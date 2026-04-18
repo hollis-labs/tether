@@ -33,6 +33,9 @@ func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (*Handle, error)
 
 	if bootMode == "stdin" && bootPrompt != "" {
 		if _, err := io.WriteString(ptmx, bootPrompt); err != nil {
+			_ = cmd.Process.Kill()
+			ptmx.Close()
+			logF.Close()
 			return nil, fmt.Errorf("write boot prompt: %w", err)
 		}
 	}
