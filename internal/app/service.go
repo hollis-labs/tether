@@ -23,6 +23,7 @@ type Service struct {
 	Providers   *provider.Registry
 
 	running map[string]*session.Handle
+	killing map[string]bool
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -49,6 +50,7 @@ func New(catalogRoot string) (*Service, error) {
 		Store:       db,
 		Providers:   reg,
 		running:     map[string]*session.Handle{},
+		killing:     map[string]bool{},
 	}, nil
 }
 
@@ -140,12 +142,18 @@ func (s *Service) Launch(launchID string, attach io.Writer) (*Launched, error) {
 
 	go func() {
 		code, _ := h.Wait()
-		state := session.StateCompleted
-		if code != 0 {
+		var state session.State
+		switch {
+		case s.killing[sessID]:
+			state = session.StateKilled
+		case code == 0:
+			state = session.StateCompleted
+		default:
 			state = session.StateFailed
 		}
 		_ = s.Store.UpdateSessionState(sessID, string(state), h.Cmd.Process.Pid, &code)
 		delete(s.running, sessID)
+		delete(s.killing, sessID)
 	}()
 
 	return &Launched{SessionID: sessID, Workspace: ws, Plan: plan, Handle: h}, nil
@@ -164,6 +172,7 @@ func (s *Service) StopSession(id string) error {
 	if !ok {
 		return fmt.Errorf("session %q not running locally", id)
 	}
+	s.killing[id] = true
 	return h.Kill()
 }
 
