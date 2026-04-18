@@ -23,6 +23,10 @@ type Service struct {
 	Store       *store.Store
 	Providers   *provider.Registry
 
+	// running/killing are accessed by the main goroutine (Launch/StopSession)
+	// and the wait goroutine. v0 CLI is one-shot so the window is narrow, but
+	// this is not safe under concurrent calls. TODO: add a sync.Mutex once the
+	// service gains more than one caller (HTTP/TUI/workflow).
 	running map[string]*session.Handle
 	killing map[string]bool
 	wg      sync.WaitGroup
