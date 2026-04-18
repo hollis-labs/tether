@@ -80,9 +80,12 @@ func resolveRoot(catalogRoot, fromGlobal, fallback string) string {
 func loadYAML(path string, out any) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", path, err)
 	}
-	return yaml.Unmarshal(b, out)
+	if err := yaml.Unmarshal(b, out); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
 }
 
 func loadDir(dir string, fn func(path string) error) error {
