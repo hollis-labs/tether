@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/creack/pty"
 )
@@ -13,7 +14,11 @@ type Handle struct {
 	Cmd     *exec.Cmd
 	PTY     *os.File
 	LogFile *os.File
-	done    chan error
+
+	done     chan error
+	waitOnce sync.Once
+	waitCode int
+	waitErr  error
 }
 
 // Start launches cmd under a PTY. Stdout/stderr are mirrored to logPath.
@@ -40,27 +45,40 @@ func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (*Handle, error)
 		}
 	}
 
+	copyDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(logF, ptmx)
+		close(copyDone)
 	}()
 	go func() {
-		h.done <- cmd.Wait()
-		ptmx.Close()
+		err := cmd.Wait()
+		ptmx.Close() // unblocks io.Copy
+		<-copyDone   // wait for final bytes to drain into logF
 		logF.Close()
+		h.done <- err
 	}()
 	return h, nil
 }
 
 // Wait blocks until the process exits; returns exit code (0 on success, -1 if signaled).
+// Safe for multiple callers: the first call consumes the done channel, subsequent
+// calls return the cached result.
 func (h *Handle) Wait() (int, error) {
-	err := <-h.done
-	if err == nil {
-		return 0, nil
-	}
-	if ee, ok := err.(*exec.ExitError); ok {
-		return ee.ExitCode(), nil
-	}
-	return -1, err
+	h.waitOnce.Do(func() {
+		err := <-h.done
+		switch {
+		case err == nil:
+			h.waitCode = 0
+		default:
+			if ee, ok := err.(*exec.ExitError); ok {
+				h.waitCode = ee.ExitCode()
+			} else {
+				h.waitCode = -1
+				h.waitErr = err
+			}
+		}
+	})
+	return h.waitCode, h.waitErr
 }
 
 // Kill terminates the process.
@@ -71,8 +89,8 @@ func (h *Handle) Kill() error {
 	return h.Cmd.Process.Kill()
 }
 
-// Attach copies the log file tail to w, then streams live PTY output.
-// For v0: simply tail the log file from start to end.
+// Attach copies the log file from start to current EOF into w.
+// v0 is snapshot-only; live-follow ("tail -f") is deferred to a later task.
 func (h *Handle) Attach(w io.Writer) error {
 	f, err := os.Open(h.LogFile.Name())
 	if err != nil {
