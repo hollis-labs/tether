@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -24,6 +25,7 @@ type Service struct {
 
 	running map[string]*session.Handle
 	killing map[string]bool
+	wg      sync.WaitGroup
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -54,7 +56,10 @@ func New(catalogRoot string) (*Service, error) {
 	}, nil
 }
 
-func (s *Service) Close() error { return s.Store.Close() }
+func (s *Service) Close() error {
+	s.wg.Wait()
+	return s.Store.Close()
+}
 
 func (s *Service) ListProjects() []config.Project {
 	out := make([]config.Project, 0, len(s.Catalog.Projects))
@@ -140,7 +145,9 @@ func (s *Service) Launch(launchID string, attach io.Writer) (*Launched, error) {
 	_ = s.Store.UpdateSessionState(sessID, string(session.StateRunning), h.Cmd.Process.Pid, nil)
 	s.running[sessID] = h
 
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		code, _ := h.Wait()
 		var state session.State
 		switch {
