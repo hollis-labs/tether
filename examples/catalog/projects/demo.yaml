@@ -1,0 +1,9 @@
+id: demo
+name: Demo Project
+repo_root: ~/Projects-apps/agent-mux-v0-pack
+tracking_root: ~/agent-mux/tracking/demo
+boot_fragments:
+  - boot/common.md
+workspace:
+  default_mode: hybrid
+  session_root: ~/agent-mux/workspaces/demo
