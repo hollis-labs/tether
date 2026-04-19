@@ -339,10 +339,18 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	return e.sess.SendInput(context.Background(), data)
 }
 
-// AttachOptions controls optional metadata attached to a subscription. The
-// zero value picks a default client_kind.
+// AttachOptions controls optional metadata attached to a subscription.
+// The zero value picks a default client_kind and requests a full-ring
+// replay (the behavior before since_seq support landed).
 type AttachOptions struct {
 	ClientKind string
+	// SinceSeq is a byte-count hint for resume. When > 0, the broker
+	// only replays ring bytes beyond this offset. When 0 (zero value),
+	// the full ring is replayed (legacy behavior). When SinceSeq is
+	// older than what the ring still holds, the full ring is replayed
+	// silently — callers detect gaps by comparing bytes received
+	// against bytes expected.
+	SinceSeq int64
 }
 
 // Attach subscribes w to the named session's live output stream. Attach
@@ -395,7 +403,7 @@ func (m *Manager) AttachWith(ctx context.Context, id string, w io.Writer, opts A
 		}
 	}()
 
-	replay, ch, cancel := e.broker.subscribe(defaultSubscriberDepth)
+	replay, ch, cancel := e.broker.subscribeSince(defaultSubscriberDepth, opts.SinceSeq)
 	defer cancel()
 	return copyStream(ctx, w, replay, ch)
 }

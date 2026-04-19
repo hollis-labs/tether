@@ -142,7 +142,8 @@ func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) er
 	if err != nil {
 		return err
 	}
-	err = c.AttachSession(ctx, id, os.Stdout)
+	// CLI has no flag for since_seq yet; always request full ring replay.
+	err = c.AttachSession(ctx, id, os.Stdout, 0)
 	if err == nil {
 		return nil
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/chrispian/agent-mux/internal/runtime"
 )
@@ -13,7 +14,23 @@ import (
 // each chunk so curl-style consumers see data immediately. The response
 // ends when the session exits (broker closes) or the client disconnects
 // (ctx cancels).
+//
+// Optional ?since_seq=N param lets callers resume where they left off;
+// the server replays only bytes with offset > N still available in the
+// attach ring. When N is older than the oldest retained byte, the
+// caller silently receives the full ring (gap detection is the
+// client's job, via expected-vs-received byte count).
 func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request, id string) {
+	var sinceSeq int64
+	if raw := r.URL.Query().Get("since_seq"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "since_seq must be a non-negative integer")
+			return
+		}
+		sinceSeq = n
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, "streaming not supported")
@@ -25,7 +42,7 @@ func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request, id string)
 	flusher.Flush()
 
 	fw := &flushWriter{w: w, f: flusher}
-	if err := s.Service.AttachSession(r.Context(), id, fw); err != nil {
+	if err := s.Service.AttachSession(r.Context(), id, fw, sinceSeq); err != nil {
 		if errors.Is(err, runtime.ErrSessionNotRunning) {
 			// Headers already sent — best we can do is close the stream.
 			return

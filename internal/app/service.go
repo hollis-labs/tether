@@ -270,9 +270,11 @@ func (s *Service) SendInput(id string, data []byte) error {
 }
 
 // AttachSession streams the named session's live output to w until ctx is
-// cancelled or the session exits. Thin wrapper over runtime.Manager.Attach.
-func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer) error {
-	return s.Runtime.Attach(ctx, id, w)
+// cancelled or the session exits. sinceSeq is a byte-offset hint for
+// resume; 0 means "replay full ring then go live" (pre-resume default).
+// Thin wrapper over runtime.Manager.AttachWith.
+func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
+	return s.Runtime.AttachWith(ctx, id, w, runtime.AttachOptions{SinceSeq: sinceSeq})
 }
 
 // AttachedClients reports the in-memory count of live attach subscribers for

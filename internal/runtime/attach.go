@@ -30,15 +30,16 @@ const (
 //   - All subscriber channels are closed exactly once — either on individual
 //     cancel() or on broker close(), whichever comes first.
 type attachBroker struct {
-	ringCap  int
-	chanCap  int
-	dropCnt  int64
-	mu       sync.Mutex
-	ring     []byte
-	subs     map[int]chan []byte
-	subNext  int
-	closed   bool
-	closeErr error
+	ringCap      int
+	chanCap      int
+	dropCnt      int64
+	totalWritten int64 // monotonic count of bytes Write() has accepted since broker init; used for since_seq resume
+	mu           sync.Mutex
+	ring         []byte
+	subs         map[int]chan []byte
+	subNext      int
+	closed       bool
+	closeErr     error
 }
 
 func newAttachBroker(ringBytes, subscriberDepth int) *attachBroker {
@@ -70,6 +71,7 @@ func (b *attachBroker) Write(p []byte) (int, error) {
 		return 0, io.ErrClosedPipe
 	}
 	b.appendRing(p)
+	b.totalWritten += int64(len(p))
 
 	// Copy once, share with every subscriber. Channels hold read-only views.
 	cp := make([]byte, len(p))
@@ -83,6 +85,39 @@ func (b *attachBroker) Write(p []byte) (int, error) {
 	}
 	b.mu.Unlock()
 	return len(p), nil
+}
+
+// computeReplay returns the bytes from ring that the caller needs to
+// catch up to the head: the tail of the ring from byte offset
+// (sinceSeq - ringStartSeq). When the ring doesn't cover sinceSeq —
+// because the requested position was evicted — the full ring is
+// returned (best-effort replay; gap is invisible to the caller).
+// When sinceSeq >= totalWritten, the caller is already at head, so
+// empty replay is returned.
+//
+// Pure function of its inputs so tests can cover edge cases without
+// spinning up a live broker.
+func computeReplay(ring []byte, totalWritten, sinceSeq int64) []byte {
+	if sinceSeq <= 0 || int64(len(ring)) == 0 {
+		out := make([]byte, len(ring))
+		copy(out, ring)
+		return out
+	}
+	if sinceSeq >= totalWritten {
+		return nil
+	}
+	ringStartSeq := totalWritten - int64(len(ring))
+	if sinceSeq < ringStartSeq {
+		// Gap — sinceSeq predates what we still hold; return everything.
+		out := make([]byte, len(ring))
+		copy(out, ring)
+		return out
+	}
+	// sinceSeq is inside the ring range — return just the tail from offset.
+	offset := sinceSeq - ringStartSeq
+	out := make([]byte, int64(len(ring))-offset)
+	copy(out, ring[offset:])
+	return out
 }
 
 // appendRing extends b.ring with p, keeping only the trailing ringCap bytes.
@@ -109,15 +144,32 @@ func (b *attachBroker) appendRing(p []byte) {
 // After the broker is closed, subscribe still returns the current replay
 // along with a channel that is already closed, so late subscribers drain
 // history and then exit cleanly.
+//
+// Convenience wrapper for subscribeSince(depth, 0) — the common "give
+// me everything in the ring, then live" flow.
 func (b *attachBroker) subscribe(depth int) (replay []byte, ch <-chan []byte, cancel func()) {
+	return b.subscribeSince(depth, 0)
+}
+
+// subscribeSince is subscribe with a byte-offset hint. sinceSeq is a
+// byte count since the session's broker was initialized; the returned
+// replay contains only bytes with seq > sinceSeq that are still
+// available in the ring. When sinceSeq >= totalWritten, replay is
+// empty and the subscriber jumps straight to live. When sinceSeq is
+// older than the oldest byte still in the ring, the caller silently
+// receives the full ring (the gap between sinceSeq and ringStart is
+// lost — callers detect this by comparing expected vs. received
+// bytes).
+//
+// sinceSeq==0 is the pre-since_seq behavior: full ring replay.
+func (b *attachBroker) subscribeSince(depth int, sinceSeq int64) (replay []byte, ch <-chan []byte, cancel func()) {
 	if depth <= 0 {
 		depth = b.chanCap
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	replay = make([]byte, len(b.ring))
-	copy(replay, b.ring)
+	replay = computeReplay(b.ring, b.totalWritten, sinceSeq)
 
 	out := make(chan []byte, depth)
 	if b.closed {

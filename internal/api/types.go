@@ -25,7 +25,7 @@ type LaunchService interface {
 	StopSession(id string) error
 	WaitSession(ctx context.Context, id string) (int, error)
 	SendInput(id string, data []byte) error
-	AttachSession(ctx context.Context, id string, w io.Writer) error
+	AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error
 	AttachedClients(id string) int
 }
 

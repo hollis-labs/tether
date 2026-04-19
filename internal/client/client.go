@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -227,12 +228,20 @@ func (c *Client) SendInput(ctx context.Context, id string, data []byte) error {
 // ctx is cancelled or the session exits (server closes the response).
 // Returns nil on clean EOF (session terminated); returns a wrapped ctx.Err
 // when the caller cancels.
-func (c *Client) AttachSession(ctx context.Context, id string, w io.Writer) error {
+//
+// sinceSeq is a byte-offset resume hint. 0 requests the full replay
+// ring (pre-resume default). Nonzero asks the server to replay only
+// bytes beyond that offset — useful for reconnect after a detach
+// where the client already has a partial byte-count watermark.
+func (c *Client) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
 	// Drop the 5s transport timeout — attach is long-lived.
 	longClient := *c.http
 	longClient.Timeout = 0
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/sessions/"+url.PathEscape(id)+"/attach", nil)
+	path := c.baseURL + "/sessions/" + url.PathEscape(id) + "/attach"
+	if sinceSeq > 0 {
+		path += "?since_seq=" + strconv.FormatInt(sinceSeq, 10)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}

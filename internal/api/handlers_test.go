@@ -42,11 +42,12 @@ type fakeLaunchService struct {
 	waitRes map[string]int
 	waitErr error
 
-	inputErr  error
-	inputLog  [][]byte
-	inputIDs  []string
-	attachFn  func(ctx context.Context, id string, w io.Writer) error
-	attachErr error
+	inputErr      error
+	inputLog      [][]byte
+	inputIDs      []string
+	attachFn      func(ctx context.Context, id string, w io.Writer) error
+	attachErr     error
+	attachSinceSeqs []int64
 
 	attachedClients map[string]int
 }
@@ -103,7 +104,10 @@ func (f *fakeLaunchService) SendInput(id string, data []byte) error {
 	return f.inputErr
 }
 
-func (f *fakeLaunchService) AttachSession(ctx context.Context, id string, w io.Writer) error {
+func (f *fakeLaunchService) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
+	f.mu.Lock()
+	f.attachSinceSeqs = append(f.attachSinceSeqs, sinceSeq)
+	f.mu.Unlock()
 	if f.attachFn != nil {
 		return f.attachFn(ctx, id, w)
 	}
@@ -523,6 +527,48 @@ func TestHandleAttach_StreamsUntilServiceReturns(t *testing.T) {
 	}
 	if ct := rr.Header().Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+func TestHandleAttach_SinceSeqForwarded(t *testing.T) {
+	svc := &fakeLaunchService{
+		attachFn: func(ctx context.Context, id string, w io.Writer) error {
+			_, _ = w.Write([]byte("tail"))
+			return nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach?since_seq=42", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if len(svc.attachSinceSeqs) != 1 || svc.attachSinceSeqs[0] != 42 {
+		t.Errorf("sinceSeq not forwarded: %v", svc.attachSinceSeqs)
+	}
+}
+
+func TestHandleAttach_BadSinceSeq(t *testing.T) {
+	svc := &fakeLaunchService{}
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach?since_seq=abc", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleAttach_NegativeSinceSeq(t *testing.T) {
+	svc := &fakeLaunchService{}
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach?since_seq=-5", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 

@@ -235,3 +235,75 @@ func TestAttachBroker_ConcurrentSubscribePublishNoRace(t *testing.T) {
 	wg.Wait()
 	b.close()
 }
+
+func TestComputeReplay_ZeroSinceSeqReturnsFullRing(t *testing.T) {
+	ring := []byte("hello world")
+	got := computeReplay(ring, 11, 0)
+	if string(got) != "hello world" {
+		t.Errorf("got %q, want full ring", got)
+	}
+}
+
+func TestComputeReplay_AtHead_ReturnsEmpty(t *testing.T) {
+	got := computeReplay([]byte("abc"), 3, 3)
+	if len(got) != 0 {
+		t.Errorf("got %q, want empty at head", got)
+	}
+}
+
+func TestComputeReplay_PastHead_ReturnsEmpty(t *testing.T) {
+	got := computeReplay([]byte("abc"), 3, 10)
+	if len(got) != 0 {
+		t.Errorf("got %q, want empty when sinceSeq>totalWritten", got)
+	}
+}
+
+func TestComputeReplay_InsideRing_ReturnsTail(t *testing.T) {
+	// Total 20 bytes written, ring holds the last 11 ("llo world!!"),
+	// client requests from byte 15 — the tail should be bytes [15..20) = "rld!!".
+	ring := []byte("llo world!!")
+	got := computeReplay(ring, 20, 15)
+	if string(got) != "rld!!" {
+		t.Errorf("got %q, want 'rld!!'", got)
+	}
+}
+
+func TestComputeReplay_GapBeforeRing_ReturnsFullRing(t *testing.T) {
+	// Client requested from byte 3, ring only holds bytes [10..20).
+	// Gap is silent: we return the full ring and let the caller
+	// detect the gap by byte-count comparison.
+	ring := []byte("0123456789")
+	got := computeReplay(ring, 20, 3)
+	if string(got) != "0123456789" {
+		t.Errorf("got %q, want full ring on gap", got)
+	}
+}
+
+func TestAttachBroker_SubscribeSince_LivesUpdate(t *testing.T) {
+	b := newAttachBroker(1024, 16)
+	// Write some history.
+	b.Write([]byte("ABCDEFGHIJ")) // totalWritten=10
+	// Subscribe asking only for bytes past offset 10 — should replay empty.
+	replay, ch, cancel := b.subscribeSince(16, 10)
+	defer cancel()
+	if len(replay) != 0 {
+		t.Fatalf("expected empty replay, got %q", replay)
+	}
+	// Subsequent writes are delivered live.
+	go b.Write([]byte("KLM"))
+	got := drainN(ch, 1, 500*time.Millisecond)
+	if string(got) != "KLM" {
+		t.Errorf("live got %q, want KLM", got)
+	}
+}
+
+func TestAttachBroker_SubscribeSince_PartialReplay(t *testing.T) {
+	b := newAttachBroker(1024, 16)
+	b.Write([]byte("ABCDEFGHIJ")) // totalWritten=10
+	// Client says "I have up to byte 6" — tail should be "GHIJ".
+	replay, _, cancel := b.subscribeSince(16, 6)
+	defer cancel()
+	if string(replay) != "GHIJ" {
+		t.Errorf("partial replay = %q, want GHIJ", replay)
+	}
+}

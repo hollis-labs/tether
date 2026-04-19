@@ -128,7 +128,7 @@ func (s *funcService) WaitSession(ctx context.Context, id string) (int, error) {
 	return s.waitFn(ctx, id)
 }
 func (s *funcService) SendInput(id string, data []byte) error { return s.inputFn(id, data) }
-func (s *funcService) AttachSession(ctx context.Context, id string, w io.Writer) error {
+func (s *funcService) AttachSession(ctx context.Context, id string, w io.Writer, _ int64) error {
 	return s.attachFn(ctx, id, w)
 }
 func (s *funcService) AttachedClients(id string) int {
@@ -322,7 +322,7 @@ func TestClient_AttachSession_StreamsBytes(t *testing.T) {
 	}
 	c := New(m.addr())
 	var buf bytes.Buffer
-	if err := c.AttachSession(context.Background(), "s1", &buf); err != nil {
+	if err := c.AttachSession(context.Background(), "s1", &buf, 0); err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
 	if buf.String() != "alpha-beta" {
@@ -332,7 +332,7 @@ func TestClient_AttachSession_StreamsBytes(t *testing.T) {
 
 func TestClient_AttachSession_DaemonUnreachable(t *testing.T) {
 	c := New("tcp:127.0.0.1:1")
-	err := c.AttachSession(context.Background(), "s1", io.Discard)
+	err := c.AttachSession(context.Background(), "s1", io.Discard, 0)
 	if !errors.Is(err, ErrDaemonUnreachable) {
 		t.Errorf("expected ErrDaemonUnreachable; got %v", err)
 	}
