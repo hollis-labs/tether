@@ -374,6 +374,112 @@ Response (200):
 
 ---
 
+## Catalog
+
+Read-only list endpoints for the four catalog types. Writes (create /
+update / delete / reload) are deliberately not exposed in v0.0.2 —
+see [ADR 0012](../adr/0012-catalog-read-api.md) for the "reads now,
+writes deferred" rationale.
+
+Conventions (all four routes):
+
+- Method: `GET` only. Other methods return `405 method_not_allowed`.
+- Response: `{"<type>": [<record>, …]}` — the inner records are the
+  catalog structs as-loaded from YAML (see
+  `internal/config/model.go`). No pagination, no cursor — the catalog
+  is small enough that clients pull the full list and filter locally.
+- Records are sorted by `id` so repeated calls emit a stable order.
+- Fresh reads per request: handlers re-read the catalog root on each
+  call, so edits to the YAML files are picked up without a daemon
+  restart.
+- Errors: a missing or unreadable catalog root surfaces as `500
+  internal_error` with a message citing the offending path (e.g.
+  `"catalog load failed: load global: read /…/global.yaml: no such
+  file or directory"`).
+
+### `GET /catalog/projects`
+
+Response (200):
+
+```json
+{
+  "projects": [
+    {
+      "id": "demo",
+      "name": "Demo Project",
+      "repo_root": "~/Projects-apps/agent-mux-v0-pack",
+      "tracking_root": "~/agent-mux/tracking/demo",
+      "boot_fragments": ["boot/common.md"],
+      "workspace": {
+        "default_mode": "hybrid",
+        "session_root": "~/agent-mux/workspaces/demo"
+      }
+    }
+  ]
+}
+```
+
+### `GET /catalog/agents`
+
+Response (200):
+
+```json
+{
+  "agents": [
+    {
+      "id": "demo-agent",
+      "name": "Demo Agent",
+      "roles": ["general"],
+      "permissions": { "network": true, "default_sandbox": "none" }
+    }
+  ]
+}
+```
+
+### `GET /catalog/providers`
+
+Response (200):
+
+```json
+{
+  "providers": [
+    {
+      "id": "api-stub",
+      "type": "api",
+      "command": "",
+      "bootstrap": {},
+      "env": { "mode": "merge" }
+    }
+  ]
+}
+```
+
+### `GET /catalog/launches`
+
+Response (200):
+
+```json
+{
+  "launches": [
+    {
+      "id": "demo-launch",
+      "project": "demo",
+      "agent": "demo-agent",
+      "provider": "claude-code",
+      "workspace": { "mode": "hybrid" },
+      "prompt": {
+        "include_project_boot": true,
+        "include_agent_boot": true,
+        "include_knowledge_base": false
+      },
+      "overrides": {}
+    }
+  ]
+}
+```
+
+---
+
 ## Event kinds
 
 Current (v0.0.2):
