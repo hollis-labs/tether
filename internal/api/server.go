@@ -11,6 +11,7 @@ import (
 type Deps struct {
 	Service     LaunchService
 	Checkpoints CheckpointStore
+	Broker      BrokerService
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -18,6 +19,7 @@ type Deps struct {
 type Server struct {
 	Service     LaunchService
 	Checkpoints CheckpointStore
+	Broker      BrokerService
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -26,9 +28,11 @@ func NewHandler(deps Deps) http.Handler {
 	s := &Server{
 		Service:     deps.Service,
 		Checkpoints: deps.Checkpoints,
+		Broker:      deps.Broker,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
 	s.registerCheckpointRoutes(mux)
+	s.registerBrokerRoutes(mux)
 	return mux
 }

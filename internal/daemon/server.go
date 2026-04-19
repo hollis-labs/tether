@@ -41,6 +41,9 @@ type Server struct {
 	// Checkpoints is optional; when set, the checkpoint endpoints are
 	// mounted. Tests can pass nil to skip them.
 	Checkpoints api.CheckpointStore
+	// Broker is optional; when set, the broker envelope endpoints are
+	// mounted.
+	Broker api.BrokerService
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -169,6 +172,7 @@ func (s *Server) Handler() http.Handler {
 		apiHandler := api.NewHandler(api.Deps{
 			Service:     s.Service,
 			Checkpoints: s.Checkpoints,
+			Broker:      s.Broker,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -176,6 +180,10 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/sessions/", apiHandler)
 		if s.Checkpoints != nil {
 			mux.Handle("/logical-agents/", apiHandler)
+		}
+		if s.Broker != nil {
+			mux.Handle("/broker/envelopes", apiHandler)
+			mux.Handle("/broker/envelopes/", apiHandler)
 		}
 	}
 	return mux

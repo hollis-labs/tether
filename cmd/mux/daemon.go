@@ -18,6 +18,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/broker"
 	"github.com/chrispian/agent-mux/internal/client"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
@@ -92,6 +93,7 @@ var daemonRunCmd = &cobra.Command{
 			Manager:     svc.Runtime,
 			Service:     &serviceAdapter{svc: svc},
 			Checkpoints: svc.Store,
+			Broker:      &brokerAdapter{write: svc.Broker, read: svc.Store},
 			Publisher:   svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
@@ -164,6 +166,40 @@ func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writ
 
 func (a *serviceAdapter) AttachedClients(id string) int {
 	return a.svc.AttachedClients(id)
+}
+
+// brokerAdapter bundles broker.Service (writes with event emission)
+// and the store's envelope-read methods into the single
+// api.BrokerService seam. Kept at the cmd layer because this is where
+// the two halves are naturally composed (app.Service already owns both
+// dependencies).
+type brokerAdapter struct {
+	write *broker.Service
+	read  envelopeReader
+}
+
+// envelopeReader is the narrow read-side contract the adapter needs.
+// *store.Store satisfies it.
+type envelopeReader interface {
+	GetEnvelope(id string) (*broker.Envelope, error)
+	ListEnvelopesByRecipient(recipient string) ([]broker.Envelope, error)
+	ListEnvelopesByWorkflow(workflowID, correlationID string) ([]broker.Envelope, error)
+}
+
+func (a *brokerAdapter) CreateEnvelope(ctx context.Context, e broker.Envelope) error {
+	return a.write.CreateEnvelope(ctx, e)
+}
+func (a *brokerAdapter) ReplyEnvelope(ctx context.Context, reply broker.Envelope) error {
+	return a.write.ReplyEnvelope(ctx, reply)
+}
+func (a *brokerAdapter) GetEnvelope(id string) (*broker.Envelope, error) {
+	return a.read.GetEnvelope(id)
+}
+func (a *brokerAdapter) ListEnvelopesByRecipient(recipient string) ([]broker.Envelope, error) {
+	return a.read.ListEnvelopesByRecipient(recipient)
+}
+func (a *brokerAdapter) ListEnvelopesByWorkflow(workflowID, correlationID string) ([]broker.Envelope, error) {
+	return a.read.ListEnvelopesByWorkflow(workflowID, correlationID)
 }
 
 var daemonStopCmd = &cobra.Command{
