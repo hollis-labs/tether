@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider/claudecode"
+	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
