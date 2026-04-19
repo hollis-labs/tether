@@ -16,8 +16,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/client"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
+	"github.com/chrispian/agent-mux/internal/store"
 )
 
 var daemonCmd = &cobra.Command{
@@ -86,6 +88,7 @@ var daemonRunCmd = &cobra.Command{
 		server := &daemon.Server{
 			Config:  cfg,
 			Manager: svc.Runtime,
+			Service: &serviceAdapter{svc: svc},
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.
@@ -98,6 +101,41 @@ var daemonRunCmd = &cobra.Command{
 
 		return server.Run(ctx)
 	},
+}
+
+// serviceAdapter bridges *app.Service to daemon.LaunchService. The only
+// translation step is flattening app.Launched's *workspace.Session pointer
+// into primitive strings so the API response never carries internal types.
+type serviceAdapter struct {
+	svc *app.Service
+}
+
+func (a *serviceAdapter) Launch(launchID string) (daemon.LaunchResult, error) {
+	l, err := a.svc.Launch(launchID)
+	if err != nil {
+		return daemon.LaunchResult{}, err
+	}
+	return daemon.LaunchResult{
+		SessionID: l.SessionID,
+		Workspace: l.Workspace.Root,
+		LogPath:   l.Workspace.LogPath,
+	}, nil
+}
+
+func (a *serviceAdapter) ListSessions() ([]store.SessionRow, error) {
+	return a.svc.ListSessions()
+}
+
+func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {
+	return a.svc.GetSession(id)
+}
+
+func (a *serviceAdapter) StopSession(id string) error {
+	return a.svc.StopSession(id)
+}
+
+func (a *serviceAdapter) WaitSession(ctx context.Context, id string) (int, error) {
+	return a.svc.WaitSession(ctx, id)
 }
 
 var daemonStopCmd = &cobra.Command{
@@ -182,6 +220,33 @@ var daemonStatusCmd = &cobra.Command{
 			h.PID, h.UptimeSec, h.Listener, h.Sessions)
 		return nil
 	},
+}
+
+// newDaemonClient returns a client wired at the catalog's daemon listen
+// address. Shared by the launch / sessions subcommands so the daemon
+// transport lives in one place.
+func newDaemonClient(catalogRoot string) (*client.Client, error) {
+	cfg, err := loadDaemonConfig(catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	return client.New(cfg.ListenAddr), nil
+}
+
+// openStoreReadOnly opens the SQLite store for fallback reads when the
+// daemon is unreachable. modernc.org/sqlite supports multi-reader
+// concurrency so this is safe even if the daemon has the file open too.
+// Caller is responsible for closing the returned *store.Store.
+func openStoreReadOnly(catalogRoot string) (*store.Store, error) {
+	cat, err := config.Load(catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	dbPath := config.Expand(cat.Global.Catalog.Defaults.StateDB)
+	if dbPath == "" {
+		return nil, fmt.Errorf("global.defaults.state_db missing")
+	}
+	return store.Open(dbPath)
 }
 
 // loadDaemonConfig loads just enough of the catalog to resolve daemon

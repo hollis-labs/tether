@@ -177,3 +177,11 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 func (s *Service) StopSession(id string) error {
 	return s.Runtime.Stop(context.Background(), id)
 }
+
+// WaitSession blocks until the named session reaches a terminal state and
+// returns its exit code. Thin wrapper over runtime.Manager.WaitSession so
+// callers (including the daemon's HTTP handlers) don't reach past Service
+// into the runtime package.
+func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
+	return s.Runtime.WaitSession(ctx, id)
+}

@@ -27,9 +27,13 @@ type Config struct {
 // is cancelled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
-	Config   Config
-	Manager  *runtime.Manager
-	Close    func() error
+	Config  Config
+	Manager *runtime.Manager
+	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
+	// only /health is registered — useful for tests that don't need the
+	// session surface.
+	Service LaunchService
+	Close   func() error
 
 	startedAt time.Time
 }
@@ -59,11 +63,8 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("write pidfile: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
-
 	httpSrv := &http.Server{
-		Handler:           mux,
+		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -116,6 +117,17 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	return runErr
+}
+
+// Handler builds the http.Handler exposed by Run. Exposed so tests can
+// exercise the routing table without spinning up a listener + PID file.
+// The returned handler always serves /health; /sessions routes are only
+// registered when Service is non-nil.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", s.handleHealth)
+	s.registerSessionRoutes(mux)
+	return mux
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —

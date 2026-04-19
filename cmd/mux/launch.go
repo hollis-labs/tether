@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/client"
 )
 
 var (
@@ -19,23 +20,34 @@ var launchCmd = &cobra.Command{
 	Use:   "launch",
 	Short: "Launch a session from a launch profile",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		svc, err := app.New(catalogPath)
+		c, err := newDaemonClient(catalogPath)
 		if err != nil {
 			return err
 		}
-		defer svc.Close()
-		launched, err := svc.Launch(launchID)
+
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		res, err := c.Launch(ctx, launchID)
 		if err != nil {
+			if errors.Is(err, client.ErrDaemonUnreachable) {
+				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+			}
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "session: %s\nworkspace: %s\nlog: %s\n",
-			launched.SessionID, launched.Workspace.Root, launched.Workspace.LogPath)
+		fmt.Fprintf(os.Stderr, "session: %s\nworkspace: %s\nlog: %s\n", res.ID, res.Workspace, res.Log)
+
 		if launchWait {
-			code, err := launched.Wait(context.Background())
+			code, err := c.WaitSession(ctx, res.ID)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "exit: %d\n", code)
+			if code != 0 {
+				os.Exit(code)
+			}
 		}
 		return nil
 	},
