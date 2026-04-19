@@ -96,6 +96,9 @@ type entry struct {
 	handle  Handle
 	broker  *attachBroker
 	killing bool
+	// inputMu serialises SendInput writes so concurrent callers never
+	// interleave partial writes on the PTY master.
+	inputMu sync.Mutex
 }
 
 // sessionResult holds the exit code of a terminated session. done is closed
@@ -260,6 +263,28 @@ func (m *Manager) List() []SessionInfo {
 		out = append(out, e.info)
 	}
 	return out
+}
+
+// SendInput writes data to the named session's PTY. Concurrent SendInput
+// callers on the same session are serialised through a per-entry lock so
+// no two callers can interleave partial writes. Returns ErrSessionNotRunning
+// if the session is not registered, or ErrNoPTYWriter if the handle does
+// not expose a writable PTY (terminal or stubbed session).
+func (m *Manager) SendInput(id string, data []byte) error {
+	m.mu.RLock()
+	e, ok := m.registry[id]
+	m.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotRunning
+	}
+	w := e.handle.PTYWriter()
+	if w == nil {
+		return ErrNoPTYWriter
+	}
+	e.inputMu.Lock()
+	defer e.inputMu.Unlock()
+	_, err := w.Write(data)
+	return err
 }
 
 // Attach subscribes w to the named session's live output stream. Attach

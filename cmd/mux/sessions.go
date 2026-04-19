@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -78,23 +79,97 @@ var sessionsStopCmd = &cobra.Command{
 	},
 }
 
+var sessionsTailFollow bool
+
 var sessionsTailCmd = &cobra.Command{
 	Use:   "tail <id>",
-	Short: "Tail the session log",
+	Short: "Follow the session's live output (alias for attach; --follow=false for snapshot)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		d, err := getSessionDaemonOrStore(cmd.Context(), catalogPath, args[0])
-		if err != nil {
-			return err
+		if sessionsTailFollow {
+			return runAttach(cmd.Context(), args[0], true)
 		}
-		f, err := os.Open(filepath.Join(d.Workspace, "logs", "session.log"))
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = io.Copy(os.Stdout, f)
-		return err
+		return runTailSnapshot(args[0])
 	},
+}
+
+var sessionsAttachCmd = &cobra.Command{
+	Use:   "attach <id>",
+	Short: "Live-follow the session's output until Ctrl-C",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAttach(cmd.Context(), args[0], false)
+	},
+}
+
+var sessionsInputCmd = &cobra.Command{
+	Use:   "input <id> [text]",
+	Short: "Send input to a running session; with no text, pipes stdin until EOF",
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return err
+		}
+		id := args[0]
+		var data []byte
+		if len(args) == 2 {
+			// Convenience form: append newline.
+			data = []byte(args[1] + "\n")
+		} else {
+			data, err = io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("read stdin: %w", err)
+			}
+		}
+		if err := c.SendInput(cmd.Context(), id, data); err != nil {
+			if errors.Is(err, client.ErrDaemonUnreachable) {
+				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+			}
+			return err
+		}
+		return nil
+	},
+}
+
+// runAttach opens a live attach stream to the daemon and copies PTY bytes
+// to stdout until the session exits or ctx is cancelled. Falls back to a
+// log-file read if the daemon is unreachable OR the session has already
+// exited (server returns 404 from attach in that case).
+func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) error {
+	c, err := newDaemonClient(catalogPath)
+	if err != nil {
+		return err
+	}
+	err = c.AttachSession(ctx, id, os.Stdout)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, client.ErrDaemonUnreachable) {
+		// Daemon down — fall back to a snapshot of the on-disk log.
+		return runTailSnapshot(id)
+	}
+	// 404 means the session isn't currently registered in the runtime (e.g.,
+	// already exited). `tail --follow` should degrade to snapshot; explicit
+	// `attach` surfaces the error so the user knows there's nothing to follow.
+	if tailFallbackOnNotRunning && strings.Contains(err.Error(), "session not running") {
+		return runTailSnapshot(id)
+	}
+	return err
+}
+
+func runTailSnapshot(id string) error {
+	d, err := getSessionDaemonOrStore(context.Background(), catalogPath, id)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Join(d.Workspace, "logs", "session.log"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(os.Stdout, f)
+	return err
 }
 
 // listSessionsDaemonOrStore tries the daemon first and falls back to a
@@ -167,5 +242,10 @@ func getSessionFromStore(catalogRoot, id string) (daemon.SessionDTO, error) {
 }
 
 func init() {
-	sessionsCmd.AddCommand(sessionsListCmd, sessionsGetCmd, sessionsStopCmd, sessionsTailCmd)
+	sessionsTailCmd.Flags().BoolVar(&sessionsTailFollow, "follow", true,
+		"follow live output (default); use --follow=false for a one-shot snapshot")
+	sessionsCmd.AddCommand(
+		sessionsListCmd, sessionsGetCmd, sessionsStopCmd,
+		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd,
+	)
 }

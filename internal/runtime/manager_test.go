@@ -537,6 +537,101 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 	}
 }
 
+func TestManager_SendInputUnknownSessionErrors(t *testing.T) {
+	m := NewManager(&fakeSink{}, &fakeStarter{})
+	if err := m.SendInput("nope", []byte("hi")); !errors.Is(err, ErrSessionNotRunning) {
+		t.Errorf("expected ErrSessionNotRunning; got %v", err)
+	}
+}
+
+func TestManager_SendInputNoPTYWriterErrors(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	// Default fakeHandle has no ptyWriter set → should surface ErrNoPTYWriter.
+	if err := m.SendInput("s1", []byte("hi")); !errors.Is(err, ErrNoPTYWriter) {
+		t.Errorf("expected ErrNoPTYWriter; got %v", err)
+	}
+	starter.get(req.Workspace.LogPath).complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_SendInputDeliversBytes(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	var tsb threadsafeBuffer
+	starter.get(req.Workspace.LogPath).ptyWriter = &tsb
+
+	if err := m.SendInput("s1", []byte("hello\n")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	if got := tsb.String(); got != "hello\n" {
+		t.Errorf("PTY received %q, want %q", got, "hello\n")
+	}
+	starter.get(req.Workspace.LogPath).complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_SendInputSerialisesConcurrentWrites(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+
+	// atomicWriter fails the test if Write is entered concurrently.
+	aw := newAtomicWriter(t)
+	starter.get(req.Workspace.LogPath).ptyWriter = aw
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := m.SendInput("s1", []byte("payloadpayloadpayload\n")); err != nil {
+				t.Errorf("SendInput: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	starter.get(req.Workspace.LogPath).complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+// atomicWriter verifies that no two Write calls overlap in time. It is used
+// to prove the per-entry inputMu actually serialises concurrent SendInput.
+type atomicWriter struct {
+	t    *testing.T
+	busy atomic.Bool
+}
+
+func newAtomicWriter(t *testing.T) *atomicWriter { return &atomicWriter{t: t} }
+
+func (a *atomicWriter) Write(p []byte) (int, error) {
+	if !a.busy.CompareAndSwap(false, true) {
+		a.t.Errorf("concurrent Write detected — inputMu did not serialise")
+		return 0, errors.New("concurrent write")
+	}
+	// Hold the "busy" flag briefly to widen the race window.
+	time.Sleep(100 * time.Microsecond)
+	a.busy.Store(false)
+	return len(p), nil
+}
+
 func TestManager_AttachReceivesLiveBytes(t *testing.T) {
 	sink := &fakeSink{}
 	starter := &fakeStarter{}

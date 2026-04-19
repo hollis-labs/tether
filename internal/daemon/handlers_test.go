@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/store"
@@ -34,6 +36,12 @@ type fakeLaunchService struct {
 	stopIDs []string
 	waitRes map[string]int
 	waitErr error
+
+	inputErr  error
+	inputLog  [][]byte
+	inputIDs  []string
+	attachFn  func(ctx context.Context, id string, w io.Writer) error
+	attachErr error
 }
 
 func (f *fakeLaunchService) Launch(id string) (LaunchResult, error) {
@@ -66,6 +74,23 @@ func (f *fakeLaunchService) WaitSession(_ context.Context, id string) (int, erro
 		return 0, f.waitErr
 	}
 	return f.waitRes[id], nil
+}
+
+func (f *fakeLaunchService) SendInput(id string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.inputIDs = append(f.inputIDs, id)
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	f.inputLog = append(f.inputLog, cp)
+	return f.inputErr
+}
+
+func (f *fakeLaunchService) AttachSession(ctx context.Context, id string, w io.Writer) error {
+	if f.attachFn != nil {
+		return f.attachFn(ctx, id, w)
+	}
+	return f.attachErr
 }
 
 func newTestServer(svc LaunchService) *Server {
@@ -258,6 +283,105 @@ func TestHandleSessions_MethodNotAllowed(t *testing.T) {
 	buildRouter(srv).ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("DELETE /sessions status = %d, want 405", rr.Code)
+	}
+}
+
+func TestHandleSendInput_Success(t *testing.T) {
+	svc := &fakeLaunchService{}
+	srv := newTestServer(svc)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("hello\n")))
+	rr := httptest.NewRecorder()
+	buildRouter(srv).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+	if len(svc.inputIDs) != 1 || svc.inputIDs[0] != "s1" {
+		t.Errorf("SendInput not dispatched: %v", svc.inputIDs)
+	}
+	if string(svc.inputLog[0]) != "hello\n" {
+		t.Errorf("inputLog[0] = %q", svc.inputLog[0])
+	}
+}
+
+func TestHandleSendInput_SessionNotRunning(t *testing.T) {
+	svc := &fakeLaunchService{inputErr: runtime.ErrSessionNotRunning}
+	srv := newTestServer(svc)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
+	rr := httptest.NewRecorder()
+	buildRouter(srv).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+}
+
+func TestHandleSendInput_NoPTYConflict(t *testing.T) {
+	svc := &fakeLaunchService{inputErr: runtime.ErrNoPTYWriter}
+	srv := newTestServer(svc)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
+	rr := httptest.NewRecorder()
+	buildRouter(srv).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", rr.Code)
+	}
+}
+
+func TestHandleSendInput_TooLarge(t *testing.T) {
+	svc := &fakeLaunchService{}
+	srv := newTestServer(svc)
+	body := bytes.Repeat([]byte{'x'}, maxInputBytes+1)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	buildRouter(srv).ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", rr.Code)
+	}
+	if len(svc.inputLog) != 0 {
+		t.Errorf("body was forwarded despite being too large: %d entries", len(svc.inputLog))
+	}
+}
+
+func TestHandleAttach_StreamsUntilServiceReturns(t *testing.T) {
+	svc := &fakeLaunchService{
+		attachFn: func(ctx context.Context, id string, w io.Writer) error {
+			if _, err := w.Write([]byte("first ")); err != nil {
+				return err
+			}
+			if _, err := w.Write([]byte("second")); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	srv := newTestServer(svc)
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach", nil)
+	rr := httptest.NewRecorder()
+	buildRouter(srv).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if rr.Body.String() != "first second" {
+		t.Errorf("body = %q, want %q", rr.Body.String(), "first second")
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+func TestHandleAttach_SessionNotRunning(t *testing.T) {
+	svc := &fakeLaunchService{attachErr: runtime.ErrSessionNotRunning}
+	srv := newTestServer(svc)
+	// With a real server we'd get 404 before streaming; our handler already
+	// wrote 200 + headers, so the check is that the stream terminates cleanly
+	// with no body and the handler returns.
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach", nil)
+	rr := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { buildRouter(srv).ServeHTTP(rr, req); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("attach handler did not return")
 	}
 }
 

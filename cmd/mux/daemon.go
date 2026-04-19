@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -136,6 +137,14 @@ func (a *serviceAdapter) StopSession(id string) error {
 
 func (a *serviceAdapter) WaitSession(ctx context.Context, id string) (int, error) {
 	return a.svc.WaitSession(ctx, id)
+}
+
+func (a *serviceAdapter) SendInput(id string, data []byte) error {
+	return a.svc.SendInput(id, data)
+}
+
+func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writer) error {
+	return a.svc.AttachSession(ctx, id, w)
 }
 
 var daemonStopCmd = &cobra.Command{

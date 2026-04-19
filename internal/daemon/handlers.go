@@ -3,11 +3,18 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/chrispian/agent-mux/internal/runtime"
 )
+
+// maxInputBytes caps the per-request body size for POST /sessions/{id}/input
+// so a misbehaving client can't exhaust daemon memory writing into a PTY.
+// 1 MiB per call is comfortably larger than a paste buffer; streaming input
+// is not a v0.0.2 concern.
+const maxInputBytes = 1 << 20
 
 // registerSessionRoutes wires /sessions handlers onto mux. Route matching is
 // deliberately hand-rolled to avoid pulling in a third-party router for
@@ -63,6 +70,18 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleWaitSession(w, r, id)
+	case "input":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSendInput(w, r, id)
+	case "attach":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleAttach(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "unknown action "+action)
 	}
@@ -142,6 +161,76 @@ func (s *Server) handleWaitSession(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	writeJSON(w, http.StatusOK, WaitResponse{ExitCode: code})
+}
+
+// handleSendInput reads raw bytes from the request body and writes them to
+// the named session's PTY. The body is treated as an opaque byte stream:
+// no framing, no newline normalisation. The CLI is free to append a
+// trailing newline for the text-arg convenience; API callers own their
+// own framing.
+func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxInputBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	if len(body) > maxInputBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "input too large")
+		return
+	}
+	if err := s.Service.SendInput(id, body); err != nil {
+		if errors.Is(err, runtime.ErrSessionNotRunning) {
+			writeError(w, http.StatusNotFound, "session not running")
+			return
+		}
+		if errors.Is(err, runtime.ErrNoPTYWriter) {
+			writeError(w, http.StatusConflict, "session has no PTY")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAttach streams the named session's live PTY output as an unframed
+// byte stream. The response uses application/octet-stream and flushes after
+// each chunk so curl-style consumers see data immediately. The response
+// ends when the session exits (broker closes) or the client disconnects
+// (ctx cancels).
+func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request, id string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	fw := &flushWriter{w: w, f: flusher}
+	if err := s.Service.AttachSession(r.Context(), id, fw); err != nil {
+		if errors.Is(err, runtime.ErrSessionNotRunning) {
+			// Headers already sent — best we can do is close the stream.
+			return
+		}
+		// Other errors also silently close; the client sees EOF.
+	}
+}
+
+// flushWriter is an io.Writer that flushes after each Write so the attach
+// stream reaches the client promptly. Not concurrency-safe; only the attach
+// goroutine writes to it.
+type flushWriter struct {
+	w io.Writer
+	f http.Flusher
+}
+
+func (fw *flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.f.Flush()
+	return n, err
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

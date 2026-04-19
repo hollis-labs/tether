@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -184,4 +185,16 @@ func (s *Service) StopSession(id string) error {
 // into the runtime package.
 func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
 	return s.Runtime.WaitSession(ctx, id)
+}
+
+// SendInput writes data to the named session's PTY. Thin wrapper over
+// runtime.Manager.SendInput.
+func (s *Service) SendInput(id string, data []byte) error {
+	return s.Runtime.SendInput(id, data)
+}
+
+// AttachSession streams the named session's live output to w until ctx is
+// cancelled or the session exits. Thin wrapper over runtime.Manager.Attach.
+func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer) error {
+	return s.Runtime.Attach(ctx, id, w)
 }

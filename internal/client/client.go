@@ -134,6 +134,59 @@ func (c *Client) StopSession(ctx context.Context, id string) error {
 	return readError(resp)
 }
 
+// SendInput writes data to the named session's PTY via the daemon's input
+// endpoint. The body is sent raw (application/octet-stream); no framing
+// or newline handling — the caller decides.
+func (c *Client) SendInput(ctx context.Context, id string, data []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(id)+"/input", bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
+// AttachSession opens a streaming GET and copies live PTY output to w until
+// ctx is cancelled or the session exits (server closes the response).
+// Returns nil on clean EOF (session terminated); returns a wrapped ctx.Err
+// when the caller cancels.
+func (c *Client) AttachSession(ctx context.Context, id string, w io.Writer) error {
+	// Drop the 5s transport timeout — attach is long-lived.
+	longClient := *c.http
+	longClient.Timeout = 0
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/sessions/"+url.PathEscape(id)+"/attach", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := longClient.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return readError(resp)
+	}
+	_, err = io.Copy(w, resp.Body)
+	// ctx cancellation turns into a ctx error at the copy layer; surface it.
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		return err
+	}
+	return nil
+}
+
 // WaitSession long-polls the daemon until the session terminates; returns
 // the exit code recorded by the runtime manager. The ctx controls the
 // client-side timeout; the daemon itself does not apply one.

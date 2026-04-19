@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -16,6 +17,8 @@ type LaunchService interface {
 	GetSession(id string) (*store.SessionRow, error)
 	StopSession(id string) error
 	WaitSession(ctx context.Context, id string) (int, error)
+	SendInput(id string, data []byte) error
+	AttachSession(ctx context.Context, id string, w io.Writer) error
 }
 
 // LaunchResult is the daemon-facing subset of app.Launched. The full app
