@@ -110,8 +110,19 @@ func (s *Store) GetSession(id string) (*SessionRow, error) {
 	return &r, nil
 }
 
-func (s *Store) LogEvent(sessionID, kind, payload string) error {
-	_, err := s.db.Exec(`INSERT INTO events (session_id, at, kind, payload) VALUES (?, ?, ?, ?)`,
-		sessionID, time.Now().UTC().Format(time.RFC3339), kind, payload)
+// LogEvent inserts a row into the events stream. scope is required
+// (typically one of events.ScopeSession / ScopeDaemon / ScopeBroker).
+// sessionID may be empty, in which case the column stores SQL NULL.
+// payloadJSON is free-form; callers format as JSON when the data is
+// structured. Timestamp is stamped server-side (RFC3339 UTC).
+func (s *Store) LogEvent(scope, sessionID, kind, payloadJSON string) error {
+	if scope == "" {
+		return fmt.Errorf("event scope required")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO events (scope, session_id, at, kind, payload_json) VALUES (?, ?, ?, ?, ?)`,
+		scope, nullIfEmpty(sessionID), time.Now().UTC().Format(time.RFC3339),
+		kind, nullIfEmpty(payloadJSON),
+	)
 	return err
 }

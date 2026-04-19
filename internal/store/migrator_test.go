@@ -248,6 +248,79 @@ INSERT INTO sessions (id, launch_id, project_id, agent_id, provider_id, workspac
 	}
 }
 
+// TestMigrate_0006_EventsBackfill proves 0006 backfills legacy events
+// rows with scope='session', carries the payload value into payload_json,
+// and leaves session_id populated. This is the data-preservation contract
+// for T-v002-s03-05's events evolution.
+func TestMigrate_0006_EventsBackfill(t *testing.T) {
+	db := openTempDB(t)
+	defer db.Close()
+
+	v001 := `
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY, launch_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL, provider_id TEXT NOT NULL, workspace TEXT NOT NULL,
+    state TEXT NOT NULL, pid INTEGER, exit_code INTEGER,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, ended_at TEXT);
+CREATE TABLE launch_plans (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    plan_json TEXT NOT NULL);
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+    at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT);
+INSERT INTO events (session_id, at, kind, payload)
+    VALUES ('s-old-1', '2026-04-17T10:00:00Z', 'state', '{"to":"running"}');
+INSERT INTO events (session_id, at, kind, payload)
+    VALUES ('s-old-1', '2026-04-17T10:05:00Z', 'state', '{"to":"completed"}');`
+	if _, err := db.Exec(v001); err != nil {
+		t.Fatalf("seed v0.0.1: %v", err)
+	}
+
+	if _, err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Legacy `payload` column must be gone; `scope` and `payload_json` present.
+	if columnExists(t, db, "events", "payload") {
+		t.Error("events.payload should be dropped by 0006")
+	}
+	if !columnExists(t, db, "events", "scope") {
+		t.Error("events.scope missing after 0006")
+	}
+	if !columnExists(t, db, "events", "payload_json") {
+		t.Error("events.payload_json missing after 0006")
+	}
+
+	rows, err := db.Query(`SELECT scope, session_id, payload_json FROM events ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	type row struct{ scope, sid, payload string }
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.scope, &r.sid, &r.payload); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	for i, r := range got {
+		if r.scope != "session" {
+			t.Errorf("row %d scope = %q, want 'session'", i, r.scope)
+		}
+		if r.sid != "s-old-1" {
+			t.Errorf("row %d session_id = %q, want s-old-1", i, r.sid)
+		}
+	}
+	if got[0].payload != `{"to":"running"}` || got[1].payload != `{"to":"completed"}` {
+		t.Errorf("payload_json not carried across: %+v", got)
+	}
+}
+
 // columnExists probes sqlite's pragma_table_info for a column by name.
 func columnExists(t *testing.T, db *sql.DB, table, col string) bool {
 	t.Helper()
