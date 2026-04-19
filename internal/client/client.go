@@ -74,8 +74,10 @@ func (c *Client) Health(ctx context.Context) (daemon.Health, error) {
 	return h, nil
 }
 
-// Launch starts a new session on the daemon.
-func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchResponse, error) {
+// CreateSession POSTs /sessions and returns the created session's
+// metadata. The session is in state=created; call LaunchSession to
+// start it.
+func (c *Client) CreateSession(ctx context.Context, launchID string) (api.LaunchResponse, error) {
 	body, _ := json.Marshal(api.LaunchRequest{Launch: launchID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions", bytes.NewReader(body))
 	if err != nil {
@@ -92,9 +94,43 @@ func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchRespons
 	}
 	var res api.LaunchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return api.LaunchResponse{}, fmt.Errorf("decode create response: %w", err)
+	}
+	return res, nil
+}
+
+// LaunchSession POSTs /sessions/{id}/launch to transition a created
+// session to running. Returns the launched metadata.
+func (c *Client) LaunchSession(ctx context.Context, sessionID string) (api.LaunchResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(sessionID)+"/launch", nil)
+	if err != nil {
+		return api.LaunchResponse{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return api.LaunchResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.LaunchResponse{}, readError(resp)
+	}
+	var res api.LaunchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return api.LaunchResponse{}, fmt.Errorf("decode launch response: %w", err)
 	}
 	return res, nil
+}
+
+// Launch is a convenience that creates then launches, returning the
+// final response. The common case — CLI callers want one round-trip-
+// per-user-action, not two.
+func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchResponse, error) {
+	created, err := c.CreateSession(ctx, launchID)
+	if err != nil {
+		return api.LaunchResponse{}, err
+	}
+	return c.LaunchSession(ctx, created.ID)
 }
 
 // ListSessions returns the daemon's current view of all sessions (running +

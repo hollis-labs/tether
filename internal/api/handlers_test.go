@@ -23,6 +23,10 @@ import (
 type fakeLaunchService struct {
 	mu sync.Mutex
 
+	createRes LaunchResult
+	createErr error
+	createIDs []string
+
 	launchRes LaunchResult
 	launchErr error
 	launchIDs []string
@@ -46,7 +50,14 @@ type fakeLaunchService struct {
 	attachedClients map[string]int
 }
 
-func (f *fakeLaunchService) Launch(id string) (LaunchResult, error) {
+func (f *fakeLaunchService) CreateSession(id string) (LaunchResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createIDs = append(f.createIDs, id)
+	return f.createRes, f.createErr
+}
+
+func (f *fakeLaunchService) LaunchSession(id string) (LaunchResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.launchIDs = append(f.launchIDs, id)
@@ -117,8 +128,8 @@ func decodeErr(t *testing.T, rr *httptest.ResponseRecorder) ErrorResponse {
 	return env
 }
 
-func TestHandleLaunch_Success(t *testing.T) {
-	svc := &fakeLaunchService{launchRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
+func TestHandleCreateSession_Success(t *testing.T) {
+	svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
 
 	body, _ := json.Marshal(LaunchRequest{Launch: "demo-launch"})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
@@ -138,12 +149,15 @@ func TestHandleLaunch_Success(t *testing.T) {
 	if res.Workspace != "/ws/1" {
 		t.Errorf("workspace = %q", res.Workspace)
 	}
-	if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "demo-launch" {
-		t.Errorf("Launch not dispatched with request body: %v", svc.launchIDs)
+	if len(svc.createIDs) != 1 || svc.createIDs[0] != "demo-launch" {
+		t.Errorf("CreateSession not dispatched with request body: %v", svc.createIDs)
+	}
+	if len(svc.launchIDs) != 0 {
+		t.Errorf("LaunchSession should not fire on POST /sessions; got %v", svc.launchIDs)
 	}
 }
 
-func TestHandleLaunch_MissingID(t *testing.T) {
+func TestHandleCreateSession_MissingID(t *testing.T) {
 	svc := &fakeLaunchService{}
 	body, _ := json.Marshal(LaunchRequest{})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
@@ -158,8 +172,8 @@ func TestHandleLaunch_MissingID(t *testing.T) {
 	}
 }
 
-func TestHandleLaunch_ServiceError(t *testing.T) {
-	svc := &fakeLaunchService{launchErr: errors.New("adapter unavailable")}
+func TestHandleCreateSession_ServiceError(t *testing.T) {
+	svc := &fakeLaunchService{createErr: errors.New("adapter unavailable")}
 	body, _ := json.Marshal(LaunchRequest{Launch: "demo"})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
@@ -170,6 +184,55 @@ func TestHandleLaunch_ServiceError(t *testing.T) {
 	env := decodeErr(t, rr)
 	if env.Error.Code != CodeInternalError || env.Error.Message == "" {
 		t.Errorf("envelope = %+v", env)
+	}
+}
+
+func TestHandleLaunchSession_Success(t *testing.T) {
+	svc := &fakeLaunchService{launchRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-1/launch", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var res LaunchResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.ID != "sess-1" {
+		t.Errorf("id = %q", res.ID)
+	}
+	if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "sess-1" {
+		t.Errorf("LaunchSession not dispatched: %v", svc.launchIDs)
+	}
+}
+
+func TestHandleLaunchSession_NotFound(t *testing.T) {
+	svc := &fakeLaunchService{launchErr: errors.New("sql: no rows in result set")}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/missing/launch", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeNotFound {
+		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleLaunchSession_WrongState(t *testing.T) {
+	svc := &fakeLaunchService{launchErr: errors.New(`session is not in 'created' state (state="running")`)}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-1/launch", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeConflict {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 

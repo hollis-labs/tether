@@ -52,6 +52,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleGetSession(w, r, id)
+	case "launch":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleLaunchSession(w, r, id)
 	case "stop":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -81,6 +87,10 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleLaunch services POST /sessions — the create leg of the split.
+// Prepares workspace + persists the session row in state=created, but
+// does NOT start the runtime. Callers subsequently POST to
+// /sessions/{id}/launch to start. Returns 201.
 func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var req LaunchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -91,12 +101,36 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "launch id required")
 		return
 	}
-	res, err := s.Service.Launch(req.Launch)
+	res, err := s.Service.CreateSession(req.Launch)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, LaunchResponse{
+		ID:        res.SessionID,
+		Workspace: res.Workspace,
+		Log:       res.LogPath,
+	})
+}
+
+// handleLaunchSession services POST /sessions/{id}/launch — the start
+// leg of the split. Returns 200 on successful transition to running,
+// 409 when the session is not in 'created' state, 404 when not found.
+func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id string) {
+	res, err := s.Service.LaunchSession(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		if strings.Contains(err.Error(), "not in 'created' state") {
+			writeError(w, http.StatusConflict, CodeConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, LaunchResponse{
 		ID:        res.SessionID,
 		Workspace: res.Workspace,
 		Log:       res.LogPath,

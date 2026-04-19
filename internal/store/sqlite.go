@@ -110,3 +110,20 @@ func (s *Store) GetSession(id string) (*SessionRow, error) {
 	return &r, nil
 }
 
+// GetLaunchPlan rehydrates the launch.Plan persisted alongside the
+// session row at creation time. Used by app.Service.LaunchSession to
+// replay a prepared-but-not-started session without asking the caller
+// to re-resolve from the catalog (which may have changed).
+func (s *Store) GetLaunchPlan(sessionID string) (*launch.Plan, error) {
+	var planJSON string
+	err := s.db.QueryRow(`SELECT plan_json FROM launch_plans WHERE session_id=?`, sessionID).Scan(&planJSON)
+	if err != nil {
+		return nil, err
+	}
+	var plan launch.Plan
+	if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+		return nil, fmt.Errorf("unmarshal launch plan: %w", err)
+	}
+	return &plan, nil
+}
+

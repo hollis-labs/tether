@@ -21,14 +21,15 @@ import (
 // helpers for assertions. httptest.Server is TCP; we use tcp: listen
 // address semantics so BaseURL + DialHTTPClient work unchanged.
 type mockDaemon struct {
-	server *httptest.Server
-	launch func(string) (api.LaunchResult, error)
-	list   func() ([]store.SessionRow, error)
-	get    func(string) (*store.SessionRow, error)
-	stop   func(string) error
-	wait   func(context.Context, string) (int, error)
-	input  func(string, []byte) error
-	attach func(context.Context, string, io.Writer) error
+	server         *httptest.Server
+	create         func(string) (api.LaunchResult, error)
+	launchSession  func(string) (api.LaunchResult, error)
+	list           func() ([]store.SessionRow, error)
+	get            func(string) (*store.SessionRow, error)
+	stop           func(string) error
+	wait           func(context.Context, string) (int, error)
+	input          func(string, []byte) error
+	attach         func(context.Context, string, io.Writer) error
 }
 
 func (m *mockDaemon) addr() string {
@@ -40,9 +41,15 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 	m := &mockDaemon{}
 
 	svc := &funcService{
+		createFn: func(id string) (api.LaunchResult, error) {
+			if m.create != nil {
+				return m.create(id)
+			}
+			return api.LaunchResult{}, errors.New("create not configured")
+		},
 		launchFn: func(id string) (api.LaunchResult, error) {
-			if m.launch != nil {
-				return m.launch(id)
+			if m.launchSession != nil {
+				return m.launchSession(id)
 			}
 			return api.LaunchResult{}, errors.New("launch not configured")
 		},
@@ -93,17 +100,23 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 // funcService is a func-table LaunchService — lighter than a struct-full-of-
 // fields fake for the case-by-case per-test overrides that client tests need.
 type funcService struct {
+	createFn func(string) (api.LaunchResult, error)
 	launchFn func(string) (api.LaunchResult, error)
 	listFn   func() ([]store.SessionRow, error)
 	getFn    func(string) (*store.SessionRow, error)
 	stopFn   func(string) error
 	waitFn   func(context.Context, string) (int, error)
-	inputFn         func(string, []byte) error
-	attachFn        func(context.Context, string, io.Writer) error
-	attachedFn      func(string) int
+	inputFn    func(string, []byte) error
+	attachFn   func(context.Context, string, io.Writer) error
+	attachedFn func(string) int
 }
 
-func (s *funcService) Launch(id string) (api.LaunchResult, error) { return s.launchFn(id) }
+func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
+	return s.createFn(id)
+}
+func (s *funcService) LaunchSession(id string) (api.LaunchResult, error) {
+	return s.launchFn(id)
+}
 func (s *funcService) ListSessions() ([]store.SessionRow, error)     { return s.listFn() }
 func (s *funcService) GetSession(id string) (*store.SessionRow, error) {
 	return s.getFn(id)
@@ -123,13 +136,51 @@ func (s *funcService) AttachedClients(id string) int {
 	return s.attachedFn(id)
 }
 
-func TestClient_Launch(t *testing.T) {
+func TestClient_CreateSession(t *testing.T) {
 	m := newMockDaemon(t)
-	m.launch = func(id string) (api.LaunchResult, error) {
+	m.create = func(id string) (api.LaunchResult, error) {
 		if id != "demo" {
-			t.Errorf("launch id = %q", id)
+			t.Errorf("create id = %q", id)
 		}
 		return api.LaunchResult{SessionID: "sess-1", Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
+	}
+	c := New(m.addr())
+	res, err := c.CreateSession(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if res.ID != "sess-1" {
+		t.Errorf("ID = %q", res.ID)
+	}
+}
+
+func TestClient_LaunchSession(t *testing.T) {
+	m := newMockDaemon(t)
+	m.launchSession = func(id string) (api.LaunchResult, error) {
+		if id != "sess-1" {
+			t.Errorf("launch id = %q", id)
+		}
+		return api.LaunchResult{SessionID: id, Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
+	}
+	c := New(m.addr())
+	res, err := c.LaunchSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	if res.ID != "sess-1" {
+		t.Errorf("ID = %q", res.ID)
+	}
+}
+
+func TestClient_Launch_CreateAndLaunch(t *testing.T) {
+	m := newMockDaemon(t)
+	m.create = func(id string) (api.LaunchResult, error) {
+		return api.LaunchResult{SessionID: "sess-1", Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
+	}
+	var launchedID string
+	m.launchSession = func(id string) (api.LaunchResult, error) {
+		launchedID = id
+		return api.LaunchResult{SessionID: id, Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
 	}
 	c := New(m.addr())
 	res, err := c.Launch(context.Background(), "demo")
@@ -138,6 +189,9 @@ func TestClient_Launch(t *testing.T) {
 	}
 	if res.ID != "sess-1" {
 		t.Errorf("ID = %q", res.ID)
+	}
+	if launchedID != "sess-1" {
+		t.Errorf("launch session id = %q, want sess-1", launchedID)
 	}
 }
 

@@ -106,15 +106,27 @@ var daemonRunCmd = &cobra.Command{
 	},
 }
 
-// serviceAdapter bridges *app.Service to api.LaunchService. The only
-// translation step is flattening app.Launched's *workspace.Session pointer
-// into primitive strings so the API response never carries internal types.
+// serviceAdapter bridges *app.Service to api.LaunchService. Flattens
+// app.Launched's *workspace.Session pointer into primitive strings so
+// the API response never carries internal types.
 type serviceAdapter struct {
 	svc *app.Service
 }
 
-func (a *serviceAdapter) Launch(launchID string) (api.LaunchResult, error) {
-	l, err := a.svc.Launch(launchID)
+func (a *serviceAdapter) CreateSession(launchID string) (api.LaunchResult, error) {
+	l, err := a.svc.CreateSession(launchID)
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	return api.LaunchResult{
+		SessionID: l.SessionID,
+		Workspace: l.Workspace.Root,
+		LogPath:   l.Workspace.LogPath,
+	}, nil
+}
+
+func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, error) {
+	l, err := a.svc.LaunchSession(sessionID)
 	if err != nil {
 		return api.LaunchResult{}, err
 	}

@@ -130,10 +130,25 @@ type Launched struct {
 	// Wait blocks until the session reaches a terminal state and returns
 	// its exit code. Routes through runtime.Manager; safe to call from any
 	// goroutine, safe to call after the session has already exited.
+	// Nil on the result of CreateSession — launching first is required
+	// before there's anything to wait on.
 	Wait func(ctx context.Context) (int, error)
 }
 
-func (s *Service) Launch(launchID string) (*Launched, error) {
+// ErrSessionNotCreated is returned by LaunchSession when the target
+// session is in any state other than "created". Once launched, a
+// session cannot be launched again — clients create a new session for
+// a retry.
+var ErrSessionNotCreated = fmt.Errorf("session is not in 'created' state")
+
+// CreateSession resolves the launch plan, materializes the workspace,
+// and persists the session row in state=created along with the plan
+// JSON. It does not start the runtime — call LaunchSession for that.
+// Splitting create from launch lets external clients inspect the
+// prepared session (plan, workspace paths) before committing to run,
+// and gives the HTTP surface the two-endpoint shape promised by the
+// context pack.
+func (s *Service) CreateSession(launchID string) (*Launched, error) {
 	plan, err := s.Resolve(launchID)
 	if err != nil {
 		return nil, err
@@ -149,32 +164,67 @@ func (s *Service) Launch(launchID string) (*Launched, error) {
 		return nil, err
 	}
 
-	rt, ok := s.Providers.Get(plan.ProviderID)
-	if !ok {
+	// Fail fast if the catalog references a provider the registry can't
+	// satisfy. Better to error here than at launch time when the user
+	// thinks they have a created session.
+	if _, ok := s.Providers.Get(plan.ProviderID); !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
 	}
 
 	row := store.SessionRow{
-		ID:         sessID,
-		LaunchID:   plan.LaunchID,
-		ProjectID:  plan.ProjectID,
+		ID:             sessID,
+		LaunchID:       plan.LaunchID,
+		ProjectID:      plan.ProjectID,
 		LogicalAgentID: plan.LogicalAgentID,
-		ProviderID: plan.ProviderID,
-		Workspace:  ws.Root,
-		State:      string(session.StateCreated),
+		ProviderID:     plan.ProviderID,
+		Workspace:      ws.Root,
+		State:          string(session.StateCreated),
 	}
 	if err := s.Store.CreateSession(row, plan); err != nil {
 		return nil, err
 	}
 
+	return &Launched{
+		SessionID: sessID,
+		Workspace: ws,
+		Plan:      plan,
+	}, nil
+}
+
+// LaunchSession starts a previously-created session. Rehydrates the
+// plan from the store, opens the workspace non-destructively, runs
+// Runtime.Prepare and hands off to runtime.Manager.Start. Returns
+// ErrSessionNotCreated when the target is in any state other than
+// "created" — v0.0.2 does not support relaunch of terminated sessions.
+func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
+	row, err := s.Store.GetSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if row.State != string(session.StateCreated) {
+		return nil, fmt.Errorf("%w (state=%q)", ErrSessionNotCreated, row.State)
+	}
+
+	plan, err := s.Store.GetLaunchPlan(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load launch plan: %w", err)
+	}
+
+	rt, ok := s.Providers.Get(plan.ProviderID)
+	if !ok {
+		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+	}
+
+	ws := workspace.Open(row.Workspace, sessionID)
+
 	if err := rt.Prepare(context.Background(), plan); err != nil {
 		exit := 1
-		_ = s.Store.UpdateSessionState(sessID, string(session.StateFailed), 0, &exit)
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
 
 	req := runtime.StartRequest{
-		ID:        sessID,
+		ID:        sessionID,
 		Plan:      plan,
 		Workspace: ws,
 		Runtime:   rt,
@@ -184,11 +234,11 @@ func (s *Service) Launch(launchID string) (*Launched, error) {
 	}
 
 	return &Launched{
-		SessionID: sessID,
+		SessionID: sessionID,
 		Workspace: ws,
 		Plan:      plan,
 		Wait: func(ctx context.Context) (int, error) {
-			return s.Runtime.WaitSession(ctx, sessID)
+			return s.Runtime.WaitSession(ctx, sessionID)
 		},
 	}, nil
 }

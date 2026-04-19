@@ -11,8 +11,15 @@ import (
 // dispatch to. A small wrapper in the CLI layer adapts *app.Service to
 // this interface, which keeps the api package decoupled from app (no
 // import cycle risk) and makes handler tests trivial to stub.
+//
+// CreateSession and LaunchSession are separate steps per the v0.0.2
+// context-pack §08 API shape: POST /sessions creates (state=created),
+// POST /sessions/{id}/launch starts. Clients that want the combined
+// flow issue both calls — the common case isn't common enough to
+// warrant a shortcut endpoint in v0.0.2.
 type LaunchService interface {
-	Launch(launchID string) (LaunchResult, error)
+	CreateSession(launchID string) (LaunchResult, error)
+	LaunchSession(sessionID string) (LaunchResult, error)
 	ListSessions() ([]store.SessionRow, error)
 	GetSession(id string) (*store.SessionRow, error)
 	StopSession(id string) error

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -34,5 +36,47 @@ func TestCreateAndListSession(t *testing.T) {
 	}
 	if got.State != "completed" || !got.ExitCode.Valid || got.ExitCode.Int64 != 0 {
 		t.Fatalf("state not updated: %+v", got)
+	}
+}
+
+func TestGetLaunchPlan_RoundTrip(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	want := &launch.Plan{
+		LaunchID:       "l1",
+		ProjectID:      "p",
+		LogicalAgentID: "a",
+		ProviderID:     "pv",
+		Command:        "echo",
+		Args:           []string{"hi"},
+	}
+	row := SessionRow{ID: "s1", LaunchID: "l1", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv", Workspace: "/tmp/ws", State: "created"}
+	if err := db.CreateSession(row, want); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := db.GetLaunchPlan("s1")
+	if err != nil {
+		t.Fatalf("GetLaunchPlan: %v", err)
+	}
+	if got.LaunchID != want.LaunchID || got.Command != want.Command || len(got.Args) != 1 || got.Args[0] != "hi" {
+		t.Errorf("roundtrip mismatch: got %+v want %+v", got, want)
+	}
+}
+
+func TestGetLaunchPlan_Missing(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.GetLaunchPlan("missing")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("err = %v, want sql.ErrNoRows", err)
 	}
 }
