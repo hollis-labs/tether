@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chrispian/agent-mux/internal/agent"
+	"github.com/chrispian/agent-mux/internal/broker"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
@@ -36,6 +37,7 @@ type Service struct {
 	Providers   *provider.Registry
 	Runtime     *runtime.Manager
 	Bus         events.Bus
+	Broker      *broker.Service
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -73,6 +75,7 @@ func New(catalogRoot string) (*Service, error) {
 	}
 	bus := events.NewBus(events.BusOptions{Persister: db})
 	mgr := runtime.NewManager(db).WithAttachmentSink(db).WithEventPublisher(bus)
+	brk := broker.NewService(db, bus)
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
@@ -80,6 +83,7 @@ func New(catalogRoot string) (*Service, error) {
 		Providers:   reg,
 		Runtime:     mgr,
 		Bus:         bus,
+		Broker:      brk,
 	}, nil
 }
 
