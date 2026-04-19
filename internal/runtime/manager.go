@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"sync"
 
@@ -30,12 +31,15 @@ type Handle interface {
 	Wait() (int, error)
 	Kill() error
 	PID() int
+	PTYWriter() io.Writer
 }
 
 // Starter produces a Handle from a command + log path + boot prompt.
-// DefaultStarter wraps session.Start; tests inject fakes.
+// DefaultStarter wraps session.Start; tests inject fakes. fanout, if non-nil,
+// receives a copy of PTY output; Manager uses it to route live bytes to
+// attach subscribers.
 type Starter interface {
-	Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (Handle, error)
+	Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error)
 }
 
 // DefaultStarter wraps session.Start so Manager does not depend directly on
@@ -43,8 +47,8 @@ type Starter interface {
 type DefaultStarter struct{}
 
 // Start satisfies Starter by delegating to session.Start.
-func (DefaultStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (Handle, error) {
-	return session.Start(cmd, logPath, bootPrompt, bootMode)
+func (DefaultStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error) {
+	return session.Start(cmd, logPath, bootPrompt, bootMode, fanout)
 }
 
 // StartRequest bundles the inputs for launching a session under Manager
@@ -90,6 +94,7 @@ type Manager struct {
 type entry struct {
 	info    SessionInfo
 	handle  Handle
+	broker  *attachBroker
 	killing bool
 }
 
@@ -105,6 +110,7 @@ type sessionResult struct {
 var (
 	ErrManagerStopped    = errors.New("runtime manager is stopped")
 	ErrSessionNotRunning = errors.New("session not running")
+	ErrNoPTYWriter       = errors.New("session has no PTY writer")
 )
 
 // NewManager constructs a Manager. If starter is nil, DefaultStarter is used.
@@ -138,8 +144,10 @@ func (m *Manager) Start(_ context.Context, req StartRequest) error {
 		return fmt.Errorf("mark launching: %w", err)
 	}
 
-	h, err := m.starter.Start(req.Cmd, req.Workspace.LogPath, req.BootPrompt, req.BootMode)
+	broker := newAttachBroker(defaultRingBytes, defaultSubscriberDepth)
+	h, err := m.starter.Start(req.Cmd, req.Workspace.LogPath, req.BootPrompt, req.BootMode, broker)
 	if err != nil {
+		broker.close()
 		exit := 1
 		_ = m.sink.UpdateSessionState(req.ID, string(session.StateFailed), 0, &exit)
 		return err
@@ -165,21 +173,23 @@ func (m *Manager) Start(_ context.Context, req StartRequest) error {
 	m.mu.Lock()
 	if m.stopped {
 		m.mu.Unlock()
+		broker.close()
 		_ = h.Kill()
 		return ErrManagerStopped
 	}
-	m.registry[req.ID] = &entry{info: info, handle: h}
+	m.registry[req.ID] = &entry{info: info, handle: h, broker: broker}
 	m.results[req.ID] = &sessionResult{done: make(chan struct{})}
 	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go m.watch(req.ID, h)
+	go m.watch(req.ID, h, broker)
 	return nil
 }
 
 // watch blocks on the handle's Wait, records the terminal state, unregisters
-// the entry, and delivers the exit code to any WaitSession callers.
-func (m *Manager) watch(id string, h Handle) {
+// the entry, closes the attach broker so subscribers drain cleanly, and
+// delivers the exit code to any WaitSession callers.
+func (m *Manager) watch(id string, h Handle, broker *attachBroker) {
 	defer m.wg.Done()
 	code, _ := h.Wait()
 
@@ -202,6 +212,10 @@ func (m *Manager) watch(id string, h Handle) {
 		state = session.StateFailed
 	}
 	_ = m.sink.UpdateSessionState(id, string(state), h.PID(), &code)
+
+	if broker != nil {
+		broker.close()
+	}
 
 	if result != nil {
 		result.exitCode = code
@@ -246,6 +260,26 @@ func (m *Manager) List() []SessionInfo {
 		out = append(out, e.info)
 	}
 	return out
+}
+
+// Attach subscribes w to the named session's live output stream. Attach
+// writes any recent history (tail replay) to w first, then streams live PTY
+// output until ctx is cancelled or the session exits. Multiple concurrent
+// Attach callers on the same session are supported; one detaching does not
+// affect the others and does not kill the session.
+//
+// Returns ErrSessionNotRunning if the session is not registered (already
+// exited or never started).
+func (m *Manager) Attach(ctx context.Context, id string, w io.Writer) error {
+	m.mu.RLock()
+	e, ok := m.registry[id]
+	m.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotRunning
+	}
+	replay, ch, cancel := e.broker.subscribe(defaultSubscriberDepth)
+	defer cancel()
+	return copyStream(ctx, w, replay, ch)
 }
 
 // WaitSession blocks until the named session's watch goroutine records its

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -16,11 +17,13 @@ import (
 )
 
 type fakeHandle struct {
-	pid    int
-	done   chan struct{}
-	once   sync.Once
-	code   atomic.Int32
-	killed atomic.Bool
+	pid       int
+	done      chan struct{}
+	once      sync.Once
+	code      atomic.Int32
+	killed    atomic.Bool
+	fanout    io.Writer
+	ptyWriter io.Writer
 }
 
 func newFakeHandle(pid int) *fakeHandle {
@@ -41,9 +44,20 @@ func (f *fakeHandle) Kill() error {
 
 func (f *fakeHandle) PID() int { return f.pid }
 
+func (f *fakeHandle) PTYWriter() io.Writer { return f.ptyWriter }
+
 func (f *fakeHandle) complete(code int) {
 	f.code.Store(int32(code))
 	f.once.Do(func() { close(f.done) })
+}
+
+// emit simulates the session writing PTY bytes; it routes through the fanout
+// writer the Starter was given so Manager.Attach subscribers see the data.
+func (f *fakeHandle) emit(p []byte) (int, error) {
+	if f.fanout == nil {
+		return 0, nil
+	}
+	return f.fanout.Write(p)
 }
 
 type fakeStarter struct {
@@ -53,7 +67,7 @@ type fakeStarter struct {
 	err     error
 }
 
-func (f *fakeStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (Handle, error) {
+func (f *fakeStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -64,6 +78,7 @@ func (f *fakeStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string)
 	}
 	f.nextPID++
 	h := newFakeHandle(1000 + f.nextPID)
+	h.fanout = fanout
 	f.handles[logPath] = h
 	return h, nil
 }
@@ -520,6 +535,187 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 	if got := len(m.List()); got != 0 {
 		t.Errorf("expected empty List after shutdown; got %d", got)
 	}
+}
+
+func TestManager_AttachReceivesLiveBytes(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	h := starter.get(req.Workspace.LogPath)
+
+	var buf threadsafeBuffer
+	attachErr := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { attachErr <- m.Attach(ctx, "s1", &buf) }()
+
+	// Give Attach time to subscribe before we emit.
+	time.Sleep(20 * time.Millisecond)
+	if _, err := h.emit([]byte("live-output")); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	// Poll for the bytes to appear.
+	deadline := time.After(1 * time.Second)
+	for {
+		if buf.String() == "live-output" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("buf = %q, want %q", buf.String(), "live-output")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	if err := <-attachErr; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Attach err = %v", err)
+	}
+
+	h.complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_AttachMultipleSubscribersBothReceive(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	h := starter.get(req.Workspace.LogPath)
+
+	var buf1, buf2 threadsafeBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{}, 2)
+	go func() { _ = m.Attach(ctx, "s1", &buf1); done <- struct{}{} }()
+	go func() { _ = m.Attach(ctx, "s1", &buf2); done <- struct{}{} }()
+
+	time.Sleep(30 * time.Millisecond)
+	if _, err := h.emit([]byte("broadcast")); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	deadline := time.After(1 * time.Second)
+	for {
+		if buf1.String() == "broadcast" && buf2.String() == "broadcast" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("buf1=%q buf2=%q, want both %q", buf1.String(), buf2.String(), "broadcast")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	<-done
+	<-done
+	h.complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_AttachUnknownSessionReturnsError(t *testing.T) {
+	m := NewManager(&fakeSink{}, &fakeStarter{})
+	err := m.Attach(context.Background(), "nope", &threadsafeBuffer{})
+	if !errors.Is(err, ErrSessionNotRunning) {
+		t.Errorf("expected ErrSessionNotRunning; got %v", err)
+	}
+}
+
+func TestManager_AttachSurvivesSiblingDetach(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	h := starter.get(req.Workspace.LogPath)
+
+	var survivor threadsafeBuffer
+	ctxSurvivor, cancelSurvivor := context.WithCancel(context.Background())
+	ctxDropped, cancelDropped := context.WithCancel(context.Background())
+	go func() { _ = m.Attach(ctxSurvivor, "s1", &survivor) }()
+	go func() { _ = m.Attach(ctxDropped, "s1", io.Discard) }()
+
+	time.Sleep(30 * time.Millisecond)
+	cancelDropped()
+	time.Sleep(10 * time.Millisecond)
+
+	if _, err := h.emit([]byte("after-drop")); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	deadline := time.After(1 * time.Second)
+	for survivor.String() != "after-drop" {
+		select {
+		case <-deadline:
+			t.Fatalf("survivor = %q, want %q", survivor.String(), "after-drop")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancelSurvivor()
+	h.complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_AttachReturnsWhenSessionExits(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	h := starter.get(req.Workspace.LogPath)
+
+	attachDone := make(chan error, 1)
+	go func() { attachDone <- m.Attach(context.Background(), "s1", io.Discard) }()
+
+	time.Sleep(20 * time.Millisecond)
+	h.complete(0)
+
+	select {
+	case err := <-attachDone:
+		if err != nil {
+			t.Fatalf("Attach returned %v; want nil after broker close", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Attach did not return after session exit")
+	}
+
+	_ = m.Shutdown(context.Background())
+}
+
+// threadsafeBuffer is a minimal sync-wrapped bytes.Buffer for use across the
+// test goroutines above.
+type threadsafeBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (b *threadsafeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *threadsafeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
 }
 
 func TestManager_ConcurrentStartStopNoRace(t *testing.T) {

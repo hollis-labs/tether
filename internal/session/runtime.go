@@ -24,7 +24,11 @@ type Handle struct {
 // Start launches cmd under a PTY. Stdout/stderr are mirrored to logPath.
 // bootPrompt, if non-empty and bootMode=="stdin", is written to the PTY before
 // returning so the child process sees it as initial input.
-func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (*Handle, error) {
+//
+// If fanout is non-nil, PTY bytes are also written to it as they arrive. The
+// runtime layer uses this to publish live output to attach subscribers; the
+// fanout writer is never closed by Start (the caller owns its lifecycle).
+func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (*Handle, error) {
 	logF, err := os.Create(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
@@ -45,15 +49,20 @@ func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string) (*Handle, error)
 		}
 	}
 
+	var sink io.Writer = logF
+	if fanout != nil {
+		sink = io.MultiWriter(logF, fanout)
+	}
+
 	copyDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(logF, ptmx)
+		_, _ = io.Copy(sink, ptmx)
 		close(copyDone)
 	}()
 	go func() {
 		err := cmd.Wait()
 		ptmx.Close() // unblocks io.Copy
-		<-copyDone   // wait for final bytes to drain into logF
+		<-copyDone   // wait for final bytes to drain into logF + fanout
 		logF.Close()
 		h.done <- err
 	}()
@@ -97,14 +106,13 @@ func (h *Handle) PID() int {
 	return h.Cmd.Process.Pid
 }
 
-// Attach copies the log file from start to current EOF into w.
-// v0 is snapshot-only; live-follow ("tail -f") is deferred to a later task.
-func (h *Handle) Attach(w io.Writer) error {
-	f, err := os.Open(h.LogFile.Name())
-	if err != nil {
-		return err
+// PTYWriter returns the PTY master so callers can inject input into the
+// running session. Returns nil if the session has already closed its PTY.
+// Writes to this writer are not guarded; concurrent callers must serialise
+// through runtime.Manager.SendInput which holds the per-session lock.
+func (h *Handle) PTYWriter() io.Writer {
+	if h.PTY == nil {
+		return nil
 	}
-	defer f.Close()
-	_, err = io.Copy(w, f)
-	return err
+	return h.PTY
 }
