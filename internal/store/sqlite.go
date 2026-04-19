@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,9 +12,6 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 )
-
-//go:embed schema.sql
-var schema string
 
 type Store struct {
 	db *sql.DB
@@ -29,9 +25,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := Migrate(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return &Store{db: db}, nil
 }
