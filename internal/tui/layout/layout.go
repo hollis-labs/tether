@@ -56,16 +56,14 @@ func DefaultStyles() Styles {
 			Padding(0, 1),
 		Footer:    lipgloss.NewStyle().Foreground(muted),
 		FooterKey: lipgloss.NewStyle().Foreground(accent).Bold(true),
-		ToastInfo: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Foreground(accent).
-			Padding(0, 1),
+		// Toasts are single-line colored text so they cost only one row
+		// each in the vertical budget. Kind distinguishes them by color
+		// + leading glyph rather than border or background, which would
+		// blow the line budget when several toasts stack.
+		ToastInfo: lipgloss.NewStyle().Foreground(accent).Bold(true),
 		ToastError: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.AdaptiveColor{Light: "#A60000", Dark: "#F7768E"}).
 			Foreground(lipgloss.AdaptiveColor{Light: "#A60000", Dark: "#F7768E"}).
-			Padding(0, 1),
+			Bold(true),
 	}
 }
 

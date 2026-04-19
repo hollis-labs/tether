@@ -122,15 +122,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case launchResultMsg:
 		if msg.err != nil {
 			cmd := m.toasts.push(ToastError, "Launch failed: "+msg.err.Error())
+			m.resize()
+			m.refreshBody()
 			return m, cmd
 		}
 		banner := fmt.Sprintf("Launched %s → session %s @ %s",
 			msg.req.LaunchID, shortID(msg.res.SessionID), trimPath(msg.res.Workspace))
 		cmd := m.toasts.push(ToastInfo, banner)
+		m.resize()
+		m.refreshBody()
 		return m, cmd
 
 	case toastExpiredMsg:
 		m.toasts.remove(msg.ID)
+		m.resize()
+		m.refreshBody()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -139,6 +145,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
+		}
+		if key.Matches(msg, m.keys.CycleChip) {
+			m.cycleSoloChip(true)
+			m.recomputeVisible()
+			m.refreshBody()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.CycleChipBack) {
+			m.cycleSoloChip(false)
+			m.recomputeVisible()
+			m.refreshBody()
+			return m, nil
 		}
 		if handled, next := m.handleChipToggle(msg); handled {
 			next.recomputeVisible()
@@ -210,18 +228,82 @@ func (m Model) View() string {
 }
 
 // handleEnter launches the selected row if it's a LaunchRow; other
-// row types are no-ops in Sprint 1 (Sprint 2 binds Enter to
-// "open detail view").
-func (m Model) handleEnter(_ ...struct{}) (Model, tea.Cmd) {
+// row types emit an info toast in Sprint 1 (Sprint 2 binds Enter to
+// "open detail view"). The toast keeps the interaction feeling
+// responsive and tells the user what Enter will do.
+func (m Model) handleEnter() (Model, tea.Cmd) {
 	row := m.SelectedRow()
-	if row == nil || m.client == nil {
+	if row == nil {
 		return m, nil
 	}
 	lr, ok := row.(LaunchRow)
 	if !ok {
+		cmd := m.toasts.push(ToastInfo, fmt.Sprintf(
+			"Enter launches [launches] rows; selected row is [%s] — detail views land in Sprint 2",
+			row.Type()))
+		m.resize()
+		m.refreshBody()
+		return m, cmd
+	}
+	if m.client == nil {
 		return m, nil
 	}
 	return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: lr.L.ID})
+}
+
+// cycleSoloChip advances the chip row through a rotating "solo"
+// filter: all-on → projects-only → agents-only → providers-only →
+// launches-only → sessions-only → all-on. Forward direction on Tab,
+// reverse on Shift+Tab. Designed so a fresh state (all-on) cycles
+// through each type and returns to all-on after len(chipOrder)+1
+// presses.
+func (m *Model) cycleSoloChip(forward bool) {
+	current := m.currentSoloChip()
+	// States, in order, that cycleSoloChip walks through:
+	//   "" (all on) → chipOrder[0] → chipOrder[1] → ... → chipOrder[last] → ""
+	states := make([]RowType, 0, len(chipOrder)+1)
+	states = append(states, "") // all-on
+	states = append(states, chipOrder...)
+
+	idx := 0
+	for i, s := range states {
+		if s == current {
+			idx = i
+			break
+		}
+	}
+	if forward {
+		idx = (idx + 1) % len(states)
+	} else {
+		idx = (idx - 1 + len(states)) % len(states)
+	}
+	m.setSoloChip(states[idx])
+}
+
+// currentSoloChip returns the single enabled RowType when exactly one
+// chip is on; returns "" when either all or a custom subset is enabled.
+// This is what cycleSoloChip uses to decide the next state.
+func (m Model) currentSoloChip() RowType {
+	var only RowType
+	enabled := 0
+	for _, t := range chipOrder {
+		if m.filters[t] {
+			enabled++
+			only = t
+		}
+	}
+	if enabled == 1 {
+		return only
+	}
+	return ""
+}
+
+// setSoloChip enables exactly `only` and disables the rest; passing ""
+// enables all chips.
+func (m *Model) setSoloChip(only RowType) {
+	for _, t := range chipOrder {
+		m.filters[t] = (only == "" || t == only)
+	}
 }
 
 func (m Model) handleChipToggle(msg tea.KeyMsg) (bool, Model) {
@@ -245,11 +327,12 @@ func (m Model) handleChipToggle(msg tea.KeyMsg) (bool, Model) {
 }
 
 // resize recomputes sub-model dimensions given the current terminal
-// size. Budget: bordered search 3 rows, chips 1, footer 1, body takes
-// the rest; outer frame adds 2 rows for body border.
+// size. Budget: bordered search 3 rows, chips 1, body border 2,
+// footer 1 hint row + 1 row per active toast. Body takes what's left.
 func (m *Model) resize() {
-	const verticalOverhead = 3 + 1 + 1 + 2
-	bodyHeight := m.height - verticalOverhead
+	base := 3 + 1 + 1 + 2 // search border + chips + footer hint + body border
+	footerToasts := len(m.toasts.items())
+	bodyHeight := m.height - base - footerToasts
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
@@ -410,21 +493,35 @@ func (m Model) renderBody() string {
 func (m Model) renderFooter() string {
 	var block strings.Builder
 	// Toasts render above the hint line so the user sees launch
-	// feedback without hunting for it.
+	// feedback without hunting for it. Single-line styled text keeps
+	// each toast to exactly one row of the vertical budget.
 	for _, t := range m.toasts.items() {
 		style := m.styles.ToastInfo
+		glyph := "●"
 		if t.Kind == ToastError {
 			style = m.styles.ToastError
+			glyph = "✗"
 		}
-		block.WriteString(style.Render(t.Message))
+		block.WriteString(style.Render(glyph + " " + t.Message))
 		block.WriteByte('\n')
 	}
 
 	hints := []string{
 		m.keyHint(m.keys.FocusSearch),
 		m.keyHint(m.keys.BlurSearch),
+		m.keyHint(m.keys.CycleChip),
 		m.keyHint(m.keys.Quit),
 		m.keyHint(m.keys.Help),
+	}
+	// Selection hint tells the user exactly which row they're pointing
+	// at and what Enter will do. Empty when the pool is empty.
+	selInfo := ""
+	if sel := m.SelectedRow(); sel != nil {
+		action := "detail (Sprint 2)"
+		if _, ok := sel.(LaunchRow); ok {
+			action = "launch"
+		}
+		selInfo = fmt.Sprintf("  ·  sel: [%s] %s — ⏎ %s", sel.Type(), sel.ID(), action)
 	}
 	status := ""
 	if m.loadRemaining > 0 && m.client != nil {
@@ -434,7 +531,7 @@ func (m Model) renderFooter() string {
 	} else if len(m.visible) > 0 {
 		status = fmt.Sprintf("  ·  %d result(s)", len(m.visible))
 	}
-	block.WriteString(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status))
+	block.WriteString(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status + selInfo))
 	return m.styles.Frame.Render(block.String())
 }
 

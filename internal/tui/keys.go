@@ -19,6 +19,8 @@ type KeyMap struct {
 	Help            key.Binding
 	FocusSearch     key.Binding
 	BlurSearch      key.Binding
+	CycleChip       key.Binding
+	CycleChipBack   key.Binding
 	ToggleProjects  key.Binding
 	ToggleAgents    key.Binding
 	ToggleProviders key.Binding
@@ -32,8 +34,12 @@ type KeyMap struct {
 //   - Ctrl-C is the authoritative quit — always works, never collides.
 //   - `q` quits only when the search input is blurred (otherwise it
 //     types 'q' into the field). Esc blurs; `/` re-focuses.
-//   - Alt+1..5 toggle chip filters instead of plain 1..5 so searching
-//     for strings like "v0.0.3" doesn't flip filter state.
+//   - Tab cycles the chip row through "solo-filter" states:
+//     all-on → projects → agents → providers → launches → sessions →
+//     all-on. Shift+Tab reverses. Universal across terminals
+//     (unlike Alt+N which macOS doesn't forward without Meta-key config).
+//   - Alt+1..5 remain as per-filter direct toggles for users who want
+//     to compose combinations (e.g., projects + launches only).
 //   - Navigation keys (arrows, pgup/pgdn) always scroll the viewport
 //     regardless of focus.
 func DefaultKeyMap() KeyMap {
@@ -54,25 +60,33 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("esc"),
 			key.WithHelp("esc", "blur"),
 		),
+		CycleChip: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "cycle filter"),
+		),
+		CycleChipBack: key.NewBinding(
+			key.WithKeys("shift+tab"),
+			key.WithHelp("⇧tab", "cycle back"),
+		),
 		ToggleProjects: key.NewBinding(
 			key.WithKeys("alt+1"),
-			key.WithHelp("alt+1", "projects"),
+			key.WithHelp("⌥1", "projects"),
 		),
 		ToggleAgents: key.NewBinding(
 			key.WithKeys("alt+2"),
-			key.WithHelp("alt+2", "agents"),
+			key.WithHelp("⌥2", "agents"),
 		),
 		ToggleProviders: key.NewBinding(
 			key.WithKeys("alt+3"),
-			key.WithHelp("alt+3", "providers"),
+			key.WithHelp("⌥3", "providers"),
 		),
 		ToggleLaunches: key.NewBinding(
 			key.WithKeys("alt+4"),
-			key.WithHelp("alt+4", "launches"),
+			key.WithHelp("⌥4", "launches"),
 		),
 		ToggleSessions: key.NewBinding(
 			key.WithKeys("alt+5"),
-			key.WithHelp("alt+5", "sessions"),
+			key.WithHelp("⌥5", "sessions"),
 		),
 	}
 }

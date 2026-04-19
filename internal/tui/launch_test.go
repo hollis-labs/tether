@@ -85,10 +85,8 @@ func TestToastExpiredWrongIDIsNoOp(t *testing.T) {
 	}
 }
 
-func TestEnterOnNonLaunchRowIsNoOp(t *testing.T) {
+func TestEnterOnNonLaunchRowShowsGuidanceToast(t *testing.T) {
 	m := newSeededModel(t)
-	// Select the first project row. It's at index 0 after alpha sort —
-	// "acme" comes first alphabetically among projects.
 	sel := m.SelectedRow()
 	if sel == nil {
 		t.Fatal("expected a selected row")
@@ -96,9 +94,17 @@ func TestEnterOnNonLaunchRowIsNoOp(t *testing.T) {
 	if _, ok := sel.(LaunchRow); ok {
 		t.Skip("unexpected: top row is LaunchRow; test expects non-launch")
 	}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil {
-		t.Fatalf("expected no cmd for Enter on non-launch row, got %T", cmd())
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	toasts := m.toasts.items()
+	if len(toasts) != 1 {
+		t.Fatalf("expected 1 guidance toast, got %d", len(toasts))
+	}
+	if toasts[0].Kind != ToastInfo {
+		t.Fatalf("expected info toast, got %v", toasts[0].Kind)
+	}
+	if !strings.Contains(toasts[0].Message, string(sel.Type())) {
+		t.Fatalf("expected toast to name selected row type %s, got %q", sel.Type(), toasts[0].Message)
 	}
 }
 
