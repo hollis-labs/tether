@@ -31,8 +31,9 @@ type fakeLaunchService struct {
 	launchErr error
 	launchIDs []string
 
-	listRes []store.SessionRow
-	listErr error
+	listRes  []store.SessionRow
+	listErr  error
+	listOpts store.ListSessionsOptions
 
 	getRes  map[string]*store.SessionRow
 	getErr  error
@@ -63,7 +64,10 @@ func (f *fakeLaunchService) LaunchSession(id string) (LaunchResult, error) {
 	f.launchIDs = append(f.launchIDs, id)
 	return f.launchRes, f.launchErr
 }
-func (f *fakeLaunchService) ListSessions() ([]store.SessionRow, error) {
+func (f *fakeLaunchService) ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error) {
+	f.mu.Lock()
+	f.listOpts = opts
+	f.mu.Unlock()
 	return f.listRes, f.listErr
 }
 func (f *fakeLaunchService) GetSession(id string) (*store.SessionRow, error) {
@@ -261,6 +265,78 @@ func TestHandleListSessions(t *testing.T) {
 	}
 	if res.Sessions[1].ExitCode == nil || *res.Sessions[1].ExitCode != 0 {
 		t.Errorf("ExitCode flatten broken: %+v", res.Sessions[1])
+	}
+}
+
+func TestHandleListSessions_ParamsForwarded(t *testing.T) {
+	svc := &fakeLaunchService{listRes: nil}
+	req := httptest.NewRequest(http.MethodGet, "/sessions?limit=25&state=running&cursor=2026-04-19T00%3A00%3A00Z", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if svc.listOpts.Limit != 25 {
+		t.Errorf("Limit = %d, want 25", svc.listOpts.Limit)
+	}
+	if svc.listOpts.State != "running" {
+		t.Errorf("State = %q, want 'running'", svc.listOpts.State)
+	}
+	if svc.listOpts.Cursor != "2026-04-19T00:00:00Z" {
+		t.Errorf("Cursor = %q", svc.listOpts.Cursor)
+	}
+}
+
+func TestHandleListSessions_NextCursor_WhenFull(t *testing.T) {
+	// Page returned == limit; handler should surface last row's created_at
+	// as next_cursor so the client can keep paging.
+	rows := make([]store.SessionRow, 3)
+	rows[0] = store.SessionRow{ID: "a", CreatedAt: "2026-04-19T10:00:00Z"}
+	rows[1] = store.SessionRow{ID: "b", CreatedAt: "2026-04-19T09:00:00Z"}
+	rows[2] = store.SessionRow{ID: "c", CreatedAt: "2026-04-19T08:00:00Z"}
+	svc := &fakeLaunchService{listRes: rows}
+	req := httptest.NewRequest(http.MethodGet, "/sessions?limit=3", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var res ListSessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.NextCursor != "2026-04-19T08:00:00Z" {
+		t.Errorf("NextCursor = %q, want last row's created_at", res.NextCursor)
+	}
+}
+
+func TestHandleListSessions_NoNextCursor_WhenShort(t *testing.T) {
+	// Fewer rows than limit → end of range, no cursor emitted.
+	rows := []store.SessionRow{{ID: "a", CreatedAt: "2026-04-19T10:00:00Z"}}
+	svc := &fakeLaunchService{listRes: rows}
+	req := httptest.NewRequest(http.MethodGet, "/sessions?limit=10", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	var res ListSessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.NextCursor != "" {
+		t.Errorf("NextCursor = %q, want empty", res.NextCursor)
+	}
+}
+
+func TestHandleListSessions_BadLimit(t *testing.T) {
+	svc := &fakeLaunchService{}
+	req := httptest.NewRequest(http.MethodGet, "/sessions?limit=bad", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("code = %q", env.Error.Code)
 	}
 }
 

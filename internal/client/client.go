@@ -133,14 +133,45 @@ func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchRespons
 	return c.LaunchSession(ctx, created.ID)
 }
 
-// ListSessions returns the daemon's current view of all sessions (running +
-// terminal), flattened into DTOs.
-func (c *Client) ListSessions(ctx context.Context) ([]api.SessionDTO, error) {
+// ListSessions returns the daemon's current view of all sessions
+// matching the optional filters, flattened into DTOs. Opts fields map
+// 1:1 onto GET /sessions query params: ?limit=, ?cursor=, ?state=.
+// A zero-valued ListOptions retrieves the first default-size page
+// with no filter.
+type ListOptions struct {
+	Limit  int
+	Cursor string
+	State  string
+}
+
+// ListResult carries the session page plus any pagination cursor the
+// server emitted. NextCursor is empty when the caller has reached the
+// end of the range.
+type ListResult struct {
+	Sessions   []api.SessionDTO
+	NextCursor string
+}
+
+func (c *Client) ListSessions(ctx context.Context, opts ListOptions) (*ListResult, error) {
+	u := "/sessions"
+	q := url.Values{}
+	if opts.Limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	if opts.State != "" {
+		q.Set("state", opts.State)
+	}
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
 	var res api.ListSessionsResponse
-	if err := c.getJSON(ctx, "/sessions", &res); err != nil {
+	if err := c.getJSON(ctx, u, &res); err != nil {
 		return nil, err
 	}
-	return res.Sessions, nil
+	return &ListResult{Sessions: res.Sessions, NextCursor: res.NextCursor}, nil
 }
 
 // GetSession fetches one session by id. Returns os-style not-found semantics

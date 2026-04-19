@@ -117,7 +117,9 @@ func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
 func (s *funcService) LaunchSession(id string) (api.LaunchResult, error) {
 	return s.launchFn(id)
 }
-func (s *funcService) ListSessions() ([]store.SessionRow, error)     { return s.listFn() }
+func (s *funcService) ListSessions(_ store.ListSessionsOptions) ([]store.SessionRow, error) {
+	return s.listFn()
+}
 func (s *funcService) GetSession(id string) (*store.SessionRow, error) {
 	return s.getFn(id)
 }
@@ -204,14 +206,14 @@ func TestClient_ListSessions(t *testing.T) {
 		}, nil
 	}
 	c := New(m.addr())
-	dtos, err := c.ListSessions(context.Background())
+	res, err := c.ListSessions(context.Background(), ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dtos) != 2 {
-		t.Fatalf("len = %d", len(dtos))
+	if len(res.Sessions) != 2 {
+		t.Fatalf("len = %d", len(res.Sessions))
 	}
-	if dtos[0].PID == nil || *dtos[0].PID != 9 {
+	if res.Sessions[0].PID == nil || *res.Sessions[0].PID != 9 {
 		t.Errorf("PID missing on first row")
 	}
 }
@@ -273,7 +275,7 @@ func TestClient_Unreachable(t *testing.T) {
 	}
 
 	// Also verify high-level methods wrap unreachable correctly.
-	if _, err := c.ListSessions(context.Background()); !errors.Is(err, ErrDaemonUnreachable) {
+	if _, err := c.ListSessions(context.Background(), ListOptions{}); !errors.Is(err, ErrDaemonUnreachable) {
 		t.Errorf("ListSessions: expected ErrDaemonUnreachable; got %v", err)
 	}
 }

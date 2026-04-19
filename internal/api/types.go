@@ -20,7 +20,7 @@ import (
 type LaunchService interface {
 	CreateSession(launchID string) (LaunchResult, error)
 	LaunchSession(sessionID string) (LaunchResult, error)
-	ListSessions() ([]store.SessionRow, error)
+	ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error)
 	GetSession(id string) (*store.SessionRow, error)
 	StopSession(id string) error
 	WaitSession(ctx context.Context, id string) (int, error)
@@ -57,6 +57,10 @@ type WaitResponse struct {
 
 type ListSessionsResponse struct {
 	Sessions []SessionDTO `json:"sessions"`
+	// NextCursor is set when the returned page hit the limit, indicating
+	// more rows may exist older than this point. Empty when the caller
+	// has reached the end (or the query was unfiltered and under limit).
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 type SessionDTO struct {

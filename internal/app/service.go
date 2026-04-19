@@ -243,8 +243,8 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	}, nil
 }
 
-func (s *Service) ListSessions() ([]store.SessionRow, error) {
-	return s.Store.ListSessions()
+func (s *Service) ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error) {
+	return s.Store.ListSessions(opts)
 }
 
 func (s *Service) GetSession(id string) (*store.SessionRow, error) {

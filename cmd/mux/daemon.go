@@ -137,8 +137,8 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 	}, nil
 }
 
-func (a *serviceAdapter) ListSessions() ([]store.SessionRow, error) {
-	return a.svc.ListSessions()
+func (a *serviceAdapter) ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error) {
+	return a.svc.ListSessions(opts)
 }
 
 func (a *serviceAdapter) GetSession(id string) (*store.SessionRow, error) {

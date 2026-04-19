@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/client"
+	"github.com/chrispian/agent-mux/internal/store"
 )
 
 var sessionsCmd = &cobra.Command{
@@ -183,9 +184,11 @@ func listSessionsDaemonOrStore(ctx context.Context, catalogRoot string) ([]api.S
 	if err != nil {
 		return nil, err
 	}
-	dtos, err := c.ListSessions(ctx)
+	// CLI currently has no --limit/--cursor flags; request the default
+	// page. Pagination-aware flags can land in a follow-up.
+	res, err := c.ListSessions(ctx, client.ListOptions{})
 	if err == nil {
-		return dtos, nil
+		return res.Sessions, nil
 	}
 	if !errors.Is(err, client.ErrDaemonUnreachable) {
 		return nil, err
@@ -199,7 +202,7 @@ func listSessionsFromStore(catalogRoot string) ([]api.SessionDTO, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.ListSessions()
+	rows, err := db.ListSessions(store.ListSessionsOptions{})
 	if err != nil {
 		return nil, err
 	}

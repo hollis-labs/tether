@@ -83,8 +83,60 @@ func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
 	return err
 }
 
-func (s *Store) ListSessions() ([]SessionRow, error) {
-	rows, err := s.db.Query(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions ORDER BY created_at DESC`)
+// ListSessionsOptions narrows the ListSessions query. All fields are
+// optional — the zero value matches the legacy "return every row,
+// newest first" behavior.
+//
+// Cursor is an RFC3339 timestamp; the query returns rows strictly
+// older than it. State, when non-empty, restricts to a single session
+// state ('created', 'launching', 'running', 'completed', 'failed',
+// 'killed'). Limit caps the page size; 0 falls back to the default
+// (100) and values above the hard cap (1000) are clamped.
+type ListSessionsOptions struct {
+	Limit  int
+	Cursor string
+	State  string
+}
+
+const (
+	defaultListLimit = 100
+	maxListLimit     = 1000
+)
+
+func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+
+	// Compose WHERE dynamically so a zero-valued opts runs the exact
+	// same query as before (no filter). Keeping the SQL simple avoids
+	// surprising query-planner decisions on the small v0.0.2 table.
+	where := ""
+	args := []any{}
+	add := func(clause string, v any) {
+		if where == "" {
+			where = " WHERE "
+		} else {
+			where += " AND "
+		}
+		where += clause
+		args = append(args, v)
+	}
+	if opts.Cursor != "" {
+		add("created_at < ?", opts.Cursor)
+	}
+	if opts.State != "" {
+		add("state = ?", opts.State)
+	}
+
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

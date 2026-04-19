@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/chrispian/agent-mux/internal/store"
 )
 
 // registerSessionRoutes wires /sessions handlers onto mux. Route matching
@@ -137,8 +139,19 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 	})
 }
 
-func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
-	rows, err := s.Service.ListSessions()
+// handleListSessions services GET /sessions. Supports three query
+// params: ?limit= (1..1000, default 100), ?cursor= (RFC3339, returns
+// rows strictly older than this timestamp), ?state= (filters to a
+// single session state). Malformed params yield 400 so callers know
+// to fix them rather than silently paging the full set.
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	opts, err := parseListSessionsOpts(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+
+	rows, err := s.Service.ListSessions(opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -149,7 +162,42 @@ func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 		dto.AttachedClients = s.Service.AttachedClients(row.ID)
 		out = append(out, dto)
 	}
-	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: out})
+
+	// When we hit the requested page size, more rows may exist older
+	// than the last returned row's created_at — hand that back as the
+	// next cursor. When we returned fewer than the limit, we know we
+	// reached the end and emit no cursor.
+	resp := ListSessionsResponse{Sessions: out}
+	effectiveLimit := opts.Limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = 100
+	}
+	if len(rows) == effectiveLimit && len(rows) > 0 {
+		resp.NextCursor = rows[len(rows)-1].CreatedAt
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// parseListSessionsOpts extracts pagination + filter params from the
+// request URL. Returns a typed error message for malformed values; the
+// caller maps it to 400.
+func parseListSessionsOpts(r *http.Request) (store.ListSessionsOptions, error) {
+	q := r.URL.Query()
+	opts := store.ListSessionsOptions{
+		Cursor: q.Get("cursor"),
+		State:  q.Get("state"),
+	}
+	if s := q.Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return opts, errors.New("invalid limit: must be integer")
+		}
+		if n < 0 {
+			return opts, errors.New("invalid limit: must be >= 0")
+		}
+		opts.Limit = n
+	}
+	return opts, nil
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id string) {
