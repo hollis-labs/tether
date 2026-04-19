@@ -1,9 +1,11 @@
-// Package events defines the Event type and scope constants for the
-// evolving events stream. v0.0.2 ships the types only — the pub/sub
-// bus and `/events/stream` endpoint arrive in Sprint v002-06. Callers
-// write events via store.LogEvent today; Sprint 6 will add a bus that
-// fan-outs writes to subscribers.
+// Package events defines the Event type, scope constants, and the
+// pub/sub bus that publishes lifecycle and broker events to
+// subscribers while persisting them to the store. The bus arrives in
+// Sprint v002-06; v0.0.2 storage primitives (scope, nullable
+// session_id, payload_json) land in Sprint v002-03.
 package events
+
+import "time"
 
 // Scope classifies an event's origin. Session events reference a
 // specific runtime session; daemon events describe muxd lifecycle;
@@ -18,13 +20,19 @@ const (
 	ScopeBroker  Scope = "broker"
 )
 
-// Event mirrors the events row. SessionID may be empty (column is
-// nullable); scope is always set.
+// Event is the in-memory shape exchanged by the bus. Seq is the
+// monotonic stream id assigned by the persister (the events table's
+// AUTOINCREMENT primary key); it is 0 on events not yet persisted.
+// SessionID is empty for daemon/broker events (column is nullable).
+// LogicalAgentID is carried for observability on lifecycle events but
+// is not persisted as a column in v0.0.2; emitters that want it to
+// survive replay should embed it in PayloadJSON.
 type Event struct {
-	ID          int64
-	Scope       Scope
-	SessionID   string
-	At          string
-	Kind        string
-	PayloadJSON string
+	Seq            int64
+	At             time.Time
+	Scope          Scope
+	SessionID      string
+	LogicalAgentID string
+	Kind           string
+	PayloadJSON    string
 }
