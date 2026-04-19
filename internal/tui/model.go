@@ -56,6 +56,8 @@ type Model struct {
 	loadRemaining int
 	loadErrs      []error
 
+	toasts toastQueue
+
 	lastSearch string
 }
 
@@ -117,9 +119,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshBody()
 		return m, nil
 
+	case launchResultMsg:
+		if msg.err != nil {
+			cmd := m.toasts.push(ToastError, "Launch failed: "+msg.err.Error())
+			return m, cmd
+		}
+		banner := fmt.Sprintf("Launched %s → session %s @ %s",
+			msg.req.LaunchID, shortID(msg.res.SessionID), trimPath(msg.res.Workspace))
+		cmd := m.toasts.push(ToastInfo, banner)
+		return m, cmd
+
+	case toastExpiredMsg:
+		m.toasts.remove(msg.ID)
+		return m, nil
+
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
+		}
+		if msg.Type == tea.KeyEnter {
+			return m.handleEnter()
 		}
 		if handled, next := m.handleChipToggle(msg); handled {
 			next.recomputeVisible()
@@ -188,6 +207,21 @@ func (m Model) View() string {
 		m.width,
 		m.height,
 	)
+}
+
+// handleEnter launches the selected row if it's a LaunchRow; other
+// row types are no-ops in Sprint 1 (Sprint 2 binds Enter to
+// "open detail view").
+func (m Model) handleEnter(_ ...struct{}) (Model, tea.Cmd) {
+	row := m.SelectedRow()
+	if row == nil || m.client == nil {
+		return m, nil
+	}
+	lr, ok := row.(LaunchRow)
+	if !ok {
+		return m, nil
+	}
+	return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: lr.L.ID})
 }
 
 func (m Model) handleChipToggle(msg tea.KeyMsg) (bool, Model) {
@@ -374,6 +408,18 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderFooter() string {
+	var block strings.Builder
+	// Toasts render above the hint line so the user sees launch
+	// feedback without hunting for it.
+	for _, t := range m.toasts.items() {
+		style := m.styles.ToastInfo
+		if t.Kind == ToastError {
+			style = m.styles.ToastError
+		}
+		block.WriteString(style.Render(t.Message))
+		block.WriteByte('\n')
+	}
+
 	hints := []string{
 		m.keyHint(m.keys.FocusSearch),
 		m.keyHint(m.keys.BlurSearch),
@@ -388,7 +434,8 @@ func (m Model) renderFooter() string {
 	} else if len(m.visible) > 0 {
 		status = fmt.Sprintf("  ·  %d result(s)", len(m.visible))
 	}
-	return m.styles.Frame.Render(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status))
+	block.WriteString(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status))
+	return m.styles.Frame.Render(block.String())
 }
 
 func (m Model) keyHint(b key.Binding) string {

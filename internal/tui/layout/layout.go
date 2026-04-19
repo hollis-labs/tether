@@ -21,6 +21,8 @@ type Styles struct {
 	Body       lipgloss.Style
 	Footer     lipgloss.Style
 	FooterKey  lipgloss.Style
+	ToastInfo  lipgloss.Style
+	ToastError lipgloss.Style
 }
 
 // DefaultStyles returns the Sprint-1 scaffold styles. T-06 replaces
@@ -54,6 +56,16 @@ func DefaultStyles() Styles {
 			Padding(0, 1),
 		Footer:    lipgloss.NewStyle().Foreground(muted),
 		FooterKey: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		ToastInfo: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Foreground(accent).
+			Padding(0, 1),
+		ToastError: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.AdaptiveColor{Light: "#A60000", Dark: "#F7768E"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "#A60000", Dark: "#F7768E"}).
+			Padding(0, 1),
 	}
 }
 
