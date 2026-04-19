@@ -17,6 +17,9 @@ var agentsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured agents",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// TODO v002-s08: route through daemon via client.ListAgents
+		// when the daemon is up (falls back to this filesystem read
+		// when unreachable). CLI reshuffle is scoped separately.
 		svc, err := app.New(catalogPath)
 		if err != nil {
 			return err

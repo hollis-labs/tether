@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -30,6 +31,7 @@ type mockDaemon struct {
 	wait          func(context.Context, string) (int, error)
 	input         func(string, []byte) error
 	attach        func(context.Context, string, io.Writer) error
+	catalog       func() (*config.Catalog, error)
 }
 
 func (m *mockDaemon) addr() string {
@@ -91,11 +93,26 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 		},
 	}
 
-	srv := &daemon.Server{Service: svc}
+	catalogLoader := mockCatalogLoader{fn: func() (*config.Catalog, error) {
+		if m.catalog != nil {
+			return m.catalog()
+		}
+		return nil, errors.New("catalog not configured")
+	}}
+
+	srv := &daemon.Server{Service: svc, Catalog: catalogLoader}
 	m.server = httptest.NewServer(srv.Handler())
 	t.Cleanup(func() { m.server.Close() })
 	return m
 }
+
+// mockCatalogLoader is the client-test-side api.CatalogLoader: defers
+// to a per-test closure set on mockDaemon.catalog.
+type mockCatalogLoader struct {
+	fn func() (*config.Catalog, error)
+}
+
+func (m mockCatalogLoader) Load() (*config.Catalog, error) { return m.fn() }
 
 // funcService is a func-table LaunchService — lighter than a struct-full-of-
 // fields fake for the case-by-case per-test overrides that client tests need.
@@ -342,5 +359,103 @@ func TestClient_UnreachableUnixSocket(t *testing.T) {
 	c := New("unix:/tmp/mux-nonexistent-" + t.Name() + ".sock")
 	if err := c.Ping(context.Background()); !errors.Is(err, ErrDaemonUnreachable) {
 		t.Errorf("expected ErrDaemonUnreachable; got %v", err)
+	}
+}
+
+func TestClient_ListProjects(t *testing.T) {
+	m := newMockDaemon(t)
+	m.catalog = func() (*config.Catalog, error) {
+		return &config.Catalog{
+			Projects: map[string]config.Project{
+				"p1": {ID: "p1", Name: "First"},
+				"p2": {ID: "p2", Name: "Second"},
+			},
+		}, nil
+	}
+	c := New(m.addr())
+	projects, err := c.ListProjects(context.Background())
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("len = %d", len(projects))
+	}
+}
+
+func TestClient_ListAgents(t *testing.T) {
+	m := newMockDaemon(t)
+	m.catalog = func() (*config.Catalog, error) {
+		return &config.Catalog{
+			Agents: map[string]config.Agent{"a1": {ID: "a1", Name: "Alpha"}},
+		}, nil
+	}
+	c := New(m.addr())
+	agents, err := c.ListAgents(context.Background())
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ID != "a1" {
+		t.Errorf("agents = %+v", agents)
+	}
+}
+
+func TestClient_ListProviders(t *testing.T) {
+	m := newMockDaemon(t)
+	m.catalog = func() (*config.Catalog, error) {
+		return &config.Catalog{
+			Providers: map[string]config.Provider{"stub": {ID: "stub", Type: "api"}},
+		}, nil
+	}
+	c := New(m.addr())
+	providers, err := c.ListProviders(context.Background())
+	if err != nil {
+		t.Fatalf("ListProviders: %v", err)
+	}
+	if len(providers) != 1 || providers[0].ID != "stub" {
+		t.Errorf("providers = %+v", providers)
+	}
+}
+
+func TestClient_ListLaunches(t *testing.T) {
+	m := newMockDaemon(t)
+	m.catalog = func() (*config.Catalog, error) {
+		return &config.Catalog{
+			Launches: map[string]config.Launch{
+				"demo-launch": {ID: "demo-launch", Project: "demo", Agent: "demo-agent", Provider: "claude-code"},
+			},
+		}, nil
+	}
+	c := New(m.addr())
+	launches, err := c.ListLaunches(context.Background())
+	if err != nil {
+		t.Fatalf("ListLaunches: %v", err)
+	}
+	if len(launches) != 1 || launches[0].ID != "demo-launch" {
+		t.Errorf("launches = %+v", launches)
+	}
+}
+
+func TestClient_ListProjects_DaemonError(t *testing.T) {
+	m := newMockDaemon(t)
+	m.catalog = func() (*config.Catalog, error) {
+		return nil, errors.New("parse /catalog/global.yaml: bad yaml")
+	}
+	c := New(m.addr())
+	if _, err := c.ListProjects(context.Background()); err == nil {
+		t.Fatal("expected error from daemon 500")
+	}
+}
+
+func TestClient_Catalog_Unreachable(t *testing.T) {
+	c := New("tcp:127.0.0.1:1")
+	for _, fn := range []func() error{
+		func() error { _, err := c.ListProjects(context.Background()); return err },
+		func() error { _, err := c.ListAgents(context.Background()); return err },
+		func() error { _, err := c.ListProviders(context.Background()); return err },
+		func() error { _, err := c.ListLaunches(context.Background()); return err },
+	} {
+		if err := fn(); !errors.Is(err, ErrDaemonUnreachable) {
+			t.Errorf("expected ErrDaemonUnreachable; got %v", err)
+		}
 	}
 }

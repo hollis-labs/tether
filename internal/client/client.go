@@ -19,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
 )
 
@@ -287,6 +288,44 @@ func (c *Client) WaitSession(ctx context.Context, id string) (int, error) {
 		return 0, fmt.Errorf("decode wait response: %w", err)
 	}
 	return res.ExitCode, nil
+}
+
+// ListProjects fetches the full project catalog via GET /catalog/projects.
+// No filtering or pagination — catalog sizes are small. Callers filter
+// locally. Returns ErrDaemonUnreachable on connection failure.
+func (c *Client) ListProjects(ctx context.Context) ([]config.Project, error) {
+	var res api.ListProjectsResponse
+	if err := c.getJSON(ctx, "/catalog/projects", &res); err != nil {
+		return nil, err
+	}
+	return res.Projects, nil
+}
+
+// ListAgents fetches the full agent catalog via GET /catalog/agents.
+func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
+	var res api.ListAgentsResponse
+	if err := c.getJSON(ctx, "/catalog/agents", &res); err != nil {
+		return nil, err
+	}
+	return res.Agents, nil
+}
+
+// ListProviders fetches the full provider catalog via GET /catalog/providers.
+func (c *Client) ListProviders(ctx context.Context) ([]config.Provider, error) {
+	var res api.ListProvidersResponse
+	if err := c.getJSON(ctx, "/catalog/providers", &res); err != nil {
+		return nil, err
+	}
+	return res.Providers, nil
+}
+
+// ListLaunches fetches the full launch catalog via GET /catalog/launches.
+func (c *Client) ListLaunches(ctx context.Context) ([]config.Launch, error) {
+	var res api.ListLaunchesResponse
+	if err := c.getJSON(ctx, "/catalog/launches", &res); err != nil {
+		return nil, err
+	}
+	return res.Launches, nil
 }
 
 // getJSON is a small helper for the GET + decode + error flow shared by
