@@ -1,0 +1,157 @@
+// Package client wraps internal/client for Bubble Tea consumption.
+//
+// The wrapper exists for three reasons:
+//
+//  1. A TUI-stable surface. As the TUI grows, it can evolve typed
+//     request/response shapes (e.g., CreateAndLaunchRequest) without
+//     bloating the shared daemon client.
+//  2. Uniform error wrapping. Every error carries a "tui client:"
+//     prefix so a tea.Cmd-returned message reads clearly without the
+//     caller having to prefix each failure themselves.
+//  3. Documentation seam. This is the home of the "never block Update"
+//     contract documented in the package README.
+//
+// ## Usage contract — never block Update
+//
+// Bubble Tea's Update runs on a single goroutine. Calling a List* or
+// CreateAndLaunch method from inside Update blocks all input handling
+// until the daemon responds. Always wrap these calls in a tea.Cmd:
+//
+//	func listProjectsCmd(c *client.Client) tea.Cmd {
+//	    return func() tea.Msg {
+//	        ps, err := c.ListProjects(context.Background())
+//	        if err != nil {
+//	            return ProjectsLoadErrMsg{Err: err}
+//	        }
+//	        return ProjectsLoadedMsg{Projects: ps}
+//	    }
+//	}
+//
+// Bubble Tea runs the returned function on its own goroutine and pipes
+// the result back into Update as a tea.Msg. That keeps input latency
+// flat even on a slow daemon.
+package client
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	daemon "github.com/chrispian/agent-mux/internal/client"
+
+	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/config"
+)
+
+// ErrDaemonUnreachable is re-exported from the underlying client so
+// TUI callers don't need to import internal/client just to check for
+// the sentinel. Use errors.Is, not ==.
+var ErrDaemonUnreachable = daemon.ErrDaemonUnreachable
+
+// Client is the TUI's handle for the muxd daemon local API. Safe for
+// concurrent use from multiple tea.Cmd goroutines.
+type Client struct {
+	inner *daemon.Client
+}
+
+// New constructs a Client pointing at the resolved daemon listen
+// address (e.g. "unix:/Users/you/.agent-mux/run/muxd.sock" or
+// "tcp:127.0.0.1:9000").
+func New(listenAddr string) *Client {
+	return &Client{inner: daemon.New(listenAddr)}
+}
+
+// Ping issues a short /health probe so the TUI can surface a
+// daemon-down banner at startup without loading any catalog data.
+func (c *Client) Ping(ctx context.Context) error {
+	if err := c.inner.Ping(ctx); err != nil {
+		return wrap("ping", err)
+	}
+	return nil
+}
+
+// ListProjects fetches project definitions from GET /catalog/projects.
+func (c *Client) ListProjects(ctx context.Context) ([]config.Project, error) {
+	ps, err := c.inner.ListProjects(ctx)
+	if err != nil {
+		return nil, wrap("list projects", err)
+	}
+	return ps, nil
+}
+
+// ListAgents fetches agent definitions from GET /catalog/agents.
+func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
+	as, err := c.inner.ListAgents(ctx)
+	if err != nil {
+		return nil, wrap("list agents", err)
+	}
+	return as, nil
+}
+
+// ListProviders fetches provider definitions from GET /catalog/providers.
+func (c *Client) ListProviders(ctx context.Context) ([]config.Provider, error) {
+	ps, err := c.inner.ListProviders(ctx)
+	if err != nil {
+		return nil, wrap("list providers", err)
+	}
+	return ps, nil
+}
+
+// ListLaunches fetches launch profiles from GET /catalog/launches.
+func (c *Client) ListLaunches(ctx context.Context) ([]config.Launch, error) {
+	ls, err := c.inner.ListLaunches(ctx)
+	if err != nil {
+		return nil, wrap("list launches", err)
+	}
+	return ls, nil
+}
+
+// ListSessions fetches the current session page from GET /sessions.
+// The TUI displays a single unpaginated page in Sprint 1; Sprint 2's
+// detail views add cursor-paging where needed.
+func (c *Client) ListSessions(ctx context.Context) ([]api.SessionDTO, error) {
+	res, err := c.inner.ListSessions(ctx, daemon.ListOptions{})
+	if err != nil {
+		return nil, wrap("list sessions", err)
+	}
+	return res.Sessions, nil
+}
+
+// CreateAndLaunchRequest drives the quick-launch flow triggered by
+// Enter on a LaunchRow. Only LaunchID is populated for v0.0.3 Sprint 1;
+// Sprint 4's wizard extends this shape with inline-plan fields.
+type CreateAndLaunchRequest struct {
+	LaunchID string
+}
+
+// CreateAndLaunchResponse carries what the TUI surfaces in the
+// launch-result toast: session ID, workspace path, and log path.
+type CreateAndLaunchResponse struct {
+	SessionID string
+	Workspace string
+	LogPath   string
+}
+
+// CreateAndLaunch performs the CLI's convenience create+launch pair in
+// one call. The daemon exposes the two operations separately; the
+// combined flow lives on the client to keep UI call-sites concise.
+func (c *Client) CreateAndLaunch(ctx context.Context, req CreateAndLaunchRequest) (CreateAndLaunchResponse, error) {
+	if req.LaunchID == "" {
+		return CreateAndLaunchResponse{}, errors.New("tui client: create+launch: launch_id is required")
+	}
+	res, err := c.inner.Launch(ctx, req.LaunchID)
+	if err != nil {
+		return CreateAndLaunchResponse{}, wrap("create+launch", err)
+	}
+	return CreateAndLaunchResponse{
+		SessionID: res.ID,
+		Workspace: res.Workspace,
+		LogPath:   res.Log,
+	}, nil
+}
+
+// wrap prefixes "tui client: <op>" while preserving the sentinel
+// (errors.Is(err, ErrDaemonUnreachable) still works in callers).
+func wrap(op string, err error) error {
+	return fmt.Errorf("tui client: %s: %w", op, err)
+}
