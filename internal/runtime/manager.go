@@ -24,13 +24,6 @@ import (
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
 
-// EventPublisher is the narrow interface Manager uses to publish
-// lifecycle events. *events.Bus satisfies it directly. Nil is
-// safe — when no publisher is configured, events are silently
-// skipped.
-type EventPublisher interface {
-	Publish(ctx context.Context, e events.Event) error
-}
 
 // StateSink persists session state transitions. The production implementation
 // is *store.Store; tests use an in-memory fake.
@@ -77,7 +70,7 @@ type SessionInfo struct {
 type Manager struct {
 	sink       StateSink
 	attachSink AttachmentSink
-	publisher  EventPublisher
+	publisher  events.Publisher
 	nowFn      func() time.Time
 	idFn       func() string
 
@@ -137,7 +130,7 @@ func (m *Manager) WithAttachmentSink(sink AttachmentSink) *Manager {
 // WithEventPublisher returns m with the lifecycle-event publisher set.
 // Nil is a no-op (events are silently skipped). Safe to call on a
 // freshly-constructed Manager before any Start.
-func (m *Manager) WithEventPublisher(pub EventPublisher) *Manager {
+func (m *Manager) WithEventPublisher(pub events.Publisher) *Manager {
 	m.publisher = pub
 	return m
 }

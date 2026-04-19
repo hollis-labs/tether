@@ -87,9 +87,10 @@ var daemonRunCmd = &cobra.Command{
 		}
 
 		server := &daemon.Server{
-			Config:  cfg,
-			Manager: svc.Runtime,
-			Service: &serviceAdapter{svc: svc},
+			Config:    cfg,
+			Manager:   svc.Runtime,
+			Service:   &serviceAdapter{svc: svc},
+			Publisher: svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.

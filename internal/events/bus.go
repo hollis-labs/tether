@@ -19,12 +19,19 @@ type BusOptions struct {
 	MaxConsecDrops  int64
 }
 
+// Publisher is the write half of the bus. Both runtime.Manager and
+// the daemon depend on this narrow interface rather than the full
+// Bus so they can't accidentally subscribe from a publisher seat.
+type Publisher interface {
+	Publish(ctx context.Context, e Event) error
+}
+
 // Bus is the pub/sub surface. Publish persists the event then fans it
 // out to every matching subscriber. Subscribe returns a receive-only
 // channel, a cancel func (idempotent), and an error; the channel is
 // closed when the subscriber is cancelled or evicted.
 type Bus interface {
-	Publish(ctx context.Context, e Event) error
+	Publisher
 	Subscribe(ctx context.Context, f Filter) (<-chan Event, func(), error)
 }
 

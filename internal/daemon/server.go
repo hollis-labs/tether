@@ -11,8 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/runtime"
 )
+
+// muxVersion labels daemon.started events. Bumped per release.
+const muxVersion = "0.0.2"
 
 // Config bundles the resolved daemon runtime parameters. Callers are
 // expected to have already run path expansion (config.Expand) on
@@ -33,9 +37,23 @@ type Server struct {
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
 	Service LaunchService
-	Close   func() error
+	// Publisher receives daemon.started / daemon.shutdown_started /
+	// daemon.shutdown_completed events. Nil is a no-op.
+	Publisher events.Publisher
+	Close     func() error
 
 	startedAt time.Time
+}
+
+func (s *Server) publishDaemon(kind, payloadJSON string) {
+	if s.Publisher == nil {
+		return
+	}
+	_ = s.Publisher.Publish(context.Background(), events.Event{
+		Scope:       events.ScopeDaemon,
+		Kind:        kind,
+		PayloadJSON: payloadJSON,
+	})
 }
 
 // Run starts the daemon: PID-file guard, listener open, HTTP serve,
@@ -68,6 +86,16 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// Daemon is up; announce it. Errors are ignored (persister failure
+	// must not gate serving).
+	if b, err := json.Marshal(struct {
+		Version  string `json:"version"`
+		PID      int    `json:"pid"`
+		Listener string `json:"listener"`
+	}{muxVersion, os.Getpid(), s.Config.ListenAddr}); err == nil {
+		s.publishDaemon(events.KindDaemonStarted, string(b))
+	}
+
 	serveErr := make(chan error, 1)
 	go func() {
 		err := httpSrv.Serve(lis)
@@ -87,6 +115,8 @@ func (s *Server) Run(ctx context.Context) error {
 		runErr = err
 	}
 
+	s.publishDaemon(events.KindDaemonShutdownStarted, "")
+
 	// Graceful shutdown: stop accepting connections, bound by timeout.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout)
 	defer cancel()
@@ -100,6 +130,11 @@ func (s *Server) Run(ctx context.Context) error {
 			runErr = fmt.Errorf("runtime shutdown: %w", err)
 		}
 	}
+
+	// Emit shutdown_completed BEFORE Close(). Close typically tears down
+	// the store, which is the bus's persister — publishing after Close
+	// would silently fail to persist.
+	s.publishDaemon(events.KindDaemonShutdownCompleted, "")
 
 	if s.Close != nil {
 		if err := s.Close(); err != nil && runErr == nil {
