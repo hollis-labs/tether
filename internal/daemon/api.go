@@ -19,6 +19,7 @@ type LaunchService interface {
 	WaitSession(ctx context.Context, id string) (int, error)
 	SendInput(id string, data []byte) error
 	AttachSession(ctx context.Context, id string, w io.Writer) error
+	AttachedClients(id string) int
 }
 
 // LaunchResult is the daemon-facing subset of app.Launched. The full app
@@ -52,18 +53,19 @@ type ListSessionsResponse struct {
 }
 
 type SessionDTO struct {
-	ID         string  `json:"id"`
-	LaunchID   string  `json:"launch_id"`
-	ProjectID  string  `json:"project_id"`
-	AgentID    string  `json:"agent_id"`
-	ProviderID string  `json:"provider_id"`
-	Workspace  string  `json:"workspace"`
-	State      string  `json:"state"`
-	PID        *int    `json:"pid,omitempty"`
-	ExitCode   *int    `json:"exit_code,omitempty"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
-	EndedAt    *string `json:"ended_at,omitempty"`
+	ID              string  `json:"id"`
+	LaunchID        string  `json:"launch_id"`
+	ProjectID       string  `json:"project_id"`
+	AgentID         string  `json:"agent_id"`
+	ProviderID      string  `json:"provider_id"`
+	Workspace       string  `json:"workspace"`
+	State           string  `json:"state"`
+	PID             *int    `json:"pid,omitempty"`
+	ExitCode        *int    `json:"exit_code,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+	EndedAt         *string `json:"ended_at,omitempty"`
+	AttachedClients int     `json:"attached_clients"`
 }
 
 type ErrorResponse struct {

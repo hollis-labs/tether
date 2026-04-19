@@ -97,8 +97,9 @@ type funcService struct {
 	getFn    func(string) (*store.SessionRow, error)
 	stopFn   func(string) error
 	waitFn   func(context.Context, string) (int, error)
-	inputFn  func(string, []byte) error
-	attachFn func(context.Context, string, io.Writer) error
+	inputFn         func(string, []byte) error
+	attachFn        func(context.Context, string, io.Writer) error
+	attachedFn      func(string) int
 }
 
 func (s *funcService) Launch(id string) (daemon.LaunchResult, error) { return s.launchFn(id) }
@@ -113,6 +114,12 @@ func (s *funcService) WaitSession(ctx context.Context, id string) (int, error) {
 func (s *funcService) SendInput(id string, data []byte) error { return s.inputFn(id, data) }
 func (s *funcService) AttachSession(ctx context.Context, id string, w io.Writer) error {
 	return s.attachFn(ctx, id, w)
+}
+func (s *funcService) AttachedClients(id string) int {
+	if s.attachedFn == nil {
+		return 0
+	}
+	return s.attachedFn(id)
 }
 
 func TestClient_Launch(t *testing.T) {

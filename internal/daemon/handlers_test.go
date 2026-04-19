@@ -42,6 +42,8 @@ type fakeLaunchService struct {
 	inputIDs  []string
 	attachFn  func(ctx context.Context, id string, w io.Writer) error
 	attachErr error
+
+	attachedClients map[string]int
 }
 
 func (f *fakeLaunchService) Launch(id string) (LaunchResult, error) {
@@ -91,6 +93,13 @@ func (f *fakeLaunchService) AttachSession(ctx context.Context, id string, w io.W
 		return f.attachFn(ctx, id, w)
 	}
 	return f.attachErr
+}
+
+func (f *fakeLaunchService) AttachedClients(id string) int {
+	if f.attachedClients == nil {
+		return 0
+	}
+	return f.attachedClients[id]
 }
 
 func newTestServer(svc LaunchService) *Server {

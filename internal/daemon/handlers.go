@@ -117,7 +117,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 	}
 	out := make([]SessionDTO, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, SessionRowToDTO(row))
+		dto := SessionRowToDTO(row)
+		dto.AttachedClients = s.Service.AttachedClients(row.ID)
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, ListSessionsResponse{Sessions: out})
 }
@@ -135,7 +137,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id str
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionRowToDTO(*row))
+	dto := SessionRowToDTO(*row)
+	dto.AttachedClients = s.Service.AttachedClients(id)
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {

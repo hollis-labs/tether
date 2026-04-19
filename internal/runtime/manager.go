@@ -13,6 +13,9 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/session"
@@ -23,6 +26,14 @@ import (
 // is *store.Store; tests use an in-memory fake.
 type StateSink interface {
 	UpdateSessionState(id, state string, pid int, exit *int) error
+}
+
+// AttachmentSink persists the lifecycle of a client attach subscription.
+// Implemented by *store.Store. Nil is safe: Manager.Attach works without
+// persistence (only the in-memory attachCount and broker subscription run).
+type AttachmentSink interface {
+	CreateClientAttachment(id, sessionID, clientKind, attachedAt string) error
+	DetachClientAttachment(id, detachedAt string) error
 }
 
 // Handle is the minimum contract Manager needs from a running session.
@@ -67,21 +78,25 @@ type StartRequest struct {
 // SessionInfo is the public snapshot of a registered session. It deliberately
 // excludes the raw *session.Handle so callers cannot reach into PTY internals.
 type SessionInfo struct {
-	ID         string
-	PID        int
-	State      session.State
-	LaunchID   string
-	ProjectID  string
-	AgentID    string
-	ProviderID string
-	Workspace  string
+	ID              string
+	PID             int
+	State           session.State
+	LaunchID        string
+	ProjectID       string
+	AgentID         string
+	ProviderID      string
+	Workspace       string
+	AttachedClients int
 }
 
 // Manager owns the registry of running sessions and their lifecycle
 // transitions.
 type Manager struct {
-	sink    StateSink
-	starter Starter
+	sink       StateSink
+	attachSink AttachmentSink
+	starter    Starter
+	nowFn      func() time.Time
+	idFn       func() string
 
 	mu       sync.RWMutex
 	registry map[string]*entry
@@ -92,10 +107,11 @@ type Manager struct {
 }
 
 type entry struct {
-	info    SessionInfo
-	handle  Handle
-	broker  *attachBroker
-	killing bool
+	info        SessionInfo
+	handle      Handle
+	broker      *attachBroker
+	killing     bool
+	attachCount int
 	// inputMu serialises SendInput writes so concurrent callers never
 	// interleave partial writes on the PTY master.
 	inputMu sync.Mutex
@@ -117,6 +133,8 @@ var (
 )
 
 // NewManager constructs a Manager. If starter is nil, DefaultStarter is used.
+// attachSink is optional; pass nil to disable client_attachments persistence
+// (useful for tests that don't care about the durability path).
 func NewManager(sink StateSink, starter Starter) *Manager {
 	if starter == nil {
 		starter = DefaultStarter{}
@@ -124,9 +142,18 @@ func NewManager(sink StateSink, starter Starter) *Manager {
 	return &Manager{
 		sink:     sink,
 		starter:  starter,
+		nowFn:    time.Now,
+		idFn:     uuid.NewString,
 		registry: map[string]*entry{},
 		results:  map[string]*sessionResult{},
 	}
+}
+
+// WithAttachmentSink returns m with the attachment persistence sink set. It
+// is safe to call on a freshly-constructed Manager before any Start.
+func (m *Manager) WithAttachmentSink(sink AttachmentSink) *Manager {
+	m.attachSink = sink
+	return m
 }
 
 // Start launches a session under Manager ownership. It records state
@@ -250,7 +277,9 @@ func (m *Manager) Get(id string) (SessionInfo, bool) {
 	if !ok {
 		return SessionInfo{}, false
 	}
-	return e.info, true
+	info := e.info
+	info.AttachedClients = e.attachCount
+	return info, true
 }
 
 // List returns snapshots of all currently registered sessions. The result is
@@ -260,7 +289,9 @@ func (m *Manager) List() []SessionInfo {
 	defer m.mu.RUnlock()
 	out := make([]SessionInfo, 0, len(m.registry))
 	for _, e := range m.registry {
-		out = append(out, e.info)
+		info := e.info
+		info.AttachedClients = e.attachCount
+		out = append(out, info)
 	}
 	return out
 }
@@ -287,6 +318,12 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	return err
 }
 
+// AttachOptions controls optional metadata attached to a subscription. The
+// zero value picks a default client_kind.
+type AttachOptions struct {
+	ClientKind string
+}
+
 // Attach subscribes w to the named session's live output stream. Attach
 // writes any recent history (tail replay) to w first, then streams live PTY
 // output until ctx is cancelled or the session exits. Multiple concurrent
@@ -296,12 +333,47 @@ func (m *Manager) SendInput(id string, data []byte) error {
 // Returns ErrSessionNotRunning if the session is not registered (already
 // exited or never started).
 func (m *Manager) Attach(ctx context.Context, id string, w io.Writer) error {
+	return m.AttachWith(ctx, id, w, AttachOptions{})
+}
+
+// AttachWith is Attach with caller-controlled attachment metadata. It
+// records the attachment in the attachSink (if configured) and bumps the
+// in-memory attached-clients counter for the session, then calls back into
+// the broker's subscribe/stream flow.
+func (m *Manager) AttachWith(ctx context.Context, id string, w io.Writer, opts AttachOptions) error {
 	m.mu.RLock()
 	e, ok := m.registry[id]
 	m.mu.RUnlock()
 	if !ok {
 		return ErrSessionNotRunning
 	}
+
+	kind := opts.ClientKind
+	if kind == "" {
+		kind = "cli"
+	}
+	attachID := m.idFn()
+	now := m.nowFn().UTC().Format(time.RFC3339)
+
+	if m.attachSink != nil {
+		_ = m.attachSink.CreateClientAttachment(attachID, id, kind, now)
+	}
+
+	m.mu.Lock()
+	e.attachCount++
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		if e.attachCount > 0 {
+			e.attachCount--
+		}
+		m.mu.Unlock()
+		if m.attachSink != nil {
+			_ = m.attachSink.DetachClientAttachment(attachID, m.nowFn().UTC().Format(time.RFC3339))
+		}
+	}()
+
 	replay, ch, cancel := e.broker.subscribe(defaultSubscriberDepth)
 	defer cancel()
 	return copyStream(ctx, w, replay, ch)

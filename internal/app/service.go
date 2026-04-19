@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -49,12 +51,18 @@ func New(catalogRoot string) (*Service, error) {
 	}
 	reg := provider.NewRegistry()
 	reg.Register(claudecode.Adapter{})
+	// Reconcile stale client_attachment rows — any attachment still marked
+	// "attached" at startup is an orphan from a prior daemon process.
+	if swept, err := db.SweepStaleAttachments(time.Now().UTC().Format(time.RFC3339)); err == nil && swept > 0 {
+		log.Printf("store: swept %d stale client_attachments row(s)", swept)
+	}
+	mgr := runtime.NewManager(db, nil).WithAttachmentSink(db)
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
 		Providers:   reg,
-		Runtime:     runtime.NewManager(db, nil),
+		Runtime:     mgr,
 	}, nil
 }
 
@@ -197,4 +205,15 @@ func (s *Service) SendInput(id string, data []byte) error {
 // cancelled or the session exits. Thin wrapper over runtime.Manager.Attach.
 func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer) error {
 	return s.Runtime.Attach(ctx, id, w)
+}
+
+// AttachedClients reports the in-memory count of live attach subscribers for
+// id, or 0 if the session is not currently registered in the runtime (e.g.,
+// already exited).
+func (s *Service) AttachedClients(id string) int {
+	info, ok := s.Runtime.Get(id)
+	if !ok {
+		return 0
+	}
+	return info.AttachedClients
 }

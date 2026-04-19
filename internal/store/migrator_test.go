@@ -67,18 +67,21 @@ func TestMigrate_FreshDB_AppliesEmbedded(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if len(res.Applied) == 0 || res.Applied[0] != 1 {
-		t.Fatalf("expected Applied to contain 1, got %+v", res)
+		t.Fatalf("expected Applied to contain version 1 first, got %+v", res)
 	}
 	if len(res.Stamped) != 0 {
 		t.Fatalf("fresh DB should not stamp adopt; got %+v", res.Stamped)
 	}
+	// Every 0001 table must exist; new migrations in this embedded set can
+	// add more, and those tests cover themselves.
 	for _, tbl := range []string{"sessions", "launch_plans", "events", "schema_migrations"} {
 		if !tableExists(t, db, tbl) {
 			t.Fatalf("table %q missing after migrate", tbl)
 		}
 	}
-	if got := appliedVersions(t, db); len(got) != 1 || got[0] != 1 {
-		t.Fatalf("schema_migrations rows = %v, want [1]", got)
+	applied := appliedVersions(t, db)
+	if len(applied) == 0 || applied[0] != 1 {
+		t.Fatalf("schema_migrations rows = %v, want to begin with 1", applied)
 	}
 }
 
@@ -86,18 +89,22 @@ func TestMigrate_Idempotent(t *testing.T) {
 	db := openTempDB(t)
 	defer db.Close()
 
-	if _, err := Migrate(db); err != nil {
+	first, err := Migrate(db)
+	if err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
+	before := appliedVersions(t, db)
+
 	res, err := Migrate(db)
 	if err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	if len(res.Applied) != 0 || len(res.Stamped) != 0 {
-		t.Fatalf("second Migrate should be a no-op, got %+v", res)
+		t.Fatalf("second Migrate should be a no-op, got %+v (first: %+v)", res, first)
 	}
-	if got := appliedVersions(t, db); len(got) != 1 || got[0] != 1 {
-		t.Fatalf("schema_migrations after second Migrate = %v, want [1]", got)
+	after := appliedVersions(t, db)
+	if !intSliceEqual(before, after) {
+		t.Fatalf("schema_migrations changed across idempotent Migrate calls: %v → %v", before, after)
 	}
 }
 
@@ -130,11 +137,16 @@ CREATE TABLE events (
 	if len(res.Stamped) != 1 || res.Stamped[0] != 1 {
 		t.Fatalf("expected version 1 stamped, got %+v", res)
 	}
-	if len(res.Applied) != 0 {
-		t.Fatalf("expected no re-applied migrations, got %+v", res.Applied)
+	// Any migrations above 0001 in the embedded set are applied normally;
+	// only 0001 should be stamped (the v0.0.1 adoption path).
+	for _, v := range res.Applied {
+		if v == 1 {
+			t.Fatalf("version 1 should be stamped, not applied: %+v", res)
+		}
 	}
-	if got := appliedVersions(t, db); len(got) != 1 || got[0] != 1 {
-		t.Fatalf("schema_migrations rows = %v, want [1]", got)
+	applied := appliedVersions(t, db)
+	if len(applied) == 0 || applied[0] != 1 {
+		t.Fatalf("schema_migrations rows = %v, want to begin with 1", applied)
 	}
 }
 

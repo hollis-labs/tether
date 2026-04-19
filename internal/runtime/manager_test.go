@@ -632,6 +632,164 @@ func (a *atomicWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// fakeAttachSink captures CreateClientAttachment / DetachClientAttachment
+// calls so tests can assert attach lifecycle persistence.
+type fakeAttachSink struct {
+	mu       sync.Mutex
+	attached map[string]fakeAttachRow
+}
+
+type fakeAttachRow struct {
+	sessionID  string
+	clientKind string
+	attachedAt string
+	detachedAt string
+}
+
+func newFakeAttachSink() *fakeAttachSink {
+	return &fakeAttachSink{attached: map[string]fakeAttachRow{}}
+}
+
+func (f *fakeAttachSink) CreateClientAttachment(id, sessionID, clientKind, attachedAt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attached[id] = fakeAttachRow{sessionID: sessionID, clientKind: clientKind, attachedAt: attachedAt}
+	return nil
+}
+
+func (f *fakeAttachSink) DetachClientAttachment(id, detachedAt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.attached[id]
+	if !ok {
+		return nil
+	}
+	row.detachedAt = detachedAt
+	f.attached[id] = row
+	return nil
+}
+
+func (f *fakeAttachSink) rows() []fakeAttachRow {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]fakeAttachRow, 0, len(f.attached))
+	for _, r := range f.attached {
+		out = append(out, r)
+	}
+	return out
+}
+
+func TestManager_AttachPersistsLifecycleThroughSink(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	attachSink := newFakeAttachSink()
+	m := NewManager(sink, starter).WithAttachmentSink(attachSink)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	h := starter.get(req.Workspace.LogPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- m.AttachWith(ctx, "s1", io.Discard, AttachOptions{ClientKind: "http-api"}) }()
+
+	// Wait for the attachment row to be recorded.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		if len(attachSink.rows()) == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("attach row never created; rows=%+v", attachSink.rows())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	row := attachSink.rows()[0]
+	if row.sessionID != "s1" || row.clientKind != "http-api" {
+		t.Errorf("row = %+v, want sessionID=s1 clientKind=http-api", row)
+	}
+	if row.detachedAt != "" {
+		t.Errorf("row detachedAt should be empty while attached, got %q", row.detachedAt)
+	}
+
+	info, ok := m.Get("s1")
+	if !ok || info.AttachedClients != 1 {
+		t.Errorf("SessionInfo.AttachedClients = %d (ok=%v), want 1", info.AttachedClients, ok)
+	}
+
+	cancel()
+	<-done
+
+	// Wait for detach to stamp.
+	for {
+		row := attachSink.rows()[0]
+		if row.detachedAt != "" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("detach never stamped: %+v", row)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	h.complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
+func TestManager_AttachCounterSurvivesConcurrentClients(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	req := newRequest("s1")
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	const N = 5
+	done := make(chan struct{}, N)
+	for i := 0; i < N; i++ {
+		go func() {
+			_ = m.Attach(ctx, "s1", io.Discard)
+			done <- struct{}{}
+		}()
+	}
+
+	// Wait until the manager sees all N subscribers.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		info, _ := m.Get("s1")
+		if info.AttachedClients == N {
+			break
+		}
+		select {
+		case <-deadline:
+			info, _ := m.Get("s1")
+			t.Fatalf("AttachedClients = %d, want %d", info.AttachedClients, N)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	for i := 0; i < N; i++ {
+		<-done
+	}
+	// All detached — counter back to 0.
+	info, _ := m.Get("s1")
+	if info.AttachedClients != 0 {
+		t.Errorf("AttachedClients after detach = %d, want 0", info.AttachedClients)
+	}
+
+	starter.get(req.Workspace.LogPath).complete(0)
+	_ = m.Shutdown(context.Background())
+}
+
 func TestManager_AttachReceivesLiveBytes(t *testing.T) {
 	sink := &fakeSink{}
 	starter := &fakeStarter{}

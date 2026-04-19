@@ -147,6 +147,10 @@ func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writ
 	return a.svc.AttachSession(ctx, id, w)
 }
 
+func (a *serviceAdapter) AttachedClients(id string) int {
+	return a.svc.AttachedClients(id)
+}
+
 var daemonStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the muxd daemon",
