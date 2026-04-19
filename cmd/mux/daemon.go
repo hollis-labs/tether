@@ -94,6 +94,8 @@ var daemonRunCmd = &cobra.Command{
 			Service:     &serviceAdapter{svc: svc},
 			Checkpoints: svc.Store,
 			Broker:      &brokerAdapter{write: svc.Broker, read: svc.Store},
+			Bus:         svc.Bus,
+			EventsStore: svc.Store,
 			Publisher:   svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just

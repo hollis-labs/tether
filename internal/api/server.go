@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/chrispian/agent-mux/internal/events"
 )
 
 // Deps bundles everything the api handlers need at construction time.
@@ -12,6 +14,8 @@ type Deps struct {
 	Service     LaunchService
 	Checkpoints CheckpointStore
 	Broker      BrokerService
+	Bus         events.Bus
+	EventsStore EventsStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -20,6 +24,8 @@ type Server struct {
 	Service     LaunchService
 	Checkpoints CheckpointStore
 	Broker      BrokerService
+	Bus         events.Bus
+	EventsStore EventsStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -29,10 +35,13 @@ func NewHandler(deps Deps) http.Handler {
 		Service:     deps.Service,
 		Checkpoints: deps.Checkpoints,
 		Broker:      deps.Broker,
+		Bus:         deps.Bus,
+		EventsStore: deps.EventsStore,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
 	s.registerCheckpointRoutes(mux)
 	s.registerBrokerRoutes(mux)
+	s.registerEventRoutes(mux)
 	return mux
 }

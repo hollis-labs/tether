@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -33,6 +34,44 @@ func (s *Store) InsertEvent(scope events.Scope, sessionID, kind, payloadJSON str
 	return id, at, nil
 }
 
+// ListEventsBySession returns events bound to a single session in
+// descending id order (newest first), up to limit. cursor restricts
+// the result to id < cursor; pass 0 on the first page. Limit is
+// clamped to [1, 1000] — callers pass -1 or 0 for the default (100).
+//
+// Used by GET /sessions/{id}/events for operator UI / debugging. The
+// Sprint 6 Bus already covers live + full-replay needs via EventsSince
+// + Subscribe; this method exists for the narrower per-session
+// historical view.
+func (s *Store) ListEventsBySession(sessionID string, limit int, cursor int64) ([]events.Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if cursor > 0 {
+		rows, err = s.db.Query(
+			`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE session_id=? AND id < ? ORDER BY id DESC LIMIT ?`,
+			sessionID, cursor, limit,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?`,
+			sessionID, limit,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
 // EventsSince returns all events with id > sinceSeq in ascending id
 // order. Used by the bus to replay history before live delivery.
 // sinceSeq = 0 returns the entire events table.
@@ -45,16 +84,21 @@ func (s *Store) EventsSince(sinceSeq int64) ([]events.Event, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanEvents(rows)
+}
 
+// scanEvents is shared by EventsSince + ListEventsBySession. Row shape
+// is identical; only ORDER BY differs.
+func scanEvents(rows *sql.Rows) ([]events.Event, error) {
 	var out []events.Event
 	for rows.Next() {
 		var (
-			id           int64
-			scope        string
-			sessionID    *string
-			atStr        string
-			kind         string
-			payloadJSON  *string
+			id          int64
+			scope       string
+			sessionID   *string
+			atStr       string
+			kind        string
+			payloadJSON *string
 		)
 		if err := rows.Scan(&id, &scope, &sessionID, &atStr, &kind, &payloadJSON); err != nil {
 			return nil, err

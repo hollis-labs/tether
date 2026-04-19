@@ -169,3 +169,62 @@ func TestEventsSince_AtRoundTrip(t *testing.T) {
 		t.Errorf("stored at %v != returned at %v", got[0].At, at)
 	}
 }
+
+func TestListEventsBySession_NewestFirstWithPagination(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "evts.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Seed mixed sessions so we can verify filtering.
+	for _, kind := range []string{"a", "b", "c", "d"} {
+		if _, _, err := db.InsertEvent(events.ScopeSession, "s1", kind, ``); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := db.InsertEvent(events.ScopeSession, "s2", "other", ``); err != nil {
+		t.Fatal(err)
+	}
+
+	// Limit 2, no cursor — returns newest 2 for s1.
+	first, err := db.ListEventsBySession("s1", 2, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("got %d, want 2", len(first))
+	}
+	if first[0].Kind != "d" || first[1].Kind != "c" {
+		t.Errorf("order wrong: %q, %q (want d,c)", first[0].Kind, first[1].Kind)
+	}
+
+	// Second page: cursor = smallest seq of first page.
+	second, err := db.ListEventsBySession("s1", 2, first[1].Seq)
+	if err != nil {
+		t.Fatalf("list2: %v", err)
+	}
+	if len(second) != 2 {
+		t.Fatalf("got %d, want 2", len(second))
+	}
+	if second[0].Kind != "b" || second[1].Kind != "a" {
+		t.Errorf("page2 order wrong: %q, %q", second[0].Kind, second[1].Kind)
+	}
+
+	// All s1 rows + nothing else.
+	all, err := db.ListEventsBySession("s1", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 {
+		t.Errorf("all s1 returned %d; want 4", len(all))
+	}
+
+	rowsS2, err := db.ListEventsBySession("s2", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsS2) != 1 || rowsS2[0].Kind != "other" {
+		t.Errorf("s2 rows = %+v", rowsS2)
+	}
+}

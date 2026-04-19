@@ -94,6 +94,16 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleCreateCheckpoint(w, r, id)
+	case "events":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.EventsStore == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "events store not configured")
+			return
+		}
+		s.handleSessionEventsList(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

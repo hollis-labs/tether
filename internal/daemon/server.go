@@ -44,6 +44,10 @@ type Server struct {
 	// Broker is optional; when set, the broker envelope endpoints are
 	// mounted.
 	Broker api.BrokerService
+	// Bus is optional; when set, /events/stream is mounted.
+	Bus events.Bus
+	// EventsStore is optional; when set, GET /sessions/{id}/events works.
+	EventsStore api.EventsStore
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -173,6 +177,8 @@ func (s *Server) Handler() http.Handler {
 			Service:     s.Service,
 			Checkpoints: s.Checkpoints,
 			Broker:      s.Broker,
+			Bus:         s.Bus,
+			EventsStore: s.EventsStore,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -184,6 +190,9 @@ func (s *Server) Handler() http.Handler {
 		if s.Broker != nil {
 			mux.Handle("/broker/envelopes", apiHandler)
 			mux.Handle("/broker/envelopes/", apiHandler)
+		}
+		if s.Bus != nil {
+			mux.Handle("/events/stream", apiHandler)
 		}
 	}
 	return mux
