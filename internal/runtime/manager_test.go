@@ -431,6 +431,97 @@ func TestManager_WaitSessionRespectsCtxCancel(t *testing.T) {
 	_ = m.Shutdown(context.Background())
 }
 
+// TestManager_InterleavedLifecycleNoRace is the T-v002-s01-04 regression
+// gate. It holds the Start, Stop, Get, and List calls on the same set of
+// IDs behind a shared barrier so they actually collide with each other —
+// and with the watch goroutines — at launch time rather than the gentler
+// Start-then-Stop fan-out TestManager_ConcurrentStartStopNoRace exercises.
+// Removing the mutex from runtime.Manager causes `go test -race` on this
+// test to report WARNING: DATA RACE (sanity-checked by hand during T-04).
+func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
+	sink := &fakeSink{}
+	starter := &fakeStarter{}
+	m := NewManager(sink, starter)
+
+	const N = 30
+	ids := make([]string, N)
+	for i := 0; i < N; i++ {
+		ids[i] = fmt.Sprintf("lc%d", i)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Starters
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		id := ids[i]
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = m.Start(context.Background(), newRequest(id))
+		}()
+	}
+
+	// Stoppers targeting the same IDs. A Stop that arrives before the
+	// corresponding Start sees ErrSessionNotRunning (not a test failure —
+	// the point is to exercise the mutex, not to assert ordering).
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		id := ids[i]
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = m.Stop(context.Background(), id)
+		}()
+	}
+
+	// Readers hammering Get + List concurrently to race against the
+	// Start-side map writes and watch-side deletes.
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		id := ids[i]
+		go func() {
+			defer wg.Done()
+			<-start
+			for k := 0; k < 5; k++ {
+				_, _ = m.Get(id)
+				_ = m.List()
+			}
+		}()
+	}
+
+	// Completers: for sessions that survived the stopper (race-dependent),
+	// drive them to a clean exit so Shutdown's wg.Wait returns promptly.
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		id := ids[i]
+		go func() {
+			defer wg.Done()
+			<-start
+			req := newRequest(id)
+			// Starter may not have registered the handle yet; spin briefly.
+			for attempt := 0; attempt < 20; attempt++ {
+				if h := starter.get(req.Workspace.LogPath); h != nil {
+					h.complete(0)
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+
+	close(start) // release the barrier — all 120 goroutines run at once
+	wg.Wait()
+
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if got := len(m.List()); got != 0 {
+		t.Errorf("expected empty List after shutdown; got %d", got)
+	}
+}
+
 func TestManager_ConcurrentStartStopNoRace(t *testing.T) {
 	sink := &fakeSink{}
 	starter := &fakeStarter{}
