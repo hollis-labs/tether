@@ -17,5 +17,5 @@ var rootCmd = &cobra.Command{
 func init() {
 	defaultCatalog := filepath.Join(os.Getenv("HOME"), ".agent-mux", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
-	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd)
+	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd)
 }

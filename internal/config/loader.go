@@ -22,6 +22,7 @@ func Load(catalogRoot string) (*Catalog, error) {
 	if err := loadYAML(filepath.Join(catalogRoot, "global.yaml"), &cat.Global); err != nil {
 		return nil, fmt.Errorf("load global: %w", err)
 	}
+	applyDaemonDefaults(&cat.Global.Daemon)
 
 	roots := cat.Global.Catalog.Roots
 	if err := loadDir(resolveRoot(catalogRoot, roots.Projects, "projects"), func(path string) error {
@@ -65,6 +66,21 @@ func Load(catalogRoot string) (*Catalog, error) {
 		return nil, err
 	}
 	return cat, nil
+}
+
+// applyDaemonDefaults fills in listen_addr / pid_file / shutdown_timeout when
+// the catalog's global.yaml omits them. Paths are left un-expanded; callers
+// that need filesystem paths should run them through config.Expand.
+func applyDaemonDefaults(d *DaemonConfig) {
+	if d.ListenAddr == "" {
+		d.ListenAddr = "unix:~/.agent-mux/run/muxd.sock"
+	}
+	if d.PIDFile == "" {
+		d.PIDFile = "~/.agent-mux/run/muxd.pid"
+	}
+	if d.ShutdownTimeout == "" {
+		d.ShutdownTimeout = "10s"
+	}
 }
 
 func resolveRoot(catalogRoot, fromGlobal, fallback string) string {
