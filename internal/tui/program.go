@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/chrispian/agent-mux/internal/tui/client"
 )
 
 // Options configures how a TUI program is constructed. Fields are
@@ -39,7 +41,8 @@ func Run(opts Options) error {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	prog := tea.NewProgram(New(), tea.WithAltScreen())
+	c := client.New(opts.ListenAddr)
+	prog := tea.NewProgram(New(c), tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

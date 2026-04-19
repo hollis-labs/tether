@@ -2,20 +2,21 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/sahilm/fuzzy"
 
+	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
 )
 
 // RowType is the catalog/runtime category a result row belongs to.
-// Filter chips enable or disable visibility per category. T-04 maps
-// each List endpoint onto one of these; T-02 only needs the ordered
-// set for the chip row.
+// Filter chips enable or disable visibility per category.
 type RowType string
 
 const (
@@ -37,23 +38,31 @@ var chipOrder = []RowType{
 }
 
 // Model is the root Bubble Tea model for the mux TUI.
-//
-// T-02 adds the search input, chip filter state, viewport, and footer
-// regions. T-04 replaces the placeholder body content with live catalog
-// rows; T-05 wires Enter-to-launch on LaunchRow selection.
 type Model struct {
-	keys    KeyMap
-	styles  layout.Styles
-	width   int
-	height  int
-	search  textinput.Model
-	body    viewport.Model
-	filters map[RowType]bool
+	keys   KeyMap
+	styles layout.Styles
+	client *client.Client
+
+	width  int
+	height int
+	search textinput.Model
+	body   viewport.Model
+
+	filters     map[RowType]bool
+	rowsByType  map[RowType][]ResultRow
+	visible     []ResultRow
+	selectedIdx int
+
+	loadRemaining int
+	loadErrs      []error
+
+	lastSearch string
 }
 
-// New constructs a Model with scaffold defaults: all filters enabled,
-// search input focused.
-func New() Model {
+// New constructs a Model. client may be nil (primarily for tests);
+// when nil, no catalog data is loaded and the body stays on its
+// placeholder message.
+func New(c *client.Client) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search projects, agents, providers, launches, sessions…"
 	ti.Prompt = "  "
@@ -63,41 +72,60 @@ func New() Model {
 	vp.SetContent(placeholderBody())
 
 	filters := make(map[RowType]bool, len(chipOrder))
+	rowsByType := make(map[RowType][]ResultRow, len(chipOrder))
 	for _, t := range chipOrder {
 		filters[t] = true
+		rowsByType[t] = nil
 	}
 
 	return Model{
-		keys:    DefaultKeyMap(),
-		styles:  layout.DefaultStyles(),
-		search:  ti,
-		body:    vp,
-		filters: filters,
+		keys:          DefaultKeyMap(),
+		styles:        layout.DefaultStyles(),
+		client:        c,
+		search:        ti,
+		body:          vp,
+		filters:       filters,
+		rowsByType:    rowsByType,
+		loadRemaining: len(chipOrder),
 	}
 }
 
-func (m Model) Init() tea.Cmd { return textinput.Blink }
+func (m Model) Init() tea.Cmd {
+	if m.client == nil {
+		return textinput.Blink
+	}
+	return tea.Batch(textinput.Blink, loadAllCatalogCmd(m.client))
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
+		m.refreshBody()
+		return m, nil
+
+	case catalogLoadedMsg:
+		m.rowsByType[msg.typ] = msg.rows
+		if msg.err != nil {
+			m.loadErrs = append(m.loadErrs, msg.err)
+		}
+		if m.loadRemaining > 0 {
+			m.loadRemaining--
+		}
+		m.recomputeVisible()
+		m.refreshBody()
 		return m, nil
 
 	case tea.KeyMsg:
-		// Ctrl-C is the authoritative quit regardless of focus.
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
-
-		// Chip toggles always work; they use Alt-modifier so they
-		// cannot collide with search-input typing.
 		if handled, next := m.handleChipToggle(msg); handled {
+			next.recomputeVisible()
+			next.refreshBody()
 			return next, nil
 		}
-
-		// Focus management for the search field.
 		if key.Matches(msg, m.keys.FocusSearch) && !m.search.Focused() {
 			m.search.Focus()
 			return m, textinput.Blink
@@ -107,9 +135,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// When the search field is blurred, `q` quits and plain
-		// movement keys (j/k/etc.) reach the viewport without the
-		// textinput intercepting them.
+		// Selection navigation. Works regardless of focus so the user
+		// can browse while typing the filter.
+		if msg.Type == tea.KeyDown {
+			m.moveSelection(1)
+			m.refreshBody()
+			return m, nil
+		}
+		if msg.Type == tea.KeyUp {
+			m.moveSelection(-1)
+			m.refreshBody()
+			return m, nil
+		}
+
 		if !m.search.Focused() {
 			if key.Matches(msg, m.keys.Quit) {
 				return m, tea.Quit
@@ -119,16 +157,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Search focused: route typing into textinput; let viewport
-		// see navigation-only keys so users can still scroll while
-		// typing.
 		if isViewportNavKey(msg) {
 			var cmd tea.Cmd
 			m.body, cmd = m.body.Update(msg)
 			return m, cmd
 		}
+		prev := m.search.Value()
 		var cmd tea.Cmd
 		m.search, cmd = m.search.Update(msg)
+		if m.search.Value() != prev {
+			m.lastSearch = m.search.Value()
+			m.recomputeVisible()
+			m.refreshBody()
+		}
 		return m, cmd
 	}
 
@@ -137,7 +178,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
-		// Pre-WindowSizeMsg: Bubble Tea will send one immediately.
 		return ""
 	}
 	return layout.Render(
@@ -150,9 +190,6 @@ func (m Model) View() string {
 	)
 }
 
-// handleChipToggle flips the filter for a RowType when an Alt+N binding
-// matches. Returns (true, updatedModel) when handled, (false, model)
-// otherwise so the caller can fall through to other bindings.
 func (m Model) handleChipToggle(msg tea.KeyMsg) (bool, Model) {
 	bindings := []struct {
 		b key.Binding
@@ -174,27 +211,145 @@ func (m Model) handleChipToggle(msg tea.KeyMsg) (bool, Model) {
 }
 
 // resize recomputes sub-model dimensions given the current terminal
-// size. Layout budget: search occupies 3 rows (bordered), chip row 1,
-// footer 1, body takes the rest; outer frame adds 2 rows of padding.
+// size. Budget: bordered search 3 rows, chips 1, footer 1, body takes
+// the rest; outer frame adds 2 rows for body border.
 func (m *Model) resize() {
-	const (
-		searchRows = 3 // bordered input
-		chipRows   = 1
-		footerRows = 1
-		// Body is bordered (+2 rows) but gets what's left.
-		verticalOverhead = searchRows + chipRows + footerRows + 2
-	)
+	const verticalOverhead = 3 + 1 + 1 + 2
 	bodyHeight := m.height - verticalOverhead
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
-	bodyWidth := m.width - 2 // frame padding
+	bodyWidth := m.width - 2
 	if bodyWidth < 10 {
 		bodyWidth = 10
 	}
 	m.body.Width = bodyWidth
 	m.body.Height = bodyHeight
-	m.search.Width = bodyWidth - 4 // account for prompt + border
+	m.search.Width = bodyWidth - 4
+}
+
+// recomputeVisible applies the current filter chips + search text to
+// m.rowsByType, producing m.visible.
+func (m *Model) recomputeVisible() {
+	// Gather enabled rows in deterministic order (chipOrder).
+	pool := make([]ResultRow, 0, 64)
+	for _, t := range chipOrder {
+		if !m.filters[t] {
+			continue
+		}
+		pool = append(pool, m.rowsByType[t]...)
+	}
+	// Stable alpha-by-title baseline before fuzzy scoring.
+	sort.SliceStable(pool, func(i, j int) bool {
+		return pool[i].Title() < pool[j].Title()
+	})
+
+	query := strings.TrimSpace(m.search.Value())
+	if query == "" {
+		m.visible = pool
+	} else {
+		titles := make([]string, len(pool))
+		for i, r := range pool {
+			titles[i] = r.Title() + " " + r.ID()
+		}
+		matches := fuzzy.Find(query, titles)
+		out := make([]ResultRow, 0, len(matches))
+		for _, mm := range matches {
+			out = append(out, pool[mm.Index])
+		}
+		m.visible = out
+	}
+
+	if m.selectedIdx >= len(m.visible) {
+		m.selectedIdx = 0
+	}
+	if m.selectedIdx < 0 {
+		m.selectedIdx = 0
+	}
+}
+
+// moveSelection nudges the selected row index within the visible
+// window, clamping at either end.
+func (m *Model) moveSelection(delta int) {
+	if len(m.visible) == 0 {
+		return
+	}
+	next := m.selectedIdx + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(m.visible) {
+		next = len(m.visible) - 1
+	}
+	m.selectedIdx = next
+}
+
+// refreshBody re-renders the visible rows into the viewport. Also
+// nudges the viewport's Y offset so the selected row stays visible.
+func (m *Model) refreshBody() {
+	if m.body.Width == 0 || m.body.Height == 0 {
+		return
+	}
+
+	// Loading state: show a placeholder until first payload arrives.
+	if m.loadRemaining == len(chipOrder) && len(m.visible) == 0 {
+		m.body.SetContent(placeholderBody())
+		return
+	}
+
+	if len(m.visible) == 0 {
+		m.body.SetContent(emptyStateBody(m.loadErrs))
+		return
+	}
+
+	var sb strings.Builder
+	for i, r := range m.visible {
+		sb.WriteString(renderRowLine(r, i == m.selectedIdx))
+		sb.WriteByte('\n')
+	}
+	m.body.SetContent(sb.String())
+	m.ensureSelectedVisible()
+}
+
+// ensureSelectedVisible scrolls the viewport so that the selected row
+// sits inside the visible window. One row per rendered line.
+func (m *Model) ensureSelectedVisible() {
+	top := m.body.YOffset
+	bottom := top + m.body.Height - 1
+	switch {
+	case m.selectedIdx < top:
+		m.body.SetYOffset(m.selectedIdx)
+	case m.selectedIdx > bottom:
+		m.body.SetYOffset(m.selectedIdx - m.body.Height + 1)
+	}
+}
+
+// SelectedRow returns the currently-highlighted row (or nil if the
+// visible set is empty). Exposed for T-05 Enter-to-launch.
+func (m Model) SelectedRow() ResultRow {
+	if len(m.visible) == 0 {
+		return nil
+	}
+	return m.visible[m.selectedIdx]
+}
+
+func renderRowLine(r ResultRow, selected bool) string {
+	typeTag := fmt.Sprintf("[%s]", r.Type())
+	line := fmt.Sprintf("%-11s %-30s  %s", typeTag, truncate(r.Title(), 30), r.Subtitle())
+	if selected {
+		return "▶ " + line
+	}
+	return "  " + line
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n < 2 {
+		return s[:n]
+	}
+	return s[:n-1] + "…"
 }
 
 func (m Model) renderSearch() string {
@@ -225,7 +380,15 @@ func (m Model) renderFooter() string {
 		m.keyHint(m.keys.Quit),
 		m.keyHint(m.keys.Help),
 	}
-	return m.styles.Frame.Render(m.styles.Footer.Render(strings.Join(hints, "  ·  ")))
+	status := ""
+	if m.loadRemaining > 0 && m.client != nil {
+		status = fmt.Sprintf("  ·  loading (%d/%d)…", len(chipOrder)-m.loadRemaining, len(chipOrder))
+	} else if len(m.loadErrs) > 0 {
+		status = fmt.Sprintf("  ·  %d load error(s)", len(m.loadErrs))
+	} else if len(m.visible) > 0 {
+		status = fmt.Sprintf("  ·  %d result(s)", len(m.visible))
+	}
+	return m.styles.Frame.Render(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status))
 }
 
 func (m Model) keyHint(b key.Binding) string {
@@ -238,15 +401,25 @@ func chipLabel(t RowType) string {
 }
 
 func placeholderBody() string {
-	return "\n  No catalog rows loaded yet.\n" +
-		"  T-03 wires the daemon client; T-04 populates this viewport.\n"
+	return "\n  Loading catalog…\n"
 }
 
-// isViewportNavKey returns true for keys that should always scroll the
-// body viewport, even when the search input is focused.
+func emptyStateBody(errs []error) string {
+	if len(errs) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n  No results — encountered load errors:\n")
+		for _, e := range errs {
+			sb.WriteString("    · " + e.Error() + "\n")
+		}
+		sb.WriteString("\n  Toggle filters (Alt+1..5) or clear the search.\n")
+		return sb.String()
+	}
+	return "\n  No matches — clear the search or toggle a filter (Alt+1..5).\n"
+}
+
 func isViewportNavKey(msg tea.KeyMsg) bool {
 	switch msg.Type { //nolint:exhaustive // intentional subset: scroll-only keys
-	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 		return true
 	default:
 		return false

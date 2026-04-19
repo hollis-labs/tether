@@ -7,7 +7,7 @@ import (
 )
 
 func TestRootModelQuitOnCtrlC(t *testing.T) {
-	m := New() // search focused by default
+	m := New(nil) // search focused by default
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("expected a quit command on Ctrl-C, got nil")
@@ -18,7 +18,7 @@ func TestRootModelQuitOnCtrlC(t *testing.T) {
 }
 
 func TestRootModelQDoesNotQuitWhileSearchFocused(t *testing.T) {
-	m := New() // search focused by default
+	m := New(nil) // search focused by default
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd != nil {
 		if _, ok := cmd().(tea.QuitMsg); ok {
@@ -35,7 +35,7 @@ func TestRootModelQDoesNotQuitWhileSearchFocused(t *testing.T) {
 }
 
 func TestRootModelQQuitsAfterSearchBlur(t *testing.T) {
-	m := New()
+	m := New(nil)
 	// Blur the search input.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
@@ -53,7 +53,7 @@ func TestRootModelQQuitsAfterSearchBlur(t *testing.T) {
 }
 
 func TestRootModelSearchRefocusesOnSlash(t *testing.T) {
-	m := New()
+	m := New(nil)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
 	if m.search.Focused() {
@@ -67,7 +67,7 @@ func TestRootModelSearchRefocusesOnSlash(t *testing.T) {
 }
 
 func TestRootModelTracksResize(t *testing.T) {
-	m := New()
+	m := New(nil)
 	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if cmd != nil {
 		t.Fatalf("expected no command on resize, got %T", cmd())
@@ -85,7 +85,7 @@ func TestRootModelTracksResize(t *testing.T) {
 }
 
 func TestChipToggleFlipsFilter(t *testing.T) {
-	m := New()
+	m := New(nil)
 	if !m.filters[RowTypeProjects] {
 		t.Fatal("expected projects filter enabled by default")
 	}
@@ -104,7 +104,7 @@ func TestChipToggleFlipsFilter(t *testing.T) {
 }
 
 func TestChipToggleAllFiveBindings(t *testing.T) {
-	m := New()
+	m := New(nil)
 	digits := []struct {
 		d rune
 		t RowType
@@ -126,7 +126,7 @@ func TestChipToggleAllFiveBindings(t *testing.T) {
 }
 
 func TestSearchCapturesTyping(t *testing.T) {
-	m := New()
+	m := New(nil)
 	for _, r := range "hello" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = next.(Model)
