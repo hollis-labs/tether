@@ -40,48 +40,48 @@ type Defaults struct {
 }
 
 type Project struct {
-	ID            string        `yaml:"id"`
-	Name          string        `yaml:"name"`
-	RepoRoot      string        `yaml:"repo_root"`
-	TrackingRoot  string        `yaml:"tracking_root"`
-	KnowledgeBase []string      `yaml:"knowledge_base"`
-	BootFragments []string      `yaml:"boot_fragments"`
-	Workspace     WorkspaceSpec `yaml:"workspace"`
+	ID            string        `yaml:"id" json:"id"`
+	Name          string        `yaml:"name" json:"name"`
+	RepoRoot      string        `yaml:"repo_root" json:"repo_root"`
+	TrackingRoot  string        `yaml:"tracking_root" json:"tracking_root"`
+	KnowledgeBase []string      `yaml:"knowledge_base" json:"knowledge_base,omitempty"`
+	BootFragments []string      `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
+	Workspace     WorkspaceSpec `yaml:"workspace" json:"workspace"`
 }
 
 type WorkspaceSpec struct {
-	DefaultMode  string `yaml:"default_mode"`
-	WorktreeBase string `yaml:"worktree_base"`
-	SessionRoot  string `yaml:"session_root"`
+	DefaultMode  string `yaml:"default_mode" json:"default_mode"`
+	WorktreeBase string `yaml:"worktree_base" json:"worktree_base,omitempty"`
+	SessionRoot  string `yaml:"session_root" json:"session_root,omitempty"`
 }
 
 type Agent struct {
-	ID            string           `yaml:"id"`
-	Name          string           `yaml:"name"`
-	Roles         []string         `yaml:"roles"`
-	Skills        []string         `yaml:"skills"`
-	ContextFiles  []string         `yaml:"context_files"`
-	BootFragments []string         `yaml:"boot_fragments"`
-	Permissions   AgentPermissions `yaml:"permissions"`
+	ID            string           `yaml:"id" json:"id"`
+	Name          string           `yaml:"name" json:"name"`
+	Roles         []string         `yaml:"roles" json:"roles,omitempty"`
+	Skills        []string         `yaml:"skills" json:"skills,omitempty"`
+	ContextFiles  []string         `yaml:"context_files" json:"context_files,omitempty"`
+	BootFragments []string         `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
+	Permissions   AgentPermissions `yaml:"permissions" json:"permissions"`
 }
 
 type AgentPermissions struct {
-	Network        bool   `yaml:"network"`
-	DefaultSandbox string `yaml:"default_sandbox"`
+	Network        bool   `yaml:"network" json:"network"`
+	DefaultSandbox string `yaml:"default_sandbox" json:"default_sandbox,omitempty"`
 }
 
 type Provider struct {
-	ID        string        `yaml:"id"`
-	Type      string        `yaml:"type"`
-	Command   string        `yaml:"command"`
-	Args      []string      `yaml:"args"`
-	Bootstrap BootstrapSpec `yaml:"bootstrap"`
-	Env       ProviderEnv   `yaml:"env"`
+	ID        string        `yaml:"id" json:"id"`
+	Type      string        `yaml:"type" json:"type"`
+	Command   string        `yaml:"command" json:"command"`
+	Args      []string      `yaml:"args" json:"args,omitempty"`
+	Bootstrap BootstrapSpec `yaml:"bootstrap" json:"bootstrap"`
+	Env       ProviderEnv   `yaml:"env" json:"env"`
 }
 
 type BootstrapSpec struct {
-	Mode         string `yaml:"mode"`
-	PromptPrefix string `yaml:"prompt_prefix"`
+	Mode         string `yaml:"mode" json:"mode,omitempty"`
+	PromptPrefix string `yaml:"prompt_prefix" json:"prompt_prefix,omitempty"`
 }
 
 // ProviderEnv describes how the provider composes a child process's
@@ -95,35 +95,35 @@ type BootstrapSpec struct {
 // in merge mode. Both fields are preserved across modes so catalog authors
 // can flip mode without rewriting the rest of the block.
 type ProviderEnv struct {
-	Mode        string   `yaml:"mode"`
-	Passthrough []string `yaml:"passthrough"`
-	Redact      []string `yaml:"redact"`
+	Mode        string   `yaml:"mode" json:"mode"`
+	Passthrough []string `yaml:"passthrough" json:"passthrough,omitempty"`
+	Redact      []string `yaml:"redact" json:"redact,omitempty"`
 }
 
 type Launch struct {
-	ID        string          `yaml:"id"`
-	Project   string          `yaml:"project"`
-	Agent     string          `yaml:"agent"`
-	Provider  string          `yaml:"provider"`
-	Workspace LaunchWorkspace `yaml:"workspace"`
-	Prompt    PromptSpec      `yaml:"prompt"`
-	Overrides LaunchOverrides `yaml:"overrides"`
+	ID        string          `yaml:"id" json:"id"`
+	Project   string          `yaml:"project" json:"project"`
+	Agent     string          `yaml:"agent" json:"agent"`
+	Provider  string          `yaml:"provider" json:"provider"`
+	Workspace LaunchWorkspace `yaml:"workspace" json:"workspace"`
+	Prompt    PromptSpec      `yaml:"prompt" json:"prompt"`
+	Overrides LaunchOverrides `yaml:"overrides" json:"overrides"`
 }
 
 type LaunchWorkspace struct {
-	Mode         string `yaml:"mode"`
-	WorktreeName string `yaml:"worktree_name"`
-	WriteHome    string `yaml:"write_home"`
+	Mode         string `yaml:"mode" json:"mode"`
+	WorktreeName string `yaml:"worktree_name" json:"worktree_name,omitempty"`
+	WriteHome    string `yaml:"write_home" json:"write_home,omitempty"`
 }
 
 type PromptSpec struct {
-	IncludeProjectBoot   bool `yaml:"include_project_boot"`
-	IncludeAgentBoot     bool `yaml:"include_agent_boot"`
-	IncludeKnowledgeBase bool `yaml:"include_knowledge_base"`
+	IncludeProjectBoot   bool `yaml:"include_project_boot" json:"include_project_boot"`
+	IncludeAgentBoot     bool `yaml:"include_agent_boot" json:"include_agent_boot"`
+	IncludeKnowledgeBase bool `yaml:"include_knowledge_base" json:"include_knowledge_base"`
 }
 
 type LaunchOverrides struct {
-	Env map[string]string `yaml:"env"`
+	Env map[string]string `yaml:"env" json:"env,omitempty"`
 }
 
 type Catalog struct {

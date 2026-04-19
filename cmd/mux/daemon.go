@@ -98,6 +98,7 @@ var daemonRunCmd = &cobra.Command{
 			Broker:      &brokerAdapter{write: svc.Broker, read: svc.Store},
 			Bus:         svc.Bus,
 			EventsStore: svc.Store,
+			Catalog:     &catalogLoader{root: svc.CatalogRoot},
 			Publisher:   svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
@@ -170,6 +171,18 @@ func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writ
 
 func (a *serviceAdapter) AttachedClients(id string) int {
 	return a.svc.AttachedClients(id)
+}
+
+// catalogLoader is the production api.CatalogLoader: each Load call
+// re-reads the catalog root with config.Load, so live YAML edits are
+// picked up without a daemon restart. The read cost is trivial (O(100s)
+// YAML files at most) and matches ADR 0012's fresh-read stance.
+type catalogLoader struct {
+	root string
+}
+
+func (c *catalogLoader) Load() (*config.Catalog, error) {
+	return config.Load(c.root)
 }
 
 // brokerAdapter bundles broker.Service (writes with event emission)

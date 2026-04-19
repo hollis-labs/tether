@@ -48,6 +48,9 @@ type Server struct {
 	Bus events.Bus
 	// EventsStore is optional; when set, GET /sessions/{id}/events works.
 	EventsStore api.EventsStore
+	// Catalog is optional; when set, GET /catalog/<type> endpoints are
+	// mounted. Nil in tests that only exercise the session surface.
+	Catalog api.CatalogLoader
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -172,18 +175,21 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	if s.Service != nil {
+	if s.Service != nil || s.Catalog != nil {
 		apiHandler := api.NewHandler(api.Deps{
 			Service:     s.Service,
 			Checkpoints: s.Checkpoints,
 			Broker:      s.Broker,
 			Bus:         s.Bus,
 			EventsStore: s.EventsStore,
+			Catalog:     s.Catalog,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
-		mux.Handle("/sessions", apiHandler)
-		mux.Handle("/sessions/", apiHandler)
+		if s.Service != nil {
+			mux.Handle("/sessions", apiHandler)
+			mux.Handle("/sessions/", apiHandler)
+		}
 		if s.Checkpoints != nil {
 			mux.Handle("/logical-agents/", apiHandler)
 		}
@@ -193,6 +199,12 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)
+		}
+		if s.Catalog != nil {
+			mux.Handle("/catalog/projects", apiHandler)
+			mux.Handle("/catalog/agents", apiHandler)
+			mux.Handle("/catalog/providers", apiHandler)
+			mux.Handle("/catalog/launches", apiHandler)
 		}
 	}
 	return mux
