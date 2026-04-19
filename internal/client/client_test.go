@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/daemon"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -21,7 +22,7 @@ import (
 // address semantics so BaseURL + DialHTTPClient work unchanged.
 type mockDaemon struct {
 	server *httptest.Server
-	launch func(string) (daemon.LaunchResult, error)
+	launch func(string) (api.LaunchResult, error)
 	list   func() ([]store.SessionRow, error)
 	get    func(string) (*store.SessionRow, error)
 	stop   func(string) error
@@ -39,11 +40,11 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 	m := &mockDaemon{}
 
 	svc := &funcService{
-		launchFn: func(id string) (daemon.LaunchResult, error) {
+		launchFn: func(id string) (api.LaunchResult, error) {
 			if m.launch != nil {
 				return m.launch(id)
 			}
-			return daemon.LaunchResult{}, errors.New("launch not configured")
+			return api.LaunchResult{}, errors.New("launch not configured")
 		},
 		listFn: func() ([]store.SessionRow, error) {
 			if m.list != nil {
@@ -92,7 +93,7 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 // funcService is a func-table LaunchService — lighter than a struct-full-of-
 // fields fake for the case-by-case per-test overrides that client tests need.
 type funcService struct {
-	launchFn func(string) (daemon.LaunchResult, error)
+	launchFn func(string) (api.LaunchResult, error)
 	listFn   func() ([]store.SessionRow, error)
 	getFn    func(string) (*store.SessionRow, error)
 	stopFn   func(string) error
@@ -102,7 +103,7 @@ type funcService struct {
 	attachedFn      func(string) int
 }
 
-func (s *funcService) Launch(id string) (daemon.LaunchResult, error) { return s.launchFn(id) }
+func (s *funcService) Launch(id string) (api.LaunchResult, error) { return s.launchFn(id) }
 func (s *funcService) ListSessions() ([]store.SessionRow, error)     { return s.listFn() }
 func (s *funcService) GetSession(id string) (*store.SessionRow, error) {
 	return s.getFn(id)
@@ -124,11 +125,11 @@ func (s *funcService) AttachedClients(id string) int {
 
 func TestClient_Launch(t *testing.T) {
 	m := newMockDaemon(t)
-	m.launch = func(id string) (daemon.LaunchResult, error) {
+	m.launch = func(id string) (api.LaunchResult, error) {
 		if id != "demo" {
 			t.Errorf("launch id = %q", id)
 		}
-		return daemon.LaunchResult{SessionID: "sess-1", Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
+		return api.LaunchResult{SessionID: "sess-1", Workspace: "/ws", LogPath: "/ws/logs/session.log"}, nil
 	}
 	c := New(m.addr())
 	res, err := c.Launch(context.Background(), "demo")

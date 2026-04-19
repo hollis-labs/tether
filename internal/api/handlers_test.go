@@ -1,4 +1,4 @@
-package daemon
+package api
 
 import (
 	"bytes"
@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,28 +102,28 @@ func (f *fakeLaunchService) AttachedClients(id string) int {
 	return f.attachedClients[id]
 }
 
-func newTestServer(svc LaunchService) *Server {
-	return &Server{
-		Config:  Config{ListenAddr: "tcp:127.0.0.1:0"},
-		Service: svc,
-	}
+func newTestHandler(svc LaunchService) http.Handler {
+	return NewHandler(Deps{Service: svc})
 }
 
-func buildRouter(s *Server) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
-	s.registerSessionRoutes(mux)
-	return mux
+// decodeErr pulls the typed error envelope out of a response body and
+// returns it; helpers use this to assert both status + code in one place.
+func decodeErr(t *testing.T, rr *httptest.ResponseRecorder) ErrorResponse {
+	t.Helper()
+	var env ErrorResponse
+	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
+		t.Fatalf("decode error envelope: %v (raw=%q)", err, rr.Body.String())
+	}
+	return env
 }
 
 func TestHandleLaunch_Success(t *testing.T) {
 	svc := &fakeLaunchService{launchRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
-	srv := newTestServer(svc)
 
 	body, _ := json.Marshal(LaunchRequest{Launch: "demo-launch"})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())
@@ -146,28 +145,31 @@ func TestHandleLaunch_Success(t *testing.T) {
 
 func TestHandleLaunch_MissingID(t *testing.T) {
 	svc := &fakeLaunchService{}
-	srv := newTestServer(svc)
 	body, _ := json.Marshal(LaunchRequest{})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("error code = %q, want %q", env.Error.Code, CodeInvalidRequest)
 	}
 }
 
 func TestHandleLaunch_ServiceError(t *testing.T) {
 	svc := &fakeLaunchService{launchErr: errors.New("adapter unavailable")}
-	srv := newTestServer(svc)
 	body, _ := json.Marshal(LaunchRequest{Launch: "demo"})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "adapter unavailable") {
-		t.Errorf("error message missing: %s", rr.Body.String())
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInternalError || env.Error.Message == "" {
+		t.Errorf("envelope = %+v", env)
 	}
 }
 
@@ -177,10 +179,9 @@ func TestHandleListSessions(t *testing.T) {
 		{ID: "s2", State: "completed", ExitCode: sql.NullInt64{Int64: 0, Valid: true}},
 	}
 	svc := &fakeLaunchService{listRes: rows}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
@@ -202,22 +203,24 @@ func TestHandleListSessions(t *testing.T) {
 
 func TestHandleGetSession_NotFound(t *testing.T) {
 	svc := &fakeLaunchService{getRes: map[string]*store.SessionRow{}}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions/missing", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeNotFound {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 
 func TestHandleGetSession_Found(t *testing.T) {
 	row := &store.SessionRow{ID: "s1", State: "running"}
 	svc := &fakeLaunchService{getRes: map[string]*store.SessionRow{"s1": row}}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -232,10 +235,9 @@ func TestHandleGetSession_Found(t *testing.T) {
 
 func TestHandleStopSession_Success(t *testing.T) {
 	svc := &fakeLaunchService{}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/stop", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204: %s", rr.Code, rr.Body.String())
 	}
@@ -246,21 +248,23 @@ func TestHandleStopSession_Success(t *testing.T) {
 
 func TestHandleStopSession_NotRunning(t *testing.T) {
 	svc := &fakeLaunchService{stopErr: runtime.ErrSessionNotRunning}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/stop", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeNotFound {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 
 func TestHandleWaitSession(t *testing.T) {
 	svc := &fakeLaunchService{waitRes: map[string]int{"s1": 42}}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/wait", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -275,10 +279,9 @@ func TestHandleWaitSession(t *testing.T) {
 
 func TestHandleWaitSession_NotRunning(t *testing.T) {
 	svc := &fakeLaunchService{waitErr: runtime.ErrSessionNotRunning}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/wait", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
 	}
@@ -286,22 +289,24 @@ func TestHandleWaitSession_NotRunning(t *testing.T) {
 
 func TestHandleSessions_MethodNotAllowed(t *testing.T) {
 	svc := &fakeLaunchService{}
-	srv := newTestServer(svc)
 
 	req := httptest.NewRequest(http.MethodDelete, "/sessions", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("DELETE /sessions status = %d, want 405", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeMethodNotAllowed {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 
 func TestHandleSendInput_Success(t *testing.T) {
 	svc := &fakeLaunchService{}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("hello\n")))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
 	}
@@ -315,10 +320,9 @@ func TestHandleSendInput_Success(t *testing.T) {
 
 func TestHandleSendInput_SessionNotRunning(t *testing.T) {
 	svc := &fakeLaunchService{inputErr: runtime.ErrSessionNotRunning}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
 	}
@@ -326,27 +330,33 @@ func TestHandleSendInput_SessionNotRunning(t *testing.T) {
 
 func TestHandleSendInput_NoInputChannelConflict(t *testing.T) {
 	svc := &fakeLaunchService{inputErr: provider.ErrNoInputChannel}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeConflict {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 
 func TestHandleSendInput_TooLarge(t *testing.T) {
 	svc := &fakeLaunchService{}
-	srv := newTestServer(svc)
 	body := bytes.Repeat([]byte{'x'}, maxInputBytes+1)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", rr.Code)
 	}
 	if len(svc.inputLog) != 0 {
 		t.Errorf("body was forwarded despite being too large: %d entries", len(svc.inputLog))
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodePayloadTooLarge {
+		t.Errorf("error code = %q", env.Error.Code)
 	}
 }
 
@@ -362,10 +372,9 @@ func TestHandleAttach_StreamsUntilServiceReturns(t *testing.T) {
 			return nil
 		},
 	}
-	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach", nil)
 	rr := httptest.NewRecorder()
-	buildRouter(srv).ServeHTTP(rr, req)
+	newTestHandler(svc).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)
@@ -380,14 +389,13 @@ func TestHandleAttach_StreamsUntilServiceReturns(t *testing.T) {
 
 func TestHandleAttach_SessionNotRunning(t *testing.T) {
 	svc := &fakeLaunchService{attachErr: runtime.ErrSessionNotRunning}
-	srv := newTestServer(svc)
 	// With a real server we'd get 404 before streaming; our handler already
 	// wrote 200 + headers, so the check is that the stream terminates cleanly
 	// with no body and the handler returns.
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/attach", nil)
 	rr := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { buildRouter(srv).ServeHTTP(rr, req); close(done) }()
+	go func() { newTestHandler(svc).ServeHTTP(rr, req); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
@@ -396,14 +404,13 @@ func TestHandleAttach_SessionNotRunning(t *testing.T) {
 }
 
 func TestSessionRoutes_NotRegisteredWithoutService(t *testing.T) {
-	srv := newTestServer(nil)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", srv.handleHealth)
-	srv.registerSessionRoutes(mux) // no-op when Service is nil
+	// Nil service means NewHandler returns a mux with no /sessions
+	// routes; requests to them fall through to ServeMux's default 404.
+	h := NewHandler(Deps{Service: nil})
 
 	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
 	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, req)
+	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404 when Service is nil; got %d", rr.Code)
 	}

@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/client"
-	"github.com/chrispian/agent-mux/internal/daemon"
 )
 
 var sessionsCmd = &cobra.Command{
@@ -175,7 +175,7 @@ func runTailSnapshot(id string) error {
 // listSessionsDaemonOrStore tries the daemon first and falls back to a
 // read-only SQLite lookup when the daemon is unreachable. Errors other than
 // "daemon unreachable" are propagated verbatim.
-func listSessionsDaemonOrStore(ctx context.Context, catalogRoot string) ([]daemon.SessionDTO, error) {
+func listSessionsDaemonOrStore(ctx context.Context, catalogRoot string) ([]api.SessionDTO, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -193,7 +193,7 @@ func listSessionsDaemonOrStore(ctx context.Context, catalogRoot string) ([]daemo
 	return listSessionsFromStore(catalogRoot)
 }
 
-func listSessionsFromStore(catalogRoot string) ([]daemon.SessionDTO, error) {
+func listSessionsFromStore(catalogRoot string) ([]api.SessionDTO, error) {
 	db, err := openStoreReadOnly(catalogRoot)
 	if err != nil {
 		return nil, err
@@ -203,42 +203,42 @@ func listSessionsFromStore(catalogRoot string) ([]daemon.SessionDTO, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]daemon.SessionDTO, 0, len(rows))
+	out := make([]api.SessionDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, daemon.SessionRowToDTO(r))
+		out = append(out, api.SessionRowToDTO(r))
 	}
 	return out, nil
 }
 
-func getSessionDaemonOrStore(ctx context.Context, catalogRoot, id string) (daemon.SessionDTO, error) {
+func getSessionDaemonOrStore(ctx context.Context, catalogRoot, id string) (api.SessionDTO, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	c, err := newDaemonClient(catalogRoot)
 	if err != nil {
-		return daemon.SessionDTO{}, err
+		return api.SessionDTO{}, err
 	}
 	dto, err := c.GetSession(ctx, id)
 	if err == nil {
 		return dto, nil
 	}
 	if !errors.Is(err, client.ErrDaemonUnreachable) {
-		return daemon.SessionDTO{}, err
+		return api.SessionDTO{}, err
 	}
 	return getSessionFromStore(catalogRoot, id)
 }
 
-func getSessionFromStore(catalogRoot, id string) (daemon.SessionDTO, error) {
+func getSessionFromStore(catalogRoot, id string) (api.SessionDTO, error) {
 	db, err := openStoreReadOnly(catalogRoot)
 	if err != nil {
-		return daemon.SessionDTO{}, err
+		return api.SessionDTO{}, err
 	}
 	defer db.Close()
 	row, err := db.GetSession(id)
 	if err != nil {
-		return daemon.SessionDTO{}, err
+		return api.SessionDTO{}, err
 	}
-	return daemon.SessionRowToDTO(*row), nil
+	return api.SessionRowToDTO(*row), nil
 }
 
 func init() {

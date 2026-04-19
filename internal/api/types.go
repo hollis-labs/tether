@@ -1,4 +1,4 @@
-package daemon
+package api
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
-// LaunchService is the subset of app.Service that the daemon's HTTP surface
-// calls. A small wrapper in the CLI layer adapts *app.Service to this
-// interface, which keeps the daemon package decoupled from app (no import
-// cycle risk) and makes handler tests trivial to stub.
+// LaunchService is the subset of app.Service that the HTTP handlers
+// dispatch to. A small wrapper in the CLI layer adapts *app.Service to
+// this interface, which keeps the api package decoupled from app (no
+// import cycle risk) and makes handler tests trivial to stub.
 type LaunchService interface {
 	Launch(launchID string) (LaunchResult, error)
 	ListSessions() ([]store.SessionRow, error)
@@ -22,7 +22,7 @@ type LaunchService interface {
 	AttachedClients(id string) int
 }
 
-// LaunchResult is the daemon-facing subset of app.Launched. The full app
+// LaunchResult is the api-facing subset of app.Launched. The full app
 // struct carries a *workspace.Session and a Wait closure; the API only
 // needs the primitive strings for the response body.
 type LaunchResult struct {
@@ -68,24 +68,20 @@ type SessionDTO struct {
 	AttachedClients int     `json:"attached_clients"`
 }
 
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
-
 // SessionRowToDTO flattens the sql.Null* fields on store.SessionRow into
 // pointer-valued JSON-friendly shapes. Nil means "no value set" (e.g.,
 // session not yet running, or hasn't exited).
 func SessionRowToDTO(r store.SessionRow) SessionDTO {
 	dto := SessionDTO{
-		ID:         r.ID,
-		LaunchID:   r.LaunchID,
-		ProjectID:  r.ProjectID,
+		ID:             r.ID,
+		LaunchID:       r.LaunchID,
+		ProjectID:      r.ProjectID,
 		LogicalAgentID: r.LogicalAgentID,
-		ProviderID: r.ProviderID,
-		Workspace:  r.Workspace,
-		State:      r.State,
-		CreatedAt:  r.CreatedAt,
-		UpdatedAt:  r.UpdatedAt,
+		ProviderID:     r.ProviderID,
+		Workspace:      r.Workspace,
+		State:          r.State,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	}
 	if r.PID.Valid {
 		v := int(r.PID.Int64)

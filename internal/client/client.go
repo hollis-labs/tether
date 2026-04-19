@@ -1,7 +1,7 @@
 // Package client is the thin HTTP client used by the mux CLI to talk to a
 // running muxd daemon. It wraps the transport helpers in internal/daemon
-// and the JSON payload types defined there, so CLI subcommands stay free
-// of HTTP plumbing.
+// and the JSON payload types defined in internal/api, so CLI subcommands
+// stay free of HTTP plumbing.
 package client
 
 import (
@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/daemon"
 )
 
@@ -74,32 +75,32 @@ func (c *Client) Health(ctx context.Context) (daemon.Health, error) {
 }
 
 // Launch starts a new session on the daemon.
-func (c *Client) Launch(ctx context.Context, launchID string) (daemon.LaunchResponse, error) {
-	body, _ := json.Marshal(daemon.LaunchRequest{Launch: launchID})
+func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchResponse, error) {
+	body, _ := json.Marshal(api.LaunchRequest{Launch: launchID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions", bytes.NewReader(body))
 	if err != nil {
-		return daemon.LaunchResponse{}, err
+		return api.LaunchResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return daemon.LaunchResponse{}, wrapIfUnreachable(err)
+		return api.LaunchResponse{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		return daemon.LaunchResponse{}, readError(resp)
+		return api.LaunchResponse{}, readError(resp)
 	}
-	var res daemon.LaunchResponse
+	var res api.LaunchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return daemon.LaunchResponse{}, fmt.Errorf("decode launch response: %w", err)
+		return api.LaunchResponse{}, fmt.Errorf("decode launch response: %w", err)
 	}
 	return res, nil
 }
 
 // ListSessions returns the daemon's current view of all sessions (running +
 // terminal), flattened into DTOs.
-func (c *Client) ListSessions(ctx context.Context) ([]daemon.SessionDTO, error) {
-	var res daemon.ListSessionsResponse
+func (c *Client) ListSessions(ctx context.Context) ([]api.SessionDTO, error) {
+	var res api.ListSessionsResponse
 	if err := c.getJSON(ctx, "/sessions", &res); err != nil {
 		return nil, err
 	}
@@ -108,10 +109,10 @@ func (c *Client) ListSessions(ctx context.Context) ([]daemon.SessionDTO, error) 
 
 // GetSession fetches one session by id. Returns os-style not-found semantics
 // via a descriptive error when the daemon returns 404.
-func (c *Client) GetSession(ctx context.Context, id string) (daemon.SessionDTO, error) {
-	var dto daemon.SessionDTO
+func (c *Client) GetSession(ctx context.Context, id string) (api.SessionDTO, error) {
+	var dto api.SessionDTO
 	if err := c.getJSON(ctx, "/sessions/"+url.PathEscape(id), &dto); err != nil {
-		return daemon.SessionDTO{}, err
+		return api.SessionDTO{}, err
 	}
 	return dto, nil
 }
@@ -191,7 +192,7 @@ func (c *Client) AttachSession(ctx context.Context, id string, w io.Writer) erro
 // the exit code recorded by the runtime manager. The ctx controls the
 // client-side timeout; the daemon itself does not apply one.
 func (c *Client) WaitSession(ctx context.Context, id string) (int, error) {
-	var res daemon.WaitResponse
+	var res api.WaitResponse
 	// Override the default 5s transport timeout for this specific call so
 	// long-running sessions can block.
 	longClient := *c.http
@@ -233,13 +234,13 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 }
 
 // readError reads a daemon error envelope from resp.Body. Returns a
-// descriptive error that preserves the HTTP status for callers that
-// want to branch on 404 vs. 500.
+// descriptive error that preserves the HTTP status + error code for
+// callers that want to branch on 404 vs. 500 or on the typed code.
 func readError(resp *http.Response) error {
-	var env daemon.ErrorResponse
+	var env api.ErrorResponse
 	body, _ := io.ReadAll(resp.Body)
-	if err := json.Unmarshal(body, &env); err == nil && env.Error != "" {
-		return fmt.Errorf("daemon %d: %s", resp.StatusCode, env.Error)
+	if err := json.Unmarshal(body, &env); err == nil && env.Error.Message != "" {
+		return fmt.Errorf("daemon %d (%s): %s", resp.StatusCode, env.Error.Code, env.Error.Message)
 	}
 	return fmt.Errorf("daemon %d: %s", resp.StatusCode, string(body))
 }

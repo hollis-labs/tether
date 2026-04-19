@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/runtime"
 )
@@ -36,7 +37,7 @@ type Server struct {
 	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
-	Service LaunchService
+	Service api.LaunchService
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -156,12 +157,18 @@ func (s *Server) Run(ctx context.Context) error {
 
 // Handler builds the http.Handler exposed by Run. Exposed so tests can
 // exercise the routing table without spinning up a listener + PID file.
-// The returned handler always serves /health; /sessions routes are only
-// registered when Service is non-nil.
+// /health is always registered; api routes are delegated to the api
+// package when Service is non-nil.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	s.registerSessionRoutes(mux)
+	if s.Service != nil {
+		apiHandler := api.NewHandler(api.Deps{Service: s.Service})
+		// Mount api at every top-level path it owns. Keeping the list
+		// explicit avoids a catch-all "/" that would shadow /health.
+		mux.Handle("/sessions", apiHandler)
+		mux.Handle("/sessions/", apiHandler)
+	}
 	return mux
 }
 

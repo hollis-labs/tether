@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
 	"github.com/chrispian/agent-mux/internal/client"
 	"github.com/chrispian/agent-mux/internal/config"
@@ -105,19 +106,19 @@ var daemonRunCmd = &cobra.Command{
 	},
 }
 
-// serviceAdapter bridges *app.Service to daemon.LaunchService. The only
+// serviceAdapter bridges *app.Service to api.LaunchService. The only
 // translation step is flattening app.Launched's *workspace.Session pointer
 // into primitive strings so the API response never carries internal types.
 type serviceAdapter struct {
 	svc *app.Service
 }
 
-func (a *serviceAdapter) Launch(launchID string) (daemon.LaunchResult, error) {
+func (a *serviceAdapter) Launch(launchID string) (api.LaunchResult, error) {
 	l, err := a.svc.Launch(launchID)
 	if err != nil {
-		return daemon.LaunchResult{}, err
+		return api.LaunchResult{}, err
 	}
-	return daemon.LaunchResult{
+	return api.LaunchResult{
 		SessionID: l.SessionID,
 		Workspace: l.Workspace.Root,
 		LogPath:   l.Workspace.LogPath,
