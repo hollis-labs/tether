@@ -15,7 +15,13 @@ func (c *Catalog) Validate() error {
 		}
 	}
 	for id, p := range c.Providers {
-		if p.Command == "" {
+		typ := p.Type
+		if typ == "" {
+			typ = "cli"
+		}
+		// Only CLI providers require a concrete Command — API-backed
+		// providers (e.g. streaming SDKs) do not spawn a process.
+		if typ == "cli" && p.Command == "" {
 			return fmt.Errorf("provider %q has empty command", id)
 		}
 	}

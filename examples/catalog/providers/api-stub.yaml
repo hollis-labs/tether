@@ -1,0 +1,14 @@
+id: api-stub
+type: api
+# command/args are intentionally empty — api-kind providers do not spawn a
+# process. The api-stub is a throwaway v0.0.2 fixture that proves the
+# provider.Runtime / provider.Session contract fits non-CLI runtimes; it
+# will be removed once the first real API provider (Anthropic/OpenAI) lands
+# in v0.0.3.
+command: ""
+args: []
+bootstrap:
+  mode: ""
+  prompt_prefix: ""
+env:
+  mode: merge

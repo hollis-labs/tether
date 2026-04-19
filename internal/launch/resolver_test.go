@@ -74,6 +74,25 @@ func TestResolve_EnvPolicyCarriedIntoPlan(t *testing.T) {
 		}
 	})
 
+	t.Run("api-stub-launch resolves against example catalog", func(t *testing.T) {
+		_, file, _, _ := runtime.Caller(0)
+		catalogRoot := filepath.Join(filepath.Dir(file), "..", "..", "examples", "catalog")
+		cat, err := config.Load(catalogRoot)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		plan, err := Resolve(cat, Input{LaunchID: "api-stub-launch", CatalogRoot: catalogRoot})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.ProviderID != "api-stub" {
+			t.Errorf("want ProviderID=api-stub, got %q", plan.ProviderID)
+		}
+		if plan.Command != "" {
+			t.Errorf("api-stub plan.Command should be empty, got %q", plan.Command)
+		}
+	})
+
 	t.Run("whitelist mode preserves passthrough list", func(t *testing.T) {
 		plan, err := Resolve(cat, Input{LaunchID: "whitelist-launch"})
 		if err != nil {
