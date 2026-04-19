@@ -40,7 +40,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 
 	// Carry only the explicit overrides into the plan. The adapter composes
 	// the effective child env at launch time per prov.Env.Mode, so parent
-	// values are never materialised into plan.Env (and thus never persisted
+	// values are never materialized into plan.Env (and thus never persisted
 	// in launch_plans). See internal/provider/env.go.
 	overrides := map[string]string{}
 	for k, v := range l.Overrides.Env {

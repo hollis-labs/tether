@@ -45,7 +45,9 @@ var daemonStartCmd = &cobra.Command{
 			return fmt.Errorf("daemon already running (pid %d, pidfile %s)", pid, cfg.PIDFile)
 		}
 
-		child := exec.Command(os.Args[0], "daemon", "run", "--catalog", catalogPath)
+		// Re-exec ourselves in daemon-run mode. os.Args[0] is our own binary.
+		child := exec.Command(os.Args[0], "daemon", "run", "--catalog", catalogPath) //nolint:gosec // G204: re-exec of own binary
+
 		child.Stdout = nil
 		child.Stderr = nil
 		child.Stdin = nil

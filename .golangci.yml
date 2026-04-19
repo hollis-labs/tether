@@ -1,0 +1,180 @@
+# agent-mux — golangci-lint configuration (v2 format)
+#
+# Starter set mirrored from the portfolio shared config (Nanite et al.),
+# trimmed of project-specific adoption rules (forbidigo-based worklists).
+#
+# Philosophy:
+#   - Catch real bugs, not style nits
+#   - Zero false-positive tolerance on CI
+#   - Errors only — no warnings that train developers to ignore output
+#
+# Usage:
+#   golangci-lint run --new   # lint only changed lines (adoption mode)
+#   golangci-lint run         # full lint (target state; what CI runs)
+
+version: "2"
+
+run:
+  go: "1.26"
+
+linters:
+  default: none
+  enable:
+    # --- Essential (catch real bugs) ---
+    - errcheck       # unchecked errors — the #1 source of silent failures in Go
+    - govet          # go vet: shadow, printf format, struct tags, etc.
+    - staticcheck    # 150+ deep analysis checks (SA*, ST*, QF* series)
+    - unused         # dead code: unused funcs, types, consts, variables
+    - ineffassign    # assignments to variables that are never read
+
+    # --- Security ---
+    - gosec          # hardcoded creds, SQL injection, weak crypto, file perms
+
+    # --- Style (minimal — errors, not opinions) ---
+    - revive         # modern golint replacement; rules configured below
+    - misspell       # typos in comments and strings
+    - unconvert      # unnecessary type conversions (e.g., int(x) where x is int)
+    - unparam        # function parameters that are always the same value
+
+    # --- Correctness ---
+    - exhaustive     # switch on enum misses cases — prevents silent bugs
+    - errorlint      # enforce errors.Is/As and %w wrapping
+    - nilerr         # returning nil in an error path (if err != nil { return nil })
+
+  settings:
+    errcheck:
+      # Don't require checking errors on:
+      #  - fmt.Print*/fmt.Fprint* — they almost never fail
+      #  - stdlib Close methods — conventional; Close errors that actually
+      #    matter (flushing writers, DB shutdown checkpoints) are wrapped
+      #    explicitly at the call site
+      exclude-functions:
+        - fmt.Print
+        - fmt.Println
+        - fmt.Printf
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*os.File).Close
+        - (net.Listener).Close
+        - (*net/http.Response.Body).Close
+
+    exhaustive:
+      # A default case counts as "handling" remaining values.
+      default-signifies-exhaustive: true
+
+    gosec:
+      excludes:
+        # G104: already covered by errcheck
+        - G104
+
+    govet:
+      enable-all: true
+      disable:
+        # fieldalignment is useful but noisy on existing structs.
+        # Enable in a dedicated cleanup pass.
+        - fieldalignment
+        # shadow fires on Go's canonical `err := ...` reuse pattern and on
+        # intentional loop-local shadowing. It trains developers to ignore
+        # output or adds rename noise. Leave off; real shadowing bugs are
+        # rare and caught in review.
+        - shadow
+
+    misspell:
+      locale: US
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true   # too noisy on internal packages — revisit later
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+          disabled: true   # unparam covers this
+        - name: var-declaration
+        - name: var-naming
+
+    staticcheck:
+      checks:
+        - "all"
+        # ST1000 — not every internal package needs a doc comment.
+        - "-ST1000"
+        # QF1006 — "could lift into loop condition". Triggers on common
+        # test polling patterns (loop + select + deadline) where the
+        # current shape is deliberately more explicit. Keep off.
+        - "-QF1006"
+        # QF1002 — "could use tagged switch on err". The patterns we use
+        # are `switch { case err == nil: ...; case errors.Is(...) }`, which
+        # don't convert cleanly to a tagged switch; keep quick-fix off.
+        - "-QF1002"
+
+    unparam:
+      check-exported: false  # start conservative
+
+  exclusions:
+    generated: lax
+
+    rules:
+      # Test files: relax errcheck — test helpers often ignore errors intentionally
+      # (httptest, os.Remove cleanup).
+      - path: _test\.go
+        linters:
+          - errcheck
+
+      # Test files: relax unparam — test helpers often have fixed params.
+      - path: _test\.go
+        linters:
+          - unparam
+
+      # Test files: relax gosec — fixture files get permissive modes, tests
+      # sometimes do direct index access on fixed-size slices, and int→int32
+      # conversions come up in synthetic inputs. Not production code paths.
+      - path: _test\.go
+        linters:
+          - gosec
+
+      # Generated files belt-and-suspenders.
+      - path: _gen\.go
+        linters:
+          - all
+
+      - path: \.pb\.go
+        linters:
+          - all
+
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+issues:
+  # Uncapped. Capping hides signal. CI runs that want truncation can pass
+  # --max-issues-per-linter=N --max-same-issues=N explicitly.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

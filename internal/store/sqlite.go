@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
 	_ "modernc.org/sqlite"
 
 	"github.com/chrispian/agent-mux/internal/launch"
@@ -18,7 +19,7 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open("sqlite", path)
@@ -35,18 +36,18 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 type SessionRow struct {
-	ID         string
-	LaunchID   string
-	ProjectID  string
+	ID             string
+	LaunchID       string
+	ProjectID      string
 	LogicalAgentID string
-	ProviderID string
-	Workspace  string
-	State      string
-	PID        sql.NullInt64
-	ExitCode   sql.NullInt64
-	CreatedAt  string
-	UpdatedAt  string
-	EndedAt    sql.NullString
+	ProviderID     string
+	Workspace      string
+	State          string
+	PID            sql.NullInt64
+	ExitCode       sql.NullInt64
+	CreatedAt      string
+	UpdatedAt      string
+	EndedAt        sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -178,4 +179,3 @@ func (s *Store) GetLaunchPlan(sessionID string) (*launch.Plan, error) {
 	}
 	return &plan, nil
 }
-

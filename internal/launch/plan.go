@@ -17,7 +17,7 @@ type Plan struct {
 
 	// Env holds explicit overrides (from the launch's overrides.env block).
 	// The adapter applies these last, after composing the base environment
-	// per EnvMode. Parent-inherited values are NOT materialised here.
+	// per EnvMode. Parent-inherited values are NOT materialized here.
 	Env map[string]string `json:"env"`
 	// EnvMode selects the env composition strategy; "merge" (default) or
 	// "whitelist". See internal/provider/env.go for semantics.

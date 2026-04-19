@@ -59,10 +59,11 @@ func (s *Server) registerEventRoutes(mux *http.ServeMux) {
 //   - ?session_id= : filter to a single session's events
 //
 // SSE framing:
-//   id: <seq>
-//   event: <kind>
-//   data: <payload_json or empty>
-//   <blank line>
+//
+//	id: <seq>
+//	event: <kind>
+//	data: <payload_json or empty>
+//	<blank line>
 //
 // A keep-alive comment (`: ping`) fires every 15s so intermediate
 // proxies don't close idle connections.

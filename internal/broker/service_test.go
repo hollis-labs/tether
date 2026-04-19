@@ -11,9 +11,9 @@ import (
 )
 
 type fakeStore struct {
-	mu         sync.Mutex
-	inserted   []Envelope
-	insertErr  error
+	mu        sync.Mutex
+	inserted  []Envelope
+	insertErr error
 }
 
 func (f *fakeStore) CreateEnvelope(e Envelope) error {

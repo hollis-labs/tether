@@ -29,7 +29,7 @@ type Config struct {
 }
 
 // Server holds the wiring for one daemon process. Run blocks until ctx
-// is cancelled; Close is the cleanup hook invoked after the runtime
+// is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
 	Config  Config

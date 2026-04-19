@@ -19,7 +19,7 @@ import (
 )
 
 // fakeLaunchService is a LaunchService stub for handler tests. Each method
-// records how it was called so assertions can check routing behaviour.
+// records how it was called so assertions can check routing behavior.
 type fakeLaunchService struct {
 	mu sync.Mutex
 
@@ -42,11 +42,11 @@ type fakeLaunchService struct {
 	waitRes map[string]int
 	waitErr error
 
-	inputErr      error
-	inputLog      [][]byte
-	inputIDs      []string
-	attachFn      func(ctx context.Context, id string, w io.Writer) error
-	attachErr     error
+	inputErr        error
+	inputLog        [][]byte
+	inputIDs        []string
+	attachFn        func(ctx context.Context, id string, w io.Writer) error
+	attachErr       error
 	attachSinceSeqs []int64
 
 	attachedClients map[string]int

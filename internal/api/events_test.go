@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func TestHandleEventsStream_SSEFraming(t *testing.T) {
 	buf := make([]byte, 512)
 	_ = resp.Body.(io.Reader)
 	n, err := resp.Body.Read(buf)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("read: %v", err)
 	}
 	chunk := string(buf[:n])
@@ -247,4 +248,3 @@ func TestEventsStream_NotRegisteredWithoutBus(t *testing.T) {
 		t.Errorf("status = %d, want 404", rr.Code)
 	}
 }
-

@@ -24,7 +24,6 @@ import (
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
 
-
 // StateSink persists session state transitions. The production implementation
 // is *store.Store; tests use an in-memory fake.
 type StateSink interface {
@@ -88,7 +87,7 @@ type entry struct {
 	broker      *attachBroker
 	killing     bool
 	attachCount int
-	// inputMu serialises SendInput writes so concurrent callers never
+	// inputMu serializes SendInput writes so concurrent callers never
 	// interleave partial writes on the session's input channel.
 	inputMu sync.Mutex
 }
@@ -212,14 +211,14 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 	m.emitStateChanged(ctx, req.ID, req.Plan.LogicalAgentID, string(session.StateLaunching), string(session.StateRunning), nil, "")
 
 	info := SessionInfo{
-		ID:         req.ID,
-		PID:        pid,
-		State:      session.StateRunning,
-		LaunchID:   req.Plan.LaunchID,
-		ProjectID:  req.Plan.ProjectID,
+		ID:             req.ID,
+		PID:            pid,
+		State:          session.StateRunning,
+		LaunchID:       req.Plan.LaunchID,
+		ProjectID:      req.Plan.ProjectID,
 		LogicalAgentID: req.Plan.LogicalAgentID,
-		ProviderID: req.Plan.ProviderID,
-		Workspace:  req.Workspace.Root,
+		ProviderID:     req.Plan.ProviderID,
+		Workspace:      req.Workspace.Root,
 	}
 
 	m.mu.Lock()
@@ -234,7 +233,9 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go m.watch(req.ID, sess, broker)
+	// watch is session-scoped, not request-scoped: it runs until the session
+	// itself terminates, long after Start's ctx is canceled.
+	go m.watch(req.ID, sess, broker) //nolint:gosec // G118: intentional — detached from req ctx
 	return nil
 }
 
@@ -322,7 +323,7 @@ func (m *Manager) List() []SessionInfo {
 }
 
 // SendInput writes data to the named session's input channel. Concurrent
-// SendInput callers on the same session are serialised through a per-entry
+// SendInput callers on the same session are serialized through a per-entry
 // lock so no two callers can interleave partial writes. Returns
 // ErrSessionNotRunning if the session is not registered, or whatever error
 // the Session.SendInput surfaces (e.g. provider.ErrNoInputChannel if the
@@ -355,7 +356,7 @@ type AttachOptions struct {
 
 // Attach subscribes w to the named session's live output stream. Attach
 // writes any recent history (tail replay) to w first, then streams live
-// output until ctx is cancelled or the session exits. Multiple concurrent
+// output until ctx is canceled or the session exits. Multiple concurrent
 // Attach callers on the same session are supported; one detaching does not
 // affect the others and does not kill the session.
 //

@@ -20,7 +20,7 @@ var embeddedMigrations embed.FS
 // (zero-padded to 4 in current files, but the parser accepts any width).
 var migrationPattern = regexp.MustCompile(`^(\d+)_([^/]+)\.sql$`)
 
-// MigrateResult summarises what happened during a Migrate call.
+// MigrateResult summarizes what happened during a Migrate call.
 type MigrateResult struct {
 	// Applied lists versions whose SQL ran against the DB, in order.
 	Applied []int
@@ -179,7 +179,7 @@ func recordMigration(db *sql.DB, m migration) error {
 }
 
 // hasLegacyTables reports whether the DB already contains the v0.0.1
-// `sessions` table. Used to recognise a pre-migrations database so that
+// `sessions` table. Used to recognize a pre-migrations database so that
 // 0001 can be stamped rather than re-run.
 func hasLegacyTables(db *sql.DB) (bool, error) {
 	var name string

@@ -134,7 +134,7 @@ var sessionsInputCmd = &cobra.Command{
 }
 
 // runAttach opens a live attach stream to the daemon and copies PTY bytes
-// to stdout until the session exits or ctx is cancelled. Falls back to a
+// to stdout until the session exits or ctx is canceled. Falls back to a
 // log-file read if the daemon is unreachable OR the session has already
 // exited (server returns 404 from attach in that case).
 func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) error {
@@ -202,7 +202,7 @@ func listSessionsFromStore(catalogRoot string) ([]api.SessionDTO, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	rows, err := db.ListSessions(store.ListSessionsOptions{})
 	if err != nil {
 		return nil, err
@@ -237,7 +237,7 @@ func getSessionFromStore(catalogRoot, id string) (api.SessionDTO, error) {
 	if err != nil {
 		return api.SessionDTO{}, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	row, err := db.GetSession(id)
 	if err != nil {
 		return api.SessionDTO{}, err

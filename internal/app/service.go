@@ -68,7 +68,7 @@ func New(catalogRoot string) (*Service, error) {
 	// restarts; preserves created_at + any future operator-set fields.
 	// See ADR 0003.
 	if n, err := seedLogicalAgents(db, cat.Agents); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("seed logical_agents: %w", err)
 	} else if n > 0 {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
@@ -270,7 +270,7 @@ func (s *Service) SendInput(id string, data []byte) error {
 }
 
 // AttachSession streams the named session's live output to w until ctx is
-// cancelled or the session exits. sinceSeq is a byte-offset hint for
+// canceled or the session exits. sinceSeq is a byte-offset hint for
 // resume; 0 means "replay full ring then go live" (pre-resume default).
 // Thin wrapper over runtime.Manager.AttachWith.
 func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {

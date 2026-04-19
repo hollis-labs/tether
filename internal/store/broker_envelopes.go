@@ -41,9 +41,9 @@ func (s *Store) CreateEnvelope(e broker.Envelope) error {
 // if no such row exists.
 func (s *Store) GetEnvelope(id string) (*broker.Envelope, error) {
 	var (
-		e                                                                                    broker.Envelope
+		e                                                                                   broker.Envelope
 		sender, recipient, workflow, corr, msgType, payload, delivered, consumed, auditJSON sql.NullString
-		priority                                                                              sql.NullInt64
+		priority                                                                            sql.NullInt64
 	)
 	err := s.db.QueryRow(
 		`SELECT id, sender, recipient, workflow_id, correlation_id,
@@ -131,9 +131,9 @@ func scanEnvelopes(rows *sql.Rows) ([]broker.Envelope, error) {
 	var out []broker.Envelope
 	for rows.Next() {
 		var (
-			e                                                                                      broker.Envelope
+			e                                                                                   broker.Envelope
 			sender, recipient, workflow, corr, msgType, payload, delivered, consumed, auditJSON sql.NullString
-			priority                                                                                sql.NullInt64
+			priority                                                                            sql.NullInt64
 		)
 		if err := rows.Scan(&e.ID, &sender, &recipient, &workflow, &corr, &msgType,
 			&priority, &payload, &e.CreatedAt, &delivered, &consumed, &auditJSON); err != nil {

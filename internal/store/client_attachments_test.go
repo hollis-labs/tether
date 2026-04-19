@@ -13,13 +13,13 @@ func TestClientAttachments_CreateAndList(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Session must exist because of the FK.
-	if err := db.CreateSession(SessionRow{
+	// Session must exist because of the FK. Ignore the CreateSession error:
+	// it also tries to insert launch_plans with a nil plan, which fails;
+	// the raw INSERT below lands the row we actually need.
+	_ = db.CreateSession(SessionRow{
 		ID: "s1", LaunchID: "l", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv",
 		Workspace: "/tmp/ws", State: "running",
-	}, nil); err != nil {
-		// CreateSession also tries to insert launch_plans; pass a nil plan.
-	}
+	}, nil)
 	// Re-insert via direct sql because CreateSession needs a plan; keep the
 	// test focused on the attachments table.
 	if _, err := db.db.Exec(`DELETE FROM sessions WHERE id=?`, "s1"); err != nil {

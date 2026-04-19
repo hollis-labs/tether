@@ -33,7 +33,10 @@ func (a Adapter) Start(ctx context.Context, plan *launch.Plan, opts provider.Sta
 	if err := a.Prepare(ctx, plan); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(plan.Command, plan.Args...)
+	// Command + args come from the trusted catalog (operator-authored
+	// YAML), not from an HTTP/user boundary.
+	cmd := exec.Command(plan.Command, plan.Args...) //nolint:gosec // G204: catalog-sourced command, not untrusted input
+
 	cmd.Dir = opts.Workdir
 	cmd.Env = provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ())
 

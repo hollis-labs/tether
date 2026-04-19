@@ -54,7 +54,7 @@ type StartOptions struct {
 // Prepare is called once per launch before Start, giving the runtime a
 // chance to surface configuration errors (missing binaries, invalid API
 // keys) while the caller can still abort cleanly without leaving half-
-// created workspace artefacts.
+// created workspace artifacts.
 type Runtime interface {
 	ID() string
 	Kind() RuntimeKind
@@ -72,7 +72,7 @@ type Runtime interface {
 // advises the checkpointer.
 //
 // SendInput is not required to be safe for concurrent callers; the runtime
-// manager serialises it behind a per-session lock.
+// manager serializes it behind a per-session lock.
 type Session interface {
 	Wait() (int, error)
 	Stop(ctx context.Context) error

@@ -14,8 +14,8 @@ import (
 )
 
 type recorderPublisher struct {
-	mu   sync.Mutex
-	evs  []events.Event
+	mu  sync.Mutex
+	evs []events.Event
 }
 
 func (r *recorderPublisher) Publish(_ context.Context, e events.Event) error {
@@ -131,7 +131,7 @@ func TestServer_Run_EmitsDaemonLifecycleEvents(t *testing.T) {
 	is := idx(events.KindDaemonStarted)
 	iss := idx(events.KindDaemonShutdownStarted)
 	isc := idx(events.KindDaemonShutdownCompleted)
-	if !(is < iss && iss < isc) {
+	if is >= iss || iss >= isc {
 		t.Errorf("event order wrong: started=%d shutdown_started=%d shutdown_completed=%d", is, iss, isc)
 	}
 }

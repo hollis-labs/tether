@@ -28,7 +28,7 @@ func Listener(addr string) (net.Listener, error) {
 		if path == "" {
 			return nil, fmt.Errorf("unix listen_addr missing path")
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return nil, fmt.Errorf("create socket dir: %w", err)
 		}
 		// Best-effort stale-socket removal: net.Listen("unix") refuses to

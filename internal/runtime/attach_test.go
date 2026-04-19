@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -112,14 +113,14 @@ func TestAttachBroker_UnsubscribeKeepsOthersAlive(t *testing.T) {
 		t.Fatalf("surviving subscriber got %q, want %q", got, "after-drop")
 	}
 
-	// Cancelled channel should be closed (read returns with !ok).
+	// Canceled channel should be closed (read returns with !ok).
 	select {
 	case _, ok := <-ch1:
 		if ok {
-			t.Fatal("expected cancelled ch1 to be closed")
+			t.Fatal("expected canceled ch1 to be closed")
 		}
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("cancelled ch1 did not close")
+		t.Fatal("canceled ch1 did not close")
 	}
 }
 
@@ -140,7 +141,7 @@ func TestAttachBroker_CloseSignalsSubscribers(t *testing.T) {
 	}
 
 	// Write after close returns io.ErrClosedPipe without panic.
-	if _, err := b.Write([]byte("x")); err != io.ErrClosedPipe {
+	if _, err := b.Write([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("Write after close = %v, want io.ErrClosedPipe", err)
 	}
 

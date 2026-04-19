@@ -21,7 +21,7 @@ var projectsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer svc.Close()
+		defer func() { _ = svc.Close() }()
 		for _, p := range svc.ListProjects() {
 			fmt.Printf("%-20s  %s\n", p.ID, p.Name)
 		}

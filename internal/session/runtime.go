@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,9 @@ type Handle struct {
 // runtime layer uses this to publish live output to attach subscribers; the
 // fanout writer is never closed by Start (the caller owns its lifecycle).
 func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (*Handle, error) {
-	logF, err := os.Create(logPath)
+	// logPath is workspace-owned (derived from catalog + session id), not user input.
+	logF, err := os.Create(logPath) //nolint:gosec // G304: workspace-managed path
+
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
 	}
@@ -75,17 +78,17 @@ func Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer
 func (h *Handle) Wait() (int, error) {
 	h.waitOnce.Do(func() {
 		err := <-h.done
-		switch {
-		case err == nil:
+		if err == nil {
 			h.waitCode = 0
-		default:
-			if ee, ok := err.(*exec.ExitError); ok {
-				h.waitCode = ee.ExitCode()
-			} else {
-				h.waitCode = -1
-				h.waitErr = err
-			}
+			return
 		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			h.waitCode = ee.ExitCode()
+			return
+		}
+		h.waitCode = -1
+		h.waitErr = err
 	})
 	return h.waitCode, h.waitErr
 }
@@ -108,7 +111,7 @@ func (h *Handle) PID() int {
 
 // PTYWriter returns the PTY master so callers can inject input into the
 // running session. Returns nil if the session has already closed its PTY.
-// Writes to this writer are not guarded; concurrent callers must serialise
+// Writes to this writer are not guarded; concurrent callers must serialize
 // through runtime.Manager.SendInput which holds the per-session lock.
 func (h *Handle) PTYWriter() io.Writer {
 	if h.PTY == nil {

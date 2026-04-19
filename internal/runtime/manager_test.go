@@ -633,7 +633,7 @@ func TestManager_SendInputSerialisesConcurrentWrites(t *testing.T) {
 }
 
 // atomicWriter verifies that no two Write calls overlap in time. It is used
-// to prove the per-entry inputMu actually serialises concurrent SendInput.
+// to prove the per-entry inputMu actually serializes concurrent SendInput.
 type atomicWriter struct {
 	t    *testing.T
 	busy atomic.Bool
@@ -643,7 +643,7 @@ func newAtomicWriter(t *testing.T) *atomicWriter { return &atomicWriter{t: t} }
 
 func (a *atomicWriter) Write(p []byte) (int, error) {
 	if !a.busy.CompareAndSwap(false, true) {
-		a.t.Errorf("concurrent Write detected — inputMu did not serialise")
+		a.t.Errorf("concurrent Write detected — inputMu did not serialize")
 		return 0, errors.New("concurrent write")
 	}
 	// Hold the "busy" flag briefly to widen the race window.

@@ -20,7 +20,7 @@ var ErrAlreadyRunning = errors.New("daemon already running")
 // process. A stale PID file (referencing a dead or unrelated process) is
 // overwritten.
 func WritePIDFile(path string, pid int) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("mkdir pidfile dir: %w", err)
 	}
 	if existing, err := ReadPIDFile(path); err == nil {
@@ -30,13 +30,16 @@ func WritePIDFile(path string, pid int) error {
 			return fmt.Errorf("%w (pid %d)", ErrAlreadyRunning, existing)
 		}
 	}
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o644)
+	return os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o600)
 }
 
 // ReadPIDFile reads a PID from path. Returns fs.ErrNotExist if missing.
 // Returns an error if the contents are not a valid integer.
 func ReadPIDFile(path string) (int, error) {
-	b, err := os.ReadFile(path)
+	// path is a catalog-configured pidfile location under the user's own
+	// data dir; not user input from an HTTP boundary.
+	b, err := os.ReadFile(path) //nolint:gosec // G304: catalog-sourced path, not untrusted input
+
 	if err != nil {
 		return 0, err
 	}

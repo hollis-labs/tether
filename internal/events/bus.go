@@ -14,9 +14,9 @@ import (
 // drop-oldest events on a single subscriber, the bus closes its
 // channel so the caller observes termination (default 64).
 type BusOptions struct {
-	Persister       Persister
-	SubBuffer       int
-	MaxConsecDrops  int64
+	Persister      Persister
+	SubBuffer      int
+	MaxConsecDrops int64
 }
 
 // Publisher is the write half of the bus. Both runtime.Manager and
@@ -29,7 +29,7 @@ type Publisher interface {
 // Bus is the pub/sub surface. Publish persists the event then fans it
 // out to every matching subscriber. Subscribe returns a receive-only
 // channel, a cancel func (idempotent), and an error; the channel is
-// closed when the subscriber is cancelled or evicted.
+// closed when the subscriber is canceled or evicted.
 type Bus interface {
 	Publisher
 	Subscribe(ctx context.Context, f Filter) (<-chan Event, func(), error)
@@ -66,9 +66,9 @@ type memBus struct {
 	subBuffer      int
 	maxConsecDrops int64
 
-	mu      sync.Mutex
-	nextID  int64
-	subs    map[int64]*subscriber
+	mu     sync.Mutex
+	nextID int64
+	subs   map[int64]*subscriber
 }
 
 // NewBus constructs the default in-memory Bus.
@@ -125,7 +125,7 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 // pushTo delivers an event to a single subscriber with drop-oldest
 // semantics on a full buffer. After maxConsecDrops consecutive drops,
 // the subscriber is evicted. The select on s.done ensures a
-// concurrently-cancelled subscriber's channel is never sent to after
+// concurrently-canceled subscriber's channel is never sent to after
 // shutdown — live is never closed, so there is no close-vs-send race.
 func (b *memBus) pushTo(s *subscriber, e Event) {
 	select {

@@ -54,7 +54,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if isUnreachable(err) {
-			return fmt.Errorf("%w: %v", ErrDaemonUnreachable, err)
+			return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 		}
 		return err
 	}
@@ -134,11 +134,9 @@ func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchRespons
 	return c.LaunchSession(ctx, created.ID)
 }
 
-// ListSessions returns the daemon's current view of all sessions
-// matching the optional filters, flattened into DTOs. Opts fields map
-// 1:1 onto GET /sessions query params: ?limit=, ?cursor=, ?state=.
-// A zero-valued ListOptions retrieves the first default-size page
-// with no filter.
+// ListOptions narrows a ListSessions request. Fields map 1:1 onto the
+// GET /sessions query params: ?limit=, ?cursor=, ?state=. A zero-valued
+// ListOptions retrieves the first default-size page with no filter.
 type ListOptions struct {
 	Limit  int
 	Cursor string
@@ -225,7 +223,7 @@ func (c *Client) SendInput(ctx context.Context, id string, data []byte) error {
 }
 
 // AttachSession opens a streaming GET and copies live PTY output to w until
-// ctx is cancelled or the session exits (server closes the response).
+// ctx is canceled or the session exits (server closes the response).
 // Returns nil on clean EOF (session terminated); returns a wrapped ctx.Err
 // when the caller cancels.
 //
@@ -325,7 +323,7 @@ func readError(resp *http.Response) error {
 // so CLI callers can fall back to a local path.
 func wrapIfUnreachable(err error) error {
 	if isUnreachable(err) {
-		return fmt.Errorf("%w: %v", ErrDaemonUnreachable, err)
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	return err
 }

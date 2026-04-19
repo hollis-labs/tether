@@ -11,13 +11,13 @@ import (
 // Standard error codes returned in ErrorResponse.Error.Code. External
 // clients key on these; add sparingly.
 const (
-	CodeInvalidRequest    = "invalid_request"
-	CodeNotFound          = "not_found"
-	CodeMethodNotAllowed  = "method_not_allowed"
-	CodePayloadTooLarge   = "payload_too_large"
-	CodeConflict          = "conflict"
-	CodeInternalError     = "internal_error"
-	CodeNotImplemented    = "not_implemented"
+	CodeInvalidRequest   = "invalid_request"
+	CodeNotFound         = "not_found"
+	CodeMethodNotAllowed = "method_not_allowed"
+	CodePayloadTooLarge  = "payload_too_large"
+	CodeConflict         = "conflict"
+	CodeInternalError    = "internal_error"
+	CodeNotImplemented   = "not_implemented"
 )
 
 // ErrorResponse is the envelope for every non-2xx JSON body. Callers

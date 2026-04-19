@@ -94,7 +94,10 @@ func resolveRoot(catalogRoot, fromGlobal, fallback string) string {
 }
 
 func loadYAML(path string, out any) error {
-	b, err := os.ReadFile(path)
+	// Catalog paths originate from the user's own catalog directory, not
+	// from an HTTP/network boundary.
+	b, err := os.ReadFile(path) //nolint:gosec // G304: catalog-sourced path
+
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}

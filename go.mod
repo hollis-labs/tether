@@ -2,6 +2,8 @@ module github.com/chrispian/agent-mux
 
 go 1.26.1
 
+toolchain go1.26.2
+
 require (
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0

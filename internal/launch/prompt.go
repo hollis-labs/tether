@@ -18,7 +18,9 @@ func Compose(catalogRoot string, fragments []string) (string, error) {
 			p = filepath.Join(catalogRoot, p)
 		}
 		p = config.Expand(p)
-		b, err := os.ReadFile(p)
+		// Prompt fragments are catalog-sourced; trusted operator input.
+		b, err := os.ReadFile(p) //nolint:gosec // G304: catalog-sourced path
+
 		if err != nil {
 			return "", err
 		}

@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -154,7 +155,7 @@ func TestBus_Filter_SessionID(t *testing.T) {
 func TestBus_Publish_RejectsEmptyScope(t *testing.T) {
 	bus := NewBus(BusOptions{Persister: &fakePersister{}})
 	err := bus.Publish(context.Background(), Event{Kind: "no-scope"})
-	if err != ErrScopeEmpty {
+	if !errors.Is(err, ErrScopeEmpty) {
 		t.Errorf("err = %v, want ErrScopeEmpty", err)
 	}
 }
@@ -162,7 +163,7 @@ func TestBus_Publish_RejectsEmptyScope(t *testing.T) {
 func TestBus_Publish_RejectsNilPersister(t *testing.T) {
 	bus := NewBus(BusOptions{}) // no persister
 	err := bus.Publish(context.Background(), Event{Scope: ScopeSession, Kind: "k"})
-	if err != ErrNoPersister {
+	if !errors.Is(err, ErrNoPersister) {
 		t.Errorf("err = %v, want ErrNoPersister", err)
 	}
 }

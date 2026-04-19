@@ -74,7 +74,9 @@ func TestManager_Start_EmitsLaunchingThenRunning(t *testing.T) {
 	// launching comes from created; running comes from launching.
 	gotFrom := []string{}
 	for _, e := range evs {
-		var p struct{ From string `json:"from"` }
+		var p struct {
+			From string `json:"from"`
+		}
 		_ = json.Unmarshal([]byte(e.PayloadJSON), &p)
 		gotFrom = append(gotFrom, p.From)
 	}
@@ -100,7 +102,9 @@ func TestManager_Terminate_EmitsCompletedEvent(t *testing.T) {
 	for time.Now().Before(deadline) {
 		evs := pub.snapshot()
 		for i := range evs {
-			var p struct{ To string `json:"to"` }
+			var p struct {
+				To string `json:"to"`
+			}
 			_ = json.Unmarshal([]byte(evs[i].PayloadJSON), &p)
 			if p.To == "completed" {
 				terminal = &evs[i]
@@ -155,7 +159,9 @@ func TestManager_Stop_EmitsKilledEvent(t *testing.T) {
 	var terminal *events.Event
 	for time.Now().Before(deadline) {
 		for _, e := range pub.snapshot() {
-			var p struct{ To string `json:"to"` }
+			var p struct {
+				To string `json:"to"`
+			}
 			_ = json.Unmarshal([]byte(e.PayloadJSON), &p)
 			if p.To == "killed" {
 				ee := e

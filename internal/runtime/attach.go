@@ -39,7 +39,6 @@ type attachBroker struct {
 	subs         map[int]chan []byte
 	subNext      int
 	closed       bool
-	closeErr     error
 }
 
 func newAttachBroker(ringBytes, subscriberDepth int) *attachBroker {
@@ -211,22 +210,7 @@ func (b *attachBroker) close() {
 	}
 }
 
-// subscriberCount reports the number of currently-subscribed clients.
-func (b *attachBroker) subscriberCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.subs)
-}
-
-// droppedBytes reports the cumulative count of bytes dropped due to slow
-// subscribers. Intended for observability; not exposed on the runtime API yet.
-func (b *attachBroker) droppedBytes() int64 {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.dropCnt
-}
-
-// copyStream pumps a broker subscription to w until ctx is cancelled or the
+// copyStream pumps a broker subscription to w until ctx is canceled or the
 // broker closes. Used by Manager.Attach so the bookkeeping lives in one place.
 func copyStream(ctx context.Context, w io.Writer, replay []byte, ch <-chan []byte) error {
 	if len(replay) > 0 {

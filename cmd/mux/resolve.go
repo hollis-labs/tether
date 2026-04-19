@@ -19,7 +19,7 @@ var resolveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer svc.Close()
+		defer func() { _ = svc.Close() }()
 		plan, err := svc.Resolve(resolveLaunchID)
 		if err != nil {
 			return err

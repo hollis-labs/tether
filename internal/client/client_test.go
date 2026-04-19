@@ -21,15 +21,15 @@ import (
 // helpers for assertions. httptest.Server is TCP; we use tcp: listen
 // address semantics so BaseURL + DialHTTPClient work unchanged.
 type mockDaemon struct {
-	server         *httptest.Server
-	create         func(string) (api.LaunchResult, error)
-	launchSession  func(string) (api.LaunchResult, error)
-	list           func() ([]store.SessionRow, error)
-	get            func(string) (*store.SessionRow, error)
-	stop           func(string) error
-	wait           func(context.Context, string) (int, error)
-	input          func(string, []byte) error
-	attach         func(context.Context, string, io.Writer) error
+	server        *httptest.Server
+	create        func(string) (api.LaunchResult, error)
+	launchSession func(string) (api.LaunchResult, error)
+	list          func() ([]store.SessionRow, error)
+	get           func(string) (*store.SessionRow, error)
+	stop          func(string) error
+	wait          func(context.Context, string) (int, error)
+	input         func(string, []byte) error
+	attach        func(context.Context, string, io.Writer) error
 }
 
 func (m *mockDaemon) addr() string {
@@ -100,12 +100,12 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 // funcService is a func-table LaunchService — lighter than a struct-full-of-
 // fields fake for the case-by-case per-test overrides that client tests need.
 type funcService struct {
-	createFn func(string) (api.LaunchResult, error)
-	launchFn func(string) (api.LaunchResult, error)
-	listFn   func() ([]store.SessionRow, error)
-	getFn    func(string) (*store.SessionRow, error)
-	stopFn   func(string) error
-	waitFn   func(context.Context, string) (int, error)
+	createFn   func(string) (api.LaunchResult, error)
+	launchFn   func(string) (api.LaunchResult, error)
+	listFn     func() ([]store.SessionRow, error)
+	getFn      func(string) (*store.SessionRow, error)
+	stopFn     func(string) error
+	waitFn     func(context.Context, string) (int, error)
 	inputFn    func(string, []byte) error
 	attachFn   func(context.Context, string, io.Writer) error
 	attachedFn func(string) int

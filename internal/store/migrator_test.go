@@ -346,8 +346,8 @@ func TestMigrate_AppliesInOrderFromInjectedFS(t *testing.T) {
 	defer db.Close()
 
 	fsys := fstest.MapFS{
-		"0001_init.sql":  {Data: []byte(`CREATE TABLE t1 (id INTEGER);`)},
-		"0003_third.sql": {Data: []byte(`CREATE TABLE t3 (id INTEGER);`)},
+		"0001_init.sql":   {Data: []byte(`CREATE TABLE t1 (id INTEGER);`)},
+		"0003_third.sql":  {Data: []byte(`CREATE TABLE t3 (id INTEGER);`)},
 		"0002_second.sql": {Data: []byte(`CREATE TABLE t2 (id INTEGER);`)},
 	}
 	res, err := migrateFS(db, fsys)

@@ -20,12 +20,12 @@ type Session struct {
 func Create(root, sessionID string, plan *launch.Plan) (*Session, error) {
 	sessRoot := filepath.Join(root, sessionID)
 	for _, sub := range Subdirs {
-		if err := os.MkdirAll(filepath.Join(sessRoot, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(sessRoot, sub), 0o750); err != nil {
 			return nil, err
 		}
 	}
 	promptPath := filepath.Join(sessRoot, "prompts", "boot.md")
-	if err := os.WriteFile(promptPath, []byte(plan.BootPrompt), 0o644); err != nil {
+	if err := os.WriteFile(promptPath, []byte(plan.BootPrompt), 0o600); err != nil {
 		return nil, err
 	}
 	planPath := filepath.Join(sessRoot, "state", "plan.json")
@@ -33,7 +33,7 @@ func Create(root, sessionID string, plan *launch.Plan) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(planPath, pb, 0o644); err != nil {
+	if err := os.WriteFile(planPath, pb, 0o600); err != nil {
 		return nil, err
 	}
 	logPath := filepath.Join(sessRoot, "logs", "session.log")

@@ -57,8 +57,8 @@ func (s *Store) UpsertLogicalAgent(a agent.LogicalAgent, now string) error {
 // no such row exists.
 func (s *Store) GetLogicalAgent(id string) (*LogicalAgentRow, error) {
 	var (
-		r                                                                                                LogicalAgentRow
-		role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold                                     sql.NullString
+		r                                                            LogicalAgentRow
+		role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold sql.NullString
 	)
 	err := s.db.QueryRow(
 		`SELECT id, role, name, responsibilities, capabilities, memory_scopes,
@@ -98,8 +98,8 @@ func (s *Store) ListLogicalAgents() ([]LogicalAgentRow, error) {
 	var out []LogicalAgentRow
 	for rows.Next() {
 		var (
-			r                                                                                                LogicalAgentRow
-			role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold                                     sql.NullString
+			r                                                            LogicalAgentRow
+			role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold sql.NullString
 		)
 		if err := rows.Scan(&r.ID, &role, &name, &resp, &caps, &mem, &pol, &tools, &esc, &chkpt, &hotCold, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan logical_agent: %w", err)

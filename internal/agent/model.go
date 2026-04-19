@@ -1,7 +1,7 @@
 // Package agent defines the durable LogicalAgent identity model used by
 // Agent Mux. A LogicalAgent is the stable handle for an agent across
 // any number of ephemeral RuntimeSessions; policies, checkpoint rules,
-// and hot/cold behaviour all attach here.
+// and hot/cold behavior all attach here.
 //
 // v0.0.2 carries only id/role/name plus TEXT columns for forward
 // compatibility; policy/capability/checkpoint fields are reserved and
