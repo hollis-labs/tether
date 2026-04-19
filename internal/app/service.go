@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/agent"
 	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/provider/api/stub"
@@ -34,6 +35,7 @@ type Service struct {
 	Store       *store.Store
 	Providers   *provider.Registry
 	Runtime     *runtime.Manager
+	Bus         events.Bus
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -69,13 +71,15 @@ func New(catalogRoot string) (*Service, error) {
 	} else if n > 0 {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
-	mgr := runtime.NewManager(db).WithAttachmentSink(db)
+	bus := events.NewBus(events.BusOptions{Persister: db})
+	mgr := runtime.NewManager(db).WithAttachmentSink(db).WithEventPublisher(bus)
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
 		Providers:   reg,
 		Runtime:     mgr,
+		Bus:         bus,
 	}, nil
 }
 

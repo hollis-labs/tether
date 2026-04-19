@@ -8,6 +8,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,11 +17,20 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
+
+// EventPublisher is the narrow interface Manager uses to publish
+// lifecycle events. *events.Bus satisfies it directly. Nil is
+// safe — when no publisher is configured, events are silently
+// skipped.
+type EventPublisher interface {
+	Publish(ctx context.Context, e events.Event) error
+}
 
 // StateSink persists session state transitions. The production implementation
 // is *store.Store; tests use an in-memory fake.
@@ -67,6 +77,7 @@ type SessionInfo struct {
 type Manager struct {
 	sink       StateSink
 	attachSink AttachmentSink
+	publisher  EventPublisher
 	nowFn      func() time.Time
 	idFn       func() string
 
@@ -123,6 +134,48 @@ func (m *Manager) WithAttachmentSink(sink AttachmentSink) *Manager {
 	return m
 }
 
+// WithEventPublisher returns m with the lifecycle-event publisher set.
+// Nil is a no-op (events are silently skipped). Safe to call on a
+// freshly-constructed Manager before any Start.
+func (m *Manager) WithEventPublisher(pub EventPublisher) *Manager {
+	m.publisher = pub
+	return m
+}
+
+// sessionStateChanged is the shape of the KindSessionStateChanged
+// event payload. ExitCode and Reason are omitted when zero-valued.
+type sessionStateChanged struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// emitStateChanged publishes a session.state_changed event. Safe when
+// publisher is nil. A marshal or publish failure is swallowed to keep
+// lifecycle progress unaffected by telemetry issues.
+func (m *Manager) emitStateChanged(ctx context.Context, sessionID, logicalAgentID, from, to string, exitCode *int, reason string) {
+	if m.publisher == nil {
+		return
+	}
+	payload, err := json.Marshal(sessionStateChanged{
+		From:     from,
+		To:       to,
+		ExitCode: exitCode,
+		Reason:   reason,
+	})
+	if err != nil {
+		return
+	}
+	_ = m.publisher.Publish(ctx, events.Event{
+		Scope:          events.ScopeSession,
+		SessionID:      sessionID,
+		LogicalAgentID: logicalAgentID,
+		Kind:           events.KindSessionStateChanged,
+		PayloadJSON:    string(payload),
+	})
+}
+
 // Start launches a session under Manager ownership. It records state
 // transitions (launching → running), registers the session, and spawns a
 // watch goroutine that will record the terminal state when the session exits.
@@ -140,6 +193,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 	if err := m.sink.UpdateSessionState(req.ID, string(session.StateLaunching), 0, nil); err != nil {
 		return fmt.Errorf("mark launching: %w", err)
 	}
+	m.emitStateChanged(ctx, req.ID, req.Plan.LogicalAgentID, "created", string(session.StateLaunching), nil, "")
 
 	broker := newAttachBroker(defaultRingBytes, defaultSubscriberDepth)
 	sess, err := req.Runtime.Start(ctx, req.Plan, provider.StartOptions{
@@ -153,6 +207,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 		broker.close()
 		exit := 1
 		_ = m.sink.UpdateSessionState(req.ID, string(session.StateFailed), 0, &exit)
+		m.emitStateChanged(ctx, req.ID, req.Plan.LogicalAgentID, string(session.StateLaunching), string(session.StateFailed), &exit, err.Error())
 		return err
 	}
 
@@ -161,6 +216,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 		_ = sess.Stop(ctx)
 		return fmt.Errorf("mark running: %w", err)
 	}
+	m.emitStateChanged(ctx, req.ID, req.Plan.LogicalAgentID, string(session.StateLaunching), string(session.StateRunning), nil, "")
 
 	info := SessionInfo{
 		ID:         req.ID,
@@ -198,8 +254,10 @@ func (m *Manager) watch(id string, sess provider.Session, broker *attachBroker) 
 
 	m.mu.Lock()
 	var killing bool
+	var logicalAgentID string
 	if e, ok := m.registry[id]; ok {
 		killing = e.killing
+		logicalAgentID = e.info.LogicalAgentID
 		delete(m.registry, id)
 	}
 	result := m.results[id]
@@ -215,6 +273,7 @@ func (m *Manager) watch(id string, sess provider.Session, broker *attachBroker) 
 		state = session.StateFailed
 	}
 	_ = m.sink.UpdateSessionState(id, string(state), sess.Health().PID, &code)
+	m.emitStateChanged(context.Background(), id, logicalAgentID, string(session.StateRunning), string(state), &code, "")
 
 	if broker != nil {
 		broker.close()
