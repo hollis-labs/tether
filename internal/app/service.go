@@ -56,7 +56,7 @@ func New(catalogRoot string) (*Service, error) {
 	if swept, err := db.SweepStaleAttachments(time.Now().UTC().Format(time.RFC3339)); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
 	}
-	mgr := runtime.NewManager(db, nil).WithAttachmentSink(db)
+	mgr := runtime.NewManager(db).WithAttachmentSink(db)
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
@@ -128,9 +128,9 @@ func (s *Service) Launch(launchID string) (*Launched, error) {
 		return nil, err
 	}
 
-	adapter, ok := s.Providers.Get(plan.ProviderID)
+	rt, ok := s.Providers.Get(plan.ProviderID)
 	if !ok {
-		return nil, fmt.Errorf("no adapter for provider %q", plan.ProviderID)
+		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
 	}
 
 	row := store.SessionRow{
@@ -146,20 +146,17 @@ func (s *Service) Launch(launchID string) (*Launched, error) {
 		return nil, err
 	}
 
-	cmd, err := adapter.Build(plan, plan.RepoRoot)
-	if err != nil {
+	if err := rt.Prepare(context.Background(), plan); err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
 
 	req := runtime.StartRequest{
-		ID:         sessID,
-		Plan:       plan,
-		Workspace:  ws,
-		Cmd:        cmd,
-		BootPrompt: plan.BootPrompt,
-		BootMode:   plan.BootMode,
+		ID:        sessID,
+		Plan:      plan,
+		Workspace: ws,
+		Runtime:   rt,
 	}
 	if err := s.Runtime.Start(context.Background(), req); err != nil {
 		return nil, err

@@ -11,13 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
@@ -36,47 +36,20 @@ type AttachmentSink interface {
 	DetachClientAttachment(id, detachedAt string) error
 }
 
-// Handle is the minimum contract Manager needs from a running session.
-// *session.Handle implements it.
-type Handle interface {
-	Wait() (int, error)
-	Kill() error
-	PID() int
-	PTYWriter() io.Writer
-}
-
-// Starter produces a Handle from a command + log path + boot prompt.
-// DefaultStarter wraps session.Start; tests inject fakes. fanout, if non-nil,
-// receives a copy of PTY output; Manager uses it to route live bytes to
-// attach subscribers.
-type Starter interface {
-	Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error)
-}
-
-// DefaultStarter wraps session.Start so Manager does not depend directly on
-// PTY internals.
-type DefaultStarter struct{}
-
-// Start satisfies Starter by delegating to session.Start.
-func (DefaultStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error) {
-	return session.Start(cmd, logPath, bootPrompt, bootMode, fanout)
-}
-
 // StartRequest bundles the inputs for launching a session under Manager
 // ownership. The caller (typically app.Service) resolves the plan, provisions
-// the workspace, and builds the provider command; Manager owns PTY start,
-// state transitions, and the watch goroutine.
+// the workspace, and picks the provider Runtime; Manager owns the Session's
+// registration, state transitions, and watch goroutine.
 type StartRequest struct {
-	ID         string
-	Plan       *launch.Plan
-	Workspace  *workspace.Session
-	Cmd        *exec.Cmd
-	BootPrompt string
-	BootMode   string
+	ID        string
+	Plan      *launch.Plan
+	Workspace *workspace.Session
+	Runtime   provider.Runtime
 }
 
 // SessionInfo is the public snapshot of a registered session. It deliberately
-// excludes the raw *session.Handle so callers cannot reach into PTY internals.
+// excludes the raw provider.Session so callers cannot reach into runtime
+// internals.
 type SessionInfo struct {
 	ID              string
 	PID             int
@@ -94,7 +67,6 @@ type SessionInfo struct {
 type Manager struct {
 	sink       StateSink
 	attachSink AttachmentSink
-	starter    Starter
 	nowFn      func() time.Time
 	idFn       func() string
 
@@ -108,12 +80,12 @@ type Manager struct {
 
 type entry struct {
 	info        SessionInfo
-	handle      Handle
+	sess        provider.Session
 	broker      *attachBroker
 	killing     bool
 	attachCount int
 	// inputMu serialises SendInput writes so concurrent callers never
-	// interleave partial writes on the PTY master.
+	// interleave partial writes on the session's input channel.
 	inputMu sync.Mutex
 }
 
@@ -129,19 +101,14 @@ type sessionResult struct {
 var (
 	ErrManagerStopped    = errors.New("runtime manager is stopped")
 	ErrSessionNotRunning = errors.New("session not running")
-	ErrNoPTYWriter       = errors.New("session has no PTY writer")
 )
 
-// NewManager constructs a Manager. If starter is nil, DefaultStarter is used.
-// attachSink is optional; pass nil to disable client_attachments persistence
-// (useful for tests that don't care about the durability path).
-func NewManager(sink StateSink, starter Starter) *Manager {
-	if starter == nil {
-		starter = DefaultStarter{}
-	}
+// NewManager constructs a Manager. attachSink is optional; pass nil to
+// disable client_attachments persistence (useful for tests that don't care
+// about the durability path).
+func NewManager(sink StateSink) *Manager {
 	return &Manager{
 		sink:     sink,
-		starter:  starter,
 		nowFn:    time.Now,
 		idFn:     uuid.NewString,
 		registry: map[string]*entry{},
@@ -157,12 +124,12 @@ func (m *Manager) WithAttachmentSink(sink AttachmentSink) *Manager {
 }
 
 // Start launches a session under Manager ownership. It records state
-// transitions (launching → running), registers the handle, and spawns a
-// watch goroutine that will record the terminal state when the process exits.
+// transitions (launching → running), registers the session, and spawns a
+// watch goroutine that will record the terminal state when the session exits.
 //
-// Errors from the starter are recorded as StateFailed before returning.
-// Start returns ErrManagerStopped if called after Shutdown.
-func (m *Manager) Start(_ context.Context, req StartRequest) error {
+// Errors from the provider Runtime are recorded as StateFailed before
+// returning. Start returns ErrManagerStopped if called after Shutdown.
+func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 	m.mu.RLock()
 	stopped := m.stopped
 	m.mu.RUnlock()
@@ -175,7 +142,13 @@ func (m *Manager) Start(_ context.Context, req StartRequest) error {
 	}
 
 	broker := newAttachBroker(defaultRingBytes, defaultSubscriberDepth)
-	h, err := m.starter.Start(req.Cmd, req.Workspace.LogPath, req.BootPrompt, req.BootMode, broker)
+	sess, err := req.Runtime.Start(ctx, req.Plan, provider.StartOptions{
+		Workdir:    req.Plan.RepoRoot,
+		LogPath:    req.Workspace.LogPath,
+		BootPrompt: req.Plan.BootPrompt,
+		BootMode:   req.Plan.BootMode,
+		Fanout:     broker,
+	})
 	if err != nil {
 		broker.close()
 		exit := 1
@@ -183,9 +156,9 @@ func (m *Manager) Start(_ context.Context, req StartRequest) error {
 		return err
 	}
 
-	pid := h.PID()
+	pid := sess.Health().PID
 	if err := m.sink.UpdateSessionState(req.ID, string(session.StateRunning), pid, nil); err != nil {
-		_ = h.Kill()
+		_ = sess.Stop(ctx)
 		return fmt.Errorf("mark running: %w", err)
 	}
 
@@ -204,24 +177,24 @@ func (m *Manager) Start(_ context.Context, req StartRequest) error {
 	if m.stopped {
 		m.mu.Unlock()
 		broker.close()
-		_ = h.Kill()
+		_ = sess.Stop(ctx)
 		return ErrManagerStopped
 	}
-	m.registry[req.ID] = &entry{info: info, handle: h, broker: broker}
+	m.registry[req.ID] = &entry{info: info, sess: sess, broker: broker}
 	m.results[req.ID] = &sessionResult{done: make(chan struct{})}
 	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go m.watch(req.ID, h, broker)
+	go m.watch(req.ID, sess, broker)
 	return nil
 }
 
-// watch blocks on the handle's Wait, records the terminal state, unregisters
+// watch blocks on the session's Wait, records the terminal state, unregisters
 // the entry, closes the attach broker so subscribers drain cleanly, and
 // delivers the exit code to any WaitSession callers.
-func (m *Manager) watch(id string, h Handle, broker *attachBroker) {
+func (m *Manager) watch(id string, sess provider.Session, broker *attachBroker) {
 	defer m.wg.Done()
-	code, _ := h.Wait()
+	code, _ := sess.Wait()
 
 	m.mu.Lock()
 	var killing bool
@@ -241,7 +214,7 @@ func (m *Manager) watch(id string, h Handle, broker *attachBroker) {
 	default:
 		state = session.StateFailed
 	}
-	_ = m.sink.UpdateSessionState(id, string(state), h.PID(), &code)
+	_ = m.sink.UpdateSessionState(id, string(state), sess.Health().PID, &code)
 
 	if broker != nil {
 		broker.close()
@@ -253,10 +226,10 @@ func (m *Manager) watch(id string, h Handle, broker *attachBroker) {
 	}
 }
 
-// Stop signals the named session's handle to terminate. It returns after Kill
-// has been invoked; the watch goroutine records the terminal state
+// Stop signals the named session to terminate. It returns after the session's
+// Stop has been invoked; the watch goroutine records the terminal state
 // asynchronously.
-func (m *Manager) Stop(_ context.Context, id string) error {
+func (m *Manager) Stop(ctx context.Context, id string) error {
 	m.mu.Lock()
 	e, ok := m.registry[id]
 	if !ok {
@@ -264,9 +237,9 @@ func (m *Manager) Stop(_ context.Context, id string) error {
 		return ErrSessionNotRunning
 	}
 	e.killing = true
-	h := e.handle
+	sess := e.sess
 	m.mu.Unlock()
-	return h.Kill()
+	return sess.Stop(ctx)
 }
 
 // Get returns a snapshot for a registered session.
@@ -296,11 +269,12 @@ func (m *Manager) List() []SessionInfo {
 	return out
 }
 
-// SendInput writes data to the named session's PTY. Concurrent SendInput
-// callers on the same session are serialised through a per-entry lock so
-// no two callers can interleave partial writes. Returns ErrSessionNotRunning
-// if the session is not registered, or ErrNoPTYWriter if the handle does
-// not expose a writable PTY (terminal or stubbed session).
+// SendInput writes data to the named session's input channel. Concurrent
+// SendInput callers on the same session are serialised through a per-entry
+// lock so no two callers can interleave partial writes. Returns
+// ErrSessionNotRunning if the session is not registered, or whatever error
+// the Session.SendInput surfaces (e.g. provider.ErrNoInputChannel if the
+// session's input channel is no longer available).
 func (m *Manager) SendInput(id string, data []byte) error {
 	m.mu.RLock()
 	e, ok := m.registry[id]
@@ -308,14 +282,9 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	if !ok {
 		return ErrSessionNotRunning
 	}
-	w := e.handle.PTYWriter()
-	if w == nil {
-		return ErrNoPTYWriter
-	}
 	e.inputMu.Lock()
 	defer e.inputMu.Unlock()
-	_, err := w.Write(data)
-	return err
+	return e.sess.SendInput(context.Background(), data)
 }
 
 // AttachOptions controls optional metadata attached to a subscription. The
@@ -325,7 +294,7 @@ type AttachOptions struct {
 }
 
 // Attach subscribes w to the named session's live output stream. Attach
-// writes any recent history (tail replay) to w first, then streams live PTY
+// writes any recent history (tail replay) to w first, then streams live
 // output until ctx is cancelled or the session exits. Multiple concurrent
 // Attach callers on the same session are supported; one detaching does not
 // affect the others and does not kill the session.

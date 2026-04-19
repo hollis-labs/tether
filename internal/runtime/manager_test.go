@@ -5,88 +5,115 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
 
-type fakeHandle struct {
-	pid       int
-	done      chan struct{}
-	once      sync.Once
-	code      atomic.Int32
-	killed    atomic.Bool
-	fanout    io.Writer
-	ptyWriter io.Writer
+// fakeSession is a manually-driven provider.Session. Tests use complete(code)
+// to unblock Wait and emit(bytes) to push PTY-like output through the
+// Fanout writer recorded at Start time.
+type fakeSession struct {
+	pid    int
+	done   chan struct{}
+	once   sync.Once
+	code   atomic.Int32
+	killed atomic.Bool
+	fanout io.Writer
+	// inputSink, if non-nil, receives SendInput bytes. Nil inputSink
+	// returns provider.ErrNoInputChannel — the manager surfaces that as-is.
+	inputSink io.Writer
 }
 
-func newFakeHandle(pid int) *fakeHandle {
-	return &fakeHandle{pid: pid, done: make(chan struct{})}
+func newFakeSession(pid int) *fakeSession {
+	return &fakeSession{pid: pid, done: make(chan struct{})}
 }
 
-func (f *fakeHandle) Wait() (int, error) {
+func (f *fakeSession) Wait() (int, error) {
 	<-f.done
 	return int(f.code.Load()), nil
 }
 
-func (f *fakeHandle) Kill() error {
+func (f *fakeSession) Stop(_ context.Context) error {
 	f.killed.Store(true)
 	f.code.Store(-1)
 	f.once.Do(func() { close(f.done) })
 	return nil
 }
 
-func (f *fakeHandle) PID() int { return f.pid }
+func (f *fakeSession) SendInput(_ context.Context, data []byte) error {
+	if f.inputSink == nil {
+		return provider.ErrNoInputChannel
+	}
+	_, err := f.inputSink.Write(data)
+	return err
+}
 
-func (f *fakeHandle) PTYWriter() io.Writer { return f.ptyWriter }
+func (f *fakeSession) Health() provider.HealthStatus {
+	return provider.HealthStatus{Alive: true, PID: f.pid}
+}
 
-func (f *fakeHandle) complete(code int) {
+func (f *fakeSession) CheckpointHints() (provider.CheckpointHint, bool) {
+	return provider.CheckpointHint{}, false
+}
+
+func (f *fakeSession) complete(code int) {
 	f.code.Store(int32(code))
 	f.once.Do(func() { close(f.done) })
 }
 
-// emit simulates the session writing PTY bytes; it routes through the fanout
-// writer the Starter was given so Manager.Attach subscribers see the data.
-func (f *fakeHandle) emit(p []byte) (int, error) {
+// emit simulates the session writing output bytes; they route through the
+// fanout writer the Runtime was given at Start so Manager.Attach subscribers
+// see the data.
+func (f *fakeSession) emit(p []byte) (int, error) {
 	if f.fanout == nil {
 		return 0, nil
 	}
 	return f.fanout.Write(p)
 }
 
-type fakeStarter struct {
-	mu      sync.Mutex
-	handles map[string]*fakeHandle
-	nextPID int
-	err     error
+// fakeRuntime satisfies provider.Runtime. It records the Session it creates
+// keyed by LogPath so tests can reach in and drive lifecycle events on a
+// specific session.
+type fakeRuntime struct {
+	mu       sync.Mutex
+	sessions map[string]*fakeSession
+	nextPID  int
+	err      error
 }
 
-func (f *fakeStarter) Start(cmd *exec.Cmd, logPath, bootPrompt, bootMode string, fanout io.Writer) (Handle, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.handles == nil {
-		f.handles = map[string]*fakeHandle{}
-	}
-	f.nextPID++
-	h := newFakeHandle(1000 + f.nextPID)
-	h.fanout = fanout
-	f.handles[logPath] = h
-	return h, nil
+func (r *fakeRuntime) ID() string                 { return "fake" }
+func (r *fakeRuntime) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
+func (r *fakeRuntime) Prepare(_ context.Context, _ *launch.Plan) error {
+	return nil
 }
 
-func (f *fakeStarter) get(logPath string) *fakeHandle {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.handles[logPath]
+func (r *fakeRuntime) Start(_ context.Context, _ *launch.Plan, opts provider.StartOptions) (provider.Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.sessions == nil {
+		r.sessions = map[string]*fakeSession{}
+	}
+	r.nextPID++
+	s := newFakeSession(1000 + r.nextPID)
+	s.fanout = opts.Fanout
+	r.sessions[opts.LogPath] = s
+	return s, nil
+}
+
+func (r *fakeRuntime) get(logPath string) *fakeSession {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessions[logPath]
 }
 
 type transition struct {
@@ -126,7 +153,11 @@ func (f *fakeSink) snapshot() []transition {
 	return out
 }
 
-func newRequest(id string) StartRequest {
+// newRequestFor is the per-request constructor used throughout the test
+// suite. Each StartRequest carries the fakeRuntime so the manager dispatches
+// Start into it and the test can look up the resulting fakeSession via
+// runtime.get(logPath).
+func newRequestFor(id string, rt provider.Runtime) StartRequest {
 	return StartRequest{
 		ID: id,
 		Plan: &launch.Plan{
@@ -140,16 +171,16 @@ func newRequest(id string) StartRequest {
 			Root:    "/tmp/ws/" + id,
 			LogPath: "/tmp/ws/" + id + "/session.log",
 		},
-		Cmd: &exec.Cmd{Path: "/bin/true"},
+		Runtime: rt,
 	}
 }
 
 func TestManager_StartRegistersSession(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -168,7 +199,7 @@ func TestManager_StartRegistersSession(t *testing.T) {
 		t.Errorf("info IDs not propagated from plan: %+v", info)
 	}
 	if info.PID == 0 {
-		t.Error("info.PID = 0, expected non-zero from fake handle")
+		t.Error("info.PID = 0, expected non-zero from fake session")
 	}
 	if info.Workspace != "/tmp/ws/s1" {
 		t.Errorf("info.Workspace = %q", info.Workspace)
@@ -186,7 +217,7 @@ func TestManager_StartRegistersSession(t *testing.T) {
 		t.Errorf("missing running transition: %+v", sink.snapshot())
 	}
 
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -194,14 +225,14 @@ func TestManager_StartRegistersSession(t *testing.T) {
 
 func TestManager_WaitMarksCompletedOnCleanExit(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -216,12 +247,12 @@ func TestManager_WaitMarksCompletedOnCleanExit(t *testing.T) {
 
 func TestManager_WaitMarksFailedOnNonzeroExit(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	_ = m.Start(context.Background(), req)
-	starter.get(req.Workspace.LogPath).complete(7)
+	rt.get(req.Workspace.LogPath).complete(7)
 	_ = m.Shutdown(context.Background())
 
 	if !sink.has("s1", string(session.StateFailed)) {
@@ -229,12 +260,12 @@ func TestManager_WaitMarksFailedOnNonzeroExit(t *testing.T) {
 	}
 }
 
-func TestManager_StopKillsHandleAndMarksKilled(t *testing.T) {
+func TestManager_StopKillsSessionAndMarksKilled(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -246,9 +277,9 @@ func TestManager_StopKillsHandleAndMarksKilled(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	h := starter.get(req.Workspace.LogPath)
-	if !h.killed.Load() {
-		t.Error("handle was not killed")
+	s := rt.get(req.Workspace.LogPath)
+	if !s.killed.Load() {
+		t.Error("session was not killed")
 	}
 	if !sink.has("s1", string(session.StateKilled)) {
 		t.Errorf("expected killed; got %+v", sink.snapshot())
@@ -259,7 +290,7 @@ func TestManager_StopKillsHandleAndMarksKilled(t *testing.T) {
 }
 
 func TestManager_StopNonexistentReturnsError(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	err := m.Stop(context.Background(), "nope")
 	if !errors.Is(err, ErrSessionNotRunning) {
 		t.Errorf("expected ErrSessionNotRunning; got %v", err)
@@ -267,11 +298,11 @@ func TestManager_StopNonexistentReturnsError(t *testing.T) {
 }
 
 func TestManager_StartAfterShutdownRejected(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	err := m.Start(context.Background(), newRequest("x"))
+	err := m.Start(context.Background(), newRequestFor("x", &fakeRuntime{}))
 	if !errors.Is(err, ErrManagerStopped) {
 		t.Errorf("expected ErrManagerStopped; got %v", err)
 	}
@@ -279,12 +310,12 @@ func TestManager_StartAfterShutdownRejected(t *testing.T) {
 
 func TestManager_StartFailurePersistsFailedState(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{err: errors.New("pty boom")}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{err: errors.New("boom")}
+	m := NewManager(sink)
 
-	err := m.Start(context.Background(), newRequest("s1"))
+	err := m.Start(context.Background(), newRequestFor("s1", rt))
 	if err == nil {
-		t.Fatal("expected error from starter")
+		t.Fatal("expected error from runtime.Start")
 	}
 	if !sink.has("s1", string(session.StateFailed)) {
 		t.Errorf("expected failed transition; got %+v", sink.snapshot())
@@ -296,10 +327,10 @@ func TestManager_StartFailurePersistsFailedState(t *testing.T) {
 
 func TestManager_ShutdownWaitsForInFlight(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +344,7 @@ func TestManager_ShutdownWaitsForInFlight(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 
 	select {
 	case err := <-done:
@@ -327,10 +358,10 @@ func TestManager_ShutdownWaitsForInFlight(t *testing.T) {
 
 func TestManager_ShutdownRespectsContextCancel(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	_ = m.Start(context.Background(), req)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -347,11 +378,11 @@ func TestManager_ShutdownRespectsContextCancel(t *testing.T) {
 		t.Fatal("Shutdown did not honor ctx cancellation")
 	}
 
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 }
 
 func TestManager_ShutdownIsIdempotent(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -362,16 +393,16 @@ func TestManager_ShutdownIsIdempotent(t *testing.T) {
 
 func TestManager_WaitSessionReturnsExitCode(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		starter.get(req.Workspace.LogPath).complete(42)
+		rt.get(req.Workspace.LogPath).complete(42)
 	}()
 
 	code, err := m.WaitSession(context.Background(), "s1")
@@ -386,15 +417,14 @@ func TestManager_WaitSessionReturnsExitCode(t *testing.T) {
 
 func TestManager_WaitSessionAfterExitReturnsCached(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	starter.get(req.Workspace.LogPath).complete(0)
-	// Let watch goroutine finish before calling WaitSession.
+	rt.get(req.Workspace.LogPath).complete(0)
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +439,7 @@ func TestManager_WaitSessionAfterExitReturnsCached(t *testing.T) {
 }
 
 func TestManager_WaitSessionUnknownReturnsError(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	if _, err := m.WaitSession(context.Background(), "nope"); !errors.Is(err, ErrSessionNotRunning) {
 		t.Errorf("expected ErrSessionNotRunning; got %v", err)
 	}
@@ -417,10 +447,10 @@ func TestManager_WaitSessionUnknownReturnsError(t *testing.T) {
 
 func TestManager_WaitSessionRespectsCtxCancel(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -442,21 +472,21 @@ func TestManager_WaitSessionRespectsCtxCancel(t *testing.T) {
 		t.Fatal("WaitSession did not honor ctx cancellation")
 	}
 
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 // TestManager_InterleavedLifecycleNoRace is the T-v002-s01-04 regression
-// gate. It holds the Start, Stop, Get, and List calls on the same set of
-// IDs behind a shared barrier so they actually collide with each other —
-// and with the watch goroutines — at launch time rather than the gentler
+// gate. It holds Start, Stop, Get, and List calls on the same set of IDs
+// behind a shared barrier so they actually collide with each other — and
+// with the watch goroutines — at launch time rather than the gentler
 // Start-then-Stop fan-out TestManager_ConcurrentStartStopNoRace exercises.
 // Removing the mutex from runtime.Manager causes `go test -race` on this
 // test to report WARNING: DATA RACE (sanity-checked by hand during T-04).
 func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
 	const N = 30
 	ids := make([]string, N)
@@ -467,20 +497,16 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 
-	// Starters
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		id := ids[i]
 		go func() {
 			defer wg.Done()
 			<-start
-			_ = m.Start(context.Background(), newRequest(id))
+			_ = m.Start(context.Background(), newRequestFor(id, rt))
 		}()
 	}
 
-	// Stoppers targeting the same IDs. A Stop that arrives before the
-	// corresponding Start sees ErrSessionNotRunning (not a test failure —
-	// the point is to exercise the mutex, not to assert ordering).
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		id := ids[i]
@@ -491,8 +517,6 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 		}()
 	}
 
-	// Readers hammering Get + List concurrently to race against the
-	// Start-side map writes and watch-side deletes.
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		id := ids[i]
@@ -506,19 +530,16 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 		}()
 	}
 
-	// Completers: for sessions that survived the stopper (race-dependent),
-	// drive them to a clean exit so Shutdown's wg.Wait returns promptly.
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		id := ids[i]
 		go func() {
 			defer wg.Done()
 			<-start
-			req := newRequest(id)
-			// Starter may not have registered the handle yet; spin briefly.
+			req := newRequestFor(id, rt)
 			for attempt := 0; attempt < 20; attempt++ {
-				if h := starter.get(req.Workspace.LogPath); h != nil {
-					h.complete(0)
+				if s := rt.get(req.Workspace.LogPath); s != nil {
+					s.complete(0)
 					return
 				}
 				time.Sleep(time.Millisecond)
@@ -526,7 +547,7 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 		}()
 	}
 
-	close(start) // release the barrier — all 120 goroutines run at once
+	close(start)
 	wg.Wait()
 
 	if err := m.Shutdown(context.Background()); err != nil {
@@ -538,64 +559,63 @@ func TestManager_InterleavedLifecycleNoRace(t *testing.T) {
 }
 
 func TestManager_SendInputUnknownSessionErrors(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	if err := m.SendInput("nope", []byte("hi")); !errors.Is(err, ErrSessionNotRunning) {
 		t.Errorf("expected ErrSessionNotRunning; got %v", err)
 	}
 }
 
-func TestManager_SendInputNoPTYWriterErrors(t *testing.T) {
+func TestManager_SendInputNoInputChannelErrors(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	// Default fakeHandle has no ptyWriter set → should surface ErrNoPTYWriter.
-	if err := m.SendInput("s1", []byte("hi")); !errors.Is(err, ErrNoPTYWriter) {
-		t.Errorf("expected ErrNoPTYWriter; got %v", err)
+	// fakeSession with no inputSink returns provider.ErrNoInputChannel.
+	if err := m.SendInput("s1", []byte("hi")); !errors.Is(err, provider.ErrNoInputChannel) {
+		t.Errorf("expected provider.ErrNoInputChannel; got %v", err)
 	}
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_SendInputDeliversBytes(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	var tsb threadsafeBuffer
-	starter.get(req.Workspace.LogPath).ptyWriter = &tsb
+	rt.get(req.Workspace.LogPath).inputSink = &tsb
 
 	if err := m.SendInput("s1", []byte("hello\n")); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
 	if got := tsb.String(); got != "hello\n" {
-		t.Errorf("PTY received %q, want %q", got, "hello\n")
+		t.Errorf("input sink received %q, want %q", got, "hello\n")
 	}
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_SendInputSerialisesConcurrentWrites(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 
-	// atomicWriter fails the test if Write is entered concurrently.
 	aw := newAtomicWriter(t)
-	starter.get(req.Workspace.LogPath).ptyWriter = aw
+	rt.get(req.Workspace.LogPath).inputSink = aw
 
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
@@ -608,7 +628,7 @@ func TestManager_SendInputSerialisesConcurrentWrites(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
@@ -681,21 +701,20 @@ func (f *fakeAttachSink) rows() []fakeAttachRow {
 
 func TestManager_AttachPersistsLifecycleThroughSink(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
+	rt := &fakeRuntime{}
 	attachSink := newFakeAttachSink()
-	m := NewManager(sink, starter).WithAttachmentSink(attachSink)
+	m := NewManager(sink).WithAttachmentSink(attachSink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	h := starter.get(req.Workspace.LogPath)
+	s := rt.get(req.Workspace.LogPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- m.AttachWith(ctx, "s1", io.Discard, AttachOptions{ClientKind: "http-api"}) }()
 
-	// Wait for the attachment row to be recorded.
 	deadline := time.After(500 * time.Millisecond)
 	for {
 		if len(attachSink.rows()) == 1 {
@@ -724,7 +743,6 @@ func TestManager_AttachPersistsLifecycleThroughSink(t *testing.T) {
 	cancel()
 	<-done
 
-	// Wait for detach to stamp.
 	for {
 		row := attachSink.rows()[0]
 		if row.detachedAt != "" {
@@ -737,16 +755,16 @@ func TestManager_AttachPersistsLifecycleThroughSink(t *testing.T) {
 		}
 	}
 
-	h.complete(0)
+	s.complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_AttachCounterSurvivesConcurrentClients(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -761,7 +779,6 @@ func TestManager_AttachCounterSurvivesConcurrentClients(t *testing.T) {
 		}()
 	}
 
-	// Wait until the manager sees all N subscribers.
 	deadline := time.After(500 * time.Millisecond)
 	for {
 		info, _ := m.Get("s1")
@@ -780,39 +797,36 @@ func TestManager_AttachCounterSurvivesConcurrentClients(t *testing.T) {
 	for i := 0; i < N; i++ {
 		<-done
 	}
-	// All detached — counter back to 0.
 	info, _ := m.Get("s1")
 	if info.AttachedClients != 0 {
 		t.Errorf("AttachedClients after detach = %d, want 0", info.AttachedClients)
 	}
 
-	starter.get(req.Workspace.LogPath).complete(0)
+	rt.get(req.Workspace.LogPath).complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_AttachReceivesLiveBytes(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	h := starter.get(req.Workspace.LogPath)
+	s := rt.get(req.Workspace.LogPath)
 
 	var buf threadsafeBuffer
 	attachErr := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { attachErr <- m.Attach(ctx, "s1", &buf) }()
 
-	// Give Attach time to subscribe before we emit.
 	time.Sleep(20 * time.Millisecond)
-	if _, err := h.emit([]byte("live-output")); err != nil {
+	if _, err := s.emit([]byte("live-output")); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 
-	// Poll for the bytes to appear.
 	deadline := time.After(1 * time.Second)
 	for {
 		if buf.String() == "live-output" {
@@ -830,20 +844,20 @@ func TestManager_AttachReceivesLiveBytes(t *testing.T) {
 		t.Fatalf("Attach err = %v", err)
 	}
 
-	h.complete(0)
+	s.complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_AttachMultipleSubscribersBothReceive(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	h := starter.get(req.Workspace.LogPath)
+	s := rt.get(req.Workspace.LogPath)
 
 	var buf1, buf2 threadsafeBuffer
 	ctx, cancel := context.WithCancel(context.Background())
@@ -852,7 +866,7 @@ func TestManager_AttachMultipleSubscribersBothReceive(t *testing.T) {
 	go func() { _ = m.Attach(ctx, "s1", &buf2); done <- struct{}{} }()
 
 	time.Sleep(30 * time.Millisecond)
-	if _, err := h.emit([]byte("broadcast")); err != nil {
+	if _, err := s.emit([]byte("broadcast")); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 
@@ -871,12 +885,12 @@ func TestManager_AttachMultipleSubscribersBothReceive(t *testing.T) {
 	cancel()
 	<-done
 	<-done
-	h.complete(0)
+	s.complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_AttachUnknownSessionReturnsError(t *testing.T) {
-	m := NewManager(&fakeSink{}, &fakeStarter{})
+	m := NewManager(&fakeSink{})
 	err := m.Attach(context.Background(), "nope", &threadsafeBuffer{})
 	if !errors.Is(err, ErrSessionNotRunning) {
 		t.Errorf("expected ErrSessionNotRunning; got %v", err)
@@ -885,14 +899,14 @@ func TestManager_AttachUnknownSessionReturnsError(t *testing.T) {
 
 func TestManager_AttachSurvivesSiblingDetach(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	h := starter.get(req.Workspace.LogPath)
+	s := rt.get(req.Workspace.LogPath)
 
 	var survivor threadsafeBuffer
 	ctxSurvivor, cancelSurvivor := context.WithCancel(context.Background())
@@ -904,7 +918,7 @@ func TestManager_AttachSurvivesSiblingDetach(t *testing.T) {
 	cancelDropped()
 	time.Sleep(10 * time.Millisecond)
 
-	if _, err := h.emit([]byte("after-drop")); err != nil {
+	if _, err := s.emit([]byte("after-drop")); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 
@@ -918,26 +932,26 @@ func TestManager_AttachSurvivesSiblingDetach(t *testing.T) {
 	}
 
 	cancelSurvivor()
-	h.complete(0)
+	s.complete(0)
 	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_AttachReturnsWhenSessionExits(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
-	req := newRequest("s1")
+	req := newRequestFor("s1", rt)
 	if err := m.Start(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	h := starter.get(req.Workspace.LogPath)
+	s := rt.get(req.Workspace.LogPath)
 
 	attachDone := make(chan error, 1)
 	go func() { attachDone <- m.Attach(context.Background(), "s1", io.Discard) }()
 
 	time.Sleep(20 * time.Millisecond)
-	h.complete(0)
+	s.complete(0)
 
 	select {
 	case err := <-attachDone:
@@ -973,8 +987,8 @@ func (b *threadsafeBuffer) String() string {
 
 func TestManager_ConcurrentStartStopNoRace(t *testing.T) {
 	sink := &fakeSink{}
-	starter := &fakeStarter{}
-	m := NewManager(sink, starter)
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
 
 	const N = 20
 	ids := make([]string, N)
@@ -988,7 +1002,7 @@ func TestManager_ConcurrentStartStopNoRace(t *testing.T) {
 		id := ids[i]
 		go func() {
 			defer wg.Done()
-			if err := m.Start(context.Background(), newRequest(id)); err != nil {
+			if err := m.Start(context.Background(), newRequestFor(id, rt)); err != nil {
 				t.Errorf("Start %s: %v", id, err)
 			}
 		}()
@@ -1000,13 +1014,13 @@ func TestManager_ConcurrentStartStopNoRace(t *testing.T) {
 		i, id := i, ids[i]
 		go func() {
 			defer wg.Done()
-			req := newRequest(id)
+			req := newRequestFor(id, rt)
 			if i%2 == 0 {
 				_ = m.Stop(context.Background(), id)
 				return
 			}
-			if h := starter.get(req.Workspace.LogPath); h != nil {
-				h.complete(0)
+			if s := rt.get(req.Workspace.LogPath); s != nil {
+				s.complete(0)
 			}
 		}()
 	}

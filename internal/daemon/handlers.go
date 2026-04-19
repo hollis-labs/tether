@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/runtime"
 )
 
@@ -187,8 +188,8 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 			writeError(w, http.StatusNotFound, "session not running")
 			return
 		}
-		if errors.Is(err, runtime.ErrNoPTYWriter) {
-			writeError(w, http.StatusConflict, "session has no PTY")
+		if errors.Is(err, provider.ErrNoInputChannel) {
+			writeError(w, http.StatusConflict, "session has no input channel")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())

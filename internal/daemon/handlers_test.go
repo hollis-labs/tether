@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -323,8 +324,8 @@ func TestHandleSendInput_SessionNotRunning(t *testing.T) {
 	}
 }
 
-func TestHandleSendInput_NoPTYConflict(t *testing.T) {
-	svc := &fakeLaunchService{inputErr: runtime.ErrNoPTYWriter}
+func TestHandleSendInput_NoInputChannelConflict(t *testing.T) {
+	svc := &fakeLaunchService{inputErr: provider.ErrNoInputChannel}
 	srv := newTestServer(svc)
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
 	rr := httptest.NewRecorder()
