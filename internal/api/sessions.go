@@ -84,6 +84,16 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleAttach(w, r, id)
+	case "checkpoint":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.Checkpoints == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "checkpoints not configured")
+			return
+		}
+		s.handleCreateCheckpoint(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

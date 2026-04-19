@@ -38,6 +38,9 @@ type Server struct {
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
 	Service api.LaunchService
+	// Checkpoints is optional; when set, the checkpoint endpoints are
+	// mounted. Tests can pass nil to skip them.
+	Checkpoints api.CheckpointStore
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -163,11 +166,17 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	if s.Service != nil {
-		apiHandler := api.NewHandler(api.Deps{Service: s.Service})
+		apiHandler := api.NewHandler(api.Deps{
+			Service:     s.Service,
+			Checkpoints: s.Checkpoints,
+		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
 		mux.Handle("/sessions", apiHandler)
 		mux.Handle("/sessions/", apiHandler)
+		if s.Checkpoints != nil {
+			mux.Handle("/logical-agents/", apiHandler)
+		}
 	}
 	return mux
 }
