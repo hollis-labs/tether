@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly Monday 09:00 UTC — re-runs the full gate (including govulncheck)
+    # so newly-disclosed vulns in dependencies get caught between pushes.
+    - cron: '0 9 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt / vet / lint / test-race / vuln
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Honors both the `go` and `toolchain` directives in go.mod so CI
+          # tracks the same toolchain developers use locally.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install developer tools
+        run: make tools-install
+
+      - name: Run full quality gate
+        run: make check
