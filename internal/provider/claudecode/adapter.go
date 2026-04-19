@@ -2,9 +2,11 @@ package claudecode
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/chrispian/agent-mux/internal/provider"
 )
 
 type Adapter struct{}
@@ -17,14 +19,6 @@ func (Adapter) Build(plan *launch.Plan, workdir string) (*exec.Cmd, error) {
 	}
 	cmd := exec.Command(plan.Command, plan.Args...)
 	cmd.Dir = workdir
-	cmd.Env = flattenEnv(plan.Env)
+	cmd.Env = provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ())
 	return cmd, nil
-}
-
-func flattenEnv(env map[string]string) []string {
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
-	}
-	return out
 }

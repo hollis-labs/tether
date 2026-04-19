@@ -6,8 +6,13 @@ bootstrap:
   mode: stdin
   prompt_prefix: ""
 env:
+  # Default "merge" inherits the full daemon environment and applies redact +
+  # overrides. Flip to "whitelist" for isolation (only the listed passthrough
+  # keys are copied in). See internal/provider/env.go.
+  mode: merge
   passthrough:
     - HOME
     - PATH
     - SHELL
     - ANTHROPIC_API_KEY
+  redact: []

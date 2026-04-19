@@ -2,7 +2,6 @@ package launch
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/chrispian/agent-mux/internal/config"
 )
@@ -39,14 +38,18 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		boot = prov.Bootstrap.PromptPrefix + "\n" + boot
 	}
 
-	env := map[string]string{}
-	for _, k := range prov.Env.Passthrough {
-		if v, ok := os.LookupEnv(k); ok {
-			env[k] = v
-		}
-	}
+	// Carry only the explicit overrides into the plan. The adapter composes
+	// the effective child env at launch time per prov.Env.Mode, so parent
+	// values are never materialised into plan.Env (and thus never persisted
+	// in launch_plans). See internal/provider/env.go.
+	overrides := map[string]string{}
 	for k, v := range l.Overrides.Env {
-		env[k] = v
+		overrides[k] = v
+	}
+
+	mode := prov.Env.Mode
+	if mode == "" {
+		mode = "merge"
 	}
 
 	writeHome := l.Workspace.WriteHome
@@ -55,16 +58,19 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	}
 
 	return &Plan{
-		LaunchID:   l.ID,
-		ProjectID:  proj.ID,
-		AgentID:    agent.ID,
-		ProviderID: prov.ID,
-		RepoRoot:   config.Expand(proj.RepoRoot),
-		WriteHome:  config.Expand(writeHome),
-		Command:    prov.Command,
-		Args:       prov.Args,
-		Env:        env,
-		BootPrompt: boot,
-		BootMode:   prov.Bootstrap.Mode,
+		LaunchID:       l.ID,
+		ProjectID:      proj.ID,
+		AgentID:        agent.ID,
+		ProviderID:     prov.ID,
+		RepoRoot:       config.Expand(proj.RepoRoot),
+		WriteHome:      config.Expand(writeHome),
+		Command:        prov.Command,
+		Args:           prov.Args,
+		Env:            overrides,
+		EnvMode:        mode,
+		EnvPassthrough: prov.Env.Passthrough,
+		EnvRedact:      prov.Env.Redact,
+		BootPrompt:     boot,
+		BootMode:       prov.Bootstrap.Mode,
 	}, nil
 }

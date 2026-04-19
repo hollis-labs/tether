@@ -84,8 +84,20 @@ type BootstrapSpec struct {
 	PromptPrefix string `yaml:"prompt_prefix"`
 }
 
+// ProviderEnv describes how the provider composes a child process's
+// environment. See internal/provider/env.go for full semantics.
+//
+// Mode is "merge" (default) or "whitelist". Merge inherits the parent
+// environment, drops any keys in Redact, and overlays explicit overrides.
+// Whitelist starts empty and copies only the keys listed in Passthrough.
+//
+// Passthrough is consulted only in whitelist mode; Redact is consulted only
+// in merge mode. Both fields are preserved across modes so catalog authors
+// can flip mode without rewriting the rest of the block.
 type ProviderEnv struct {
+	Mode        string   `yaml:"mode"`
 	Passthrough []string `yaml:"passthrough"`
+	Redact      []string `yaml:"redact"`
 }
 
 type Launch struct {
