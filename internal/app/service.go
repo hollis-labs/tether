@@ -1,10 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"path/filepath"
-	"sync"
 
 	"github.com/google/uuid"
 
@@ -12,24 +11,23 @@ import (
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/provider/claudecode"
+	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
 
+// Service is the composition root: it wires catalog, store, providers, and
+// the runtime manager. Lifecycle ownership of running sessions lives in
+// internal/runtime; Service only orchestrates launch preconditions (plan
+// resolution, workspace creation, persistence of the initial row) and then
+// hands the handle off to the manager.
 type Service struct {
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store
 	Providers   *provider.Registry
-
-	// running/killing are accessed by the main goroutine (Launch/StopSession)
-	// and the wait goroutine. v0 CLI is one-shot so the window is narrow, but
-	// this is not safe under concurrent calls. TODO: add a sync.Mutex once the
-	// service gains more than one caller (HTTP/TUI/workflow).
-	running map[string]*session.Handle
-	killing map[string]bool
-	wg      sync.WaitGroup
+	Runtime     *runtime.Manager
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -55,13 +53,14 @@ func New(catalogRoot string) (*Service, error) {
 		Catalog:     cat,
 		Store:       db,
 		Providers:   reg,
-		running:     map[string]*session.Handle{},
-		killing:     map[string]bool{},
+		Runtime:     runtime.NewManager(db, nil),
 	}, nil
 }
 
 func (s *Service) Close() error {
-	s.wg.Wait()
+	if err := s.Runtime.Shutdown(context.Background()); err != nil {
+		return err
+	}
 	return s.Store.Close()
 }
 
@@ -97,10 +96,14 @@ type Launched struct {
 	SessionID string
 	Workspace *workspace.Session
 	Plan      *launch.Plan
-	Handle    *session.Handle
+
+	// Wait blocks until the session reaches a terminal state and returns
+	// its exit code. Routes through runtime.Manager; safe to call from any
+	// goroutine, safe to call after the session has already exited.
+	Wait func(ctx context.Context) (int, error)
 }
 
-func (s *Service) Launch(launchID string, attach io.Writer) (*Launched, error) {
+func (s *Service) Launch(launchID string) (*Launched, error) {
 	plan, err := s.Resolve(launchID)
 	if err != nil {
 		return nil, err
@@ -136,38 +139,31 @@ func (s *Service) Launch(launchID string, attach io.Writer) (*Launched, error) {
 
 	cmd, err := adapter.Build(plan, plan.RepoRoot)
 	if err != nil {
-		_ = s.Store.UpdateSessionState(sessID, string(session.StateFailed), 0, intPtr(1))
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
-	_ = s.Store.UpdateSessionState(sessID, string(session.StateLaunching), 0, nil)
 
-	h, err := session.Start(cmd, ws.LogPath, plan.BootPrompt, plan.BootMode)
-	if err != nil {
-		_ = s.Store.UpdateSessionState(sessID, string(session.StateFailed), 0, intPtr(1))
+	req := runtime.StartRequest{
+		ID:         sessID,
+		Plan:       plan,
+		Workspace:  ws,
+		Cmd:        cmd,
+		BootPrompt: plan.BootPrompt,
+		BootMode:   plan.BootMode,
+	}
+	if err := s.Runtime.Start(context.Background(), req); err != nil {
 		return nil, err
 	}
-	_ = s.Store.UpdateSessionState(sessID, string(session.StateRunning), h.Cmd.Process.Pid, nil)
-	s.running[sessID] = h
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		code, _ := h.Wait()
-		var state session.State
-		switch {
-		case s.killing[sessID]:
-			state = session.StateKilled
-		case code == 0:
-			state = session.StateCompleted
-		default:
-			state = session.StateFailed
-		}
-		_ = s.Store.UpdateSessionState(sessID, string(state), h.Cmd.Process.Pid, &code)
-		delete(s.running, sessID)
-		delete(s.killing, sessID)
-	}()
-
-	return &Launched{SessionID: sessID, Workspace: ws, Plan: plan, Handle: h}, nil
+	return &Launched{
+		SessionID: sessID,
+		Workspace: ws,
+		Plan:      plan,
+		Wait: func(ctx context.Context) (int, error) {
+			return s.Runtime.WaitSession(ctx, sessID)
+		},
+	}, nil
 }
 
 func (s *Service) ListSessions() ([]store.SessionRow, error) {
@@ -179,12 +175,5 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 }
 
 func (s *Service) StopSession(id string) error {
-	h, ok := s.running[id]
-	if !ok {
-		return fmt.Errorf("session %q not running locally", id)
-	}
-	s.killing[id] = true
-	return h.Kill()
+	return s.Runtime.Stop(context.Background(), id)
 }
-
-func intPtr(i int) *int { return &i }

@@ -89,6 +89,14 @@ func (h *Handle) Kill() error {
 	return h.Cmd.Process.Kill()
 }
 
+// PID returns the child process PID, or 0 if the process is not started.
+func (h *Handle) PID() int {
+	if h.Cmd == nil || h.Cmd.Process == nil {
+		return 0
+	}
+	return h.Cmd.Process.Pid
+}
+
 // Attach copies the log file from start to current EOF into w.
 // v0 is snapshot-only; live-follow ("tail -f") is deferred to a later task.
 func (h *Handle) Attach(w io.Writer) error {

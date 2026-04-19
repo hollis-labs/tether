@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -23,14 +24,14 @@ var launchCmd = &cobra.Command{
 			return err
 		}
 		defer svc.Close()
-		launched, err := svc.Launch(launchID, os.Stdout)
+		launched, err := svc.Launch(launchID)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "session: %s\nworkspace: %s\nlog: %s\n",
 			launched.SessionID, launched.Workspace.Root, launched.Workspace.LogPath)
 		if launchWait {
-			code, err := launched.Handle.Wait()
+			code, err := launched.Wait(context.Background())
 			if err != nil {
 				return err
 			}
