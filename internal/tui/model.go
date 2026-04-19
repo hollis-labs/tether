@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
+	"github.com/chrispian/agent-mux/internal/tui/theme"
 )
 
 // RowType is the catalog/runtime category a result row belongs to.
@@ -40,7 +41,7 @@ var chipOrder = []RowType{
 // Model is the root Bubble Tea model for the mux TUI.
 type Model struct {
 	keys   KeyMap
-	styles layout.Styles
+	theme  theme.Theme
 	client *client.Client
 
 	width  int
@@ -82,7 +83,7 @@ func New(c *client.Client) Model {
 
 	return Model{
 		keys:          DefaultKeyMap(),
-		styles:        layout.DefaultStyles(),
+		theme:         theme.Default(),
 		client:        c,
 		search:        ti,
 		body:          vp,
@@ -421,7 +422,7 @@ func (m *Model) refreshBody() {
 
 	var sb strings.Builder
 	for i, r := range m.visible {
-		sb.WriteString(renderRowLine(r, i == m.selectedIdx))
+		sb.WriteString(m.renderRowLine(r, i == m.selectedIdx))
 		sb.WriteByte('\n')
 	}
 	m.body.SetContent(sb.String())
@@ -450,13 +451,20 @@ func (m Model) SelectedRow() ResultRow {
 	return m.visible[m.selectedIdx]
 }
 
-func renderRowLine(r ResultRow, selected bool) string {
+func (m Model) renderRowLine(r ResultRow, selected bool) string {
 	typeTag := fmt.Sprintf("[%s]", r.Type())
-	line := fmt.Sprintf("%-11s %-30s  %s", typeTag, truncate(r.Title(), 30), r.Subtitle())
+	body := fmt.Sprintf("%-11s %-30s  %s", typeTag, truncate(r.Title(), 30), r.Subtitle())
 	if selected {
-		return "▶ " + line
+		// Width fills the body viewport width so the accent background
+		// extends across the whole row (accounting for the body's border +
+		// padding: 2 border cols + 2 padding cols).
+		width := m.body.Width - 4
+		if width < 20 {
+			width = 20
+		}
+		return m.theme.ResultSelected().Width(width).Render("▶ " + body)
 	}
-	return "  " + line
+	return m.theme.ResultUnselected().Render("  " + body)
 }
 
 func truncate(s string, n int) string {
@@ -470,7 +478,7 @@ func truncate(s string, n int) string {
 }
 
 func (m Model) renderSearch() string {
-	return m.styles.Search.Width(m.width - 2).Render(m.search.View())
+	return m.theme.Search().Width(m.width - 2).Render(m.search.View())
 }
 
 func (m Model) renderChips() string {
@@ -478,16 +486,16 @@ func (m Model) renderChips() string {
 	for i, t := range chipOrder {
 		label := fmt.Sprintf("%s (⌥%d)", chipLabel(t), i+1)
 		if m.filters[t] {
-			out = append(out, m.styles.ChipOn.Render(label))
+			out = append(out, m.theme.ChipOn().Render(label))
 		} else {
-			out = append(out, m.styles.ChipOff.Render(label))
+			out = append(out, m.theme.ChipOff().Render(label))
 		}
 	}
-	return m.styles.Frame.Render(strings.Join(out, ""))
+	return m.theme.Frame().Render(strings.Join(out, ""))
 }
 
 func (m Model) renderBody() string {
-	return m.styles.Body.Width(m.width - 2).Render(m.body.View())
+	return m.theme.Body().Width(m.width - 2).Render(m.body.View())
 }
 
 func (m Model) renderFooter() string {
@@ -496,10 +504,10 @@ func (m Model) renderFooter() string {
 	// feedback without hunting for it. Single-line styled text keeps
 	// each toast to exactly one row of the vertical budget.
 	for _, t := range m.toasts.items() {
-		style := m.styles.ToastInfo
+		style := m.theme.ToastInfo()
 		glyph := "●"
 		if t.Kind == ToastError {
-			style = m.styles.ToastError
+			style = m.theme.ToastError()
 			glyph = "✗"
 		}
 		block.WriteString(style.Render(glyph + " " + t.Message))
@@ -531,13 +539,13 @@ func (m Model) renderFooter() string {
 	} else if len(m.visible) > 0 {
 		status = fmt.Sprintf("  ·  %d result(s)", len(m.visible))
 	}
-	block.WriteString(m.styles.Footer.Render(strings.Join(hints, "  ·  ") + status + selInfo))
-	return m.styles.Frame.Render(block.String())
+	block.WriteString(m.theme.Footer().Render(strings.Join(hints, "  ·  ") + status + selInfo))
+	return m.theme.Frame().Render(block.String())
 }
 
 func (m Model) keyHint(b key.Binding) string {
 	k, help := b.Help().Key, b.Help().Desc
-	return m.styles.FooterKey.Render(k) + " " + help
+	return m.theme.FooterKey().Render(k) + " " + help
 }
 
 func chipLabel(t RowType) string {
