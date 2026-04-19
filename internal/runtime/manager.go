@@ -56,7 +56,7 @@ type SessionInfo struct {
 	State           session.State
 	LaunchID        string
 	ProjectID       string
-	AgentID         string
+	LogicalAgentID  string
 	ProviderID      string
 	Workspace       string
 	AttachedClients int
@@ -168,7 +168,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 		State:      session.StateRunning,
 		LaunchID:   req.Plan.LaunchID,
 		ProjectID:  req.Plan.ProjectID,
-		AgentID:    req.Plan.AgentID,
+		LogicalAgentID: req.Plan.LogicalAgentID,
 		ProviderID: req.Plan.ProviderID,
 		Workspace:  req.Workspace.Root,
 	}

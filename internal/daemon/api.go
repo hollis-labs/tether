@@ -56,7 +56,7 @@ type SessionDTO struct {
 	ID              string  `json:"id"`
 	LaunchID        string  `json:"launch_id"`
 	ProjectID       string  `json:"project_id"`
-	AgentID         string  `json:"agent_id"`
+	LogicalAgentID  string  `json:"logical_agent_id"`
 	ProviderID      string  `json:"provider_id"`
 	Workspace       string  `json:"workspace"`
 	State           string  `json:"state"`
@@ -80,7 +80,7 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 		ID:         r.ID,
 		LaunchID:   r.LaunchID,
 		ProjectID:  r.ProjectID,
-		AgentID:    r.AgentID,
+		LogicalAgentID: r.LogicalAgentID,
 		ProviderID: r.ProviderID,
 		Workspace:  r.Workspace,
 		State:      r.State,

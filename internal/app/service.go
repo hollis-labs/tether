@@ -6,10 +6,12 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/chrispian/agent-mux/internal/agent"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
@@ -57,6 +59,15 @@ func New(catalogRoot string) (*Service, error) {
 	// "attached" at startup is an orphan from a prior daemon process.
 	if swept, err := db.SweepStaleAttachments(time.Now().UTC().Format(time.RFC3339)); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
+	}
+	// Seed logical_agents from the catalog. Upsert — idempotent across
+	// restarts; preserves created_at + any future operator-set fields.
+	// See ADR 0003.
+	if n, err := seedLogicalAgents(db, cat.Agents); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed logical_agents: %w", err)
+	} else if n > 0 {
+		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
 	mgr := runtime.NewManager(db).WithAttachmentSink(db)
 	return &Service{
@@ -139,7 +150,7 @@ func (s *Service) Launch(launchID string) (*Launched, error) {
 		ID:         sessID,
 		LaunchID:   plan.LaunchID,
 		ProjectID:  plan.ProjectID,
-		AgentID:    plan.AgentID,
+		LogicalAgentID: plan.LogicalAgentID,
 		ProviderID: plan.ProviderID,
 		Workspace:  ws.Root,
 		State:      string(session.StateCreated),
@@ -215,4 +226,25 @@ func (s *Service) AttachedClients(id string) int {
 		return 0
 	}
 	return info.AttachedClients
+}
+
+// seedLogicalAgents upserts a logical_agents row for every catalog agent.
+// Returns the number of rows touched. Idempotent: re-running refreshes
+// name/role and updated_at while preserving created_at per the Upsert
+// contract. See ADR 0003.
+func seedLogicalAgents(db *store.Store, agents map[string]config.Agent) (int, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var n int
+	for _, a := range agents {
+		la := agent.LogicalAgent{
+			ID:   a.ID,
+			Name: a.Name,
+			Role: strings.Join(a.Roles, ", "),
+		}
+		if err := db.UpsertLogicalAgent(la, now); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }

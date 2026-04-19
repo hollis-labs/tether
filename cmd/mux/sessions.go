@@ -30,7 +30,7 @@ var sessionsListCmd = &cobra.Command{
 		}
 		fmt.Printf("%-36s  %-12s  %-12s  %-12s  %s\n", "ID", "STATE", "PROJECT", "AGENT", "CREATED")
 		for _, d := range dtos {
-			fmt.Printf("%-36s  %-12s  %-12s  %-12s  %s\n", d.ID, d.State, d.ProjectID, d.AgentID, d.CreatedAt)
+			fmt.Printf("%-36s  %-12s  %-12s  %-12s  %s\n", d.ID, d.State, d.ProjectID, d.LogicalAgentID, d.CreatedAt)
 		}
 		return nil
 	},
@@ -54,7 +54,7 @@ var sessionsGetCmd = &cobra.Command{
 			pid = fmt.Sprintf("%d", *d.PID)
 		}
 		fmt.Printf("id:         %s\nstate:      %s\nlaunch:     %s\nproject:    %s\nagent:      %s\nprovider:   %s\nworkspace:  %s\npid:        %s\nexit:       %s\ncreated_at: %s\nupdated_at: %s\n",
-			d.ID, d.State, d.LaunchID, d.ProjectID, d.AgentID, d.ProviderID, d.Workspace, pid, exitCode, d.CreatedAt, d.UpdatedAt)
+			d.ID, d.State, d.LaunchID, d.ProjectID, d.LogicalAgentID, d.ProviderID, d.Workspace, pid, exitCode, d.CreatedAt, d.UpdatedAt)
 		return nil
 	},
 }

@@ -15,7 +15,7 @@ func TestClientAttachments_CreateAndList(t *testing.T) {
 
 	// Session must exist because of the FK.
 	if err := db.CreateSession(SessionRow{
-		ID: "s1", LaunchID: "l", ProjectID: "p", AgentID: "a", ProviderID: "pv",
+		ID: "s1", LaunchID: "l", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv",
 		Workspace: "/tmp/ws", State: "running",
 	}, nil); err != nil {
 		// CreateSession also tries to insert launch_plans; pass a nil plan.
@@ -26,7 +26,7 @@ func TestClientAttachments_CreateAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`INSERT INTO sessions
-        (id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+        (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"s1", "l", "p", "a", "pv", "/tmp/ws", "running",
 		time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
@@ -73,7 +73,7 @@ func TestClientAttachments_SweepStale(t *testing.T) {
 
 	// Seed a session row manually (same reason as above).
 	if _, err := db.db.Exec(`INSERT INTO sessions
-        (id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+        (id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"s1", "l", "p", "a", "pv", "/tmp/ws", "completed",
 		"2026-04-18T09:00:00Z", "2026-04-18T09:00:00Z",

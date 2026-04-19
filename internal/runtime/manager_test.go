@@ -161,10 +161,10 @@ func newRequestFor(id string, rt provider.Runtime) StartRequest {
 	return StartRequest{
 		ID: id,
 		Plan: &launch.Plan{
-			LaunchID:   "demo",
-			ProjectID:  "p1",
-			AgentID:    "a1",
-			ProviderID: "pr1",
+			LaunchID:       "demo",
+			ProjectID:      "p1",
+			LogicalAgentID: "a1",
+			ProviderID:     "pr1",
 		},
 		Workspace: &workspace.Session{
 			ID:      id,
@@ -195,7 +195,7 @@ func TestManager_StartRegistersSession(t *testing.T) {
 	if info.State != session.StateRunning {
 		t.Errorf("info.State = %q, want running", info.State)
 	}
-	if info.ProjectID != "p1" || info.AgentID != "a1" || info.ProviderID != "pr1" {
+	if info.ProjectID != "p1" || info.LogicalAgentID != "a1" || info.ProviderID != "pr1" {
 		t.Errorf("info IDs not propagated from plan: %+v", info)
 	}
 	if info.PID == 0 {

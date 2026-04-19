@@ -23,6 +23,9 @@ func TestResolveDemoLaunch(t *testing.T) {
 	if plan.Command != "claude" {
 		t.Fatalf("want command=claude, got %q", plan.Command)
 	}
+	if plan.LogicalAgentID != "demo-agent" {
+		t.Fatalf("want LogicalAgentID=demo-agent, got %q", plan.LogicalAgentID)
+	}
 	if !strings.Contains(plan.BootPrompt, "Agent Mux") {
 		t.Fatalf("boot prompt missing common fragment: %q", plan.BootPrompt)
 	}

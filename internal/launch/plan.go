@@ -6,14 +6,14 @@ package launch
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
-	LaunchID   string   `json:"launch_id"`
-	ProjectID  string   `json:"project_id"`
-	AgentID    string   `json:"agent_id"`
-	ProviderID string   `json:"provider_id"`
-	RepoRoot   string   `json:"repo_root"`
-	WriteHome  string   `json:"write_home"`
-	Command    string   `json:"command"`
-	Args       []string `json:"args"`
+	LaunchID       string   `json:"launch_id"`
+	ProjectID      string   `json:"project_id"`
+	LogicalAgentID string   `json:"logical_agent_id"`
+	ProviderID     string   `json:"provider_id"`
+	RepoRoot       string   `json:"repo_root"`
+	WriteHome      string   `json:"write_home"`
+	Command        string   `json:"command"`
+	Args           []string `json:"args"`
 
 	// Env holds explicit overrides (from the launch's overrides.env block).
 	// The adapter applies these last, after composing the base environment

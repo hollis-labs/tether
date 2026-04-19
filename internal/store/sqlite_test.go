@@ -13,7 +13,7 @@ func TestCreateAndListSession(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	row := SessionRow{ID: "s1", LaunchID: "l1", ProjectID: "p", AgentID: "a", ProviderID: "pv", Workspace: "/tmp/ws", State: "created"}
+	row := SessionRow{ID: "s1", LaunchID: "l1", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv", Workspace: "/tmp/ws", State: "created"}
 	if err := db.CreateSession(row, &launch.Plan{LaunchID: "l1"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}

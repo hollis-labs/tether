@@ -150,6 +150,124 @@ CREATE TABLE events (
 	}
 }
 
+// TestMigrate_0003_AdoptsLegacySessionData proves migration 0003 both
+// backfills logical_agents from distinct sessions.agent_id values and
+// renames the column to logical_agent_id while preserving row data. This
+// is the v0.0.1 → v0.0.2 upgrade contract for T-v002-s03-02.
+func TestMigrate_0003_AdoptsLegacySessionData(t *testing.T) {
+	db := openTempDB(t)
+	defer db.Close()
+
+	// Seed v0.0.1 schema + a couple of session rows referencing two distinct
+	// agent_id values. Note: no client_attachments or logical_agents yet.
+	v001Schema := `
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY, launch_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL, provider_id TEXT NOT NULL, workspace TEXT NOT NULL,
+    state TEXT NOT NULL, pid INTEGER, exit_code INTEGER,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, ended_at TEXT);
+CREATE TABLE launch_plans (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    plan_json TEXT NOT NULL);
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+    at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT);
+INSERT INTO sessions (id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+    VALUES ('s-old-1', 'l', 'p', 'claude-code', 'claudecode', '/tmp/ws1', 'completed',
+            '2026-04-17T10:00:00Z', '2026-04-17T10:05:00Z');
+INSERT INTO sessions (id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+    VALUES ('s-old-2', 'l', 'p', 'claude-code', 'claudecode', '/tmp/ws2', 'killed',
+            '2026-04-17T11:00:00Z', '2026-04-17T11:05:00Z');
+INSERT INTO sessions (id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+    VALUES ('s-old-3', 'l', 'p', 'codex-cli', 'codex', '/tmp/ws3', 'completed',
+            '2026-04-17T12:00:00Z', '2026-04-17T12:05:00Z');`
+	if _, err := db.Exec(v001Schema); err != nil {
+		t.Fatalf("seed v0.0.1 schema + rows: %v", err)
+	}
+
+	if _, err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// logical_agents must have exactly the distinct agent_id set as rows.
+	rows, err := db.Query(`SELECT id FROM logical_agents ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query logical_agents: %v", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	want := []string{"claude-code", "codex-cli"}
+	if len(ids) != len(want) {
+		t.Fatalf("logical_agents ids = %v, want %v", ids, want)
+	}
+	for i, id := range ids {
+		if id != want[i] {
+			t.Errorf("logical_agents[%d] = %q, want %q", i, id, want[i])
+		}
+	}
+
+	// sessions column set must be the rebuilt one: logical_agent_id in, agent_id out.
+	if columnExists(t, db, "sessions", "agent_id") {
+		t.Error("sessions.agent_id should not exist after 0003 (clean rename)")
+	}
+	if !columnExists(t, db, "sessions", "logical_agent_id") {
+		t.Error("sessions.logical_agent_id missing after 0003")
+	}
+
+	// Existing rows must carry their identity into logical_agent_id.
+	type sessMap struct{ id, la string }
+	got := map[string]string{}
+	rows2, err := db.Query(`SELECT id, logical_agent_id FROM sessions ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query sessions: %v", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var s sessMap
+		if err := rows2.Scan(&s.id, &s.la); err != nil {
+			t.Fatalf("scan sessions: %v", err)
+		}
+		got[s.id] = s.la
+	}
+	wantMap := map[string]string{
+		"s-old-1": "claude-code",
+		"s-old-2": "claude-code",
+		"s-old-3": "codex-cli",
+	}
+	for id, want := range wantMap {
+		if got[id] != want {
+			t.Errorf("sessions[%q].logical_agent_id = %q, want %q", id, got[id], want)
+		}
+	}
+}
+
+// columnExists probes sqlite's pragma_table_info for a column by name.
+func columnExists(t *testing.T, db *sql.DB, table, col string) bool {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if n == col {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMigrate_AppliesInOrderFromInjectedFS(t *testing.T) {
 	db := openTempDB(t)
 	defer db.Close()

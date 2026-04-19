@@ -60,7 +60,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	return &Plan{
 		LaunchID:       l.ID,
 		ProjectID:      proj.ID,
-		AgentID:        agent.ID,
+		LogicalAgentID: agent.ID,
 		ProviderID:     prov.ID,
 		RepoRoot:       config.Expand(proj.RepoRoot),
 		WriteHome:      config.Expand(writeHome),

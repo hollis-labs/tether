@@ -37,14 +37,14 @@ func TestManager_RealPTYLifecycle(t *testing.T) {
 	req := StartRequest{
 		ID: "sess-real",
 		Plan: &launch.Plan{
-			LaunchID:   "integ",
-			ProjectID:  "p",
-			AgentID:    "a",
-			ProviderID: "cli",
-			Command:    "/bin/echo",
-			Args:       []string{"hello-from-mux"},
-			RepoRoot:   tmp,
-			EnvMode:    "merge",
+			LaunchID:       "integ",
+			ProjectID:      "p",
+			LogicalAgentID: "a",
+			ProviderID:     "cli",
+			Command:        "/bin/echo",
+			Args:           []string{"hello-from-mux"},
+			RepoRoot:       tmp,
+			EnvMode:        "merge",
 		},
 		Workspace: &workspace.Session{
 			ID:      "sess-real",
@@ -97,11 +97,11 @@ func TestManager_APIStubLifecycle(t *testing.T) {
 	req := StartRequest{
 		ID: "sess-stub",
 		Plan: &launch.Plan{
-			LaunchID:   "api-stub-launch",
-			ProjectID:  "demo",
-			AgentID:    "demo-agent",
-			ProviderID: "api-stub",
-			EnvMode:    "merge",
+			LaunchID:       "api-stub-launch",
+			ProjectID:      "demo",
+			LogicalAgentID: "demo-agent",
+			ProviderID:     "api-stub",
+			EnvMode:        "merge",
 		},
 		Workspace: &workspace.Session{
 			ID:      "sess-stub",

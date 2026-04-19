@@ -38,7 +38,7 @@ type SessionRow struct {
 	ID         string
 	LaunchID   string
 	ProjectID  string
-	AgentID    string
+	LogicalAgentID string
 	ProviderID string
 	Workspace  string
 	State      string
@@ -54,9 +54,9 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	row.CreatedAt = now
 	row.UpdatedAt = now
 	if _, err := s.db.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, agent_id, provider_id, workspace, state, created_at, updated_at)
+		(id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, row.LaunchID, row.ProjectID, row.AgentID, row.ProviderID,
+		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.Workspace, row.State, row.CreatedAt, row.UpdatedAt); err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
 }
 
 func (s *Store) ListSessions() ([]SessionRow, error) {
-	rows, err := s.db.Query(`SELECT id, launch_id, project_id, agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (s *Store) ListSessions() ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.AgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -102,8 +102,8 @@ func (s *Store) ListSessions() ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.AgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt)
 	if err != nil {
 		return nil, err
 	}
