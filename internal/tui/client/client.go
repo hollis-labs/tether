@@ -36,6 +36,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	daemon "github.com/chrispian/agent-mux/internal/client"
 
@@ -148,6 +149,30 @@ func (c *Client) CreateAndLaunch(ctx context.Context, req CreateAndLaunchRequest
 		Workspace: res.Workspace,
 		LogPath:   res.Log,
 	}, nil
+}
+
+// AttachStream opens a long-running byte stream from the daemon's
+// /sessions/{id}/attach endpoint. Bytes arrive on w in the order the
+// session emits them. Returns when ctx is canceled (caller detaches)
+// or the session exits.
+//
+// Per ADR 0011 attach is plain application/octet-stream — no SSE, no
+// JSON envelope, no base64. Callers write straight PTY bytes into w.
+func (c *Client) AttachStream(ctx context.Context, sessionID string, w io.Writer) error {
+	if err := c.inner.AttachSession(ctx, sessionID, w, 0); err != nil {
+		return wrap("attach", err)
+	}
+	return nil
+}
+
+// SendInput forwards raw bytes to the session's stdin via
+// POST /sessions/{id}/input. The daemon treats the body as opaque
+// octet-stream — no framing, no newline handling.
+func (c *Client) SendInput(ctx context.Context, sessionID string, data []byte) error {
+	if err := c.inner.SendInput(ctx, sessionID, data); err != nil {
+		return wrap("send input", err)
+	}
+	return nil
 }
 
 // wrap prefixes "tui client: <op>" while preserving the sentinel

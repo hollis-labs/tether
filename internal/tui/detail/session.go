@@ -26,9 +26,10 @@ type sessionRefetchedMsg struct {
 // rather than "whenever the list was loaded."
 type SessionScreen struct {
 	base
-	s      api.SessionDTO
-	client *client.Client
-	err    error
+	s         api.SessionDTO
+	client    *client.Client
+	err       error
+	attachKey key.Binding
 }
 
 func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
@@ -36,7 +37,10 @@ func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	return SessionScreen{base: newBase("Session " + short), s: s, client: c}
+	attachKey := key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "attach"))
+	b := newBase("Session " + short)
+	b.extra = append(b.extra, attachKey)
+	return SessionScreen{base: b, s: s, client: c, attachKey: attachKey}
 }
 
 func (s SessionScreen) Init() tea.Cmd {
@@ -68,6 +72,11 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		s.refresh()
 		return s, nil
+	}
+	if km, ok := msg.(tea.KeyMsg); ok {
+		if key.Matches(km, s.attachKey) && s.client != nil {
+			return s, screen.Push(NewAttachScreen(s.s, s.client))
+		}
 	}
 	cmd, handled := s.updateCommon(msg)
 	if handled {
