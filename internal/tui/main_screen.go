@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/detail"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
@@ -155,12 +156,22 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.refreshBody()
 			return m, cmd
 		}
-		banner := fmt.Sprintf("Launched %s → session %s @ %s",
-			msg.req.LaunchID, shortID(msg.res.SessionID), trimPath(msg.res.Workspace))
-		cmd := m.toasts.push(ToastInfo, banner)
+		// Success: push a brief banner and auto-attach into the new
+		// session so the user lands in the terminal instead of
+		// hunting for it. They can Esc to detach back to the list.
+		banner := fmt.Sprintf("Launched %s → session %s — attaching…",
+			msg.req.LaunchID, shortID(msg.res.SessionID))
+		toastCmd := m.toasts.push(ToastInfo, banner)
 		m.resize()
 		m.refreshBody()
-		return m, cmd
+		sess := api.SessionDTO{
+			ID:        msg.res.SessionID,
+			Workspace: msg.res.Workspace,
+			State:     "running",
+			LaunchID:  msg.req.LaunchID,
+		}
+		attachPush := screen.Push(detail.NewAttachScreen(sess, m.client))
+		return m, tea.Batch(toastCmd, attachPush)
 
 	case toastExpiredMsg:
 		m.toasts.remove(msg.ID)
@@ -196,6 +207,13 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.OpenDetail) {
 			return m.openDetail()
+		}
+		// `a` on a session row is a shortcut: attach directly without
+		// going through session detail first.
+		if msg.Type == tea.KeyRunes && string(msg.Runes) == "a" && !m.search.Focused() {
+			if sr, ok := m.SelectedRow().(SessionRow); ok && m.client != nil {
+				return m, screen.Push(detail.NewAttachScreen(sr.S, m.client))
+			}
 		}
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
