@@ -9,6 +9,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/tui/client"
+	"github.com/chrispian/agent-mux/internal/tui/externshell"
 	"github.com/chrispian/agent-mux/internal/tui/modal"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
@@ -39,6 +40,7 @@ type SessionScreen struct {
 	client    *client.Client
 	err       error
 	attachKey key.Binding
+	openKey   key.Binding
 	stopKey   key.Binding
 	tailKey   key.Binding
 }
@@ -49,12 +51,13 @@ func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
 		short = short[:8]
 	}
 	attachKey := key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "attach"))
+	openKey := key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open shell"))
 	stopKey := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop"))
 	tailKey := key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tail"))
 	b := newBase("Session " + short)
-	b.extra = append(b.extra, attachKey, stopKey, tailKey)
+	b.extra = append(b.extra, attachKey, openKey, stopKey, tailKey)
 	return SessionScreen{base: b, s: s, client: c,
-		attachKey: attachKey, stopKey: stopKey, tailKey: tailKey}
+		attachKey: attachKey, openKey: openKey, stopKey: stopKey, tailKey: tailKey}
 }
 
 func (s SessionScreen) Init() tea.Cmd {
@@ -106,6 +109,9 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if key.Matches(m, s.attachKey) && s.client != nil {
 			return s, screen.Push(NewAttachScreen(s.s, s.client))
 		}
+		if key.Matches(m, s.openKey) {
+			return s, openExternalAttachCmd(s.s.ID)
+		}
 		if key.Matches(m, s.stopKey) && s.client != nil {
 			return s, screen.Push(s.newStopConfirm())
 		}
@@ -146,6 +152,25 @@ func stopSessionCmd(c *client.Client, id string) tea.Cmd {
 	return func() tea.Msg {
 		err := c.StopSession(context.Background(), id)
 		return sessionStoppedMsg{id: id, err: err}
+	}
+}
+
+// openExternalAttachCmd spawns a platform terminal running
+// `mux sessions attach <id>` via externshell.AttachIn. The result
+// surfaces as a screen.ToastEmitMsg so MainScreen reports either
+// success ("opened external terminal") or the spawn error.
+func openExternalAttachCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		if err := externshell.AttachIn(id); err != nil {
+			return screen.ToastEmitMsg{
+				Kind: screen.ToastError,
+				Text: "open shell failed: " + err.Error(),
+			}
+		}
+		return screen.ToastEmitMsg{
+			Kind: screen.ToastInfo,
+			Text: "opened external terminal (raw attach)",
+		}
 	}
 }
 

@@ -77,6 +77,7 @@ type attachKeys struct {
 	SigInt  key.Binding
 	SendEOF key.Binding
 	Send    key.Binding
+	OpenExt key.Binding
 	Palette key.Binding
 }
 
@@ -86,6 +87,7 @@ func defaultAttachKeys() attachKeys {
 		SigInt:  key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "SIGINT")),
 		SendEOF: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "EOF")),
 		Send:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "send")),
+		OpenExt: key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "open in shell")),
 		Palette: key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "palette")),
 	}
 }
@@ -203,6 +205,14 @@ func (s *AttachScreen) handleKey(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 	case key.Matches(msg, s.keys.SendEOF):
 		return s, s.sendBytesCmd([]byte{0x04})
 
+	case key.Matches(msg, s.keys.OpenExt):
+		// Detach the in-TUI stream and open an external terminal
+		// attached to the same session. Session keeps running.
+		if s.cancel != nil {
+			s.cancel()
+		}
+		return s, tea.Batch(screen.Pop(), openExternalAttachCmd(s.s.ID))
+
 	case key.Matches(msg, s.keys.Send):
 		line := s.input.Value()
 		s.input.SetValue("")
@@ -301,6 +311,7 @@ func (s *AttachScreen) View() string {
 		s.keyHint(s.keys.SigInt),
 		s.keyHint(s.keys.SendEOF),
 		s.keyHint(s.keys.Send),
+		s.keyHint(s.keys.OpenExt),
 		s.keyHint(s.keys.Palette),
 	}
 	statusSuffix := ""
@@ -319,7 +330,7 @@ func (s *AttachScreen) keyHint(k key.Binding) string {
 }
 
 func (s *AttachScreen) KeyBindings() []key.Binding {
-	return []key.Binding{s.keys.Detach, s.keys.SigInt, s.keys.SendEOF, s.keys.Send, s.keys.Palette}
+	return []key.Binding{s.keys.Detach, s.keys.SigInt, s.keys.SendEOF, s.keys.Send, s.keys.OpenExt, s.keys.Palette}
 }
 
 func (s *AttachScreen) Title() string {
