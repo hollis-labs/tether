@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/client"
@@ -133,27 +136,127 @@ var sessionsInputCmd = &cobra.Command{
 	},
 }
 
-// runAttach opens a live attach stream to the daemon and copies PTY bytes
-// to stdout until the session exits or ctx is canceled. Falls back to a
-// log-file read if the daemon is unreachable OR the session has already
-// exited (server returns 404 from attach in that case).
+// detachByte is the keystroke that cleanly exits `mux sessions
+// attach` while leaving the session running. \x1d is Ctrl-] —
+// familiar to telnet users and rarely sent by any real program, so
+// it's a safe "drop me out" escape.
+const detachByte = 0x1d
+
+// runAttach opens a bidirectional interactive attach:
+//
+//   - stdin is flipped to raw mode so keystrokes forward to the
+//     session's PTY without line-buffering or local echo (the session
+//     echoes what it wants).
+//   - daemon → stdout via a streaming HTTP GET (same as before).
+//   - stdin  → daemon via POST /sessions/{id}/input for each batch.
+//   - SIGWINCH → POST /sessions/{id}/resize so the PTY tracks the
+//     outer terminal size.
+//   - Ctrl-] detaches cleanly; the session keeps running on the
+//     daemon.
+//
+// When stdin isn't a TTY (pipes, CI, etc.) the function falls back to
+// the old read-only stream. Daemon-down or session-exited errors map
+// to the log-file snapshot path the tail subcommand used.
 func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) error {
 	c, err := newDaemonClient(catalogPath)
 	if err != nil {
 		return err
 	}
-	// CLI has no flag for since_seq yet; always request full ring replay.
-	err = c.AttachSession(ctx, id, os.Stdout, 0)
-	if err == nil {
+
+	// fd uintptr → int conversion is safe in practice (stdin fd is 0).
+	// Hoisted so the //nolint tag applies once.
+	stdinFd := int(os.Stdin.Fd()) //nolint:gosec // G115: fd is a small non-negative int in practice
+
+	// Degraded path: stdin is not a TTY → just stream output.
+	if !term.IsTerminal(stdinFd) {
+		err := c.AttachSession(ctx, id, os.Stdout, 0)
+		return attachFallback(err, id, tailFallbackOnNotRunning)
+	}
+	old, err := term.MakeRaw(stdinFd)
+	if err != nil {
+		return fmt.Errorf("raw-mode stdin: %w", err)
+	}
+	defer func() { _ = term.Restore(stdinFd, old) }()
+
+	fmt.Fprintf(os.Stderr, "[attached to %s — Ctrl-] to detach]\r\n", id)
+
+	attachCtx, cancelAttach := context.WithCancel(ctx)
+	defer cancelAttach()
+
+	// Initial resize so the session starts at the right shape.
+	if w, h, err := term.GetSize(stdinFd); err == nil {
+		_ = c.ResizeSession(attachCtx, id, uint16(h), uint16(w)) //nolint:gosec // G115: GetSize returns sane int dims
+	}
+
+	// SIGWINCH → resize. Runs until attach exits.
+	winchCh := make(chan os.Signal, 1)
+	signal.Notify(winchCh, syscall.SIGWINCH)
+	defer signal.Stop(winchCh)
+	go func() {
+		for {
+			select {
+			case <-winchCh:
+				w, h, err := term.GetSize(stdinFd)
+				if err == nil {
+					_ = c.ResizeSession(attachCtx, id, uint16(h), uint16(w)) //nolint:gosec // G115: sane dims
+				}
+			case <-attachCtx.Done():
+				return
+			}
+		}
+	}()
+
+	// stdin → daemon. Reads a byte at a time so the detach byte is
+	// caught immediately (no line-buffering). Per-keystroke HTTP
+	// overhead is tiny over UDS; we could batch later if it matters.
+	inputDone := make(chan struct{})
+	go func() {
+		defer close(inputDone)
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				return
+			}
+			if n == 0 {
+				continue
+			}
+			if buf[0] == detachByte {
+				cancelAttach()
+				return
+			}
+			if err := c.SendInput(attachCtx, id, buf[:n]); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "\r\n[send input: %v]\r\n", err)
+				return
+			}
+		}
+	}()
+
+	// daemon → stdout (blocks until attach ends or ctx cancels).
+	err = c.AttachSession(attachCtx, id, os.Stdout, 0)
+	cancelAttach()
+	<-inputDone
+
+	// Final restore newline + message so the prompt after detach
+	// doesn't land in the middle of a half-drawn line.
+	fmt.Fprint(os.Stderr, "\r\n[detached]\r\n")
+
+	return attachFallback(err, id, tailFallbackOnNotRunning)
+}
+
+// attachFallback maps benign attach errors (daemon down, session
+// exited) to the log-snapshot path, and passes everything else
+// through as-is.
+func attachFallback(err error, id string, tailFallbackOnNotRunning bool) error {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return nil
 	}
 	if errors.Is(err, client.ErrDaemonUnreachable) {
-		// Daemon down — fall back to a snapshot of the on-disk log.
 		return runTailSnapshot(id)
 	}
-	// 404 means the session isn't currently registered in the runtime (e.g.,
-	// already exited). `tail --follow` should degrade to snapshot; explicit
-	// `attach` surfaces the error so the user knows there's nothing to follow.
 	if tailFallbackOnNotRunning && strings.Contains(err.Error(), "session not running") {
 		return runTailSnapshot(id)
 	}
