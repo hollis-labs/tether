@@ -156,9 +156,11 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.refreshBody()
 			return m, cmd
 		}
-		// Success: push a brief banner and auto-attach into the new
-		// session so the user lands in the terminal instead of
-		// hunting for it. They can Esc to detach back to the list.
+		// Success: banner + auto-attach + re-fetch sessions so the
+		// new session appears in the main list when the user Esc's
+		// back. Without the re-fetch, the list is frozen at the
+		// startup snapshot and the newly-launched session never
+		// shows up.
 		banner := fmt.Sprintf("Launched %s → session %s — attaching…",
 			msg.req.LaunchID, shortID(msg.res.SessionID))
 		toastCmd := m.toasts.push(ToastInfo, banner)
@@ -171,7 +173,8 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			LaunchID:  msg.req.LaunchID,
 		}
 		attachPush := screen.Push(detail.NewAttachScreen(sess, m.client))
-		return m, tea.Batch(toastCmd, attachPush)
+		refreshSessions := loadSessionsCmd(m.client)
+		return m, tea.Batch(toastCmd, attachPush, refreshSessions)
 
 	case toastExpiredMsg:
 		m.toasts.remove(msg.ID)
@@ -208,12 +211,13 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if key.Matches(msg, m.keys.OpenDetail) {
 			return m.openDetail()
 		}
-		// `a` on a session row is a shortcut: attach directly without
-		// going through session detail first.
-		if msg.Type == tea.KeyRunes && string(msg.Runes) == "a" && !m.search.Focused() {
-			if sr, ok := m.SelectedRow().(SessionRow); ok && m.client != nil {
-				return m, screen.Push(detail.NewAttachScreen(sr.S, m.client))
+		if key.Matches(msg, m.keys.Refresh) {
+			if m.client != nil {
+				m.loadRemaining = len(chipOrder)
+				m.loadErrs = nil
+				return m, loadAllCatalogCmd(m.client)
 			}
+			return m, nil
 		}
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
@@ -296,24 +300,30 @@ func (m MainScreen) View() string {
 	)
 }
 
-// handleEnter dispatches on the selected row type: Enter on a
-// LaunchRow launches a session; Enter on any other row opens the
-// detail screen (same as Right-arrow). The rule is "Enter always
-// does something" — silent no-ops were confusing during smoke test
-// because users couldn't tell whether Enter was bound.
+// handleEnter dispatches on the selected row type so Enter always
+// does "the main action" for whatever you're looking at:
+//
+//   - LaunchRow  → launch (+ auto-attach via launchResultMsg)
+//   - SessionRow → attach to the running session
+//   - everything else → open the detail screen (same as →)
 func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	row := m.SelectedRow()
 	if row == nil {
 		return m, nil
 	}
-	lr, ok := row.(LaunchRow)
-	if !ok {
+	if m.client == nil {
+		// Can't launch or attach without a daemon client — fall
+		// back to the detail screen so Enter still feels responsive
+		// in test/offline mode.
 		return m.openDetail()
 	}
-	if m.client == nil {
-		return m, nil
+	switch r := row.(type) {
+	case LaunchRow:
+		return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: r.L.ID})
+	case SessionRow:
+		return m, screen.Push(detail.NewAttachScreen(r.S, m.client))
 	}
-	return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: lr.L.ID})
+	return m.openDetail()
 }
 
 // openDetail pushes the appropriate detail screen for the currently
@@ -592,6 +602,7 @@ func (m MainScreen) renderFooter() string {
 
 	hints := []string{
 		m.keyHint(m.keys.OpenDetail),
+		m.keyHint(m.keys.Refresh),
 		m.keyHint(m.keys.FocusSearch),
 		m.keyHint(m.keys.BlurSearch),
 		m.keyHint(m.keys.CycleChip),
@@ -601,8 +612,11 @@ func (m MainScreen) renderFooter() string {
 	selInfo := ""
 	if sel := m.SelectedRow(); sel != nil {
 		enterAction := "⏎/→ detail"
-		if _, ok := sel.(LaunchRow); ok {
+		switch sel.(type) {
+		case LaunchRow:
 			enterAction = "⏎ launch · → detail"
+		case SessionRow:
+			enterAction = "⏎ attach · → detail"
 		}
 		selInfo = fmt.Sprintf("  ·  sel: [%s] %s — %s", sel.Type(), sel.ID(), enterAction)
 	}

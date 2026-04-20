@@ -18,6 +18,7 @@ type KeyMap struct {
 	Quit            key.Binding
 	Help            key.Binding
 	OpenDetail      key.Binding
+	Refresh         key.Binding
 	FocusSearch     key.Binding
 	BlurSearch      key.Binding
 	CycleChip       key.Binding
@@ -56,6 +57,10 @@ func DefaultKeyMap() KeyMap {
 		OpenDetail: key.NewBinding(
 			key.WithKeys("right"),
 			key.WithHelp("→", "detail"),
+		),
+		Refresh: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "refresh"),
 		),
 		FocusSearch: key.NewBinding(
 			key.WithKeys("/"),
