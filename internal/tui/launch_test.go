@@ -15,12 +15,12 @@ import (
 )
 
 func TestLaunchResultMsgPushesSuccessToast(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, cmd := m.Update(launchResultMsg{
 		req: client.CreateAndLaunchRequest{LaunchID: "demo-launch"},
 		res: client.CreateAndLaunchResponse{SessionID: "abcdef01-2345-6789-abcd-ef0123456789", Workspace: "/tmp/ws"},
 	})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if cmd == nil {
 		t.Fatal("expected tea.Tick cmd for toast expiration")
 	}
@@ -40,9 +40,9 @@ func TestLaunchResultMsgPushesSuccessToast(t *testing.T) {
 }
 
 func TestLaunchResultMsgPushesErrorToast(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, _ := m.Update(launchResultMsg{err: errors.New("daemon refused")})
-	m = next.(Model)
+	m = next.(MainScreen)
 	toasts := m.toasts.items()
 	if len(toasts) != 1 {
 		t.Fatalf("expected 1 toast, got %d", len(toasts))
@@ -56,11 +56,11 @@ func TestLaunchResultMsgPushesErrorToast(t *testing.T) {
 }
 
 func TestToastExpiredRemovesToast(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, _ := m.Update(launchResultMsg{
 		res: client.CreateAndLaunchResponse{SessionID: "s1"},
 	})
-	m = next.(Model)
+	m = next.(MainScreen)
 	toasts := m.toasts.items()
 	if len(toasts) != 1 {
 		t.Fatalf("expected 1 toast, got %d", len(toasts))
@@ -68,18 +68,18 @@ func TestToastExpiredRemovesToast(t *testing.T) {
 	id := toasts[0].ID
 
 	next, _ = m.Update(toastExpiredMsg{ID: id})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if len(m.toasts.items()) != 0 {
 		t.Fatalf("expected toast removed, got %d remaining", len(m.toasts.items()))
 	}
 }
 
 func TestToastExpiredWrongIDIsNoOp(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, _ := m.Update(launchResultMsg{res: client.CreateAndLaunchResponse{SessionID: "s1"}})
-	m = next.(Model)
+	m = next.(MainScreen)
 	next, _ = m.Update(toastExpiredMsg{ID: 9999})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if len(m.toasts.items()) != 1 {
 		t.Fatalf("expected toast unchanged, got %d", len(m.toasts.items()))
 	}
@@ -95,7 +95,7 @@ func TestEnterOnNonLaunchRowShowsGuidanceToast(t *testing.T) {
 		t.Skip("unexpected: top row is LaunchRow; test expects non-launch")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
+	m = next.(MainScreen)
 	toasts := m.toasts.items()
 	if len(toasts) != 1 {
 		t.Fatalf("expected 1 guidance toast, got %d", len(toasts))
@@ -126,10 +126,10 @@ func TestEnterOnLaunchRowIssuesCreateAndLaunch(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
-	m := New(c)
+	m := NewMainScreen(c)
 	// Size the layout so the viewport has a valid dimension.
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = next.(Model)
+	m = next.(MainScreen)
 
 	// Seed only a single LaunchRow so SelectedRow lands on it.
 	next, _ = m.Update(catalogLoadedMsg{
@@ -138,11 +138,11 @@ func TestEnterOnLaunchRowIssuesCreateAndLaunch(t *testing.T) {
 			{ID: "demo-launch", Project: "acme", Agent: "writer", Provider: "stub"},
 		}),
 	})
-	m = next.(Model)
+	m = next.(MainScreen)
 	// Drain the remaining four load slots so loadRemaining hits zero.
 	for _, typ := range []RowType{RowTypeProjects, RowTypeAgents, RowTypeProviders, RowTypeSessions} {
 		next, _ = m.Update(catalogLoadedMsg{typ: typ})
-		m = next.(Model)
+		m = next.(MainScreen)
 	}
 
 	sel := m.SelectedRow()

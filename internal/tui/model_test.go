@@ -7,7 +7,7 @@ import (
 )
 
 func TestRootModelQuitOnCtrlC(t *testing.T) {
-	m := New(nil) // search focused by default
+	m := NewMainScreen(nil) // search focused by default
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("expected a quit command on Ctrl-C, got nil")
@@ -18,16 +18,16 @@ func TestRootModelQuitOnCtrlC(t *testing.T) {
 }
 
 func TestRootModelQDoesNotQuitWhileSearchFocused(t *testing.T) {
-	m := New(nil) // search focused by default
+	m := NewMainScreen(nil) // search focused by default
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd != nil {
 		if _, ok := cmd().(tea.QuitMsg); ok {
 			t.Fatal("expected 'q' to NOT quit while search is focused")
 		}
 	}
-	nm, ok := next.(Model)
+	nm, ok := next.(MainScreen)
 	if !ok {
-		t.Fatalf("expected Model, got %T", next)
+		t.Fatalf("expected MainScreen, got %T", next)
 	}
 	if nm.search.Value() != "q" {
 		t.Fatalf("expected search value 'q', got %q", nm.search.Value())
@@ -35,10 +35,10 @@ func TestRootModelQDoesNotQuitWhileSearchFocused(t *testing.T) {
 }
 
 func TestRootModelQQuitsAfterSearchBlur(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	// Blur the search input.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if m.search.Focused() {
 		t.Fatal("expected search blurred after Esc")
 	}
@@ -53,28 +53,28 @@ func TestRootModelQQuitsAfterSearchBlur(t *testing.T) {
 }
 
 func TestRootModelSearchRefocusesOnSlash(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if m.search.Focused() {
 		t.Fatal("expected blurred after Esc")
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if !m.search.Focused() {
 		t.Fatal("expected / to re-focus search")
 	}
 }
 
 func TestRootModelTracksResize(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if cmd != nil {
 		t.Fatalf("expected no command on resize, got %T", cmd())
 	}
-	nm, ok := next.(Model)
+	nm, ok := next.(MainScreen)
 	if !ok {
-		t.Fatalf("expected Model, got %T", next)
+		t.Fatalf("expected MainScreen, got %T", next)
 	}
 	if nm.width != 120 || nm.height != 40 {
 		t.Fatalf("expected 120x40, got %dx%d", nm.width, nm.height)
@@ -85,26 +85,26 @@ func TestRootModelTracksResize(t *testing.T) {
 }
 
 func TestChipToggleFlipsFilter(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	if !m.filters[RowTypeProjects] {
 		t.Fatal("expected projects filter enabled by default")
 	}
 	// Alt+1 toggles projects off.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if m.filters[RowTypeProjects] {
 		t.Fatal("expected projects filter OFF after Alt+1")
 	}
 	// Second Alt+1 flips it back.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
-	m = next.(Model)
+	m = next.(MainScreen)
 	if !m.filters[RowTypeProjects] {
 		t.Fatal("expected projects filter ON after second Alt+1")
 	}
 }
 
 func TestChipToggleAllFiveBindings(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	digits := []struct {
 		d rune
 		t RowType
@@ -118,7 +118,7 @@ func TestChipToggleAllFiveBindings(t *testing.T) {
 	for _, tc := range digits {
 		before := m.filters[tc.t]
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.d}, Alt: true})
-		m = next.(Model)
+		m = next.(MainScreen)
 		if m.filters[tc.t] == before {
 			t.Fatalf("Alt+%c did not toggle %s filter", tc.d, tc.t)
 		}
@@ -126,10 +126,10 @@ func TestChipToggleAllFiveBindings(t *testing.T) {
 }
 
 func TestSearchCapturesTyping(t *testing.T) {
-	m := New(nil)
+	m := NewMainScreen(nil)
 	for _, r := range "hello" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = next.(Model)
+		m = next.(MainScreen)
 	}
 	if m.search.Value() != "hello" {
 		t.Fatalf("expected search value 'hello', got %q", m.search.Value())
