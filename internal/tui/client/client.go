@@ -160,6 +160,16 @@ func (c *Client) StopSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// ResizeSession forwards a (rows, cols) winsize update to the named
+// session's PTY. Primary caller is the attach screen on every
+// tea.WindowSizeMsg while attached.
+func (c *Client) ResizeSession(ctx context.Context, sessionID string, rows, cols uint16) error {
+	if err := c.inner.ResizeSession(ctx, sessionID, rows, cols); err != nil {
+		return wrap("resize", err)
+	}
+	return nil
+}
+
 // AttachStream opens a long-running byte stream from the daemon's
 // /sessions/{id}/attach endpoint. Bytes arrive on w in the order the
 // session emits them. Returns when ctx is canceled (caller detaches)

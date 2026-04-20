@@ -34,6 +34,11 @@ type attachMsg struct {
 
 type attachSendErrMsg struct{ err error }
 
+// attachResizeResultMsg surfaces the outcome of a fire-and-forget
+// resize. Non-nil err is displayed as a status-line suffix but never
+// detaches the stream.
+type attachResizeResultMsg struct{ err error }
+
 // AttachScreen is the live-attach pane. On Init it spawns a goroutine
 // that reads from the daemon's attach endpoint into a buffered
 // channel; each batch arrives on Update as attachMsg. Keys:
@@ -139,6 +144,24 @@ func (s *AttachScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		s.width, s.height = msg.Width, msg.Height
 		s.resize()
 		s.refresh()
+		// Propagate the body-viewport's inner dimensions to the
+		// session's PTY so full-screen TUI providers (claude CLI,
+		// vim) redraw at the right shape. See ADR 0014.
+		if s.client != nil && s.output.Width > 0 && s.output.Height > 0 {
+			return s, s.resizeSessionCmd(clampDim(s.output.Height), clampDim(s.output.Width))
+		}
+		return s, nil
+
+	case attachResizeResultMsg:
+		if msg.err != nil {
+			s.status = "resize failed: " + msg.err.Error()
+		} else {
+			// Clear any prior resize-failure status on a successful
+			// subsequent resize.
+			if strings.HasPrefix(s.status, "resize failed: ") {
+				s.status = ""
+			}
+		}
 		return s, nil
 
 	case attachMsg:
@@ -202,6 +225,21 @@ func (s *AttachScreen) sendBytesCmd(b []byte) tea.Cmd {
 			return attachSendErrMsg{err: err}
 		}
 		return nil
+	}
+}
+
+// resizeSessionCmd returns a tea.Cmd that posts the current winsize
+// to the session's PTY. Fire-and-forget from the Update loop — the
+// result comes back as attachResizeResultMsg for status reporting.
+func (s *AttachScreen) resizeSessionCmd(rows, cols uint16) tea.Cmd {
+	if s.client == nil {
+		return nil
+	}
+	id := s.s.ID
+	c := s.client
+	return func() tea.Msg {
+		err := c.ResizeSession(context.Background(), id, rows, cols)
+		return attachResizeResultMsg{err: err}
 	}
 }
 
@@ -323,6 +361,21 @@ func (w *chanWriter) Write(p []byte) (int, error) {
 	case <-w.ctx.Done():
 		return 0, w.ctx.Err()
 	}
+}
+
+// clampDim safely narrows an int terminal-dimension value to the
+// uint16 shape the daemon resize endpoint accepts. Negative and zero
+// values clamp to 1 (zero would be rejected by the handler); values
+// above math.MaxUint16 clamp to MaxUint16.
+func clampDim(n int) uint16 {
+	const maxU16 = int(^uint16(0))
+	if n < 1 {
+		return 1
+	}
+	if n > maxU16 {
+		return uint16(maxU16)
+	}
+	return uint16(n)
 }
 
 // isBenignDetachErr classifies context-cancel / EOF errors as

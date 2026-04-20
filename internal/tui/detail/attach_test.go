@@ -2,14 +2,18 @@ package detail
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
+
+var errDummy = errors.New("dummy")
 
 // newTestAttach returns an AttachScreen suitable for reducer tests —
 // no daemon client, pre-sized, with the context/channel pair
@@ -101,6 +105,42 @@ func TestAttachDoneMsgSetsFinished(t *testing.T) {
 	s = next.(*AttachScreen)
 	if !s.finished {
 		t.Fatal("expected finished=true after done msg")
+	}
+}
+
+func TestAttachWindowSizeEmitsResize(t *testing.T) {
+	// Needs a non-nil client so resize cmd fires. Use a dead address
+	// so the cmd does not actually post — we only assert that a cmd
+	// was returned; execution would hit the dead address and produce
+	// an error msg we don't care about here.
+	c := client.New("tcp:127.0.0.1:1")
+	s := NewAttachScreen(api.SessionDTO{ID: "abc"}, c)
+	// Wire the goroutine plumbing so Update doesn't panic on close.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx, s.cancel = ctx, cancel
+	s.ch = make(chan attachMsg, 4)
+	t.Cleanup(cancel)
+
+	_, cmd := s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if cmd == nil {
+		t.Fatal("expected resize cmd from WindowSizeMsg, got nil")
+	}
+}
+
+func TestAttachWindowSizeNilClientNoOp(t *testing.T) {
+	s := newTestAttach(t) // client is nil
+	_, cmd := s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for nil client, got %T", cmd())
+	}
+}
+
+func TestAttachResizeFailureSetsStatus(t *testing.T) {
+	s := newTestAttach(t)
+	next, _ := s.Update(attachResizeResultMsg{err: errDummy})
+	s = next.(*AttachScreen)
+	if !strings.Contains(s.status, "resize failed") {
+		t.Fatalf("expected resize failure status, got %q", s.status)
 	}
 }
 
