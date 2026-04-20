@@ -19,6 +19,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/provider/api/stub"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
+	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
 	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
@@ -58,6 +59,7 @@ func New(catalogRoot string) (*Service, error) {
 	}
 	reg := provider.NewRegistry()
 	reg.Register(claudecode.Adapter{})
+	reg.Register(claudestream.Adapter{})
 	reg.Register(stub.Runtime{})
 	// Reconcile stale client_attachment rows — any attachment still marked
 	// "attached" at startup is an orphan from a prior daemon process.
