@@ -156,25 +156,37 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.refreshBody()
 			return m, cmd
 		}
-		// Success: banner + auto-attach + re-fetch sessions so the
-		// new session appears in the main list when the user Esc's
-		// back. Without the re-fetch, the list is frozen at the
-		// startup snapshot and the newly-launched session never
-		// shows up.
+		// Success: banner + fetch-then-dispatch so the right detail
+		// screen (chat vs. raw attach) is chosen by provider kind, and
+		// re-fetch sessions so the new session appears in the main
+		// list when the user Esc's back. Without the re-fetch, the
+		// list is frozen at the startup snapshot and the newly-launched
+		// session never shows up.
 		banner := fmt.Sprintf("Launched %s → session %s — attaching…",
 			msg.req.LaunchID, shortID(msg.res.SessionID))
 		toastCmd := m.toasts.push(ToastInfo, banner)
 		m.resize()
 		m.refreshBody()
-		sess := api.SessionDTO{
-			ID:        msg.res.SessionID,
-			Workspace: msg.res.Workspace,
-			State:     "running",
-			LaunchID:  msg.req.LaunchID,
-		}
-		attachPush := screen.Push(detail.NewAttachScreen(sess, m.client))
+		fetchCmd := getSessionForAttachCmd(m.client, msg.req, msg.res)
 		refreshSessions := loadSessionsCmd(m.client)
-		return m, tea.Batch(toastCmd, attachPush, refreshSessions)
+		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
+
+	case sessionFetchedForAttachMsg:
+		// Fetch failed: fall back to the raw attach screen with the
+		// minimal DTO the launch response provided. PTY renders work;
+		// claude-stream sessions would see raw NDJSON — imperfect but
+		// recoverable (user can detach and re-open via the session row).
+		if msg.err != nil {
+			sess := api.SessionDTO{
+				ID:        msg.launchRes.SessionID,
+				Workspace: msg.launchRes.Workspace,
+				State:     "running",
+				LaunchID:  msg.launchReq.LaunchID,
+			}
+			toastCmd := m.toasts.push(ToastError, "Fetch session failed: "+msg.err.Error())
+			return m, tea.Batch(toastCmd, screen.Push(detail.NewAttachScreen(sess, m.client)))
+		}
+		return m, screen.Push(attachScreenForSession(msg.sess, m.client))
 
 	case toastExpiredMsg:
 		m.toasts.remove(msg.ID)
@@ -321,9 +333,20 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	case LaunchRow:
 		return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: r.L.ID})
 	case SessionRow:
-		return m, screen.Push(detail.NewAttachScreen(r.S, m.client))
+		return m, screen.Push(attachScreenForSession(r.S, m.client))
 	}
 	return m.openDetail()
+}
+
+// attachScreenForSession picks the right detail screen based on the
+// session's provider kind. Claude's stream-json adapter (ADR 0017)
+// emits typed NDJSON events which render natively in the chat surface;
+// every other provider uses the raw octet-stream AttachScreen.
+func attachScreenForSession(sess api.SessionDTO, c *client.Client) screen.Screen {
+	if sess.ProviderID == "claude-stream" {
+		return detail.NewChatScreen(sess, c)
+	}
+	return detail.NewAttachScreen(sess, c)
 }
 
 // openDetail pushes the appropriate detail screen for the currently

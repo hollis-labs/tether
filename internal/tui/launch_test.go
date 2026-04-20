@@ -12,6 +12,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/tui/client"
+	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
 
 func TestLaunchResultMsgPushesSuccessToast(t *testing.T) {
@@ -164,4 +165,71 @@ func TestEnterOnLaunchRowIssuesCreateAndLaunch(t *testing.T) {
 			createHit, launchHit)
 	}
 	_ = api.SessionDTO{} // silence unused import once above refactored
+}
+
+func TestAttachScreenForSessionDispatchesOnProviderKind(t *testing.T) {
+	chat := attachScreenForSession(api.SessionDTO{ID: "s1", ProviderID: "claude-stream"}, nil)
+	if got := chat.Title(); !strings.HasPrefix(got, "Chat ") {
+		t.Fatalf("expected claude-stream to dispatch to ChatScreen, got title %q", got)
+	}
+
+	raw := attachScreenForSession(api.SessionDTO{ID: "s2", ProviderID: "claude-code"}, nil)
+	if got := raw.Title(); !strings.HasPrefix(got, "Attach ") {
+		t.Fatalf("expected claude-code to dispatch to AttachScreen, got title %q", got)
+	}
+
+	stub := attachScreenForSession(api.SessionDTO{ID: "s3", ProviderID: "api-stub"}, nil)
+	if got := stub.Title(); !strings.HasPrefix(got, "Attach ") {
+		t.Fatalf("expected api-stub to default to AttachScreen, got title %q", got)
+	}
+}
+
+func TestSessionFetchedForAttachPushesChatForClaudeStream(t *testing.T) {
+	m := NewMainScreen(nil)
+	_, cmd := m.Update(sessionFetchedForAttachMsg{
+		sess: api.SessionDTO{ID: "s1", Workspace: "/tmp/ws", ProviderID: "claude-stream"},
+	})
+	if cmd == nil {
+		t.Fatal("expected Push cmd")
+	}
+	push, ok := cmd().(screen.PushScreenMsg)
+	if !ok {
+		t.Fatalf("expected PushScreenMsg, got %T", cmd())
+	}
+	if got := push.Screen.Title(); !strings.HasPrefix(got, "Chat ") {
+		t.Fatalf("expected ChatScreen pushed, got title %q", got)
+	}
+}
+
+func TestSessionFetchedForAttachFallsBackToAttachOnError(t *testing.T) {
+	m := NewMainScreen(nil)
+	_, cmd := m.Update(sessionFetchedForAttachMsg{
+		err:       errors.New("not found"),
+		launchReq: client.CreateAndLaunchRequest{LaunchID: "demo"},
+		launchRes: client.CreateAndLaunchResponse{SessionID: "s1", Workspace: "/tmp/ws"},
+	})
+	if cmd == nil {
+		t.Fatal("expected batch cmd with toast + push")
+	}
+	// cmd is a tea.Batch — execute and look for the PushScreenMsg.
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected tea.BatchMsg, got %T", msg)
+	}
+	foundPush := false
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if push, ok := c().(screen.PushScreenMsg); ok {
+			foundPush = true
+			if got := push.Screen.Title(); !strings.HasPrefix(got, "Attach ") {
+				t.Fatalf("expected fallback AttachScreen, got title %q", got)
+			}
+		}
+	}
+	if !foundPush {
+		t.Fatalf("expected PushScreenMsg inside batch; got %+v", batch)
+	}
 }

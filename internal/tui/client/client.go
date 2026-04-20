@@ -118,6 +118,18 @@ func (c *Client) ListSessions(ctx context.Context) ([]api.SessionDTO, error) {
 	return res.Sessions, nil
 }
 
+// GetSession fetches a single session DTO by ID via GET /sessions/{id}.
+// Used by the main screen's launch-and-attach flow to determine the
+// provider kind (claude-stream vs claude-code etc.) before choosing
+// which detail screen to push.
+func (c *Client) GetSession(ctx context.Context, sessionID string) (api.SessionDTO, error) {
+	dto, err := c.inner.GetSession(ctx, sessionID)
+	if err != nil {
+		return api.SessionDTO{}, wrap("get session", err)
+	}
+	return dto, nil
+}
+
 // CreateAndLaunchRequest drives the quick-launch flow triggered by
 // Enter on a LaunchRow. Only LaunchID is populated for v0.0.3 Sprint 1;
 // Sprint 4's wizard extends this shape with inline-plan fields.
