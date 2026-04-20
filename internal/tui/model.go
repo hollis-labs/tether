@@ -4,24 +4,33 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chrispian/agent-mux/internal/tui/client"
+	"github.com/chrispian/agent-mux/internal/tui/palette"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
 
 // Model is the Bubble Tea root for the mux TUI. It's a thin wrapper
 // around a screen.Stack: every visible pane is a Screen, and Model
 // delegates Init / Update / View to whatever screen is on top. The
-// only global state Model owns is the terminal size and the stack
-// itself — everything else lives on the screens.
+// only cross-screen state Model owns is the terminal size, the
+// palette Registry, and the stack itself — everything else lives on
+// the screens.
 type Model struct {
-	stack  *screen.Stack
-	width  int
-	height int
+	stack    *screen.Stack
+	registry *palette.Registry
+	width    int
+	height   int
 }
 
 // New constructs the root Model with MainScreen as the initial top-of-
-// stack screen. client may be nil for tests.
+// stack screen and registers the default Sprint-2 verbs with the
+// palette registry. client may be nil for tests.
 func New(c *client.Client) Model {
-	return Model{stack: screen.NewStack(NewMainScreen(c))}
+	reg := palette.NewRegistry()
+	registerDefaultVerbs(reg)
+	return Model{
+		stack:    screen.NewStack(NewMainScreen(c)),
+		registry: reg,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -43,6 +52,10 @@ func (m Model) Init() tea.Cmd {
 // preempt that.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case openPaletteMsg:
+		overlay := palette.NewOverlay(m.registry)
+		return m.Update(screen.PushScreenMsg{Screen: overlay})
+
 	case screen.PushScreenMsg:
 		m.stack.Push(msg.Screen)
 		initCmd := msg.Screen.Init()

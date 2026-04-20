@@ -168,9 +168,18 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		m.refreshBody()
 		return m, nil
 
+	case applyFilterMsg:
+		m.setSoloChip(msg.solo)
+		m.recomputeVisible()
+		m.refreshBody()
+		return m, nil
+
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
+		}
+		if msg.Type == tea.KeyCtrlK || (msg.Type == tea.KeyRunes && string(msg.Runes) == ":") {
+			return m, openPalette()
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
