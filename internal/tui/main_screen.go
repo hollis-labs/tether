@@ -168,6 +168,16 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		m.refreshBody()
 		return m, nil
 
+	case screen.ToastEmitMsg:
+		kind := ToastInfo
+		if msg.Kind == screen.ToastError {
+			kind = ToastError
+		}
+		cmd := m.toasts.push(kind, msg.Text)
+		m.resize()
+		m.refreshBody()
+		return m, cmd
+
 	case applyFilterMsg:
 		m.setSoloChip(msg.solo)
 		m.recomputeVisible()

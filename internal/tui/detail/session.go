@@ -9,8 +9,17 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/tui/client"
+	"github.com/chrispian/agent-mux/internal/tui/modal"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
+
+// sessionStoppedMsg carries the result of a stop request back into
+// SessionScreen so it can pop + emit a toast via the cross-screen
+// toast surface.
+type sessionStoppedMsg struct {
+	id  string
+	err error
+}
 
 // sessionRefetchedMsg carries the result of an on-Init GetSession
 // re-fetch so the detail screen can show the latest state (the session
@@ -30,6 +39,8 @@ type SessionScreen struct {
 	client    *client.Client
 	err       error
 	attachKey key.Binding
+	stopKey   key.Binding
+	tailKey   key.Binding
 }
 
 func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
@@ -38,9 +49,12 @@ func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
 		short = short[:8]
 	}
 	attachKey := key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "attach"))
+	stopKey := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop"))
+	tailKey := key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tail"))
 	b := newBase("Session " + short)
-	b.extra = append(b.extra, attachKey)
-	return SessionScreen{base: b, s: s, client: c, attachKey: attachKey}
+	b.extra = append(b.extra, attachKey, stopKey, tailKey)
+	return SessionScreen{base: b, s: s, client: c,
+		attachKey: attachKey, stopKey: stopKey, tailKey: tailKey}
 }
 
 func (s SessionScreen) Init() tea.Cmd {
@@ -64,7 +78,8 @@ func (s SessionScreen) Init() tea.Cmd {
 }
 
 func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
-	if m, ok := msg.(sessionRefetchedMsg); ok {
+	switch m := msg.(type) {
+	case sessionRefetchedMsg:
 		if m.err != nil {
 			s.err = m.err
 		} else {
@@ -72,10 +87,30 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		s.refresh()
 		return s, nil
-	}
-	if km, ok := msg.(tea.KeyMsg); ok {
-		if key.Matches(km, s.attachKey) && s.client != nil {
+
+	case sessionStoppedMsg:
+		short := m.id
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		if m.err != nil {
+			return s, screen.Toast(screen.ToastError, "Stop failed: "+m.err.Error())
+		}
+		// Success: pop session detail back to main, and push toast.
+		return s, tea.Batch(
+			screen.Pop(),
+			screen.Toast(screen.ToastInfo, "Stopped session "+short),
+		)
+
+	case tea.KeyMsg:
+		if key.Matches(m, s.attachKey) && s.client != nil {
 			return s, screen.Push(NewAttachScreen(s.s, s.client))
+		}
+		if key.Matches(m, s.stopKey) && s.client != nil {
+			return s, screen.Push(s.newStopConfirm())
+		}
+		if key.Matches(m, s.tailKey) {
+			return s, screen.Push(NewTailScreen(s.s))
 		}
 	}
 	cmd, handled := s.updateCommon(msg)
@@ -84,6 +119,34 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return s, cmd
 	}
 	return s, nil
+}
+
+// newStopConfirm constructs the confirmation modal that, on yes,
+// fires a stopSessionCmd. The modal pops itself; its onYes-returned
+// cmd then posts /stop asynchronously. The resulting
+// sessionStoppedMsg routes back here to pop-and-toast.
+func (s SessionScreen) newStopConfirm() *modal.ConfirmModal {
+	short := s.s.ID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return modal.NewConfirm(
+		"Stop session "+short,
+		"This terminates the running session. Continue?",
+		func() tea.Cmd { return stopSessionCmd(s.client, s.s.ID) },
+	)
+}
+
+// stopSessionCmd posts /sessions/{id}/stop on a worker goroutine and
+// returns a sessionStoppedMsg with the outcome.
+func stopSessionCmd(c *client.Client, id string) tea.Cmd {
+	if c == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		err := c.StopSession(context.Background(), id)
+		return sessionStoppedMsg{id: id, err: err}
+	}
 }
 
 func (s SessionScreen) View() string {

@@ -151,6 +151,15 @@ func (c *Client) CreateAndLaunch(ctx context.Context, req CreateAndLaunchRequest
 	}, nil
 }
 
+// StopSession asks the daemon to terminate a running session. Returns
+// nil on success; an error for unreachable-daemon or non-2xx response.
+func (c *Client) StopSession(ctx context.Context, sessionID string) error {
+	if err := c.inner.StopSession(ctx, sessionID); err != nil {
+		return wrap("stop session", err)
+	}
+	return nil
+}
+
 // AttachStream opens a long-running byte stream from the daemon's
 // /sessions/{id}/attach endpoint. Bytes arrive on w in the order the
 // session emits them. Returns when ctx is canceled (caller detaches)
