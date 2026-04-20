@@ -85,23 +85,19 @@ func TestToastExpiredWrongIDIsNoOp(t *testing.T) {
 	}
 }
 
-func TestEnterOnNonLaunchRowIsSilentNoOp(t *testing.T) {
-	// With T-02's → detail path live, Enter on a non-launch row is a
-	// quiet no-op: the footer sel-hint advertises → for detail, so we
-	// don't spam toasts every time the user presses Enter on the
-	// wrong row type.
+func TestEnterOnNonLaunchRowOpensDetail(t *testing.T) {
+	// Enter on a non-launch row does the same thing as Right-arrow:
+	// opens the detail screen. The rule is "Enter always does
+	// something" so the user is never left wondering whether Enter
+	// is bound.
 	m := newSeededModel(t)
 	sel := m.SelectedRow()
 	if _, ok := sel.(LaunchRow); ok {
 		t.Skip("unexpected: top row is LaunchRow; test expects non-launch")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(MainScreen)
-	if len(m.toasts.items()) != 0 {
-		t.Fatalf("expected no toast on non-launch Enter, got %d", len(m.toasts.items()))
-	}
-	if cmd != nil {
-		t.Fatalf("expected nil cmd on non-launch Enter, got %T", cmd())
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a push cmd from Enter on non-launch row")
 	}
 }
 

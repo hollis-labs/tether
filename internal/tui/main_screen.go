@@ -278,10 +278,11 @@ func (m MainScreen) View() string {
 	)
 }
 
-// handleEnter launches the selected row if it's a LaunchRow. Other
-// row types are a no-op on Enter; the user should press → instead to
-// open the detail screen for non-launch rows. The footer sel-hint
-// tells them which key to use.
+// handleEnter dispatches on the selected row type: Enter on a
+// LaunchRow launches a session; Enter on any other row opens the
+// detail screen (same as Right-arrow). The rule is "Enter always
+// does something" — silent no-ops were confusing during smoke test
+// because users couldn't tell whether Enter was bound.
 func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	row := m.SelectedRow()
 	if row == nil {
@@ -289,9 +290,7 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	}
 	lr, ok := row.(LaunchRow)
 	if !ok {
-		// Non-launch: Enter is unbound here; → opens detail. Quiet
-		// no-op (footer hint already tells the user what → does).
-		return m, nil
+		return m.openDetail()
 	}
 	if m.client == nil {
 		return m, nil
@@ -583,7 +582,7 @@ func (m MainScreen) renderFooter() string {
 	}
 	selInfo := ""
 	if sel := m.SelectedRow(); sel != nil {
-		enterAction := "(→ detail)"
+		enterAction := "⏎/→ detail"
 		if _, ok := sel.(LaunchRow); ok {
 			enterAction = "⏎ launch · → detail"
 		}
