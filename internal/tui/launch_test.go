@@ -85,26 +85,23 @@ func TestToastExpiredWrongIDIsNoOp(t *testing.T) {
 	}
 }
 
-func TestEnterOnNonLaunchRowShowsGuidanceToast(t *testing.T) {
+func TestEnterOnNonLaunchRowIsSilentNoOp(t *testing.T) {
+	// With T-02's → detail path live, Enter on a non-launch row is a
+	// quiet no-op: the footer sel-hint advertises → for detail, so we
+	// don't spam toasts every time the user presses Enter on the
+	// wrong row type.
 	m := newSeededModel(t)
 	sel := m.SelectedRow()
-	if sel == nil {
-		t.Fatal("expected a selected row")
-	}
 	if _, ok := sel.(LaunchRow); ok {
 		t.Skip("unexpected: top row is LaunchRow; test expects non-launch")
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(MainScreen)
-	toasts := m.toasts.items()
-	if len(toasts) != 1 {
-		t.Fatalf("expected 1 guidance toast, got %d", len(toasts))
+	if len(m.toasts.items()) != 0 {
+		t.Fatalf("expected no toast on non-launch Enter, got %d", len(m.toasts.items()))
 	}
-	if toasts[0].Kind != ToastInfo {
-		t.Fatalf("expected info toast, got %v", toasts[0].Kind)
-	}
-	if !strings.Contains(toasts[0].Message, string(sel.Type())) {
-		t.Fatalf("expected toast to name selected row type %s, got %q", sel.Type(), toasts[0].Message)
+	if cmd != nil {
+		t.Fatalf("expected nil cmd on non-launch Enter, got %T", cmd())
 	}
 }
 

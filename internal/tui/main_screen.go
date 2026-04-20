@@ -12,6 +12,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/chrispian/agent-mux/internal/tui/client"
+	"github.com/chrispian/agent-mux/internal/tui/detail"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/internal/tui/theme"
@@ -111,6 +112,7 @@ func (m MainScreen) Title() string { return "Main" }
 // in the footer hint line.
 func (m MainScreen) KeyBindings() []key.Binding {
 	return []key.Binding{
+		m.keys.OpenDetail,
 		m.keys.FocusSearch,
 		m.keys.BlurSearch,
 		m.keys.CycleChip,
@@ -172,6 +174,9 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
+		}
+		if key.Matches(msg, m.keys.OpenDetail) {
+			return m.openDetail()
 		}
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
@@ -254,10 +259,10 @@ func (m MainScreen) View() string {
 	)
 }
 
-// handleEnter launches the selected row if it's a LaunchRow; other
-// row types emit an info toast in Sprint 1 (Sprint 2 binds Enter to
-// "open detail view"). The toast keeps the interaction feeling
-// responsive and tells the user what Enter will do.
+// handleEnter launches the selected row if it's a LaunchRow. Other
+// row types are a no-op on Enter; the user should press → instead to
+// open the detail screen for non-launch rows. The footer sel-hint
+// tells them which key to use.
 func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	row := m.SelectedRow()
 	if row == nil {
@@ -265,17 +270,37 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	}
 	lr, ok := row.(LaunchRow)
 	if !ok {
-		cmd := m.toasts.push(ToastInfo, fmt.Sprintf(
-			"Enter launches [launches] rows; selected row is [%s] — detail views land in Sprint 2",
-			row.Type()))
-		m.resize()
-		m.refreshBody()
-		return m, cmd
+		// Non-launch: Enter is unbound here; → opens detail. Quiet
+		// no-op (footer hint already tells the user what → does).
+		return m, nil
 	}
 	if m.client == nil {
 		return m, nil
 	}
 	return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: lr.L.ID})
+}
+
+// openDetail pushes the appropriate detail screen for the currently
+// selected row. Session rows re-fetch on Init so displayed state is
+// fresh; other rows render from the cached ListXxx payload.
+func (m MainScreen) openDetail() (MainScreen, tea.Cmd) {
+	row := m.SelectedRow()
+	if row == nil {
+		return m, nil
+	}
+	switch r := row.(type) {
+	case ProjectRow:
+		return m, screen.Push(detail.NewProjectScreen(r.P))
+	case AgentRow:
+		return m, screen.Push(detail.NewAgentScreen(r.A))
+	case ProviderRow:
+		return m, screen.Push(detail.NewProviderScreen(r.P))
+	case LaunchRow:
+		return m, screen.Push(detail.NewLaunchScreen(r.L))
+	case SessionRow:
+		return m, screen.Push(detail.NewSessionScreen(r.S, m.client))
+	}
+	return m, nil
 }
 
 // cycleSoloChip advances the chip row through a rotating "solo"
@@ -530,6 +555,7 @@ func (m MainScreen) renderFooter() string {
 	}
 
 	hints := []string{
+		m.keyHint(m.keys.OpenDetail),
 		m.keyHint(m.keys.FocusSearch),
 		m.keyHint(m.keys.BlurSearch),
 		m.keyHint(m.keys.CycleChip),
@@ -538,11 +564,11 @@ func (m MainScreen) renderFooter() string {
 	}
 	selInfo := ""
 	if sel := m.SelectedRow(); sel != nil {
-		action := "detail (Sprint 2)"
+		enterAction := "(→ detail)"
 		if _, ok := sel.(LaunchRow); ok {
-			action = "launch"
+			enterAction = "⏎ launch · → detail"
 		}
-		selInfo = fmt.Sprintf("  ·  sel: [%s] %s — ⏎ %s", sel.Type(), sel.ID(), action)
+		selInfo = fmt.Sprintf("  ·  sel: [%s] %s — %s", sel.Type(), sel.ID(), enterAction)
 	}
 	status := ""
 	if m.loadRemaining > 0 && m.client != nil {

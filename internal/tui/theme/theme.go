@@ -53,6 +53,25 @@ func (t Theme) Muted() lipgloss.TerminalColor  { return t.muted }
 func (t Theme) Border() lipgloss.TerminalColor { return t.border }
 func (t Theme) Danger() lipgloss.TerminalColor { return t.danger }
 
+// Header is the title bar atop detail screens. Bold accent-colored
+// text on a muted background, padded.
+func (t Theme) Header() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(t.accent).
+		Bold(true).
+		Padding(0, 1)
+}
+
+// FieldLabel is the left-side label for a detail-screen field row.
+func (t Theme) FieldLabel() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(t.muted).Bold(true)
+}
+
+// FieldValue is the right-side value for a detail-screen field row.
+func (t Theme) FieldValue() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(t.text)
+}
+
 // ---- region styles ----------------------------------------------------
 
 // Frame is the outermost padding applied to multi-item rows

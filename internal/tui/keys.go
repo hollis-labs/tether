@@ -17,6 +17,7 @@ import "github.com/charmbracelet/bubbles/key"
 type KeyMap struct {
 	Quit            key.Binding
 	Help            key.Binding
+	OpenDetail      key.Binding
 	FocusSearch     key.Binding
 	BlurSearch      key.Binding
 	CycleChip       key.Binding
@@ -51,6 +52,10 @@ func DefaultKeyMap() KeyMap {
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
+		),
+		OpenDetail: key.NewBinding(
+			key.WithKeys("right"),
+			key.WithHelp("→", "detail"),
 		),
 		FocusSearch: key.NewBinding(
 			key.WithKeys("/"),
