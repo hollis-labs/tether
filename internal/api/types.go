@@ -34,9 +34,10 @@ type LaunchService interface {
 // struct carries a *workspace.Session and a Wait closure; the API only
 // needs the primitive strings for the response body.
 type LaunchResult struct {
-	SessionID string
-	Workspace string
-	LogPath   string
+	SessionID  string
+	Workspace  string
+	LogPath    string
+	ProviderID string
 }
 
 // Request / response payloads for the HTTP API. JSON tags are the public
@@ -47,9 +48,10 @@ type LaunchRequest struct {
 }
 
 type LaunchResponse struct {
-	ID        string `json:"id"`
-	Workspace string `json:"workspace"`
-	Log       string `json:"log"`
+	ID         string `json:"id"`
+	Workspace  string `json:"workspace"`
+	Log        string `json:"log"`
+	ProviderID string `json:"provider_id"`
 }
 
 type WaitResponse struct {

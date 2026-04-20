@@ -135,9 +135,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, LaunchResponse{
-		ID:        res.SessionID,
-		Workspace: res.Workspace,
-		Log:       res.LogPath,
+		ID:         res.SessionID,
+		Workspace:  res.Workspace,
+		Log:        res.LogPath,
+		ProviderID: res.ProviderID,
 	})
 }
 
@@ -159,9 +160,10 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 		return
 	}
 	writeJSON(w, http.StatusOK, LaunchResponse{
-		ID:        res.SessionID,
-		Workspace: res.Workspace,
-		Log:       res.LogPath,
+		ID:         res.SessionID,
+		Workspace:  res.Workspace,
+		Log:        res.LogPath,
+		ProviderID: res.ProviderID,
 	})
 }
 

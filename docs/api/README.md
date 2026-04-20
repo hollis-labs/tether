@@ -90,9 +90,14 @@ Response (201):
 {
   "id": "88e1c18c-fca2-40a9-ac3a-ba25fd790869",
   "workspace": "/path/to/workspaces/proj/88e1c18c.../",
-  "log": "/path/to/workspaces/proj/88e1c18c.../logs/session.log"
+  "log": "/path/to/workspaces/proj/88e1c18c.../logs/session.log",
+  "provider_id": "claude-stream"
 }
 ```
+
+`provider_id` resolves from the launch profile's referenced provider. Clients
+use it to dispatch provider-kind-specific paths (chat surface vs. raw PTY
+attach) without a follow-up `GET /sessions/{id}` round-trip.
 
 ### `POST /sessions/{id}/launch`
 
@@ -105,7 +110,8 @@ Response (200):
 {
   "id": "88e1c18c-...",
   "workspace": "/...",
-  "log": "/..."
+  "log": "/...",
+  "provider_id": "claude-stream"
 }
 ```
 

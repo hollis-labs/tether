@@ -151,7 +151,7 @@ func decodeErr(t *testing.T, rr *httptest.ResponseRecorder) ErrorResponse {
 }
 
 func TestHandleCreateSession_Success(t *testing.T) {
-	svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
+	svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log", ProviderID: "claude-stream"}}
 
 	body, _ := json.Marshal(LaunchRequest{Launch: "demo-launch"})
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
@@ -170,6 +170,9 @@ func TestHandleCreateSession_Success(t *testing.T) {
 	}
 	if res.Workspace != "/ws/1" {
 		t.Errorf("workspace = %q", res.Workspace)
+	}
+	if res.ProviderID != "claude-stream" {
+		t.Errorf("provider_id = %q, want %q", res.ProviderID, "claude-stream")
 	}
 	if len(svc.createIDs) != 1 || svc.createIDs[0] != "demo-launch" {
 		t.Errorf("CreateSession not dispatched with request body: %v", svc.createIDs)
@@ -210,7 +213,7 @@ func TestHandleCreateSession_ServiceError(t *testing.T) {
 }
 
 func TestHandleLaunchSession_Success(t *testing.T) {
-	svc := &fakeLaunchService{launchRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log"}}
+	svc := &fakeLaunchService{launchRes: LaunchResult{SessionID: "sess-1", Workspace: "/ws/1", LogPath: "/ws/1/logs/session.log", ProviderID: "claude-stream"}}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-1/launch", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -224,6 +227,9 @@ func TestHandleLaunchSession_Success(t *testing.T) {
 	}
 	if res.ID != "sess-1" {
 		t.Errorf("id = %q", res.ID)
+	}
+	if res.ProviderID != "claude-stream" {
+		t.Errorf("provider_id = %q, want %q", res.ProviderID, "claude-stream")
 	}
 	if len(svc.launchIDs) != 1 || svc.launchIDs[0] != "sess-1" {
 		t.Errorf("LaunchSession not dispatched: %v", svc.launchIDs)
