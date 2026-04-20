@@ -87,7 +87,10 @@ func defaultAttachKeys() attachKeys {
 		SigInt:  key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "SIGINT")),
 		SendEOF: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "EOF")),
 		Send:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "send")),
-		OpenExt: key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "open in shell")),
+		// F2 rather than Ctrl+O — macOS/Linux terminals commonly trap
+		// Ctrl+O as stty's discard character before Bubble Tea can
+		// see it. F-keys reach the app reliably on every terminal.
+		OpenExt: key.NewBinding(key.WithKeys("f2"), key.WithHelp("F2", "open in shell")),
 		Palette: key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "palette")),
 	}
 }
