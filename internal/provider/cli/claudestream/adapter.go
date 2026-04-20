@@ -54,6 +54,11 @@ func (a Adapter) Start(ctx context.Context, plan *launch.Plan, opts provider.Sta
 		opts:      opts,
 		logFile:   logF,
 		stoppedCh: make(chan struct{}),
+		// Resume continuity (T-v004-s02-05): if the caller observed a
+		// prior session_id via the durable store, preload it so the
+		// very first turn runs with `--resume <id>`. Empty string falls
+		// back to the fresh-session path.
+		sessionID: opts.ClaudeSessionIDPreset,
 	}
 	return s, nil
 }
@@ -184,12 +189,23 @@ func (s *Session) readTurn(stdout io.ReadCloser, cmd *exec.Cmd) {
 			continue
 		}
 		for _, ev := range events {
-			if ev.Kind == claudestream.KindSessionID {
-				s.mu.Lock()
-				if s.sessionID == "" {
-					s.sessionID = ev.SessionID
-				}
-				s.mu.Unlock()
+			if ev.Kind != claudestream.KindSessionID || ev.SessionID == "" {
+				continue
+			}
+			s.mu.Lock()
+			learned := ""
+			if s.sessionID == "" {
+				s.sessionID = ev.SessionID
+				learned = ev.SessionID
+			}
+			cb := s.opts.OnClaudeSessionID
+			s.mu.Unlock()
+			// Fire the persistence callback only when we observed a
+			// fresh id (preset carried from the durable store stays
+			// write-through-free — claude echoes it back and this
+			// avoids redundant store writes).
+			if learned != "" && cb != nil {
+				cb(learned)
 			}
 		}
 	}

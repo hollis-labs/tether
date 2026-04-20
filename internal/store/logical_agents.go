@@ -125,3 +125,50 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// SetClaudeSessionID stores the claude CLI `session_id` observed on a
+// claudestream turn's `system/init` event so a later resume can pass
+// `--resume <id>` to the subprocess. No-op with nil error if id is ""
+// (avoids clobbering a valid cached id with a transient empty signal).
+// Does NOT touch updated_at — this field is an opaque resume token,
+// not user-visible state; mutating updated_at here would reorder UI
+// lists on every claudestream turn for no user-meaningful reason.
+func (s *Store) SetClaudeSessionID(logicalAgentID, claudeSessionID string) error {
+	if logicalAgentID == "" {
+		return errors.New("logical agent id required")
+	}
+	if claudeSessionID == "" {
+		return nil
+	}
+	res, err := s.db.Exec(
+		`UPDATE logical_agents SET claude_session_id = ? WHERE id = ?`,
+		claudeSessionID, logicalAgentID,
+	)
+	if err != nil {
+		return fmt.Errorf("set claude_session_id for %q: %w", logicalAgentID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set claude_session_id for %q: rows affected: %w", logicalAgentID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set claude_session_id: no logical_agents row with id %q", logicalAgentID)
+	}
+	return nil
+}
+
+// GetClaudeSessionID returns the last-seen claude CLI session_id for
+// the given logical agent, or "" if unset (the column is nullable and
+// defaults to NULL until the first system/init event persists it).
+// Returns sql.ErrNoRows if the logical_agents row itself is missing.
+func (s *Store) GetClaudeSessionID(logicalAgentID string) (string, error) {
+	var sid sql.NullString
+	err := s.db.QueryRow(
+		`SELECT claude_session_id FROM logical_agents WHERE id = ?`,
+		logicalAgentID,
+	).Scan(&sid)
+	if err != nil {
+		return "", err
+	}
+	return sid.String, nil
+}

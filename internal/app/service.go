@@ -231,6 +231,22 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		Workspace: ws,
 		Runtime:   rt,
 	}
+	// Resume continuity for claudestream sessions (T-v004-s02-05). For
+	// other provider kinds the preset + callback are inert. Missing /
+	// empty session_id falls through to fresh-session behavior.
+	if plan.ProviderID == "claude-stream" {
+		preset, err := s.Store.GetClaudeSessionID(plan.LogicalAgentID)
+		if err == nil {
+			req.ClaudeSessionIDPreset = preset
+		}
+		logicalAgentID := plan.LogicalAgentID
+		store := s.Store
+		req.OnClaudeSessionID = func(claudeSessionID string) {
+			if err := store.SetClaudeSessionID(logicalAgentID, claudeSessionID); err != nil {
+				log.Printf("claudestream: persist session_id for %q failed: %v", logicalAgentID, err)
+			}
+		}
+	}
 	if err := s.Runtime.Start(context.Background(), req); err != nil {
 		return nil, err
 	}

@@ -39,12 +39,31 @@ type CheckpointHint struct{}
 // a Session. Fanout, if non-nil, receives a copy of the session's output
 // stream so the manager can fan it out to attach subscribers — CLI runtimes
 // tee the PTY bytes into it; API runtimes write streamed assistant tokens.
+//
+// ClaudeSessionIDPreset and OnClaudeSessionID are additive hooks for the
+// claudestream adapter's `--resume <id>` continuity (T-v004-s02-05). Both
+// are optional; adapters that don't understand them (PTY claudecode,
+// stub API) ignore them silently.
 type StartOptions struct {
 	Workdir    string
 	LogPath    string
 	BootPrompt string
 	BootMode   string
 	Fanout     io.Writer
+
+	// ClaudeSessionIDPreset, when non-empty, is the claude CLI
+	// session_id the adapter should pass as `--resume` on the very
+	// first turn. Sourced by the caller from the durable store
+	// (logical_agents.claude_session_id) so the conversation continues
+	// across daemon restarts.
+	ClaudeSessionIDPreset string
+
+	// OnClaudeSessionID, when non-nil, is invoked by the claudestream
+	// adapter with the session_id observed on the first `system/init`
+	// event of a freshly-spawned turn. Callers typically persist it
+	// via *store.Store.SetClaudeSessionID. Called on the adapter's
+	// read goroutine — callers must not block inside it.
+	OnClaudeSessionID func(claudeSessionID string)
 }
 
 // Runtime is the high-level contract a provider adapter satisfies. It names

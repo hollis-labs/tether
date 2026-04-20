@@ -175,3 +175,206 @@ func TestSession_LogFileWrittenOnTurn(t *testing.T) {
 		t.Errorf("log missing expected line: %q", logBytes)
 	}
 }
+
+// waitForTurnIdle polls s.current until it's nil (turn completed) or
+// the deadline elapses. Mirrors the polling pattern in
+// TestSession_SendInputEmitsEventsAndCapturesSessionID.
+func waitForTurnIdle(t *testing.T, s *Session, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		done := s.current == nil
+		s.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("turn did not complete within %v", within)
+}
+
+func TestSession_PresetSessionIDIsLoadedOnStart(t *testing.T) {
+	dir := t.TempDir()
+	plan := &launch.Plan{Command: "sh", Args: []string{"-c", "exit 0"}}
+	sess, err := Adapter{}.Start(context.Background(), plan, provider.StartOptions{
+		Workdir:               dir,
+		LogPath:               filepath.Join(dir, "session.log"),
+		ClaudeSessionIDPreset: "sid-preloaded",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s, ok := sess.(*Session)
+	if !ok {
+		t.Fatalf("expected *Session, got %T", sess)
+	}
+	defer func() { _ = s.Stop(context.Background()) }()
+	if got := s.SessionID(); got != "sid-preloaded" {
+		t.Fatalf("SessionID = %q, want sid-preloaded", got)
+	}
+}
+
+func TestSession_PresetCausesResumeFlagOnFirstTurn(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	// $0 receives argsFile (first positional); "$@" expands to the
+	// adapter-added flags — --print … --resume <sid> -p <prompt>. The
+	// script writes them into argsFile so the test can assert on the
+	// exact args claude was invoked with, then emits a canned init
+	// event on stdout so the adapter's readTurn completes cleanly.
+	script := `printf "%s\n" "$@" > "$0"; printf '{"type":"system","subtype":"init","session_id":"sid-preloaded"}\n'`
+	plan := &launch.Plan{
+		Command: "sh",
+		Args:    []string{"-c", script, argsFile},
+	}
+	sess, err := Adapter{}.Start(context.Background(), plan, provider.StartOptions{
+		Workdir:               dir,
+		LogPath:               filepath.Join(dir, "session.log"),
+		ClaudeSessionIDPreset: "sid-preloaded",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s := sess.(*Session)
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	if err := s.SendInput(context.Background(), []byte("hi")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	waitForTurnIdle(t, s, 2*time.Second)
+
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	if !strings.Contains(string(got), "--resume\nsid-preloaded\n") {
+		t.Fatalf("expected --resume sid-preloaded in args, got:\n%s", got)
+	}
+}
+
+func TestSession_FreshSessionOmitsResumeFlag(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	script := `printf "%s\n" "$@" > "$0"; printf '{"type":"system","subtype":"init","session_id":"sid-fresh"}\n'`
+	plan := &launch.Plan{
+		Command: "sh",
+		Args:    []string{"-c", script, argsFile},
+	}
+	sess, err := Adapter{}.Start(context.Background(), plan, provider.StartOptions{
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "session.log"),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s := sess.(*Session)
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	if err := s.SendInput(context.Background(), []byte("hi")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	waitForTurnIdle(t, s, 2*time.Second)
+
+	got, _ := os.ReadFile(argsFile)
+	if strings.Contains(string(got), "--resume") {
+		t.Fatalf("expected no --resume on fresh session, got:\n%s", got)
+	}
+}
+
+func TestSession_OnClaudeSessionIDCallbackFiresOnceForFreshSession(t *testing.T) {
+	dir := t.TempDir()
+	plan := &launch.Plan{
+		Command: "sh",
+		Args: []string{"-c", `cat <<'JSON'
+{"type":"system","subtype":"init","session_id":"sid-captured"}
+JSON`, "--"},
+	}
+
+	observed := make(chan string, 4)
+	sess, err := Adapter{}.Start(context.Background(), plan, provider.StartOptions{
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "session.log"),
+		OnClaudeSessionID: func(sid string) {
+			observed <- sid
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s := sess.(*Session)
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	if err := s.SendInput(context.Background(), []byte("hi")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	waitForTurnIdle(t, s, 2*time.Second)
+
+	select {
+	case got := <-observed:
+		if got != "sid-captured" {
+			t.Fatalf("callback got %q, want sid-captured", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("callback not invoked within 500ms")
+	}
+
+	// A second init event for the SAME session_id must not refire the
+	// callback — the adapter tracks "first learned" rather than "every
+	// observed". Spawn a second turn with the same session_id.
+	plan2 := &launch.Plan{
+		Command: "sh",
+		Args: []string{"-c", `cat <<'JSON'
+{"type":"system","subtype":"init","session_id":"sid-captured"}
+JSON`, "--"},
+	}
+	s.plan = plan2
+	if err := s.SendInput(context.Background(), []byte("again")); err != nil {
+		t.Fatalf("second SendInput: %v", err)
+	}
+	waitForTurnIdle(t, s, 2*time.Second)
+
+	select {
+	case got := <-observed:
+		t.Fatalf("callback refired on repeat session_id: %q", got)
+	case <-time.After(200 * time.Millisecond):
+		// Expected — no refire.
+	}
+}
+
+func TestSession_OnClaudeSessionIDCallbackSkippedWhenPresetMatches(t *testing.T) {
+	dir := t.TempDir()
+	plan := &launch.Plan{
+		Command: "sh",
+		Args: []string{"-c", `cat <<'JSON'
+{"type":"system","subtype":"init","session_id":"sid-preloaded"}
+JSON`, "--"},
+	}
+
+	fired := make(chan string, 1)
+	sess, err := Adapter{}.Start(context.Background(), plan, provider.StartOptions{
+		Workdir:               dir,
+		LogPath:               filepath.Join(dir, "session.log"),
+		ClaudeSessionIDPreset: "sid-preloaded",
+		OnClaudeSessionID: func(sid string) {
+			fired <- sid
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s := sess.(*Session)
+	defer func() { _ = s.Stop(context.Background()) }()
+
+	if err := s.SendInput(context.Background(), []byte("hi")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	waitForTurnIdle(t, s, 2*time.Second)
+
+	select {
+	case got := <-fired:
+		t.Fatalf("callback unexpectedly fired with preset in place: %q", got)
+	case <-time.After(200 * time.Millisecond):
+		// Expected — preset already matches, no fresh info to persist.
+	}
+}

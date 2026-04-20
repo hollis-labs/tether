@@ -124,3 +124,97 @@ func TestListLogicalAgents_OrdersByID(t *testing.T) {
 		}
 	}
 }
+
+func openClaudeSessionTestStore(t *testing.T, id string) *Store {
+	t.Helper()
+	db, err := Open(filepath.Join(t.TempDir(), "cs.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.UpsertLogicalAgent(agent.LogicalAgent{ID: id, Name: id}, "2026-04-19T10:00:00Z"); err != nil {
+		t.Fatalf("seed logical_agent: %v", err)
+	}
+	return db
+}
+
+func TestClaudeSessionID_NullByDefault(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "a1")
+	got, err := db.GetClaudeSessionID("a1")
+	if err != nil {
+		t.Fatalf("GetClaudeSessionID: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty string for NULL column, got %q", got)
+	}
+}
+
+func TestClaudeSessionID_SetThenGetRoundTrips(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "a1")
+	if err := db.SetClaudeSessionID("a1", "sid-abc-123"); err != nil {
+		t.Fatalf("SetClaudeSessionID: %v", err)
+	}
+	got, err := db.GetClaudeSessionID("a1")
+	if err != nil {
+		t.Fatalf("GetClaudeSessionID: %v", err)
+	}
+	if got != "sid-abc-123" {
+		t.Fatalf("round-trip mismatch: got %q", got)
+	}
+}
+
+func TestClaudeSessionID_SetOverwritesPriorValue(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "a1")
+	if err := db.SetClaudeSessionID("a1", "first"); err != nil {
+		t.Fatalf("set first: %v", err)
+	}
+	if err := db.SetClaudeSessionID("a1", "second"); err != nil {
+		t.Fatalf("set second: %v", err)
+	}
+	got, _ := db.GetClaudeSessionID("a1")
+	if got != "second" {
+		t.Fatalf("expected latest value, got %q", got)
+	}
+}
+
+func TestClaudeSessionID_SetEmptyIsNoOp(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "a1")
+	if err := db.SetClaudeSessionID("a1", "persisted"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := db.SetClaudeSessionID("a1", ""); err != nil {
+		t.Fatalf("set empty should not error, got %v", err)
+	}
+	got, _ := db.GetClaudeSessionID("a1")
+	if got != "persisted" {
+		t.Fatalf("empty set clobbered prior value: %q", got)
+	}
+}
+
+func TestClaudeSessionID_MissingRowErrors(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "missing.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.SetClaudeSessionID("ghost", "sid"); err == nil {
+		t.Fatal("expected error setting on missing logical_agents row")
+	}
+
+	_, err = db.GetClaudeSessionID("ghost")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestClaudeSessionID_EmptyAgentIDRejected(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "empty.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	if err := db.SetClaudeSessionID("", "sid"); err == nil {
+		t.Fatal("expected error for empty logical agent id")
+	}
+}

@@ -47,6 +47,19 @@ type StartRequest struct {
 	Plan      *launch.Plan
 	Workspace *workspace.Session
 	Runtime   provider.Runtime
+
+	// ClaudeSessionIDPreset is forwarded into provider.StartOptions for
+	// the claudestream adapter's `--resume <id>` continuity. Sourced by
+	// the caller from the durable store. Empty string means "start
+	// fresh". Ignored by non-claudestream adapters.
+	ClaudeSessionIDPreset string
+
+	// OnClaudeSessionID is forwarded into provider.StartOptions for the
+	// claudestream adapter's session_id persistence. The caller
+	// typically closes over a store handle to write the observed id
+	// back onto the logical_agents row. Nil is safe; the adapter skips
+	// the callback when nil.
+	OnClaudeSessionID func(claudeSessionID string)
 }
 
 // SessionInfo is the public snapshot of a registered session. It deliberately
@@ -189,11 +202,13 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 
 	broker := newAttachBroker(defaultRingBytes, defaultSubscriberDepth)
 	sess, err := req.Runtime.Start(ctx, req.Plan, provider.StartOptions{
-		Workdir:    req.Plan.RepoRoot,
-		LogPath:    req.Workspace.LogPath,
-		BootPrompt: req.Plan.BootPrompt,
-		BootMode:   req.Plan.BootMode,
-		Fanout:     broker,
+		Workdir:               req.Plan.RepoRoot,
+		LogPath:               req.Workspace.LogPath,
+		BootPrompt:            req.Plan.BootPrompt,
+		BootMode:              req.Plan.BootMode,
+		Fanout:                broker,
+		ClaudeSessionIDPreset: req.ClaudeSessionIDPreset,
+		OnClaudeSessionID:     req.OnClaudeSessionID,
 	})
 	if err != nil {
 		broker.close()
