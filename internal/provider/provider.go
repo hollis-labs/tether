@@ -77,6 +77,12 @@ type Session interface {
 	Wait() (int, error)
 	Stop(ctx context.Context) error
 	SendInput(ctx context.Context, data []byte) error
+	// Resize updates the session's terminal winsize so child TUI apps
+	// redraw correctly. For CLI/PTY sessions this translates to a
+	// TIOCSWINSZ on the PTY master. For API sessions with no terminal
+	// concept, implementations should no-op and return nil.
+	// Additive to the v0.0.2 contract (ADR 0006, ADR 0014).
+	Resize(ctx context.Context, rows, cols uint16) error
 	Health() HealthStatus
 	CheckpointHints() (CheckpointHint, bool)
 }

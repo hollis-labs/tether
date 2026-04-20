@@ -29,6 +29,9 @@ type fakeSession struct {
 	// inputSink, if non-nil, receives SendInput bytes. Nil inputSink
 	// returns provider.ErrNoInputChannel — the manager surfaces that as-is.
 	inputSink io.Writer
+
+	resizeRows atomic.Uint32
+	resizeCols atomic.Uint32
 }
 
 func newFakeSession(pid int) *fakeSession {
@@ -53,6 +56,15 @@ func (f *fakeSession) SendInput(_ context.Context, data []byte) error {
 	}
 	_, err := f.inputSink.Write(data)
 	return err
+}
+
+// Resize records the requested dimensions for test assertions. No PTY
+// in this fake; the no-op + capture matches how a provider without a
+// PTY would behave in production.
+func (f *fakeSession) Resize(_ context.Context, rows, cols uint16) error {
+	f.resizeRows.Store(uint32(rows))
+	f.resizeCols.Store(uint32(cols))
+	return nil
 }
 
 func (f *fakeSession) Health() provider.HealthStatus {
@@ -563,6 +575,36 @@ func TestManager_SendInputUnknownSessionErrors(t *testing.T) {
 	if err := m.SendInput("nope", []byte("hi")); !errors.Is(err, ErrSessionNotRunning) {
 		t.Errorf("expected ErrSessionNotRunning; got %v", err)
 	}
+}
+
+func TestManager_ResizeUnknownSessionErrors(t *testing.T) {
+	m := NewManager(&fakeSink{})
+	if err := m.Resize("nope", 24, 80); !errors.Is(err, ErrSessionNotRunning) {
+		t.Errorf("expected ErrSessionNotRunning; got %v", err)
+	}
+}
+
+func TestManager_ResizePropagatesToSession(t *testing.T) {
+	sink := &fakeSink{}
+	rt := &fakeRuntime{}
+	m := NewManager(sink)
+
+	req := newRequestFor("s1", rt)
+	if err := m.Start(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Resize("s1", 42, 120); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fs := rt.get(req.Workspace.LogPath)
+	if got := fs.resizeRows.Load(); got != 42 {
+		t.Errorf("resize rows not propagated: got %d want 42", got)
+	}
+	if got := fs.resizeCols.Load(); got != 120 {
+		t.Errorf("resize cols not propagated: got %d want 120", got)
+	}
+	fs.complete(0)
+	_ = m.Shutdown(context.Background())
 }
 
 func TestManager_SendInputNoInputChannelErrors(t *testing.T) {

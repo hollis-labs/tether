@@ -119,3 +119,18 @@ func (h *Handle) PTYWriter() io.Writer {
 	}
 	return h.PTY
 }
+
+// Resize updates the PTY's winsize to (rows, cols). The child process
+// typically observes this as a SIGWINCH + a re-read of TIOCGWINSZ —
+// full-screen TUI apps (vim, top, claude CLI) redraw at the new shape.
+// Returns nil on success; an error if the PTY is closed or the ioctl
+// fails.
+//
+// Safe for concurrent callers — `pty.Setsize` is a single syscall on
+// the master fd and does not interact with the input/output goroutines.
+func (h *Handle) Resize(rows, cols uint16) error {
+	if h.PTY == nil {
+		return errors.New("session pty is closed")
+	}
+	return pty.Setsize(h.PTY, &pty.Winsize{Rows: rows, Cols: cols})
+}

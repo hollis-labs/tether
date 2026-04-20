@@ -66,6 +66,10 @@ func (s *cliSession) SendInput(_ context.Context, data []byte) error {
 	return err
 }
 
+func (s *cliSession) Resize(_ context.Context, rows, cols uint16) error {
+	return s.handle.Resize(rows, cols)
+}
+
 func (s *cliSession) Health() provider.HealthStatus {
 	return provider.HealthStatus{Alive: true, PID: s.handle.PID()}
 }

@@ -191,6 +191,25 @@ When `since_seq` is older than the oldest retained byte (ring eviction),
 the handler silently replays the full ring — clients detect gaps by byte-
 count comparison.
 
+### `POST /sessions/{id}/resize`
+
+Propagate a terminal resize to the session's PTY. Primary caller is
+`mux tui` forwarding `tea.WindowSizeMsg` events on the attach screen.
+See ADR 0014 for the full rationale.
+
+```json
+{"rows": 42, "cols": 120}
+```
+
+Response: 204 on success.
+
+Errors: `invalid_request` (missing/zero rows/cols or malformed JSON);
+`not_found` (session is not currently registered in the runtime — e.g.
+already exited); `internal_error` (rare `pty.Setsize` failure).
+
+Provider runtimes without a PTY (stub API provider) accept the call and
+no-op.
+
 ---
 
 ## Checkpoints

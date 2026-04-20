@@ -14,6 +14,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
+	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -31,6 +32,7 @@ type mockDaemon struct {
 	wait          func(context.Context, string) (int, error)
 	input         func(string, []byte) error
 	attach        func(context.Context, string, io.Writer) error
+	resize        func(string, uint16, uint16) error
 	catalog       func() (*config.Catalog, error)
 }
 
@@ -91,6 +93,12 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 			}
 			return errors.New("attach not configured")
 		},
+		resizeFn: func(id string, rows, cols uint16) error {
+			if m.resize != nil {
+				return m.resize(id, rows, cols)
+			}
+			return errors.New("resize not configured")
+		},
 	}
 
 	catalogLoader := mockCatalogLoader{fn: func() (*config.Catalog, error) {
@@ -126,6 +134,7 @@ type funcService struct {
 	inputFn    func(string, []byte) error
 	attachFn   func(context.Context, string, io.Writer) error
 	attachedFn func(string) int
+	resizeFn   func(string, uint16, uint16) error
 }
 
 func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
@@ -153,6 +162,43 @@ func (s *funcService) AttachedClients(id string) int {
 		return 0
 	}
 	return s.attachedFn(id)
+}
+func (s *funcService) ResizeSession(id string, rows, cols uint16) error {
+	if s.resizeFn == nil {
+		return nil
+	}
+	return s.resizeFn(id, rows, cols)
+}
+
+func TestClient_ResizeSession(t *testing.T) {
+	var gotID string
+	var gotRows, gotCols uint16
+	m := newMockDaemon(t)
+	m.resize = func(id string, rows, cols uint16) error {
+		gotID = id
+		gotRows, gotCols = rows, cols
+		return nil
+	}
+	c := New(m.addr())
+	if err := c.ResizeSession(context.Background(), "s1", 42, 120); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotID != "s1" || gotRows != 42 || gotCols != 120 {
+		t.Errorf("resize dispatch = (%q, %d, %d); want (s1, 42, 120)", gotID, gotRows, gotCols)
+	}
+}
+
+func TestClient_ResizeSession_NotRunning(t *testing.T) {
+	m := newMockDaemon(t)
+	m.resize = func(string, uint16, uint16) error { return runtime.ErrSessionNotRunning }
+	c := New(m.addr())
+	err := c.ResizeSession(context.Background(), "s1", 24, 80)
+	if err == nil {
+		t.Fatal("expected error for not-running session")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected 404 in error, got %v", err)
+	}
 }
 
 func TestClient_CreateSession(t *testing.T) {

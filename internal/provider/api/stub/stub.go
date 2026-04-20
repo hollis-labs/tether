@@ -97,6 +97,11 @@ func (s *Session) writeEcho(data []byte) error {
 	return nil
 }
 
+// Resize is a no-op for the stub API provider — there's no PTY to
+// propagate to. Satisfies the provider.Session contract added for
+// ADR 0014.
+func (s *Session) Resize(_ context.Context, _, _ uint16) error { return nil }
+
 func (s *Session) Health() provider.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()

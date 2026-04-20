@@ -340,6 +340,25 @@ func (m *Manager) SendInput(id string, data []byte) error {
 	return e.sess.SendInput(context.Background(), data)
 }
 
+// Resize forwards a (rows, cols) winsize update to the named session's
+// underlying PTY. Called from the TUI attach screen on every
+// tea.WindowSizeMsg so full-screen TUI providers redraw at the
+// right shape. For provider runtimes without a PTY concept the call
+// is a no-op at the provider layer. Returns ErrSessionNotRunning if
+// the session isn't registered.
+//
+// Not guarded by inputMu — pty.Setsize is a single ioctl on the
+// master fd and doesn't race with input/output goroutines.
+func (m *Manager) Resize(id string, rows, cols uint16) error {
+	m.mu.RLock()
+	e, ok := m.registry[id]
+	m.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotRunning
+	}
+	return e.sess.Resize(context.Background(), rows, cols)
+}
+
 // AttachOptions controls optional metadata attached to a subscription.
 // The zero value picks a default client_kind and requests a full-ring
 // replay (the behavior before since_seq support landed).

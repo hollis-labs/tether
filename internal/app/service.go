@@ -269,6 +269,12 @@ func (s *Service) SendInput(id string, data []byte) error {
 	return s.Runtime.SendInput(id, data)
 }
 
+// ResizeSession forwards a (rows, cols) winsize update to the named
+// session's PTY. Thin wrapper over runtime.Manager.Resize.
+func (s *Service) ResizeSession(id string, rows, cols uint16) error {
+	return s.Runtime.Resize(id, rows, cols)
+}
+
 // AttachSession streams the named session's live output to w until ctx is
 // canceled or the session exits. sinceSeq is a byte-offset hint for
 // resume; 0 means "replay full ring then go live" (pre-resume default).

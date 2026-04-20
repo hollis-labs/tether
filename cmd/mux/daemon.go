@@ -165,6 +165,10 @@ func (a *serviceAdapter) SendInput(id string, data []byte) error {
 	return a.svc.SendInput(id, data)
 }
 
+func (a *serviceAdapter) ResizeSession(id string, rows, cols uint16) error {
+	return a.svc.ResizeSession(id, rows, cols)
+}
+
 func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
 	return a.svc.AttachSession(ctx, id, w, sinceSeq)
 }

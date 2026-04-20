@@ -27,6 +27,7 @@ type LaunchService interface {
 	SendInput(id string, data []byte) error
 	AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error
 	AttachedClients(id string) int
+	ResizeSession(id string, rows, cols uint16) error
 }
 
 // LaunchResult is the api-facing subset of app.Launched. The full app
@@ -53,6 +54,15 @@ type LaunchResponse struct {
 
 type WaitResponse struct {
 	ExitCode int `json:"exit_code"`
+}
+
+// ResizeRequest is the body of POST /sessions/{id}/resize. Rows and
+// Cols are required and must be > 0; the endpoint rejects zero-valued
+// dimensions with invalid_request so callers can't accidentally shrink
+// a session to a no-op winsize.
+type ResizeRequest struct {
+	Rows uint16 `json:"rows"`
+	Cols uint16 `json:"cols"`
 }
 
 type ListSessionsResponse struct {

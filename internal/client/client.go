@@ -202,6 +202,28 @@ func (c *Client) StopSession(ctx context.Context, id string) error {
 	return readError(resp)
 }
 
+// ResizeSession forwards a (rows, cols) winsize update to the named
+// session's PTY via POST /sessions/{id}/resize. 204 on success.
+// See ADR 0014 for the contract.
+func (c *Client) ResizeSession(ctx context.Context, id string, rows, cols uint16) error {
+	body, _ := json.Marshal(api.ResizeRequest{Rows: rows, Cols: cols})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(id)+"/resize", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
 // SendInput writes data to the named session's PTY via the daemon's input
 // endpoint. The body is sent raw (application/octet-stream); no framing
 // or newline handling — the caller decides.

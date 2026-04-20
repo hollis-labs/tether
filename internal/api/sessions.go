@@ -78,6 +78,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSendInput(w, r, id)
+	case "resize":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleResizeSession(w, r, id)
 	case "attach":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -240,6 +246,32 @@ func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id str
 
 func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {
 	if err := s.Service.StopSession(id); err != nil {
+		if errors.Is(err, runtime.ErrSessionNotRunning) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleResizeSession services POST /sessions/{id}/resize. Body is a
+// ResizeRequest with rows + cols (both > 0). On success returns 204.
+// Typed errors: invalid_request (missing/zero fields), not_found
+// (session id unknown OR not currently running — the underlying
+// runtime distinguishes only ErrSessionNotRunning).
+func (s *Server) handleResizeSession(w http.ResponseWriter, r *http.Request, id string) {
+	var req ResizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Rows == 0 || req.Cols == 0 {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "rows and cols must be > 0")
+		return
+	}
+	if err := s.Service.ResizeSession(id, req.Rows, req.Cols); err != nil {
 		if errors.Is(err, runtime.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return

@@ -50,6 +50,11 @@ type fakeLaunchService struct {
 	attachSinceSeqs []int64
 
 	attachedClients map[string]int
+
+	resizeErr  error
+	resizeIDs  []string
+	resizeRows []uint16
+	resizeCols []uint16
 }
 
 func (f *fakeLaunchService) CreateSession(id string) (LaunchResult, error) {
@@ -119,6 +124,15 @@ func (f *fakeLaunchService) AttachedClients(id string) int {
 		return 0
 	}
 	return f.attachedClients[id]
+}
+
+func (f *fakeLaunchService) ResizeSession(id string, rows, cols uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resizeIDs = append(f.resizeIDs, id)
+	f.resizeRows = append(f.resizeRows, rows)
+	f.resizeCols = append(f.resizeCols, cols)
+	return f.resizeErr
 }
 
 func newTestHandler(svc LaunchService) http.Handler {
@@ -500,6 +514,97 @@ func TestHandleSendInput_TooLarge(t *testing.T) {
 	env := decodeErr(t, rr)
 	if env.Error.Code != CodePayloadTooLarge {
 		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+// ---- Resize ----
+
+func TestHandleResize_Success(t *testing.T) {
+	svc := &fakeLaunchService{}
+	body := bytes.NewReader([]byte(`{"rows":42,"cols":120}`))
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", body)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", rr.Code)
+	}
+	if len(svc.resizeIDs) != 1 || svc.resizeIDs[0] != "s1" {
+		t.Errorf("resize not dispatched to s1: %v", svc.resizeIDs)
+	}
+	if svc.resizeRows[0] != 42 || svc.resizeCols[0] != 120 {
+		t.Errorf("resize dims wrong: got %dx%d, want 42x120", svc.resizeRows[0], svc.resizeCols[0])
+	}
+}
+
+func TestHandleResize_ZeroRowsRejected(t *testing.T) {
+	svc := &fakeLaunchService{}
+	body := bytes.NewReader([]byte(`{"rows":0,"cols":120}`))
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", body)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	if len(svc.resizeIDs) != 0 {
+		t.Errorf("resize was dispatched despite zero rows: %v", svc.resizeIDs)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("error code = %q, want %q", env.Error.Code, CodeInvalidRequest)
+	}
+}
+
+func TestHandleResize_ZeroColsRejected(t *testing.T) {
+	svc := &fakeLaunchService{}
+	body := bytes.NewReader([]byte(`{"rows":24,"cols":0}`))
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", body)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleResize_BadJSON(t *testing.T) {
+	svc := &fakeLaunchService{}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", bytes.NewReader([]byte(`{bad json`)))
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeInvalidRequest {
+		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleResize_SessionNotRunning(t *testing.T) {
+	svc := &fakeLaunchService{resizeErr: runtime.ErrSessionNotRunning}
+	body := bytes.NewReader([]byte(`{"rows":24,"cols":80}`))
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", body)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeNotFound {
+		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleResize_MethodNotAllowed(t *testing.T) {
+	svc := &fakeLaunchService{}
+	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/resize", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rr.Code)
 	}
 }
 
