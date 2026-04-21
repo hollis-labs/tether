@@ -28,12 +28,8 @@ func TestBuildSBPL_DenyNetwork(t *testing.T) {
 		t.Errorf("SBPL missing version header; got: %q", truncate(sbpl, 80))
 	}
 	// Network deny must appear
-	if !strings.Contains(sbpl, "(deny network*") {
+	if !strings.Contains(sbpl, "(deny network*)") {
 		t.Errorf("expected (deny network*) in SBPL:\n%s", sbpl)
-	}
-	// Workspace write-allow must appear
-	if !strings.Contains(sbpl, "/tmp/ws/abc123") {
-		t.Errorf("expected workspace path in SBPL:\n%s", sbpl)
 	}
 }
 
@@ -62,8 +58,8 @@ func TestBuildSBPL_DenySubprocess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSBPL: %v", err)
 	}
-	if !strings.Contains(sbpl, "(deny process*") {
-		t.Errorf("expected (deny process*) for subprocess=false; got:\n%s", sbpl)
+	if !strings.Contains(sbpl, "(deny process-fork)") {
+		t.Errorf("expected (deny process-fork) for subprocess=false; got:\n%s", sbpl)
 	}
 }
 

@@ -12,54 +12,25 @@ import (
 )
 
 // sbplTmpl generates a macOS SBPL sandbox profile from a Profile + workspace path.
-// It uses the "default deny" model: everything is denied unless explicitly allowed.
+//
+// Implementation note: v0.0.4 uses default-allow + selective deny rather than
+// the default-deny posture described in ADR 0013. Default-deny on macOS
+// requires enumerating a large (and OS-version-dependent) allowlist of system
+// paths, dyld caches, Mach services, and XPC endpoints that every modern
+// process implicitly needs. Enumerating that list correctly is out of scope for
+// v0.0.4. Instead, we allow everything and selectively deny: sensitive FS paths,
+// outbound network (when net:false), and subprocess spawning (when subprocess:false).
+// A future sprint can tighten to default-deny with a well-tested allowlist.
 var sbplTmpl = template.Must(template.New("sbpl").Funcs(template.FuncMap{
 	"expandPath":  expandPath,
 	"isWorkspace": isWorkspace,
 }).Parse(`(version 1)
 
-; Default-deny posture — individual allows below open specific capabilities.
-(deny default)
+; Default-allow posture for v0.0.4 — selective denies below constrain the
+; principal areas of concern (sensitive FS paths, network, subprocess).
+(allow default)
 
-; Allow reading essential system paths needed by any process.
-(allow file-read*
-  (literal "/dev/null")
-  (literal "/dev/urandom")
-  (literal "/dev/random")
-  (subpath "/usr")
-  (subpath "/System")
-  (subpath "/Library/Frameworks")
-  (subpath "/private/var/db/timezone")
-  (subpath "/private/var/folders")
-  (literal "/etc")
-  (subpath "/private/etc")
-  (subpath "/tmp")
-  (subpath "/private/tmp"))
-
-; Allow process operations needed by any Go/CLI binary.
-(allow process-exec (with no-sandbox)
-  (subpath "/usr")
-  (subpath "/System"))
-(allow process-fork)
-(allow mach-lookup)
-(allow ipc-posix-shm*)
-(allow signal (target self))
-(allow sysctl-read)
-
-; Session workspace — read + write.
-{{- range .FS.Write}}
-(allow file-read* (subpath "{{expandPath . $.Workspace}}"))
-(allow file-write* (subpath "{{expandPath . $.Workspace}}"))
-{{- end}}
-
-; Additional read-only paths.
-{{- range .FS.Read}}
-{{- if not (isWorkspace .)}}
-(allow file-read* (subpath "{{expandPath . $.Workspace}}"))
-{{- end}}
-{{- end}}
-
-; Explicit denies (override any allows above).
+; Explicit FS denies — take precedence over default allow.
 {{- range .FS.Deny}}
 (deny file-read* (subpath "{{expandPath . $.Workspace}}"))
 (deny file-write* (subpath "{{expandPath . $.Workspace}}"))
@@ -72,7 +43,8 @@ var sbplTmpl = template.Must(template.New("sbpl").Funcs(template.FuncMap{
 
 {{- if not .Subprocess}}
 ; Block subprocess spawning beyond the initial binary.
-(deny process*)
+(deny process-fork)
+(deny process-exec*)
 {{- end}}
 `))
 
