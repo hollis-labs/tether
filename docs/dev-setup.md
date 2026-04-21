@@ -164,8 +164,45 @@ Re-run with `go test -race -count=5 -run TestName ./internal/runtime`
 to confirm reproducibility, then fix the synchronization. The runtime
 manager is the usual suspect.
 
+## MCP adapter
+
+`mux mcp` starts an MCP stdio server so LLM-based tools can call agent-mux
+capabilities as tool calls. It connects directly to the catalog (no daemon
+required) and gates mutating operations behind a token + scope.
+
+```bash
+# Read-only access (no auth):
+mux mcp
+
+# With mutating tool access:
+AGENT_MUX_MCP_TOKEN=dev-token \
+AGENT_MUX_MCP_SCOPES=session.write,message.write \
+mux mcp
+```
+
+Add to Claude Desktop / Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "agent-mux": {
+      "command": "/path/to/bin/mux",
+      "args": ["mcp"],
+      "env": {
+        "AGENT_MUX_MCP_TOKEN": "your-token",
+        "AGENT_MUX_MCP_SCOPES": "session.write,message.write"
+      }
+    }
+  }
+}
+```
+
+See [`docs/mcp.md`](mcp.md) for the full tool reference, boot-profile setup,
+and cross-agent messaging examples.
+
 ## Related docs
 
+- [`docs/mcp.md`](mcp.md) — MCP adapter setup and tool reference.
 - [`docs/api/README.md`](api/README.md) — HTTP/UDS API reference.
 - [`docs/adr/`](adr/) — architecture decision records.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — contribution workflow + code style.
