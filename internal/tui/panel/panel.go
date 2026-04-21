@@ -280,6 +280,10 @@ func (m Model) confirmActive() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	front := m.queue[0]
+	// No tool_use binding (e.g. display-only review card) — dismiss without response.
+	if front.ToolUseID() == "" {
+		return m.dismissFront()
+	}
 	var value string
 	switch c := front.(type) {
 	case *YesNoContent:

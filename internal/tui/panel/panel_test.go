@@ -146,8 +146,12 @@ func TestPanel_AcceptAll_DrainQueue(t *testing.T) {
 	c2 := panel.NewYesNoContent("Q2?", "no", "t04")
 	p2, _ := p.Update(panel.PanelPushMsg{Content: c1})
 	p3, _ := p2.(panel.Model).Update(panel.PanelPushMsg{Content: c2})
-	_, cmd := p3.(panel.Model).Update(panel.PanelAcceptAllMsg{})
+	p4, cmd := p3.(panel.Model).Update(panel.PanelAcceptAllMsg{})
 	if cmd == nil {
 		t.Error("AcceptAll must return a cmd (PanelResponseMsgs)")
+	}
+	p4model := p4.(panel.Model)
+	if p4model.HasEphemeral() {
+		t.Error("AcceptAll must drain the queue")
 	}
 }
