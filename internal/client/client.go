@@ -76,9 +76,31 @@ func (c *Client) Health(ctx context.Context) (daemon.Health, error) {
 	return h, nil
 }
 
-// CreateSession POSTs /sessions and returns the created session's
-// metadata. The session is in state=created; call LaunchSession to
-// start it.
+// CreateSessionWithBootPrompt POSTs /sessions with a boot_prompt override,
+// replacing the catalog's static boot fragments with the provided text.
+// The session is in state=created; call LaunchSession to start it.
+func (c *Client) CreateSessionWithBootPrompt(ctx context.Context, launchID, bootPrompt string) (api.LaunchResponse, error) {
+	body, _ := json.Marshal(api.LaunchRequest{Launch: launchID, BootPrompt: bootPrompt})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions", bytes.NewReader(body))
+	if err != nil {
+		return api.LaunchResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return api.LaunchResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated {
+		return api.LaunchResponse{}, readError(resp)
+	}
+	var res api.LaunchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return api.LaunchResponse{}, fmt.Errorf("decode create response: %w", err)
+	}
+	return res, nil
+}
+
 func (c *Client) CreateSession(ctx context.Context, launchID string) (api.LaunchResponse, error) {
 	body, _ := json.Marshal(api.LaunchRequest{Launch: launchID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions", bytes.NewReader(body))

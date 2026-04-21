@@ -17,7 +17,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	defaultCatalog := filepath.Join(os.Getenv("HOME"), ".agent-mux", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
-	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, tuiCmd, workspacesCmd, bootCmd)
-	// Top-level aliases so `mux generate-boot` works without the `boot` subcommand.
-	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd)
+	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, tuiCmd, workspacesCmd, bootCmd, mcpCmd)
+	// Top-level aliases for discoverability.
+	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd)
 }
