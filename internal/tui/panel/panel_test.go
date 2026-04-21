@@ -72,3 +72,26 @@ func TestMultiChoiceContent_View_ContainsOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestTextInputContent_DefaultValue(t *testing.T) {
+	c := panel.NewTextInputContent("Branch name:", "feat/my-branch", "toolu_03")
+	if c.DefaultValue() != "feat/my-branch" {
+		t.Errorf("want feat/my-branch, got %q", c.DefaultValue())
+	}
+	if c.Kind() != panel.KindTextInput {
+		t.Errorf("want KindTextInput, got %v", c.Kind())
+	}
+}
+
+func TestViewportContent_NilToolUseID(t *testing.T) {
+	c := panel.NewViewportContent("## Sprint Plan\n\n- [ ] Task 1\n")
+	if c.ToolUseID() != "" {
+		t.Errorf("pinned file has no tool_use ID, want empty, got %q", c.ToolUseID())
+	}
+	if c.DefaultValue() != "" {
+		t.Errorf("viewport has no default, want empty, got %q", c.DefaultValue())
+	}
+	if c.Kind() != panel.KindViewport {
+		t.Errorf("want KindViewport, got %v", c.Kind())
+	}
+}

@@ -43,7 +43,7 @@ func NewMultiChoiceContent(title string, options []string, defaultIdx int, toolU
 }
 
 func (c *MultiChoiceContent) Kind() ContentKind { return KindMultiChoice }
-func (c *MultiChoiceContent) ToolUseID() string  { return c.toolUseID }
+func (c *MultiChoiceContent) ToolUseID() string { return c.toolUseID }
 func (c *MultiChoiceContent) DefaultValue() string {
 	if c.defaultIdx >= 0 && c.defaultIdx < len(c.options) {
 		return c.options[c.defaultIdx]
