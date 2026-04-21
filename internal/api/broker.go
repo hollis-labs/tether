@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,12 +143,31 @@ func (s *Server) handleCreateEnvelope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, "generate id: "+err.Error())
 		return
 	}
+	// Validate message_type at the API boundary before passing to service.
+	if req.MessageType != "" && !broker.IsValidMessageType(req.MessageType) {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"unknown message_type "+strconv.Quote(req.MessageType)+"; valid: "+strings.Join(broker.ValidMessageTypes(), ", "))
+		return
+	}
+
+	// For request envelopes the server assigns the correlation_id (UUIDv7)
+	// so responses can be matched deterministically. Callers MUST NOT set it.
+	correlationID := req.CorrelationID
+	if req.MessageType == broker.TypeRequest {
+		corrID, err := uuid.NewV7()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, "generate correlation_id: "+err.Error())
+			return
+		}
+		correlationID = corrID.String()
+	}
+
 	e := broker.Envelope{
 		ID:            id.String(),
 		Sender:        req.Sender,
 		Recipient:     req.Recipient,
 		WorkflowID:    req.WorkflowID,
-		CorrelationID: req.CorrelationID,
+		CorrelationID: correlationID,
 		MessageType:   req.MessageType,
 		Priority:      req.Priority,
 		Payload:       req.Payload,
@@ -155,7 +175,12 @@ func (s *Server) handleCreateEnvelope(w http.ResponseWriter, r *http.Request) {
 		AuditJSON:     req.AuditJSON,
 	}
 	if err := s.Broker.CreateEnvelope(r.Context(), e); err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		msg := err.Error()
+		if strings.Contains(msg, "correlation_id") {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, msg)
 		return
 	}
 	writeJSON(w, http.StatusCreated, envelopeToDTO(e))

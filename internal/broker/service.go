@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/chrispian/agent-mux/internal/events"
 )
@@ -46,10 +47,17 @@ type envelopeMeta struct {
 	MessageType   string `json:"message_type,omitempty"`
 }
 
-// CreateEnvelope persists the envelope and publishes
-// broker.envelope_created on success. Store errors are returned
-// without publishing anything (persistence-before-emit ordering).
+// CreateEnvelope validates the envelope, persists it, and publishes
+// broker.envelope_created on success. Validation: message_type must be
+// in the enum; response must carry a correlation_id. Store errors are
+// returned without publishing (persistence-before-emit ordering).
 func (s *Service) CreateEnvelope(ctx context.Context, e Envelope) error {
+	if e.MessageType != "" && !IsValidMessageType(e.MessageType) {
+		return fmt.Errorf("broker: unknown message_type %q; valid types: %v", e.MessageType, ValidMessageTypes())
+	}
+	if e.MessageType == TypeResponse && e.CorrelationID == "" {
+		return fmt.Errorf("broker: response envelope requires a correlation_id")
+	}
 	if err := s.store.CreateEnvelope(e); err != nil {
 		return err
 	}

@@ -113,7 +113,7 @@ func TestService_ReplyEnvelope_EmitsRepliedEventWithCorrelation(t *testing.T) {
 		Sender:        "agent-b",
 		Recipient:     "agent-a",
 		CorrelationID: "env-1",
-		MessageType:   "reply",
+		MessageType:   "response",
 		CreatedAt:     "2026-04-19T00:00:05Z",
 	}
 	if err := svc.ReplyEnvelope(context.Background(), reply); err != nil {
@@ -149,6 +149,70 @@ func TestService_CreateEnvelope_StoreFailure_NoEvent(t *testing.T) {
 	}
 	if len(pub.snapshot()) != 0 {
 		t.Errorf("events published despite store failure: %d", len(pub.snapshot()))
+	}
+}
+
+func TestMessageType_ValidValues(t *testing.T) {
+	for _, mt := range ValidMessageTypes() {
+		if !IsValidMessageType(mt) {
+			t.Errorf("ValidMessageTypes() returned %q but IsValidMessageType rejects it", mt)
+		}
+	}
+}
+
+func TestMessageType_InvalidRejects(t *testing.T) {
+	for _, bad := range []string{"", "unknown", "REQUEST", "RESPONSE", "reply"} {
+		if IsValidMessageType(bad) {
+			t.Errorf("IsValidMessageType(%q) = true, want false", bad)
+		}
+	}
+}
+
+func TestService_CreateEnvelope_RejectsInvalidType(t *testing.T) {
+	st := &fakeStore{}
+	pub := &fakePub{}
+	svc := NewService(st, pub)
+
+	err := svc.CreateEnvelope(context.Background(), Envelope{
+		ID:          "e1",
+		MessageType: "bogus",
+		CreatedAt:   "2026-04-21T00:00:00Z",
+	})
+	if err == nil {
+		t.Error("expected error for invalid message_type, got nil")
+	}
+	if len(st.inserted) != 0 {
+		t.Error("envelope should not be persisted when type is invalid")
+	}
+}
+
+func TestService_CreateEnvelope_ResponseRequiresCorrelation(t *testing.T) {
+	st := &fakeStore{}
+	svc := NewService(st, nil)
+
+	err := svc.CreateEnvelope(context.Background(), Envelope{
+		ID:          "e2",
+		MessageType: "response",
+		// No CorrelationID
+		CreatedAt: "2026-04-21T00:00:00Z",
+	})
+	if err == nil {
+		t.Error("expected error for response without correlation_id, got nil")
+	}
+}
+
+func TestService_CreateEnvelope_ResponseWithCorrelationOK(t *testing.T) {
+	st := &fakeStore{}
+	svc := NewService(st, nil)
+
+	err := svc.CreateEnvelope(context.Background(), Envelope{
+		ID:            "e3",
+		MessageType:   "response",
+		CorrelationID: "req-id",
+		CreatedAt:     "2026-04-21T00:00:00Z",
+	})
+	if err != nil {
+		t.Errorf("response with correlation_id should succeed: %v", err)
 	}
 }
 
