@@ -20,6 +20,11 @@ type applyFilterMsg struct {
 	solo RowType
 }
 
+// panelPinFileMsg is emitted when the user runs "pin file" from the
+// palette. Path argument parsing is a follow-up; this registers the
+// verb so it appears in palette autocomplete.
+type panelPinFileMsg struct{ path string } //nolint:unused
+
 // openPalette is the cmd screens emit when the user presses `:` or
 // Ctrl+K. Kept as a helper so every screen's trigger call reads the
 // same way.
@@ -46,5 +51,14 @@ func registerDefaultVerbs(reg *palette.Registry) {
 		Description: "Exit the TUI",
 		Aliases:     []string{"exit", "q"},
 		Handler:     func() tea.Cmd { return tea.Quit },
+	})
+	reg.Register(palette.Verb{
+		Name:        "pin file",
+		Description: "Pin a file to the side panel persistent slot (usage: pin file <path>)",
+		Handler: func() tea.Cmd {
+			// Path argument parsing is a follow-up item.
+			// For now, registering the verb for palette autocomplete.
+			return nil
+		},
 	})
 }

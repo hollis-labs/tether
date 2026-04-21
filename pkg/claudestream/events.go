@@ -61,6 +61,11 @@ const (
 	// KindError reports either a top-level transport error
 	// ("error" envelope) or a run that ended with is_error=true.
 	KindError Kind = "error"
+
+	// KindUIPrompt is emitted when the agent invokes the reserved
+	// "ui_prompt" tool. The TUI renders a form in the side panel;
+	// the agent receives the user's response as the next user turn.
+	KindUIPrompt Kind = "ui_prompt"
 )
 
 // Event is the uniform return shape. Which fields are populated
@@ -68,11 +73,12 @@ const (
 // zero-valued.
 type Event struct {
 	Kind      Kind
-	Text      string        // populated for KindDelta
-	ToolUse   *ToolUseBlock // populated for KindToolUse
-	Usage     *Usage        // populated for KindUsage
-	ErrorMsg  string        // populated for KindError
-	SessionID string        // populated for KindSessionID
+	Text      string              // populated for KindDelta
+	ToolUse   *ToolUseBlock       // populated for KindToolUse
+	UIPrompt  *UIPromptDescriptor // populated for KindUIPrompt
+	Usage     *Usage              // populated for KindUsage
+	ErrorMsg  string              // populated for KindError
+	SessionID string              // populated for KindSessionID
 }
 
 // ToolUseBlock is the content of a claude tool_use block: the unique
@@ -93,6 +99,28 @@ type Usage struct {
 	CacheCreationTokens int
 	CacheReadTokens     int
 	StopReason          string
+}
+
+// UIPromptDescriptor carries the form specification embedded in a
+// "ui_prompt" tool_use block. Kind drives which Content type the
+// panel instantiates.
+type UIPromptDescriptor struct {
+	// Kind selects the content renderer.
+	// Valid values: "yes_no", "multi_choice", "text_input", "review_card", "diff", "document"
+	Kind string `json:"kind"`
+	// Title is the short heading shown above the form.
+	Title string `json:"title"`
+	// Body is optional detail text rendered below the title.
+	Body string `json:"body,omitempty"`
+	// Options lists the selectable items for multi_choice.
+	Options []string `json:"options,omitempty"`
+	// Default is the pre-selected value. For yes_no: "yes"/"no".
+	// For multi_choice: index (float64 from JSON). For text_input: string.
+	// For review_card/diff/document: unused.
+	Default any `json:"default,omitempty"`
+	// ToolUseID is the claude tool_use block ID, used to correlate the
+	// user's response back to the agent as a tool_result marker.
+	ToolUseID string `json:"-"` // set by parse.go from the block ID, not from JSON
 }
 
 // ---------------------------------------------------------------------

@@ -3,7 +3,46 @@ package claudestream
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+const (
+	sentinelOpen  = "[[UI_PROMPT:"
+	sentinelClose = "]]"
+)
+
+// extractUIPromptSentinel scans text for a [[UI_PROMPT:{...}]] sentinel
+// emitted by agents that use the text-based (non-MCP) ui_prompt convention.
+// Returns the remaining text (sentinel stripped) and the parsed descriptor.
+// Returns ("", nil) when no valid sentinel is present.
+// Only the first sentinel per text block is processed.
+func extractUIPromptSentinel(text string) (string, *UIPromptDescriptor) {
+	start := strings.Index(text, sentinelOpen)
+	if start == -1 {
+		return "", nil
+	}
+	rest := text[start+len(sentinelOpen):]
+	end := strings.Index(rest, sentinelClose)
+	if end == -1 {
+		return "", nil
+	}
+	var desc UIPromptDescriptor
+	if err := json.Unmarshal([]byte(rest[:end]), &desc); err != nil {
+		return "", nil
+	}
+	if desc.Kind == "" {
+		return "", nil // require at least kind to be present
+	}
+	before := strings.TrimRight(text[:start], " \t")
+	after := strings.TrimLeft(rest[end+len(sentinelClose):], " \t\n")
+	remaining := before
+	if before != "" && after != "" {
+		remaining = before + "\n" + after
+	} else if after != "" {
+		remaining = after
+	}
+	return remaining, &desc
+}
 
 // Parse translates a single line of claude stream-json output into
 // zero or more Events. Empty lines return (nil, nil). Informational
@@ -51,9 +90,39 @@ func parseAssistant(line []byte) ([]Event, error) {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
-				out = append(out, Event{Kind: KindDelta, Text: block.Text})
+				if remaining, desc := extractUIPromptSentinel(block.Text); desc != nil {
+					if remaining != "" {
+						out = append(out, Event{Kind: KindDelta, Text: remaining})
+					}
+					out = append(out, Event{Kind: KindUIPrompt, UIPrompt: desc})
+				} else {
+					out = append(out, Event{Kind: KindDelta, Text: block.Text})
+				}
 			}
 		case "tool_use":
+			if block.Name == "ui_prompt" {
+				// Intercept: parse the input as a UIPromptDescriptor and emit
+				// KindUIPrompt. The tool_use is NOT forwarded to consumers as
+				// KindToolUse — the panel owns the interaction.
+				// Fall back to KindToolUse on malformed input so the agent
+				// can observe the failure rather than silently losing the call.
+				var desc UIPromptDescriptor
+				if len(block.Input) > 0 {
+					if err := json.Unmarshal(block.Input, &desc); err != nil || desc.Kind == "" {
+						// Malformed — emit as normal tool_use so nothing is lost.
+						input := make(map[string]any)
+						_ = json.Unmarshal(block.Input, &input)
+						out = append(out, Event{Kind: KindToolUse, ToolUse: &ToolUseBlock{ID: block.ID, Name: block.Name, Input: input}})
+						continue
+					}
+				}
+				desc.ToolUseID = block.ID
+				out = append(out, Event{
+					Kind:     KindUIPrompt,
+					UIPrompt: &desc,
+				})
+				continue
+			}
 			input := make(map[string]any)
 			if len(block.Input) > 0 {
 				_ = json.Unmarshal(block.Input, &input)

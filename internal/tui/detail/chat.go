@@ -16,6 +16,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
+	"github.com/chrispian/agent-mux/internal/tui/panel"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/internal/tui/theme"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
@@ -204,9 +205,22 @@ func (s *ChatScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.refresh()
 			return s, nil
 		}
-		s.applyEvent(msg.ev)
+		cmd := s.applyEvent(msg.ev)
 		s.refresh()
-		return s, drainChatCmd(s.ch)
+		return s, tea.Batch(drainChatCmd(s.ch), cmd)
+
+	case panel.PanelResponseMsg:
+		// User confirmed a ui_prompt panel form. Send the response as the
+		// next user turn. The agent receives it as a user message and
+		// resolves its pending ui_prompt call.
+		if msg.Value == "" {
+			return s, nil
+		}
+		s.history = append(s.history, chatTurn{user: msg.Value})
+		s.awaiting = true
+		s.status = ""
+		s.refresh()
+		return s, s.sendTurnCmd(msg.Value)
 
 	case chatSendErrMsg:
 		s.status = "send failed: " + msg.err.Error()
@@ -292,7 +306,7 @@ func (s *ChatScreen) handleSendOrToggle() (screen.Screen, tea.Cmd) {
 // SessionID and Error are session-scoped rather than turn-scoped but
 // are still appended to the active turn so they render in the
 // conversation flow.
-func (s *ChatScreen) applyEvent(ev claudestream.Event) {
+func (s *ChatScreen) applyEvent(ev claudestream.Event) tea.Cmd {
 	// Session-scoped side-effects first. The non-listed kinds (Delta,
 	// ToolUse, Error) have no session-level effect — they're rendered
 	// inline via renderHistory.
@@ -319,6 +333,25 @@ func (s *ChatScreen) applyEvent(ev claudestream.Event) {
 		if strings.HasPrefix(s.status, "waiting") {
 			s.status = ""
 		}
+	case claudestream.KindUIPrompt:
+		if ev.UIPrompt == nil {
+			return nil
+		}
+		content := buildPanelContent(ev)
+		if content == nil {
+			// Unknown kind — surface as an inline error so the user knows
+			// a prompt was lost rather than seeing the agent hang silently.
+			if ev.UIPrompt.Kind != "" {
+				s.history[len(s.history)-1].events = append(
+					s.history[len(s.history)-1].events,
+					claudestream.Event{Kind: claudestream.KindError, ErrorMsg: "ui_prompt: unknown kind " + ev.UIPrompt.Kind},
+				)
+			}
+			return nil
+		}
+		return func() tea.Msg {
+			return panel.PanelPushMsg{Content: content}
+		}
 	}
 
 	// If we've received an event before the first user turn was
@@ -330,6 +363,7 @@ func (s *ChatScreen) applyEvent(ev claudestream.Event) {
 	}
 	idx := len(s.history) - 1
 	s.history[idx].events = append(s.history[idx].events, ev)
+	return nil
 }
 
 // sendTurnCmd wraps SendInput in a tea.Cmd. The daemon-side adapter
@@ -476,6 +510,8 @@ func (s *ChatScreen) renderHistory() string {
 			case claudestream.KindError:
 				sb.WriteString(errorStyle().Render("error: " + ev.ErrorMsg))
 				sb.WriteString("\n")
+			case claudestream.KindUIPrompt:
+				// Rendered in the side panel; suppress inline.
 			case claudestream.KindUsage, claudestream.KindDone:
 				// Rendered in the header / footer; suppress inline.
 			}
@@ -596,6 +632,45 @@ func drainChatCmd(ch <-chan chatStreamMsg) tea.Cmd {
 			return chatStreamMsg{done: true}
 		}
 		return m
+	}
+}
+
+// buildPanelContent converts a KindUIPrompt event into the appropriate
+// panel.Content type. Returns nil for unknown kinds (panel stays closed).
+func buildPanelContent(ev claudestream.Event) panel.Content {
+	if ev.UIPrompt == nil {
+		return nil
+	}
+	d := ev.UIPrompt
+	switch d.Kind {
+	case "yes_no":
+		def := "yes"
+		if s, ok := d.Default.(string); ok {
+			def = s
+		}
+		return panel.NewYesNoContent(d.Title, def, d.ToolUseID)
+	case "multi_choice":
+		idx := 0
+		if f, ok := d.Default.(float64); ok { // JSON numbers unmarshal as float64
+			idx = int(f)
+		}
+		return panel.NewMultiChoiceContent(d.Title, d.Options, idx, d.ToolUseID)
+	case "text_input":
+		def := ""
+		if s, ok := d.Default.(string); ok {
+			def = s
+		}
+		return panel.NewTextInputContent(d.Title, def, d.ToolUseID)
+	case "review_card", "diff", "document":
+		body := d.Body
+		if body == "" {
+			body = d.Title
+		} else if d.Title != "" {
+			body = d.Title + "\n\n" + body
+		}
+		return panel.NewViewportContentWithToolUse(body, d.ToolUseID)
+	default:
+		return nil
 	}
 }
 
