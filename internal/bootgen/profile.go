@@ -255,17 +255,26 @@ func resolveCmd(ctx context.Context, src SlotSource) (string, error) {
 }
 
 func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.URL, nil)
+	// Expand env vars in URL so profiles can use ${VANTA_URL}, ${CLOCKWORK_URL}, etc.
+	rawURL := os.ExpandEnv(src.URL)
+	if rawURL == "" {
+		return "", fmt.Errorf("http slot URL is empty after env expansion")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("build request %s: %w", src.URL, err)
+		return "", fmt.Errorf("build request %s: %w", rawURL, err)
+	}
+	// Optional auth header via VANTA_TOKEN / bearer token env var.
+	if token := os.Getenv("VANTA_TOKEN"); token != "" && strings.Contains(rawURL, "vanta") {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := defaultHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", src.URL, err)
+		return "", fmt.Errorf("GET %s: %w", rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("GET %s: status %d", src.URL, resp.StatusCode)
+		return "", fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
 	}
 	b, err := io.ReadAll(resp.Body)
 	return string(b), err
