@@ -17,6 +17,7 @@ type Deps struct {
 	Bus         events.Bus
 	EventsStore EventsStore
 	Catalog     CatalogLoader
+	GroupStore  SessionGroupStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -28,6 +29,7 @@ type Server struct {
 	Bus         events.Bus
 	EventsStore EventsStore
 	Catalog     CatalogLoader
+	GroupStore  SessionGroupStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -40,6 +42,7 @@ func NewHandler(deps Deps) http.Handler {
 		Bus:         deps.Bus,
 		EventsStore: deps.EventsStore,
 		Catalog:     deps.Catalog,
+		GroupStore:  deps.GroupStore,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -47,5 +50,6 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerBrokerRoutes(mux)
 	s.registerEventRoutes(mux)
 	s.registerCatalogRoutes(mux)
+	s.registerSessionGroupRoutes(mux)
 	return mux
 }

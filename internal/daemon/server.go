@@ -51,6 +51,8 @@ type Server struct {
 	// Catalog is optional; when set, GET /catalog/<type> endpoints are
 	// mounted. Nil in tests that only exercise the session surface.
 	Catalog api.CatalogLoader
+	// GroupStore is optional; when set, /session-groups endpoints are mounted.
+	GroupStore api.SessionGroupStore
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -183,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 			Bus:         s.Bus,
 			EventsStore: s.EventsStore,
 			Catalog:     s.Catalog,
+			GroupStore:  s.GroupStore,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -196,6 +199,11 @@ func (s *Server) Handler() http.Handler {
 		if s.Broker != nil {
 			mux.Handle("/broker/envelopes", apiHandler)
 			mux.Handle("/broker/envelopes/", apiHandler)
+			mux.Handle("/broker/requests", apiHandler)
+		}
+		if s.GroupStore != nil {
+			mux.Handle("/session-groups", apiHandler)
+			mux.Handle("/session-groups/", apiHandler)
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)

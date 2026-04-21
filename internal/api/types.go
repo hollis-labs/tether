@@ -94,6 +94,7 @@ type SessionDTO struct {
 	UpdatedAt       string  `json:"updated_at"`
 	EndedAt         *string `json:"ended_at,omitempty"`
 	AttachedClients int     `json:"attached_clients"`
+	SessionGroupID  string  `json:"session_group_id,omitempty"`
 }
 
 // SessionRowToDTO flattens the sql.Null* fields on store.SessionRow into
@@ -123,5 +124,6 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 		s := r.EndedAt.String
 		dto.EndedAt = &s
 	}
+	dto.SessionGroupID = r.SessionGroupID.String
 	return dto
 }

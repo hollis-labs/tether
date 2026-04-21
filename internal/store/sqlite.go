@@ -48,6 +48,7 @@ type SessionRow struct {
 	CreatedAt      string
 	UpdatedAt      string
 	EndedAt        sql.NullString
+	SessionGroupID sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -112,12 +113,14 @@ func (s *Store) SweepStaleSessions(now string) (int, error) {
 // Cursor is an RFC3339 timestamp; the query returns rows strictly
 // older than it. State, when non-empty, restricts to a single session
 // state ('created', 'launching', 'running', 'completed', 'failed',
-// 'killed'). Limit caps the page size; 0 falls back to the default
-// (100) and values above the hard cap (1000) are clamped.
+// 'killed'). GroupID, when non-empty, restricts to sessions in the
+// named session group. Limit caps the page size; 0 falls back to the
+// default (100) and values above the hard cap (1000) are clamped.
 type ListSessionsOptions struct {
-	Limit  int
-	Cursor string
-	State  string
+	Limit   int
+	Cursor  string
+	State   string
+	GroupID string
 }
 
 const (
@@ -154,8 +157,11 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	if opts.State != "" {
 		add("state = ?", opts.State)
 	}
+	if opts.GroupID != "" {
+		add("session_group_id = ?", opts.GroupID)
+	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -166,7 +172,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -176,8 +182,8 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID)
 	if err != nil {
 		return nil, err
 	}
