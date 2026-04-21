@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/internal/session"
 )
 
@@ -39,6 +40,12 @@ func (a Adapter) Start(ctx context.Context, plan *launch.Plan, opts provider.Sta
 
 	cmd.Dir = opts.Workdir
 	cmd.Env = provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ())
+
+	if opts.Sandbox != nil {
+		if err := sandbox.Apply(cmd, *opts.Sandbox, opts.Workdir); err != nil {
+			return nil, fmt.Errorf("sandbox: %w", err)
+		}
+	}
 
 	h, err := session.Start(cmd, opts.LogPath, opts.BootPrompt, opts.BootMode, opts.Fanout)
 	if err != nil {

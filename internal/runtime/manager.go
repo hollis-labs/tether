@@ -20,6 +20,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
@@ -60,6 +61,12 @@ type StartRequest struct {
 	// back onto the logical_agents row. Nil is safe; the adapter skips
 	// the callback when nil.
 	OnClaudeSessionID func(claudeSessionID string)
+
+	// SandboxProfile, when non-nil, is the resolved sandbox profile to
+	// enforce on the session process. Resolved by app.Service from the
+	// agent's AgentPermissions.DefaultSandbox at LaunchSession time.
+	// Nil means no enforcement.
+	SandboxProfile *sandbox.Profile
 }
 
 // SessionInfo is the public snapshot of a registered session. It deliberately
@@ -209,6 +216,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 		Fanout:                broker,
 		ClaudeSessionIDPreset: req.ClaudeSessionIDPreset,
 		OnClaudeSessionID:     req.OnClaudeSessionID,
+		Sandbox:               req.SandboxProfile,
 	})
 	if err != nil {
 		broker.close()

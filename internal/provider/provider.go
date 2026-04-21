@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/chrispian/agent-mux/internal/sandbox"
 )
 
 // RuntimeKind names the execution family a provider runtime belongs to.
@@ -64,6 +65,13 @@ type StartOptions struct {
 	// via *store.Store.SetClaudeSessionID. Called on the adapter's
 	// read goroutine — callers must not block inside it.
 	OnClaudeSessionID func(claudeSessionID string)
+
+	// Sandbox, when non-nil, is the resolved sandbox profile the provider
+	// must enforce before starting the session process. Nil means no
+	// enforcement (DefaultSandbox was empty). The provider calls
+	// sandbox.Apply to wrap the exec.Cmd before starting it. Per ADR 0013,
+	// a non-nil profile on an unsupported platform is a hard launch failure.
+	Sandbox *sandbox.Profile
 }
 
 // Runtime is the high-level contract a provider adapter satisfies. It names

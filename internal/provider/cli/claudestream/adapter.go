@@ -19,6 +19,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
 )
 
@@ -140,6 +141,13 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 	cmd := exec.CommandContext(ctx, s.plan.Command, args...) //nolint:gosec // G204: plan.Command is catalog-sourced
 	cmd.Dir = s.opts.Workdir
 	cmd.Env = provider.BuildEnv(s.plan.EnvMode, s.plan.EnvPassthrough, s.plan.EnvRedact, s.plan.Env, os.Environ())
+
+	if s.opts.Sandbox != nil {
+		if err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir); err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("claudestream: sandbox: %w", err)
+		}
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
