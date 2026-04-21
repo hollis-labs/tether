@@ -12,7 +12,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chrispian/agent-mux/internal/agent"
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/broker"
+	"github.com/chrispian/agent-mux/internal/checkpoint"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
@@ -264,6 +266,12 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, err
 	}
 
+	// Record this launch profile on the logical agent so the resume
+	// endpoint knows which catalog config to use next time.
+	if err := s.Store.SetLogicalAgentLaunchID(plan.LogicalAgentID, plan.LaunchID); err != nil {
+		log.Printf("app: set launch_id on logical_agent %q: %v (non-fatal)", plan.LogicalAgentID, err)
+	}
+
 	return &Launched{
 		SessionID: sessionID,
 		Workspace: ws,
@@ -323,6 +331,110 @@ func (s *Service) AttachedClients(id string) int {
 		return 0
 	}
 	return info.AttachedClients
+}
+
+// ResumeLogicalAgent starts a new session for the given logical agent using
+// its most recent checkpoint as boot context. The launch profile from the
+// agent's most recent previous session (logical_agents.launch_id) is reused.
+//
+// Returns a conflict error if the agent has never launched (no launch_id).
+// Returns a not-found-shaped error if no checkpoint exists.
+func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, error) {
+	la, err := s.Store.GetLogicalAgent(logicalAgentID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("get logical agent: %w", err)
+	}
+	if la.LaunchID == "" {
+		return api.LaunchResult{}, fmt.Errorf("agent %q has never launched a session; cannot resume", logicalAgentID)
+	}
+
+	ck, err := s.Store.GetLatestCheckpointForAgent(logicalAgentID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
+	}
+
+	plan, err := s.Resolve(la.LaunchID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
+	}
+
+	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
+
+	// Create workspace + persist session row (same as CreateSession but with pre-built plan).
+	sessID := uuid.NewString()
+	wsRoot := plan.WriteHome
+	if wsRoot == "" {
+		wsRoot = filepath.Join(config.Expand(s.Catalog.Global.Catalog.Defaults.WorkspaceRoot), plan.ProjectID)
+	}
+	ws, err := workspace.Create(wsRoot, sessID, plan)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("create workspace: %w", err)
+	}
+
+	if _, ok := s.Providers.Get(plan.ProviderID); !ok {
+		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+	}
+
+	row := store.SessionRow{
+		ID:             sessID,
+		LaunchID:       plan.LaunchID,
+		ProjectID:      plan.ProjectID,
+		LogicalAgentID: plan.LogicalAgentID,
+		ProviderID:     plan.ProviderID,
+		Workspace:      ws.Root,
+		State:          string(session.StateCreated),
+	}
+	if err := s.Store.CreateSession(row, plan); err != nil {
+		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
+	}
+
+	l, err := s.LaunchSession(sessID)
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	return api.LaunchResult{
+		SessionID:  l.SessionID,
+		Workspace:  l.Workspace.Root,
+		LogPath:    l.Workspace.LogPath,
+		ProviderID: l.Plan.ProviderID,
+	}, nil
+}
+
+// buildResumePrompt prepends a checkpoint context block to the boot prompt.
+// Fields that are empty are omitted to keep the context clean.
+func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
+	var b strings.Builder
+	b.WriteString("## Resumed from checkpoint ")
+	b.WriteString(ck.ID)
+	b.WriteString("\n")
+	if ck.Status != "" {
+		b.WriteString("\n**Status:** ")
+		b.WriteString(ck.Status)
+		b.WriteString("\n")
+	}
+	if ck.Summary != "" {
+		b.WriteString("\n**Summary:**\n")
+		b.WriteString(ck.Summary)
+		b.WriteString("\n")
+	}
+	if ck.PendingWork != "" {
+		b.WriteString("\n**Pending work:**\n")
+		b.WriteString(ck.PendingWork)
+		b.WriteString("\n")
+	}
+	if ck.KeyDecisions != "" {
+		b.WriteString("\n**Key decisions:**\n")
+		b.WriteString(ck.KeyDecisions)
+		b.WriteString("\n")
+	}
+	if ck.NextRecommendation != "" {
+		b.WriteString("\n**Next recommendation:**\n")
+		b.WriteString(ck.NextRecommendation)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n---\n\n")
+	b.WriteString(bootPrompt)
+	return b.String()
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.

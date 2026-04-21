@@ -19,6 +19,7 @@ import (
 type CheckpointStore interface {
 	CreateCheckpoint(c checkpoint.Checkpoint) error
 	ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoint.Checkpoint, error)
+	GetLatestCheckpointForAgent(logicalAgentID string) (*checkpoint.Checkpoint, error)
 }
 
 // CheckpointCreateRequest mirrors the free-form shape accepted by
@@ -200,9 +201,27 @@ func (s *Server) handleListCheckpoints(w http.ResponseWriter, _ *http.Request, a
 }
 
 // handleResumeLogicalAgent services POST /logical-agents/{id}/resume.
-// Deliberately returns 501 in v0.0.2 — resume semantics land in v0.0.3
-// Sprint v003-04 when checkpoint-to-session rehydration is designed.
-// Body is ignored.
-func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request, _ string) {
-	writeError(w, http.StatusNotImplemented, CodeNotImplemented, "resume lands in v0.0.3")
+// Starts a new session using the agent's most recent checkpoint as boot context.
+// The agent's stored launch_id (set on its most recent LaunchSession call) is
+// reused — no launch override is supported in v0.0.4. Body is ignored.
+func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request, agentID string) {
+	res, err := s.Service.ResumeLogicalAgent(agentID)
+	if err != nil {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "no rows"), strings.Contains(msg, "no checkpoint"):
+			writeError(w, http.StatusNotFound, CodeNotFound, "no checkpoint found for agent "+agentID)
+		case strings.Contains(msg, "never launched"):
+			writeError(w, http.StatusConflict, CodeConflict, msg)
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternalError, msg)
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, LaunchResponse{
+		ID:         res.SessionID,
+		Workspace:  res.Workspace,
+		Log:        res.LogPath,
+		ProviderID: res.ProviderID,
+	})
 }

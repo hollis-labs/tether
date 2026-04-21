@@ -24,6 +24,10 @@ func (f *fakeCheckpoints) CreateCheckpoint(c checkpoint.Checkpoint) error {
 	return nil
 }
 
+func (f *fakeCheckpoints) GetLatestCheckpointForAgent(_ string) (*checkpoint.Checkpoint, error) {
+	return nil, nil
+}
+
 func (f *fakeCheckpoints) ListCheckpointsByLogicalAgent(agentID string) ([]checkpoint.Checkpoint, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
@@ -151,18 +155,21 @@ func TestHandleListCheckpoints(t *testing.T) {
 	}
 }
 
-func TestHandleResumeLogicalAgent_Returns501(t *testing.T) {
-	svc := &fakeLaunchService{}
+func TestHandleResumeLogicalAgent_Success(t *testing.T) {
+	svc := &fakeLaunchService{resumeRes: LaunchResult{SessionID: "resumed-sess", Workspace: "/ws/r"}}
 	cp := &fakeCheckpoints{}
 	req := httptest.NewRequest(http.MethodPost, "/logical-agents/agent-1/resume", nil)
 	rr := httptest.NewRecorder()
 	newCheckpointTestHandler(svc, cp).ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want 501", rr.Code)
+	if rr.Code != http.StatusCreated {
+		t.Errorf("status = %d, want 201: %s", rr.Code, rr.Body.String())
 	}
-	env := decodeErr(t, rr)
-	if env.Error.Code != CodeNotImplemented {
-		t.Errorf("code = %q, want %q", env.Error.Code, CodeNotImplemented)
+	var res LaunchResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.ID != "resumed-sess" {
+		t.Errorf("id = %q, want %q", res.ID, "resumed-sess")
 	}
 }
 

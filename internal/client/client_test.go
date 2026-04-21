@@ -170,6 +170,10 @@ func (s *funcService) ResizeSession(id string, rows, cols uint16) error {
 	return s.resizeFn(id, rows, cols)
 }
 
+func (s *funcService) ResumeLogicalAgent(_ string) (api.LaunchResult, error) {
+	return api.LaunchResult{}, nil
+}
+
 func TestClient_ResizeSession(t *testing.T) {
 	var gotID string
 	var gotRows, gotCols uint16

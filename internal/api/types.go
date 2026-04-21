@@ -28,6 +28,11 @@ type LaunchService interface {
 	AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error
 	AttachedClients(id string) int
 	ResizeSession(id string, rows, cols uint16) error
+	// ResumeLogicalAgent starts a new session for the agent using its most
+	// recent checkpoint as boot context. Returns the new session's launch
+	// result. Errors: not_found if no checkpoint exists; conflict if the
+	// agent has never had a session launched (no launch_id).
+	ResumeLogicalAgent(logicalAgentID string) (LaunchResult, error)
 }
 
 // LaunchResult is the api-facing subset of app.Launched. The full app

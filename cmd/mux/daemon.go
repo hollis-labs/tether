@@ -179,6 +179,10 @@ func (a *serviceAdapter) AttachedClients(id string) int {
 	return a.svc.AttachedClients(id)
 }
 
+func (a *serviceAdapter) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, error) {
+	return a.svc.ResumeLogicalAgent(logicalAgentID)
+}
+
 // catalogLoader is the production api.CatalogLoader: each Load call
 // re-reads the catalog root with config.Load, so live YAML edits are
 // picked up without a daemon restart. The read cost is trivial (O(100s)

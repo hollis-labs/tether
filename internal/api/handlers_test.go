@@ -55,6 +55,9 @@ type fakeLaunchService struct {
 	resizeIDs  []string
 	resizeRows []uint16
 	resizeCols []uint16
+
+	resumeRes LaunchResult
+	resumeErr error
 }
 
 func (f *fakeLaunchService) CreateSession(id string) (LaunchResult, error) {
@@ -133,6 +136,10 @@ func (f *fakeLaunchService) ResizeSession(id string, rows, cols uint16) error {
 	f.resizeRows = append(f.resizeRows, rows)
 	f.resizeCols = append(f.resizeCols, cols)
 	return f.resizeErr
+}
+
+func (f *fakeLaunchService) ResumeLogicalAgent(_ string) (LaunchResult, error) {
+	return f.resumeRes, f.resumeErr
 }
 
 func newTestHandler(svc LaunchService) http.Handler {
