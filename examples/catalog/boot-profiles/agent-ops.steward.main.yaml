@@ -1,0 +1,50 @@
+id: agent-ops.steward.main
+display_name: "Agent Ops — Steward"
+
+identity:
+  lineage_alias:   agent-ops.steward.main
+  lineage_id:      ""
+  profile_id:      agent-ops-steward
+  profile_version: 1
+  role:            steward
+  project:         agent-ops
+  work_root:       ~/Projects-apps/agent-workspaces
+  tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-ops/
+  vanta_primary:   "2026-04-19"
+
+slots:
+  agent:
+    type: static
+    path: ~/.nanite/roles/meta/steward.md
+
+  recap:
+    type: cmd
+    run: |
+      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/agent-ops/boot-prompt.md" ]; then
+        head -80 "$HOME/Projects-apps/agent-workspaces/boot/agent-ops/boot-prompt.md"
+      else
+        echo "(no recap available)"
+      fi
+    timeout: 5s
+
+  history:
+    type: cmd
+    run: "git -C ~/Projects-apps/agent-workspaces log --oneline -15 2>/dev/null || echo '(git unavailable)'"
+    timeout: 5s
+
+  status:
+    type: cmd
+    run: "cd ~/Projects-apps/agent-workspaces 2>/dev/null && git status --short -b 2>/dev/null"
+    timeout: 5s
+
+  # memory_recall namespace=user/$USER/memory tags=["scope:agent-ops.steward.main"] limit=20
+  memory:
+    type: cmd
+    run: echo "[ memory slot: configure vanta recall for scope:agent-ops.steward.main ]"
+    timeout: 3s
+
+  skills:
+    type: static
+    path: ~/.nanite/skills/
+    glob: "*.md"
+    limit: 8

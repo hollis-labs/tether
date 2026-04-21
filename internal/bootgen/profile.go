@@ -38,12 +38,32 @@ var defaultHTTPClient = &http.Client{Timeout: 15 * time.Second}
 // Profile is a boot profile configuration loaded from
 // <catalog-root>/boot-profiles/<id>.yaml.
 type Profile struct {
-	ID          string                `yaml:"id"`
-	DisplayName string                `yaml:"display_name"`
-	Slots       map[string]SlotSource `yaml:"slots"`
-	// Template is an optional path to a custom Go text/template file.
-	// When empty, the default 7-section template is used.
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"display_name"`
+	// Identity carries the agent identity fields (Agent Identity Model,
+	// chatgpt-research-01-2026-04-21.md). Populates §1 of the boot prompt.
+	Identity Identity              `yaml:"identity"`
+	Slots    map[string]SlotSource `yaml:"slots"`
+	// Template is optional; when empty the default 7-section template is used.
 	Template string `yaml:"template,omitempty"`
+}
+
+// Identity holds agent identity metadata per the Agent Identity Model:
+//   - lineage_alias  = <project>.<role>.<profile> dot notation (scope_key)
+//   - lineage_id     = stable machine ID (format: agtln_<ulid>; issued by Agent Mux)
+//   - profile_id     = config name (e.g. "nanite-backend")
+//   - profile_version = integer revision counter for this profile config
+//   - role / project / work_root / tracking_root — contextual metadata
+type Identity struct {
+	LineageAlias   string `yaml:"lineage_alias"`
+	LineageID      string `yaml:"lineage_id,omitempty"`
+	ProfileID      string `yaml:"profile_id,omitempty"`
+	ProfileVersion int    `yaml:"profile_version,omitempty"`
+	Role           string `yaml:"role,omitempty"`
+	Project        string `yaml:"project,omitempty"`
+	WorkRoot       string `yaml:"work_root,omitempty"`
+	TrackingRoot   string `yaml:"tracking_root,omitempty"`
+	VantaPrimary   string `yaml:"vanta_primary,omitempty"`
 }
 
 // SlotSource describes how to populate a single named slot.

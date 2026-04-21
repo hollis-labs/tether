@@ -1,56 +1,64 @@
 id: nanite.backend.main
-display_name: "Nanite Backend"
+display_name: "Nanite — Backend"
 
-# Boot profile for the Nanite backend engineer role.
-# scope_key: nanite.backend.main
-#
-# Usage:
-#   mux generate-boot nanite.backend.main | claude --dangerously-skip-permissions
-#
-# Slot sources — customize to match your setup.
+identity:
+  lineage_alias:   nanite.backend.main
+  lineage_id:      ""          # pending — Agent Mux will issue agtln_<ulid>
+  profile_id:      nanite-backend
+  profile_version: 1
+  role:            backend
+  project:         nanite
+  work_root:       ~/Projects-apps/nanite
+  tracking_root:   ~/Projects-apps/agent-workspaces/execution/nanite/nanite-backend/
+  vanta_primary:   "2026-04-19"
 
 slots:
-  # agent: the role definition file for this persona.
+  # §1 — role definition
   agent:
     type: static
-    path: "~/.nanite/roles/backend/backend.md"
+    path: ~/.nanite/roles/domain/backend.md
 
-  # memory: recent canonical records from Vanta scoped to this agent.
-  # Uses the vanta CLI or a custom script that calls the Vanta API.
-  memory:
-    type: cmd
-    run: |
-      # Replace with your Vanta recall command, e.g.:
-      # vanta recall --namespace user/$USER/memory --tag scope:nanite.backend.main --limit 15 --format markdown
-      # Or a local script:
-      # ~/.agent-mux/scripts/vanta-recall.sh nanite.backend.main
-      echo "<!-- memory: configure vanta recall command in this profile -->"
-    timeout: 15s
-
-  # recap: most recent session-close records (what changed last session).
+  # §2 — resume now: recent session-close records
+  # Vanta recall (configure when CLI available):
+  #   conduit_lookup namespace=user/$USER/knowledge/session-close/nanite limit=3 ranking=chronological
+  # Fallback: reads current manual boot prompt until session-close records accumulate
   recap:
     type: cmd
     run: |
-      # Replace with your session-close recall command, e.g.:
-      # vanta recall --namespace user/$USER/knowledge/session-close/nanite --limit 3 --format markdown
-      echo "<!-- recap: configure session-close recall command in this profile -->"
-    timeout: 15s
-
-  # history: recent git commits in the project repo.
-  history:
-    type: cmd
-    run: "git -C ~/Projects-apps/nanite log --oneline -20 2>/dev/null || echo '(git not available)'"
+      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/nanite/boot-prompt.md" ]; then
+        head -60 "$HOME/Projects-apps/agent-workspaces/boot/nanite/boot-prompt.md"
+      else
+        echo "(no recap available — configure vanta recall)"
+      fi
     timeout: 5s
 
-  # tasks: active Clockwork tasks for this project (requires clockwork CLI).
+  # §4 — active state
+  history:
+    type: cmd
+    run: "git -C ~/Projects-apps/nanite log --oneline -20 2>/dev/null || echo '(git unavailable)'"
+    timeout: 5s
+
+  status:
+    type: cmd
+    run: "cd ~/Projects-apps/nanite 2>/dev/null && git status --short -b 2>/dev/null || echo '(git status unavailable)'"
+    timeout: 5s
+
+  # Clockwork tasks — uncomment when clockwork CLI is available:
   # tasks:
   #   type: cmd
-  #   run: "clockwork tasks list --project nanite --status in_progress --format brief 2>/dev/null"
+  #   run: "clockwork tasks list --project-id PRJ-20260417-0002 --status in_progress --format brief 2>/dev/null"
   #   timeout: 10s
 
-  # skills: available skills for this role.
+  # §5 — durable context
+  # Memory — configure vanta recall when CLI is available:
+  #   memory_recall namespace=user/$USER/memory tags=["scope:nanite.backend.main"] limit=20 ranking=activation
+  memory:
+    type: cmd
+    run: echo "[ memory slot: configure vanta recall — memory_recall namespace=user/$USER/memory tags=[scope:nanite.backend.main] ]"
+    timeout: 3s
+
   skills:
     type: static
-    path: "~/.nanite/skills/"
+    path: ~/.nanite/skills/
     glob: "*.md"
-    limit: 10
+    limit: 8

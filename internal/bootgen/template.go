@@ -1,18 +1,30 @@
 package bootgen
 
-// defaultTemplate is the canonical 7-section boot prompt shape from
-// agent-ops-alignment/examples/README.md. It renders using the named
-// slots defined in the profile; sections are omitted when their slot
-// is empty so a minimal profile still produces a clean output.
+// defaultTemplate is the canonical 7-section boot prompt shape per
+// agent-ops-alignment/examples/README.md and the Agent Identity Model
+// (chatgpt-research-01-2026-04-21.md).
+// Sections are omitted when their slot is empty.
 const defaultTemplate = `# Boot Prompt — {{if .Profile.DisplayName}}{{ .Profile.DisplayName }}{{else}}{{ .Profile.ID }}{{end}}
 
-> **Compiled:** {{ .CompiledAt }}
-> **Profile:** {{ .Profile.ID }}
+> **Memory + knowledge:** Vanta-primary. Recall Vanta first (` + "`" + `memory_recall` + "`" + ` / ` + "`" + `conduit_lookup` + "`" + `), file-based is legacy fallback. Writes → Vanta only via ` + "`" + `capture-to-vanta` + "`" + `.
 
 ---
 
+## 1. Identity & Freshness
+
+` + "```yaml" + `
+compiled_at:     {{ .CompiledAt }}
+lineage_alias:   {{ .Profile.Identity.LineageAlias }}
+lineage_id:      {{ if .Profile.Identity.LineageID }}{{ .Profile.Identity.LineageID }}{{ else }}(pending — Agent Mux profile registry){{ end }}
+profile_id:      {{ .Profile.Identity.ProfileID }}
+profile_version: {{ .Profile.Identity.ProfileVersion }}
+role:            {{ .Profile.Identity.Role }}
+project:         {{ .Profile.Identity.Project }}
+work_root:       {{ .Profile.Identity.WorkRoot }}
+tracking_root:   {{ .Profile.Identity.TrackingRoot }}
+vanta_primary:   {{ .Profile.Identity.VantaPrimary }}
+` + "```" + `
 {{- if hasSlot "agent" }}
-## 1. Identity
 
 {{ slot "agent" }}
 {{- end }}
