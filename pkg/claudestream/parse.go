@@ -54,6 +54,21 @@ func parseAssistant(line []byte) ([]Event, error) {
 				out = append(out, Event{Kind: KindDelta, Text: block.Text})
 			}
 		case "tool_use":
+			if block.Name == "ui_prompt" {
+				// Intercept: parse the input as a UIPromptDescriptor and emit
+				// KindUIPrompt. The tool_use is NOT forwarded to consumers as
+				// KindToolUse — the panel owns the interaction.
+				var desc UIPromptDescriptor
+				if len(block.Input) > 0 {
+					_ = json.Unmarshal(block.Input, &desc)
+				}
+				desc.ToolUseID = block.ID
+				out = append(out, Event{
+					Kind:     KindUIPrompt,
+					UIPrompt: &desc,
+				})
+				continue
+			}
 			input := make(map[string]any)
 			if len(block.Input) > 0 {
 				_ = json.Unmarshal(block.Input, &input)

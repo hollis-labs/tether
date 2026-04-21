@@ -476,6 +476,8 @@ func (s *ChatScreen) renderHistory() string {
 			case claudestream.KindError:
 				sb.WriteString(errorStyle().Render("error: " + ev.ErrorMsg))
 				sb.WriteString("\n")
+			case claudestream.KindUIPrompt:
+				// Rendered in the side panel; suppress inline.
 			case claudestream.KindUsage, claudestream.KindDone:
 				// Rendered in the header / footer; suppress inline.
 			}

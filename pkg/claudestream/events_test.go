@@ -211,3 +211,43 @@ func TestScanner_SkipsBlankAndIgnoredLines(t *testing.T) {
 		t.Fatalf("expected EOF, got ok=%v err=%v", ok, err)
 	}
 }
+
+func TestParse_UIPrompt(t *testing.T) {
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"ui_prompt","input":{"kind":"yes_no","title":"Continue?","default":"yes"}}]}}`)
+	events, err := Parse(line)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	ev := events[0]
+	if ev.Kind != KindUIPrompt {
+		t.Errorf("want KindUIPrompt, got %q", ev.Kind)
+	}
+	if ev.UIPrompt == nil {
+		t.Fatal("UIPrompt is nil")
+	}
+	if ev.UIPrompt.Kind != "yes_no" {
+		t.Errorf("want kind yes_no, got %q", ev.UIPrompt.Kind)
+	}
+	if ev.UIPrompt.Title != "Continue?" {
+		t.Errorf("want title Continue?, got %q", ev.UIPrompt.Title)
+	}
+	if ev.UIPrompt.ToolUseID != "toolu_01" {
+		t.Errorf("want ToolUseID toolu_01, got %q", ev.UIPrompt.ToolUseID)
+	}
+}
+
+func TestParse_UIPrompt_NotForwardedAsToolUse(t *testing.T) {
+	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"ui_prompt","input":{"kind":"yes_no","title":"Ok?"}}]}}`)
+	events, err := Parse(line)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Kind == KindToolUse {
+			t.Error("ui_prompt must not be emitted as KindToolUse")
+		}
+	}
+}
