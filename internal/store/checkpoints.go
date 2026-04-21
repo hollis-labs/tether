@@ -31,14 +31,14 @@ func (s *Store) CreateCheckpoint(c checkpoint.Checkpoint) error {
             id, logical_agent_id, task_id, workflow_id, status,
             completed_work, pending_work, key_decisions,
             referenced_artifacts, summary, next_recommendation,
-            created_at, source_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at, source_session_id, provider_hints
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.LogicalAgentID,
 		nullIfEmpty(c.TaskID), nullIfEmpty(c.WorkflowID), nullIfEmpty(c.Status),
 		nullIfEmpty(c.CompletedWork), nullIfEmpty(c.PendingWork),
 		nullIfEmpty(c.KeyDecisions), nullIfEmpty(c.ReferencedArtifacts),
 		nullIfEmpty(c.Summary), nullIfEmpty(c.NextRecommendation),
-		c.CreatedAt, nullIfEmpty(c.SourceSessionID),
+		c.CreatedAt, nullIfEmpty(c.SourceSessionID), nullIfEmpty(c.ProviderHintsJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("insert checkpoint %q: %w", c.ID, err)
@@ -50,19 +50,19 @@ func (s *Store) CreateCheckpoint(c checkpoint.Checkpoint) error {
 // sql.ErrNoRows if no such row exists.
 func (s *Store) GetCheckpoint(id string) (*checkpoint.Checkpoint, error) {
 	var (
-		c                                                                                               checkpoint.Checkpoint
-		taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess sql.NullString
+		c                                                                                                         checkpoint.Checkpoint
+		taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
 	)
 	err := s.db.QueryRow(
 		`SELECT id, logical_agent_id, task_id, workflow_id, status,
                 completed_work, pending_work, key_decisions,
                 referenced_artifacts, summary, next_recommendation,
-                created_at, source_session_id
+                created_at, source_session_id, provider_hints
            FROM checkpoints WHERE id=?`,
 		id,
 	).Scan(&c.ID, &c.LogicalAgentID, &taskID, &workflowID, &status,
 		&completed, &pending, &keyDec, &artifacts, &summary, &nextRec,
-		&c.CreatedAt, &sourceSess)
+		&c.CreatedAt, &sourceSess, &provHints)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +76,43 @@ func (s *Store) GetCheckpoint(id string) (*checkpoint.Checkpoint, error) {
 	c.Summary = summary.String
 	c.NextRecommendation = nextRec.String
 	c.SourceSessionID = sourceSess.String
+	c.ProviderHintsJSON = provHints.String
+	return &c, nil
+}
+
+// GetLatestCheckpointForAgent returns the most recent checkpoint for the given
+// logical agent (ordered by created_at DESC, LIMIT 1). Returns sql.ErrNoRows
+// if no checkpoints exist for the agent.
+func (s *Store) GetLatestCheckpointForAgent(logicalAgentID string) (*checkpoint.Checkpoint, error) {
+	var (
+		c                                                                                                         checkpoint.Checkpoint
+		taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
+	)
+	err := s.db.QueryRow(
+		`SELECT id, logical_agent_id, task_id, workflow_id, status,
+                completed_work, pending_work, key_decisions,
+                referenced_artifacts, summary, next_recommendation,
+                created_at, source_session_id, provider_hints
+           FROM checkpoints WHERE logical_agent_id=?
+           ORDER BY created_at DESC LIMIT 1`,
+		logicalAgentID,
+	).Scan(&c.ID, &c.LogicalAgentID, &taskID, &workflowID, &status,
+		&completed, &pending, &keyDec, &artifacts, &summary, &nextRec,
+		&c.CreatedAt, &sourceSess, &provHints)
+	if err != nil {
+		return nil, err
+	}
+	c.TaskID = taskID.String
+	c.WorkflowID = workflowID.String
+	c.Status = status.String
+	c.CompletedWork = completed.String
+	c.PendingWork = pending.String
+	c.KeyDecisions = keyDec.String
+	c.ReferencedArtifacts = artifacts.String
+	c.Summary = summary.String
+	c.NextRecommendation = nextRec.String
+	c.SourceSessionID = sourceSess.String
+	c.ProviderHintsJSON = provHints.String
 	return &c, nil
 }
 
@@ -86,7 +123,7 @@ func (s *Store) ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoi
 		`SELECT id, logical_agent_id, task_id, workflow_id, status,
                 completed_work, pending_work, key_decisions,
                 referenced_artifacts, summary, next_recommendation,
-                created_at, source_session_id
+                created_at, source_session_id, provider_hints
            FROM checkpoints WHERE logical_agent_id=? ORDER BY created_at DESC`,
 		logicalAgentID,
 	)
@@ -97,12 +134,12 @@ func (s *Store) ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoi
 	var out []checkpoint.Checkpoint
 	for rows.Next() {
 		var (
-			c                                                                                               checkpoint.Checkpoint
-			taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess sql.NullString
+			c                                                                                                         checkpoint.Checkpoint
+			taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
 		)
 		if err := rows.Scan(&c.ID, &c.LogicalAgentID, &taskID, &workflowID, &status,
 			&completed, &pending, &keyDec, &artifacts, &summary, &nextRec,
-			&c.CreatedAt, &sourceSess); err != nil {
+			&c.CreatedAt, &sourceSess, &provHints); err != nil {
 			return nil, fmt.Errorf("scan checkpoint: %w", err)
 		}
 		c.TaskID = taskID.String
@@ -115,6 +152,7 @@ func (s *Store) ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoi
 		c.Summary = summary.String
 		c.NextRecommendation = nextRec.String
 		c.SourceSessionID = sourceSess.String
+		c.ProviderHintsJSON = provHints.String
 		out = append(out, c)
 	}
 	return out, rows.Err()

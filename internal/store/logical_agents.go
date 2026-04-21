@@ -26,6 +26,10 @@ type LogicalAgentRow struct {
 	HotColdPolicy    string
 	CreatedAt        string
 	UpdatedAt        string
+	// LaunchID is the most recently used launch profile for this agent.
+	// Set by LaunchSession; used by the resume endpoint to start a new session
+	// with the same catalog configuration. Empty until the agent's first launch.
+	LaunchID string
 }
 
 // UpsertLogicalAgent inserts or updates a logical_agents row keyed by
@@ -57,16 +61,16 @@ func (s *Store) UpsertLogicalAgent(a agent.LogicalAgent, now string) error {
 // no such row exists.
 func (s *Store) GetLogicalAgent(id string) (*LogicalAgentRow, error) {
 	var (
-		r                                                            LogicalAgentRow
-		role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold sql.NullString
+		r                                                                    LogicalAgentRow
+		role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold, launchID sql.NullString
 	)
 	err := s.db.QueryRow(
 		`SELECT id, role, name, responsibilities, capabilities, memory_scopes,
                 policies_json, permitted_tools, escalation_rules,
-                checkpoint_policy, hot_cold_policy, created_at, updated_at
+                checkpoint_policy, hot_cold_policy, created_at, updated_at, launch_id
            FROM logical_agents WHERE id=?`,
 		id,
-	).Scan(&r.ID, &role, &name, &resp, &caps, &mem, &pol, &tools, &esc, &chkpt, &hotCold, &r.CreatedAt, &r.UpdatedAt)
+	).Scan(&r.ID, &role, &name, &resp, &caps, &mem, &pol, &tools, &esc, &chkpt, &hotCold, &r.CreatedAt, &r.UpdatedAt, &launchID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +84,28 @@ func (s *Store) GetLogicalAgent(id string) (*LogicalAgentRow, error) {
 	r.EscalationRules = esc.String
 	r.CheckpointPolicy = chkpt.String
 	r.HotColdPolicy = hotCold.String
+	r.LaunchID = launchID.String
 	return &r, nil
+}
+
+// SetLogicalAgentLaunchID stores the launch profile ID most recently used
+// to start a session for this agent. Used by the resume endpoint to start
+// a new session with the same catalog config. Safe to call on every launch —
+// it overwrites any prior value (last-write-wins is correct; the latest
+// launch profile is the most meaningful one for resume).
+func (s *Store) SetLogicalAgentLaunchID(agentID, launchID string) error {
+	res, err := s.db.Exec(
+		`UPDATE logical_agents SET launch_id=? WHERE id=?`,
+		nullIfEmpty(launchID), agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("set launch_id on logical_agent %q: %w", agentID, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("set launch_id: no logical_agents row with id %q", agentID)
+	}
+	return nil
 }
 
 // ListLogicalAgents returns all rows ordered by id.

@@ -86,6 +86,102 @@ func TestCheckpoints_GetMissing(t *testing.T) {
 	}
 }
 
+func TestCheckpoints_ProviderHints_RoundTrip(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "ck4.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.UpsertLogicalAgent(agent.LogicalAgent{ID: "a1", Name: "Agent"}, "2026-04-21T00:00:00Z"); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	c := checkpoint.Checkpoint{
+		ID:               "ck-hints",
+		LogicalAgentID:   "a1",
+		Summary:          "with hints",
+		ProviderHintsJSON: `{"session_id":"abc123"}`,
+		CreatedAt:        "2026-04-21T10:00:00Z",
+	}
+	if err := db.CreateCheckpoint(c); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := db.GetCheckpoint("ck-hints")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ProviderHintsJSON != `{"session_id":"abc123"}` {
+		t.Errorf("ProviderHintsJSON = %q, want %q", got.ProviderHintsJSON, `{"session_id":"abc123"}`)
+	}
+}
+
+func TestCheckpoints_GetLatestForAgent(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "ck5.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.UpsertLogicalAgent(agent.LogicalAgent{ID: "ag1", Name: "Agent"}, "2026-04-21T00:00:00Z"); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	for _, c := range []checkpoint.Checkpoint{
+		{ID: "old", LogicalAgentID: "ag1", Summary: "old", CreatedAt: "2026-04-21T09:00:00Z"},
+		{ID: "new", LogicalAgentID: "ag1", Summary: "new", CreatedAt: "2026-04-21T10:00:00Z"},
+	} {
+		if err := db.CreateCheckpoint(c); err != nil {
+			t.Fatalf("create %s: %v", c.ID, err)
+		}
+	}
+
+	latest, err := db.GetLatestCheckpointForAgent("ag1")
+	if err != nil {
+		t.Fatalf("GetLatestCheckpointForAgent: %v", err)
+	}
+	if latest.ID != "new" {
+		t.Errorf("latest.ID = %q, want %q", latest.ID, "new")
+	}
+}
+
+func TestCheckpoints_GetLatestForAgent_None(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "ck6.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.GetLatestCheckpointForAgent("no-such-agent")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestLogicalAgent_LaunchID_RoundTrip(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "la.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.UpsertLogicalAgent(agent.LogicalAgent{ID: "la1", Name: "A"}, "2026-04-21T00:00:00Z"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := db.SetLogicalAgentLaunchID("la1", "my-launch"); err != nil {
+		t.Fatalf("SetLogicalAgentLaunchID: %v", err)
+	}
+
+	row, err := db.GetLogicalAgent("la1")
+	if err != nil {
+		t.Fatalf("GetLogicalAgent: %v", err)
+	}
+	if row.LaunchID != "my-launch" {
+		t.Errorf("LaunchID = %q, want %q", row.LaunchID, "my-launch")
+	}
+}
+
 func TestCheckpoints_RejectsMissingRequiredFields(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "ck3.db"))
 	if err != nil {

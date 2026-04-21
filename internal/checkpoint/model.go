@@ -26,4 +26,8 @@ type Checkpoint struct {
 	NextRecommendation  string
 	CreatedAt           string
 	SourceSessionID     string
+	// ProviderHintsJSON holds an opaque JSON blob from Session.CheckpointHints().
+	// Empty string means no hints were provided. Round-tripped as-is; the daemon
+	// does not interpret the content. See ADR 0015.
+	ProviderHintsJSON string
 }
