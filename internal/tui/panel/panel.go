@@ -280,8 +280,10 @@ func (m Model) confirmActive() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	front := m.queue[0]
-	// No tool_use binding (e.g. display-only review card) — dismiss without response.
-	if front.ToolUseID() == "" {
+	// Viewport is display-only — Enter dismisses without sending a response.
+	// Interactive types (YesNo, MultiChoice, TextInput) always send a response,
+	// even for text-sentinel prompts that carry no tool_use ID.
+	if front.Kind() == KindViewport {
 		return m.dismissFront()
 	}
 	var value string

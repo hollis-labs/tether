@@ -3,7 +3,43 @@ package claudestream
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+const (
+	sentinelOpen  = "[[UI_PROMPT:"
+	sentinelClose = "]]"
+)
+
+// extractUIPromptSentinel scans text for a [[UI_PROMPT:{...}]] sentinel
+// emitted by agents that use the text-based (non-MCP) ui_prompt convention.
+// Returns the remaining text (sentinel stripped) and the parsed descriptor.
+// Returns ("", nil) when no valid sentinel is present.
+// Only the first sentinel per text block is processed.
+func extractUIPromptSentinel(text string) (string, *UIPromptDescriptor) {
+	start := strings.Index(text, sentinelOpen)
+	if start == -1 {
+		return "", nil
+	}
+	rest := text[start+len(sentinelOpen):]
+	end := strings.Index(rest, sentinelClose)
+	if end == -1 {
+		return "", nil
+	}
+	var desc UIPromptDescriptor
+	if err := json.Unmarshal([]byte(rest[:end]), &desc); err != nil {
+		return "", nil
+	}
+	before := strings.TrimRight(text[:start], " \t")
+	after := strings.TrimLeft(rest[end+len(sentinelClose):], " \t\n")
+	remaining := before
+	if before != "" && after != "" {
+		remaining = before + "\n" + after
+	} else if after != "" {
+		remaining = after
+	}
+	return remaining, &desc
+}
 
 // Parse translates a single line of claude stream-json output into
 // zero or more Events. Empty lines return (nil, nil). Informational
@@ -51,7 +87,14 @@ func parseAssistant(line []byte) ([]Event, error) {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
-				out = append(out, Event{Kind: KindDelta, Text: block.Text})
+				if remaining, desc := extractUIPromptSentinel(block.Text); desc != nil {
+					if remaining != "" {
+						out = append(out, Event{Kind: KindDelta, Text: remaining})
+					}
+					out = append(out, Event{Kind: KindUIPrompt, UIPrompt: desc})
+				} else {
+					out = append(out, Event{Kind: KindDelta, Text: block.Text})
+				}
 			}
 		case "tool_use":
 			if block.Name == "ui_prompt" {
