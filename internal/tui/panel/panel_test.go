@@ -50,3 +50,25 @@ func TestYesNoContent_View_NotEmpty(t *testing.T) {
 		t.Error("View must contain title")
 	}
 }
+
+func TestMultiChoiceContent_DefaultValue(t *testing.T) {
+	opts := []string{"Alpha", "Beta", "Gamma"}
+	c := panel.NewMultiChoiceContent("Pick one", opts, 1, "toolu_02")
+	if c.DefaultValue() != "Beta" {
+		t.Errorf("want Beta, got %q", c.DefaultValue())
+	}
+	if c.Kind() != panel.KindMultiChoice {
+		t.Errorf("want KindMultiChoice, got %v", c.Kind())
+	}
+}
+
+func TestMultiChoiceContent_View_ContainsOptions(t *testing.T) {
+	opts := []string{"Alpha", "Beta", "Gamma"}
+	c := panel.NewMultiChoiceContent("Pick one", opts, 0, "toolu_02")
+	v := c.View(40, 10)
+	for _, opt := range opts {
+		if !strings.Contains(v, opt) {
+			t.Errorf("View must contain option %q", opt)
+		}
+	}
+}
