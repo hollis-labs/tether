@@ -61,9 +61,14 @@ func New(catalogRoot string) (*Service, error) {
 	reg.Register(claudecode.Adapter{})
 	reg.Register(claudestream.Adapter{})
 	reg.Register(stub.Runtime{})
-	// Reconcile stale client_attachment rows — any attachment still marked
-	// "attached" at startup is an orphan from a prior daemon process.
-	if swept, err := db.SweepStaleAttachments(time.Now().UTC().Format(time.RFC3339)); err == nil && swept > 0 {
+	// Reconcile stale rows from a prior daemon instance: sessions stuck in
+	// launching/running are orphaned (the process they tracked is gone),
+	// and open client_attachments are no longer live.
+	now := time.Now().UTC().Format(time.RFC3339)
+	if swept, err := db.SweepStaleSessions(now); err == nil && swept > 0 {
+		log.Printf("store: swept %d stale session(s) to failed", swept)
+	}
+	if swept, err := db.SweepStaleAttachments(now); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
 	}
 	// Seed logical_agents from the catalog. Upsert — idempotent across

@@ -84,6 +84,27 @@ func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
 	return err
 }
 
+// SweepStaleSessions marks any session stuck in 'launching' or 'running'
+// as 'failed'. Intended for call-once-on-daemon-start: after a crash, any
+// session still in a live state is an orphan. Exit code -1 signals
+// "daemon lost contact" rather than a natural process exit. Returns the
+// number of rows updated.
+func (s *Store) SweepStaleSessions(now string) (int, error) {
+	res, err := s.db.Exec(
+		`UPDATE sessions SET state='failed', exit_code=-1, ended_at=?, updated_at=?
+		 WHERE state IN ('launching', 'running')`,
+		now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("sweep stale sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // ListSessionsOptions narrows the ListSessions query. All fields are
 // optional — the zero value matches the legacy "return every row,
 // newest first" behavior.

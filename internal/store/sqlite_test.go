@@ -130,6 +130,102 @@ func TestListSessions_LimitCursorState(t *testing.T) {
 	}
 }
 
+func TestSweepStaleSessions(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	plan := &launch.Plan{LaunchID: "l1"}
+
+	type seedRow struct {
+		id    string
+		state string
+		setTo string // final state after optional UpdateSessionState
+	}
+	seeds := []seedRow{
+		{"s-created", "created", ""},
+		{"s-launching", "created", "launching"},
+		{"s-running", "created", "running"},
+		{"s-completed", "created", "completed"},
+		{"s-failed", "created", "failed"},
+		{"s-killed", "created", "killed"},
+	}
+	exit := 0
+	for _, s := range seeds {
+		r := SessionRow{ID: s.id, LaunchID: "l1", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv", Workspace: "/tmp", State: "created"}
+		if err := db.CreateSession(r, plan); err != nil {
+			t.Fatalf("create %s: %v", s.id, err)
+		}
+		switch s.setTo {
+		case "launching", "running":
+			if err := db.UpdateSessionState(s.id, s.setTo, 0, nil); err != nil {
+				t.Fatalf("update %s → %s: %v", s.id, s.setTo, err)
+			}
+		case "completed":
+			if err := db.UpdateSessionState(s.id, s.setTo, 0, &exit); err != nil {
+				t.Fatalf("update %s → %s: %v", s.id, s.setTo, err)
+			}
+		case "failed":
+			code := 1
+			if err := db.UpdateSessionState(s.id, s.setTo, 0, &code); err != nil {
+				t.Fatalf("update %s → %s: %v", s.id, s.setTo, err)
+			}
+		case "killed":
+			code := -1
+			if err := db.UpdateSessionState(s.id, s.setTo, 0, &code); err != nil {
+				t.Fatalf("update %s → %s: %v", s.id, s.setTo, err)
+			}
+		}
+	}
+
+	const sweepTime = "2026-04-21T12:00:00Z"
+	n, err := db.SweepStaleSessions(sweepTime)
+	if err != nil {
+		t.Fatalf("SweepStaleSessions: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("swept %d sessions, want 2 (launching + running)", n)
+	}
+
+	// launching and running → failed with exit_code and ended_at set
+	for _, id := range []string{"s-launching", "s-running"} {
+		row, err := db.GetSession(id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if row.State != "failed" {
+			t.Errorf("%s state = %q, want %q", id, row.State, "failed")
+		}
+		if !row.ExitCode.Valid {
+			t.Errorf("%s exit_code not set after sweep", id)
+		}
+		if !row.EndedAt.Valid {
+			t.Errorf("%s ended_at not set after sweep", id)
+		}
+		if row.EndedAt.String != sweepTime {
+			t.Errorf("%s ended_at = %q, want %q", id, row.EndedAt.String, sweepTime)
+		}
+	}
+
+	// all other states untouched
+	for _, tc := range []struct{ id, want string }{
+		{"s-created", "created"},
+		{"s-completed", "completed"},
+		{"s-failed", "failed"},
+		{"s-killed", "killed"},
+	} {
+		row, err := db.GetSession(tc.id)
+		if err != nil {
+			t.Fatalf("get %s: %v", tc.id, err)
+		}
+		if row.State != tc.want {
+			t.Errorf("%s state = %q, want %q (should be untouched)", tc.id, row.State, tc.want)
+		}
+	}
+}
+
 func TestGetLaunchPlan_Missing(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
