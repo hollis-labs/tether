@@ -17,6 +17,7 @@ package bootgen
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -85,6 +86,10 @@ type SlotSource struct {
 
 	// HTTP source fields.
 	URL string `yaml:"url,omitempty"`
+	// ResponseFormat controls how the HTTP response body is rendered.
+	// "text" (default): use body verbatim.
+	// "vanta_recall": parse Vanta GET /v1/recall JSON and render as markdown bullet list.
+	ResponseFormat string `yaml:"response_format,omitempty"`
 }
 
 // LoadProfile reads and parses a single boot profile YAML.
@@ -254,6 +259,46 @@ func resolveCmd(ctx context.Context, src SlotSource) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+// vantaRecallBrief is the shape of a single item in a Vanta GET /v1/recall
+// response when format=brief. Only the fields we render are declared.
+type vantaRecallBrief struct {
+	MemoryKey  string   `json:"memory_key"`
+	Domain     string   `json:"domain"`
+	Tags       []string `json:"tags"`
+	Confidence float64  `json:"confidence"`
+	Summary    string   `json:"summary"`
+	CreatedAt  string   `json:"created_at"`
+}
+
+type vantaRecallResponse struct {
+	Results []vantaRecallBrief `json:"results"`
+	Meta    struct {
+		Namespace string `json:"namespace"`
+		Returned  int    `json:"returned"`
+	} `json:"meta"`
+}
+
+// formatVantaRecall converts a Vanta GET /v1/recall JSON response into a
+// readable markdown bullet list for insertion into boot prompt slots.
+func formatVantaRecall(body string) string {
+	var resp vantaRecallResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return body // not parseable — return raw
+	}
+	if resp.Meta.Returned == 0 {
+		return "" // empty result = omit the section
+	}
+	var sb strings.Builder
+	for _, item := range resp.Results {
+		key := item.MemoryKey
+		if key == "" {
+			key = item.Domain
+		}
+		fmt.Fprintf(&sb, "- **%s** — %s\n", key, item.Summary)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
 	// Expand env vars in URL so profiles can use ${VANTA_URL}, ${CLOCKWORK_URL}, etc.
 	rawURL := os.ExpandEnv(src.URL)
@@ -277,7 +322,14 @@ func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
 		return "", fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
 	}
 	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	if err != nil {
+		return "", err
+	}
+	body := string(b)
+	if strings.ToLower(src.ResponseFormat) == "vanta_recall" {
+		return formatVantaRecall(body), nil
+	}
+	return body, nil
 }
 
 func expandPath(p string) string {
