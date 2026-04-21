@@ -1,5 +1,7 @@
 package config
 
+import "github.com/chrispian/agent-mux/internal/sandbox"
+
 type Global struct {
 	Version string       `yaml:"version"`
 	Catalog CatalogRoots `yaml:"catalog"`
@@ -127,9 +129,10 @@ type LaunchOverrides struct {
 }
 
 type Catalog struct {
-	Global    Global
-	Projects  map[string]Project
-	Agents    map[string]Agent
-	Providers map[string]Provider
-	Launches  map[string]Launch
+	Global          Global
+	Projects        map[string]Project
+	Agents          map[string]Agent
+	Providers       map[string]Provider
+	Launches        map[string]Launch
+	SandboxProfiles map[string]sandbox.Profile
 }

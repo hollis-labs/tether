@@ -25,5 +25,12 @@ func (c *Catalog) Validate() error {
 			return fmt.Errorf("provider %q has empty command", id)
 		}
 	}
+	for id, a := range c.Agents {
+		if name := a.Permissions.DefaultSandbox; name != "" {
+			if _, ok := c.SandboxProfiles[name]; !ok {
+				return fmt.Errorf("agent %q references unknown sandbox profile %q", id, name)
+			}
+		}
+	}
 	return nil
 }

@@ -1,0 +1,16 @@
+id: workspace-plus-net
+description: "Read/write session workspace with outbound network. Suitable for agents that need npm, pip, git, or API calls."
+fs:
+  read:
+    - workspace
+    - ${HOME}/Library/Application Support/Claude
+    - ${HOME}/.config/claude
+  write:
+    - workspace
+  deny:
+    - ${HOME}/.ssh
+    - ${HOME}/.aws
+    - ${HOME}/.config/gh
+    - ${HOME}/.gnupg
+net: true
+subprocess: true

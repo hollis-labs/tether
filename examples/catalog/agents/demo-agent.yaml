@@ -5,4 +5,3 @@ skills: []
 boot_fragments: []
 permissions:
   network: true
-  default_sandbox: none

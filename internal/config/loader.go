@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/chrispian/agent-mux/internal/sandbox"
 )
 
 // Load reads the global catalog + subdirectories and returns a populated Catalog.
@@ -14,10 +16,11 @@ import (
 func Load(catalogRoot string) (*Catalog, error) {
 	catalogRoot = Expand(catalogRoot)
 	cat := &Catalog{
-		Projects:  map[string]Project{},
-		Agents:    map[string]Agent{},
-		Providers: map[string]Provider{},
-		Launches:  map[string]Launch{},
+		Projects:        map[string]Project{},
+		Agents:          map[string]Agent{},
+		Providers:       map[string]Provider{},
+		Launches:        map[string]Launch{},
+		SandboxProfiles: map[string]sandbox.Profile{},
 	}
 	if err := loadYAML(filepath.Join(catalogRoot, "global.yaml"), &cat.Global); err != nil {
 		return nil, fmt.Errorf("load global: %w", err)
@@ -65,6 +68,14 @@ func Load(catalogRoot string) (*Catalog, error) {
 	}); err != nil {
 		return nil, err
 	}
+
+	// Sandbox profiles are optional — missing dir is not an error.
+	profiles, err := sandbox.LoadProfiles(filepath.Join(catalogRoot, "sandbox-profiles"))
+	if err != nil {
+		return nil, fmt.Errorf("load sandbox-profiles: %w", err)
+	}
+	cat.SandboxProfiles = profiles
+
 	return cat, nil
 }
 

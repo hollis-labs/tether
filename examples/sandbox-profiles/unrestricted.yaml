@@ -1,0 +1,8 @@
+id: unrestricted
+description: "No filesystem or network restrictions. For debugging only. Explicit opt-in required."
+fs:
+  read: []
+  write: []
+  deny: []
+net: true
+subprocess: true

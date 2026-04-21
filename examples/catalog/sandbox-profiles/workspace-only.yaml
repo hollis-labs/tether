@@ -1,0 +1,16 @@
+id: workspace-only
+description: "Default for most agents. Read/write session workspace only. No network."
+fs:
+  read:
+    - workspace
+    - ${HOME}/Library/Application Support/Claude
+    - ${HOME}/.config/claude
+  write:
+    - workspace
+  deny:
+    - ${HOME}/.ssh
+    - ${HOME}/.aws
+    - ${HOME}/.config/gh
+    - ${HOME}/.gnupg
+net: false
+subprocess: true

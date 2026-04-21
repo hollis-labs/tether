@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/chrispian/agent-mux/internal/sandbox"
 )
 
 func TestLoadExampleCatalog(t *testing.T) {
@@ -38,6 +40,64 @@ func TestLoadExampleCatalog(t *testing.T) {
 	}
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
 		t.Errorf("daemon.shutdown_timeout = %q, want default %q", got, want)
+	}
+}
+
+func TestLoad_SandboxProfiles(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	catalogRoot := filepath.Join(filepath.Dir(file), "..", "..", "examples", "catalog")
+	cat, err := Load(catalogRoot)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// Three seed profiles must be present in the examples catalog.
+	for _, id := range []string{"workspace-only", "workspace-plus-net", "unrestricted"} {
+		if _, ok := cat.SandboxProfiles[id]; !ok {
+			t.Errorf("seed profile %q not loaded", id)
+		}
+	}
+}
+
+func TestValidate_UnknownSandboxProfile(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{DefaultSandbox: "no-such-profile"}}},
+		Providers: map[string]Provider{},
+		Launches:  map[string]Launch{},
+		SandboxProfiles: map[string]sandbox.Profile{
+			"workspace-only": {ID: "workspace-only"},
+		},
+	}
+	if err := cat.Validate(); err == nil {
+		t.Error("expected error for unknown sandbox profile reference, got nil")
+	}
+}
+
+func TestValidate_KnownSandboxProfile(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{DefaultSandbox: "workspace-only"}}},
+		Providers: map[string]Provider{},
+		Launches:  map[string]Launch{},
+		SandboxProfiles: map[string]sandbox.Profile{
+			"workspace-only": {ID: "workspace-only"},
+		},
+	}
+	if err := cat.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+}
+
+func TestValidate_EmptySandboxProfile(t *testing.T) {
+	cat := &Catalog{
+		Projects:        map[string]Project{},
+		Agents:          map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{DefaultSandbox: ""}}},
+		Providers:       map[string]Provider{},
+		Launches:        map[string]Launch{},
+		SandboxProfiles: map[string]sandbox.Profile{},
+	}
+	if err := cat.Validate(); err != nil {
+		t.Errorf("empty sandbox profile should not error: %v", err)
 	}
 }
 
