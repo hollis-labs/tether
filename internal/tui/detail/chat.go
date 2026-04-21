@@ -339,6 +339,14 @@ func (s *ChatScreen) applyEvent(ev claudestream.Event) tea.Cmd {
 		}
 		content := buildPanelContent(ev)
 		if content == nil {
+			// Unknown kind — surface as an inline error so the user knows
+			// a prompt was lost rather than seeing the agent hang silently.
+			if ev.UIPrompt.Kind != "" {
+				s.history[len(s.history)-1].events = append(
+					s.history[len(s.history)-1].events,
+					claudestream.Event{Kind: claudestream.KindError, ErrorMsg: "ui_prompt: unknown kind " + ev.UIPrompt.Kind},
+				)
+			}
 			return nil
 		}
 		return func() tea.Msg {

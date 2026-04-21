@@ -59,6 +59,8 @@ func (c *ViewportContent) View(width, height int) string {
 	c.vp.Width = width - 4
 	if height > 2 {
 		c.vp.Height = height - 2
+	} else {
+		c.vp.Height = 1
 	}
 	return c.th.Body().Width(width).Render(c.vp.View())
 }

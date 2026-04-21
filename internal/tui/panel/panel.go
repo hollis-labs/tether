@@ -51,14 +51,15 @@ type PanelResponseMsg struct {
 // Key bindings
 // ---------------------------------------------------------------------------
 
+// panelKeys are the bindings handled by the panel model itself.
+// Navigation (↑↓/jk) is intentionally absent — each Content type owns
+// its own navigation bindings so they can vary by content kind.
 type panelKeys struct {
-	Up, Down, Confirm, ToggleSlot, TogglePin, Refresh, Hints, BlurPanel key.Binding
+	Confirm, ToggleSlot, TogglePin, Refresh, Hints, BlurPanel key.Binding
 }
 
 func defaultPanelKeys() panelKeys {
 	return panelKeys{
-		Up:         key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:       key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Confirm:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		ToggleSlot: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch slot")),
 		TogglePin:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pin/unpin")),
@@ -219,9 +220,11 @@ func (m Model) acceptAll() (tea.Model, tea.Cmd) {
 	}
 	cmds := make([]tea.Cmd, 0, len(m.queue))
 	for _, item := range m.queue {
-		if item.ToolUseID() != "" {
-			cmds = append(cmds, panelResponseCmd(item.ToolUseID(), item.DefaultValue()))
+		// Skip display-only viewport content — no response to send.
+		if item.Kind() == KindViewport {
+			continue
 		}
+		cmds = append(cmds, panelResponseCmd(item.ToolUseID(), item.DefaultValue()))
 	}
 	m.queue = nil
 	if !m.pinned {

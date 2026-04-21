@@ -30,6 +30,9 @@ func extractUIPromptSentinel(text string) (string, *UIPromptDescriptor) {
 	if err := json.Unmarshal([]byte(rest[:end]), &desc); err != nil {
 		return "", nil
 	}
+	if desc.Kind == "" {
+		return "", nil // require at least kind to be present
+	}
 	before := strings.TrimRight(text[:start], " \t")
 	after := strings.TrimLeft(rest[end+len(sentinelClose):], " \t\n")
 	remaining := before
@@ -101,9 +104,17 @@ func parseAssistant(line []byte) ([]Event, error) {
 				// Intercept: parse the input as a UIPromptDescriptor and emit
 				// KindUIPrompt. The tool_use is NOT forwarded to consumers as
 				// KindToolUse — the panel owns the interaction.
+				// Fall back to KindToolUse on malformed input so the agent
+				// can observe the failure rather than silently losing the call.
 				var desc UIPromptDescriptor
 				if len(block.Input) > 0 {
-					_ = json.Unmarshal(block.Input, &desc)
+					if err := json.Unmarshal(block.Input, &desc); err != nil || desc.Kind == "" {
+						// Malformed — emit as normal tool_use so nothing is lost.
+						input := make(map[string]any)
+						_ = json.Unmarshal(block.Input, &input)
+						out = append(out, Event{Kind: KindToolUse, ToolUse: &ToolUseBlock{ID: block.ID, Name: block.Name, Input: input}})
+						continue
+					}
 				}
 				desc.ToolUseID = block.ID
 				out = append(out, Event{

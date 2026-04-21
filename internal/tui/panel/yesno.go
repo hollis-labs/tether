@@ -24,8 +24,15 @@ type YesNoContent struct {
 	keyNo      key.Binding
 }
 
-// NewYesNoContent constructs a YesNoContent. defaultChoice must be "yes" or "no".
+// NewYesNoContent constructs a YesNoContent.
+// defaultChoice is normalized to "yes" or "no"; any other value defaults to "yes".
 func NewYesNoContent(title, defaultChoice, toolUseID string) *YesNoContent {
+	switch strings.ToLower(defaultChoice) {
+	case "no", "false", "n":
+		defaultChoice = "no"
+	default:
+		defaultChoice = "yes"
+	}
 	cursor := 0
 	if defaultChoice == "no" {
 		cursor = 1
