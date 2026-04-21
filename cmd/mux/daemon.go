@@ -225,6 +225,10 @@ func (a *brokerAdapter) GetEnvelope(id string) (*broker.Envelope, error) {
 func (a *brokerAdapter) ListEnvelopesByRecipient(recipient string) ([]broker.Envelope, error) {
 	return a.read.ListEnvelopesByRecipient(recipient)
 }
+func (a *brokerAdapter) WaitForResponse(ctx context.Context, correlationID string) (*broker.Envelope, error) {
+	return a.write.WaitForResponse(ctx, correlationID)
+}
+
 func (a *brokerAdapter) ListEnvelopesByWorkflow(workflowID, correlationID string) ([]broker.Envelope, error) {
 	return a.read.ListEnvelopesByWorkflow(workflowID, correlationID)
 }

@@ -17,20 +17,34 @@ type EnvelopeStore interface {
 }
 
 // Service is the broker write layer. It persists envelopes through
-// EnvelopeStore and publishes broker.* events on the Bus. Sprint
-// v002-05's HTTP broker endpoints wrap Service, so event emission
-// is inherited by the API surface for free. Request/reply blocking
-// semantics are Sprint v003-05 territory — not here.
+// EnvelopeStore, publishes broker.* events on the Bus, and notifies
+// the in-memory Dispatcher when a response arrives so any blocking
+// Wait call can be unblocked.
 type Service struct {
-	store     EnvelopeStore
-	publisher events.Publisher
+	store      EnvelopeStore
+	publisher  events.Publisher
+	dispatcher *Dispatcher
 }
 
-// NewService wires an EnvelopeStore and Publisher. Publisher may be
-// nil, in which case envelope persistence still happens but no
-// events are emitted.
+// NewService wires an EnvelopeStore and Publisher. Publisher may be nil
+// (no events emitted). A Dispatcher is always created; callers can
+// retrieve it via Dispatcher() to wire up blocking request endpoints.
 func NewService(store EnvelopeStore, publisher events.Publisher) *Service {
-	return &Service{store: store, publisher: publisher}
+	return &Service{
+		store:      store,
+		publisher:  publisher,
+		dispatcher: NewDispatcher(),
+	}
+}
+
+// Dispatcher returns the service's in-memory correlation dispatcher.
+func (s *Service) Dispatcher() *Dispatcher { return s.dispatcher }
+
+// WaitForResponse blocks until a response envelope with the given
+// correlationID is delivered via CreateEnvelope, or ctx is canceled.
+// Satisfies the api.BrokerService interface.
+func (s *Service) WaitForResponse(ctx context.Context, correlationID string) (*Envelope, error) {
+	return s.dispatcher.Wait(ctx, correlationID)
 }
 
 // envelopeMeta is the lean metadata shape published on broker.*
@@ -62,6 +76,10 @@ func (s *Service) CreateEnvelope(ctx context.Context, e Envelope) error {
 		return err
 	}
 	s.publishEnvelope(ctx, events.KindBrokerEnvelopeCreated, e)
+	// Unblock any Wait calls registered for this correlation ID.
+	if e.MessageType == TypeResponse && e.CorrelationID != "" {
+		s.dispatcher.Deliver(&e)
+	}
 	return nil
 }
 

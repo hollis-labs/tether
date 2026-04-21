@@ -67,6 +67,10 @@ func (f *fakeBroker) ListEnvelopesByWorkflow(workflowID, correlationID string) (
 	return f.byWork[workflowID], nil
 }
 
+func (f *fakeBroker) WaitForResponse(_ context.Context, _ string) (*broker.Envelope, error) {
+	return nil, context.DeadlineExceeded
+}
+
 func newBrokerTestHandler(b BrokerService) http.Handler {
 	// Broker-only tests don't need LaunchService; nil is allowed because
 	// registerSessionRoutes guards on it.
