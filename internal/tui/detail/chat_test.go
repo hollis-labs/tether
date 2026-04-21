@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/tui/panel"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
 )
@@ -299,5 +300,86 @@ func TestChatSendErrMsgClearsAwaiting(t *testing.T) {
 	}
 	if !strings.Contains(s.status, "send failed") {
 		t.Fatalf("expected status to report send failure, got %q", s.status)
+	}
+}
+
+func TestChatKindUIPromptEmitsPanelPushMsgAndDoesNotAppendToHistory(t *testing.T) {
+	s := newTestChat(t)
+
+	ev := claudestream.Event{
+		Kind: claudestream.KindUIPrompt,
+		UIPrompt: &claudestream.UIPromptDescriptor{
+			Kind:      "yes_no",
+			Title:     "Continue?",
+			ToolUseID: "toolu_01",
+			Default:   "yes",
+		},
+	}
+
+	// Call applyEvent directly (same package) to get the panel push cmd
+	// without going through Update's tea.Batch(drainChatCmd, ...) wrapper,
+	// which would block the test goroutine on drainChatCmd.
+	cmd := s.applyEvent(ev)
+
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for KindUIPrompt")
+	}
+
+	msg := cmd()
+	pushMsg, ok := msg.(panel.PanelPushMsg)
+	if !ok {
+		t.Fatalf("expected PanelPushMsg, got %T", msg)
+	}
+	if pushMsg.Content == nil {
+		t.Fatal("expected PanelPushMsg.Content to be non-nil")
+	}
+
+	// UIPrompt must NOT appear in history events.
+	for _, turn := range s.history {
+		for _, histEv := range turn.events {
+			if histEv.Kind == claudestream.KindUIPrompt {
+				t.Fatal("KindUIPrompt event must not be appended to history")
+			}
+		}
+	}
+}
+
+func TestChatPanelResponseMsgSetsAwaitingAndCreatesHistoryTurn(t *testing.T) {
+	s := newTestChat(t)
+
+	before := len(s.history)
+	next, cmd := s.Update(panel.PanelResponseMsg{ToolUseID: "toolu_01", Value: "yes"})
+	s = next.(*ChatScreen)
+
+	if len(s.history) != before+1 {
+		t.Fatalf("expected history to grow by 1, got %d turns", len(s.history))
+	}
+	if got := s.history[len(s.history)-1].user; got != "yes" {
+		t.Fatalf("expected new turn user=%q, got %q", "yes", got)
+	}
+	if !s.awaiting {
+		t.Fatal("expected awaiting=true after PanelResponseMsg")
+	}
+	// sendTurnCmd returns nil when client is nil — the cmd returned from
+	// Update is the result of s.sendTurnCmd which itself returns nil for
+	// a nil client. Accept either non-nil (real client) or nil (nil client).
+	_ = cmd // nil client → nil cmd; that's expected and fine
+}
+
+func TestChatPanelResponseMsgWithEmptyValueIsNoOp(t *testing.T) {
+	s := newTestChat(t)
+
+	before := len(s.history)
+	next, cmd := s.Update(panel.PanelResponseMsg{Value: ""})
+	s = next.(*ChatScreen)
+
+	if len(s.history) != before {
+		t.Fatalf("expected history unchanged, got %d turns", len(s.history))
+	}
+	if s.awaiting {
+		t.Fatal("expected awaiting=false after empty PanelResponseMsg")
+	}
+	if cmd != nil {
+		t.Fatal("expected nil cmd for empty PanelResponseMsg")
 	}
 }

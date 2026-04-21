@@ -657,6 +657,8 @@ func buildPanelContent(ev claudestream.Event) panel.Content {
 		body := d.Body
 		if body == "" {
 			body = d.Title
+		} else if d.Title != "" {
+			body = d.Title + "\n\n" + body
 		}
 		return panel.NewViewportContentWithToolUse(body, d.ToolUseID)
 	default:
