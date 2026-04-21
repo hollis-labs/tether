@@ -47,7 +47,7 @@ func (c *TextInputContent) Update(msg tea.Msg) (Content, tea.Cmd) {
 func (c *TextInputContent) View(width, height int) string {
 	c.input.Width = width - 4
 	title := c.th.FieldValue().Render(c.title)
-	input := c.th.Search().Width(width - 2).Render(c.input.View())
+	input := c.th.Search().Width(width - 4).Render(c.input.View())
 	hint := c.th.Footer().Render("Enter to confirm")
 	return title + "\n\n" + input + "\n\n" + hint
 }

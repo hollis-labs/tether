@@ -55,7 +55,8 @@ func (c *ViewportContent) Update(msg tea.Msg) (Content, tea.Cmd) {
 func (c *ViewportContent) View(width, height int) string {
 	// Resize viewport on every View call; cheap and avoids a separate
 	// WindowSizeMsg path inside the panel.
-	c.vp.Width = width - 2
+	// Deduct 4: Body() adds RoundedBorder (2) + Padding(0,1) (2) horizontally.
+	c.vp.Width = width - 4
 	if height > 2 {
 		c.vp.Height = height - 2
 	}
