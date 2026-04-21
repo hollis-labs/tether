@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
@@ -16,6 +17,11 @@ import (
 
 type Store struct {
 	db *sql.DB
+	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
+	// fan-out instance on every call within a process so Subscribe/Send
+	// cross-talk works. See messaging_store.go.
+	msgOnce  sync.Once
+	msgStore *messagingStore
 }
 
 func Open(path string) (*Store, error) {

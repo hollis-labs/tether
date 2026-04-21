@@ -32,11 +32,15 @@ type msgSubscription struct {
 	done   <-chan struct{}
 }
 
-// MessagingStore returns the go-messaging Store implementation backed by
-// this SQLite store. The returned Store satisfies the full messaging.Store
-// contract (use messagingtest.RunContract to verify).
+// MessagingStore returns the singleton go-messaging Store backed by this
+// SQLite store. The same instance is returned on every call so that
+// in-memory fan-out (Subscribe → Send) works correctly across all callers
+// within one process.
 func (s *Store) MessagingStore() messaging.Store {
-	return &messagingStore{db: s.db}
+	s.msgOnce.Do(func() {
+		s.msgStore = &messagingStore{db: s.db}
+	})
+	return s.msgStore
 }
 
 // ─── Send ────────────────────────────────────────────────────────────────────

@@ -211,6 +211,9 @@ func (s *Server) Handler() http.Handler {
 		if s.MessageStore != nil {
 			mux.Handle("/messages", apiHandler)
 			mux.Handle("/messages/", apiHandler)
+			mux.Handle("/messages/subscribe", apiHandler)
+			mux.Handle("/messages/inbox", apiHandler)
+			mux.Handle("/messages/request", apiHandler)
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)

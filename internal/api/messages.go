@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ func (s *Server) registerMessageRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/messages", s.handleMessagesCollection)
 	mux.HandleFunc("/messages/request", s.handleMessageRequest)
+	mux.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
 	mux.HandleFunc("/messages/inbox", s.handleMessagesInbox)
 	mux.HandleFunc("/messages/thread/", s.handleMessagesThread)
 	mux.HandleFunc("/messages/", s.handleMessagesItem)
@@ -242,6 +244,94 @@ func (s *Server) handleMessageRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMessagesSubscribe services GET /messages/subscribe as an SSE stream.
+//
+// Query params:
+//   - ?to=<urn>       — required; only envelopes addressed to this recipient
+//   - ?kind=X,Y       — optional comma-separated Kind filter
+//   - ?thread_id=T    — optional thread scope
+//
+// Each SSE event has event type "message" and data containing a
+// JSON-encoded messaging.Envelope. A ": ping" comment is sent every 15s
+// to keep proxies and load balancers alive.
+//
+// The connection streams envelopes created AFTER subscription time only
+// (matching the messaging.Store.Subscribe contract — no historical replay;
+// use GET /messages/inbox for that).
+func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "streaming not supported")
+		return
+	}
+
+	q := r.URL.Query()
+	toURN := q.Get("to")
+	if toURN == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "to query param required")
+		return
+	}
+	to, err := messaging.ParseURN(toURN)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid to URN: "+err.Error())
+		return
+	}
+
+	var f messaging.Filter
+	if ks := q.Get("kind"); ks != "" {
+		for _, k := range strings.Split(ks, ",") {
+			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
+		}
+	}
+	f.ThreadID = q.Get("thread_id")
+	_ = to // address validated; filter is used at Subscribe level
+
+	ch, err := s.MessageStore.Subscribe(r.Context(), f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+
+	for {
+		select {
+		case env, open := <-ch:
+			if !open {
+				return
+			}
+			// Filter to the requested recipient — Subscribe returns ALL
+			// envelopes matching the Kind/Thread filter; we narrow to `to` here.
+			if !env.To.IsZero() && env.To != to {
+				continue
+			}
+			b, err := json.Marshal(env)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", b)
+			flusher.Flush()
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func isNotFound(err error) bool {
