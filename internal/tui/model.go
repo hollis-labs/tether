@@ -1,24 +1,43 @@
 package tui
 
 import (
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/palette"
+	"github.com/chrispian/agent-mux/internal/tui/panel"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
 
-// Model is the Bubble Tea root for the mux TUI. It's a thin wrapper
-// around a screen.Stack: every visible pane is a Screen, and Model
-// delegates Init / Update / View to whatever screen is on top. The
-// only cross-screen state Model owns is the terminal size, the
-// palette Registry, and the stack itself — everything else lives on
-// the screens.
+// globalKeys holds the root-level key bindings that are handled by Model
+// before any message reaches the screen stack or the panel.
+type globalKeys struct {
+	PanelToggle key.Binding // Ctrl+\ — show/hide panel
+	PanelFocus  key.Binding // Ctrl+→ or F3 — focus panel
+	AcceptAll   key.Binding // A — accept all queued prompts
+}
+
+func defaultGlobalKeys() globalKeys {
+	return globalKeys{
+		PanelToggle: key.NewBinding(key.WithKeys("ctrl+\\"), key.WithHelp("ctrl+\\", "panel")),
+		PanelFocus:  key.NewBinding(key.WithKeys("ctrl+right", "f3"), key.WithHelp("ctrl+→", "focus panel")),
+		AcceptAll:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "accept all")),
+	}
+}
+
+// Model is the Bubble Tea root for the mux TUI. It owns the screen stack,
+// the command palette registry, and the side panel. The panel is a
+// root-level sibling of the stack — not pushed onto it — so it persists
+// across screen transitions and can be toggled from anywhere.
 type Model struct {
-	stack    *screen.Stack
-	registry *palette.Registry
-	width    int
-	height   int
+	stack      *screen.Stack
+	registry   *palette.Registry
+	sidePanel  panel.Model
+	globalKeys globalKeys
+	width      int
+	height     int
 }
 
 // New constructs the root Model with MainScreen as the initial top-of-
@@ -28,8 +47,10 @@ func New(c *client.Client) Model {
 	reg := palette.NewRegistry()
 	registerDefaultVerbs(reg)
 	return Model{
-		stack:    screen.NewStack(NewMainScreen(c)),
-		registry: reg,
+		stack:      screen.NewStack(NewMainScreen(c)),
+		registry:   reg,
+		sidePanel:  panel.New(),
+		globalKeys: defaultGlobalKeys(),
 	}
 }
 
@@ -37,13 +58,18 @@ func (m Model) Init() tea.Cmd {
 	return m.stack.Top().Init()
 }
 
-// Update routes messages to the top screen, with three exceptions:
+// Update routes messages to the top screen, with the following exceptions:
 //
-//   - PushScreenMsg / PopScreenMsg mutate the stack and re-send the
-//     current WindowSizeMsg to the new top so it lays out at the
-//     correct dimensions immediately.
-//   - WindowSizeMsg is captured in Model (so pushes/pops can re-send
-//     it) and also forwarded to the top screen.
+//   - openPaletteMsg / PushScreenMsg / PopScreenMsg mutate the stack and
+//     re-send the current WindowSizeMsg to the new top so it lays out at
+//     the correct dimensions immediately.
+//   - Panel messages (PanelPushMsg, PanelPinMsg, etc.) are routed to the
+//     side panel. PanelResponseMsg is forwarded to the top screen.
+//   - WindowSizeMsg is captured in Model (so pushes/pops can re-send it);
+//     the panel and the top screen both receive a size notification, but
+//     the stack gets only its share of the horizontal space.
+//   - tea.KeyMsg is intercepted for global panel shortcuts first, then
+//     routed to the panel (when focused) or the stack.
 //
 // Crucially, Model does NOT intercept Ctrl-C. The screen-stack design
 // puts key handling under the top screen's control — MainScreen maps
@@ -60,7 +86,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stack.Push(msg.Screen)
 		initCmd := msg.Screen.Init()
 		if m.width > 0 && m.height > 0 {
-			sized, sizeCmd := m.stack.Top().Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			sized, sizeCmd := m.stack.Top().Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
 			m.stack.Replace(sized)
 			return m, tea.Batch(initCmd, sizeCmd)
 		}
@@ -72,19 +98,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.width > 0 && m.height > 0 {
-			sized, sizeCmd := m.stack.Top().Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			sized, sizeCmd := m.stack.Top().Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
 			m.stack.Replace(sized)
 			return m, sizeCmd
 		}
 		return m, nil
 
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		// Fall through to delegate: the top screen needs the size too.
+	case panel.PanelPushMsg, panel.PanelPinMsg, panel.PanelToggleOpenMsg,
+		panel.PanelToggleSlotMsg, panel.PanelTogglePinMsg,
+		panel.PanelAcceptAllMsg, panel.PanelFocusMsg, panel.PanelDismissMsg:
+		newPanel, cmd := m.sidePanel.Update(msg)
+		m.sidePanel = newPanel.(panel.Model)
+		m.sidePanel.SetSize(m.panelWidth(), m.height)
+		return m, cmd
+
+	case panel.PanelResponseMsg:
 		top := m.stack.Top()
 		newTop, cmd := top.Update(msg)
 		m.stack.Replace(newTop)
 		return m, cmd
+
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.sidePanel.SetSize(m.panelWidth(), m.height)
+		stackMsg := tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height}
+		top := m.stack.Top()
+		newTop, cmd := top.Update(stackMsg)
+		m.stack.Replace(newTop)
+		return m, cmd
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
 
 	default:
 		top := m.stack.Top()
@@ -94,6 +138,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// handleKey handles key messages at the root level, intercepting global
+// panel shortcuts before routing to the panel or the screen stack.
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Ctrl+\ — toggle panel open/closed from anywhere
+	if key.Matches(msg, m.globalKeys.PanelToggle) {
+		newPanel, cmd := m.sidePanel.Update(panel.PanelToggleOpenMsg{})
+		m.sidePanel = newPanel.(panel.Model)
+		m.sidePanel.SetSize(m.panelWidth(), m.height)
+		if m.width > 0 {
+			top := m.stack.Top()
+			newTop, sizeCmd := top.Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
+			m.stack.Replace(newTop)
+			return m, tea.Batch(cmd, sizeCmd)
+		}
+		return m, cmd
+	}
+	// Ctrl+→ / F3 — focus panel when open
+	if key.Matches(msg, m.globalKeys.PanelFocus) && m.sidePanel.IsOpen() {
+		newPanel, cmd := m.sidePanel.Update(panel.PanelFocusMsg{})
+		m.sidePanel = newPanel.(panel.Model)
+		return m, cmd
+	}
+	// A — accept all queued prompts
+	if key.Matches(msg, m.globalKeys.AcceptAll) && m.sidePanel.HasEphemeral() {
+		newPanel, cmd := m.sidePanel.Update(panel.PanelAcceptAllMsg{})
+		m.sidePanel = newPanel.(panel.Model)
+		return m, cmd
+	}
+	// Route to panel when focused; otherwise to screen stack
+	if m.sidePanel.IsFocused() {
+		newPanel, cmd := m.sidePanel.Update(msg)
+		m.sidePanel = newPanel.(panel.Model)
+		return m, cmd
+	}
+	top := m.stack.Top()
+	newTop, cmd := top.Update(msg)
+	m.stack.Replace(newTop)
+	return m, cmd
+}
+
 func (m Model) View() string {
-	return m.stack.Top().View()
+	stackView := m.stack.Top().View()
+	panelView := m.sidePanel.View()
+	if panelView == "" {
+		return stackView
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, stackView, panelView)
+}
+
+// stackWidth returns the width for the screen stack.
+// When panel is closed or terminal too narrow, stack takes full width.
+func (m Model) stackWidth() int {
+	pw := m.panelWidth()
+	if pw == 0 {
+		return m.width
+	}
+	return m.width - pw
+}
+
+// panelWidth returns the width allocated to the side panel.
+// Returns 0 if panel is closed or terminal too narrow for a useful panel.
+func (m Model) panelWidth() int {
+	if !m.sidePanel.IsOpen() {
+		return 0
+	}
+	pw := m.width * 30 / 100
+	if pw < 40 {
+		return 0 // terminal too narrow; suppress panel rather than squash the stack
+	}
+	return pw
 }
