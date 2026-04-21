@@ -95,3 +95,59 @@ func TestViewportContent_NilToolUseID(t *testing.T) {
 		t.Errorf("want KindViewport, got %v", c.Kind())
 	}
 }
+
+func TestPanel_InitialState(t *testing.T) {
+	p := panel.New()
+	if p.IsOpen() {
+		t.Error("panel must start closed")
+	}
+	if p.IsFocused() {
+		t.Error("panel must start unfocused")
+	}
+	if p.HasEphemeral() {
+		t.Error("panel must start with no ephemeral content")
+	}
+}
+
+func TestPanel_PushOpensPanel(t *testing.T) {
+	p := panel.New()
+	content := panel.NewYesNoContent("Continue?", "yes", "t01")
+	newM, _ := p.Update(panel.PanelPushMsg{Content: content})
+	pp := newM.(panel.Model)
+	if !pp.IsOpen() {
+		t.Error("panel must open after PanelPushMsg")
+	}
+	if !pp.HasEphemeral() {
+		t.Error("panel must have ephemeral content after push")
+	}
+}
+
+func TestPanel_PinKeepsOpen(t *testing.T) {
+	p := panel.New()
+	content := panel.NewYesNoContent("Ok?", "yes", "t02")
+	// Without pin: dismiss should close
+	p2, _ := p.Update(panel.PanelPushMsg{Content: content})
+	p3, _ := p2.(panel.Model).Update(panel.PanelDismissMsg{})
+	if p3.(panel.Model).IsOpen() {
+		t.Error("unpinned panel must close when ephemeral clears")
+	}
+	// With pin: dismiss should stay open
+	p4, _ := p.Update(panel.PanelPushMsg{Content: content})
+	p5, _ := p4.(panel.Model).Update(panel.PanelTogglePinMsg{})
+	p6, _ := p5.(panel.Model).Update(panel.PanelDismissMsg{})
+	if !p6.(panel.Model).IsOpen() {
+		t.Error("pinned panel must stay open when ephemeral clears")
+	}
+}
+
+func TestPanel_AcceptAll_DrainQueue(t *testing.T) {
+	p := panel.New()
+	c1 := panel.NewYesNoContent("Q1?", "yes", "t03")
+	c2 := panel.NewYesNoContent("Q2?", "no", "t04")
+	p2, _ := p.Update(panel.PanelPushMsg{Content: c1})
+	p3, _ := p2.(panel.Model).Update(panel.PanelPushMsg{Content: c2})
+	_, cmd := p3.(panel.Model).Update(panel.PanelAcceptAllMsg{})
+	if cmd == nil {
+		t.Error("AcceptAll must return a cmd (PanelResponseMsgs)")
+	}
+}
