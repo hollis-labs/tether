@@ -1,0 +1,9 @@
+id: claude-goprovider
+type: cli-goprovider
+adapter: claude
+# command: /Users/chrispian/.local/bin/claude
+# Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.
+bootstrap:
+  mode: stdin
+env:
+  mode: merge

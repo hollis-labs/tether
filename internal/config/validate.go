@@ -19,10 +19,16 @@ func (c *Catalog) Validate() error {
 		if typ == "" {
 			typ = "cli"
 		}
-		// Only CLI providers require a concrete Command — API-backed
-		// providers (e.g. streaming SDKs) do not spawn a process.
-		if typ == "cli" && p.Command == "" {
-			return fmt.Errorf("provider %q has empty command", id)
+		switch typ {
+		case "cli":
+			if p.Command == "" {
+				return fmt.Errorf("provider %q has empty command", id)
+			}
+		case "cli-goprovider":
+			if p.Adapter == "" {
+				return fmt.Errorf("provider %q (cli-goprovider) missing adapter field", id)
+			}
+			// "api" type (api-stub, future API-backed) has no command requirement.
 		}
 	}
 	for id, a := range c.Agents {

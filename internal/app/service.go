@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/chrispian/agent-mux/internal/agent"
 	"github.com/chrispian/agent-mux/internal/api"
@@ -22,6 +23,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/provider/api/stub"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
+	goprovider "github.com/chrispian/agent-mux/internal/provider/cli/goprovider"
 	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
@@ -63,6 +65,15 @@ func New(catalogRoot string) (*Service, error) {
 	reg.Register(claudecode.Adapter{})
 	reg.Register(claudestream.Adapter{})
 	reg.Register(stub.Runtime{})
+	// Register cli-goprovider runtimes declared in the catalog.
+	for _, p := range cat.Providers {
+		if p.Type == "cli-goprovider" {
+			adapter := goproviderCLIAdapter(p.Adapter)
+			if adapter != nil {
+				reg.Register(goprovider.NewRuntime(p.ID, adapter, p.Command))
+			}
+		}
+	}
 	// Reconcile stale rows from a prior daemon instance: sessions stuck in
 	// launching/running are orphaned (the process they tracked is gone),
 	// and open client_attachments are no longer live.
@@ -435,6 +446,32 @@ func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
 	b.WriteString("\n---\n\n")
 	b.WriteString(bootPrompt)
 	return b.String()
+}
+
+// goproviderCLIAdapter maps a catalog adapter name to the corresponding
+// go-providers CLIAdapter. Returns nil for unknown names; callers skip
+// registration silently (a validation error catches unknown names earlier).
+func goproviderCLIAdapter(name string) gop.CLIAdapter {
+	switch name {
+	case "claude":
+		return gop.NewClaudeAdapter()
+	case "codex":
+		return gop.NewCodexAdapter()
+	case "aider":
+		return gop.NewAiderAdapter()
+	case "copilot":
+		return gop.NewCopilotAdapter()
+	case "gemini":
+		return gop.NewGeminiAdapter()
+	case "junie":
+		return gop.NewJunieAdapter()
+	case "kiro":
+		return gop.NewKiroAdapter()
+	case "qwen":
+		return gop.NewQwenAdapter()
+	default:
+		return nil
+	}
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.
