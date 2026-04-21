@@ -291,9 +291,11 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	f.ThreadID = q.Get("thread_id")
-	_ = to // address validated; filter is used at Subscribe level
 
-	ch, err := s.MessageStore.Subscribe(r.Context(), f)
+	// Pass `to` into Subscribe so the Store filters at the source —
+	// the post-hoc recipient check below is now redundant but kept as
+	// a defense-in-depth safety net.
+	ch, err := s.MessageStore.Subscribe(r.Context(), to, f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -314,8 +316,8 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 			if !open {
 				return
 			}
-			// Filter to the requested recipient — Subscribe returns ALL
-			// envelopes matching the Kind/Thread filter; we narrow to `to` here.
+			// Store already filters by `to`; this is a defense-in-depth
+			// check for any Store impl that doesn't enforce it.
 			if !env.To.IsZero() && env.To != to {
 				continue
 			}

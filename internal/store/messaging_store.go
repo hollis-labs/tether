@@ -27,6 +27,7 @@ type messagingStore struct {
 }
 
 type msgSubscription struct {
+	to     messaging.Address
 	filter messaging.Filter
 	ch     chan messaging.Envelope
 	done   <-chan struct{}
@@ -247,9 +248,9 @@ func (ms *messagingStore) Cancel(ctx context.Context, id string) error {
 
 // ─── Subscribe ───────────────────────────────────────────────────────────────
 
-func (ms *messagingStore) Subscribe(ctx context.Context, f messaging.Filter) (<-chan messaging.Envelope, error) {
+func (ms *messagingStore) Subscribe(ctx context.Context, to messaging.Address, f messaging.Filter) (<-chan messaging.Envelope, error) {
 	ch := make(chan messaging.Envelope, 32)
-	sub := &msgSubscription{filter: f, ch: ch, done: ctx.Done()}
+	sub := &msgSubscription{to: to, filter: f, ch: ch, done: ctx.Done()}
 
 	ms.subMu.Lock()
 	ms.subscribers = append(ms.subscribers, sub)
@@ -279,6 +280,9 @@ func (ms *messagingStore) fanOut(env messaging.Envelope) {
 	ms.subMu.Unlock()
 
 	for _, s := range subs {
+		if !s.to.IsZero() && s.to != env.To {
+			continue
+		}
 		if s.filter.Matches(env) {
 			select {
 			case s.ch <- env:
