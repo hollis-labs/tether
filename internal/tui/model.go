@@ -107,9 +107,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case panel.PanelPushMsg, panel.PanelPinMsg, panel.PanelToggleOpenMsg,
 		panel.PanelToggleSlotMsg, panel.PanelTogglePinMsg,
 		panel.PanelAcceptAllMsg, panel.PanelFocusMsg, panel.PanelDismissMsg:
+		wasOpen := m.sidePanel.IsOpen()
 		newPanel, cmd := m.sidePanel.Update(msg)
 		m.sidePanel = newPanel.(panel.Model)
 		m.sidePanel.SetSize(m.panelWidth(), m.height)
+		if m.sidePanel.IsOpen() != wasOpen && m.width > 0 {
+			top := m.stack.Top()
+			newTop, sizeCmd := top.Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
+			m.stack.Replace(newTop)
+			return m, tea.Batch(cmd, sizeCmd)
+		}
 		return m, cmd
 
 	case panel.PanelResponseMsg:
@@ -162,8 +169,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// A — accept all queued prompts
 	if key.Matches(msg, m.globalKeys.AcceptAll) && m.sidePanel.HasEphemeral() {
+		wasOpen := m.sidePanel.IsOpen()
 		newPanel, cmd := m.sidePanel.Update(panel.PanelAcceptAllMsg{})
 		m.sidePanel = newPanel.(panel.Model)
+		if wasOpen && !m.sidePanel.IsOpen() && m.width > 0 {
+			top := m.stack.Top()
+			newTop, sizeCmd := top.Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
+			m.stack.Replace(newTop)
+			return m, tea.Batch(cmd, sizeCmd)
+		}
 		return m, cmd
 	}
 	// Route to panel when focused; otherwise to screen stack
