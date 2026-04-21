@@ -1,6 +1,6 @@
 # TUI Split Panel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a root-level right-side panel to the agent-mux TUI that displays agent-pushed interactive forms (ephemeral slot) and user-pinned documents (persistent slot), with auto show/hide, pin control, slot toggle, and accept-all shortcut.
 
@@ -38,7 +38,7 @@
 - Modify: `pkg/claudestream/parse.go`
 - Modify: `pkg/claudestream/events_test.go`
 
-- [ ] **Step 1: Add KindUIPrompt and UIPromptDescriptor to events.go**
+- [x] **Step 1: Add KindUIPrompt and UIPromptDescriptor to events.go**
 
 In `pkg/claudestream/events.go`, add after `KindError`:
 
@@ -81,7 +81,7 @@ Add `UIPrompt` field to the `Event` struct after `SessionID`:
 UIPrompt *UIPromptDescriptor // populated for KindUIPrompt
 ```
 
-- [ ] **Step 2: Intercept ui_prompt in parse.go**
+- [x] **Step 2: Intercept ui_prompt in parse.go**
 
 In `pkg/claudestream/parse.go`, in `parseAssistant`, replace the `"tool_use"` case:
 
@@ -116,7 +116,7 @@ case "tool_use":
 	})
 ```
 
-- [ ] **Step 3: Write the failing parse test**
+- [x] **Step 3: Write the failing parse test**
 
 In `pkg/claudestream/events_test.go`, add:
 
@@ -162,21 +162,21 @@ func TestParse_UIPrompt_NotForwardedAsToolUse(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it fails**
+- [x] **Step 4: Run the test to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./pkg/claudestream/... -v -run TestParse_UIPrompt
 ```
 Expected: `FAIL — KindUIPrompt undefined`
 
-- [ ] **Step 5: Verify tests pass after changes**
+- [x] **Step 5: Verify tests pass after changes**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./pkg/claudestream/... -v -run TestParse_UIPrompt
 ```
 Expected: both tests PASS
 
-- [ ] **Step 6: Run full gate and commit**
+- [x] **Step 6: Run full gate and commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
@@ -191,7 +191,7 @@ git commit -m "feat(claudestream): add KindUIPrompt + UIPromptDescriptor; interc
 **Files:**
 - Create: `internal/tui/panel/content.go`
 
-- [ ] **Step 1: Write a failing test for ContentKind constants**
+- [x] **Step 1: Write a failing test for ContentKind constants**
 
 Create `internal/tui/panel/panel_test.go`:
 
@@ -225,14 +225,14 @@ func TestSlots_Defined(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestContent
 ```
 Expected: FAIL — package not found
 
-- [ ] **Step 3: Create content.go**
+- [x] **Step 3: Create content.go**
 
 Create `internal/tui/panel/content.go`:
 
@@ -284,14 +284,14 @@ type Content interface {
 }
 ```
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestContent
 ```
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/panel/
@@ -306,7 +306,7 @@ git commit -m "feat(panel): Content interface, ContentKind, Slot types"
 - Create: `internal/tui/panel/yesno.go`
 - Modify: `internal/tui/panel/panel_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Add to `internal/tui/panel/panel_test.go`:
 
@@ -338,14 +338,14 @@ func TestYesNoContent_View_NotEmpty(t *testing.T) {
 
 Add `"strings"` to the import block in `panel_test.go`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestYesNo
 ```
 Expected: FAIL — NewYesNoContent undefined
 
-- [ ] **Step 3: Create yesno.go**
+- [x] **Step 3: Create yesno.go**
 
 Create `internal/tui/panel/yesno.go`:
 
@@ -448,14 +448,14 @@ func (c *YesNoContent) View(width, height int) string {
 }
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [x] **Step 4: Verify tests pass**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestYesNo
 ```
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/panel/yesno.go internal/tui/panel/panel_test.go
@@ -470,7 +470,7 @@ git commit -m "feat(panel): YesNoContent"
 - Create: `internal/tui/panel/multichoice.go`
 - Modify: `internal/tui/panel/panel_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Add to `internal/tui/panel/panel_test.go`:
 
@@ -498,14 +498,14 @@ func TestMultiChoiceContent_View_ContainsOptions(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestMultiChoice
 ```
 Expected: FAIL — NewMultiChoiceContent undefined
 
-- [ ] **Step 3: Create multichoice.go**
+- [x] **Step 3: Create multichoice.go**
 
 Create `internal/tui/panel/multichoice.go`:
 
@@ -609,14 +609,14 @@ func (c *MultiChoiceContent) View(width, height int) string {
 }
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [x] **Step 4: Verify tests pass**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestMultiChoice
 ```
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/panel/multichoice.go internal/tui/panel/panel_test.go
@@ -632,7 +632,7 @@ git commit -m "feat(panel): MultiChoiceContent"
 - Create: `internal/tui/panel/viewport_content.go`
 - Modify: `internal/tui/panel/panel_test.go`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add to `internal/tui/panel/panel_test.go`:
 
@@ -648,7 +648,7 @@ func TestTextInputContent_DefaultValue(t *testing.T) {
 }
 
 func TestViewportContent_NilToolUseID(t *testing.T) {
-	c := panel.NewViewportContent("## Sprint Plan\n\n- [ ] Task 1\n")
+	c := panel.NewViewportContent("## Sprint Plan\n\n- [x] Task 1\n")
 	if c.ToolUseID() != "" {
 		t.Errorf("pinned file has no tool_use ID, want empty, got %q", c.ToolUseID())
 	}
@@ -661,14 +661,14 @@ func TestViewportContent_NilToolUseID(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run "TestTextInput|TestViewport"
 ```
 Expected: FAIL
 
-- [ ] **Step 3: Create textinput_content.go**
+- [x] **Step 3: Create textinput_content.go**
 
 Create `internal/tui/panel/textinput_content.go`:
 
@@ -728,7 +728,7 @@ func (c *TextInputContent) View(width, height int) string {
 }
 ```
 
-- [ ] **Step 4: Create viewport_content.go**
+- [x] **Step 4: Create viewport_content.go**
 
 Create `internal/tui/panel/viewport_content.go`:
 
@@ -800,14 +800,14 @@ func (c *ViewportContent) View(width, height int) string {
 }
 ```
 
-- [ ] **Step 5: Verify tests pass**
+- [x] **Step 5: Verify tests pass**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run "TestTextInput|TestViewport"
 ```
 Expected: PASS
 
-- [ ] **Step 6: Run full check and commit**
+- [x] **Step 6: Run full check and commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
@@ -823,7 +823,7 @@ git commit -m "feat(panel): TextInputContent and ViewportContent"
 - Create: `internal/tui/panel/panel.go`
 - Modify: `internal/tui/panel/panel_test.go`
 
-- [ ] **Step 1: Write failing panel model tests**
+- [x] **Step 1: Write failing panel model tests**
 
 Add to `internal/tui/panel/panel_test.go`:
 
@@ -887,14 +887,14 @@ func TestPanel_AcceptAll_DrainQueue(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestPanel
 ```
 Expected: FAIL — panel.New undefined
 
-- [ ] **Step 3: Create panel.go**
+- [x] **Step 3: Create panel.go**
 
 Create `internal/tui/panel/panel.go`:
 
@@ -1292,14 +1292,14 @@ func (m Model) renderBody() string {
 }
 ```
 
-- [ ] **Step 4: Verify tests pass**
+- [x] **Step 4: Verify tests pass**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -run TestPanel
 ```
 Expected: all TestPanel_* tests PASS
 
-- [ ] **Step 5: Run full gate and commit**
+- [x] **Step 5: Run full gate and commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
@@ -1316,13 +1316,13 @@ git commit -m "feat(panel): panel.Model — messages, Update, View, accept-all"
 
 The root model must: hold a `panel.Model`, expose global key bindings (`Ctrl+\`, `Ctrl+→`/`F3`, `A`), split `WindowSizeMsg` width between stack and panel, route panel messages, route keys to panel when focused, and compose `View` with `JoinHorizontal`.
 
-- [ ] **Step 1: Read current model.go before editing**
+- [x] **Step 1: Read current model.go before editing**
 
 ```bash
 cat ~/Projects-apps/agent-mux/internal/tui/model.go
 ```
 
-- [ ] **Step 2: Write the updated model.go**
+- [x] **Step 2: Write the updated model.go**
 
 Replace `internal/tui/model.go` with:
 
@@ -1543,14 +1543,14 @@ func (m Model) panelWidth() int {
 }
 ```
 
-- [ ] **Step 3: Compile and run the gate**
+- [x] **Step 3: Compile and run the gate**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
 ```
 Expected: green. Fix any import or type errors before continuing.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/model.go
@@ -1566,13 +1566,13 @@ git commit -m "feat(tui): wire panel.Model at root — split width, global keys,
 
 ChatScreen must: (1) convert `KindUIPrompt` events to `PanelPushMsg` commands, and (2) handle `PanelResponseMsg` by sending the user's answer via `SendInput` and entering the awaiting state.
 
-- [ ] **Step 1: Read the current chat.go**
+- [x] **Step 1: Read the current chat.go**
 
 ```bash
 cat ~/Projects-apps/agent-mux/internal/tui/detail/chat.go
 ```
 
-- [ ] **Step 2: Add UIPromptEvent handling to applyEvent**
+- [x] **Step 2: Add UIPromptEvent handling to applyEvent**
 
 In `applyEvent`, in the `switch ev.Kind` block, add a case for `claudestream.KindUIPrompt`. Also return a `tea.Cmd` from `applyEvent` (the method signature must change slightly, or we can store the pending cmd and return it from `Update`).
 
@@ -1612,7 +1612,7 @@ case claudestream.KindUIPrompt:
 
 All other `applyEvent` cases return `nil` (no cmd). Add `return nil` at the bottom of the function.
 
-- [ ] **Step 3: Add buildPanelContent helper**
+- [x] **Step 3: Add buildPanelContent helper**
 
 Add to `internal/tui/detail/chat.go`:
 
@@ -1660,7 +1660,7 @@ Add the import:
 "github.com/chrispian/agent-mux/internal/tui/panel"
 ```
 
-- [ ] **Step 4: Handle PanelResponseMsg in Update**
+- [x] **Step 4: Handle PanelResponseMsg in Update**
 
 In `ChatScreen.Update`, add a case before `tea.KeyMsg`:
 
@@ -1679,14 +1679,14 @@ case panel.PanelResponseMsg:
     return s, s.sendTurnCmd(msg.Value)
 ```
 
-- [ ] **Step 5: Compile and run make check**
+- [x] **Step 5: Compile and run make check**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
 ```
 Expected: green. Fix any signature mismatches (the `applyEvent` return type change touches every call site — there is only one in `Update`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/detail/chat.go
@@ -1704,7 +1704,7 @@ The `"pin file"` verb asks the user for a path (via a second palette prompt in v
 
 Actually, for v1 keep it simple: the verb reads the path from a palette input. Since the palette currently only shows filtered verbs, the simplest path is: add a `"pin file <path>"` free-text verb where the extra text after `"pin file "` is treated as the path.
 
-- [ ] **Step 1: Add panelPinFileMsg and the verb**
+- [x] **Step 1: Add panelPinFileMsg and the verb**
 
 In `internal/tui/verbs.go`, add after the existing `type applyFilterMsg`:
 
@@ -1729,14 +1729,14 @@ reg.Register(palette.Verb{
 })
 ```
 
-- [ ] **Step 2: Check compile and run gate**
+- [x] **Step 2: Check compile and run gate**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
 ```
 Expected: green.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add internal/tui/verbs.go
@@ -1749,35 +1749,35 @@ git commit -m "feat(tui): register 'pin file' palette verb stub (path arg follow
 
 Run each acceptance criterion from the spec against the running binary.
 
-- [ ] **Step 1: Build the binary**
+- [x] **Step 1: Build the binary**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go build ./cmd/mux/...
 ```
 Expected: clean build
 
-- [ ] **Step 2: Run full test suite with race detector**
+- [x] **Step 2: Run full test suite with race detector**
 
 ```bash
 cd ~/Projects-apps/agent-mux && make check
 ```
 Expected: green, no race conditions
 
-- [ ] **Step 3: Verify panel package test coverage**
+- [x] **Step 3: Verify panel package test coverage**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./internal/tui/panel/... -v -count=1
 ```
 Expected: all tests pass
 
-- [ ] **Step 4: Verify claudestream package tests**
+- [x] **Step 4: Verify claudestream package tests**
 
 ```bash
 cd ~/Projects-apps/agent-mux && go test ./pkg/claudestream/... -v -count=1
 ```
 Expected: all tests pass including TestParse_UIPrompt*
 
-- [ ] **Step 5: Smoke the panel in the TUI**
+- [x] **Step 5: Smoke the panel in the TUI**
 
 ```bash
 ~/go/bin/mux tui
@@ -1787,11 +1787,11 @@ Expected: all tests pass including TestParse_UIPrompt*
 - Press `Esc` in panel — focus returns to left
 - Press `?` in panel — inline hints appear
 
-- [ ] **Step 6: Tag acceptance and note smoke gaps**
+- [x] **Step 6: Tag acceptance and note smoke gaps**
 
 Any live-claude smoke (actual ui_prompt tool_use round-trip) follows the existing `[SMOKE-TEST GAP]` backlog pattern from the boot prompt — add a note to the backlog if the live path couldn't be verified.
 
-- [ ] **Step 7: Final commit**
+- [x] **Step 7: Final commit**
 
 ```bash
 cd ~/Projects-apps/agent-mux && git add .
