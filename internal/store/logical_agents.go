@@ -61,7 +61,7 @@ func (s *Store) UpsertLogicalAgent(a agent.LogicalAgent, now string) error {
 // no such row exists.
 func (s *Store) GetLogicalAgent(id string) (*LogicalAgentRow, error) {
 	var (
-		r                                                                    LogicalAgentRow
+		r                                                                      LogicalAgentRow
 		role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold, launchID sql.NullString
 	)
 	err := s.db.QueryRow(
@@ -113,7 +113,7 @@ func (s *Store) ListLogicalAgents() ([]LogicalAgentRow, error) {
 	rows, err := s.db.Query(
 		`SELECT id, role, name, responsibilities, capabilities, memory_scopes,
                 policies_json, permitted_tools, escalation_rules,
-                checkpoint_policy, hot_cold_policy, created_at, updated_at
+                checkpoint_policy, hot_cold_policy, created_at, updated_at, launch_id
            FROM logical_agents ORDER BY id`,
 	)
 	if err != nil {
@@ -123,10 +123,10 @@ func (s *Store) ListLogicalAgents() ([]LogicalAgentRow, error) {
 	var out []LogicalAgentRow
 	for rows.Next() {
 		var (
-			r                                                            LogicalAgentRow
-			role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold sql.NullString
+			r                                                                      LogicalAgentRow
+			role, name, resp, caps, mem, pol, tools, esc, chkpt, hotCold, launchID sql.NullString
 		)
-		if err := rows.Scan(&r.ID, &role, &name, &resp, &caps, &mem, &pol, &tools, &esc, &chkpt, &hotCold, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &role, &name, &resp, &caps, &mem, &pol, &tools, &esc, &chkpt, &hotCold, &r.CreatedAt, &r.UpdatedAt, &launchID); err != nil {
 			return nil, fmt.Errorf("scan logical_agent: %w", err)
 		}
 		r.Role = role.String
@@ -139,6 +139,7 @@ func (s *Store) ListLogicalAgents() ([]LogicalAgentRow, error) {
 		r.EscalationRules = esc.String
 		r.CheckpointPolicy = chkpt.String
 		r.HotColdPolicy = hotCold.String
+		r.LaunchID = launchID.String
 		out = append(out, r)
 	}
 	return out, rows.Err()

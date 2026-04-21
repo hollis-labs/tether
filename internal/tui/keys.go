@@ -15,19 +15,20 @@ import "github.com/charmbracelet/bubbles/key"
 // help overlay (Sprint 6) both enumerate this table so rendered hints
 // and actual bindings stay in lockstep.
 type KeyMap struct {
-	Quit            key.Binding
-	Help            key.Binding
-	OpenDetail      key.Binding
-	Refresh         key.Binding
-	FocusSearch     key.Binding
-	BlurSearch      key.Binding
-	CycleChip       key.Binding
-	CycleChipBack   key.Binding
-	ToggleProjects  key.Binding
-	ToggleAgents    key.Binding
-	ToggleProviders key.Binding
-	ToggleLaunches  key.Binding
-	ToggleSessions  key.Binding
+	Quit                key.Binding
+	Help                key.Binding
+	OpenDetail          key.Binding
+	Refresh             key.Binding
+	FocusSearch         key.Binding
+	BlurSearch          key.Binding
+	CycleChip           key.Binding
+	CycleChipBack       key.Binding
+	ToggleProjects      key.Binding
+	ToggleAgents        key.Binding
+	ToggleProviders     key.Binding
+	ToggleLaunches      key.Binding
+	ToggleSessions      key.Binding
+	ToggleLogicalAgents key.Binding
 }
 
 // DefaultKeyMap returns the scaffold bindings.
@@ -97,6 +98,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleSessions: key.NewBinding(
 			key.WithKeys("alt+5"),
 			key.WithHelp("⌥5", "sessions"),
+		),
+		ToggleLogicalAgents: key.NewBinding(
+			key.WithKeys("alt+6"),
+			key.WithHelp("⌥6", "runtime agents"),
 		),
 	}
 }

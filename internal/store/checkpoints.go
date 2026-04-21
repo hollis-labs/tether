@@ -50,7 +50,7 @@ func (s *Store) CreateCheckpoint(c checkpoint.Checkpoint) error {
 // sql.ErrNoRows if no such row exists.
 func (s *Store) GetCheckpoint(id string) (*checkpoint.Checkpoint, error) {
 	var (
-		c                                                                                                         checkpoint.Checkpoint
+		c                                                                                                          checkpoint.Checkpoint
 		taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
 	)
 	err := s.db.QueryRow(
@@ -85,7 +85,7 @@ func (s *Store) GetCheckpoint(id string) (*checkpoint.Checkpoint, error) {
 // if no checkpoints exist for the agent.
 func (s *Store) GetLatestCheckpointForAgent(logicalAgentID string) (*checkpoint.Checkpoint, error) {
 	var (
-		c                                                                                                         checkpoint.Checkpoint
+		c                                                                                                          checkpoint.Checkpoint
 		taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
 	)
 	err := s.db.QueryRow(
@@ -134,7 +134,7 @@ func (s *Store) ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoi
 	var out []checkpoint.Checkpoint
 	for rows.Next() {
 		var (
-			c                                                                                                         checkpoint.Checkpoint
+			c                                                                                                          checkpoint.Checkpoint
 			taskID, workflowID, status, completed, pending, keyDec, artifacts, summary, nextRec, sourceSess, provHints sql.NullString
 		)
 		if err := rows.Scan(&c.ID, &c.LogicalAgentID, &taskID, &workflowID, &status,

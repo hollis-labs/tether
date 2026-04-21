@@ -350,8 +350,58 @@ func (c *Client) ListLaunches(ctx context.Context) ([]config.Launch, error) {
 	return res.Launches, nil
 }
 
-// getJSON is a small helper for the GET + decode + error flow shared by
-// Health / ListSessions / GetSession.
+// CreateCheckpoint posts a checkpoint for sessionID via POST /sessions/{id}/checkpoint.
+func (c *Client) CreateCheckpoint(ctx context.Context, sessionID, status, summary string) error {
+	body, _ := json.Marshal(api.CheckpointCreateRequest{Status: status, Summary: summary})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(sessionID)+"/checkpoint", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+	return readError(resp)
+}
+
+// ResumeLogicalAgent posts a resume request for the given logical agent and
+// returns the new session ID on success.
+func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/logical-agents/"+url.PathEscape(agentID)+"/resume", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return "", readError(resp)
+	}
+	var res api.LaunchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", fmt.Errorf("decode resume response: %w", err)
+	}
+	return res.ID, nil
+}
+
+// ListLogicalAgents fetches all logical agents from GET /logical-agents.
+func (c *Client) ListLogicalAgents(ctx context.Context) ([]api.LogicalAgentSummary, error) {
+	var res api.LogicalAgentListResponse
+	if err := c.getJSON(ctx, "/logical-agents", &res); err != nil {
+		return nil, err
+	}
+	return res.Agents, nil
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {

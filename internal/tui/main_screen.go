@@ -24,21 +24,23 @@ import (
 type RowType string
 
 const (
-	RowTypeProjects  RowType = "projects"
-	RowTypeAgents    RowType = "agents"
-	RowTypeProviders RowType = "providers"
-	RowTypeLaunches  RowType = "launches"
-	RowTypeSessions  RowType = "sessions"
+	RowTypeProjects      RowType = "projects"
+	RowTypeAgents        RowType = "agents"
+	RowTypeProviders     RowType = "providers"
+	RowTypeLaunches      RowType = "launches"
+	RowTypeSessions      RowType = "sessions"
+	RowTypeLogicalAgents RowType = "runtime-agents"
 )
 
 // chipOrder is the left-to-right rendering order of the chip row,
-// matched 1:1 to Alt+1..5 bindings.
+// matched 1:1 to Alt+1..6 bindings.
 var chipOrder = []RowType{
 	RowTypeProjects,
 	RowTypeAgents,
 	RowTypeProviders,
 	RowTypeLaunches,
 	RowTypeSessions,
+	RowTypeLogicalAgents,
 }
 
 // MainScreen is the results-list / launcher pane — the first screen
@@ -168,6 +170,26 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		m.resize()
 		m.refreshBody()
 		fetchCmd := getSessionForAttachCmd(m.client, msg.req, msg.res)
+		refreshSessions := loadSessionsCmd(m.client)
+		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
+
+	case resumeResultMsg:
+		if msg.err != nil {
+			cmd := m.toasts.push(ToastError, "Resume failed: "+msg.err.Error())
+			m.resize()
+			m.refreshBody()
+			return m, cmd
+		}
+		banner := fmt.Sprintf("Resumed agent %s → session %s — attaching…",
+			shortID(msg.agentID), shortID(msg.sessionID))
+		toastCmd := m.toasts.push(ToastInfo, banner)
+		m.resize()
+		m.refreshBody()
+		// Fetch the new session then auto-attach.
+		fetchCmd := getSessionForAttachCmd(m.client,
+			client.CreateAndLaunchRequest{LaunchID: msg.agentID},
+			client.CreateAndLaunchResponse{SessionID: msg.sessionID},
+		)
 		refreshSessions := loadSessionsCmd(m.client)
 		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
 
@@ -334,6 +356,11 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 		return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: r.L.ID})
 	case SessionRow:
 		return m, screen.Push(attachScreenForSession(r.S, m.client))
+	case LogicalAgentRow:
+		if r.LA.LaunchID == "" {
+			return m, screen.Toast(screen.ToastError, "Cannot resume: agent "+r.LA.ID+" has no prior launch")
+		}
+		return m, resumeLogicalAgentCmd(m.client, r.LA.ID)
 	}
 	return m.openDetail()
 }
@@ -434,6 +461,7 @@ func (m MainScreen) handleChipToggle(msg tea.KeyMsg) (bool, MainScreen) {
 		{m.keys.ToggleProviders, RowTypeProviders},
 		{m.keys.ToggleLaunches, RowTypeLaunches},
 		{m.keys.ToggleSessions, RowTypeSessions},
+		{m.keys.ToggleLogicalAgents, RowTypeLogicalAgents},
 	}
 	for _, pair := range bindings {
 		if key.Matches(msg, pair.b) {

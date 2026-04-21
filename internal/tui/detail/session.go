@@ -31,18 +31,24 @@ type sessionRefetchedMsg struct {
 	err error
 }
 
+// checkpointResultMsg carries the result of a checkpoint create call.
+type checkpointResultMsg struct {
+	err error
+}
+
 // SessionScreen renders an api.SessionDTO. On Init it kicks off a
 // GetSession re-fetch so the displayed state reflects "right now"
 // rather than "whenever the list was loaded."
 type SessionScreen struct {
 	base
-	s         api.SessionDTO
-	client    *client.Client
-	err       error
-	attachKey key.Binding
-	openKey   key.Binding
-	stopKey   key.Binding
-	tailKey   key.Binding
+	s             api.SessionDTO
+	client        *client.Client
+	err           error
+	attachKey     key.Binding
+	openKey       key.Binding
+	stopKey       key.Binding
+	tailKey       key.Binding
+	checkpointKey key.Binding
 }
 
 func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
@@ -54,10 +60,12 @@ func NewSessionScreen(s api.SessionDTO, c *client.Client) SessionScreen {
 	openKey := key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open shell"))
 	stopKey := key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop"))
 	tailKey := key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tail"))
+	checkpointKey := key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "checkpoint"))
 	b := newBase("Session " + short)
-	b.extra = append(b.extra, attachKey, openKey, stopKey, tailKey)
+	b.extra = append(b.extra, attachKey, openKey, stopKey, tailKey, checkpointKey)
 	return SessionScreen{base: b, s: s, client: c,
-		attachKey: attachKey, openKey: openKey, stopKey: stopKey, tailKey: tailKey}
+		attachKey: attachKey, openKey: openKey, stopKey: stopKey, tailKey: tailKey,
+		checkpointKey: checkpointKey}
 }
 
 func (s SessionScreen) Init() tea.Cmd {
@@ -105,6 +113,23 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			screen.Toast(screen.ToastInfo, "Stopped session "+short),
 		)
 
+	case checkpointResultMsg:
+		if m.err != nil {
+			return s, screen.Toast(screen.ToastError, "Checkpoint failed: "+m.err.Error())
+		}
+		return s, screen.Toast(screen.ToastInfo, "Checkpoint saved")
+
+	case modal.CheckpointSubmitMsg:
+		if s.client == nil {
+			return s, nil
+		}
+		sessionID := s.s.ID
+		c := s.client
+		return s, func() tea.Msg {
+			err := c.CreateCheckpoint(context.Background(), sessionID, m.Status, m.Summary)
+			return checkpointResultMsg{err: err}
+		}
+
 	case tea.KeyMsg:
 		if key.Matches(m, s.attachKey) && s.client != nil {
 			return s, screen.Push(NewAttachScreen(s.s, s.client))
@@ -117,6 +142,9 @@ func (s SessionScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if key.Matches(m, s.tailKey) {
 			return s, screen.Push(NewTailScreen(s.s))
+		}
+		if key.Matches(m, s.checkpointKey) && s.client != nil {
+			return s, screen.Push(modal.NewCheckpointModal())
 		}
 	}
 	cmd, handled := s.updateCommon(msg)

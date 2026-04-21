@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chrispian/agent-mux/internal/checkpoint"
+	"github.com/chrispian/agent-mux/internal/store"
 )
 
 // CheckpointStore is the narrow storage seam the checkpoint handlers
@@ -20,6 +21,20 @@ type CheckpointStore interface {
 	CreateCheckpoint(c checkpoint.Checkpoint) error
 	ListCheckpointsByLogicalAgent(logicalAgentID string) ([]checkpoint.Checkpoint, error)
 	GetLatestCheckpointForAgent(logicalAgentID string) (*checkpoint.Checkpoint, error)
+	ListLogicalAgents() ([]store.LogicalAgentRow, error)
+}
+
+// LogicalAgentSummary is the minimal projection the TUI needs to display
+// logical agents and decide whether resume is available.
+type LogicalAgentSummary struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	LaunchID string `json:"launch_id,omitempty"`
+}
+
+// LogicalAgentListResponse is the collection response for GET /logical-agents.
+type LogicalAgentListResponse struct {
+	Agents []LogicalAgentSummary `json:"agents"`
 }
 
 // CheckpointCreateRequest mirrors the free-form shape accepted by
@@ -91,7 +106,30 @@ func (s *Server) registerCheckpointRoutes(mux *http.ServeMux) {
 	// POST /sessions/{id}/checkpoint is parameterised but shares the
 	// /sessions/ prefix owned by the sessions handler — it's dispatched
 	// from handleSessionsItem's action switch.
+	mux.HandleFunc("/logical-agents", s.handleLogicalAgentsCollection)
 	mux.HandleFunc("/logical-agents/", s.handleLogicalAgentsItem)
+}
+
+// handleLogicalAgentsCollection handles GET /logical-agents.
+func (s *Server) handleLogicalAgentsCollection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	rows, err := s.Checkpoints.ListLogicalAgents()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	out := make([]LogicalAgentSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, LogicalAgentSummary{
+			ID:       r.ID,
+			Name:     r.Name,
+			LaunchID: r.LaunchID,
+		})
+	}
+	writeJSON(w, http.StatusOK, LogicalAgentListResponse{Agents: out})
 }
 
 // handleLogicalAgentsItem dispatches the two /logical-agents/{id}/...

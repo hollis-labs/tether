@@ -206,6 +206,34 @@ func (c *Client) SendInput(ctx context.Context, sessionID string, data []byte) e
 	return nil
 }
 
+// CreateCheckpoint posts a checkpoint for the given session. Summary is
+// the free-text content; status is one of active/paused/completed/escalated.
+func (c *Client) CreateCheckpoint(ctx context.Context, sessionID, status, summary string) error {
+	if err := c.inner.CreateCheckpoint(ctx, sessionID, status, summary); err != nil {
+		return wrap("create checkpoint", err)
+	}
+	return nil
+}
+
+// ResumeLogicalAgent posts a resume request for the given logical agent
+// and returns the new session ID.
+func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (string, error) {
+	id, err := c.inner.ResumeLogicalAgent(ctx, agentID)
+	if err != nil {
+		return "", wrap("resume", err)
+	}
+	return id, nil
+}
+
+// ListLogicalAgents fetches all logical agents from the daemon.
+func (c *Client) ListLogicalAgents(ctx context.Context) ([]api.LogicalAgentSummary, error) {
+	rows, err := c.inner.ListLogicalAgents(ctx)
+	if err != nil {
+		return nil, wrap("list logical agents", err)
+	}
+	return rows, nil
+}
+
 // wrap prefixes "tui client: <op>" while preserving the sentinel
 // (errors.Is(err, ErrDaemonUnreachable) still works in callers).
 func wrap(op string, err error) error {

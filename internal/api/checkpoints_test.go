@@ -28,6 +28,10 @@ func (f *fakeCheckpoints) GetLatestCheckpointForAgent(_ string) (*checkpoint.Che
 	return nil, nil
 }
 
+func (f *fakeCheckpoints) ListLogicalAgents() ([]store.LogicalAgentRow, error) {
+	return nil, nil
+}
+
 func (f *fakeCheckpoints) ListCheckpointsByLogicalAgent(agentID string) ([]checkpoint.Checkpoint, error) {
 	if f.listErr != nil {
 		return nil, f.listErr

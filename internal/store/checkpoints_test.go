@@ -98,11 +98,11 @@ func TestCheckpoints_ProviderHints_RoundTrip(t *testing.T) {
 	}
 
 	c := checkpoint.Checkpoint{
-		ID:               "ck-hints",
-		LogicalAgentID:   "a1",
-		Summary:          "with hints",
+		ID:                "ck-hints",
+		LogicalAgentID:    "a1",
+		Summary:           "with hints",
 		ProviderHintsJSON: `{"session_id":"abc123"}`,
-		CreatedAt:        "2026-04-21T10:00:00Z",
+		CreatedAt:         "2026-04-21T10:00:00Z",
 	}
 	if err := db.CreateCheckpoint(c); err != nil {
 		t.Fatalf("create: %v", err)

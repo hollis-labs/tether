@@ -18,7 +18,7 @@ func newSeededModel(t *testing.T) MainScreen {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = next.(MainScreen)
 
-	// Prime with fixture data; simulate the 5 fanned-in loads.
+	// Prime with fixture data; simulate the 6 fanned-in loads.
 	loads := []catalogLoadedMsg{
 		{typ: RowTypeProjects, rows: rowsFromProjects([]config.Project{
 			{ID: "acme", Name: "Acme Corp"},
@@ -37,6 +37,7 @@ func newSeededModel(t *testing.T) MainScreen {
 		{typ: RowTypeSessions, rows: rowsFromSessions([]api.SessionDTO{
 			{ID: "01234567-aaaa-bbbb-cccc-000000000000", State: "running", ProjectID: "acme", LogicalAgentID: "writer"},
 		})},
+		{typ: RowTypeLogicalAgents, rows: rowsFromLogicalAgents([]api.LogicalAgentSummary{})},
 	}
 	for _, msg := range loads {
 		next, _ := m.Update(msg)
@@ -51,7 +52,7 @@ func TestCatalogLoadedPopulatesVisibleRows(t *testing.T) {
 		t.Fatalf("expected 7 visible rows (2+1+2+1+1), got %d", len(m.visible))
 	}
 	if m.loadRemaining != 0 {
-		t.Fatalf("expected loadRemaining=0 after 5 loads, got %d", m.loadRemaining)
+		t.Fatalf("expected loadRemaining=0 after 6 loads, got %d", m.loadRemaining)
 	}
 }
 

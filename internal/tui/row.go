@@ -80,6 +80,21 @@ func (r SessionRow) Subtitle() string {
 }
 func (r SessionRow) Record() any { return r.S }
 
+// LogicalAgentRow wraps api.LogicalAgentSummary. Enter on this row type
+// drives the resume flow: POST /logical-agents/{id}/resume.
+type LogicalAgentRow struct{ LA api.LogicalAgentSummary }
+
+func (r LogicalAgentRow) Type() RowType { return RowTypeLogicalAgents }
+func (r LogicalAgentRow) ID() string    { return r.LA.ID }
+func (r LogicalAgentRow) Title() string { return displayName(r.LA.Name, r.LA.ID) }
+func (r LogicalAgentRow) Subtitle() string {
+	if r.LA.LaunchID != "" {
+		return "runtime  ·  launch: " + r.LA.LaunchID + "  (resume available)"
+	}
+	return "runtime  ·  no prior launch"
+}
+func (r LogicalAgentRow) Record() any { return r.LA }
+
 // rowsFromProjects / rowsFromAgents / ... adapt the concrete slice
 // returned by the daemon into a []ResultRow the model can render.
 
@@ -119,6 +134,14 @@ func rowsFromSessions(ss []api.SessionDTO) []ResultRow {
 	out := make([]ResultRow, len(ss))
 	for i, s := range ss {
 		out[i] = SessionRow{S: s}
+	}
+	return out
+}
+
+func rowsFromLogicalAgents(las []api.LogicalAgentSummary) []ResultRow {
+	out := make([]ResultRow, len(las))
+	for i, la := range las {
+		out[i] = LogicalAgentRow{LA: la}
 	}
 	return out
 }

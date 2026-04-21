@@ -8,6 +8,13 @@ import (
 	"github.com/chrispian/agent-mux/internal/tui/client"
 )
 
+// resumeResultMsg carries the outcome of a ResumeLogicalAgent call.
+type resumeResultMsg struct {
+	agentID   string
+	sessionID string
+	err       error
+}
+
 // catalogLoadedMsg carries the outcome of a single List* call into
 // Update. When err is non-nil the rows slice will be empty; Update
 // stores the error for display in the footer.
@@ -17,7 +24,7 @@ type catalogLoadedMsg struct {
 	err  error
 }
 
-// loadAllCatalogCmd returns a tea.Batch of five List* commands that
+// loadAllCatalogCmd returns a tea.Batch of six List* commands that
 // run in parallel. Each emits a catalogLoadedMsg with its own RowType.
 func loadAllCatalogCmd(c *client.Client) tea.Cmd {
 	return tea.Batch(
@@ -26,6 +33,7 @@ func loadAllCatalogCmd(c *client.Client) tea.Cmd {
 		loadProvidersCmd(c),
 		loadLaunchesCmd(c),
 		loadSessionsCmd(c),
+		loadLogicalAgentsCmd(c),
 	)
 }
 
@@ -76,5 +84,22 @@ func loadSessionsCmd(c *client.Client) tea.Cmd {
 			return catalogLoadedMsg{typ: RowTypeSessions, err: err}
 		}
 		return catalogLoadedMsg{typ: RowTypeSessions, rows: rowsFromSessions(ss)}
+	}
+}
+
+func loadLogicalAgentsCmd(c *client.Client) tea.Cmd {
+	return func() tea.Msg {
+		las, err := c.ListLogicalAgents(context.Background())
+		if err != nil {
+			return catalogLoadedMsg{typ: RowTypeLogicalAgents, err: err}
+		}
+		return catalogLoadedMsg{typ: RowTypeLogicalAgents, rows: rowsFromLogicalAgents(las)}
+	}
+}
+
+func resumeLogicalAgentCmd(c *client.Client, agentID string) tea.Cmd {
+	return func() tea.Msg {
+		sessID, err := c.ResumeLogicalAgent(context.Background(), agentID)
+		return resumeResultMsg{agentID: agentID, sessionID: sessID, err: err}
 	}
 }
