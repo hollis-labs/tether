@@ -11,38 +11,41 @@ import (
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
-	Service     LaunchService
-	Checkpoints CheckpointStore
-	Broker      BrokerService
-	Bus         events.Bus
-	EventsStore EventsStore
-	Catalog     CatalogLoader
-	GroupStore  SessionGroupStore
+	Service      LaunchService
+	Checkpoints  CheckpointStore
+	Broker       BrokerService
+	Bus          events.Bus
+	EventsStore  EventsStore
+	Catalog      CatalogLoader
+	GroupStore   SessionGroupStore
+	MessageStore MessageStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
-	Service     LaunchService
-	Checkpoints CheckpointStore
-	Broker      BrokerService
-	Bus         events.Bus
-	EventsStore EventsStore
-	Catalog     CatalogLoader
-	GroupStore  SessionGroupStore
+	Service      LaunchService
+	Checkpoints  CheckpointStore
+	Broker       BrokerService
+	Bus          events.Bus
+	EventsStore  EventsStore
+	Catalog      CatalogLoader
+	GroupStore   SessionGroupStore
+	MessageStore MessageStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
-		Service:     deps.Service,
-		Checkpoints: deps.Checkpoints,
-		Broker:      deps.Broker,
-		Bus:         deps.Bus,
-		EventsStore: deps.EventsStore,
-		Catalog:     deps.Catalog,
-		GroupStore:  deps.GroupStore,
+		Service:      deps.Service,
+		Checkpoints:  deps.Checkpoints,
+		Broker:       deps.Broker,
+		Bus:          deps.Bus,
+		EventsStore:  deps.EventsStore,
+		Catalog:      deps.Catalog,
+		GroupStore:   deps.GroupStore,
+		MessageStore: deps.MessageStore,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -51,5 +54,6 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEventRoutes(mux)
 	s.registerCatalogRoutes(mux)
 	s.registerSessionGroupRoutes(mux)
+	s.registerMessageRoutes(mux)
 	return mux
 }

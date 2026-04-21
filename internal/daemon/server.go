@@ -53,6 +53,8 @@ type Server struct {
 	Catalog api.CatalogLoader
 	// GroupStore is optional; when set, /session-groups endpoints are mounted.
 	GroupStore api.SessionGroupStore
+	// MessageStore is optional; when set, /messages/* endpoints are mounted.
+	MessageStore api.MessageStore
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -179,13 +181,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	if s.Service != nil || s.Catalog != nil {
 		apiHandler := api.NewHandler(api.Deps{
-			Service:     s.Service,
-			Checkpoints: s.Checkpoints,
-			Broker:      s.Broker,
-			Bus:         s.Bus,
-			EventsStore: s.EventsStore,
-			Catalog:     s.Catalog,
-			GroupStore:  s.GroupStore,
+			Service:      s.Service,
+			Checkpoints:  s.Checkpoints,
+			Broker:       s.Broker,
+			Bus:          s.Bus,
+			EventsStore:  s.EventsStore,
+			Catalog:      s.Catalog,
+			GroupStore:   s.GroupStore,
+			MessageStore: s.MessageStore,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -204,6 +207,10 @@ func (s *Server) Handler() http.Handler {
 		if s.GroupStore != nil {
 			mux.Handle("/session-groups", apiHandler)
 			mux.Handle("/session-groups/", apiHandler)
+		}
+		if s.MessageStore != nil {
+			mux.Handle("/messages", apiHandler)
+			mux.Handle("/messages/", apiHandler)
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)
