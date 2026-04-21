@@ -317,7 +317,18 @@ stop_daemon "$E3_PID"
 
 echo
 echo "E4  PTY child orphan after daemon SIGKILL (informational)"
-skip "E4" "api-stub has no real child process (PID=0); repeat with a real PTY provider (claudecode/claudestream): start session, SIGKILL daemon, check 'ps -p <session-pid>' to verify orphan behavior."
+skip "E4" "$(cat <<'MSG'
+api-stub has no real child process (PID=0). Manual procedure for real PTY providers:
+  1. mux --catalog <catalog> daemon start
+  2. mux --catalog <catalog> sessions list   # note session ID
+  3. SESS_ID=<id>; PID=\$(mux --catalog <catalog> sessions get \$SESS_ID | grep '^pid' | awk '{print \$2}')
+  4. DAEMON_PID=\$(cat \$(mux --catalog <catalog> daemon status 2>&1 | grep pidfile | awk '{print \$NF}'))
+  5. kill -KILL \$DAEMON_PID
+  6. ps -p \$PID    # if process still alive: orphan adopted by launchd (macOS expected behavior)
+  7. kill \$PID     # clean up orphan manually
+  Mitigation: checkpoint-resume (v0.0.4 Sprint 4) allows re-attaching to orphans after daemon restart.
+MSG
+)"
 
 ###############################################################################
 # E5 — Workspace prune mechanism
