@@ -142,6 +142,14 @@ Launch failures from sandbox enforcement are surfaced as `conflict` (HTTP 409, e
 
 **Why profile name in Plan is not persisted?** The plan is the launch contract for the session. Permissions are catalog configuration, not session-specific state. Keeping them separate means a permission change takes effect on the next launch without migrating existing plan JSON.
 
+## Implementation note (v0.0.4)
+
+The macOS SBPL generator uses **default-allow + selective deny** rather than the default-deny posture described above. Default-deny on macOS requires enumerating a large, OS-version-dependent allowlist of system paths, dyld caches, and Mach/XPC services that every modern process implicitly needs. Characterizing that list correctly is out of scope for v0.0.4.
+
+The practical effect: outbound network (when `net: false`) and sensitive FS paths (Deny list) are blocked; general filesystem and process operations are permitted. This still closes the primary threat vectors (SSH key exfiltration, cloud-credential reads, unintended network calls) while being reliable in practice.
+
+A future sprint can tighten to default-deny with a well-tested allowlist. When that happens, supersede this ADR.
+
 ## Consequences
 
 - `provider.StartOptions` gains `Sandbox *sandbox.Profile`. All provider adapters must handle it (no-op if nil). Build fails loudly on missing implementations.
