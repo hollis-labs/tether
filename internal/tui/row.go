@@ -112,12 +112,40 @@ func (r BootProfileRow) ID() string    { return r.ProfileID }
 func (r BootProfileRow) Title() string { return displayName(r.DisplayName, r.ProfileID) }
 func (r BootProfileRow) Subtitle() string {
 	if r.LaunchID == "" {
-		return "(stdout only — add launch: to profile)"
+		return "(stdout only)"
 	}
-	if r.ProviderID != "" {
-		return r.ProviderID + "  ·  " + r.LaunchID
+	h, m := providerHarness(r.ProviderID), providerMode(r.ProviderID)
+	if h == "" {
+		return "boot"
 	}
-	return r.LaunchID
+	return h + "  " + m
+}
+
+// providerHarness extracts the tool name from a provider ID.
+// "claude-stream" → "claude", "claude-code" → "claude", "opencode" → "opencode".
+func providerHarness(id string) string {
+	switch {
+	case id == "opencode":
+		return "opencode"
+	case strings.HasPrefix(id, "claude"):
+		return "claude"
+	case id != "":
+		return id
+	}
+	return ""
+}
+
+// providerMode returns a short interaction-model label for a provider ID.
+func providerMode(id string) string {
+	switch {
+	case strings.Contains(id, "stream") || id == "opencode":
+		return "stream"
+	case strings.Contains(id, "code"):
+		return "pty"
+	case strings.HasPrefix(id, "cli-"):
+		return "cli"
+	}
+	return "cli"
 }
 func (r BootProfileRow) Record() any { return r }
 

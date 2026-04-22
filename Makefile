@@ -1,14 +1,25 @@
-.PHONY: build run test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html clean-coverage
+.PHONY: build install run test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html clean-coverage
 
 # ---------------------------------------------------------------------------
 # Build / run
 # ---------------------------------------------------------------------------
 
+# GOBIN is the canonical user install location — always build here so the
+# system `mux` command reflects the current code. Agents must use `make install`
+# after code changes, then tell the user: "built to /Users/chrispian/go/bin/mux".
+GOBIN ?= /Users/chrispian/go/bin
+
 build:
 	go build -o bin/mux ./cmd/mux
 
-run: build
-	./bin/mux
+# install puts mux in the user's PATH ($GOBIN). Use this — not `go build` — so
+# `mux tui` always runs the latest version, not a stale local binary.
+install:
+	GOBIN=$(GOBIN) go install ./cmd/mux/...
+	@echo "installed → $(GOBIN)/mux"
+
+run: install
+	$(GOBIN)/mux
 
 # ---------------------------------------------------------------------------
 # Test
