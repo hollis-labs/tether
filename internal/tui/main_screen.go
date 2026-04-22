@@ -15,6 +15,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/detail"
+	"github.com/chrispian/agent-mux/internal/tui/externshell"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/internal/tui/theme"
@@ -197,19 +198,28 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.refreshBody()
 			return m, cmd
 		}
-		banner := fmt.Sprintf("Booted %s → session %s — attaching…",
-			shortID(msg.profileID), shortID(msg.sessionID))
+		// Open the session in an external terminal window. The TUI stays as a
+		// launcher — it doesn't take over the session display. If the external
+		// terminal spawn fails (unsupported platform, etc.), fall back to the
+		// in-TUI attach screen so the session is still accessible.
+		var banner string
+		var extraCmd tea.Cmd
+		if err := externshell.AttachIn(msg.sessionID); err != nil {
+			banner = fmt.Sprintf("Booted %s — opened in TUI (external terminal unavailable: %s)",
+				shortID(msg.profileID), err.Error())
+			extraCmd = getSessionForAttachCmd(m.client,
+				client.CreateAndLaunchRequest{},
+				client.CreateAndLaunchResponse{SessionID: msg.sessionID},
+			)
+		} else {
+			banner = fmt.Sprintf("Booted %s — opened in Terminal (%s)",
+				shortID(msg.profileID), shortID(msg.sessionID))
+		}
 		toastCmd := m.toasts.push(ToastInfo, banner)
 		m.resize()
 		m.refreshBody()
-		// profileID is not a launch ID — pass an empty LaunchID so the
-		// fallback attach DTO doesn't misreport the launch profile.
-		fetchCmd := getSessionForAttachCmd(m.client,
-			client.CreateAndLaunchRequest{},
-			client.CreateAndLaunchResponse{SessionID: msg.sessionID},
-		)
 		refreshSessions := loadSessionsCmd(m.client)
-		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
+		return m, tea.Batch(toastCmd, refreshSessions, extraCmd)
 
 	case resumeResultMsg:
 		if msg.err != nil {
