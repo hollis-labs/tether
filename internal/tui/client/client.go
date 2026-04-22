@@ -301,6 +301,20 @@ func (c *Client) ListLogicalAgents(ctx context.Context) ([]api.LogicalAgentSumma
 	return rows, nil
 }
 
+// QueryProxyEvents fetches MCP proxy tool call events from the daemon.
+// Returns nil, nil when the daemon is unreachable — the feed degrades
+// gracefully rather than surfacing an error on every 100ms poll.
+func (c *Client) QueryProxyEvents(ctx context.Context, limit int) ([]api.ProxyEventDTO, error) {
+	evs, err := c.inner.QueryProxyEvents(ctx, "", "", limit, false)
+	if err != nil {
+		if errors.Is(err, daemon.ErrDaemonUnreachable) {
+			return nil, nil
+		}
+		return nil, wrap("query proxy events", err)
+	}
+	return evs, nil
+}
+
 // wrap prefixes "tui client: <op>" while preserving the sentinel
 // (errors.Is(err, ErrDaemonUnreachable) still works in callers).
 func wrap(op string, err error) error {

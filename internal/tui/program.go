@@ -7,22 +7,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 )
 
-// Options configures how a TUI program is constructed. Fields are
-// captured here even when the scaffold doesn't yet consume them so the
-// cmd-layer call-site stays stable as T-03+ wires data flow.
+// Options configures how a TUI program is constructed.
 type Options struct {
 	ListenAddr  string
 	CatalogRoot string // enables in-process boot profile loading and boot-launch TUI flow
 	LogPath     string
-
-	// EventStore, when non-nil, enables the 'e' key shortcut to open the
-	// live Tool Call Feed panel (Phase 2 observability). Only populated
-	// when the MCP adapter runs in --proxy mode with observability wired.
-	EventStore *mcpadapter.ToolCallEventStore
 }
 
 // Run constructs a Bubble Tea program with the scaffold root model and

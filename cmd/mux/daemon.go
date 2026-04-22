@@ -101,6 +101,7 @@ var daemonRunCmd = &cobra.Command{
 			Catalog:      &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:   svc.Store,
 			MessageStore: svc.Store.MessagingStore(),
+			ProxyEvents:  svc.Store,
 			Publisher:    svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just

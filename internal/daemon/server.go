@@ -55,6 +55,11 @@ type Server struct {
 	GroupStore api.SessionGroupStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
+	// ProxyEvents is optional; when set, GET/POST /proxy/events endpoints are
+	// mounted. Populated by the daemon when MCP proxy forwarding is active,
+	// so the TUI can poll tool call events without sharing in-process memory
+	// with the MCP subprocess.
+	ProxyEvents api.ProxyEventStore
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
@@ -189,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 			Catalog:      s.Catalog,
 			GroupStore:   s.GroupStore,
 			MessageStore: s.MessageStore,
+			ProxyEvents:  s.ProxyEvents,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -217,6 +223,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)
+		}
+		if s.ProxyEvents != nil {
+			mux.Handle("/proxy/events", apiHandler)
 		}
 		if s.Catalog != nil {
 			mux.Handle("/catalog/projects", apiHandler)

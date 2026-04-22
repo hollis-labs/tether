@@ -19,6 +19,11 @@ type Deps struct {
 	Catalog      CatalogLoader
 	GroupStore   SessionGroupStore
 	MessageStore MessageStore
+	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
+	// persisting and querying MCP relay tool call events. Populated by the
+	// daemon when --proxy mode is active. The TUI polls this to populate the
+	// Activity feed without requiring in-process access to the MCP subprocess.
+	ProxyEvents ProxyEventStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -32,6 +37,7 @@ type Server struct {
 	Catalog      CatalogLoader
 	GroupStore   SessionGroupStore
 	MessageStore MessageStore
+	ProxyEvents  ProxyEventStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -46,6 +52,7 @@ func NewHandler(deps Deps) http.Handler {
 		Catalog:      deps.Catalog,
 		GroupStore:   deps.GroupStore,
 		MessageStore: deps.MessageStore,
+		ProxyEvents:  deps.ProxyEvents,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -55,5 +62,6 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerCatalogRoutes(mux)
 	s.registerSessionGroupRoutes(mux)
 	s.registerMessageRoutes(mux)
+	s.registerProxyEventRoutes(mux)
 	return mux
 }

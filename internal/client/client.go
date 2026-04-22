@@ -452,6 +452,33 @@ func readError(resp *http.Response) error {
 	return fmt.Errorf("daemon %d: %s", resp.StatusCode, string(body))
 }
 
+// QueryProxyEvents fetches MCP proxy tool call events from GET /proxy/events.
+// All filter fields are optional; zero values match everything.
+// Returns ErrDaemonUnreachable when the daemon is not running.
+func (c *Client) QueryProxyEvents(ctx context.Context, serverID, toolName string, limit int, errorsOnly bool) ([]api.ProxyEventDTO, error) {
+	u := "/proxy/events?"
+	params := url.Values{}
+	if serverID != "" {
+		params.Set("server", serverID)
+	}
+	if toolName != "" {
+		params.Set("tool_name", toolName)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	if errorsOnly {
+		params.Set("errors_only", "true")
+	}
+	u += params.Encode()
+
+	var res api.ProxyEventListResponse
+	if err := c.getJSON(ctx, u, &res); err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	return res.Events, nil
+}
+
 // wrapIfUnreachable annotates connection-refused / socket-missing errors
 // so CLI callers can fall back to a local path.
 func wrapIfUnreachable(err error) error {

@@ -12,7 +12,6 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/detail"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
@@ -81,9 +80,6 @@ type MainScreen struct {
 
 	lastSearch string
 
-	// eventStore is non-nil when proxy mode is running with observability
-	// enabled. The 'e' key opens the ToolCallFeedScreen backed by this store.
-	eventStore *mcpadapter.ToolCallEventStore
 }
 
 // NewMainScreen constructs the main screen. client may be nil
@@ -270,8 +266,8 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		// 'e' — open the Tool Call Feed (Phase 2 observability).
 		// Only active when an event store is wired (proxy mode with --proxy flag).
-		if msg.Type == tea.KeyRunes && string(msg.Runes) == "e" && m.eventStore != nil && !m.search.Focused() {
-			return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
+		if msg.Type == tea.KeyRunes && string(msg.Runes) == "e" && !m.search.Focused() {
+			return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
@@ -289,8 +285,8 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
-			if m.currentSoloChip() == RowTypeActivity && m.eventStore != nil {
-				return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
+			if m.currentSoloChip() == RowTypeActivity {
+				return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
 			}
 			m.recomputeVisible()
 			m.refreshBody()
@@ -298,8 +294,8 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.CycleChipBack) {
 			m.cycleSoloChip(false)
-			if m.currentSoloChip() == RowTypeActivity && m.eventStore != nil {
-				return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
+			if m.currentSoloChip() == RowTypeActivity {
+				return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
 			}
 			m.recomputeVisible()
 			m.refreshBody()
@@ -599,11 +595,7 @@ func (m *MainScreen) refreshBody() {
 	}
 
 	if m.currentSoloChip() == RowTypeActivity {
-		if m.eventStore != nil {
-			m.body.SetContent("\n  Activity feed active — tool call events stream here.\n")
-		} else {
-			m.body.SetContent("\n  Activity feed — start opencode with mux as MCP provider (mux mcp --proxy) to stream tool call events here.\n")
-		}
+		m.body.SetContent("\n  Activity feed — press Enter or 'e' to open the live tool call feed.\n")
 		return
 	}
 
