@@ -158,11 +158,11 @@ func TestToolCallEventStore_Subscribe(t *testing.T) {
 
 	// Publish a tool_call_end event.
 	ev := events.ToolCallEvent{
-		ToolName:  "hadron_health",
-		Server:    "hadron",
+		ToolName:   "hadron_health",
+		Server:     "hadron",
 		DurationMs: 5,
-		OK:        true,
-		Timestamp: time.Now(),
+		OK:         true,
+		Timestamp:  time.Now(),
 	}
 	raw, _ := json.Marshal(ev)
 	if err := bus.Publish(ctx, events.Event{

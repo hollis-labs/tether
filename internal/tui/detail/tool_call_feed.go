@@ -7,8 +7,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/mcpadapter"
@@ -54,18 +54,18 @@ type ToolCallFeedScreen struct {
 }
 
 type feedKeys struct {
-	Back      key.Binding
-	Follow    key.Binding
-	Quit      key.Binding
-	ScrollUp  key.Binding
-	ScrollDn  key.Binding
+	Back     key.Binding
+	Follow   key.Binding
+	Quit     key.Binding
+	ScrollUp key.Binding
+	ScrollDn key.Binding
 }
 
 func defaultFeedKeys() feedKeys {
 	return feedKeys{
-		Back:   key.NewBinding(key.WithKeys("esc", "left"), key.WithHelp("esc", "back")),
-		Follow: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
-		Quit:   key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+		Back:     key.NewBinding(key.WithKeys("esc", "left"), key.WithHelp("esc", "back")),
+		Follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
+		Quit:     key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 		ScrollUp: key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
 		ScrollDn: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
 	}
