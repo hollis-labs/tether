@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/bootgen"
 	"github.com/chrispian/agent-mux/internal/config"
 )
 
@@ -101,10 +102,12 @@ func (r SessionRow) Record() any { return r.S }
 // BootProfileRow wraps a boot profile. Enter generates the boot prompt
 // and launches a session using the profile's configured launch ID.
 type BootProfileRow struct {
-	ProfileID   string
-	DisplayName string
-	LaunchID    string // catalog launch ID configured in the profile
-	ProviderID  string // provider resolved from the launch (empty if no launch)
+	ProfileID       string
+	DisplayName     string
+	LaunchID        string          // catalog launch ID configured in the profile
+	ProviderID      string          // provider resolved from the launch (empty if no launch)
+	ProviderCommand string          // absolute path to the tool binary (e.g. /usr/local/bin/claude)
+	Profile         bootgen.Profile // full profile needed to generate the boot prompt
 }
 
 func (r BootProfileRow) Type() RowType { return RowTypeBootProfiles }

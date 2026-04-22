@@ -15,7 +15,6 @@ import (
 	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/detail"
-	"github.com/chrispian/agent-mux/internal/tui/externshell"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/internal/tui/theme"
@@ -191,35 +190,17 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		refreshSessions := loadSessionsCmd(m.client)
 		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
 
-	case bootResultMsg:
+	case bootDirectMsg:
 		if msg.err != nil {
 			cmd := m.toasts.push(ToastError, "Boot failed: "+msg.err.Error())
 			m.resize()
 			m.refreshBody()
 			return m, cmd
 		}
-		// Open the session in an external terminal window. The TUI stays as a
-		// launcher — it doesn't take over the session display. If the external
-		// terminal spawn fails (unsupported platform, etc.), fall back to the
-		// in-TUI attach screen so the session is still accessible.
-		var banner string
-		var extraCmd tea.Cmd
-		if err := externshell.AttachIn(msg.sessionID); err != nil {
-			banner = fmt.Sprintf("Booted %s — opened in TUI (external terminal unavailable: %s)",
-				shortID(msg.profileID), err.Error())
-			extraCmd = getSessionForAttachCmd(m.client,
-				client.CreateAndLaunchRequest{},
-				client.CreateAndLaunchResponse{SessionID: msg.sessionID},
-			)
-		} else {
-			banner = fmt.Sprintf("Booted %s — opened in Terminal (%s)",
-				shortID(msg.profileID), shortID(msg.sessionID))
-		}
-		toastCmd := m.toasts.push(ToastInfo, banner)
+		toastCmd := m.toasts.push(ToastInfo, "Booted "+shortID(msg.profileID)+" — opened in terminal")
 		m.resize()
 		m.refreshBody()
-		refreshSessions := loadSessionsCmd(m.client)
-		return m, tea.Batch(toastCmd, refreshSessions, extraCmd)
+		return m, toastCmd
 
 	case resumeResultMsg:
 		if msg.err != nil {
@@ -422,9 +403,9 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 		return m, resumeLogicalAgentCmd(m.client, r.LA.ID)
 	case BootProfileRow:
 		if r.LaunchID == "" {
-			return m, screen.Toast(screen.ToastError, "Profile "+r.ProfileID+" has no launch configured")
+			return m, screen.Toast(screen.ToastError, "Profile "+r.ProfileID+" has no launch configured — add launch: to the profile YAML")
 		}
-		return m, bootAndLaunchCmd(m.client, r.ProfileID)
+		return m, bootDirectCmd(m.client, r)
 	}
 	return m.openDetail()
 }
