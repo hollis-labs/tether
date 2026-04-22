@@ -72,6 +72,15 @@ func (s *Store) ListEventsBySession(sessionID string, limit int, cursor int64) (
 	return scanEvents(rows)
 }
 
+// MaxEventSeq returns the highest event sequence number (id) currently
+// in the events table, or 0 if the table is empty. Used by the MCP proxy
+// forwarder to subscribe live-only without replaying history.
+func (s *Store) MaxEventSeq() (int64, error) {
+	var seq int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM events`).Scan(&seq)
+	return seq, err
+}
+
 // EventsSince returns all events with id > sinceSeq in ascending id
 // order. Used by the bus to replay history before live delivery.
 // sinceSeq = 0 returns the entire events table.

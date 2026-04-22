@@ -100,9 +100,18 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		// Activity feed can display them without sharing in-process memory.
 		// Best-effort: if the daemon is not reachable the MCP adapter still
 		// works normally — we just don't get TUI visibility.
+		//
+		// Subscribe live-only: get the current max event seq so the forwarder
+		// skips history replay. Replaying history causes a flood of stale
+		// events on every startup and blocks live event delivery during drain.
+		sinceSeq, seqErr := svc.Store.MaxEventSeq()
+		if seqErr != nil {
+			slog.Warn("mcp: could not read max event seq; forwarding from seq 0", "err", seqErr)
+			sinceSeq = 0
+		}
 		daemonListenAddr, daemonBaseURL := resolveDaemonAddr()
 		if daemonBaseURL != "" {
-			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonListenAddr, daemonBaseURL)
+			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonListenAddr, daemonBaseURL, sinceSeq)
 		}
 
 		return adapter.RunWithProxyOpts(cmd.Context(), expandCatalogPath(), opts)
@@ -142,8 +151,10 @@ type proxyEventForwardBody struct {
 // forwardProxyEventsToDaemon subscribes to the bus and POSTs every
 // tool_call_end event to daemonBaseURL/proxy/events. Runs until ctx is done.
 // listenAddr is used to construct a transport capable of dialing unix sockets.
-func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, daemonBaseURL string) {
-	ch, cancel, err := bus.Subscribe(ctx, events.Filter{})
+// sinceSeq should be set to the current max event seq so only live events
+// are forwarded — passing 0 causes full history replay on every startup.
+func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, daemonBaseURL string, sinceSeq int64) {
+	ch, cancel, err := bus.Subscribe(ctx, events.Filter{SinceSeq: sinceSeq})
 	if err != nil {
 		slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
 		return
