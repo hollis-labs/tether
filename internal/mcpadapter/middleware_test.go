@@ -124,14 +124,14 @@ func TestBuildMiddlewareChain_ErrorPropagated(t *testing.T) {
 	}
 }
 
-// ─── ArgsSchemaFP tests ───────────────────────────────────────────────────────
+// ─── argsSchemaFP tests ───────────────────────────────────────────────────────
 
 func TestArgsSchemaFP_Empty(t *testing.T) {
-	fp := ArgsSchemaFP(nil)
+	fp := argsSchemaFP(nil)
 	if fp != "00000000" {
 		t.Errorf("nil args FP = %q, want 00000000", fp)
 	}
-	fp = ArgsSchemaFP(json.RawMessage(""))
+	fp = argsSchemaFP(json.RawMessage(""))
 	if fp != "00000000" {
 		t.Errorf("empty args FP = %q, want 00000000", fp)
 	}
@@ -141,8 +141,8 @@ func TestArgsSchemaFP_SameKeysAreStable(t *testing.T) {
 	args1, _ := json.Marshal(map[string]any{"b": 2, "a": 1})
 	args2, _ := json.Marshal(map[string]any{"a": "x", "b": "y"})
 
-	fp1 := ArgsSchemaFP(args1)
-	fp2 := ArgsSchemaFP(args2)
+	fp1 := argsSchemaFP(args1)
+	fp2 := argsSchemaFP(args2)
 	if fp1 != fp2 {
 		t.Errorf("same keys different values: fp1=%q fp2=%q (should be equal)", fp1, fp2)
 	}
@@ -152,8 +152,8 @@ func TestArgsSchemaFP_DifferentKeysAreDifferent(t *testing.T) {
 	args1, _ := json.Marshal(map[string]any{"a": 1})
 	args2, _ := json.Marshal(map[string]any{"b": 1})
 
-	fp1 := ArgsSchemaFP(args1)
-	fp2 := ArgsSchemaFP(args2)
+	fp1 := argsSchemaFP(args1)
+	fp2 := argsSchemaFP(args2)
 	if fp1 == fp2 {
 		t.Errorf("different keys produced same FP: %q", fp1)
 	}
@@ -161,14 +161,14 @@ func TestArgsSchemaFP_DifferentKeysAreDifferent(t *testing.T) {
 
 func TestArgsSchemaFP_Length(t *testing.T) {
 	args, _ := json.Marshal(map[string]any{"key": "value"})
-	fp := ArgsSchemaFP(args)
+	fp := argsSchemaFP(args)
 	if len(fp) != 8 {
 		t.Errorf("FP length = %d, want 8", len(fp))
 	}
 }
 
 func TestArgsSchemaFP_NotAnObject(t *testing.T) {
-	fp := ArgsSchemaFP(json.RawMessage(`"not an object"`))
+	fp := argsSchemaFP(json.RawMessage(`"not an object"`))
 	if fp != "00000000" {
 		t.Errorf("non-object FP = %q, want 00000000", fp)
 	}

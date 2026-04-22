@@ -242,7 +242,8 @@ func (s *ToolCallFeedScreen) scrollToBottom() {
 }
 
 func (s *ToolCallFeedScreen) resizeViewport() {
-	const overhead = 1 + 1 + 2 // header + footer + body border
+	// overhead: 1 header row + 1 footer row + 2 border rows (top+bottom of body box)
+	const overhead = 1 + 1 + 2
 	h := s.height - overhead
 	if h < 3 {
 		h = 3

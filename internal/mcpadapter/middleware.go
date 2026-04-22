@@ -36,14 +36,8 @@ func buildMiddlewareChain(handler ToolCallHandler, mws []ToolCallMiddleware) Too
 	return handler
 }
 
-// ArgsSchemaFP is the exported helper for computing the args schema fingerprint.
-// It computes an 8-character hex SHA-256 of the sorted arg key names in a
-// JSON object. Arg values are never read or logged. See ADR 0021 §Decision 3.
-func ArgsSchemaFP(args json.RawMessage) string {
-	return argsSchemaFP(args)
-}
-
-// argsSchemaFP is the internal implementation.
+// argsSchemaFP computes an 8-character hex SHA-256 of the sorted arg key names
+// in a JSON object. Arg values are never read or logged. See ADR 0021 §Decision 3.
 func argsSchemaFP(args json.RawMessage) string {
 	if len(args) == 0 {
 		return "00000000"
