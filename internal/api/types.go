@@ -19,6 +19,7 @@ import (
 // warrant a shortcut endpoint in v0.0.2.
 type LaunchService interface {
 	CreateSession(launchID string) (LaunchResult, error)
+	CreateSessionWithBootPrompt(launchID, bootPrompt string) (LaunchResult, error)
 	LaunchSession(sessionID string) (LaunchResult, error)
 	ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error)
 	GetSession(id string) (*store.SessionRow, error)
@@ -50,6 +51,10 @@ type LaunchResult struct {
 
 type LaunchRequest struct {
 	Launch string `json:"launch"`
+	// BootPrompt, when non-empty, overrides the catalog's static boot prompt
+	// fragments. Used by `mux boot <profile_id>` to inject a dynamically
+	// generated boot prompt without modifying the catalog.
+	BootPrompt string `json:"boot_prompt,omitempty"`
 }
 
 type LaunchResponse struct {

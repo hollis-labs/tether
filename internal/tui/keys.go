@@ -29,6 +29,7 @@ type KeyMap struct {
 	ToggleLaunches      key.Binding
 	ToggleSessions      key.Binding
 	ToggleLogicalAgents key.Binding
+	ToggleBootProfiles  key.Binding
 }
 
 // DefaultKeyMap returns the scaffold bindings.
@@ -102,6 +103,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleLogicalAgents: key.NewBinding(
 			key.WithKeys("alt+6"),
 			key.WithHelp("⌥6", "runtime agents"),
+		),
+		ToggleBootProfiles: key.NewBinding(
+			key.WithKeys("alt+7"),
+			key.WithHelp("⌥7", "boot profiles"),
 		),
 	}
 }

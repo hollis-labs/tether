@@ -41,6 +41,10 @@ var defaultHTTPClient = &http.Client{Timeout: 15 * time.Second}
 type Profile struct {
 	ID          string `yaml:"id"`
 	DisplayName string `yaml:"display_name"`
+	// Launch is the catalog launch ID to use when this profile is used to
+	// start a session via `mux boot <profile_id>` or the TUI boot-launch flow.
+	// When empty, generate-boot only writes to stdout (no session created).
+	Launch string `yaml:"launch,omitempty"`
 	// Identity carries the agent identity fields (Agent Identity Model,
 	// chatgpt-research-01-2026-04-21.md). Populates §1 of the boot prompt.
 	Identity Identity              `yaml:"identity"`

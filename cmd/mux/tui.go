@@ -24,6 +24,9 @@ Press q or Ctrl-C to quit.`,
 		if err != nil {
 			return fmt.Errorf("load daemon config: %w", err)
 		}
-		return tui.Run(tui.Options{ListenAddr: cfg.ListenAddr})
+		return tui.Run(tui.Options{
+			ListenAddr:  cfg.ListenAddr,
+			CatalogRoot: expandCatalogPath(),
+		})
 	},
 }

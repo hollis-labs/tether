@@ -33,6 +33,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,8 +42,66 @@ import (
 	daemon "github.com/chrispian/agent-mux/internal/client"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/bootgen"
 	"github.com/chrispian/agent-mux/internal/config"
 )
+
+// ListBootProfiles loads boot profiles from the catalog root.
+// Returns an empty list when CatalogRoot is not set or the directory is missing.
+func (c *Client) ListBootProfiles() ([]bootgen.Profile, error) {
+	if c.CatalogRoot == "" {
+		return nil, nil
+	}
+	dir := c.CatalogRoot + "/boot-profiles"
+	profiles, err := bootgen.LoadProfiles(dir)
+	if err != nil {
+		return nil, fmt.Errorf("tui client: list boot profiles: %w", err)
+	}
+	out := make([]bootgen.Profile, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// BootAndLaunch generates the boot prompt for profileID and launches a
+// session using the profile's configured launch ID.
+func (c *Client) BootAndLaunch(ctx context.Context, profileID string) (CreateAndLaunchResponse, error) {
+	if c.CatalogRoot == "" {
+		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: catalog root not set")
+	}
+	dir := c.CatalogRoot + "/boot-profiles"
+	profiles, err := bootgen.LoadProfiles(dir)
+	if err != nil {
+		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: load profiles: %w", err)
+	}
+	p, ok := profiles[profileID]
+	if !ok {
+		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: boot profile %q not found", profileID)
+	}
+	if p.Launch == "" {
+		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: profile %q has no launch configured", profileID)
+	}
+	var buf bytes.Buffer
+	if err := bootgen.Generate(ctx, p, c.CatalogRoot, &buf); err != nil {
+		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: generate boot: %w", err)
+	}
+	return c.CreateAndLaunchWithBootPrompt(ctx, p.Launch, buf.String())
+}
+
+// CreateAndLaunchWithBootPrompt creates a session with a dynamically generated
+// boot prompt, launches it, and returns the result for auto-attach.
+func (c *Client) CreateAndLaunchWithBootPrompt(ctx context.Context, launchID, bootPrompt string) (CreateAndLaunchResponse, error) {
+	created, err := c.inner.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
+	if err != nil {
+		return CreateAndLaunchResponse{}, wrap("create session with boot prompt", err)
+	}
+	launched, err := c.inner.LaunchSession(ctx, created.ID)
+	if err != nil {
+		return CreateAndLaunchResponse{}, wrap("launch session", err)
+	}
+	return CreateAndLaunchResponse{SessionID: launched.ID}, nil
+}
 
 // ErrDaemonUnreachable is re-exported from the underlying client so
 // TUI callers don't need to import internal/client just to check for
@@ -52,7 +111,8 @@ var ErrDaemonUnreachable = daemon.ErrDaemonUnreachable
 // Client is the TUI's handle for the muxd daemon local API. Safe for
 // concurrent use from multiple tea.Cmd goroutines.
 type Client struct {
-	inner *daemon.Client
+	inner       *daemon.Client
+	CatalogRoot string // set by NewWithCatalog; enables in-process boot profile loading
 }
 
 // New constructs a Client pointing at the resolved daemon listen
@@ -60,6 +120,12 @@ type Client struct {
 // "tcp:127.0.0.1:9000").
 func New(listenAddr string) *Client {
 	return &Client{inner: daemon.New(listenAddr)}
+}
+
+// NewWithCatalog constructs a Client that also knows the catalog root,
+// enabling in-process operations like boot profile loading.
+func NewWithCatalog(listenAddr, catalogRoot string) *Client {
+	return &Client{inner: daemon.New(listenAddr), CatalogRoot: catalogRoot}
 }
 
 // Ping issues a short /health probe so the TUI can surface a

@@ -140,6 +140,9 @@ type funcService struct {
 func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
 	return s.createFn(id)
 }
+func (s *funcService) CreateSessionWithBootPrompt(id, _ string) (api.LaunchResult, error) {
+	return s.createFn(id)
+}
 func (s *funcService) LaunchSession(id string) (api.LaunchResult, error) {
 	return s.launchFn(id)
 }

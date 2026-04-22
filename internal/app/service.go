@@ -161,18 +161,33 @@ type Launched struct {
 // a retry.
 var ErrSessionNotCreated = fmt.Errorf("session is not in 'created' state")
 
+// CreateSessionWithBootPrompt creates a session like CreateSession but
+// replaces the catalog's static boot prompt with the provided text.
+// Used by `mux boot <profile_id>` to inject a dynamically generated
+// prompt without modifying the catalog.
+func (s *Service) CreateSessionWithBootPrompt(launchID, bootPrompt string) (*Launched, error) {
+	plan, err := s.Resolve(launchID)
+	if err != nil {
+		return nil, err
+	}
+	if bootPrompt != "" {
+		plan.BootPrompt = bootPrompt
+	}
+	return s.createSessionFromPlan(plan)
+}
+
 // CreateSession resolves the launch plan, materializes the workspace,
 // and persists the session row in state=created along with the plan
 // JSON. It does not start the runtime — call LaunchSession for that.
-// Splitting create from launch lets external clients inspect the
-// prepared session (plan, workspace paths) before committing to run,
-// and gives the HTTP surface the two-endpoint shape promised by the
-// context pack.
 func (s *Service) CreateSession(launchID string) (*Launched, error) {
 	plan, err := s.Resolve(launchID)
 	if err != nil {
 		return nil, err
 	}
+	return s.createSessionFromPlan(plan)
+}
+
+func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 	sessID := uuid.NewString()
 
 	wsRoot := plan.WriteHome

@@ -129,7 +129,13 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "launch id required")
 		return
 	}
-	res, err := s.Service.CreateSession(req.Launch)
+	var res LaunchResult
+	var err error
+	if req.BootPrompt != "" {
+		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)
+	} else {
+		res, err = s.Service.CreateSession(req.Launch)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return

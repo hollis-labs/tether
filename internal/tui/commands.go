@@ -32,6 +32,7 @@ func loadAllCatalogCmd(c *client.Client) tea.Cmd {
 		loadAgentsCmd(c),
 		loadProvidersCmd(c),
 		loadLaunchesCmd(c),
+		loadBootProfilesCmd(c),
 		loadSessionsCmd(c),
 		loadLogicalAgentsCmd(c),
 	)
@@ -84,6 +85,38 @@ func loadSessionsCmd(c *client.Client) tea.Cmd {
 			return catalogLoadedMsg{typ: RowTypeSessions, err: err}
 		}
 		return catalogLoadedMsg{typ: RowTypeSessions, rows: rowsFromSessions(ss)}
+	}
+}
+
+func loadBootProfilesCmd(c *client.Client) tea.Cmd {
+	return func() tea.Msg {
+		profiles, err := c.ListBootProfiles()
+		if err != nil {
+			return catalogLoadedMsg{typ: RowTypeBootProfiles, err: err}
+		}
+		rows := make([]BootProfileRow, 0, len(profiles))
+		for _, p := range profiles {
+			rows = append(rows, BootProfileRow{
+				ProfileID:   p.ID,
+				DisplayName: p.DisplayName,
+				LaunchID:    p.Launch,
+			})
+		}
+		return catalogLoadedMsg{typ: RowTypeBootProfiles, rows: rowsFromBootProfiles(rows)}
+	}
+}
+
+// bootResultMsg carries the outcome of a BootAndLaunch call.
+type bootResultMsg struct {
+	profileID string
+	sessionID string
+	err       error
+}
+
+func bootAndLaunchCmd(c *client.Client, profileID string) tea.Cmd {
+	return func() tea.Msg {
+		res, err := c.BootAndLaunch(context.Background(), profileID)
+		return bootResultMsg{profileID: profileID, sessionID: res.SessionID, err: err}
 	}
 }
 

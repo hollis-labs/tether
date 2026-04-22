@@ -80,6 +80,25 @@ func (r SessionRow) Subtitle() string {
 }
 func (r SessionRow) Record() any { return r.S }
 
+// BootProfileRow wraps a boot profile. Enter generates the boot prompt
+// and launches a session using the profile's configured launch ID.
+type BootProfileRow struct {
+	ProfileID   string
+	DisplayName string
+	LaunchID    string // catalog launch ID configured in the profile
+}
+
+func (r BootProfileRow) Type() RowType { return RowTypeBootProfiles }
+func (r BootProfileRow) ID() string    { return r.ProfileID }
+func (r BootProfileRow) Title() string { return displayName(r.DisplayName, r.ProfileID) }
+func (r BootProfileRow) Subtitle() string {
+	if r.LaunchID != "" {
+		return "boot     ·  launch: " + r.LaunchID
+	}
+	return "boot     ·  (no launch configured — stdout only)"
+}
+func (r BootProfileRow) Record() any { return r }
+
 // LogicalAgentRow wraps api.LogicalAgentSummary. Enter on this row type
 // drives the resume flow: POST /logical-agents/{id}/resume.
 type LogicalAgentRow struct{ LA api.LogicalAgentSummary }
@@ -134,6 +153,14 @@ func rowsFromSessions(ss []api.SessionDTO) []ResultRow {
 	out := make([]ResultRow, len(ss))
 	for i, s := range ss {
 		out[i] = SessionRow{S: s}
+	}
+	return out
+}
+
+func rowsFromBootProfiles(profiles []BootProfileRow) []ResultRow {
+	out := make([]ResultRow, len(profiles))
+	for i, p := range profiles {
+		out[i] = p
 	}
 	return out
 }
