@@ -101,9 +101,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		// Activity feed can display them without sharing in-process memory.
 		// Best-effort: if the daemon is not reachable the MCP adapter still
 		// works normally — we just don't get TUI visibility.
-		daemonBaseURL := resolveDaemonBaseURL()
+		daemonListenAddr, daemonBaseURL := resolveDaemonAddr()
 		if daemonBaseURL != "" {
-			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonBaseURL)
+			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonListenAddr, daemonBaseURL)
 		}
 
 		return adapter.RunWithProxyOpts(cmd.Context(), expandCatalogPath(), opts)
@@ -111,16 +111,18 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	return adapter.Run(cmd.Context())
 }
 
-// resolveDaemonBaseURL derives the daemon's HTTP base URL from the catalog
-// global config. Returns an empty string when the config cannot be loaded or
-// the daemon address is unknown.
-func resolveDaemonBaseURL() string {
+// resolveDaemonAddr derives the daemon's listen address and HTTP base URL from
+// the catalog global config. Returns empty strings when the config cannot be
+// loaded. listenAddr is needed to construct a socket-aware HTTP client for unix
+// transport; baseURL is the http:// prefix used in request URLs.
+func resolveDaemonAddr() (listenAddr, baseURL string) {
 	cfg, err := loadDaemonConfig(catalogPath)
 	if err != nil {
 		slog.Debug("mcp: cannot resolve daemon address for event forwarding", "err", err)
-		return ""
+		return "", ""
 	}
-	return daemon.BaseURL(config.Expand(cfg.ListenAddr))
+	addr := config.Expand(cfg.ListenAddr)
+	return addr, daemon.BaseURL(addr)
 }
 
 // proxyEventForwardBody is the POST /proxy/events request shape.
@@ -137,7 +139,8 @@ type proxyEventForwardBody struct {
 
 // forwardProxyEventsToDaemon subscribes to the bus and POSTs every
 // tool_call_end event to daemonBaseURL/proxy/events. Runs until ctx is done.
-func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, daemonBaseURL string) {
+// listenAddr is used to construct a transport capable of dialing unix sockets.
+func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, daemonBaseURL string) {
 	ch, cancel, err := bus.Subscribe(ctx, events.Filter{})
 	if err != nil {
 		slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
@@ -145,7 +148,10 @@ func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, daemonBaseU
 	}
 	defer cancel()
 
-	httpClient := &http.Client{Timeout: 3 * time.Second}
+	// Use daemon.DialHTTPClient so the transport can dial unix:// sockets.
+	// A plain http.Client cannot reach "http://unix/..." addresses.
+	httpClient := daemon.DialHTTPClient(listenAddr)
+	httpClient.Timeout = 3 * time.Second
 	url := daemonBaseURL + "/proxy/events"
 
 	for {
