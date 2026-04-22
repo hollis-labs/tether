@@ -1,15 +1,54 @@
 package tui
 
 import (
+	"context"
+	"time"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/palette"
 	"github.com/chrispian/agent-mux/internal/tui/panel"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 )
+
+// proxyEventReceiver is implemented by screens that want to receive the
+// root model's polled proxy event snapshot directly instead of polling
+// on their own. ToolCallFeedScreen implements this.
+type proxyEventReceiver interface {
+	screen.Screen
+	ReceiveProxyEvents(evts []api.ProxyEventDTO) (screen.Screen, tea.Cmd)
+}
+
+const proxyEventPollInterval = 500 * time.Millisecond
+const proxyEventLimit = 200
+
+// proxyEventTickMsg triggers a background poll of proxy events.
+type proxyEventTickMsg struct{}
+
+// proxyEventsLoadedMsg carries a fresh snapshot of proxy events.
+type proxyEventsLoadedMsg struct {
+	events []api.ProxyEventDTO
+}
+
+func proxyEventTickCmd() tea.Cmd {
+	return tea.Tick(proxyEventPollInterval, func(time.Time) tea.Msg {
+		return proxyEventTickMsg{}
+	})
+}
+
+func proxyEventPollCmd(c *client.Client) tea.Cmd {
+	if c == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		evs, _ := c.QueryProxyEvents(context.Background(), proxyEventLimit)
+		return proxyEventsLoadedMsg{events: evs}
+	}
+}
 
 // globalKeys holds the root-level key bindings that are handled by Model
 // before any message reaches the screen stack or the panel.
@@ -38,6 +77,15 @@ type Model struct {
 	globalKeys globalKeys
 	width      int
 	height     int
+
+	// tuiClient is kept here so the root model can poll proxy events
+	// independently of which screen is on top of the stack.
+	tuiClient *client.Client
+
+	// proxyEvents is the latest snapshot of proxy tool call events,
+	// polled globally every 500ms. The feed screen reads from this
+	// slice rather than issuing its own polling commands.
+	proxyEvents []api.ProxyEventDTO
 }
 
 // New constructs the root Model with MainScreen as the initial top-of-
@@ -57,11 +105,15 @@ func NewWithOptions(c *client.Client, opts Options) Model {
 		registry:   reg,
 		sidePanel:  panel.New(),
 		globalKeys: defaultGlobalKeys(),
+		tuiClient:  c,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.stack.Top().Init()
+	return tea.Batch(
+		m.stack.Top().Init(),
+		proxyEventTickCmd(), // start global proxy event poll immediately
+	)
 }
 
 // Update routes messages to the top screen, with the following exceptions:
@@ -91,6 +143,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screen.PushScreenMsg:
 		m.stack.Push(msg.Screen)
 		initCmd := msg.Screen.Init()
+		// If the pushed screen is a feed screen, immediately seed it with
+		// the current proxy event snapshot so it renders without waiting.
+		if feed, ok := m.stack.Top().(proxyEventReceiver); ok && len(m.proxyEvents) > 0 {
+			seeded, seedCmd := feed.ReceiveProxyEvents(m.proxyEvents)
+			m.stack.Replace(seeded)
+			initCmd = tea.Batch(initCmd, seedCmd)
+		}
 		if m.width > 0 && m.height > 0 {
 			sized, sizeCmd := m.stack.Top().Update(tea.WindowSizeMsg{Width: m.stackWidth(), Height: m.height})
 			m.stack.Replace(sized)
@@ -139,6 +198,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newTop, cmd := top.Update(stackMsg)
 		m.stack.Replace(newTop)
 		return m, cmd
+
+	case proxyEventTickMsg:
+		// Fire an async poll regardless of which screen is on top.
+		return m, proxyEventPollCmd(m.tuiClient)
+
+	case proxyEventsLoadedMsg:
+		if msg.events != nil {
+			m.proxyEvents = msg.events
+		}
+		// Forward the latest snapshot to the feed screen if it's currently on top.
+		top := m.stack.Top()
+		if feed, ok := top.(proxyEventReceiver); ok {
+			newTop, cmd := feed.ReceiveProxyEvents(m.proxyEvents)
+			m.stack.Replace(newTop)
+			return m, tea.Batch(proxyEventTickCmd(), cmd)
+		}
+		return m, proxyEventTickCmd()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)

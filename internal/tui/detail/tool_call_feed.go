@@ -1,7 +1,6 @@
 package detail
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -12,55 +11,29 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
 	"github.com/chrispian/agent-mux/internal/tui/screen"
 	"github.com/chrispian/agent-mux/internal/tui/theme"
 )
 
-const (
-	// feedMaxEvents is the maximum number of events kept in the feed buffer.
-	feedMaxEvents = 200
-
-	// feedPollInterval is how often the feed polls the daemon for new events.
-	feedPollInterval = 500 * time.Millisecond
-)
-
-// toolCallFeedTickMsg is emitted by the ticker to trigger a daemon poll.
-type toolCallFeedTickMsg struct{}
-
-// toolCallFeedLoadedMsg carries a fresh batch of events from the daemon.
-type toolCallFeedLoadedMsg struct {
-	events []api.ProxyEventDTO
-	err    error
-}
-
 // ToolCallFeedScreen is a live scrolling panel showing all proxied tool call
-// events. It polls the muxd daemon's GET /proxy/events endpoint every 500ms
-// and auto-scrolls to the latest event. Scrolling up pauses auto-scroll;
-// pressing 'f' or scrolling to the bottom resumes following.
+// events. Events are pushed to it by the root Model via ReceiveProxyEvents —
+// the screen does NO polling of its own. This keeps the event stream alive
+// regardless of whether the feed is currently the top screen.
 //
-// Events are sourced from the daemon database rather than an in-process store,
-// so the feed works correctly when the MCP adapter and TUI run as separate
-// processes (the normal opencode integration path).
-//
-// If the daemon is unreachable the feed shows a placeholder message; it
-// retries automatically on every poll tick.
+// Scrolling up pauses auto-scroll; pressing 'f' or reaching the bottom
+// resumes following.
 type ToolCallFeedScreen struct {
 	theme  theme.Theme
-	client *client.Client
 	body   viewport.Model
 	width  int
 	height int
 
-	// evts is the local snapshot rendered in View.
+	// evts is the current snapshot rendered in View.
 	evts []api.ProxyEventDTO
 
-	// following controls auto-scroll: true = pin to bottom on every tick.
+	// following controls auto-scroll: true = pin to bottom on new events.
 	following bool
-
-	// lastErr is the most recent polling error (nil = healthy).
-	lastErr error
 
 	keys feedKeys
 }
@@ -83,12 +56,11 @@ func defaultFeedKeys() feedKeys {
 	}
 }
 
-// NewToolCallFeedScreen creates a feed screen that polls c for events.
-// c may be nil (read-only empty view); useful for tests and offline TUI sessions.
-func NewToolCallFeedScreen(c *client.Client) *ToolCallFeedScreen {
+// NewToolCallFeedScreen creates a feed screen. Events are delivered via
+// ReceiveProxyEvents from the root Model rather than polled here.
+func NewToolCallFeedScreen() *ToolCallFeedScreen {
 	return &ToolCallFeedScreen{
 		theme:     theme.Default(),
-		client:    c,
 		body:      viewport.New(0, 0),
 		following: true,
 		keys:      defaultFeedKeys(),
@@ -109,26 +81,16 @@ func (s *ToolCallFeedScreen) KeyBindings() []key.Binding {
 	}
 }
 
-// Init implements screen.Screen — start the polling ticker.
-func (s *ToolCallFeedScreen) Init() tea.Cmd {
-	return s.tickCmd()
-}
+// Init implements screen.Screen. No polling is started here; the root
+// model drives updates via ReceiveProxyEvents.
+func (s *ToolCallFeedScreen) Init() tea.Cmd { return nil }
 
-func (s *ToolCallFeedScreen) tickCmd() tea.Cmd {
-	return tea.Tick(feedPollInterval, func(time.Time) tea.Msg {
-		return toolCallFeedTickMsg{}
-	})
-}
-
-// pollCmd returns a tea.Cmd that fetches events from the daemon asynchronously.
-func (s *ToolCallFeedScreen) pollCmd() tea.Cmd {
-	if s.client == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		evs, err := s.client.QueryProxyEvents(context.Background(), feedMaxEvents)
-		return toolCallFeedLoadedMsg{events: evs, err: err}
-	}
+// ReceiveProxyEvents is called by the root Model when a fresh event
+// snapshot arrives. The screen updates its local slice and redraws.
+func (s *ToolCallFeedScreen) ReceiveProxyEvents(evts []api.ProxyEventDTO) (screen.Screen, tea.Cmd) {
+	s.evts = evts
+	s.refreshBody()
+	return s, nil
 }
 
 // Update implements screen.Screen.
@@ -139,19 +101,6 @@ func (s *ToolCallFeedScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		s.resizeViewport()
 		s.refreshBody()
 		return s, nil
-
-	case toolCallFeedTickMsg:
-		// Fire an async poll; next tick will follow in the loaded handler.
-		return s, s.pollCmd()
-
-	case toolCallFeedLoadedMsg:
-		s.lastErr = m.err
-		if m.err == nil && m.events != nil {
-			s.evts = m.events
-		}
-		s.refreshBody()
-		// Schedule the next tick after the load completes (back-pressure).
-		return s, s.tickCmd()
 
 	case tea.KeyMsg:
 		switch {
@@ -206,14 +155,7 @@ func (s *ToolCallFeedScreen) refreshBody() {
 		return
 	}
 	var sb strings.Builder
-
-	if s.client == nil {
-		sb.WriteString("\n  No daemon client configured.\n\n")
-		sb.WriteString("  Start mux daemon and open the TUI to see events.\n")
-	} else if s.lastErr != nil {
-		sb.WriteString("\n  Error polling daemon: " + s.lastErr.Error() + "\n")
-		sb.WriteString("  Retrying…\n")
-	} else if len(s.evts) == 0 {
+	if len(s.evts) == 0 {
 		sb.WriteString("\n  No tool call events yet.\n\n")
 		sb.WriteString("  Make a tool call through the MCP relay (mux mcp --proxy --broker)\n")
 		sb.WriteString("  to see events appear here in real time.\n")
@@ -223,7 +165,6 @@ func (s *ToolCallFeedScreen) refreshBody() {
 			sb.WriteByte('\n')
 		}
 	}
-
 	s.body.SetContent(sb.String())
 	if s.following {
 		s.scrollToBottom()
@@ -272,9 +213,7 @@ func (s *ToolCallFeedScreen) renderEventRow(ev api.ProxyEventDTO) string {
 	return row
 }
 
-func (s *ToolCallFeedScreen) scrollToBottom() {
-	s.body.GotoBottom()
-}
+func (s *ToolCallFeedScreen) scrollToBottom() { s.body.GotoBottom() }
 
 func (s *ToolCallFeedScreen) resizeViewport() {
 	const overhead = 1 + 1 + 2
@@ -295,11 +234,7 @@ func (s *ToolCallFeedScreen) headerText() string {
 	if !s.following {
 		following = "  [auto-scroll paused — press f to resume]"
 	}
-	status := ""
-	if s.lastErr != nil {
-		status = "  [daemon error]"
-	}
-	return fmt.Sprintf("Tool Call Feed — %d events%s%s", len(s.evts), following, status)
+	return fmt.Sprintf("Tool Call Feed — %d events%s", len(s.evts), following)
 }
 
 func (s *ToolCallFeedScreen) renderFooter() string {

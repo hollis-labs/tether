@@ -267,7 +267,7 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		// 'e' — open the Tool Call Feed (Phase 2 observability).
 		// Only active when an event store is wired (proxy mode with --proxy flag).
 		if msg.Type == tea.KeyRunes && string(msg.Runes) == "e" && !m.search.Focused() {
-			return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
+			return m, screen.Push(detail.NewToolCallFeedScreen())
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
@@ -286,7 +286,7 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
 			if m.currentSoloChip() == RowTypeActivity {
-				return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
+				return m, screen.Push(detail.NewToolCallFeedScreen())
 			}
 			m.recomputeVisible()
 			m.refreshBody()
@@ -295,7 +295,7 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if key.Matches(msg, m.keys.CycleChipBack) {
 			m.cycleSoloChip(false)
 			if m.currentSoloChip() == RowTypeActivity {
-				return m, screen.Push(detail.NewToolCallFeedScreen(m.client))
+				return m, screen.Push(detail.NewToolCallFeedScreen())
 			}
 			m.recomputeVisible()
 			m.refreshBody()
