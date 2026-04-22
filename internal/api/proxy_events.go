@@ -120,10 +120,11 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid request body: "+err.Error())
 		return
 	}
-	if req.Server == "" || req.ToolName == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "server and tool_name are required")
+	if req.ToolName == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "tool_name is required")
 		return
 	}
+	// Server may be empty for native mux tools — store it as-is.
 
 	ts := time.Now().UTC()
 	if req.Timestamp != "" {

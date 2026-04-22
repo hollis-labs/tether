@@ -43,8 +43,12 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest,
 	sessionID := sessionIDFromContext(ctx)
 
 	// Look up the server ID for this tool from the registry via context, if available.
-	// If not set, leave blank — the router will have it.
+	// Native mux tools never set WithServerID, so default to "mux" to keep the
+	// TUI feed readable and satisfy the POST /proxy/events tool_name-only validation.
 	serverID := serverIDFromContext(ctx)
+	if serverID == "" {
+		serverID = "mux"
+	}
 
 	m.publish(ctx, events.EventTypeToolCallStart, events.ToolCallEvent{
 		SessionID:    sessionID,
