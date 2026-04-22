@@ -94,12 +94,21 @@ func loadBootProfilesCmd(c *client.Client) tea.Cmd {
 		if err != nil {
 			return catalogLoadedMsg{typ: RowTypeBootProfiles, err: err}
 		}
+		// Build launchID → providerID map so the boot row can show which
+		// harness (claude-stream, opencode, …) the profile will use.
+		providerByLaunch := map[string]string{}
+		if launches, err := c.ListLaunches(context.Background()); err == nil {
+			for _, l := range launches {
+				providerByLaunch[l.ID] = l.Provider
+			}
+		}
 		rows := make([]BootProfileRow, 0, len(profiles))
 		for _, p := range profiles {
 			rows = append(rows, BootProfileRow{
 				ProfileID:   p.ID,
 				DisplayName: p.DisplayName,
 				LaunchID:    p.Launch,
+				ProviderID:  providerByLaunch[p.Launch],
 			})
 		}
 		return catalogLoadedMsg{typ: RowTypeBootProfiles, rows: rowsFromBootProfiles(rows)}

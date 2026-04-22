@@ -32,10 +32,11 @@ const (
 	RowTypeSessions      RowType = "sessions"
 	RowTypeLogicalAgents RowType = "runtime-agents"
 	RowTypeBootProfiles  RowType = "boot-profiles"
+	RowTypeActivity      RowType = "activity"
 )
 
 // chipOrder is the left-to-right rendering order of the chip row,
-// matched 1:1 to Alt+1..6 bindings.
+// matched 1:1 to Alt+1..N bindings.
 var chipOrder = []RowType{
 	RowTypeProjects,
 	RowTypeAgents,
@@ -44,6 +45,7 @@ var chipOrder = []RowType{
 	RowTypeBootProfiles,
 	RowTypeSessions,
 	RowTypeLogicalAgents,
+	RowTypeActivity,
 }
 
 // MainScreen is the results-list / launcher pane — the first screen
@@ -103,6 +105,14 @@ func NewMainScreen(c *client.Client) MainScreen {
 		rowsByType[t] = nil
 	}
 
+	// Activity tab has no catalog rows — exclude from load count.
+	catalogChips := 0
+	for _, t := range chipOrder {
+		if t != RowTypeActivity {
+			catalogChips++
+		}
+	}
+
 	return MainScreen{
 		keys:          DefaultKeyMap(),
 		theme:         theme.Default(),
@@ -111,7 +121,7 @@ func NewMainScreen(c *client.Client) MainScreen {
 		body:          vp,
 		filters:       filters,
 		rowsByType:    rowsByType,
-		loadRemaining: len(chipOrder),
+		loadRemaining: catalogChips,
 	}
 }
 
@@ -288,12 +298,18 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.CycleChip) {
 			m.cycleSoloChip(true)
+			if m.currentSoloChip() == RowTypeActivity && m.eventStore != nil {
+				return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
+			}
 			m.recomputeVisible()
 			m.refreshBody()
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.CycleChipBack) {
 			m.cycleSoloChip(false)
+			if m.currentSoloChip() == RowTypeActivity && m.eventStore != nil {
+				return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
+			}
 			m.recomputeVisible()
 			m.refreshBody()
 			return m, nil
@@ -512,10 +528,10 @@ func (m MainScreen) handleChipToggle(msg tea.KeyMsg) (bool, MainScreen) {
 }
 
 // resize recomputes sub-model dimensions given the current terminal
-// size. Budget: bordered search 3 rows, chips 1, body border 2,
-// footer 1 hint row + 1 row per active toast. Body takes what's left.
+// size. Budget: bordered search 3 rows, chips 2 (catalog row + activity row),
+// body border 2, footer 1 hint row + 1 row per active toast. Body takes what's left.
 func (m *MainScreen) resize() {
-	base := 3 + 1 + 1 + 2
+	base := 3 + 2 + 1 + 2
 	footerToasts := len(m.toasts.items())
 	bodyHeight := m.height - base - footerToasts
 	if bodyHeight < 3 {
@@ -535,7 +551,7 @@ func (m *MainScreen) resize() {
 func (m *MainScreen) recomputeVisible() {
 	pool := make([]ResultRow, 0, 64)
 	for _, t := range chipOrder {
-		if !m.filters[t] {
+		if !m.filters[t] || t == RowTypeActivity {
 			continue
 		}
 		pool = append(pool, m.rowsByType[t]...)
@@ -591,7 +607,17 @@ func (m *MainScreen) refreshBody() {
 		return
 	}
 
-	if m.loadRemaining == len(chipOrder) && len(m.visible) == 0 {
+	if m.currentSoloChip() == RowTypeActivity {
+		if m.eventStore != nil {
+			m.body.SetContent("\n  Activity feed active — tool call events stream here.\n")
+		} else {
+			m.body.SetContent("\n  Activity feed — start opencode with mux as MCP provider (mux mcp --proxy) to stream tool call events here.\n")
+		}
+		return
+	}
+
+	catalogCount := len(chipOrder) - 1 // Activity has no catalog load
+	if m.loadRemaining == catalogCount && len(m.visible) == 0 {
 		m.body.SetContent(placeholderBody())
 		return
 	}
@@ -634,8 +660,7 @@ func (m MainScreen) SelectedRow() ResultRow {
 }
 
 func (m MainScreen) renderRowLine(r ResultRow, selected bool) string {
-	typeTag := fmt.Sprintf("[%s]", r.Type())
-	body := fmt.Sprintf("%-11s %-30s  %s", typeTag, truncate(r.Title(), 30), r.Subtitle())
+	body := fmt.Sprintf("%-2s  %-32s  %s", rowTypeIcon(r.Type()), truncate(r.Title(), 32), r.Subtitle())
 	if selected {
 		width := m.body.Width - 4
 		if width < 20 {
@@ -661,16 +686,27 @@ func (m MainScreen) renderSearch() string {
 }
 
 func (m MainScreen) renderChips() string {
-	out := make([]string, 0, len(chipOrder))
+	catalog := make([]string, 0, len(chipOrder))
+	var activityChip string
 	for i, t := range chipOrder {
 		label := fmt.Sprintf("%s (⌥%d)", chipLabel(t), i+1)
+		var rendered string
 		if m.filters[t] {
-			out = append(out, m.theme.ChipOn().Render(label))
+			rendered = m.theme.ChipOn().Render(label)
 		} else {
-			out = append(out, m.theme.ChipOff().Render(label))
+			rendered = m.theme.ChipOff().Render(label)
+		}
+		if t == RowTypeActivity {
+			activityChip = rendered
+		} else {
+			catalog = append(catalog, rendered)
 		}
 	}
-	return m.theme.Frame().Render(strings.Join(out, ""))
+	row1 := strings.Join(catalog, "")
+	if activityChip != "" {
+		return m.theme.Frame().Render(row1 + "\n" + activityChip)
+	}
+	return m.theme.Frame().Render(row1)
 }
 
 func (m MainScreen) renderBody() string {
@@ -728,6 +764,24 @@ func (m MainScreen) keyHint(b key.Binding) string {
 }
 
 func chipLabel(t RowType) string {
+	switch t {
+	case RowTypeActivity:
+		return "Activity ⚡"
+	case RowTypeProjects:
+		return "Proj"
+	case RowTypeAgents:
+		return "Agents"
+	case RowTypeProviders:
+		return "Providers"
+	case RowTypeLaunches:
+		return "Launches"
+	case RowTypeBootProfiles:
+		return "Boot"
+	case RowTypeSessions:
+		return "Sessions"
+	case RowTypeLogicalAgents:
+		return "Runtime"
+	}
 	return strings.ToUpper(string(t)[:1]) + string(t)[1:]
 }
 

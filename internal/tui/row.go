@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/chrispian/agent-mux/internal/api"
@@ -20,16 +19,37 @@ type ResultRow interface {
 	Record() any
 }
 
+// rowTypeIcon returns a compact 2-char type indicator for the row prefix column.
+func rowTypeIcon(t RowType) string {
+	switch t {
+	case RowTypeBootProfiles:
+		return "B>"
+	case RowTypeLaunches:
+		return "L>"
+	case RowTypeSessions:
+		return "S "
+	case RowTypeLogicalAgents:
+		return "R "
+	case RowTypeAgents:
+		return "A "
+	case RowTypeProviders:
+		return "P "
+	case RowTypeProjects:
+		return "@ "
+	case RowTypeActivity:
+		return "! "
+	}
+	return "  "
+}
+
 // ProjectRow wraps config.Project.
 type ProjectRow struct{ P config.Project }
 
-func (r ProjectRow) Type() RowType { return RowTypeProjects }
-func (r ProjectRow) ID() string    { return r.P.ID }
-func (r ProjectRow) Title() string { return displayName(r.P.Name, r.P.ID) }
-func (r ProjectRow) Subtitle() string {
-	return "project  ·  " + trimPath(r.P.RepoRoot)
-}
-func (r ProjectRow) Record() any { return r.P }
+func (r ProjectRow) Type() RowType    { return RowTypeProjects }
+func (r ProjectRow) ID() string       { return r.P.ID }
+func (r ProjectRow) Title() string    { return displayName(r.P.Name, r.P.ID) }
+func (r ProjectRow) Subtitle() string { return trimPath(r.P.RepoRoot) }
+func (r ProjectRow) Record() any      { return r.P }
 
 // AgentRow wraps config.Agent.
 type AgentRow struct{ A config.Agent }
@@ -40,22 +60,20 @@ func (r AgentRow) Title() string { return displayName(r.A.Name, r.A.ID) }
 func (r AgentRow) Subtitle() string {
 	roles := strings.Join(r.A.Roles, ", ")
 	if roles == "" {
-		roles = "—"
+		return "—"
 	}
-	return "agent    ·  roles: " + roles
+	return roles
 }
 func (r AgentRow) Record() any { return r.A }
 
 // ProviderRow wraps config.Provider.
 type ProviderRow struct{ P config.Provider }
 
-func (r ProviderRow) Type() RowType { return RowTypeProviders }
-func (r ProviderRow) ID() string    { return r.P.ID }
-func (r ProviderRow) Title() string { return r.P.ID }
-func (r ProviderRow) Subtitle() string {
-	return "provider ·  type: " + r.P.Type
-}
-func (r ProviderRow) Record() any { return r.P }
+func (r ProviderRow) Type() RowType    { return RowTypeProviders }
+func (r ProviderRow) ID() string       { return r.P.ID }
+func (r ProviderRow) Title() string    { return r.P.ID }
+func (r ProviderRow) Subtitle() string { return r.P.Type + "  ·  " + r.P.Command }
+func (r ProviderRow) Record() any      { return r.P }
 
 // LaunchRow wraps config.Launch. Enter on this row type drives the
 // quick-launch flow in T-05.
@@ -65,7 +83,7 @@ func (r LaunchRow) Type() RowType { return RowTypeLaunches }
 func (r LaunchRow) ID() string    { return r.L.ID }
 func (r LaunchRow) Title() string { return r.L.ID }
 func (r LaunchRow) Subtitle() string {
-	return fmt.Sprintf("launch   ·  %s / %s via %s", r.L.Project, r.L.Agent, r.L.Provider)
+	return r.L.Project + " / " + r.L.Agent + "  via  " + r.L.Provider
 }
 func (r LaunchRow) Record() any { return r.L }
 
@@ -76,7 +94,7 @@ func (r SessionRow) Type() RowType { return RowTypeSessions }
 func (r SessionRow) ID() string    { return r.S.ID }
 func (r SessionRow) Title() string { return shortID(r.S.ID) }
 func (r SessionRow) Subtitle() string {
-	return fmt.Sprintf("session  ·  %s  ·  %s / %s", r.S.State, r.S.ProjectID, r.S.LogicalAgentID)
+	return r.S.State + "  ·  " + r.S.ProjectID
 }
 func (r SessionRow) Record() any { return r.S }
 
@@ -86,16 +104,20 @@ type BootProfileRow struct {
 	ProfileID   string
 	DisplayName string
 	LaunchID    string // catalog launch ID configured in the profile
+	ProviderID  string // provider resolved from the launch (empty if no launch)
 }
 
 func (r BootProfileRow) Type() RowType { return RowTypeBootProfiles }
 func (r BootProfileRow) ID() string    { return r.ProfileID }
 func (r BootProfileRow) Title() string { return displayName(r.DisplayName, r.ProfileID) }
 func (r BootProfileRow) Subtitle() string {
-	if r.LaunchID != "" {
-		return "boot     ·  launch: " + r.LaunchID
+	if r.LaunchID == "" {
+		return "(stdout only — add launch: to profile)"
 	}
-	return "boot     ·  (no launch configured — stdout only)"
+	if r.ProviderID != "" {
+		return r.ProviderID + "  ·  " + r.LaunchID
+	}
+	return r.LaunchID
 }
 func (r BootProfileRow) Record() any { return r }
 
@@ -108,9 +130,9 @@ func (r LogicalAgentRow) ID() string    { return r.LA.ID }
 func (r LogicalAgentRow) Title() string { return displayName(r.LA.Name, r.LA.ID) }
 func (r LogicalAgentRow) Subtitle() string {
 	if r.LA.LaunchID != "" {
-		return "runtime  ·  launch: " + r.LA.LaunchID + "  (resume available)"
+		return r.LA.LaunchID + "  (resume)"
 	}
-	return "runtime  ·  no prior launch"
+	return "no prior launch"
 }
 func (r LogicalAgentRow) Record() any { return r.LA }
 
