@@ -72,13 +72,29 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}
 
-	router := NewProxyRouterWithMiddleware(registry, mws...)
-
 	s := server.NewMCPServer(
 		"agent-mux",
 		version,
 		server.WithToolCapabilities(true),
 	)
+
+	// Register LoggingMiddleware as a server-level tool handler middleware so
+	// that ALL tool calls — native mux tools and proxied upstream tools alike —
+	// emit tool_call_start / tool_call_end events. This covers native tools
+	// (mux_health, mux_session_list, mux_message_*, etc.) which previously
+	// bypassed the ProxyRouter and were never recorded.
+	//
+	// Because the server-level middleware now observes every call, we build a
+	// plain router (no middleware) for upstream dispatch to avoid double-logging.
+	if len(mws) > 0 {
+		s.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+			chain := buildMiddlewareChain(ToolCallHandler(next), mws)
+			return server.ToolHandlerFunc(chain)
+		})
+	}
+
+	// Plain router — no middleware; observation is handled server-side above.
+	plainRouter := NewProxyRouter(registry)
 
 	// Register native mux tools first (always present regardless of mode).
 	a.registerTools(s)
@@ -103,7 +119,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
 
 		a.registerDiscoverTool(s, idx)
-		a.registerCallTool(s, router)
+		a.registerCallTool(s, plainRouter)
 	} else {
 		// ── Flat proxy mode (default) ─────────────────────────────────────────
 		// Register every upstream tool directly. Suitable for small catalogs
@@ -117,7 +133,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 			}
 			slog.Debug("mcp-proxy: registering proxied tool", "tool", def.Name, "server", rt.ServerID)
 			s.AddTool(def, func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return router.Handle(handlerCtx, req)
+				return plainRouter.Handle(handlerCtx, req)
 			})
 		}
 	}
