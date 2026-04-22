@@ -10,9 +10,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registeredTool associates a tool definition with its upstream source.
+// RegisteredTool associates a tool definition with its upstream source.
 // Client is nil for native mux tools.
-type registeredTool struct {
+type RegisteredTool struct {
 	Definition mcp.Tool
 	ServerID   string // upstream server ID; empty string = native tool
 	Client     mcpclient.MCPClient
@@ -21,13 +21,13 @@ type registeredTool struct {
 // ToolRegistry holds the merged tool set: native mux tools plus all proxied
 // upstream tools. It is safe for concurrent reads and writes.
 type ToolRegistry struct {
-	tools map[string]registeredTool
+	tools map[string]RegisteredTool
 	mu    sync.RWMutex
 }
 
 // NewToolRegistry creates an empty registry.
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{tools: make(map[string]registeredTool)}
+	return &ToolRegistry{tools: make(map[string]RegisteredTool)}
 }
 
 // RegisterNative bulk-registers native mux tools (serverID = "", client = nil).
@@ -35,7 +35,7 @@ func (r *ToolRegistry) RegisterNative(tools []mcp.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, t := range tools {
-		r.tools[t.Name] = registeredTool{Definition: t}
+		r.tools[t.Name] = RegisteredTool{Definition: t}
 	}
 }
 
@@ -60,7 +60,7 @@ func (r *ToolRegistry) Register(serverID string, client mcpclient.MCPClient, too
 			disambig.Name = key
 			t = disambig
 		}
-		r.tools[key] = registeredTool{
+		r.tools[key] = RegisteredTool{
 			Definition: t,
 			ServerID:   serverID,
 			Client:     client,
@@ -68,8 +68,8 @@ func (r *ToolRegistry) Register(serverID string, client mcpclient.MCPClient, too
 	}
 }
 
-// Lookup returns the registeredTool for the given tool name (thread-safe).
-func (r *ToolRegistry) Lookup(name string) (registeredTool, bool) {
+// Lookup returns the RegisteredTool for the given tool name (thread-safe).
+func (r *ToolRegistry) Lookup(name string) (RegisteredTool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rt, ok := r.tools[name]

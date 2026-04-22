@@ -63,10 +63,12 @@ func registerToolCallEventsTool(s *server.MCPServer, store *ToolCallEventStore) 
 			f.Limit = limit
 
 			if since := str(req, "since"); since != "" {
-				t, err := time.Parse(time.RFC3339, since)
-				if err != nil {
-					return toolError("invalid_request",
-						"since must be an RFC3339 timestamp: "+err.Error()), nil
+				t, parsedErr := time.Parse(time.RFC3339, since)
+				if parsedErr != nil {
+					// toolError returns a non-nil *CallToolResult with IsError:true;
+					// the nil is the Go error return — correct MCP pattern.
+					return toolError("invalid_request", //nolint:nilerr
+						"since must be an RFC3339 timestamp: "+parsedErr.Error()), nil
 				}
 				f.SinceTimestamp = t
 			}

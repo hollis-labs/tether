@@ -13,9 +13,8 @@ import (
 
 // recordingMiddleware records whether it was called and in which order.
 type recordingMiddleware struct {
-	id      int
-	called  *[]int
-	callCtx *[]context.Context
+	id     int
+	called *[]int
 }
 
 func (m *recordingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest, next ToolCallHandler) (*mcp.CallToolResult, error) {

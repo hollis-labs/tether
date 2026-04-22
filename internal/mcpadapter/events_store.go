@@ -36,22 +36,22 @@ type ToolCallEventFilter struct {
 // ToolCallEventStore is an in-memory ring buffer of ToolCallEnd events.
 // It is safe for concurrent use. See ADR 0021 §Decision 2.
 type ToolCallEventStore struct {
-	mu   sync.RWMutex
-	buf  []events.ToolCallEvent
-	cap  int
-	head int // index of the oldest slot (circular)
-	size int // number of entries currently stored
+	mu       sync.RWMutex
+	buf      []events.ToolCallEvent
+	capacity int
+	head     int // index of the oldest slot (circular)
+	size     int // number of entries currently stored
 }
 
 // NewToolCallEventStore creates a store with the given ring buffer capacity.
-// Panics when cap <= 0.
-func NewToolCallEventStore(cap int) *ToolCallEventStore {
-	if cap <= 0 {
+// Panics when capacity <= 0.
+func NewToolCallEventStore(capacity int) *ToolCallEventStore {
+	if capacity <= 0 {
 		panic("mcpadapter: ToolCallEventStore capacity must be > 0")
 	}
 	return &ToolCallEventStore{
-		buf: make([]events.ToolCallEvent, cap),
-		cap: cap,
+		buf:      make([]events.ToolCallEvent, capacity),
+		capacity: capacity,
 	}
 }
 
@@ -61,13 +61,13 @@ func (s *ToolCallEventStore) Add(ev events.ToolCallEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	slot := (s.head + s.size) % s.cap
+	slot := (s.head + s.size) % s.capacity
 	s.buf[slot] = ev
-	if s.size < s.cap {
+	if s.size < s.capacity {
 		s.size++
 	} else {
 		// Ring is full — advance head to drop the oldest entry.
-		s.head = (s.head + 1) % s.cap
+		s.head = (s.head + 1) % s.capacity
 	}
 }
 
@@ -79,7 +79,7 @@ func (s *ToolCallEventStore) Query(f ToolCallEventFilter) []events.ToolCallEvent
 
 	out := make([]events.ToolCallEvent, 0, s.size)
 	for i := 0; i < s.size; i++ {
-		idx := (s.head + i) % s.cap
+		idx := (s.head + i) % s.capacity
 		ev := s.buf[idx]
 
 		if f.ErrorsOnly && ev.OK {

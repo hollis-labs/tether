@@ -13,7 +13,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/events"
 )
 
-// ProxyOptions configures RunWithProxy behaviour for Phase 2+.
+// ProxyOptions configures RunWithProxy behavior for Phase 2+.
 type ProxyOptions struct {
 	// Bus, when non-nil, enables the LoggingMiddleware that emits
 	// tool_call_start / tool_call_end events for every proxied call.
@@ -119,27 +119,18 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 					"Returns each server's ID, transport, connection status, tool count, and tags.",
 			),
 		),
-		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			live := pool.StatusSummary()
 			liveByID := make(map[string]ServerStatus, len(live))
 			for _, s := range live {
 				liveByID[s.ID] = s
 			}
 
-			// Merge live status with disabled entries.
-			type serverBrief struct {
-				ID        string   `json:"id"`
-				Transport string   `json:"transport"`
-				Status    string   `json:"status"`
-				Error     string   `json:"error,omitempty"`
-				ToolCount int      `json:"tool_count"`
-				Tags      []string `json:"tags,omitempty"`
-			}
-
-			out := make([]serverBrief, 0, len(allEntries))
+			// Merge live status with disabled entries into a uniform ServerStatus slice.
+			out := make([]ServerStatus, 0, len(allEntries))
 			for _, e := range allEntries {
 				if !e.IsEnabled() {
-					out = append(out, serverBrief{
+					out = append(out, ServerStatus{
 						ID:        e.ID,
 						Transport: e.Transport,
 						Status:    "disabled",
@@ -148,14 +139,7 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 					continue
 				}
 				if ls, ok := liveByID[e.ID]; ok {
-					out = append(out, serverBrief{
-						ID:        ls.ID,
-						Transport: ls.Transport,
-						Status:    ls.Status,
-						Error:     ls.Error,
-						ToolCount: ls.ToolCount,
-						Tags:      ls.Tags,
-					})
+					out = append(out, ls)
 				}
 			}
 

@@ -13,7 +13,7 @@ const EventTypeToolCallStart = "tool_call_start"
 const EventTypeToolCallEnd = "tool_call_end"
 
 // ToolCallEvent is the structured payload emitted for every proxied tool call.
-// It is serialised to JSON and stored in Event.PayloadJSON when published to
+// It is serialized to JSON and stored in Event.PayloadJSON when published to
 // the Bus. Consumers that want the typed struct should unmarshal PayloadJSON.
 //
 // Privacy note: ArgsSchemaFP is derived from arg key names only — never from

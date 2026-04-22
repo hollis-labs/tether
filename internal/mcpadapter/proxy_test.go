@@ -62,7 +62,7 @@ func (m *mockClient) SetLevel(ctx context.Context, req mcp.SetLevelRequest) erro
 func (m *mockClient) Complete(ctx context.Context, req mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 	return nil, nil
 }
-func (m *mockClient) Close() error { return nil }
+func (m *mockClient) Close() error                                         { return nil }
 func (m *mockClient) OnNotification(handler func(mcp.JSONRPCNotification)) {}
 
 var _ mcpclient.MCPClient = (*mockClient)(nil)

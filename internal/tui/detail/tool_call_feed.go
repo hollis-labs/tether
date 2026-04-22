@@ -133,10 +133,10 @@ func (s *ToolCallFeedScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			return s, nil
 		case key.Matches(m, s.keys.ScrollUp):
 			s.following = false
-			s.body.LineUp(3)
+			s.body.ScrollUp(3)
 			return s, nil
 		case key.Matches(m, s.keys.ScrollDn):
-			s.body.LineDown(3)
+			s.body.ScrollDown(3)
 			// Resume following when the user scrolls all the way to the bottom.
 			if s.body.AtBottom() {
 				s.following = true
@@ -144,10 +144,10 @@ func (s *ToolCallFeedScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			return s, nil
 		case m.Type == tea.KeyPgUp:
 			s.following = false
-			s.body.HalfViewUp()
+			s.body.HalfPageUp()
 			return s, nil
 		case m.Type == tea.KeyPgDown:
-			s.body.HalfViewDown()
+			s.body.HalfPageDown()
 			if s.body.AtBottom() {
 				s.following = true
 			}

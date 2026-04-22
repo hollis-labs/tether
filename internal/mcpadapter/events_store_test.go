@@ -108,8 +108,8 @@ func TestToolCallEventStore_Limit(t *testing.T) {
 
 // TestToolCallEventStore_RingBuffer verifies oldest events are evicted when full.
 func TestToolCallEventStore_RingBuffer(t *testing.T) {
-	const cap = 5
-	s := NewToolCallEventStore(cap)
+	const capacity = 5
+	s := NewToolCallEventStore(capacity)
 
 	// Add 10 events (double capacity).
 	for i := 0; i < 10; i++ {
@@ -117,8 +117,8 @@ func TestToolCallEventStore_RingBuffer(t *testing.T) {
 	}
 
 	all := s.Query(ToolCallEventFilter{})
-	if len(all) != cap {
-		t.Errorf("expected %d events (ring cap), got %d", cap, len(all))
+	if len(all) != capacity {
+		t.Errorf("expected %d events (ring capacity), got %d", capacity, len(all))
 	}
 }
 
