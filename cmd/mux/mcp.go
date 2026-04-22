@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/mcpadapter"
@@ -121,7 +120,10 @@ func resolveDaemonAddr() (listenAddr, baseURL string) {
 		slog.Debug("mcp: cannot resolve daemon address for event forwarding", "err", err)
 		return "", ""
 	}
-	addr := config.Expand(cfg.ListenAddr)
+	// cfg.ListenAddr is already tilde-expanded by daemonConfigFromCatalog →
+	// expandListenAddr. Do NOT call config.Expand again — it calls filepath.Abs
+	// which corrupts "unix:/path" into "<cwd>/unix:/path".
+	addr := cfg.ListenAddr
 	return addr, daemon.BaseURL(addr)
 }
 
