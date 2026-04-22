@@ -33,6 +33,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Configure private module access
+        # hollis-labs/go-messaging and hollis-labs/go-providers are private.
+        # GH_PAT must be a PAT with `repo` scope added as a repository secret.
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          go env -w GONOSUMCHECK="github.com/hollis-labs/*"
+          go env -w GOPRIVATE="github.com/hollis-labs/*"
+
       - name: Install developer tools
         run: make tools-install
 
