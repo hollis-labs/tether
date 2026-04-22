@@ -59,24 +59,23 @@ func BootWith(bootPrompt, providerID, command, workDir string) error {
 	}
 }
 
-// agentName is the opencode agent key used in the ephemeral config. It must
-// match an agent that opencode recognizes from any loaded config — using a
-// globally-defined name ensures our override takes effect rather than falling
-// back to the global default silently.
-const agentName = "orchestrator"
-
 // bootOpencode creates an ephemeral OPENCODE_CONFIG_DIR and a launcher script,
 // then spawns opencode interactively in workDir.
 //
-// Why a script instead of an inline VAR=value command: on macOS, environment
-// variables set inline in a command string don't reliably survive the
-// osascript → iTerm2 → new-shell chain. Writing a shell script file and
-// executing it sidesteps that entirely.
+// Agent discovery in opencode comes from two sources:
+//   - ~/.opencode/agents.json (global data dir, always loaded)
+//   - agents.json in OPENCODE_CONFIG_DIR (if opencode reads it from there)
 //
-// Why "orchestrator" as the agent name: opencode falls back silently to the
-// global default when --agent receives an unknown name. Using a name from the
-// global config ("orchestrator") ensures our prompt override is applied.
+// We write agents.json to the temp config dir so opencode can discover our
+// custom "mux-boot" agent without touching the user's global config.
+// If opencode doesn't read agents.json from OPENCODE_CONFIG_DIR, it will
+// fall back to the global default; the instructions_file path is absolute
+// so the boot prompt is still loaded if the agent name matches.
+//
+// The script file avoids env-var propagation issues through osascript on macOS.
 func bootOpencode(bootPrompt, command, workDir string) error {
+	const agent = "mux-boot"
+
 	tmpDir, err := os.MkdirTemp("", "mux-opencode-boot-*")
 	if err != nil {
 		return fmt.Errorf("create temp config dir: %w", err)
@@ -87,33 +86,49 @@ func bootOpencode(bootPrompt, command, workDir string) error {
 		return fmt.Errorf("create agents dir: %w", err)
 	}
 
-	// Boot prompt becomes the orchestrator's system prompt for this session.
-	promptFile := filepath.Join(agentsDir, agentName+".md")
+	promptFile := filepath.Join(agentsDir, agent+".md")
 	if err := os.WriteFile(promptFile, []byte(bootPrompt), 0o600); err != nil {
 		return fmt.Errorf("write boot prompt: %w", err)
 	}
 
-	// Minimal opencode config: override the orchestrator agent's system prompt.
-	cfg := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"agent": map[string]any{
-			agentName: map[string]any{
-				"prompt": "{file:./agents/" + agentName + ".md}",
+	// agents.json — defines the custom agent so opencode can discover it.
+	// Written to OPENCODE_CONFIG_DIR; opencode may read it from here alongside
+	// (or instead of) the global ~/.opencode/agents.json.
+	agentsDef, err := json.MarshalIndent(map[string]any{
+		"agents": []map[string]any{
+			{
+				"name":              agent,
+				"description":       "Agent Mux ephemeral boot session",
+				"instructions_file": promptFile,
 			},
 		},
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal agents: %w", err)
 	}
-	cfgBytes, err := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "agents.json"), agentsDef, 0o600); err != nil {
+		return fmt.Errorf("write agents.json: %w", err)
+	}
+
+	// opencode.json — sets the prompt via the config "agent" block too,
+	// covering whichever mechanism opencode actually uses.
+	cfg, err := json.MarshalIndent(map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"agent": map[string]any{
+			agent: map[string]any{
+				"prompt": "{file:./agents/" + agent + ".md}",
+			},
+		},
+	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal opencode config: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "opencode.json"), cfgBytes, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "opencode.json"), cfg, 0o600); err != nil {
 		return fmt.Errorf("write opencode config: %w", err)
 	}
 
-	// Shell script sets OPENCODE_CONFIG_DIR before exec'ing opencode.
-	// Using a script file avoids env-var propagation issues through osascript.
 	script := fmt.Sprintf("#!/bin/sh\nexport OPENCODE_CONFIG_DIR=%s\nexec %s --agent %s %s\n",
-		quote(tmpDir), quote(command), agentName, quote(workDir))
+		quote(tmpDir), quote(command), agent, quote(workDir))
 	scriptPath := filepath.Join(tmpDir, "boot.sh")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		return fmt.Errorf("write boot script: %w", err)
