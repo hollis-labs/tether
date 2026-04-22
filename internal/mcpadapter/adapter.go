@@ -17,6 +17,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -78,10 +79,12 @@ func toolJSON(v any) *mcp.CallToolResult {
 	return mcp.NewToolResultText(string(b))
 }
 
-// toolError returns a JSON error tool result with a code and message.
+// toolError returns an MCP error result (IsError=true) with a structured JSON body.
+// Using NewToolResultError ensures middleware and clients that check result.IsError
+// correctly identify failures — NewToolResultText with ok:"false" was wrong.
 func toolError(code, message string) *mcp.CallToolResult {
-	b, _ := json.Marshal(map[string]string{"ok": "false", "code": code, "message": message})
-	return mcp.NewToolResultText(string(b))
+	b, _ := json.Marshal(map[string]any{"ok": false, "code": code, "message": message})
+	return mcp.NewToolResultError(string(b))
 }
 
 // checkScope verifies that the token is set and the named scope is present.
@@ -103,13 +106,29 @@ func str(req mcp.CallToolRequest, key string) string {
 	return strings.TrimSpace(v)
 }
 
-// intArg extracts an integer argument. JSON numbers arrive as float64.
+// intArg extracts an integer argument. JSON numbers arrive as float64 from
+// well-behaved callers, but LLM clients frequently emit numeric strings (e.g.
+// "50"). Both forms are handled; unknown types fall back to def.
 func intArg(req mcp.CallToolRequest, key string, def int) int {
 	switch v := req.GetArguments()[key].(type) {
 	case float64:
 		return int(v)
 	case int:
 		return v
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return int(n)
+		}
+		return def
+	case string:
+		if v == "" {
+			return def
+		}
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+		return def
 	default:
 		return def
 	}

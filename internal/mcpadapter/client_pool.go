@@ -62,7 +62,7 @@ func (p *ClientPool) Start(ctx context.Context) error {
 func (p *ClientPool) startOne(ctx context.Context, entry config.MCPServerEntry) {
 	status := &clientStatus{entry: entry}
 
-	client, err := p.connect(entry)
+	client, err := p.connect(ctx, entry)
 	if err != nil {
 		status.err = fmt.Errorf("connect: %w", err)
 		slog.Error("mcp-proxy: upstream connect failed",
@@ -109,7 +109,8 @@ func (p *ClientPool) startOne(ctx context.Context, entry config.MCPServerEntry) 
 }
 
 // connect creates (and starts) the appropriate MCP client for the entry.
-func (p *ClientPool) connect(entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
+// ctx is threaded through so SSE startup cancels promptly on shutdown.
+func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
 	switch entry.Transport {
 	case "stdio":
 		if entry.Command == "" {
@@ -137,7 +138,7 @@ func (p *ClientPool) connect(entry config.MCPServerEntry) (mcpclient.MCPClient, 
 		}
 		// SSE transport requires an explicit Start call (unlike stdio which
 		// auto-starts in NewStdioMCPClient).
-		if err := c.Start(context.Background()); err != nil {
+		if err := c.Start(ctx); err != nil {
 			return nil, fmt.Errorf("start sse transport: %w", err)
 		}
 		return c, nil

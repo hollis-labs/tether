@@ -54,7 +54,7 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleMessageSend(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageSend(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
 		return denied, nil
 	}
@@ -83,19 +83,19 @@ func (a *Adapter) handleMessageSend(_ context.Context, req mcp.CallToolRequest) 
 	if p := str(req, "payload_json"); p != "" {
 		env.Payload = []byte(p)
 	}
-	sent, err := a.svc.Store.MessagingStore().Send(context.Background(), env)
+	sent, err := a.svc.Store.MessagingStore().Send(ctx, env)
 	if err != nil {
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message": sent}), nil
 }
 
-func (a *Adapter) handleMessageGet(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := str(req, "message_id")
 	if id == "" {
 		return toolError("invalid_request", "message_id required"), nil
 	}
-	env, err := a.svc.Store.MessagingStore().Get(context.Background(), id)
+	env, err := a.svc.Store.MessagingStore().Get(ctx, id)
 	if err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "message not found: "+id), nil
@@ -105,7 +105,7 @@ func (a *Adapter) handleMessageGet(_ context.Context, req mcp.CallToolRequest) (
 	return toolJSON(map[string]any{"ok": true, "message": env}), nil
 }
 
-func (a *Adapter) handleMessageInbox(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	toURN := str(req, "to")
 	if toURN == "" {
 		return toolError("invalid_request", "to required"), nil
@@ -121,14 +121,14 @@ func (a *Adapter) handleMessageInbox(_ context.Context, req mcp.CallToolRequest)
 		}
 	}
 	f.ThreadID = str(req, "thread_id")
-	envs, err := a.svc.Store.MessagingStore().Inbox(context.Background(), to, f)
+	envs, err := a.svc.Store.MessagingStore().Inbox(ctx, to, f)
 	if err != nil {
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "messages": envs, "count": len(envs)}), nil
 }
 
-func (a *Adapter) handleMessageThread(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	threadID := str(req, "thread_id")
 	if threadID == "" {
 		return toolError("invalid_request", "thread_id required"), nil
@@ -139,14 +139,14 @@ func (a *Adapter) handleMessageThread(_ context.Context, req mcp.CallToolRequest
 			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
 		}
 	}
-	envs, err := a.svc.Store.MessagingStore().Thread(context.Background(), threadID, f)
+	envs, err := a.svc.Store.MessagingStore().Thread(ctx, threadID, f)
 	if err != nil {
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "messages": envs, "count": len(envs)}), nil
 }
 
-func (a *Adapter) handleMessageConsume(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageConsume(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
 		return denied, nil
 	}
@@ -159,7 +159,7 @@ func (a *Adapter) handleMessageConsume(_ context.Context, req mcp.CallToolReques
 	if parseErr != nil {
 		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	if err := a.svc.Store.MessagingStore().Consume(context.Background(), id, recipient); err != nil {
+	if err := a.svc.Store.MessagingStore().Consume(ctx, id, recipient); err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "message not found: "+id), nil
 		}
@@ -168,7 +168,7 @@ func (a *Adapter) handleMessageConsume(_ context.Context, req mcp.CallToolReques
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
 }
 
-func (a *Adapter) handleMessageCancel(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleMessageCancel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
 		return denied, nil
 	}
@@ -176,7 +176,7 @@ func (a *Adapter) handleMessageCancel(_ context.Context, req mcp.CallToolRequest
 	if id == "" {
 		return toolError("invalid_request", "message_id required"), nil
 	}
-	if err := a.svc.Store.MessagingStore().Cancel(context.Background(), id); err != nil {
+	if err := a.svc.Store.MessagingStore().Cancel(ctx, id); err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "message not found: "+id), nil
 		}

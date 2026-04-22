@@ -18,6 +18,10 @@ set -euo pipefail
 MUX="${1:-./mux}"
 CATALOG="${2:-${HOME}/.agent-mux/catalog}"
 
+# Use a per-run temp file for stderr; clean up on exit regardless of outcome.
+SMOKE_STDERR="$(mktemp)"
+trap 'rm -f "$SMOKE_STDERR"' EXIT
+
 # JSON-RPC frame: Content-Length header + blank line + body
 frame() {
     local body="$1"
@@ -33,11 +37,11 @@ CALL_HEALTH='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"had
 INPUT="$(frame "$INIT")$(frame "$INITIALIZED")$(frame "$LIST_TOOLS")$(frame "$CALL_HEALTH")"
 
 echo "==> Starting mux mcp --proxy with catalog: $CATALOG"
-RESPONSE=$(echo "$INPUT" | timeout 30 "$MUX" mcp --proxy --catalog "$CATALOG" 2>/tmp/smoke_stderr.txt || true)
+RESPONSE=$(printf '%s' "$INPUT" | timeout 30 "$MUX" mcp --proxy --catalog "$CATALOG" 2>"$SMOKE_STDERR" || true)
 
-if [[ -s /tmp/smoke_stderr.txt ]]; then
+if [[ -s "$SMOKE_STDERR" ]]; then
     echo "--- stderr ---"
-    cat /tmp/smoke_stderr.txt
+    cat "$SMOKE_STDERR"
     echo "---"
 fi
 

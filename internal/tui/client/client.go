@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	daemon "github.com/chrispian/agent-mux/internal/client"
 
@@ -52,7 +53,7 @@ func (c *Client) ListBootProfiles() ([]bootgen.Profile, error) {
 	if c.CatalogRoot == "" {
 		return nil, nil
 	}
-	dir := c.CatalogRoot + "/boot-profiles"
+	dir := filepath.Join(c.CatalogRoot, "boot-profiles")
 	profiles, err := bootgen.LoadProfiles(dir)
 	if err != nil {
 		return nil, fmt.Errorf("tui client: list boot profiles: %w", err)
@@ -70,7 +71,7 @@ func (c *Client) BootAndLaunch(ctx context.Context, profileID string) (CreateAnd
 	if c.CatalogRoot == "" {
 		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: catalog root not set")
 	}
-	dir := c.CatalogRoot + "/boot-profiles"
+	dir := filepath.Join(c.CatalogRoot, "boot-profiles")
 	profiles, err := bootgen.LoadProfiles(dir)
 	if err != nil {
 		return CreateAndLaunchResponse{}, fmt.Errorf("tui client: load profiles: %w", err)

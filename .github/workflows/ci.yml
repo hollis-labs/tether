@@ -40,10 +40,11 @@ jobs:
           cache: true
 
       - name: Configure private module access
-        # Rewrite all github.com fetches to use the PAT for authentication.
+        # Scope the rewrite to hollis-labs/ only — not all of github.com —
+        # to minimise PAT exposure surface.
         # GH_PAT must be a classic PAT with `repo` scope set as a repository secret.
         run: |
-          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/hollis-labs/".insteadOf "https://github.com/hollis-labs/"
 
       - name: Install developer tools
         run: make tools-install

@@ -192,8 +192,10 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		toastCmd := m.toasts.push(ToastInfo, banner)
 		m.resize()
 		m.refreshBody()
+		// profileID is not a launch ID — pass an empty LaunchID so the
+		// fallback attach DTO doesn't misreport the launch profile.
 		fetchCmd := getSessionForAttachCmd(m.client,
-			client.CreateAndLaunchRequest{LaunchID: msg.profileID},
+			client.CreateAndLaunchRequest{},
 			client.CreateAndLaunchResponse{SessionID: msg.sessionID},
 		)
 		refreshSessions := loadSessionsCmd(m.client)
