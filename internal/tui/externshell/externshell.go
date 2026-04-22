@@ -3,10 +3,12 @@
 //  1. AttachIn — spawns `mux sessions attach <id>` for attaching to a
 //     running mux-managed session from a detail screen (F2 key).
 //
-//  2. BootWith — directly launches a tool (claude, opencode, …) with a
-//     boot prompt pre-loaded. This is the boot-profile quicklaunch path:
-//     no mux daemon session is created; the tool runs natively in the
-//     terminal with the generated context as its first input.
+//  2. BootWith — directly launches claude or opencode with the boot prompt
+//     pre-loaded as the agent's system context. No mux session is created.
+//     For opencode: uses a temp OPENCODE_CONFIG_DIR with an ephemeral agent
+//     config so the prompt becomes the system prompt, not a user message.
+//     For claude: pipes the prompt via stdin so claude reads it as the first
+//     message then stays interactive.
 //
 // Terminal selection order (both functions):
 //  1. MUX_TERMINAL env var template (e.g. `MUX_TERMINAL='iterm2 --detach -- %s'`)
@@ -15,10 +17,12 @@
 package externshell
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -33,22 +37,77 @@ func AttachIn(sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("locate mux binary: %w", err)
 	}
-	cmd := fmt.Sprintf("%s sessions attach %s", quote(mux), quote(sessionID))
-	return spawnTerminal(cmd)
+	return spawnTerminal(fmt.Sprintf("%s sessions attach %s", quote(mux), quote(sessionID)))
 }
 
-// BootWith directly launches a tool with the boot prompt as initial input.
-// This is the boot-profile quicklaunch path — no mux daemon session involved.
+// BootWith opens a terminal with the given tool pre-loaded with the boot prompt.
+// workDir is the project root to open the session in (~ already expanded by caller).
 //
-// How the boot prompt is delivered depends on the provider:
-//   - "opencode": passed as a positional argument (`opencode run "<prompt>"`)
-//   - all others (claude variants, etc.): piped via stdin with
-//     `--dangerously-skip-permissions` so claude starts in auto-approve mode
+// opencode: creates a temp OPENCODE_CONFIG_DIR with an ephemeral agent config
+// that sets the boot prompt as the agent system prompt, then launches
+// `opencode --agent boot <workDir>` interactively.
 //
-// The prompt is written to a temp file to avoid shell argument-length limits
-// and quoting issues. The temp file is left in /tmp for the OS to clean up.
-func BootWith(bootPrompt, providerID, command string) error {
-	// Write prompt to temp file — safer than inlining in shell args.
+// claude (and all other CLI tools): writes the boot prompt to a temp file and
+// pipes it via stdin — claude reads it as the first message then stays interactive.
+// The session opens in workDir.
+func BootWith(bootPrompt, providerID, command, workDir string) error {
+	switch providerID {
+	case "opencode":
+		return bootOpencode(bootPrompt, command, workDir)
+	default:
+		return bootClaude(bootPrompt, command, workDir)
+	}
+}
+
+// bootOpencode creates an ephemeral OPENCODE_CONFIG_DIR containing a minimal
+// opencode.json and the boot prompt as the agent's system prompt file,
+// then spawns opencode interactively in workDir.
+func bootOpencode(bootPrompt, command, workDir string) error {
+	tmpDir, err := os.MkdirTemp("", "mux-opencode-boot-*")
+	if err != nil {
+		return fmt.Errorf("create temp config dir: %w", err)
+	}
+
+	agentsDir := filepath.Join(tmpDir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+		return fmt.Errorf("create agents dir: %w", err)
+	}
+
+	// Write boot prompt as the agent's system prompt file.
+	promptFile := filepath.Join(agentsDir, "boot.md")
+	if err := os.WriteFile(promptFile, []byte(bootPrompt), 0o600); err != nil {
+		return fmt.Errorf("write boot prompt: %w", err)
+	}
+
+	// Minimal opencode config: one ephemeral agent named "boot" whose system
+	// prompt is the generated boot prompt file.
+	cfg := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"agent": map[string]any{
+			"boot": map[string]any{
+				"description": "Agent Mux ephemeral boot session",
+				"prompt":      "{file:./agents/boot.md}",
+			},
+		},
+	}
+	cfgBytes, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal opencode config: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "opencode.json"), cfgBytes, 0o600); err != nil {
+		return fmt.Errorf("write opencode config: %w", err)
+	}
+
+	// OPENCODE_CONFIG_DIR overrides the config location; --agent selects our
+	// ephemeral agent; workDir is opencode's project path argument.
+	shellCmd := fmt.Sprintf("OPENCODE_CONFIG_DIR=%s %s --agent boot %s",
+		quote(tmpDir), quote(command), quote(workDir))
+	return spawnTerminal(shellCmd)
+}
+
+// bootClaude pipes the boot prompt via stdin. Claude reads it as the first
+// message and stays interactive after responding.
+func bootClaude(bootPrompt, command, workDir string) error {
 	f, err := os.CreateTemp("", "mux-boot-*.md")
 	if err != nil {
 		return fmt.Errorf("write boot prompt: %w", err)
@@ -59,18 +118,8 @@ func BootWith(bootPrompt, providerID, command string) error {
 	}
 	f.Close()
 
-	var shellCmd string
-	switch providerID {
-	case "opencode":
-		// opencode run accepts the message as a positional arg.
-		// The subshell $(cat file) expands inside the new terminal's shell.
-		shellCmd = fmt.Sprintf("%s run \"$(cat %s)\"", quote(command), quote(f.Name()))
-	default:
-		// claude and other CLI tools: pipe prompt via stdin.
-		// --dangerously-skip-permissions enables auto-approve mode.
-		shellCmd = fmt.Sprintf("%s --dangerously-skip-permissions < %s", quote(command), quote(f.Name()))
-	}
-
+	shellCmd := fmt.Sprintf("cd %s && cat %s | %s --dangerously-skip-permissions",
+		quote(workDir), quote(f.Name()), quote(command))
 	return spawnTerminal(shellCmd)
 }
 

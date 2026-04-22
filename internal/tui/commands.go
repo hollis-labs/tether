@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chrispian/agent-mux/internal/bootgen"
+	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/externshell"
 )
@@ -156,7 +157,11 @@ func bootDirectCmd(c *client.Client, row BootProfileRow) tea.Cmd {
 		if err := bootgen.Generate(context.Background(), row.Profile, c.CatalogRoot, &buf); err != nil {
 			return bootDirectMsg{profileID: row.ProfileID, err: fmt.Errorf("generate boot prompt: %w", err)}
 		}
-		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand); err != nil {
+		workDir := config.Expand(row.Profile.Identity.WorkRoot)
+		if workDir == "" {
+			workDir = "."
+		}
+		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand, workDir); err != nil {
 			return bootDirectMsg{profileID: row.ProfileID, err: fmt.Errorf("open terminal: %w", err)}
 		}
 		return bootDirectMsg{profileID: row.ProfileID}
