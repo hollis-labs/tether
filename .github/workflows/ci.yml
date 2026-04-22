@@ -21,6 +21,12 @@ jobs:
     name: fmt / vet / lint / test-race / vuln
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # hollis-labs/go-messaging and hollis-labs/go-providers are private.
+      # GOPRIVATE skips the proxy and sum database for these modules.
+      # GONOSUMDB is the correct env var name (GONOSUMCHECK does not exist).
+      GOPRIVATE: "github.com/hollis-labs/*"
+      GONOSUMDB: "github.com/hollis-labs/*"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,12 +40,10 @@ jobs:
           cache: true
 
       - name: Configure private module access
-        # hollis-labs/go-messaging and hollis-labs/go-providers are private.
-        # GH_PAT must be a PAT with `repo` scope added as a repository secret.
+        # Rewrite all github.com fetches to use the PAT for authentication.
+        # GH_PAT must be a classic PAT with `repo` scope set as a repository secret.
         run: |
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-          go env -w GONOSUMCHECK="github.com/hollis-labs/*"
-          go env -w GOPRIVATE="github.com/hollis-labs/*"
 
       - name: Install developer tools
         run: make tools-install
