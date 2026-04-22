@@ -24,6 +24,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
 	goprovider "github.com/chrispian/agent-mux/internal/provider/cli/goprovider"
+	"github.com/chrispian/agent-mux/internal/provider/cli/opencode"
 	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
@@ -64,6 +65,7 @@ func New(catalogRoot string) (*Service, error) {
 	reg := provider.NewRegistry()
 	reg.Register(claudecode.Adapter{})
 	reg.Register(claudestream.Adapter{})
+	reg.Register(opencode.Adapter{})
 	reg.Register(stub.Runtime{})
 	// Register cli-goprovider runtimes declared in the catalog.
 	for _, p := range cat.Providers {
@@ -272,19 +274,19 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			}
 		}
 	}
-	// Resume continuity for claudestream sessions (T-v004-s02-05). For
-	// other provider kinds the preset + callback are inert. Missing /
-	// empty session_id falls through to fresh-session behavior.
-	if plan.ProviderID == "claude-stream" {
+	// Resume continuity for turn-based providers that use a CLI session ID
+	// (--resume / --session flag). Adapters that don't use this are inert;
+	// missing / empty session_id falls through to fresh-session behavior.
+	if providerHasSessionIDContinuity(plan.ProviderID) {
 		preset, err := s.Store.GetClaudeSessionID(plan.LogicalAgentID)
 		if err == nil {
 			req.ClaudeSessionIDPreset = preset
 		}
 		logicalAgentID := plan.LogicalAgentID
 		store := s.Store
-		req.OnClaudeSessionID = func(claudeSessionID string) {
-			if err := store.SetClaudeSessionID(logicalAgentID, claudeSessionID); err != nil {
-				log.Printf("claudestream: persist session_id for %q failed: %v", logicalAgentID, err)
+		req.OnClaudeSessionID = func(sessionID string) {
+			if err := store.SetClaudeSessionID(logicalAgentID, sessionID); err != nil {
+				log.Printf("%s: persist session_id for %q failed: %v", plan.ProviderID, logicalAgentID, err)
 			}
 		}
 	}
@@ -461,6 +463,18 @@ func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
 	b.WriteString("\n---\n\n")
 	b.WriteString(bootPrompt)
 	return b.String()
+}
+
+// providerHasSessionIDContinuity reports whether the given provider ID
+// participates in the CLI session-ID continuity mechanism (ClaudeSessionIDPreset
+// / OnClaudeSessionID). Adapters in this set use --resume or --session flags to
+// maintain conversation continuity across daemon restarts.
+func providerHasSessionIDContinuity(providerID string) bool {
+	switch providerID {
+	case "claude-stream", "opencode":
+		return true
+	}
+	return false
 }
 
 // goproviderCLIAdapter maps a catalog adapter name to the corresponding
