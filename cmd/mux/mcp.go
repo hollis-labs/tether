@@ -49,11 +49,13 @@ Example MCP client config (mcp.json):
 var (
 	mcpToken  string
 	mcpScopes string
+	mcpProxy  bool
 )
 
 func init() {
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: AGENT_MUX_MCP_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write (env: AGENT_MUX_MCP_SCOPES)")
+	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
@@ -75,6 +77,15 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = svc.Close() }()
 
 	adapter := mcpadapter.New(svc, token, scopes)
+	if mcpProxy {
+		// Phase 2: wire observability — LoggingMiddleware + ToolCallEventStore.
+		store := mcpadapter.NewToolCallEventStore(1000)
+		opts := mcpadapter.ProxyOptions{
+			Bus:        svc.Bus,
+			EventStore: store,
+		}
+		return adapter.RunWithProxyOpts(cmd.Context(), expandCatalogPath(), opts)
+	}
 	return adapter.Run(cmd.Context())
 }
 

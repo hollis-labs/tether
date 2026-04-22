@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 )
 
@@ -14,15 +15,14 @@ import (
 // captured here even when the scaffold doesn't yet consume them so the
 // cmd-layer call-site stays stable as T-03+ wires data flow.
 type Options struct {
-	// ListenAddr is the resolved muxd listen address (e.g.
-	// "unix:/Users/you/.agent-mux/run/muxd.sock"). T-03 passes this to
-	// the TUI client package; the scaffold accepts but does not use it.
-	ListenAddr string
+	ListenAddr  string
+	CatalogRoot string // enables in-process boot profile loading and boot-launch TUI flow
+	LogPath     string
 
-	// LogPath overrides the default Bubble Tea debug-log destination.
-	// Empty value defaults to ~/.agent-mux/logs/tui.log so the alt
-	// screen never sees debug writes.
-	LogPath string
+	// EventStore, when non-nil, enables the 'e' key shortcut to open the
+	// live Tool Call Feed panel (Phase 2 observability). Only populated
+	// when the MCP adapter runs in --proxy mode with observability wired.
+	EventStore *mcpadapter.ToolCallEventStore
 }
 
 // Run constructs a Bubble Tea program with the scaffold root model and
@@ -41,8 +41,8 @@ func Run(opts Options) error {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	c := client.New(opts.ListenAddr)
-	prog := tea.NewProgram(New(c), tea.WithAltScreen())
+	c := client.NewWithCatalog(opts.ListenAddr, opts.CatalogRoot)
+	prog := tea.NewProgram(NewWithOptions(c, opts), tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

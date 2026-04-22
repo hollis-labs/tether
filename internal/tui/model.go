@@ -44,10 +44,18 @@ type Model struct {
 // stack screen and registers the default Sprint-2 verbs with the
 // palette registry. client may be nil for tests.
 func New(c *client.Client) Model {
+	return NewWithOptions(c, Options{})
+}
+
+// NewWithOptions constructs the root Model with optional observability features
+// (Phase 2: EventStore for the Tool Call Feed screen).
+func NewWithOptions(c *client.Client, opts Options) Model {
 	reg := palette.NewRegistry()
 	registerDefaultVerbs(reg)
+	main := NewMainScreen(c)
+	main.eventStore = opts.EventStore
 	return Model{
-		stack:      screen.NewStack(NewMainScreen(c)),
+		stack:      screen.NewStack(main),
 		registry:   reg,
 		sidePanel:  panel.New(),
 		globalKeys: defaultGlobalKeys(),

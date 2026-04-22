@@ -12,6 +12,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/chrispian/agent-mux/internal/mcpadapter"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/detail"
 	"github.com/chrispian/agent-mux/internal/tui/layout"
@@ -30,6 +31,7 @@ const (
 	RowTypeLaunches      RowType = "launches"
 	RowTypeSessions      RowType = "sessions"
 	RowTypeLogicalAgents RowType = "runtime-agents"
+	RowTypeBootProfiles  RowType = "boot-profiles"
 )
 
 // chipOrder is the left-to-right rendering order of the chip row,
@@ -39,6 +41,7 @@ var chipOrder = []RowType{
 	RowTypeAgents,
 	RowTypeProviders,
 	RowTypeLaunches,
+	RowTypeBootProfiles,
 	RowTypeSessions,
 	RowTypeLogicalAgents,
 }
@@ -75,6 +78,10 @@ type MainScreen struct {
 	toasts toastQueue
 
 	lastSearch string
+
+	// eventStore is non-nil when proxy mode is running with observability
+	// enabled. The 'e' key opens the ToolCallFeedScreen backed by this store.
+	eventStore *mcpadapter.ToolCallEventStore
 }
 
 // NewMainScreen constructs the main screen. client may be nil
@@ -173,6 +180,25 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		refreshSessions := loadSessionsCmd(m.client)
 		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
 
+	case bootResultMsg:
+		if msg.err != nil {
+			cmd := m.toasts.push(ToastError, "Boot failed: "+msg.err.Error())
+			m.resize()
+			m.refreshBody()
+			return m, cmd
+		}
+		banner := fmt.Sprintf("Booted %s → session %s — attaching…",
+			shortID(msg.profileID), shortID(msg.sessionID))
+		toastCmd := m.toasts.push(ToastInfo, banner)
+		m.resize()
+		m.refreshBody()
+		fetchCmd := getSessionForAttachCmd(m.client,
+			client.CreateAndLaunchRequest{LaunchID: msg.profileID},
+			client.CreateAndLaunchResponse{SessionID: msg.sessionID},
+		)
+		refreshSessions := loadSessionsCmd(m.client)
+		return m, tea.Batch(toastCmd, fetchCmd, refreshSessions)
+
 	case resumeResultMsg:
 		if msg.err != nil {
 			cmd := m.toasts.push(ToastError, "Resume failed: "+msg.err.Error())
@@ -238,6 +264,11 @@ func (m MainScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		if msg.Type == tea.KeyCtrlK || (msg.Type == tea.KeyRunes && string(msg.Runes) == ":") {
 			return m, openPalette()
+		}
+		// 'e' — open the Tool Call Feed (Phase 2 observability).
+		// Only active when an event store is wired (proxy mode with --proxy flag).
+		if msg.Type == tea.KeyRunes && string(msg.Runes) == "e" && m.eventStore != nil && !m.search.Focused() {
+			return m, screen.Push(detail.NewToolCallFeedScreen(m.eventStore))
 		}
 		if msg.Type == tea.KeyEnter {
 			return m.handleEnter()
@@ -361,6 +392,11 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 			return m, screen.Toast(screen.ToastError, "Cannot resume: agent "+r.LA.ID+" has no prior launch")
 		}
 		return m, resumeLogicalAgentCmd(m.client, r.LA.ID)
+	case BootProfileRow:
+		if r.LaunchID == "" {
+			return m, screen.Toast(screen.ToastError, "Profile "+r.ProfileID+" has no launch configured")
+		}
+		return m, bootAndLaunchCmd(m.client, r.ProfileID)
 	}
 	return m.openDetail()
 }
@@ -462,6 +498,7 @@ func (m MainScreen) handleChipToggle(msg tea.KeyMsg) (bool, MainScreen) {
 		{m.keys.ToggleLaunches, RowTypeLaunches},
 		{m.keys.ToggleSessions, RowTypeSessions},
 		{m.keys.ToggleLogicalAgents, RowTypeLogicalAgents},
+		{m.keys.ToggleBootProfiles, RowTypeBootProfiles},
 	}
 	for _, pair := range bindings {
 		if key.Matches(msg, pair.b) {
