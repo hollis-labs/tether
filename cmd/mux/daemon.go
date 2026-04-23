@@ -130,10 +130,12 @@ func (a *serviceAdapter) CreateSession(launchID string) (api.LaunchResult, error
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:  l.SessionID,
-		Workspace:  l.Workspace.Root,
-		LogPath:    l.Workspace.LogPath,
-		ProviderID: l.Plan.ProviderID,
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
 }
 
@@ -143,10 +145,12 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:  l.SessionID,
-		Workspace:  l.Workspace.Root,
-		LogPath:    l.Workspace.LogPath,
-		ProviderID: l.Plan.ProviderID,
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
 }
 
@@ -156,10 +160,12 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:  l.SessionID,
-		Workspace:  l.Workspace.Root,
-		LogPath:    l.Workspace.LogPath,
-		ProviderID: l.Plan.ProviderID,
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
 }
 

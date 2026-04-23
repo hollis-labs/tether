@@ -40,10 +40,18 @@ type LaunchService interface {
 // struct carries a *workspace.Session and a Wait closure; the API only
 // needs the primitive strings for the response body.
 type LaunchResult struct {
-	SessionID  string
-	Workspace  string
-	LogPath    string
-	ProviderID string
+	SessionID      string
+	Workspace      string
+	LogPath        string
+	ProviderID     string
+	// ProviderKind is the runtime family ("cli" | "api"). Consumers may
+	// branch on this to select PTY-specific affordances (resize, raw input)
+	// vs. API-mode affordances (structured turns). Matches provider.RuntimeKind.
+	ProviderKind   string
+	// LogicalAgentID is the durable identity that accumulates checkpoints
+	// across sessions. Returned on create and launch so consumers can
+	// correlate a new session to its logical agent without a follow-up get.
+	LogicalAgentID string
 }
 
 // Request / response payloads for the HTTP API. JSON tags are the public
@@ -58,10 +66,12 @@ type LaunchRequest struct {
 }
 
 type LaunchResponse struct {
-	ID         string `json:"id"`
-	Workspace  string `json:"workspace"`
-	Log        string `json:"log"`
-	ProviderID string `json:"provider_id"`
+	ID             string `json:"id"`
+	Workspace      string `json:"workspace"`
+	Log            string `json:"log"`
+	ProviderID     string `json:"provider_id"`
+	ProviderKind   string `json:"provider_kind"`
+	LogicalAgentID string `json:"logical_agent_id"`
 }
 
 type WaitResponse struct {
@@ -91,6 +101,10 @@ type SessionDTO struct {
 	ProjectID       string  `json:"project_id"`
 	LogicalAgentID  string  `json:"logical_agent_id"`
 	ProviderID      string  `json:"provider_id"`
+	// ProviderKind is the runtime family ("cli" | "api"). Consumers branch
+	// on this to select PTY-specific affordances vs. API-mode affordances.
+	// Empty for sessions created before this field was added (pre-v0.0.3).
+	ProviderKind    string  `json:"provider_kind,omitempty"`
 	Workspace       string  `json:"workspace"`
 	State           string  `json:"state"`
 	PID             *int    `json:"pid,omitempty"`
@@ -112,6 +126,7 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 		ProjectID:      r.ProjectID,
 		LogicalAgentID: r.LogicalAgentID,
 		ProviderID:     r.ProviderID,
+		ProviderKind:   r.ProviderKind,
 		Workspace:      r.Workspace,
 		State:          r.State,
 		CreatedAt:      r.CreatedAt,

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 )
+
+// ErrSessionNotFound is returned by GetSession when no row matches the
+// given session ID. Callers should use errors.Is to check for this error
+// rather than inspecting the error message string.
+var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
 	db *sql.DB
@@ -47,6 +53,9 @@ type SessionRow struct {
 	ProjectID      string
 	LogicalAgentID string
 	ProviderID     string
+	// ProviderKind is the runtime family ("cli" | "api"). Added in migration
+	// 0012 (ADR 0022 G3); empty for rows created before the migration.
+	ProviderKind   string
 	Workspace      string
 	State          string
 	PID            sql.NullInt64
@@ -62,10 +71,10 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	row.CreatedAt = now
 	row.UpdatedAt = now
 	if _, err := s.db.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
-		row.Workspace, row.State, row.CreatedAt, row.UpdatedAt); err != nil {
+		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt); err != nil {
 		return err
 	}
 	pb, err := json.Marshal(plan)
@@ -167,7 +176,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("session_group_id = ?", opts.GroupID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -178,7 +187,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -188,8 +197,11 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+	}
 	if err != nil {
 		return nil, err
 	}

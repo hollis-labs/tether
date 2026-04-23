@@ -155,13 +155,21 @@ type Launched struct {
 	// Nil on the result of CreateSession — launching first is required
 	// before there's anything to wait on.
 	Wait func(ctx context.Context) (int, error)
+
+	// ProviderKind is the runtime family ("cli" | "api"), resolved from
+	// the provider registry at create/launch time. Populated as part of
+	// ADR 0022 G2/G3 so consumers don't need a follow-up catalog lookup.
+	ProviderKind string
 }
 
 // ErrSessionNotCreated is returned by LaunchSession when the target
 // session is in any state other than "created". Once launched, a
 // session cannot be launched again — clients create a new session for
 // a retry.
-var ErrSessionNotCreated = fmt.Errorf("session is not in 'created' state")
+//
+// Deprecated: prefer session.ErrNotCreated; this alias is kept so
+// existing callers that reference app.ErrSessionNotCreated do not break.
+var ErrSessionNotCreated = session.ErrNotCreated
 
 // CreateSessionWithBootPrompt creates a session like CreateSession but
 // replaces the catalog's static boot prompt with the provided text.
@@ -204,9 +212,11 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 	// Fail fast if the catalog references a provider the registry can't
 	// satisfy. Better to error here than at launch time when the user
 	// thinks they have a created session.
-	if _, ok := s.Providers.Get(plan.ProviderID); !ok {
+	rt, ok := s.Providers.Get(plan.ProviderID)
+	if !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
 	}
+	providerKind := string(rt.Kind())
 
 	row := store.SessionRow{
 		ID:             sessID,
@@ -214,6 +224,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 		ProjectID:      plan.ProjectID,
 		LogicalAgentID: plan.LogicalAgentID,
 		ProviderID:     plan.ProviderID,
+		ProviderKind:   providerKind,
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 	}
@@ -222,9 +233,10 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 	}
 
 	return &Launched{
-		SessionID: sessID,
-		Workspace: ws,
-		Plan:      plan,
+		SessionID:    sessID,
+		Workspace:    ws,
+		Plan:         plan,
+		ProviderKind: providerKind,
 	}, nil
 }
 
@@ -301,9 +313,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	}
 
 	return &Launched{
-		SessionID: sessionID,
-		Workspace: ws,
-		Plan:      plan,
+		SessionID:    sessionID,
+		Workspace:    ws,
+		Plan:         plan,
+		ProviderKind: string(rt.Kind()),
 		Wait: func(ctx context.Context) (int, error) {
 			return s.Runtime.WaitSession(ctx, sessionID)
 		},
@@ -399,7 +412,8 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		return api.LaunchResult{}, fmt.Errorf("create workspace: %w", err)
 	}
 
-	if _, ok := s.Providers.Get(plan.ProviderID); !ok {
+	rt, ok := s.Providers.Get(plan.ProviderID)
+	if !ok {
 		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
 	}
 
@@ -409,6 +423,7 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		ProjectID:      plan.ProjectID,
 		LogicalAgentID: plan.LogicalAgentID,
 		ProviderID:     plan.ProviderID,
+		ProviderKind:   string(rt.Kind()),
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 	}
@@ -421,10 +436,12 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		return api.LaunchResult{}, err
 	}
 	return api.LaunchResult{
-		SessionID:  l.SessionID,
-		Workspace:  l.Workspace.Root,
-		LogPath:    l.Workspace.LogPath,
-		ProviderID: l.Plan.ProviderID,
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
 }
 

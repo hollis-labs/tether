@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -186,7 +187,7 @@ func (s *Server) handleCreateCheckpoint(w http.ResponseWriter, r *http.Request, 
 
 	row, err := s.Service.GetSession(sessionID)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
 		}
@@ -247,7 +248,9 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request
 	if err != nil {
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "no rows"), strings.Contains(msg, "no checkpoint"):
+		case errors.Is(err, store.ErrSessionNotFound),
+			strings.Contains(msg, "no checkpoint"),
+			strings.Contains(msg, "no rows"):
 			writeError(w, http.StatusNotFound, CodeNotFound, "no checkpoint found for agent "+agentID)
 		case strings.Contains(msg, "never launched"):
 			writeError(w, http.StatusConflict, CodeConflict, msg)
@@ -257,9 +260,11 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, LaunchResponse{
-		ID:         res.SessionID,
-		Workspace:  res.Workspace,
-		Log:        res.LogPath,
-		ProviderID: res.ProviderID,
+		ID:             res.SessionID,
+		Workspace:      res.Workspace,
+		Log:            res.LogPath,
+		ProviderID:     res.ProviderID,
+		ProviderKind:   res.ProviderKind,
+		LogicalAgentID: res.LogicalAgentID,
 	})
 }

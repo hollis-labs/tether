@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -141,10 +142,12 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, LaunchResponse{
-		ID:         res.SessionID,
-		Workspace:  res.Workspace,
-		Log:        res.LogPath,
-		ProviderID: res.ProviderID,
+		ID:             res.SessionID,
+		Workspace:      res.Workspace,
+		Log:            res.LogPath,
+		ProviderID:     res.ProviderID,
+		ProviderKind:   res.ProviderKind,
+		LogicalAgentID: res.LogicalAgentID,
 	})
 }
 
@@ -154,11 +157,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id string) {
 	res, err := s.Service.LaunchSession(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
 		}
-		if strings.Contains(err.Error(), "not in 'created' state") {
+		if errors.Is(err, session.ErrNotCreated) {
 			writeError(w, http.StatusConflict, CodeConflict, err.Error())
 			return
 		}
@@ -166,10 +169,12 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 		return
 	}
 	writeJSON(w, http.StatusOK, LaunchResponse{
-		ID:         res.SessionID,
-		Workspace:  res.Workspace,
-		Log:        res.LogPath,
-		ProviderID: res.ProviderID,
+		ID:             res.SessionID,
+		Workspace:      res.Workspace,
+		Log:            res.LogPath,
+		ProviderID:     res.ProviderID,
+		ProviderKind:   res.ProviderKind,
+		LogicalAgentID: res.LogicalAgentID,
 	})
 }
 
@@ -237,10 +242,7 @@ func parseListSessionsOpts(r *http.Request) (store.ListSessionsOptions, error) {
 func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id string) {
 	row, err := s.Service.GetSession(id)
 	if err != nil {
-		// Store returns sql.ErrNoRows for missing; surface as 404 regardless
-		// of the specific driver error (we don't want to import database/sql
-		// just to type-check).
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
 		}

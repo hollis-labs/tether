@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -89,7 +91,7 @@ func (f *fakeLaunchService) GetSession(id string) (*store.SessionRow, error) {
 	}
 	r, ok := f.getRes[id]
 	if !ok {
-		return nil, errors.New("sql: no rows in result set")
+		return nil, fmt.Errorf("%w: %s", store.ErrSessionNotFound, id)
 	}
 	return r, nil
 }
@@ -248,7 +250,7 @@ func TestHandleLaunchSession_Success(t *testing.T) {
 }
 
 func TestHandleLaunchSession_NotFound(t *testing.T) {
-	svc := &fakeLaunchService{launchErr: errors.New("sql: no rows in result set")}
+	svc := &fakeLaunchService{launchErr: fmt.Errorf("%w: missing", store.ErrSessionNotFound)}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/missing/launch", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -262,7 +264,7 @@ func TestHandleLaunchSession_NotFound(t *testing.T) {
 }
 
 func TestHandleLaunchSession_WrongState(t *testing.T) {
-	svc := &fakeLaunchService{launchErr: errors.New(`session is not in 'created' state (state="running")`)}
+	svc := &fakeLaunchService{launchErr: fmt.Errorf("%w (state=%q)", session.ErrNotCreated, "running")}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-1/launch", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)

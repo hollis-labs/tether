@@ -50,10 +50,12 @@ func (a *Adapter) handleLogicalAgentResume(_ context.Context, req mcp.CallToolRe
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{
-		"ok":          true,
-		"session_id":  res.SessionID,
-		"workspace":   res.Workspace,
-		"log":         res.LogPath,
-		"provider_id": res.ProviderID,
+		"ok":               true,
+		"session_id":       res.SessionID,
+		"workspace":        res.Workspace,
+		"log":              res.LogPath,
+		"provider_id":      res.ProviderID,
+		"provider_kind":    res.ProviderKind,
+		"logical_agent_id": res.LogicalAgentID,
 	}), nil
 }

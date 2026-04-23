@@ -2,13 +2,15 @@ package mcpadapter
 
 import (
 	"context"
-	"strings"
+	"errors"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -137,10 +139,13 @@ func (a *Adapter) handleSessionCreate(_ context.Context, req mcp.CallToolRequest
 		logPath = res.Workspace.LogPath
 	}
 	return toolJSON(map[string]any{
-		"ok":         true,
-		"session_id": res.SessionID,
-		"workspace":  wsPath,
-		"log":        logPath,
+		"ok":               true,
+		"session_id":       res.SessionID,
+		"workspace":        wsPath,
+		"log":              logPath,
+		"provider_id":      res.Plan.ProviderID,
+		"provider_kind":    res.ProviderKind,
+		"logical_agent_id": res.Plan.LogicalAgentID,
 	}), nil
 }
 
@@ -169,10 +174,13 @@ func (a *Adapter) handleSessionLaunch(_ context.Context, req mcp.CallToolRequest
 		logPath = res.Workspace.LogPath
 	}
 	return toolJSON(map[string]any{
-		"ok":         true,
-		"session_id": res.SessionID,
-		"workspace":  wsPath,
-		"log":        logPath,
+		"ok":               true,
+		"session_id":       res.SessionID,
+		"workspace":        wsPath,
+		"log":              logPath,
+		"provider_id":      res.Plan.ProviderID,
+		"provider_kind":    res.ProviderKind,
+		"logical_agent_id": res.Plan.LogicalAgentID,
 	}), nil
 }
 
@@ -255,21 +263,24 @@ func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest
 
 // ─── error helpers ─────────────────────────────────────────────────────────────
 
+// isNotFound reports whether err is a "not found" class error. Uses
+// errors.Is against sentinel values (ADR 0022 G6) to avoid fragile
+// string matching. Falls back to store.ErrSessionNotFound and
+// runtime.ErrSessionNotRunning sentinels.
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "no rows") ||
-		strings.Contains(s, "not found") ||
-		strings.Contains(s, "ErrSessionNotRunning")
+	return errors.Is(err, store.ErrSessionNotFound) ||
+		errors.Is(err, runtime.ErrSessionNotRunning)
 }
 
+// isConflict reports whether err is a "conflict" class error — specifically
+// that a session lifecycle precondition failed (e.g. launching a session
+// that is not in the created state). Uses errors.Is against session.ErrNotCreated.
 func isConflict(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "not in 'created' state") ||
-		strings.Contains(s, "conflict")
+	return errors.Is(err, session.ErrNotCreated)
 }
