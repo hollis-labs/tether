@@ -177,6 +177,10 @@ func (s *funcService) ResumeLogicalAgent(_ string) (api.LaunchResult, error) {
 	return api.LaunchResult{}, nil
 }
 
+func (s *funcService) RuntimeHealth(_ string) (api.RuntimeHealthResult, bool) {
+	return api.RuntimeHealthResult{}, false
+}
+
 func TestClient_ResizeSession(t *testing.T) {
 	var gotID string
 	var gotRows, gotCols uint16

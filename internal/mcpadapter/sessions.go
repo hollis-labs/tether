@@ -62,6 +62,11 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 		mcp.WithNumber("rows", mcp.Required(), mcp.Description("Terminal rows (must be > 0)")),
 		mcp.WithNumber("cols", mcp.Required(), mcp.Description("Terminal columns (must be > 0)")),
 	), a.handleSessionResize)
+
+	s.AddTool(mcp.NewTool("mux_session_health",
+		mcp.WithDescription("Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running."),
+		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
+	), a.handleSessionHealth)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
@@ -261,6 +266,46 @@ func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "rows": rows, "cols": cols}), nil
+}
+
+func (a *Adapter) handleSessionHealth(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := str(req, "session_id")
+	if id == "" {
+		return toolError("invalid_request", "session_id required"), nil
+	}
+	// Verify the session exists in the store.
+	if _, err := a.svc.GetSession(id); err != nil {
+		if isNotFound(err) {
+			return toolError("not_found", "session not found: "+id), nil
+		}
+		return toolError("internal_error", err.Error()), nil
+	}
+	// Fetch live runtime health from the manager.
+	result, ok := a.svc.RuntimeHealth(id)
+	if !ok {
+		return toolError("conflict", "session is not currently running; no live health available"), nil
+	}
+	caps := result.Caps
+	data := map[string]any{
+		"ok":         true,
+		"session_id": id,
+		"alive":      result.Health.Alive,
+		"live_state": result.Health.State.String(),
+		"turn_id":    result.Health.TurnID,
+		"provider_id":   result.ProviderID,
+		"provider_kind": result.ProviderKind,
+		"caps": map[string]any{
+			"pty":                 caps.PTY,
+			"resize":              caps.Resize,
+			"provider_session_id": caps.ProviderSessionID,
+			"checkpoint_resume":   caps.CheckpointResume,
+			"binary_required":     caps.BinaryRequired,
+		},
+	}
+	if result.Health.PID != 0 {
+		data["pid"] = result.Health.PID
+	}
+	return toolJSON(data), nil
 }
 
 // ─── error helpers ─────────────────────────────────────────────────────────────

@@ -10,7 +10,36 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
+
+// TestCompliance runs the shared provider compliance suite against the
+// claude-code PTY adapter. It gates binary-dependent tests on the
+// availability of /bin/true so CI without a real Claude CLI still
+// exercises the full lifecycle contract.
+func TestCompliance(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("PTY path requires unix")
+	}
+	// Use `sh -c 'exit 0'` via exec so it works on both Linux (/bin/sh)
+	// and macOS (/bin/sh exists everywhere sh does).
+	shPath, shErr := exec.LookPath("sh")
+	if shErr != nil {
+		t.Skip("sh not available")
+	}
+
+	compliance.Run(t, compliance.Harness{
+		NewRuntime: func(t *testing.T) provider.Runtime { return Adapter{} },
+		NewPlan: func(t *testing.T) *launch.Plan {
+			return &launch.Plan{
+				Command: shPath,
+				Args:    []string{"-c", "exit 0"},
+				EnvMode: "merge",
+			}
+		},
+		BinarySkip: true, // skip capability tests requiring real claude binary
+	})
+}
 
 // TestAdapter_Prepare_EmptyCommandErrors proves validation surfaces before
 // any workspace state is touched.

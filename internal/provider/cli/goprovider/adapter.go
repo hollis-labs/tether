@@ -54,6 +54,20 @@ func NewRuntime(id string, adapter gop.CLIAdapter, binary string) *Runtime {
 func (r *Runtime) ID() string                 { return r.id }
 func (r *Runtime) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
 
+// Caps declares the goprovider adapter's capabilities. It is a turn-based
+// CLI adapter with provider session ID continuity (ClaudeSessionIDPreset /
+// OnClaudeSessionID hooks) and requires a binary to be present.
+// No PTY, no resize.
+func (r *Runtime) Caps() provider.Capabilities {
+	return provider.Capabilities{
+		PTY:               false,
+		Resize:            false,
+		ProviderSessionID: true,
+		CheckpointResume:  false,
+		BinaryRequired:    true,
+	}
+}
+
 // Prepare validates that the CLI binary is reachable. If binary was not
 // set at construction time, Detect() is called here; the resolved path
 // is stored on the Runtime for Start.
@@ -225,7 +239,23 @@ func (s *Session) Stop(_ context.Context) error {
 func (s *Session) Health() provider.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return provider.HealthStatus{Alive: !s.stopped, PID: 0}
+	if s.stopped {
+		return provider.HealthStatus{Alive: false, PID: 0, State: provider.LiveStateStopped}
+	}
+	state := provider.LiveStateIdle
+	if s.current != nil && s.current.ProcessState == nil {
+		state = provider.LiveStateProcessing
+	}
+	return provider.HealthStatus{Alive: true, PID: 0, State: state}
+}
+
+// ProviderSessionID returns the provider session ID captured from the
+// go-providers CLIAdapter's system/init event, or "" if no turn has run yet.
+// Satisfies provider.SessionIDer (checked by Caps().ProviderSessionID == true).
+func (s *Session) ProviderSessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionID
 }
 
 // CheckpointHints returns the current session_id as JSON for --resume

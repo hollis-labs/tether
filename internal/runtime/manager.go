@@ -80,8 +80,23 @@ type SessionInfo struct {
 	ProjectID       string
 	LogicalAgentID  string
 	ProviderID      string
+	ProviderKind    string
+	Caps            provider.Capabilities
 	Workspace       string
 	AttachedClients int
+}
+
+// RuntimeHealthSnapshot is a point-in-time health + capability snapshot of a
+// running session. It combines the live HealthStatus from the provider.Session
+// with the static Capabilities from the provider.Runtime that spawned it.
+// Returned by Manager.RuntimeHealth; consumed by the HTTP health endpoint
+// (GET /sessions/{id}/health) and the mux_session_health MCP tool.
+type RuntimeHealthSnapshot struct {
+	SessionID    string
+	ProviderID   string
+	ProviderKind string
+	Caps         provider.Capabilities
+	Health       provider.HealthStatus
 }
 
 // Manager owns the registry of running sessions and their lifecycle
@@ -241,6 +256,8 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) error {
 		ProjectID:      req.Plan.ProjectID,
 		LogicalAgentID: req.Plan.LogicalAgentID,
 		ProviderID:     req.Plan.ProviderID,
+		ProviderKind:   string(req.Runtime.Kind()),
+		Caps:           req.Runtime.Caps(),
 		Workspace:      req.Workspace.Root,
 	}
 
@@ -343,6 +360,27 @@ func (m *Manager) List() []SessionInfo {
 		out = append(out, info)
 	}
 	return out
+}
+
+// RuntimeHealth returns a live health snapshot for the named session.
+// It combines the current HealthStatus from the provider.Session with the
+// static Capabilities declared by the provider.Runtime that spawned it.
+// Returns (zero, false) if the session is not currently registered
+// (i.e. it never started, has already terminated, or was never launched).
+func (m *Manager) RuntimeHealth(id string) (RuntimeHealthSnapshot, bool) {
+	m.mu.RLock()
+	e, ok := m.registry[id]
+	m.mu.RUnlock()
+	if !ok {
+		return RuntimeHealthSnapshot{}, false
+	}
+	return RuntimeHealthSnapshot{
+		SessionID:    id,
+		ProviderID:   e.info.ProviderID,
+		ProviderKind: e.info.ProviderKind,
+		Caps:         e.info.Caps,
+		Health:       e.sess.Health(),
+	}, true
 }
 
 // SendInput writes data to the named session's input channel. Concurrent

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,28 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
+
+// TestCompliance runs the shared provider compliance suite against the
+// opencode adapter. We use sh as a stand-in binary so baseline lifecycle
+// tests run without requiring the real opencode binary.
+func TestCompliance(t *testing.T) {
+	_, shErr := exec.LookPath("sh")
+	if shErr != nil {
+		t.Skip("sh not available")
+	}
+	compliance.Run(t, compliance.Harness{
+		NewRuntime: func(t *testing.T) provider.Runtime { return Adapter{} },
+		NewPlan: func(t *testing.T) *launch.Plan {
+			return &launch.Plan{
+				Command: "sh",
+				Args:    []string{"-c", "exit 0"},
+			}
+		},
+		BinarySkip: true, // skip capability tests requiring real opencode binary
+	})
+}
 
 func newTestSession(t *testing.T, plan *launch.Plan) (*Session, *bytes.Buffer) {
 	t.Helper()

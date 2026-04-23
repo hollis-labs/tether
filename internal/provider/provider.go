@@ -23,11 +23,84 @@ const (
 	RuntimeKindAPI RuntimeKind = "api"
 )
 
-// HealthStatus snapshots a live session's liveness. PID is meaningful only
-// for CLI runtimes; API-backed sessions report PID=0 and rely on Alive.
+// LiveState describes the fine-grained observable state of a running session
+// as reported by the provider adapter. It disambiguates sub-states within the
+// Mux "running" lifecycle state so consumers (Clockwork, Nanite) can decide
+// whether to send another turn without polling for ErrTurnInFlight.
+type LiveState int
+
+const (
+	// LiveStateIdle: session is alive and waiting for input. No turn in flight.
+	LiveStateIdle LiveState = iota
+	// LiveStateProcessing: a turn or subprocess is currently running.
+	LiveStateProcessing
+	// LiveStateStopped: Stop has been called; Wait will return soon.
+	LiveStateStopped
+)
+
+// String returns the JSON/API string representation of a LiveState.
+func (s LiveState) String() string {
+	switch s {
+	case LiveStateIdle:
+		return "idle"
+	case LiveStateProcessing:
+		return "processing"
+	case LiveStateStopped:
+		return "stopped"
+	default:
+		return "unknown"
+	}
+}
+
+// Capabilities declares what a Runtime's Sessions support beyond the
+// baseline Runtime + Session contract. All fields default to false.
+// Adapters set fields to true to declare capabilities they implement.
+// Callers must check Caps() before using the corresponding affordance —
+// attempting a capability against an adapter that declares false for it
+// is undefined behavior (the adapter may no-op, return an error, or panic).
+type Capabilities struct {
+	// PTY: Session.SendInput writes to a live PTY master. Resize is meaningful.
+	// False for all turn-based adapters (opencode, claudestream, goprovider, stub).
+	PTY bool
+
+	// Resize: Session.Resize has an observable effect on the terminal dimensions.
+	// Requires PTY=true to be meaningful; non-PTY adapters no-op Resize per ADR 0014.
+	Resize bool
+
+	// ProviderSessionID: the adapter observes and stores a provider-side session ID
+	// (e.g. claude --resume ID, opencode sessionID) for cross-session continuity.
+	// When true, the Session implements SessionIDer and ProviderSessionID() returns
+	// the stored ID (empty string if no turn has run yet).
+	ProviderSessionID bool
+
+	// CheckpointResume: Session.CheckpointHints returns a non-trivial hint (_, true).
+	// Consumers may use the hint for cross-session continuity beyond ProviderSessionID.
+	CheckpointResume bool
+
+	// BinaryRequired: Prepare will return an error if the provider binary is absent
+	// from PATH or the configured path. False only for in-process providers (api-stub).
+	BinaryRequired bool
+}
+
+// SessionIDer is an optional interface implemented by Session when the adapter
+// tracks a provider-side session ID (Caps().ProviderSessionID == true). Callers
+// must type-assert to this interface; it is not part of the core Session contract.
+type SessionIDer interface {
+	ProviderSessionID() string
+}
+
+// HealthStatus snapshots a live session's liveness.
+// PID is meaningful only for PTY runtimes; API-backed and turn-based sessions
+// report PID=0 or the PID of the current turn's subprocess.
+// State and TurnID provide fine-grained sub-state within the Mux "running"
+// lifecycle state (see LiveState). Both are always set by Health(); the zero
+// value (LiveStateIdle, "") is safe for adapters that don't distinguish idle
+// from processing.
 type HealthStatus struct {
-	Alive bool
-	PID   int
+	Alive  bool
+	PID    int
+	State  LiveState // fine-grained within-running state (added in ADR 0025)
+	TurnID string    // opaque turn identifier; set by turn-based adapters during a live turn
 }
 
 // CheckpointHint is an opaque, provider-defined blob carrying hints for
@@ -78,6 +151,10 @@ type StartOptions struct {
 // itself and its kind, validates a plan via Prepare, and spawns a Session
 // when asked to Start.
 //
+// Caps returns the static capability declaration for Sessions produced by
+// this Runtime. The returned Capabilities struct is immutable for the
+// lifetime of the Runtime and safe to call from multiple goroutines.
+//
 // Prepare is called once per launch before Start, giving the runtime a
 // chance to surface configuration errors (missing binaries, invalid API
 // keys) while the caller can still abort cleanly without leaving half-
@@ -85,6 +162,7 @@ type StartOptions struct {
 type Runtime interface {
 	ID() string
 	Kind() RuntimeKind
+	Caps() Capabilities // added in ADR 0025
 	Prepare(ctx context.Context, plan *launch.Plan) error
 	Start(ctx context.Context, plan *launch.Plan, opts StartOptions) (Session, error)
 }

@@ -30,6 +30,19 @@ type Adapter struct{}
 func (Adapter) ID() string                 { return "claude-stream" }
 func (Adapter) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
 
+// Caps declares the claudestream adapter's capabilities. It is a turn-based
+// CLI adapter with provider session ID continuity (--resume) and requires the
+// binary to be present. No PTY, no resize.
+func (Adapter) Caps() provider.Capabilities {
+	return provider.Capabilities{
+		PTY:               false,
+		Resize:            false,
+		ProviderSessionID: true,
+		CheckpointResume:  false,
+		BinaryRequired:    true,
+	}
+}
+
 // Prepare validates that the catalog references a binary we can run.
 // Same shape as claudecode's Prepare for consistency.
 func (Adapter) Prepare(_ context.Context, plan *launch.Plan) error {
@@ -121,7 +134,7 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
-		return fmt.Errorf("claudestream: session stopped")
+		return provider.ErrNoInputChannel
 	}
 	if s.current != nil {
 		s.mu.Unlock()
@@ -235,11 +248,23 @@ func (s *Session) Resize(_ context.Context, _, _ uint16) error { return nil }
 func (s *Session) Health() provider.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopped {
+		return provider.HealthStatus{Alive: false, PID: 0, State: provider.LiveStateStopped}
+	}
 	pid := 0
+	state := provider.LiveStateIdle
 	if s.current != nil && s.current.Process != nil {
 		pid = s.current.Process.Pid
+		state = provider.LiveStateProcessing
 	}
-	return provider.HealthStatus{Alive: !s.stopped, PID: pid}
+	return provider.HealthStatus{Alive: true, PID: pid, State: state}
+}
+
+// ProviderSessionID returns the claude CLI session_id observed on this
+// session's first turn, or "" if no turn has run yet.
+// Satisfies provider.SessionIDer (checked by Caps().ProviderSessionID == true).
+func (s *Session) ProviderSessionID() string {
+	return s.SessionID()
 }
 
 // CheckpointHints — no-op in v0.0.4. Claude has its own session_id

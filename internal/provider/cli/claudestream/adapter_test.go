@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,28 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
+
+// TestCompliance runs the shared provider compliance suite against the
+// claudestream adapter using a sh-backed plan so no real Claude CLI is needed.
+func TestCompliance(t *testing.T) {
+	_, shErr := exec.LookPath("sh")
+	if shErr != nil {
+		t.Skip("sh not available")
+	}
+	compliance.Run(t, compliance.Harness{
+		NewRuntime: func(t *testing.T) provider.Runtime { return Adapter{} },
+		NewPlan: func(t *testing.T) *launch.Plan {
+			// Use sh as a stand-in binary so Prepare succeeds.
+			return &launch.Plan{
+				Command: "sh",
+				Args:    []string{"-c", "exit 0"},
+			}
+		},
+		BinarySkip: true, // skip capability tests requiring real claude binary
+	})
+}
 
 // newTestSession returns a Session configured with a scratch log path
 // and a buffered Fanout for assertions.
@@ -84,8 +106,8 @@ func TestSession_SendInputAfterStopErrors(t *testing.T) {
 	s, _ := newTestSession(t, plan)
 	_ = s.Stop(context.Background())
 	err := s.SendInput(context.Background(), []byte("hi"))
-	if err == nil || !strings.Contains(err.Error(), "stopped") {
-		t.Fatalf("expected stopped error, got %v", err)
+	if !errors.Is(err, provider.ErrNoInputChannel) {
+		t.Fatalf("expected provider.ErrNoInputChannel, got %v", err)
 	}
 }
 

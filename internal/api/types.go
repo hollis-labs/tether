@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -34,6 +35,21 @@ type LaunchService interface {
 	// result. Errors: not_found if no checkpoint exists; conflict if the
 	// agent has never had a session launched (no launch_id).
 	ResumeLogicalAgent(logicalAgentID string) (LaunchResult, error)
+	// RuntimeHealth returns the live health snapshot for a running session.
+	// Returns (zero, false) when the session is not currently registered
+	// in the runtime manager (never launched, already terminal, or unknown).
+	RuntimeHealth(id string) (RuntimeHealthResult, bool)
+}
+
+// RuntimeHealthResult is the api-facing health snapshot. It carries the
+// live HealthStatus from the provider.Session and the static Capabilities
+// from the provider.Runtime that spawned it, along with provider identity.
+type RuntimeHealthResult struct {
+	SessionID    string
+	ProviderID   string
+	ProviderKind string
+	Caps         provider.Capabilities
+	Health       provider.HealthStatus
 }
 
 // LaunchResult is the api-facing subset of app.Launched. The full app
@@ -76,6 +92,27 @@ type LaunchResponse struct {
 
 type WaitResponse struct {
 	ExitCode int `json:"exit_code"`
+}
+
+// CapabilitiesDTO is the on-the-wire representation of provider.Capabilities.
+type CapabilitiesDTO struct {
+	PTY               bool `json:"pty"`
+	Resize            bool `json:"resize"`
+	ProviderSessionID bool `json:"provider_session_id"`
+	CheckpointResume  bool `json:"checkpoint_resume"`
+	BinaryRequired    bool `json:"binary_required"`
+}
+
+// RuntimeHealthResponse is the body of GET /sessions/{id}/health.
+type RuntimeHealthResponse struct {
+	SessionID    string          `json:"session_id"`
+	Alive        bool            `json:"alive"`
+	PID          int             `json:"pid,omitempty"`
+	LiveState    string          `json:"live_state"`
+	TurnID       string          `json:"turn_id,omitempty"`
+	ProviderID   string          `json:"provider_id"`
+	ProviderKind string          `json:"provider_kind"`
+	Caps         CapabilitiesDTO `json:"caps"`
 }
 
 // ResizeRequest is the body of POST /sessions/{id}/resize. Rows and

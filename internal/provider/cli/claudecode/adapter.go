@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
@@ -19,6 +20,19 @@ type Adapter struct{}
 
 func (Adapter) ID() string                 { return "claude-code" }
 func (Adapter) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
+
+// Caps declares the claude-code PTY adapter's capabilities. It is a PTY-backed
+// CLI with resize support and requires the binary to be present. It does not
+// expose a provider session ID or checkpoint hints (v0.0.4).
+func (Adapter) Caps() provider.Capabilities {
+	return provider.Capabilities{
+		PTY:               true,
+		Resize:            true,
+		ProviderSessionID: false,
+		CheckpointResume:  false,
+		BinaryRequired:    true,
+	}
+}
 
 // Prepare validates the plan is runnable before the manager provisions a
 // workspace. Surfacing errors here (vs. inside Start) lets the caller abort
@@ -58,13 +72,32 @@ func (a Adapter) Start(ctx context.Context, plan *launch.Plan, opts provider.Sta
 // PTY internals encapsulated so the runtime manager can treat CLI and API
 // runtimes identically.
 type cliSession struct {
-	handle *session.Handle
+	handle   *session.Handle
+	mu       sync.Mutex
+	stopped  bool
+	stopOnce sync.Once
 }
 
-func (s *cliSession) Wait() (int, error)           { return s.handle.Wait() }
-func (s *cliSession) Stop(_ context.Context) error { return s.handle.Kill() }
+func (s *cliSession) Wait() (int, error) { return s.handle.Wait() }
+
+func (s *cliSession) Stop(_ context.Context) error {
+	var killErr error
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.stopped = true
+		s.mu.Unlock()
+		killErr = s.handle.Kill()
+	})
+	return killErr
+}
 
 func (s *cliSession) SendInput(_ context.Context, data []byte) error {
+	s.mu.Lock()
+	stopped := s.stopped
+	s.mu.Unlock()
+	if stopped {
+		return provider.ErrNoInputChannel
+	}
 	w := s.handle.PTYWriter()
 	if w == nil {
 		return provider.ErrNoInputChannel
@@ -78,7 +111,16 @@ func (s *cliSession) Resize(_ context.Context, rows, cols uint16) error {
 }
 
 func (s *cliSession) Health() provider.HealthStatus {
-	return provider.HealthStatus{Alive: true, PID: s.handle.PID()}
+	s.mu.Lock()
+	stopped := s.stopped
+	s.mu.Unlock()
+	if stopped {
+		return provider.HealthStatus{Alive: false, PID: 0, State: provider.LiveStateStopped}
+	}
+	// PTY sessions are always in LiveStateIdle while alive — the PTY is
+	// continuously active; there is no discrete "turn" concept at the
+	// adapter level.
+	return provider.HealthStatus{Alive: true, PID: s.handle.PID(), State: provider.LiveStateIdle}
 }
 
 // CheckpointHints is a no-op for the CLI runtime in v0.0.2. The checkpoint

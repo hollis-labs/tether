@@ -37,6 +37,19 @@ type Adapter struct{}
 func (Adapter) ID() string                 { return "opencode" }
 func (Adapter) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
 
+// Caps declares the opencode adapter's capabilities. It is a turn-based
+// CLI adapter with provider session ID continuity (--session flag) and
+// requires the binary to be present. No PTY, no resize.
+func (Adapter) Caps() provider.Capabilities {
+	return provider.Capabilities{
+		PTY:               false,
+		Resize:            false,
+		ProviderSessionID: true,
+		CheckpointResume:  false,
+		BinaryRequired:    true,
+	}
+}
+
 // Prepare validates that the catalog references a runnable binary.
 func (Adapter) Prepare(_ context.Context, plan *launch.Plan) error {
 	if plan.Command == "" {
@@ -230,11 +243,23 @@ func (s *Session) Resize(_ context.Context, _, _ uint16) error { return nil }
 func (s *Session) Health() provider.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopped {
+		return provider.HealthStatus{Alive: false, PID: 0, State: provider.LiveStateStopped}
+	}
 	pid := 0
+	state := provider.LiveStateIdle
 	if s.current != nil && s.current.Process != nil {
 		pid = s.current.Process.Pid
+		state = provider.LiveStateProcessing
 	}
-	return provider.HealthStatus{Alive: !s.stopped, PID: pid}
+	return provider.HealthStatus{Alive: true, PID: pid, State: state}
+}
+
+// ProviderSessionID returns the opencode session ID observed on this
+// session's first turn, or "" if no turn has run yet.
+// Satisfies provider.SessionIDer (checked by Caps().ProviderSessionID == true).
+func (s *Session) ProviderSessionID() string {
+	return s.SessionID()
 }
 
 // CheckpointHints returns no hints; opencode session continuity is handled

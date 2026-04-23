@@ -26,6 +26,18 @@ type Runtime struct{}
 func (Runtime) ID() string                 { return "api-stub" }
 func (Runtime) Kind() provider.RuntimeKind { return provider.RuntimeKindAPI }
 
+// Caps declares the api-stub's capabilities. It is an in-process echo
+// provider with no external binary, no PTY, and no provider session ID.
+func (Runtime) Caps() provider.Capabilities {
+	return provider.Capabilities{
+		PTY:               false,
+		Resize:            false,
+		ProviderSessionID: false,
+		CheckpointResume:  false,
+		BinaryRequired:    false,
+	}
+}
+
 // Prepare is a no-op — the stub has no validation to perform. Real API
 // runtimes will use Prepare to verify credentials, model availability, etc.
 func (Runtime) Prepare(_ context.Context, _ *launch.Plan) error { return nil }
@@ -105,7 +117,11 @@ func (s *Session) Resize(_ context.Context, _, _ uint16) error { return nil }
 func (s *Session) Health() provider.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return provider.HealthStatus{Alive: !s.closed, PID: 0}
+	state := provider.LiveStateIdle
+	if s.closed {
+		state = provider.LiveStateStopped
+	}
+	return provider.HealthStatus{Alive: !s.closed, PID: 0, State: state}
 }
 
 func (s *Session) CheckpointHints() (provider.CheckpointHint, bool) {

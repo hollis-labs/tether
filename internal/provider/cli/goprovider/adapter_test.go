@@ -15,7 +15,29 @@ import (
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/provider/cli/goprovider"
+	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
+
+// TestCompliance runs the shared provider compliance suite against the
+// goprovider adapter. We wire a scriptAdapter so no real external binary
+// is required for baseline lifecycle tests.
+func TestCompliance(t *testing.T) {
+	sh, shErr := exec.LookPath("sh")
+	if shErr != nil {
+		t.Skip("sh not available")
+	}
+	// A scriptAdapter that immediately exits (no NDJSON output needed for
+	// baseline lifecycle tests).
+	sa := &scriptAdapter{name: "compliance-stub", script: sh}
+	rt := goprovider.NewRuntime("compliance-stub", sa, sh)
+	compliance.Run(t, compliance.Harness{
+		NewRuntime: func(t *testing.T) provider.Runtime { return rt },
+		NewPlan: func(t *testing.T) *launch.Plan {
+			return &launch.Plan{}
+		},
+		BinarySkip: true, // skip capability tests requiring real provider binary
+	})
+}
 
 // scriptAdapter is a test CLIAdapter that runs a shell script as the "binary".
 // The BuildArgs call just passes the prompt as a positional argument so the

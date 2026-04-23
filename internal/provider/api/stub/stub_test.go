@@ -10,7 +10,18 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
+
+// TestCompliance runs the shared provider compliance suite against the api-stub.
+// The stub is an in-process provider so no binary gating is needed.
+func TestCompliance(t *testing.T) {
+	compliance.Run(t, compliance.Harness{
+		NewRuntime: func(t *testing.T) provider.Runtime { return Runtime{} },
+		NewPlan:    func(t *testing.T) *launch.Plan { return &launch.Plan{} },
+		BinarySkip: false,
+	})
+}
 
 func TestStub_StartProducesAliveSession(t *testing.T) {
 	sess, err := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{})

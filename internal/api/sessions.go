@@ -131,9 +131,57 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionCheckpointsList(w, r, id)
+	case "health":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSessionHealth(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}
+}
+
+// handleSessionHealth services GET /sessions/{id}/health.
+// Returns the live runtime health snapshot for a running session, including
+// provider identity, capability flags, and fine-grained live state.
+//
+// Returns 404 if the session does not exist in the store, 409 if the session
+// is not currently registered in the runtime manager (not in running state),
+// or 200 with the RuntimeHealthResponse on success.
+func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id string) {
+	// Confirm the session exists in the store first.
+	if _, err := s.Service.GetSession(id); err != nil {
+		if errors.Is(err, store.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	// Read live runtime health from the manager.
+	result, ok := s.Service.RuntimeHealth(id)
+	if !ok {
+		writeError(w, http.StatusConflict, CodeConflict, "session is not currently running; no live health available")
+		return
+	}
+	caps := result.Caps
+	writeJSON(w, http.StatusOK, RuntimeHealthResponse{
+		SessionID:    id,
+		Alive:        result.Health.Alive,
+		PID:          result.Health.PID,
+		LiveState:    result.Health.State.String(),
+		TurnID:       result.Health.TurnID,
+		ProviderID:   result.ProviderID,
+		ProviderKind: result.ProviderKind,
+		Caps: CapabilitiesDTO{
+			PTY:               caps.PTY,
+			Resize:            caps.Resize,
+			ProviderSessionID: caps.ProviderSessionID,
+			CheckpointResume:  caps.CheckpointResume,
+			BinaryRequired:    caps.BinaryRequired,
+		},
+	})
 }
 
 // handleLaunch services POST /sessions — the create leg of the split.

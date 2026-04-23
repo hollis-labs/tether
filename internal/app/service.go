@@ -374,6 +374,23 @@ func (s *Service) AttachedClients(id string) int {
 	return info.AttachedClients
 }
 
+// RuntimeHealth returns the live health snapshot for a running session by
+// delegating to the runtime.Manager. Returns (zero, false) when the session
+// is not currently registered in the manager (not running, already terminal).
+func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
+	snap, ok := s.Runtime.RuntimeHealth(id)
+	if !ok {
+		return api.RuntimeHealthResult{}, false
+	}
+	return api.RuntimeHealthResult{
+		SessionID:    snap.SessionID,
+		ProviderID:   snap.ProviderID,
+		ProviderKind: snap.ProviderKind,
+		Caps:         snap.Caps,
+		Health:       snap.Health,
+	}, true
+}
+
 // ResumeLogicalAgent starts a new session for the given logical agent using
 // its most recent checkpoint as boot context. The launch profile from the
 // agent's most recent previous session (logical_agents.launch_id) is reused.

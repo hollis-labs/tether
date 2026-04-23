@@ -206,6 +206,10 @@ func (a *serviceAdapter) ResumeLogicalAgent(logicalAgentID string) (api.LaunchRe
 	return a.svc.ResumeLogicalAgent(logicalAgentID)
 }
 
+func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
+	return a.svc.RuntimeHealth(id)
+}
+
 // catalogLoader is the production api.CatalogLoader: each Load call
 // re-reads the catalog root with config.Load, so live YAML edits are
 // picked up without a daemon restart. The read cost is trivial (O(100s)

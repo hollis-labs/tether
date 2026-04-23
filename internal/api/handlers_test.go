@@ -148,6 +148,10 @@ func (f *fakeLaunchService) ResumeLogicalAgent(_ string) (LaunchResult, error) {
 	return f.resumeRes, f.resumeErr
 }
 
+func (f *fakeLaunchService) RuntimeHealth(_ string) (RuntimeHealthResult, bool) {
+	return RuntimeHealthResult{}, false
+}
+
 func newTestHandler(svc LaunchService) http.Handler {
 	return NewHandler(Deps{Service: svc})
 }
