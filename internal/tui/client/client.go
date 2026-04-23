@@ -35,6 +35,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,9 @@ import (
 	"github.com/chrispian/agent-mux/internal/bootgen"
 	"github.com/chrispian/agent-mux/internal/config"
 )
+
+type MessageEnvelope = daemon.MessageEnvelopeDTO
+type MessageSendRequest = daemon.MessageSendRequest
 
 // ListBootProfiles loads boot profiles from the catalog root.
 // Returns an empty list when CatalogRoot is not set or the directory is missing.
@@ -313,6 +317,41 @@ func (c *Client) QueryProxyEvents(ctx context.Context, limit int) ([]api.ProxyEv
 		return nil, wrap("query proxy events", err)
 	}
 	return evs, nil
+}
+
+// MessageInbox fetches pending messages for a recipient address.
+func (c *Client) MessageInbox(ctx context.Context, to string) ([]MessageEnvelope, error) {
+	rows, err := c.inner.MessageInbox(ctx, to, "", "")
+	if err != nil {
+		return nil, wrap("message inbox", err)
+	}
+	return rows, nil
+}
+
+// MessageSend sends a Mux message envelope.
+func (c *Client) MessageSend(ctx context.Context, req MessageSendRequest) (MessageEnvelope, error) {
+	if req.ContentType == "" {
+		req.ContentType = "application/json"
+	}
+	if req.Payload == nil {
+		req.Payload = map[string]any{}
+	}
+	if _, err := json.Marshal(req.Payload); err != nil {
+		return MessageEnvelope{}, wrap("message send", err)
+	}
+	sent, err := c.inner.MessageSend(ctx, req)
+	if err != nil {
+		return MessageEnvelope{}, wrap("message send", err)
+	}
+	return sent, nil
+}
+
+// MessageConsume marks a message consumed by a recipient address.
+func (c *Client) MessageConsume(ctx context.Context, id, as string) error {
+	if err := c.inner.MessageConsume(ctx, id, as); err != nil {
+		return wrap("message consume", err)
+	}
+	return nil
 }
 
 // wrap prefixes "tui client: <op>" while preserving the sentinel

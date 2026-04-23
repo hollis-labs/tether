@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/config"
@@ -33,6 +34,42 @@ var ErrDaemonUnreachable = errors.New("daemon unreachable")
 type Client struct {
 	baseURL string
 	http    *http.Client
+}
+
+// MessageEnvelopeDTO is the daemon's /messages envelope shape as consumed by
+// CLI/TUI clients. Address fields are kept as canonical msg:// strings so UI
+// code does not need to import go-messaging just to render or reply.
+type MessageEnvelopeDTO struct {
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Channel     string          `json:"channel"`
+	From        string          `json:"from"`
+	To          string          `json:"to"`
+	ThreadID    string          `json:"thread_id"`
+	InReplyTo   string          `json:"in_reply_to"`
+	Payload     json.RawMessage `json:"payload"`
+	ContentType string          `json:"content_type"`
+	Metadata    map[string]any  `json:"metadata"`
+	CreatedAt   time.Time       `json:"created_at"`
+	DeliveredAt *time.Time      `json:"delivered_at"`
+	ConsumedAt  *time.Time      `json:"consumed_at"`
+}
+
+type messageListResponse struct {
+	Messages []MessageEnvelopeDTO `json:"messages"`
+}
+
+// MessageSendRequest is the JSON body accepted by POST /messages.
+type MessageSendRequest struct {
+	Kind        string         `json:"kind"`
+	Channel     string         `json:"channel,omitempty"`
+	From        string         `json:"from"`
+	To          string         `json:"to"`
+	ThreadID    string         `json:"thread_id,omitempty"`
+	InReplyTo   string         `json:"in_reply_to,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+	ContentType string         `json:"content_type,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 // New constructs a Client for the given listen_addr. The transport handles
@@ -422,6 +459,75 @@ func (c *Client) ListLogicalAgents(ctx context.Context) ([]api.LogicalAgentSumma
 		return nil, err
 	}
 	return res.Agents, nil
+}
+
+// MessageInbox fetches pending messages for a recipient from GET /messages/inbox.
+// The daemon currently treats inbox reads as delivery, so callers should keep
+// returned messages locally if they need to continue displaying them.
+func (c *Client) MessageInbox(ctx context.Context, to, kind, threadID string) ([]MessageEnvelopeDTO, error) {
+	params := url.Values{}
+	params.Set("to", to)
+	if kind != "" {
+		params.Set("kind", kind)
+	}
+	if threadID != "" {
+		params.Set("thread_id", threadID)
+	}
+	var res messageListResponse
+	if err := c.getJSON(ctx, "/messages/inbox?"+params.Encode(), &res); err != nil {
+		return nil, err
+	}
+	return res.Messages, nil
+}
+
+// MessageThread loads all messages in a Mux message thread.
+func (c *Client) MessageThread(ctx context.Context, threadID string) ([]MessageEnvelopeDTO, error) {
+	var res messageListResponse
+	if err := c.getJSON(ctx, "/messages/thread/"+url.PathEscape(threadID), &res); err != nil {
+		return nil, err
+	}
+	return res.Messages, nil
+}
+
+// MessageSend posts a new envelope through POST /messages.
+func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (MessageEnvelopeDTO, error) {
+	body, _ := json.Marshal(msg)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages", bytes.NewReader(body))
+	if err != nil {
+		return MessageEnvelopeDTO{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MessageEnvelopeDTO{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return MessageEnvelopeDTO{}, readError(resp)
+	}
+	var sent MessageEnvelopeDTO
+	if err := json.NewDecoder(resp.Body).Decode(&sent); err != nil {
+		return MessageEnvelopeDTO{}, fmt.Errorf("decode message response: %w", err)
+	}
+	return sent, nil
+}
+
+// MessageConsume marks a message consumed by the named recipient.
+func (c *Client) MessageConsume(ctx context.Context, id, as string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/consume?as="+url.QueryEscape(as), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
