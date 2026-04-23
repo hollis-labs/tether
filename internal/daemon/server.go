@@ -55,6 +55,8 @@ type Server struct {
 	GroupStore api.SessionGroupStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
+	// Attachments is optional; when set, GET /sessions/{id}/attachments works.
+	Attachments api.AttachmentStore
 	// ProxyEvents is optional; when set, GET/POST /proxy/events endpoints are
 	// mounted. Populated by the daemon when MCP proxy forwarding is active,
 	// so the TUI can poll tool call events without sharing in-process memory
@@ -194,6 +196,7 @@ func (s *Server) Handler() http.Handler {
 			Catalog:      s.Catalog,
 			GroupStore:   s.GroupStore,
 			MessageStore: s.MessageStore,
+			Attachments:  s.Attachments,
 			ProxyEvents:  s.ProxyEvents,
 		})
 		// Mount api at every top-level path it owns. Keeping the list

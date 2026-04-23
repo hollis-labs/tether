@@ -376,6 +376,79 @@ mux_session_launch (session_id)  → start
 
 ---
 
+### Observation (durable history)
+
+These tools expose durable history stored in the agent-mux SQLite database.
+All four are read-only and require no auth scope. They are available in both
+normal and `--proxy` mode.
+
+> **Note:** `mux_events_tool_calls` (proxy mode only) is now backed by the
+> same durable `proxy_events` SQLite table as `mux_proxy_events`. Results
+> survive daemon restarts.
+
+#### `mux_session_events`
+List historical lifecycle events for a session in descending seq order.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `session_id` | string | ✓ | Session UUID |
+| `limit` | number | — | Max events (default 100, max 1000) |
+| `cursor` | number | — | Smallest seq from previous page (for pagination) |
+
+```json
+// Response
+{
+  "ok": true,
+  "events": [{"seq": 12, "at": "...", "scope": "session", "kind": "session.state_changed", ...}],
+  "count": 1,
+  "next_cursor": 0
+}
+```
+
+#### `mux_session_checkpoints`
+List checkpoints for a session (resolved via its logical agent). Newest first.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `session_id` | string | ✓ | Session UUID |
+
+```json
+// Response
+{ "ok": true, "checkpoints": [...], "count": 2 }
+```
+
+#### `mux_session_attachments`
+List client attach/detach records for a session. `detached_at` is `""` for
+still-open or pre-tracking attachments.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `session_id` | string | ✓ | Session UUID |
+
+```json
+// Response
+{ "ok": true, "attachments": [{"id":"...","session_id":"...","client_kind":"tui","attached_at":"...","detached_at":"..."}], "count": 1 }
+```
+
+#### `mux_proxy_events`
+Query durable proxy/tool call events from the SQLite store.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `session_id` | string | — | Filter by session ID |
+| `server` | string | — | Filter by upstream server ID (exact match) |
+| `tool_name` | string | — | Filter by tool name prefix |
+| `errors_only` | bool | — | When true, only return failed calls |
+| `limit` | number | — | Max results (default 100, max 500) |
+| `since` | string | — | RFC3339 lower-bound on event timestamp |
+
+```json
+// Response
+{ "ok": true, "events": [...], "count": 5 }
+```
+
+---
+
 ## Common workflows
 
 ### Launch a new agent session

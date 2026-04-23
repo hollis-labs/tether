@@ -4,7 +4,14 @@ import (
 	"net/http"
 
 	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/chrispian/agent-mux/internal/store"
 )
+
+// AttachmentStore is the narrow storage contract for listing client
+// attachment history per session. *store.Store satisfies it directly.
+type AttachmentStore interface {
+	ListClientAttachments(sessionID string) ([]store.ClientAttachmentRow, error)
+}
 
 // Deps bundles everything the api handlers need at construction time.
 // The daemon package builds this and calls NewHandler to get an
@@ -24,6 +31,8 @@ type Deps struct {
 	// daemon when --proxy mode is active. The TUI polls this to populate the
 	// Activity feed without requiring in-process access to the MCP subprocess.
 	ProxyEvents ProxyEventStore
+	// Attachments, when non-nil, enables GET /sessions/{id}/attachments.
+	Attachments AttachmentStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -38,6 +47,7 @@ type Server struct {
 	GroupStore   SessionGroupStore
 	MessageStore MessageStore
 	ProxyEvents  ProxyEventStore
+	Attachments  AttachmentStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -53,6 +63,7 @@ func NewHandler(deps Deps) http.Handler {
 		GroupStore:   deps.GroupStore,
 		MessageStore: deps.MessageStore,
 		ProxyEvents:  deps.ProxyEvents,
+		Attachments:  deps.Attachments,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)

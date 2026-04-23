@@ -88,11 +88,13 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 	adapter := mcpadapter.New(svc, token, scopes)
 	if mcpProxy {
-		// Wire observability — LoggingMiddleware + ToolCallEventStore.
-		store := mcpadapter.NewToolCallEventStore(1000)
+		// Wire observability — LoggingMiddleware + ToolCallEventStore (TUI) +
+		// durable proxy_events table (mux_events_tool_calls MCP tool).
+		eventStore := mcpadapter.NewToolCallEventStore(1000)
 		opts := mcpadapter.ProxyOptions{
 			Bus:        svc.Bus,
-			EventStore: store,
+			EventStore: eventStore,
+			ProxyStore: svc.Store, // durable SQLite store for mux_events_tool_calls
 			BrokerMode: mcpBroker,
 		}
 

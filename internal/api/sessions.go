@@ -111,6 +111,26 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionEventsList(w, r, id)
+	case "attachments":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.Attachments == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "attachments store not configured")
+			return
+		}
+		s.handleSessionAttachmentsList(w, r, id)
+	case "checkpoints":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.Checkpoints == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "checkpoints not configured")
+			return
+		}
+		s.handleSessionCheckpointsList(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}
@@ -303,4 +323,55 @@ func (s *Server) handleWaitSession(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	writeJSON(w, http.StatusOK, WaitResponse{ExitCode: code})
+}
+
+// handleSessionAttachmentsList services GET /sessions/{id}/attachments.
+// Returns the attach/detach history for the session in attached_at order
+// (oldest first). DetachedAt is emitted as "" when the attachment is still
+// open or the row predates detach tracking.
+func (s *Server) handleSessionAttachmentsList(w http.ResponseWriter, _ *http.Request, sessionID string) {
+	rows, err := s.Attachments.ListClientAttachments(sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	out := make([]AttachmentDTO, 0, len(rows))
+	for _, r := range rows {
+		detachedAt := ""
+		if r.DetachedAt.Valid {
+			detachedAt = r.DetachedAt.String
+		}
+		out = append(out, AttachmentDTO{
+			ID:         r.ID,
+			SessionID:  r.SessionID,
+			ClientKind: r.ClientKind,
+			AttachedAt: r.AttachedAt,
+			DetachedAt: detachedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, AttachmentListResponse{Attachments: out, Count: len(out)})
+}
+
+// handleSessionCheckpointsList services GET /sessions/{id}/checkpoints.
+// Resolves the session's logical agent ID and returns that agent's checkpoints.
+func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Request, sessionID string) {
+	row, err := s.Service.GetSession(sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrSessionNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	cps, err := s.Checkpoints.ListCheckpointsByLogicalAgent(row.LogicalAgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	out := make([]CheckpointDTO, 0, len(cps))
+	for _, c := range cps {
+		out = append(out, checkpointToDTO(c))
+	}
+	writeJSON(w, http.StatusOK, CheckpointListResponse{Checkpoints: out})
 }

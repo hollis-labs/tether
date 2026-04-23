@@ -6,14 +6,62 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/chrispian/agent-mux/internal/store"
 )
 
+// toolCallEventStoreQuerier wraps the in-memory ToolCallEventStore to satisfy
+// ProxyEventQuerier. Used as a fallback when ProxyStore is not set in
+// ProxyOptions so existing callers that only wire EventStore continue working.
+type toolCallEventStoreQuerier struct {
+	store *ToolCallEventStore
+}
+
+// QueryProxyEvents maps store.ProxyEventFilter to ToolCallEventFilter and
+// queries the in-memory ring buffer. This is a best-effort bridge — fields
+// that have no equivalent in ToolCallEventFilter are ignored.
+func (q *toolCallEventStoreQuerier) QueryProxyEvents(f store.ProxyEventFilter) ([]store.ProxyEvent, error) {
+	filter := ToolCallEventFilter{
+		ServerID:       f.ServerID,
+		ToolName:       f.ToolName,
+		SessionID:      f.SessionID,
+		Limit:          f.Limit,
+		SinceTimestamp: f.Since,
+		ErrorsOnly:     f.ErrorsOnly,
+	}
+	events := q.store.Query(filter)
+	out := make([]store.ProxyEvent, 0, len(events))
+	for _, ev := range events {
+		out = append(out, store.ProxyEvent{
+			SessionID:    ev.SessionID,
+			Server:       ev.Server,
+			ToolName:     ev.ToolName,
+			ArgsSchemaFP: ev.ArgsSchemaFP,
+			DurationMs:   ev.DurationMs,
+			OK:           ev.OK,
+			Error:        ev.Error,
+			Timestamp:    ev.Timestamp,
+		})
+	}
+	return out, nil
+}
+
+// ProxyEventQuerier is the narrow store contract that registerToolCallEventsTool
+// depends on. *store.Store satisfies it. Defined here to keep tool_events.go
+// self-contained and avoid importing the full store package at the call site.
+type ProxyEventQuerier interface {
+	QueryProxyEvents(f store.ProxyEventFilter) ([]store.ProxyEvent, error)
+}
+
 // registerToolCallEventsTool registers the mux_events_tool_calls native tool
-// on s. The tool queries the ToolCallEventStore and returns results as JSON.
+// on s. The tool queries the durable proxy_events SQLite table and returns
+// results as JSON.
 //
-// This tool is only registered in proxy mode when an event store is wired.
-// See T-03 (CW-20260422-0010) and ADR 0021.
-func registerToolCallEventsTool(s *server.MCPServer, store *ToolCallEventStore) {
+// This tool is only registered in proxy mode when a store is wired.
+// The in-memory ToolCallEventStore is retained for the live TUI feed (ADR 0021)
+// but mux_events_tool_calls now reads from the durable proxy_events table
+// (ADR 0024 §4).
+func registerToolCallEventsTool(s *server.MCPServer, proxyStore ProxyEventQuerier) {
 	s.AddTool(
 		mcp.NewTool("mux_events_tool_calls",
 			mcp.WithDescription(
@@ -41,7 +89,7 @@ func registerToolCallEventsTool(s *server.MCPServer, store *ToolCallEventStore) 
 			),
 		),
 		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			f := ToolCallEventFilter{}
+			f := store.ProxyEventFilter{}
 
 			if v := str(req, "server"); v != "" {
 				f.ServerID = v
@@ -70,14 +118,17 @@ func registerToolCallEventsTool(s *server.MCPServer, store *ToolCallEventStore) 
 					return toolError("invalid_request", //nolint:nilerr
 						"since must be an RFC3339 timestamp: "+parsedErr.Error()), nil
 				}
-				f.SinceTimestamp = t
+				f.Since = t
 			}
 
 			if b, ok := req.GetArguments()["errors_only"].(bool); ok {
 				f.ErrorsOnly = b
 			}
 
-			results := store.Query(f)
+			results, err := proxyStore.QueryProxyEvents(f)
+			if err != nil {
+				return toolError("internal_error", "query proxy events: "+err.Error()), nil
+			}
 			return toolJSON(map[string]any{
 				"ok":     true,
 				"events": results,

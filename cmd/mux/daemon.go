@@ -101,6 +101,7 @@ var daemonRunCmd = &cobra.Command{
 			Catalog:      &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:   svc.Store,
 			MessageStore: svc.Store.MessagingStore(),
+			Attachments:  svc.Store,
 			ProxyEvents:  svc.Store,
 			Publisher:    svc.Bus,
 			Close: func() error {

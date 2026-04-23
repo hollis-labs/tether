@@ -21,8 +21,16 @@ type ProxyOptions struct {
 	Bus events.Bus
 
 	// EventStore, when non-nil, is subscribed to the Bus to accumulate
-	// tool call events for the mux_events_tool_calls query tool.
+	// tool call events for the live TUI Activity feed (in-memory ring buffer).
+	// See ADR 0021. The TUI reads from this store; the MCP tool
+	// mux_events_tool_calls reads from the durable ProxyStore instead.
 	EventStore *ToolCallEventStore
+
+	// ProxyStore, when non-nil, is used by mux_events_tool_calls to query the
+	// durable proxy_events SQLite table (ADR 0024 §4). When both EventStore
+	// and ProxyStore are set, EventStore feeds the TUI and ProxyStore feeds
+	// the MCP tool.
+	ProxyStore ProxyEventQuerier
 
 	// BrokerMode, when true, enables progressive tool discovery instead of
 	// registering every upstream tool at startup. Only mux_discover,
@@ -141,9 +149,14 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// Introspection tool — always registered in proxy mode.
 	a.registerMCPServersTool(s, pool, entries)
 
-	// Register mux_events_tool_calls when an event store is wired.
-	if opts.EventStore != nil {
-		registerToolCallEventsTool(s, opts.EventStore)
+	// Register mux_events_tool_calls when a durable proxy store is wired.
+	// Falls back to EventStore for backwards compatibility when ProxyStore
+	// is not set (e.g. tests that only wire the in-memory store).
+	switch {
+	case opts.ProxyStore != nil:
+		registerToolCallEventsTool(s, opts.ProxyStore)
+	case opts.EventStore != nil:
+		registerToolCallEventsTool(s, &toolCallEventStoreQuerier{store: opts.EventStore})
 	}
 
 	ctxFunc := func(_ context.Context) context.Context { return ctx }

@@ -116,6 +116,24 @@ type SessionDTO struct {
 	SessionGroupID  string  `json:"session_group_id,omitempty"`
 }
 
+// AttachmentDTO is the on-the-wire shape for a client attachment row.
+// DetachedAt is "" when the row has no detached_at stamp (attachment
+// still open or predates detach tracking).
+type AttachmentDTO struct {
+	ID         string `json:"id"`
+	SessionID  string `json:"session_id"`
+	ClientKind string `json:"client_kind"`
+	AttachedAt string `json:"attached_at"`
+	DetachedAt string `json:"detached_at"`
+}
+
+// AttachmentListResponse is the collection response for
+// GET /sessions/{id}/attachments.
+type AttachmentListResponse struct {
+	Attachments []AttachmentDTO `json:"attachments"`
+	Count       int             `json:"count"`
+}
+
 // SessionRowToDTO flattens the sql.Null* fields on store.SessionRow into
 // pointer-valued JSON-friendly shapes. Nil means "no value set" (e.g.,
 // session not yet running, or hasn't exited).
