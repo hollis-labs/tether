@@ -13,6 +13,12 @@ import (
 	"github.com/hollis-labs/go-messaging"
 )
 
+// ErrWrongRecipient is returned by Consume when the caller's `as` URN does
+// not match the envelope's intended `to_urn`. Callers should surface this
+// as HTTP 409 Conflict (the message exists but the caller is not entitled
+// to consume it).
+var ErrWrongRecipient = errors.New("consume: caller is not the intended recipient")
+
 // messagingStore implements messaging.Store backed by the SQLite messages
 // table (migration 0010). It is obtained via (*Store).MessagingStore().
 //
@@ -111,6 +117,14 @@ func (ms *messagingStore) Get(ctx context.Context, id string) (messaging.Envelop
 
 // ─── Inbox ───────────────────────────────────────────────────────────────────
 
+// Inbox returns undelivered envelopes for `to` and atomically marks them as
+// delivered within a single write transaction (BEGIN IMMEDIATE).
+//
+// The BEGIN IMMEDIATE lock ensures that two concurrent Inbox calls for the
+// same recipient cannot both see the same undelivered row: the second caller
+// blocks at the transaction boundary until the first commits its
+// delivered_at updates. This is the atomic-delivery guarantee required by
+// ADR-0023 §4 and the messaging.Store contract.
 func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
 	toURN := to.URN()
 	limit := f.Limit
@@ -134,7 +148,17 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 		args = append(args, f.ThreadID)
 	}
 
-	rows, err := ms.db.QueryContext(ctx,
+	// BEGIN IMMEDIATE acquires a write lock upfront so that two concurrent
+	// Inbox calls are serialised: the loser blocks until the winner commits,
+	// then sees 0 rows (all already delivered_at). Without this, both could
+	// SELECT the same undelivered rows before either commits the UPDATE.
+	tx, err := ms.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("messaging store: inbox begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx,
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,
 		        delivered_at, consumed_at
@@ -143,32 +167,36 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	if err != nil {
 		return nil, fmt.Errorf("messaging store: inbox query: %w", err)
 	}
-	defer rows.Close()
 
 	var out []messaging.Envelope
 	var ids []string
 	for rows.Next() {
 		env, err := scanEnvelope(rows.Scan)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, env)
 		ids = append(ids, env.ID)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// Atomically mark as DELIVERED for this recipient.
+	// Mark as DELIVERED within the same transaction — atomic with the SELECT.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, id := range ids {
-		if _, err := ms.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE messages SET delivered_at=? WHERE id=? AND delivered_at IS NULL`,
 			now, id); err != nil {
 			return nil, fmt.Errorf("messaging store: inbox mark delivered: %w", err)
 		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("messaging store: inbox commit: %w", err)
+	}
 	return out, nil
 }
 
@@ -215,12 +243,36 @@ func (ms *messagingStore) Thread(ctx context.Context, threadID string, f messagi
 
 // ─── Consume ─────────────────────────────────────────────────────────────────
 
+// Consume marks a message as consumed by `recipient`. Idempotent: if the
+// message was already consumed by this recipient, returns nil. Returns
+// ErrNotFound if the id does not exist. Returns ErrWrongRecipient if the
+// message exists but `recipient` is not the intended `to_urn`.
 func (ms *messagingStore) Consume(ctx context.Context, id string, recipient messaging.Address) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := ms.db.ExecContext(ctx,
+	res, err := ms.db.ExecContext(ctx,
 		`UPDATE messages SET consumed_at=? WHERE id=? AND to_urn=? AND consumed_at IS NULL`,
 		now, id, recipient.URN())
-	return err
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		return nil // updated — success
+	}
+	// 0 rows: already consumed (idempotent OK), wrong recipient, or not found.
+	var toURN string
+	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=?`, id).Scan(&toURN)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return messaging.ErrNotFound
+		}
+		return err
+	}
+	if toURN != recipient.URN() {
+		return ErrWrongRecipient
+	}
+	// Row exists and to_urn matches — already consumed. Idempotent.
+	return nil
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────

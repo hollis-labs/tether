@@ -2,8 +2,8 @@ package mcpadapter
 
 import (
 	"context"
+	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -11,12 +11,24 @@ import (
 	messaging "github.com/hollis-labs/go-messaging"
 )
 
+// validMsgKinds is the closed set of allowed kind values for mux_message_send.
+// Wire names match go-messaging Kind constants; "response" is the wire name
+// for replies (human docs say "reply" but the wire says "response").
+var validMsgKinds = map[messaging.Kind]struct{}{
+	messaging.MsgKindRequest:      {},
+	messaging.MsgKindResponse:     {},
+	messaging.MsgKindNotice:       {},
+	messaging.MsgKindStatusUpdate: {},
+	messaging.MsgKindHandoff:      {},
+	messaging.MsgKindEscalation:   {},
+}
+
 func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("mux_message_send",
 		mcp.WithDescription("Send a message envelope via the agent-mux messaging store. Requires message.write scope."),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Sender URN (e.g. urn:agent:nanite:session-abc)")),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
-		mcp.WithString("kind", mcp.Required(), mcp.Description("Message kind: request, reply, notification, handoff, status_update, escalation")),
+		mcp.WithString("from", mcp.Required(), mcp.Description("Sender URN (e.g. msg://agent/agent-mux/orchestrator)")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN (e.g. msg://agent/agent-mux/worker)")),
+		mcp.WithString("kind", mcp.Required(), mcp.Description("Message kind: request, response, notice, status_update, handoff, escalation")),
 		mcp.WithString("payload_json", mcp.Description("JSON payload body (optional)")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID for grouping related messages (optional)")),
 		mcp.WithString("in_reply_to", mcp.Description("Message ID this message is in reply to (optional)")),
@@ -64,6 +76,12 @@ func (a *Adapter) handleMessageSend(ctx context.Context, req mcp.CallToolRequest
 	if fromURN == "" || toURN == "" || kind == "" {
 		return toolError("invalid_request", "from, to, and kind are required"), nil
 	}
+	// Validate kind against closed enum before touching the store.
+	msgKind := messaging.Kind(kind)
+	if _, ok := validMsgKinds[msgKind]; !ok {
+		return toolError("invalid_request",
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)), nil
+	}
 	from, parseErr := messaging.ParseURN(fromURN)
 	if parseErr != nil {
 		return toolError("invalid_request", "invalid from URN: "+parseErr.Error()), nil //nolint:nilerr
@@ -75,10 +93,9 @@ func (a *Adapter) handleMessageSend(ctx context.Context, req mcp.CallToolRequest
 	env := messaging.Envelope{
 		From:      from,
 		To:        to,
-		Kind:      messaging.Kind(kind),
+		Kind:      msgKind,
 		ThreadID:  str(req, "thread_id"),
 		InReplyTo: str(req, "in_reply_to"),
-		CreatedAt: time.Now().UTC(),
 	}
 	if p := str(req, "payload_json"); p != "" {
 		env.Payload = []byte(p)
@@ -162,6 +179,9 @@ func (a *Adapter) handleMessageConsume(ctx context.Context, req mcp.CallToolRequ
 	if err := a.svc.Store.MessagingStore().Consume(ctx, id, recipient); err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "message not found: "+id), nil
+		}
+		if isWrongRecipient(err) {
+			return toolError("conflict", "caller is not the intended recipient of message: "+id), nil
 		}
 		return toolError("internal_error", err.Error()), nil
 	}

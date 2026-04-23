@@ -30,14 +30,38 @@ type Store struct {
 	msgStore *messagingStore
 }
 
+// Open opens (or creates) the SQLite store at path and runs migrations.
+//
+// The connection is configured with:
+//   - WAL journal mode: allows concurrent readers + one writer without
+//     blocking reads. Essential for the messaging fan-out path where
+//     Subscribe goroutines read while Send goroutines write.
+//   - busy_timeout=5000ms: SQLite retries a locked write for up to 5s
+//     before returning SQLITE_BUSY. This prevents SQLITE_BUSY propagating
+//     to callers under brief write contention (e.g. concurrent Inbox calls).
+//   - MaxOpenConns=1: SQLite does not support concurrent writers; serialising
+//     at the connection pool level prevents SQLITE_LOCKED races between
+//     goroutines sharing the same *sql.DB.
+//
+// Note: foreign_keys enforcement is deliberately left OFF (see ADR-0008 and
+// migration 0004_checkpoints.sql). FK declarations in the schema are
+// documentation only until the project explicitly enables enforcement.
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// DSN parameters are supported by modernc.org/sqlite.
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	// Serialise writers at the pool level. Readers may still run concurrently
+	// in WAL mode because SQLite WAL allows N readers + 1 writer. Setting
+	// MaxOpenConns=1 is the safest default for an embedded daemon; it prevents
+	// the "database is locked" errors that appear when multiple goroutines
+	// try to hold a write transaction simultaneously.
+	db.SetMaxOpenConns(1)
 	if _, err := Migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)

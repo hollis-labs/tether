@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrispian/agent-mux/internal/store"
 	"github.com/hollis-labs/go-messaging"
 )
 
@@ -80,6 +81,18 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// validMessageKinds is the closed set of allowed envelope kinds on the
+// /messages surface. MsgKindResponse ("response") is the go-messaging
+// wire name; the MCP tools and human docs call it "reply".
+var validMessageKinds = map[messaging.Kind]struct{}{
+	messaging.MsgKindRequest:      {},
+	messaging.MsgKindResponse:     {},
+	messaging.MsgKindNotice:       {},
+	messaging.MsgKindStatusUpdate: {},
+	messaging.MsgKindHandoff:      {},
+	messaging.MsgKindEscalation:   {},
+}
+
 // POST /messages
 // Body: messaging.Envelope (id, created_at, delivered_at, consumed_at are server-assigned/ignored).
 func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
@@ -88,12 +101,26 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
 		return
 	}
+	// Validate kind against closed enum. Empty kind is rejected — all new
+	// messages must have an explicit kind (backwards-compat empty-kind is
+	// only preserved in the legacy /broker surface).
+	if _, ok := validMessageKinds[env.Kind]; !ok {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", env.Kind))
+		return
+	}
 	// Guard: reject caller-set lifecycle fields.
 	env.ID = ""
 	env.CreatedAt = time.Time{}
+	env.DeliveredAt = nil
+	env.ConsumedAt = nil
 
 	sent, err := s.MessageStore.Send(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, messaging.ErrPresetLifecycle) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
@@ -188,6 +215,14 @@ func (s *Server) handleMessageConsume(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	if err := s.MessageStore.Consume(r.Context(), id, recipient); err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "message not found")
+			return
+		}
+		if isWrongRecipient(err) {
+			writeError(w, http.StatusConflict, CodeConflict, "caller is not the intended recipient")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
@@ -339,4 +374,8 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 func isNotFound(err error) bool {
 	return errors.Is(err, messaging.ErrNotFound) ||
 		strings.Contains(err.Error(), "no rows")
+}
+
+func isWrongRecipient(err error) bool {
+	return errors.Is(err, store.ErrWrongRecipient)
 }

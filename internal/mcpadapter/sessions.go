@@ -7,6 +7,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	messaging "github.com/hollis-labs/go-messaging"
+
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
 	"github.com/chrispian/agent-mux/internal/runtime"
@@ -265,14 +267,24 @@ func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest
 
 // isNotFound reports whether err is a "not found" class error. Uses
 // errors.Is against sentinel values (ADR 0022 G6) to avoid fragile
-// string matching. Falls back to store.ErrSessionNotFound and
-// runtime.ErrSessionNotRunning sentinels.
+// string matching. Covers session, runtime, and messaging not-found sentinels.
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
 	return errors.Is(err, store.ErrSessionNotFound) ||
-		errors.Is(err, runtime.ErrSessionNotRunning)
+		errors.Is(err, runtime.ErrSessionNotRunning) ||
+		errors.Is(err, messaging.ErrNotFound)
+}
+
+// isWrongRecipient reports whether err signals that the caller is not
+// the intended recipient of a message (store.ErrWrongRecipient).
+// Used by handleMessageConsume to return a distinct conflict error.
+func isWrongRecipient(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, store.ErrWrongRecipient)
 }
 
 // isConflict reports whether err is a "conflict" class error — specifically
