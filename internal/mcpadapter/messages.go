@@ -42,7 +42,7 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("mux_message_inbox",
 		mcp.WithDescription("List messages in a recipient's inbox. Optionally filter by kind and/or thread."),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
-		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, reply, notification, handoff, status_update, escalation")),
+		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
 	), a.handleMessageInbox)
 
