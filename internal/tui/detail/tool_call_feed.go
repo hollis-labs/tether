@@ -157,7 +157,7 @@ func (s *ToolCallFeedScreen) refreshBody() {
 	var sb strings.Builder
 	if len(s.evts) == 0 {
 		sb.WriteString("\n  No tool call events yet.\n\n")
-		sb.WriteString("  Make a tool call through the MCP relay (mux mcp --proxy --broker)\n")
+		sb.WriteString("  Make a tool call through the MCP relay (mux mcp --proxy [--servers <server-id>])\n")
 		sb.WriteString("  to see events appear here in real time.\n")
 	} else {
 		for _, ev := range s.evts {

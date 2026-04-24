@@ -51,11 +51,13 @@ func AttachIn(sessionID string) error {
 // pipes it via stdin — claude reads it as the first message then stays interactive.
 // The session opens in workDir.
 func BootWith(bootPrompt, providerID, command, workDir string) error {
-	switch providerID {
-	case "opencode":
+	switch {
+	case providerID == "opencode":
 		return bootOpencode(bootPrompt, command, workDir)
-	default:
+	case strings.HasPrefix(providerID, "claude-") || providerID == "claude":
 		return bootClaude(bootPrompt, command, workDir)
+	default:
+		return fmt.Errorf("unsupported provider for boot: %s", providerID)
 	}
 }
 

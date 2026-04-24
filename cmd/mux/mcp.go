@@ -55,10 +55,11 @@ Example MCP client config (mcp.json):
 }
 
 var (
-	mcpToken  string
-	mcpScopes string
-	mcpProxy  bool
-	mcpBroker bool
+	mcpToken   string
+	mcpScopes  string
+	mcpProxy   bool
+	mcpBroker  bool
+	mcpServers string
 )
 
 func init() {
@@ -66,6 +67,8 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write (env: AGENT_MUX_MCP_SCOPES)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().BoolVar(&mcpBroker, "broker", false, "enable broker mode (requires --proxy): register mux_discover+mux_call instead of all upstream tools; reduces per-request context size")
+	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: MUX_MCP_SERVERS); empty = all servers when --proxy is set")
+	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
@@ -87,15 +90,32 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = svc.Close() }()
 
 	adapter := mcpadapter.New(svc, token, scopes)
+	if mcpBroker && !mcpProxy {
+		return fmt.Errorf("--broker requires --proxy")
+	}
 	if mcpProxy {
+		// resolve servers filter: flag > env
+		serversStr := mcpServers
+		if serversStr == "" {
+			serversStr = os.Getenv("MUX_MCP_SERVERS")
+		}
+		var serverFilter []string
+		for _, s := range strings.Split(serversStr, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				serverFilter = append(serverFilter, s)
+			}
+		}
+
 		// Wire observability — LoggingMiddleware + ToolCallEventStore (TUI) +
 		// durable proxy_events table (mux_events_tool_calls MCP tool).
 		eventStore := mcpadapter.NewToolCallEventStore(1000)
 		opts := mcpadapter.ProxyOptions{
-			Bus:        svc.Bus,
-			EventStore: eventStore,
-			ProxyStore: svc.Store, // durable SQLite store for mux_events_tool_calls
-			BrokerMode: mcpBroker,
+			Bus:          svc.Bus,
+			EventStore:   eventStore,
+			ProxyStore:   svc.Store, // durable SQLite store for mux_events_tool_calls
+			BrokerMode:   mcpBroker, // deprecated path, still works
+			ServerFilter: serverFilter,
 		}
 
 		// Forward tool_call_end events to the running muxd daemon so the TUI

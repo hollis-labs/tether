@@ -7,7 +7,7 @@
 # GOBIN is the canonical user install location — always build here so the
 # system `mux` command reflects the current code. Agents must use `make install`
 # after code changes, then tell the user: "built to /Users/chrispian/go/bin/mux".
-GOBIN ?= /Users/chrispian/go/bin
+GOBIN ?= $(shell go env GOPATH)/bin
 
 build:
 	go build -o bin/mux ./cmd/mux

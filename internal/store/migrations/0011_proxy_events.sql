@@ -7,7 +7,7 @@
 --
 -- Ring-buffer semantics are enforced in Go (store.AppendProxyEvent trims the
 -- table to proxy_events_max_rows after each insert). SQLite does not natively
--- support ring buffers, so we use a timestamp-ordered DELETE … LIMIT approach.
+-- support ring buffers, so we use an id-ordered DELETE … LIMIT approach.
 --
 -- All timestamps are RFC3339 nanosecond strings in UTC.
 

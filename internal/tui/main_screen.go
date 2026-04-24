@@ -690,8 +690,7 @@ func (m MainScreen) renderChips() string {
 		}
 	}
 	row1 := strings.Join(catalog, "")
-	row2 := strings.TrimSpace(strings.Join([]string{activityChip, messagesChip}, ""))
-	if row2 != "" {
+	if strings.TrimSpace(activityChip+messagesChip) != "" {
 		return m.theme.Frame().Render(row1 + "\n" + activityChip + messagesChip)
 	}
 	return m.theme.Frame().Render(row1)
