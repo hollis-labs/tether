@@ -41,6 +41,14 @@ type Defaults struct {
 	TempRoot      string `yaml:"temp_root"`
 }
 
+// MCPConfig holds per-project or per-launch MCP proxy settings that are
+// injected into agent sessions at launch time. Servers lists the upstream MCP
+// server IDs to expose as native tools (sets MUX_MCP_SERVERS). Empty means
+// all servers (firehose mode).
+type MCPConfig struct {
+	Servers []string `yaml:"servers" json:"servers,omitempty"`
+}
+
 type Project struct {
 	ID            string        `yaml:"id" json:"id"`
 	Name          string        `yaml:"name" json:"name"`
@@ -49,6 +57,7 @@ type Project struct {
 	KnowledgeBase []string      `yaml:"knowledge_base" json:"knowledge_base,omitempty"`
 	BootFragments []string      `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
 	Workspace     WorkspaceSpec `yaml:"workspace" json:"workspace"`
+	MCP           MCPConfig     `yaml:"mcp" json:"mcp,omitempty"`
 }
 
 type WorkspaceSpec struct {
@@ -115,6 +124,7 @@ type Launch struct {
 	Workspace LaunchWorkspace `yaml:"workspace" json:"workspace"`
 	Prompt    PromptSpec      `yaml:"prompt" json:"prompt"`
 	Overrides LaunchOverrides `yaml:"overrides" json:"overrides"`
+	MCP       MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
 }
 
 type LaunchWorkspace struct {

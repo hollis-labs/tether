@@ -113,6 +113,81 @@ func TestResolve_EnvPolicyCarriedIntoPlan(t *testing.T) {
 	})
 }
 
+// TestResolve_MCPServerChain verifies the config-chain precedence:
+// project.mcp.servers > launch.mcp.servers > (nothing → no env var).
+func TestResolve_MCPServerChain(t *testing.T) {
+	base := func() *config.Catalog {
+		return &config.Catalog{
+			Projects: map[string]config.Project{
+				"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+			},
+			Agents:    map[string]config.Agent{"a": {ID: "a"}},
+			Providers: map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+			Launches:  map[string]config.Launch{},
+		}
+	}
+
+	t.Run("neither project nor launch sets servers", func(t *testing.T) {
+		cat := base()
+		cat.Launches["l"] = config.Launch{ID: "l", Project: "proj", Agent: "a", Provider: "p"}
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if _, ok := plan.Env["MUX_MCP_SERVERS"]; ok {
+			t.Fatalf("MUX_MCP_SERVERS should not be set when no servers configured; got %q", plan.Env["MUX_MCP_SERVERS"])
+		}
+	})
+
+	t.Run("launch sets servers", func(t *testing.T) {
+		cat := base()
+		cat.Launches["l"] = config.Launch{
+			ID: "l", Project: "proj", Agent: "a", Provider: "p",
+			MCP: config.MCPConfig{Servers: []string{"hadron", "vanta"}},
+		}
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.Env["MUX_MCP_SERVERS"] != "hadron,vanta" {
+			t.Fatalf("want MUX_MCP_SERVERS=hadron,vanta, got %q", plan.Env["MUX_MCP_SERVERS"])
+		}
+	})
+
+	t.Run("project overrides launch servers", func(t *testing.T) {
+		cat := base()
+		proj := cat.Projects["proj"]
+		proj.MCP = config.MCPConfig{Servers: []string{"cerberus"}}
+		cat.Projects["proj"] = proj
+		cat.Launches["l"] = config.Launch{
+			ID: "l", Project: "proj", Agent: "a", Provider: "p",
+			MCP: config.MCPConfig{Servers: []string{"hadron", "vanta"}},
+		}
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.Env["MUX_MCP_SERVERS"] != "cerberus" {
+			t.Fatalf("want project servers to win; got %q", plan.Env["MUX_MCP_SERVERS"])
+		}
+	})
+
+	t.Run("project sets servers, launch has none", func(t *testing.T) {
+		cat := base()
+		proj := cat.Projects["proj"]
+		proj.MCP = config.MCPConfig{Servers: []string{"hadron"}}
+		cat.Projects["proj"] = proj
+		cat.Launches["l"] = config.Launch{ID: "l", Project: "proj", Agent: "a", Provider: "p"}
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.Env["MUX_MCP_SERVERS"] != "hadron" {
+			t.Fatalf("want MUX_MCP_SERVERS=hadron, got %q", plan.Env["MUX_MCP_SERVERS"])
+		}
+	})
+}
+
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
