@@ -90,6 +90,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = svc.Close() }()
 
 	adapter := mcpadapter.New(svc, token, scopes)
+	if mcpBroker && !mcpProxy {
+		return fmt.Errorf("--broker requires --proxy")
+	}
 	if mcpProxy {
 		// resolve servers filter: flag > env
 		serversStr := mcpServers

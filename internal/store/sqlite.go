@@ -56,11 +56,12 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Serialise writers at the pool level. Readers may still run concurrently
-	// in WAL mode because SQLite WAL allows N readers + 1 writer. Setting
-	// MaxOpenConns=1 is the safest default for an embedded daemon; it prevents
-	// the "database is locked" errors that appear when multiple goroutines
-	// try to hold a write transaction simultaneously.
+	// Intentionally set to a single connection to serialise all access — reads
+	// and writes alike. Although SQLite WAL allows N readers + 1 writer, using
+	// MaxOpenConns=1 avoids SQLITE_BUSY/SQLITE_LOCKED errors that occur when
+	// multiple goroutines compete for write transactions. The embedded daemon
+	// workload is not read-heavy enough to justify the complexity of a
+	// separate read pool.
 	db.SetMaxOpenConns(1)
 	if _, err := Migrate(db); err != nil {
 		db.Close()

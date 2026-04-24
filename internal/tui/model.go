@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -45,7 +46,10 @@ func proxyEventPollCmd(c *client.Client) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		evs, _ := c.QueryProxyEvents(context.Background(), proxyEventLimit)
+		evs, err := c.QueryProxyEvents(context.Background(), proxyEventLimit)
+		if err != nil {
+			slog.Debug("tui: proxyEventPollCmd: QueryProxyEvents failed", "err", err)
+		}
 		return proxyEventsLoadedMsg{events: evs}
 	}
 }

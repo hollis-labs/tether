@@ -148,10 +148,12 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 		args = append(args, f.ThreadID)
 	}
 
-	// BEGIN IMMEDIATE acquires a write lock upfront so that two concurrent
-	// Inbox calls are serialised: the loser blocks until the winner commits,
-	// then sees 0 rows (all already delivered_at). Without this, both could
-	// SELECT the same undelivered rows before either commits the UPDATE.
+	// BeginTx with default options starts a deferred transaction (not IMMEDIATE).
+	// Write contention is already prevented by the single-connection pool
+	// (MaxOpenConns=1 in sqlite.go), so an IMMEDIATE lock is not required here.
+	// If the connection pool is ever widened, consider switching to
+	// sql.TxOptions{Isolation: sql.LevelSerializable} or issuing a manual
+	// BEGIN IMMEDIATE to preserve the serialisation guarantee.
 	tx, err := ms.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("messaging store: inbox begin tx: %w", err)

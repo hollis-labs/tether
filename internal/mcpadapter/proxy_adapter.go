@@ -249,9 +249,9 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex)
 
 // registerCallTool registers mux_call on s. It accepts a tool name and
 // arguments object, looks the tool up in the registry, and forwards it
-// through the ProxyRouter (including the LoggingMiddleware chain). This is
-// the single execution surface in broker mode — all proxied calls flow here
-// so they are recorded in the event store.
+// through the ProxyRouter. Observation/logging happens at the server
+// middleware layer (via s.Use()), not inside the router — all proxied calls
+// flow here so they are recorded in the event store.
 func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 	s.AddTool(
 		mcp.NewTool("mux_call",
