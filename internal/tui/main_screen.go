@@ -380,6 +380,9 @@ func (m MainScreen) handleEnter() (MainScreen, tea.Cmd) {
 	}
 	switch r := row.(type) {
 	case LaunchRow:
+		if isInteractiveProvider(r.L.Provider) {
+			return m, bootLaunchDirectCmd(m.client, r)
+		}
 		return m, launchCmd(m.client, client.CreateAndLaunchRequest{LaunchID: r.L.ID})
 	case SessionRow:
 		return m, screen.Push(attachScreenForSession(r.S, m.client))

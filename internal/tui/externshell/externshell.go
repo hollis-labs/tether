@@ -47,9 +47,12 @@ func AttachIn(sessionID string) error {
 // that sets the boot prompt as the agent system prompt, then launches
 // `opencode --agent boot <workDir>` interactively.
 //
-// claude (and all other CLI tools): writes the boot prompt to a temp file and
-// pipes it via stdin — claude reads it as the first message then stays interactive.
-// The session opens in workDir.
+// claude (and all other CLI tools): creates an ephemeral temp dir as the
+// session root. The dir contains CLAUDE.md (boot prompt), .claude/settings.json
+// (stub config), and boot.sh that runs `cd <tmpDir> && exec <command>
+// --add-dir <workDir> --dangerously-skip-permissions`. Claude auto-loads
+// CLAUDE.md from the working directory; --add-dir gives file access to the
+// real project root without auto-loading its CLAUDE.md.
 func BootWith(bootPrompt, providerID, command, workDir string) error {
 	switch {
 	case providerID == "opencode":
@@ -142,22 +145,55 @@ func bootOpencode(bootPrompt, command, workDir string) error {
 	return spawnTerminal(quote(scriptPath))
 }
 
-// bootClaude pipes the boot prompt via stdin. Claude reads it as the first
-// message and stays interactive after responding.
+// bootClaude creates an ephemeral temp dir as the agent's session root and
+// launches claude from it. The temp dir contains:
+//
+//	CLAUDE.md              — boot prompt + project context instructions
+//	.claude/settings.json  — ephemeral session config stub (mcpServers, approvedTools)
+//	boot.sh                — launcher: cd <tmpDir> && exec <command> --add-dir <workDir>
+//
+// Claude auto-loads CLAUDE.md because it's the working directory. --add-dir
+// gives file access to the real project root without auto-loading its CLAUDE.md.
 func bootClaude(bootPrompt, command, workDir string) error {
-	f, err := os.CreateTemp("", "mux-boot-*.md")
+	tmpDir, err := os.MkdirTemp("", "mux-claude-boot-*")
 	if err != nil {
-		return fmt.Errorf("write boot prompt: %w", err)
+		return fmt.Errorf("create temp dir: %w", err)
 	}
-	if _, err := f.WriteString(bootPrompt); err != nil {
-		_ = os.Remove(f.Name())
-		return fmt.Errorf("write boot prompt: %w", err)
-	}
-	f.Close()
 
-	shellCmd := fmt.Sprintf("cd %s && cat %s | %s --dangerously-skip-permissions",
-		quote(workDir), quote(f.Name()), quote(command))
-	return spawnTerminal(shellCmd)
+	claudeMDPath := filepath.Join(tmpDir, "CLAUDE.md")
+	claudeMD := bootPrompt + "\n\n---\n\nProject root: " + workDir +
+		"\nTo load project context: Read " + workDir + "/CLAUDE.md" +
+		"\nAfter context compaction: re-read this file (" + claudeMDPath + ")\n"
+	if err := os.WriteFile(claudeMDPath, []byte(claudeMD), 0o600); err != nil {
+		return fmt.Errorf("write CLAUDE.md: %w", err)
+	}
+
+	settingsDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		return fmt.Errorf("create .claude dir: %w", err)
+	}
+	settings, err := json.MarshalIndent(map[string]any{
+		"mcpServers":    map[string]any{},
+		"approvedTools": []string{},
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), settings, 0o600); err != nil {
+		return fmt.Errorf("write settings.json: %w", err)
+	}
+
+	script := fmt.Sprintf("#!/bin/sh\ncd %s\nexec %s --add-dir %s --dangerously-skip-permissions\n",
+		quote(tmpDir), quote(command), quote(workDir))
+	scriptPath := filepath.Join(tmpDir, "boot.sh")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return fmt.Errorf("write boot script: %w", err)
+	}
+	if err := os.Chmod(scriptPath, 0o700); err != nil { //nolint:gosec // G302: shell script needs execute permission
+		return fmt.Errorf("chmod boot script: %w", err)
+	}
+
+	return spawnTerminal(quote(scriptPath))
 }
 
 // spawnTerminal dispatches to the right terminal emulator.

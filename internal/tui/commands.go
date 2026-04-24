@@ -168,6 +168,72 @@ func bootDirectCmd(c *client.Client, row BootProfileRow) tea.Cmd {
 	}
 }
 
+// bootLaunchDirectCmd is the interactive-provider quicklaunch action for
+// LaunchRows. It resolves the provider command and project workDir from the
+// catalog, builds a minimal boot profile from the launch config, generates
+// the boot prompt, and opens an external terminal via externshell.BootWith.
+//
+// Used when the launch's provider is an interactive CLI (claude-code, opencode,
+// etc.). The daemon path (launchCmd) is kept for non-interactive providers.
+func bootLaunchDirectCmd(c *client.Client, row LaunchRow) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		providers, err := c.ListProviders(ctx)
+		if err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("list providers: %w", err)}
+		}
+		var providerCmd string
+		for _, p := range providers {
+			if p.ID == row.L.Provider {
+				providerCmd = p.Command
+				break
+			}
+		}
+		if providerCmd == "" {
+			return bootDirectMsg{profileID: row.L.ID,
+				err: fmt.Errorf("no command for provider %q — check catalog", row.L.Provider)}
+		}
+
+		var workDir string
+		if row.L.Project != "" {
+			projects, lerr := c.ListProjects(ctx)
+			if lerr == nil {
+				for _, p := range projects {
+					if p.ID == row.L.Project {
+						workDir = config.Expand(p.RepoRoot)
+						break
+					}
+				}
+			}
+		}
+		if workDir == "" {
+			workDir = "."
+		}
+
+		profile := bootgen.Profile{
+			ID:          row.L.ID,
+			DisplayName: row.L.ID,
+			Identity: bootgen.Identity{
+				LineageAlias: row.L.Project + "." + row.L.Agent,
+				Role:         row.L.Agent,
+				Project:      row.L.Project,
+				WorkRoot:     workDir,
+			},
+			Slots: map[string]bootgen.SlotSource{},
+		}
+
+		var buf bytes.Buffer
+		if err := bootgen.Generate(ctx, profile, c.CatalogRoot, &buf); err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("generate boot prompt: %w", err)}
+		}
+		if err := externshell.BootWith(buf.String(), row.L.Provider, providerCmd, workDir); err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("open terminal: %w", err)}
+		}
+		return bootDirectMsg{profileID: row.L.ID}
+	}
+}
+
 func loadLogicalAgentsCmd(c *client.Client) tea.Cmd {
 	return func() tea.Msg {
 		las, err := c.ListLogicalAgents(context.Background())

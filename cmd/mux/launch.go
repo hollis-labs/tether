@@ -37,7 +37,9 @@ var launchCmd = &cobra.Command{
 			}
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "session: %s\nworkspace: %s\nlog: %s\n", res.ID, res.Workspace, res.Log)
+		muxBin, _ := os.Executable()
+		fmt.Fprintf(os.Stderr, "session:   %s\nworkspace: %s\nattach:    %s sessions attach %s\n",
+			res.ID, res.Workspace, muxBin, res.ID)
 
 		if launchWait {
 			code, err := c.WaitSession(ctx, res.ID)
