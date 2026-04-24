@@ -9,6 +9,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/bootgen"
 	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/externshell"
 )
@@ -161,7 +162,7 @@ func bootDirectCmd(c *client.Client, row BootProfileRow) tea.Cmd {
 		if workDir == "" {
 			workDir = "."
 		}
-		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand, workDir); err != nil {
+		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand, nil, workDir); err != nil {
 			return bootDirectMsg{profileID: row.ProfileID, err: fmt.Errorf("open terminal: %w", err)}
 		}
 		return bootDirectMsg{profileID: row.ProfileID}
@@ -169,65 +170,44 @@ func bootDirectCmd(c *client.Client, row BootProfileRow) tea.Cmd {
 }
 
 // bootLaunchDirectCmd is the interactive-provider quicklaunch action for
-// LaunchRows. It resolves the provider command and project workDir from the
-// catalog, builds a minimal boot profile from the launch config, generates
-// the boot prompt, and opens an external terminal via externshell.BootWith.
+// LaunchRows. It loads the catalog from disk, runs launch.Resolve to get the
+// full boot prompt (project/agent fragments, knowledge base, provider prefix)
+// along with the resolved command, args, and workDir, then opens an external
+// terminal via externshell.BootWith.
 //
-// Used when the launch's provider is an interactive CLI (claude-code, opencode,
-// etc.). The daemon path (launchCmd) is kept for non-interactive providers.
+// Using launch.Resolve mirrors the daemon's boot path so the generated prompt
+// is identical to what a daemon-managed session would receive.
+// The daemon path (launchCmd) is kept for non-interactive providers.
 func bootLaunchDirectCmd(c *client.Client, row LaunchRow) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		if c.CatalogRoot == "" {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("catalog root not set")}
+		}
 
-		providers, err := c.ListProviders(ctx)
+		cat, err := config.Load(c.CatalogRoot)
 		if err != nil {
-			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("list providers: %w", err)}
-		}
-		var providerCmd string
-		for _, p := range providers {
-			if p.ID == row.L.Provider {
-				providerCmd = p.Command
-				break
-			}
-		}
-		if providerCmd == "" {
-			return bootDirectMsg{profileID: row.L.ID,
-				err: fmt.Errorf("no command for provider %q — check catalog", row.L.Provider)}
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("load catalog: %w", err)}
 		}
 
-		var workDir string
-		if row.L.Project != "" {
-			projects, lerr := c.ListProjects(ctx)
-			if lerr == nil {
-				for _, p := range projects {
-					if p.ID == row.L.Project {
-						workDir = config.Expand(p.RepoRoot)
-						break
-					}
-				}
-			}
+		plan, err := launch.Resolve(cat, launch.Input{
+			LaunchID:    row.L.ID,
+			CatalogRoot: c.CatalogRoot,
+		})
+		if err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("resolve launch: %w", err)}
 		}
+
+		if plan.Command == "" {
+			return bootDirectMsg{profileID: row.L.ID,
+				err: fmt.Errorf("no command for provider %q — check catalog", plan.ProviderID)}
+		}
+
+		workDir := plan.RepoRoot
 		if workDir == "" {
 			workDir = "."
 		}
 
-		profile := bootgen.Profile{
-			ID:          row.L.ID,
-			DisplayName: row.L.ID,
-			Identity: bootgen.Identity{
-				LineageAlias: row.L.Project + "." + row.L.Agent,
-				Role:         row.L.Agent,
-				Project:      row.L.Project,
-				WorkRoot:     workDir,
-			},
-			Slots: map[string]bootgen.SlotSource{},
-		}
-
-		var buf bytes.Buffer
-		if err := bootgen.Generate(ctx, profile, c.CatalogRoot, &buf); err != nil {
-			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("generate boot prompt: %w", err)}
-		}
-		if err := externshell.BootWith(buf.String(), row.L.Provider, providerCmd, workDir); err != nil {
+		if err := externshell.BootWith(plan.BootPrompt, plan.ProviderID, plan.Command, plan.Args, workDir); err != nil {
 			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("open terminal: %w", err)}
 		}
 		return bootDirectMsg{profileID: row.L.ID}
