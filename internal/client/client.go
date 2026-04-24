@@ -163,12 +163,16 @@ func (c *Client) CreateSession(ctx context.Context, launchID string) (api.Launch
 // LaunchSession POSTs /sessions/{id}/launch to transition a created
 // session to running. Returns the launched metadata.
 func (c *Client) LaunchSession(ctx context.Context, sessionID string) (api.LaunchResponse, error) {
+	// Drop the 5s transport timeout — spawning an agent process can take
+	// longer than 5 seconds depending on provider startup time.
+	longClient := *c.http
+	longClient.Timeout = 0
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/sessions/"+url.PathEscape(sessionID)+"/launch", nil)
 	if err != nil {
 		return api.LaunchResponse{}, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := longClient.Do(req)
 	if err != nil {
 		return api.LaunchResponse{}, wrapIfUnreachable(err)
 	}
