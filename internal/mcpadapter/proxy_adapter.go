@@ -38,7 +38,16 @@ type ProxyOptions struct {
 	// server. The LLM queries mux_discover to receive tool schemas on demand,
 	// then calls mux_call to execute them. This reduces per-request context
 	// size by an order of magnitude for large upstream catalogs.
+	//
+	// Deprecated: use ServerFilter instead. BrokerMode is kept for backward
+	// compatibility and still works.
 	BrokerMode bool
+
+	// ServerFilter, when non-empty, limits which upstream servers are registered
+	// as native flat tools. Servers not in the list are still reachable via
+	// mux_discover + mux_call. Empty means all servers (firehose). Only
+	// consulted when BrokerMode is false.
+	ServerFilter []string
 }
 
 // RunWithProxy is identical to Run but additionally:
@@ -107,43 +116,64 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// Register native mux tools first (always present regardless of mode).
 	a.registerTools(s)
 
+	// Build discovery index — used in all proxy modes (always register mux_discover + mux_call
+	// so undeclared servers remain reachable as a safety hatch).
+	serverTags := make(map[string][]string, len(entries))
+	for _, e := range entries {
+		serverTags[e.ID] = e.Tags
+	}
+	idx := NewDiscoveryIndex()
+	idx.Build(registry, serverTags)
+	slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
+
 	if opts.BrokerMode {
-		// ── Broker mode ──────────────────────────────────────────────────────
-		// Build a DiscoveryIndex from the registry and register only two
-		// meta-tools: mux_discover and mux_call. No upstream tool schemas are
-		// emitted directly. The LLM asks for schemas by intent and then calls
-		// mux_call to execute them. This keeps per-request context small.
-		slog.Info("mcp-proxy: broker mode enabled — registering mux_discover + mux_call only",
+		// ── Broker mode (deprecated) ─────────────────────────────────────────
+		// Pure discovery: no upstream tools registered natively.
+		// Kept for backward compatibility; --servers filtering is preferred.
+		slog.Warn("mcp-proxy: --broker is deprecated; use --proxy with optional --servers instead")
+		slog.Info("mcp-proxy: broker mode — registering mux_discover + mux_call only",
 			"upstream_tools", len(registry.AllDefinitions()))
-
-		// Build server-level tag map from catalog entries.
-		serverTags := make(map[string][]string, len(entries))
-		for _, e := range entries {
-			serverTags[e.ID] = e.Tags
-		}
-
-		idx := NewDiscoveryIndex()
-		idx.Build(registry, serverTags)
-		slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
-
 		a.registerDiscoverTool(s, idx)
 		a.registerCallTool(s, plainRouter)
 	} else {
-		// ── Flat proxy mode (default) ─────────────────────────────────────────
-		// Register every upstream tool directly. Suitable for small catalogs
-		// or when the caller explicitly opts out of broker mode.
+		// ── Selective flat mode ───────────────────────────────────────────────
+		// Build allowed-server set. Empty = all servers (firehose).
+		allowed := make(map[string]struct{}, len(opts.ServerFilter))
+		for _, id := range opts.ServerFilter {
+			allowed[id] = struct{}{}
+		}
+		firehose := len(allowed) == 0
+
+		if firehose {
+			slog.Info("mcp-proxy: flat mode (firehose) — registering all upstream tools natively",
+				"upstream_tools", len(registry.AllDefinitions()))
+		} else {
+			slog.Info("mcp-proxy: selective flat mode — filtering upstream tools",
+				"servers", opts.ServerFilter,
+				"upstream_tools", len(registry.AllDefinitions()))
+		}
+
 		for _, def := range registry.AllDefinitions() {
 			def := def // capture loop var
 			rt, ok := registry.Lookup(def.Name)
 			if !ok || rt.ServerID == "" {
-				// Native tools already registered above — skip.
 				continue
+			}
+			if !firehose {
+				if _, inFilter := allowed[rt.ServerID]; !inFilter {
+					continue
+				}
 			}
 			slog.Debug("mcp-proxy: registering proxied tool", "tool", def.Name, "server", rt.ServerID)
 			s.AddTool(def, func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return plainRouter.Handle(handlerCtx, req)
 			})
 		}
+
+		// Always register mux_discover + mux_call as a safety hatch so agents
+		// can reach undeclared servers without needing a restart.
+		a.registerDiscoverTool(s, idx)
+		a.registerCallTool(s, plainRouter)
 	}
 
 	// Introspection tool — always registered in proxy mode.
@@ -211,7 +241,7 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex)
 				"ok":      true,
 				"count":   len(results),
 				"tools":   results,
-				"hint":    "Use mux_call(tool_name, arguments) to execute any of these tools.",
+				"hint":    "Use mux_call(tool_name, arguments) to execute tools not already in your native tool list.",
 			}), nil
 		},
 	)
@@ -226,8 +256,8 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 	s.AddTool(
 		mcp.NewTool("mux_call",
 			mcp.WithDescription(
-				"Execute any upstream tool by name with an arguments object. "+
-					"Use mux_discover first to find the tool name and its input schema. "+
+				"Execute any upstream MCP tool by name. Use this for tools not natively listed — "+
+					"call mux_discover first to find the tool name and input schema. "+
 					"Arguments must match the tool's input schema exactly.\n\n"+
 					"Example:\n"+
 					"  mux_call(tool_name=\"clockwork_task_create\", arguments={\"title\":\"Fix bug\",\"description\":\"...\"})",
