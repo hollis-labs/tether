@@ -39,6 +39,8 @@ func rowTypeIcon(t RowType) string {
 		return "@ "
 	case RowTypeActivity:
 		return "! "
+	case RowTypeMessages:
+		return "M "
 	}
 	return "  "
 }

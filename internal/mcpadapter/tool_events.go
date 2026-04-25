@@ -127,7 +127,7 @@ func registerToolCallEventsTool(s *server.MCPServer, proxyStore ProxyEventQuerie
 
 			results, err := proxyStore.QueryProxyEvents(f)
 			if err != nil {
-				return toolError("internal_error", "query proxy events: "+err.Error()), nil
+				return toolError("internal_error", "query proxy events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
 			}
 			return toolJSON(map[string]any{
 				"ok":     true,

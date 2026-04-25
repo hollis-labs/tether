@@ -386,6 +386,9 @@ func runCapsResize(t *testing.T, rt provider.Runtime, plan planFn, opts startOpt
 
 func runCapsProviderSessionID(t *testing.T, rt provider.Runtime, plan planFn, opts startOptsFn, binarySkip bool) {
 	t.Helper()
+	if binarySkip {
+		t.Skip("BinarySkip=true: binary not available")
+	}
 	t.Run("ImplementsSessionIDer", func(t *testing.T) {
 		sess := mustStart(t, rt, plan(t), opts(t))
 		defer func() { _ = sess.Stop(context.Background()) }()

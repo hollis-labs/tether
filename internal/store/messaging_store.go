@@ -153,7 +153,7 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	// (MaxOpenConns=1 in sqlite.go), so an IMMEDIATE lock is not required here.
 	// If the connection pool is ever widened, consider switching to
 	// sql.TxOptions{Isolation: sql.LevelSerializable} or issuing a manual
-	// BEGIN IMMEDIATE to preserve the serialisation guarantee.
+	// BEGIN IMMEDIATE to preserve the serialization guarantee.
 	tx, err := ms.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("messaging store: inbox begin tx: %w", err)

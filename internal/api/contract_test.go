@@ -82,15 +82,6 @@ func contractService() *fakeLaunchService {
 	}
 }
 
-func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
-	t.Helper()
-	var v T
-	if err := json.NewDecoder(rr.Body).Decode(&v); err != nil {
-		t.Fatalf("decode response: %v (body: %s)", err, rr.Body.String())
-	}
-	return v
-}
-
 // ─── Layer 1: Launch Profile Inputs ─────────────────────────────────────────
 
 // TestContract_CreateSession_LaunchIDRequired verifies that POST /sessions

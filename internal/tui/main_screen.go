@@ -684,11 +684,12 @@ func (m MainScreen) renderChips() string {
 		} else {
 			rendered = m.theme.ChipOff().Render(label)
 		}
-		if t == RowTypeActivity {
+		switch t {
+		case RowTypeActivity:
 			activityChip = rendered
-		} else if t == RowTypeMessages {
+		case RowTypeMessages:
 			messagesChip = rendered
-		} else {
+		default:
 			catalog = append(catalog, rendered)
 		}
 	}

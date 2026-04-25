@@ -39,7 +39,7 @@ type Store struct {
 //   - busy_timeout=5000ms: SQLite retries a locked write for up to 5s
 //     before returning SQLITE_BUSY. This prevents SQLITE_BUSY propagating
 //     to callers under brief write contention (e.g. concurrent Inbox calls).
-//   - MaxOpenConns=1: SQLite does not support concurrent writers; serialising
+//   - MaxOpenConns=1: SQLite does not support concurrent writers; serializing
 //     at the connection pool level prevents SQLITE_LOCKED races between
 //     goroutines sharing the same *sql.DB.
 //
@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Intentionally set to a single connection to serialise all access — reads
+	// Intentionally set to a single connection to serialize all access — reads
 	// and writes alike. Although SQLite WAL allows N readers + 1 writer, using
 	// MaxOpenConns=1 avoids SQLITE_BUSY/SQLITE_LOCKED errors that occur when
 	// multiple goroutines compete for write transactions. The embedded daemon
