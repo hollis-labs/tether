@@ -2,6 +2,7 @@ package launch
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/chrispian/agent-mux/internal/config"
 )
@@ -45,6 +46,17 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	overrides := map[string]string{}
 	for k, v := range l.Overrides.Env {
 		overrides[k] = v
+	}
+
+	// Resolve MCP server filter: project wins over launch. Injected as
+	// MUX_MCP_SERVERS so the spawned agent's mux mcp --proxy process picks it
+	// up without requiring per-agent ~/.claude.json changes.
+	mcpServers := proj.MCP.Servers
+	if len(mcpServers) == 0 {
+		mcpServers = l.MCP.Servers
+	}
+	if len(mcpServers) > 0 {
+		overrides["MUX_MCP_SERVERS"] = strings.Join(mcpServers, ",")
 	}
 
 	mode := prov.Env.Mode

@@ -9,6 +9,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/bootgen"
 	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/tui/client"
 	"github.com/chrispian/agent-mux/internal/tui/externshell"
 )
@@ -161,10 +162,55 @@ func bootDirectCmd(c *client.Client, row BootProfileRow) tea.Cmd {
 		if workDir == "" {
 			workDir = "."
 		}
-		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand, workDir); err != nil {
+		if err := externshell.BootWith(buf.String(), row.ProviderID, row.ProviderCommand, nil, workDir); err != nil {
 			return bootDirectMsg{profileID: row.ProfileID, err: fmt.Errorf("open terminal: %w", err)}
 		}
 		return bootDirectMsg{profileID: row.ProfileID}
+	}
+}
+
+// bootLaunchDirectCmd is the interactive-provider quicklaunch action for
+// LaunchRows. It loads the catalog from disk, runs launch.Resolve to get the
+// full boot prompt (project/agent fragments, knowledge base, provider prefix)
+// along with the resolved command, args, and workDir, then opens an external
+// terminal via externshell.BootWith.
+//
+// Using launch.Resolve mirrors the daemon's boot path so the generated prompt
+// is identical to what a daemon-managed session would receive.
+// The daemon path (launchCmd) is kept for non-interactive providers.
+func bootLaunchDirectCmd(c *client.Client, row LaunchRow) tea.Cmd {
+	return func() tea.Msg {
+		if c.CatalogRoot == "" {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("catalog root not set")}
+		}
+
+		cat, err := config.Load(c.CatalogRoot)
+		if err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("load catalog: %w", err)}
+		}
+
+		plan, err := launch.Resolve(cat, launch.Input{
+			LaunchID:    row.L.ID,
+			CatalogRoot: c.CatalogRoot,
+		})
+		if err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("resolve launch: %w", err)}
+		}
+
+		if plan.Command == "" {
+			return bootDirectMsg{profileID: row.L.ID,
+				err: fmt.Errorf("no command for provider %q — check catalog", plan.ProviderID)}
+		}
+
+		workDir := plan.RepoRoot
+		if workDir == "" {
+			workDir = "."
+		}
+
+		if err := externshell.BootWith(plan.BootPrompt, plan.ProviderID, plan.Command, plan.Args, workDir); err != nil {
+			return bootDirectMsg{profileID: row.L.ID, err: fmt.Errorf("open terminal: %w", err)}
+		}
+		return bootDirectMsg{profileID: row.L.ID}
 	}
 }
 

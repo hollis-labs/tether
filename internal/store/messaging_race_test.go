@@ -213,7 +213,7 @@ func TestMessagingStore_Race_CancelVsConsume(t *testing.T) {
 			conErr := <-consumeErr
 
 			// Cancel should either succeed (nil) or return ErrNotFound if
-			// the message was already cancelled. It must NOT be an opaque error.
+			// the message was already canceled. It must NOT be an opaque error.
 			if cErr != nil && !errors.Is(cErr, messaging.ErrNotFound) {
 				t.Errorf("iter %d: Cancel returned unexpected error: %v", i, cErr)
 			}

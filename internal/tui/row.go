@@ -39,6 +39,8 @@ func rowTypeIcon(t RowType) string {
 		return "@ "
 	case RowTypeActivity:
 		return "! "
+	case RowTypeMessages:
+		return "M "
 	}
 	return "  "
 }
@@ -122,6 +124,16 @@ func (r BootProfileRow) Subtitle() string {
 		return "boot"
 	}
 	return h + "  " + m
+}
+
+// isInteractiveProvider reports whether providerID is a direct-launch CLI
+// tool that externshell.BootWith can open in a terminal (claude-code, claude,
+// opencode). Excludes streaming/programmatic variants like claude-stream.
+func isInteractiveProvider(id string) bool {
+	if id == "opencode" || id == "claude" {
+		return true
+	}
+	return strings.HasPrefix(id, "claude-") && !strings.Contains(id, "stream")
 }
 
 // providerHarness extracts the tool name from a provider ID.

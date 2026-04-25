@@ -75,7 +75,7 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 
 			evs, err := a.svc.Store.ListEventsBySession(sessionID, limit, cursor)
 			if err != nil {
-				return toolError("internal_error", "list events: "+err.Error()), nil
+				return toolError("internal_error", "list events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
 			}
 
 			// Build DTO slice to expose consistent field names over the wire.
@@ -144,7 +144,7 @@ func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
 
 			cps, err := a.svc.Store.ListCheckpointsByLogicalAgent(row.LogicalAgentID)
 			if err != nil {
-				return toolError("internal_error", "list checkpoints: "+err.Error()), nil
+				return toolError("internal_error", "list checkpoints: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
 			}
 
 			return toolJSON(map[string]any{
@@ -177,7 +177,7 @@ func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
 
 			rows, err := a.svc.Store.ListClientAttachments(sessionID)
 			if err != nil {
-				return toolError("internal_error", "list attachments: "+err.Error()), nil
+				return toolError("internal_error", "list attachments: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
 			}
 
 			type attachmentDTO struct {
@@ -270,7 +270,7 @@ func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
 
 			evs, err := a.svc.Store.QueryProxyEvents(f)
 			if err != nil {
-				return toolError("internal_error", "query proxy events: "+err.Error()), nil
+				return toolError("internal_error", "query proxy events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
 			}
 
 			return toolJSON(map[string]any{

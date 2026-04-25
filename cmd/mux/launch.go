@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -37,7 +38,12 @@ var launchCmd = &cobra.Command{
 			}
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "session: %s\nworkspace: %s\nlog: %s\n", res.ID, res.Workspace, res.Log)
+		attachCmd := "mux"
+		if bin, err := os.Executable(); err == nil && bin != "" {
+			attachCmd = filepath.Base(bin)
+		}
+		fmt.Fprintf(os.Stderr, "session:   %s\nworkspace: %s\nattach:    %s sessions attach %s\n",
+			res.ID, res.Workspace, attachCmd, res.ID)
 
 		if launchWait {
 			code, err := c.WaitSession(ctx, res.ID)
