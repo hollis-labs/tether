@@ -1,0 +1,58 @@
+id: agent-mux.codex.main
+display_name: "Agent Mux — Codex Engineer"
+
+# Wire directly to the Codex launch so `mux boot agent-mux.codex.main`
+# generates the boot prompt AND creates the session in one step.
+launch: agent-mux-codex-launch
+
+identity:
+  lineage_alias:   agent-mux.codex.main
+  lineage_id:      ""
+  profile_id:      agent-mux-codex
+  profile_version: 1
+  role:            backend
+  project:         agent-mux
+  work_root:       ~/Projects-apps/agent-mux
+  tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
+  vanta_primary:   "2026-04-19"
+
+slots:
+  # §1 — role definition (graceful fallback if nanite roles not present)
+  agent:
+    type: cmd
+    timeout: 5s
+    run: |
+      if [ -f "$HOME/.nanite/roles/domain/backend.md" ]; then
+        cat "$HOME/.nanite/roles/domain/backend.md"
+      else
+        printf "## Role: Backend Engineer\n\nExperienced Go backend engineer. Minimal focused changes. No unnecessary abstractions. Comments only when the WHY is non-obvious. Trust internal invariants.\n"
+      fi
+
+  # §2 — resume: last session close record
+  recap:
+    type: cmd
+    timeout: 5s
+    run: |
+      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md" ]; then
+        head -80 "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md"
+      else
+        echo "(no recap available)"
+      fi
+
+  # §4 — active state
+  history:
+    type: cmd
+    timeout: 5s
+    run: git -C ~/Projects-apps/agent-mux log --oneline -20 2>/dev/null || echo "(git unavailable)"
+
+  status:
+    type: cmd
+    timeout: 5s
+    run: git -C ~/Projects-apps/agent-mux status --short -b 2>/dev/null || echo "(git status unavailable)"
+
+  # §5 — durable context
+  memory:
+    type: cmd
+    timeout: 3s
+    run: |
+      echo "(memory slot: configure vanta recall for scope agent-mux.codex.main)"

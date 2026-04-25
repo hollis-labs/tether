@@ -40,7 +40,8 @@ slots:
   # memory_recall namespace=user/$USER/memory tags=["scope:agent-ops.steward.main"] limit=20
   memory:
     type: cmd
-    run: echo "[ memory slot: configure vanta recall for scope:agent-ops.steward.main ]"
+    run: |
+      echo "[ memory slot: configure vanta recall for scope:agent-ops.steward.main ]"
     timeout: 3s
 
   skills:

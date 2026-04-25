@@ -1,0 +1,9 @@
+id: codex-launch
+project: demo
+agent: demo-agent
+provider: codex-cli
+workspace:
+  mode: hybrid
+prompt:
+  include_project_boot: true
+  include_agent_boot: true

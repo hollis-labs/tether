@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 
 	gop "github.com/hollis-labs/go-providers/provider"
@@ -88,7 +89,22 @@ func (r *Runtime) Prepare(_ context.Context, _ *launch.Plan) error {
 
 // Start creates a new Session. The session is idle until the first
 // SendInput call, which spawns the subprocess for that turn.
+//
+// When opts.BootMode is "agents_md" and opts.BootPrompt is non-empty, the
+// boot prompt is written to AGENTS.md in opts.Workdir before any turn runs.
+// This is the correct boot mechanism for providers (e.g. Codex) that read
+// their system context from a file rather than a CLI flag. The file is only
+// created if it does not already exist — an existing AGENTS.md is preserved.
 func (r *Runtime) Start(_ context.Context, _ *launch.Plan, opts provider.StartOptions) (provider.Session, error) {
+	if opts.BootMode == "agents_md" && opts.BootPrompt != "" {
+		agentsPath := filepath.Join(opts.Workdir, "AGENTS.md")
+		if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
+			if err := os.WriteFile(agentsPath, []byte(opts.BootPrompt), 0o600); err != nil { //nolint:gosec // G306: boot prompt written to session workdir
+				return nil, fmt.Errorf("goprovider: write AGENTS.md: %w", err)
+			}
+		}
+	}
+
 	logF, err := os.Create(opts.LogPath) //nolint:gosec // G304: workspace-managed path
 	if err != nil {
 		return nil, fmt.Errorf("goprovider: open log %s: %w", opts.LogPath, err)

@@ -1,0 +1,15 @@
+id: codex-cli
+type: cli-goprovider
+adapter: codex
+# Leave command empty to let the adapter auto-detect via $CODEX_CLI_PATH or PATH.
+# command: /usr/local/bin/codex
+bootstrap:
+  # agents_md: mux writes the assembled boot prompt to AGENTS.md in the session
+  # working directory before the first turn. Only created if AGENTS.md does not
+  # already exist. Set to "none" (or omit) if you manage AGENTS.md yourself.
+  mode: agents_md
+env:
+  mode: merge
+  redact:
+    - ANTHROPIC_API_KEY
+    - CLAUDE_API_KEY

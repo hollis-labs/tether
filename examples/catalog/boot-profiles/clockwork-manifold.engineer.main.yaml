@@ -39,7 +39,8 @@ slots:
 
   memory:
     type: cmd
-    run: echo "[ memory slot: configure vanta recall for scope:clockwork-manifold.engineer.main ]"
+    run: |
+      echo "[ memory slot: configure vanta recall for scope:clockwork-manifold.engineer.main ]"
     timeout: 3s
 
   skills:

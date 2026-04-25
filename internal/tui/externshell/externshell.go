@@ -67,6 +67,8 @@ func BootWith(bootPrompt, providerID, command string, args []string, workDir str
 		return bootOpencode(bootPrompt, command, args, workDir)
 	case strings.HasPrefix(providerID, "claude-") || providerID == "claude":
 		return bootClaude(bootPrompt, command, args, workDir)
+	case providerID == "codex-cli" || strings.HasPrefix(providerID, "codex"):
+		return bootCodex(bootPrompt, command, args, workDir)
 	default:
 		return fmt.Errorf("unsupported provider for boot: %s", providerID)
 	}
@@ -205,6 +207,47 @@ func bootClaude(bootPrompt, command string, args []string, workDir string) error
 	// No exec — shell must survive so the EXIT trap fires and removes tmpDir.
 	script := fmt.Sprintf("#!/bin/sh\ntrap 'rm -rf %s' EXIT\ncd %s\n%s%s --add-dir %s --dangerously-skip-permissions\n",
 		quote(tmpDir), quote(tmpDir), quote(command), argsStr.String(), quote(workDir))
+	scriptPath := filepath.Join(tmpDir, "boot.sh")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return fmt.Errorf("write boot script: %w", err)
+	}
+	if err := os.Chmod(scriptPath, 0o700); err != nil { //nolint:gosec // G302: shell script needs execute permission
+		return fmt.Errorf("chmod boot script: %w", err)
+	}
+
+	return spawnTerminal(quote(scriptPath))
+}
+
+// bootCodex creates an ephemeral AGENTS.md in workDir and launches the Codex
+// interactive REPL from that directory. Codex auto-loads AGENTS.md from the
+// working directory as its system context.
+//
+// AGENTS.md is only written when one does not already exist; if we created it,
+// a trap in the launch script removes it when the terminal session ends so the
+// project root is left clean.
+func bootCodex(bootPrompt, command string, args []string, workDir string) error {
+	tmpDir, err := os.MkdirTemp("", "mux-codex-boot-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+
+	agentsPath := filepath.Join(workDir, "AGENTS.md")
+	var cleanupLine string
+	if _, serr := os.Stat(agentsPath); os.IsNotExist(serr) {
+		if werr := os.WriteFile(agentsPath, []byte(bootPrompt), 0o600); werr != nil {
+			return fmt.Errorf("write AGENTS.md: %w", werr)
+		}
+		cleanupLine = fmt.Sprintf("trap 'rm -f %s' EXIT\n", quote(agentsPath))
+	}
+
+	var argsStr strings.Builder
+	for _, a := range args {
+		argsStr.WriteString(" ")
+		argsStr.WriteString(quote(a))
+	}
+	// No exec — shell must survive so the EXIT trap fires and removes AGENTS.md.
+	script := fmt.Sprintf("#!/bin/sh\n%scd %s\n%s%s\n",
+		cleanupLine, quote(workDir), quote(command), argsStr.String())
 	scriptPath := filepath.Join(tmpDir, "boot.sh")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		return fmt.Errorf("write boot script: %w", err)

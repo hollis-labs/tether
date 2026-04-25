@@ -1,0 +1,7 @@
+id: agent-mux-engineer
+name: Agent Mux Engineer
+roles: [backend]
+skills: []
+boot_fragments: []
+permissions:
+  network: false

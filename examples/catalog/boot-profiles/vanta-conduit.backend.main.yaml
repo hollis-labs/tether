@@ -39,7 +39,8 @@ slots:
 
   memory:
     type: cmd
-    run: echo "[ memory slot: configure vanta recall for scope:vanta-conduit.backend.main ]"
+    run: |
+      echo "[ memory slot: configure vanta recall for scope:vanta-conduit.backend.main ]"
     timeout: 3s
 
   skills:

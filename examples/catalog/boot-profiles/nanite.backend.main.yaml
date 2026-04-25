@@ -54,7 +54,8 @@ slots:
   #   memory_recall namespace=user/$USER/memory tags=["scope:nanite.backend.main"] limit=20 ranking=activation
   memory:
     type: cmd
-    run: echo "[ memory slot: configure vanta recall — memory_recall namespace=user/$USER/memory tags=[scope:nanite.backend.main] ]"
+    run: |
+      echo "[ memory slot: configure vanta recall — memory_recall namespace=user/$USER/memory tags=[scope:nanite.backend.main] ]"
     timeout: 3s
 
   skills:

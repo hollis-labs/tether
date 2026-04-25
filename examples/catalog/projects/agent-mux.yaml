@@ -1,0 +1,10 @@
+id: agent-mux
+name: Agent Mux
+repo_root: ~/Projects-apps/agent-mux
+tracking_root: ~/Projects-apps/agent-workspaces/execution/agent-mux/
+boot_fragments:
+  - boot/common.md
+  - boot/agent-mux.md
+workspace:
+  default_mode: hybrid
+  session_root: ~/.agent-mux/workspaces/agent-mux

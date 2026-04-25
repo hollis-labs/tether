@@ -40,7 +40,8 @@ slots:
   # memory_recall namespace=user/$USER/memory tags=["scope:agent-mux.engineer.main"] limit=20
   memory:
     type: cmd
-    run: echo "[ memory slot: configure vanta recall for scope:agent-mux.engineer.main ]"
+    run: |
+      echo "[ memory slot: configure vanta recall for scope:agent-mux.engineer.main ]"
     timeout: 3s
 
   skills:

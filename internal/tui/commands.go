@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -111,7 +112,16 @@ func loadBootProfilesCmd(c *client.Client) tea.Cmd {
 		}
 		if providers, perr := c.ListProviders(context.Background()); perr == nil {
 			for _, p := range providers {
-				commandByProvider[p.ID] = p.Command
+				cmd := p.Command
+				// cli-goprovider adapters have an empty command — the binary is
+				// auto-detected at daemon launch time. Resolve it here so the
+				// direct-boot path has a command to invoke.
+				if cmd == "" && p.Type == "cli-goprovider" && p.Adapter != "" {
+					if resolved, lerr := exec.LookPath(p.Adapter); lerr == nil {
+						cmd = resolved
+					}
+				}
+				commandByProvider[p.ID] = cmd
 			}
 		}
 		rows := make([]BootProfileRow, 0, len(profiles))
