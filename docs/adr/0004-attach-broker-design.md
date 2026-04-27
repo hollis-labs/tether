@@ -67,3 +67,24 @@ Semantics:
   load-bearing. Reversing it means reintroducing per-runtime duplication.
 - Ring sizing is a tuning knob, not a correctness knob. Changing it
   does not require a new ADR unless the drop semantics change.
+
+---
+
+## Addendum — 2026-04-27 (Sprint v005-03, Stage 2b)
+
+The broker described above now ships in `github.com/hollis-labs/go-agent-sessions/agentsessions`. Mux's `internal/runtime/attach.go` (the `attachBroker` source-of-truth previously cited in this ADR) was deleted in `091fd0b`; the lib's `Manager.AttachWith` exposes the same shape (`AttachOptions{ClientKind, SinceSeq, Depth}`).
+
+What did **not** change:
+
+- 64 KiB ring buffer + 64-chunk subscriber depth defaults
+- Drop-oldest-on-slow-consumer contract, with per-broker dropped-byte counter
+- `since_seq` resume semantics (silent gap when offset predates the ring)
+- Idempotent close + closed-channel-on-late-subscribe guarantees
+
+What moved:
+
+- `attachBroker.subscribeSince` → `agentsessions.AttachOptions.SinceSeq`
+- Per-broker drop counter is internal to the lib (consumers no longer expose it directly; if a metric surfaces becomes desirable, a v0.2.0 lib hook is the path)
+- Ring + depth tuning is now per-Session via `StartOptions.RingBytes` / `SubscriberDepth` (the lib pins per-session; mux pinned per-broker via constants — same observable behavior)
+
+No supersede; this addendum is reference-only. Mux's HTTP `GET /sessions/{id}/attach?since_seq=N` and TUI attach flow are unchanged.

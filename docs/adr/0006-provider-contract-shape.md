@@ -78,3 +78,31 @@ type Session interface {
 - The `Kind()` string is the extension point. New values do not
   require an ADR; they require a concrete runtime, catalog wiring, and
   the manager treating them identically.
+
+---
+
+## Addendum — 2026-04-27 (Sprint v005-03, Stage 2b)
+
+The `Runtime` and `Session` interfaces described above now live in `github.com/hollis-labs/go-agent-sessions/agentsessions`. Mux's `internal/provider/provider.go` (the source-of-truth previously cited here) was deleted in `091fd0b`. `Runtime`, `Session`, `Capabilities`, `HealthStatus`, `LiveState`, `CheckpointHint`, `SessionIDer`, `StartOptions`, and the `ErrNoInputChannel` / `ErrSessionNotRunning` / `ErrTurnInFlight` sentinels all moved to the lib unchanged in shape.
+
+Mux composes adapters two ways now:
+
+- **Per-turn subprocess adapters** (claude-stream, opencode, catalog-driven cli-goprovider entries) wrap a `gop.CLIAdapter` and call `agentsessions.NewFromAdapter(AdapterRuntimeConfig{...})`. The lib drives `runner.Run` per turn and routes events through `StartOptions.Fanout`.
+- **PTY adapters** (claude-code) implement `agentsessions.Runtime` directly and own their own PTY plumbing through `internal/session.Handle`.
+
+Each adapter's `New(plan)` factory is registered at `app.Service` construction; catalog-declared `cli-goprovider` providers register dynamically via `claudestream.NewWithAdapter` closures (this replaced the deleted `internal/provider/cli/goprovider/` package).
+
+What did **not** change:
+
+- The `Runtime` / `Session` separation rationale (Prepare-then-Start, single-Session-per-Runtime-call)
+- The `Kind()` extension point (`"cli"` / `"api"` strings; new values do not require an ADR)
+- Capability-gated optional behavior (`PTY`, `Resize`, `ProviderSessionID`, `CheckpointResume`, `BinaryRequired`)
+- The "additive changes are fine, breaking changes need a new ADR" rule — applied now to the lib's interface
+
+What's new (lib-introduced, additive):
+
+- `LifecycleEvent` / `EventSink` for state-transition emission (mux's `eventSinkAdapter` in `app/sinks.go` adapts the lib's events to `events.Bus` envelopes)
+- `StartRequest.SessionMeta` (string→string map echoed back via `SessionInfo.Meta`) carries mux-domain identity (`logical_agent_id`, `project_id`, `launch_id`, `provider_id`)
+- `StartOptions.SessionIDPreset` + `OnSessionID` (rename of the claude-specific hooks; semantic-identical for any --resume-style adapter)
+
+No supersede; this ADR remains the canonical decision record for the contract shape, with the implementation now upstream.
