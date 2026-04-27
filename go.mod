@@ -10,7 +10,11 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-providers v0.2.0
+	github.com/hollis-labs/go-agent-sessions v0.1.0
+	github.com/hollis-labs/go-messaging v0.2.0
+	github.com/hollis-labs/go-providers v0.5.0
+	github.com/hollis-labs/go-sandbox v0.1.0
+	github.com/mark3labs/mcp-go v0.47.0
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.42.0
@@ -34,11 +38,9 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/hollis-labs/go-messaging v0.2.0 // indirect
-	github.com/hollis-labs/go-sandbox v0.1.0 // indirect
+	github.com/hollis-labs/go-runner v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
-	github.com/mark3labs/mcp-go v0.47.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
