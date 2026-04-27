@@ -4,9 +4,11 @@ package events
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/events.md alongside their payload schema.
 const (
-	// KindSessionStateChanged is emitted by runtime.Manager on each
-	// session lifecycle transition (created → launching → running →
-	// completed|failed|killed). Payload schema:
+	// KindSessionStateChanged is emitted by the eventSinkAdapter wired
+	// into agentsessions.Manager on each session lifecycle transition
+	// (created → launching → running → done|failed; the adapter remaps
+	// done+reason="killed" → "killed" for mux-domain consumers).
+	// Payload schema:
 	//   {"from":"<prev>","to":"<next>","exit_code":<int,optional>,"reason":"<string,optional>"}
 	KindSessionStateChanged = "session.state_changed"
 

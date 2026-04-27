@@ -11,10 +11,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/config"
 	"github.com/chrispian/agent-mux/internal/daemon"
-	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -201,7 +202,7 @@ func TestClient_ResizeSession(t *testing.T) {
 
 func TestClient_ResizeSession_NotRunning(t *testing.T) {
 	m := newMockDaemon(t)
-	m.resize = func(string, uint16, uint16) error { return runtime.ErrSessionNotRunning }
+	m.resize = func(string, uint16, uint16) error { return agentsessions.ErrSessionNotRunning }
 	c := New(m.addr())
 	err := c.ResizeSession(context.Background(), "s1", 24, 80)
 	if err == nil {

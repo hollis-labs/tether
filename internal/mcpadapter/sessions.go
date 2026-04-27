@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -11,7 +12,6 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -318,7 +318,7 @@ func isNotFound(err error) bool {
 		return false
 	}
 	return errors.Is(err, store.ErrSessionNotFound) ||
-		errors.Is(err, runtime.ErrSessionNotRunning) ||
+		errors.Is(err, agentsessions.ErrSessionNotRunning) ||
 		errors.Is(err, messaging.ErrNotFound)
 }
 

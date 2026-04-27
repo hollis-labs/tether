@@ -4,7 +4,8 @@ import (
 	"context"
 	"io"
 
-	"github.com/chrispian/agent-mux/internal/provider"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
@@ -42,14 +43,15 @@ type LaunchService interface {
 }
 
 // RuntimeHealthResult is the api-facing health snapshot. It carries the
-// live HealthStatus from the provider.Session and the static Capabilities
-// from the provider.Runtime that spawned it, along with provider identity.
+// live HealthStatus from the agentsessions.Session and the static
+// Capabilities from the agentsessions.Runtime that spawned it, along
+// with provider identity.
 type RuntimeHealthResult struct {
 	SessionID    string
 	ProviderID   string
 	ProviderKind string
-	Caps         provider.Capabilities
-	Health       provider.HealthStatus
+	Caps         agentsessions.Capabilities
+	Health       agentsessions.HealthStatus
 }
 
 // LaunchResult is the api-facing subset of app.Launched. The full app
@@ -62,13 +64,17 @@ type LaunchResult struct {
 	ProviderID string
 	// ProviderKind is the runtime family ("cli" | "api"). Consumers may
 	// branch on this to select PTY-specific affordances (resize, raw input)
-	// vs. API-mode affordances (structured turns). Matches provider.RuntimeKind.
+	// vs. API-mode affordances (structured turns). Sourced from
+	// agentsessions.Runtime.Kind().
 	ProviderKind string
 	// LogicalAgentID is the durable identity that accumulates checkpoints
 	// across sessions. Returned on create and launch so consumers can
 	// correlate a new session to its logical agent without a follow-up get.
 	LogicalAgentID string
 }
+
+// (RuntimeKind / Capabilities live in agentsessions; see
+// agentsessions.Capabilities for the canonical type.)
 
 // Request / response payloads for the HTTP API. JSON tags are the public
 // contract; rename with care.
@@ -94,7 +100,7 @@ type WaitResponse struct {
 	ExitCode int `json:"exit_code"`
 }
 
-// CapabilitiesDTO is the on-the-wire representation of provider.Capabilities.
+// CapabilitiesDTO is the on-the-wire representation of agentsessions.Capabilities.
 type CapabilitiesDTO struct {
 	PTY               bool `json:"pty"`
 	Resize            bool `json:"resize"`

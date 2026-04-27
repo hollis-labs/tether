@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/runtime"
 )
 
 // muxVersion labels daemon.started events. Bumped per release.
@@ -33,7 +34,7 @@ type Config struct {
 // manager drains (typically it closes the store).
 type Server struct {
 	Config  Config
-	Manager *runtime.Manager
+	Manager *agentsessions.Manager
 	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
 	// only /health is registered — useful for tests that don't need the
 	// session surface.

@@ -116,10 +116,9 @@ func mapLifecycleStates(ev agentsessions.LifecycleEvent) (from, to string) {
 	return from, to
 }
 
-// Static interface checks. Stage 2a stands these up in parallel to the
-// existing internal/runtime sinks; Stage 2b wires them through
-// app.Service. The assertions also let the linter see the types as
-// "used" before consumers exist.
+// Static interface checks. The assertions let the linter see the types
+// as "used" and surface contract drift at build time if the lib's sink
+// shapes change.
 var (
 	_ agentsessions.StateSink      = stateSinkAdapter{}
 	_ agentsessions.AttachmentSink = attachmentSinkAdapter{}

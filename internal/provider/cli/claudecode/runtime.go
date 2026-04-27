@@ -12,7 +12,6 @@ import (
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
 	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/session"
 )
 
@@ -60,9 +59,14 @@ func (r *runtime) Start(_ context.Context, opts agentsessions.StartOptions) (age
 	}
 	cmd := exec.Command(r.plan.Command, r.plan.Args...) //nolint:gosec // G204: catalog-sourced command
 	cmd.Dir = opts.Workdir
-	cmd.Env = provider.BuildEnv(r.plan.EnvMode, r.plan.EnvPassthrough, r.plan.EnvRedact, r.plan.Env, os.Environ())
+	// opts.Env is the env policy already applied by service.go's call
+	// to provider.BuildEnv at LaunchSession time. Falling back to
+	// os.Environ() keeps tests / direct callers (compliance harness)
+	// usable without manually composing env.
 	if len(opts.Env) > 0 {
-		cmd.Env = append(cmd.Env, opts.Env...)
+		cmd.Env = opts.Env
+	} else {
+		cmd.Env = os.Environ()
 	}
 
 	var sandboxCleanup func()
@@ -129,12 +133,13 @@ func (s *ptySession) SendInput(_ context.Context, data []byte) error {
 	if stopped {
 		return agentsessions.ErrNoInputChannel
 	}
-	w := s.handle.PTYWriter()
-	if w == nil {
-		return agentsessions.ErrNoInputChannel
+	if _, err := s.handle.Write(data); err != nil {
+		if session.IsPTYClosed(err) {
+			return agentsessions.ErrNoInputChannel
+		}
+		return err
 	}
-	_, err := w.Write(data)
-	return err
+	return nil
 }
 
 func (s *ptySession) Resize(_ context.Context, rows, cols uint16) error {

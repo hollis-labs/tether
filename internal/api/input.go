@@ -5,8 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
 
 // maxInputBytes caps the per-request body size for POST /sessions/{id}/input
@@ -31,11 +30,11 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	if err := s.Service.SendInput(id, body); err != nil {
-		if errors.Is(err, runtime.ErrSessionNotRunning) {
+		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
-		if errors.Is(err, provider.ErrNoInputChannel) {
+		if errors.Is(err, agentsessions.ErrNoInputChannel) {
 			writeError(w, http.StatusConflict, CodeConflict, "session has no input channel")
 			return
 		}

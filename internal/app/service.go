@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 
 	"github.com/chrispian/agent-mux/internal/agent"
 	"github.com/chrispian/agent-mux/internal/api"
@@ -23,27 +26,32 @@ import (
 	"github.com/chrispian/agent-mux/internal/provider/api/stub"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
-	goprovider "github.com/chrispian/agent-mux/internal/provider/cli/goprovider"
 	"github.com/chrispian/agent-mux/internal/provider/cli/opencode"
-	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 	"github.com/chrispian/agent-mux/internal/workspace"
 )
 
-// Service is the composition root: it wires catalog, store, providers, and
-// the runtime manager. Lifecycle ownership of running sessions lives in
-// internal/runtime; Service only orchestrates launch preconditions (plan
-// resolution, workspace creation, persistence of the initial row) and then
-// hands the handle off to the manager.
+// RuntimeFactory builds an agentsessions.Runtime for a single launch. The
+// plan supplies binary path, args, and env policy; per-launch StartOptions
+// supply workspace, log path, sandbox profile, and fanout (passed at
+// Manager.Start time).
+type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
+
+// Service is the composition root: it wires catalog, store, sinks, and
+// the agentsessions.Manager. Lifecycle ownership of running sessions
+// lives in agentsessions; Service only orchestrates launch preconditions
+// (plan resolution, workspace creation, persistence of the initial row)
+// and then hands the handle off to the manager.
 type Service struct {
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store
-	Providers   *provider.Registry
-	Runtime     *runtime.Manager
+	Manager     *agentsessions.Manager
 	Bus         events.Bus
 	Broker      *broker.Service
+
+	factories map[string]RuntimeFactory
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -62,20 +70,40 @@ func New(catalogRoot string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg := provider.NewRegistry()
-	reg.Register(claudecode.Adapter{})
-	reg.Register(claudestream.Adapter{})
-	reg.Register(opencode.Adapter{})
-	reg.Register(stub.Runtime{})
-	// Register cli-goprovider runtimes declared in the catalog.
+
+	factories := map[string]RuntimeFactory{
+		"claude-stream": claudestream.New,
+		"claude-code":   claudecode.New,
+		"opencode":      opencode.New,
+		"api-stub":      stub.New,
+	}
+	// Register cli-goprovider runtimes declared in the catalog. Each one
+	// is the same pattern as claude-stream — a per-turn subprocess driven
+	// by a go-providers CLIAdapter — so claudestream.NewWithAdapter is
+	// the shared constructor. Catalog ids that match a built-in name
+	// override the built-in (last write wins, matching the legacy
+	// provider.Registry semantics).
 	for _, p := range cat.Providers {
-		if p.Type == "cli-goprovider" {
-			adapter := goproviderCLIAdapter(p.Adapter)
-			if adapter != nil {
-				reg.Register(goprovider.NewRuntime(p.ID, adapter, p.Command))
-			}
+		if p.Type != "cli-goprovider" {
+			continue
+		}
+		adapter := goproviderCLIAdapter(p.Adapter)
+		if adapter == nil {
+			continue
+		}
+		providerID := p.ID
+		ad := adapter
+		factories[providerID] = func(plan *launch.Plan) (agentsessions.Runtime, error) {
+			return claudestream.NewWithAdapter(plan, ad, providerID, agentsessions.Capabilities{
+				PTY:               false,
+				Resize:            false,
+				ProviderSessionID: true,
+				CheckpointResume:  false,
+				BinaryRequired:    true,
+			})
 		}
 	}
+
 	// Reconcile stale rows from a prior daemon instance: sessions stuck in
 	// launching/running are orphaned (the process they tracked is gone),
 	// and open client_attachments are no longer live.
@@ -96,21 +124,27 @@ func New(catalogRoot string) (*Service, error) {
 		log.Printf("store: seeded %d logical_agent row(s) from catalog", n)
 	}
 	bus := events.NewBus(events.BusOptions{Persister: db})
-	mgr := runtime.NewManager(db).WithAttachmentSink(db).WithEventPublisher(bus)
+
+	evSink := &eventSinkAdapter{bus: bus}
+	mgr := agentsessions.NewManager(stateSinkAdapter{db: db}).
+		WithAttachmentSink(attachmentSinkAdapter{db: db}).
+		WithEventSink(evSink)
+	evSink.SetManager(mgr)
+
 	brk := broker.NewService(db, bus)
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
-		Providers:   reg,
-		Runtime:     mgr,
+		Manager:     mgr,
 		Bus:         bus,
 		Broker:      brk,
+		factories:   factories,
 	}, nil
 }
 
 func (s *Service) Close() error {
-	if err := s.Runtime.Shutdown(context.Background()); err != nil {
+	if err := s.Manager.Shutdown(context.Background()); err != nil {
 		return err
 	}
 	return s.Store.Close()
@@ -150,14 +184,14 @@ type Launched struct {
 	Plan      *launch.Plan
 
 	// Wait blocks until the session reaches a terminal state and returns
-	// its exit code. Routes through runtime.Manager; safe to call from any
-	// goroutine, safe to call after the session has already exited.
-	// Nil on the result of CreateSession — launching first is required
-	// before there's anything to wait on.
+	// its exit code. Routes through agentsessions.Manager; safe to call
+	// from any goroutine, safe to call after the session has already
+	// exited. Nil on the result of CreateSession — launching first is
+	// required before there's anything to wait on.
 	Wait func(ctx context.Context) (int, error)
 
 	// ProviderKind is the runtime family ("cli" | "api"), resolved from
-	// the provider registry at create/launch time. Populated as part of
+	// the runtime factory at create/launch time. Populated as part of
 	// ADR 0022 G2/G3 so consumers don't need a follow-up catalog lookup.
 	ProviderKind string
 }
@@ -209,14 +243,18 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 		return nil, err
 	}
 
-	// Fail fast if the catalog references a provider the registry can't
-	// satisfy. Better to error here than at launch time when the user
-	// thinks they have a created session.
-	rt, ok := s.Providers.Get(plan.ProviderID)
+	// Fail fast if the catalog references a provider the factory map
+	// can't satisfy. Better to error here than at launch time when the
+	// user thinks they have a created session.
+	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
 	}
-	providerKind := string(rt.Kind())
+	probe, err := factory(plan)
+	if err != nil {
+		return nil, fmt.Errorf("build runtime for %q: %w", plan.ProviderID, err)
+	}
+	providerKind := probe.Kind()
 
 	row := store.SessionRow{
 		ID:             sessID,
@@ -242,9 +280,9 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 
 // LaunchSession starts a previously-created session. Rehydrates the
 // plan from the store, opens the workspace non-destructively, runs
-// Runtime.Prepare and hands off to runtime.Manager.Start. Returns
-// ErrSessionNotCreated when the target is in any state other than
-// "created" — v0.0.2 does not support relaunch of terminated sessions.
+// Runtime.Prepare and hands off to agentsessions.Manager.Start.
+// Returns ErrSessionNotCreated when the target is in any state other
+// than "created" — relaunch of terminated sessions is not supported.
 func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	row, err := s.Store.GetSession(sessionID)
 	if err != nil {
@@ -259,50 +297,75 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
 
-	rt, ok := s.Providers.Get(plan.ProviderID)
+	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+	}
+	rt, err := factory(plan)
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, fmt.Errorf("build runtime: %w", err)
 	}
 
 	ws := workspace.Open(row.Workspace, sessionID)
 
-	if err := rt.Prepare(context.Background(), plan); err != nil {
+	if err := rt.Prepare(context.Background()); err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
 
-	req := runtime.StartRequest{
-		ID:        sessionID,
-		Plan:      plan,
-		Workspace: ws,
-		Runtime:   rt,
-	}
 	// Resolve sandbox profile if the agent specifies one.
+	var profile sandbox.Profile
 	if a, ok := s.Catalog.Agents[plan.LogicalAgentID]; ok {
 		if name := a.Permissions.DefaultSandbox; name != "" {
 			if sp, ok := s.Catalog.SandboxProfiles[name]; ok {
-				req.SandboxProfile = &sp
+				profile = sp
 			}
 		}
 	}
+
 	// Resume continuity for turn-based providers that use a CLI session ID
-	// (--resume / --session flag). Adapters that don't use this are inert;
-	// missing / empty session_id falls through to fresh-session behavior.
+	// (--resume / --session). Adapters that don't use this are inert.
+	var sessionIDPreset string
+	var onSessionID func(string)
 	if providerHasSessionIDContinuity(plan.ProviderID) {
-		preset, err := s.Store.GetClaudeSessionID(plan.LogicalAgentID)
-		if err == nil {
-			req.ClaudeSessionIDPreset = preset
+		if preset, err := s.Store.GetClaudeSessionID(plan.LogicalAgentID); err == nil {
+			sessionIDPreset = preset
 		}
 		logicalAgentID := plan.LogicalAgentID
-		store := s.Store
-		req.OnClaudeSessionID = func(sessionID string) {
-			if err := store.SetClaudeSessionID(logicalAgentID, sessionID); err != nil {
-				log.Printf("%s: persist session_id for %q failed: %v", plan.ProviderID, logicalAgentID, err)
+		storeRef := s.Store
+		providerID := plan.ProviderID
+		onSessionID = func(id string) {
+			if err := storeRef.SetClaudeSessionID(logicalAgentID, id); err != nil {
+				log.Printf("%s: persist session_id for %q failed: %v", providerID, logicalAgentID, err)
 			}
 		}
 	}
-	if err := s.Runtime.Start(context.Background(), req); err != nil {
+
+	req := agentsessions.StartRequest{
+		ID:      sessionID,
+		Runtime: rt,
+		Options: agentsessions.StartOptions{
+			Workdir:         plan.RepoRoot,
+			LogPath:         ws.LogPath,
+			BootPrompt:      plan.BootPrompt,
+			BootMode:        plan.BootMode,
+			Env:             provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
+			Profile:         profile,
+			SessionIDPreset: sessionIDPreset,
+			OnSessionID:     onSessionID,
+			AttachEnabled:   true,
+		},
+		SessionMeta: map[string]string{
+			"logical_agent_id": plan.LogicalAgentID,
+			"project_id":       plan.ProjectID,
+			"launch_id":        plan.LaunchID,
+			"provider_id":      plan.ProviderID,
+		},
+	}
+	if err := s.Manager.Start(context.Background(), req); err != nil {
 		return nil, err
 	}
 
@@ -316,9 +379,9 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		SessionID:    sessionID,
 		Workspace:    ws,
 		Plan:         plan,
-		ProviderKind: string(rt.Kind()),
+		ProviderKind: rt.Kind(),
 		Wait: func(ctx context.Context) (int, error) {
-			return s.Runtime.WaitSession(ctx, sessionID)
+			return s.Manager.WaitSession(ctx, sessionID)
 		},
 	}, nil
 }
@@ -332,42 +395,41 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 }
 
 func (s *Service) StopSession(id string) error {
-	return s.Runtime.Stop(context.Background(), id)
+	return s.Manager.Stop(context.Background(), id)
 }
 
 // WaitSession blocks until the named session reaches a terminal state and
-// returns its exit code. Thin wrapper over runtime.Manager.WaitSession so
-// callers (including the daemon's HTTP handlers) don't reach past Service
-// into the runtime package.
+// returns its exit code. Thin wrapper over agentsessions.Manager.WaitSession
+// so callers (including the daemon's HTTP handlers) don't reach past Service
+// into the lib.
 func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
-	return s.Runtime.WaitSession(ctx, id)
+	return s.Manager.WaitSession(ctx, id)
 }
 
-// SendInput writes data to the named session's PTY. Thin wrapper over
-// runtime.Manager.SendInput.
+// SendInput writes data to the named session's input channel. Thin wrapper
+// over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
-	return s.Runtime.SendInput(id, data)
+	return s.Manager.SendInput(id, data)
 }
 
-// ResizeSession forwards a (rows, cols) winsize update to the named
-// session's PTY. Thin wrapper over runtime.Manager.Resize.
+// ResizeSession forwards a (rows, cols) winsize update. Thin wrapper over
+// agentsessions.Manager.Resize.
 func (s *Service) ResizeSession(id string, rows, cols uint16) error {
-	return s.Runtime.Resize(id, rows, cols)
+	return s.Manager.Resize(id, rows, cols)
 }
 
 // AttachSession streams the named session's live output to w until ctx is
-// canceled or the session exits. sinceSeq is a byte-offset hint for
-// resume; 0 means "replay full ring then go live" (pre-resume default).
-// Thin wrapper over runtime.Manager.AttachWith.
+// canceled or the session exits. sinceSeq is a byte-offset hint for resume;
+// 0 means "replay full ring then go live". Thin wrapper over
+// agentsessions.Manager.AttachWith.
 func (s *Service) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
-	return s.Runtime.AttachWith(ctx, id, w, runtime.AttachOptions{SinceSeq: sinceSeq})
+	return s.Manager.AttachWith(ctx, id, w, agentsessions.AttachOptions{SinceSeq: sinceSeq})
 }
 
-// AttachedClients reports the in-memory count of live attach subscribers for
-// id, or 0 if the session is not currently registered in the runtime (e.g.,
-// already exited).
+// AttachedClients reports the in-memory count of live attach subscribers
+// for id, or 0 if the session is not currently registered.
 func (s *Service) AttachedClients(id string) int {
-	info, ok := s.Runtime.Get(id)
+	info, ok := s.Manager.Get(id)
 	if !ok {
 		return 0
 	}
@@ -375,25 +437,26 @@ func (s *Service) AttachedClients(id string) int {
 }
 
 // RuntimeHealth returns the live health snapshot for a running session by
-// delegating to the runtime.Manager. Returns (zero, false) when the session
-// is not currently registered in the manager (not running, already terminal).
+// delegating to agentsessions.Manager.Health. Returns (zero, false) when
+// the session is not currently registered.
 func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
-	snap, ok := s.Runtime.RuntimeHealth(id)
+	snap, ok := s.Manager.Health(id)
 	if !ok {
 		return api.RuntimeHealthResult{}, false
 	}
 	return api.RuntimeHealthResult{
 		SessionID:    snap.SessionID,
-		ProviderID:   snap.ProviderID,
-		ProviderKind: snap.ProviderKind,
+		ProviderID:   snap.RuntimeID,
+		ProviderKind: snap.RuntimeKind,
 		Caps:         snap.Caps,
 		Health:       snap.Health,
 	}, true
 }
 
-// ResumeLogicalAgent starts a new session for the given logical agent using
-// its most recent checkpoint as boot context. The launch profile from the
-// agent's most recent previous session (logical_agents.launch_id) is reused.
+// ResumeLogicalAgent starts a new session for the given logical agent
+// using its most recent checkpoint as boot context. The launch profile
+// from the agent's most recent previous session (logical_agents.launch_id)
+// is reused.
 //
 // Returns a conflict error if the agent has never launched (no launch_id).
 // Returns a not-found-shaped error if no checkpoint exists.
@@ -418,7 +481,6 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 
 	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
 
-	// Create workspace + persist session row (same as CreateSession but with pre-built plan).
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
 	if wsRoot == "" {
@@ -429,9 +491,13 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		return api.LaunchResult{}, fmt.Errorf("create workspace: %w", err)
 	}
 
-	rt, ok := s.Providers.Get(plan.ProviderID)
+	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
 		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+	}
+	probe, err := factory(plan)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
 	}
 
 	row := store.SessionRow{
@@ -440,7 +506,7 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		ProjectID:      plan.ProjectID,
 		LogicalAgentID: plan.LogicalAgentID,
 		ProviderID:     plan.ProviderID,
-		ProviderKind:   string(rt.Kind()),
+		ProviderKind:   probe.Kind(),
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 	}
@@ -500,9 +566,9 @@ func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
 }
 
 // providerHasSessionIDContinuity reports whether the given provider ID
-// participates in the CLI session-ID continuity mechanism (ClaudeSessionIDPreset
-// / OnClaudeSessionID). Adapters in this set use --resume or --session flags to
-// maintain conversation continuity across daemon restarts.
+// participates in the CLI session-ID continuity mechanism (preset +
+// OnSessionID callback). Adapters in this set use --resume or --session
+// flags to maintain conversation continuity across daemon restarts.
 func providerHasSessionIDContinuity(providerID string) bool {
 	switch providerID {
 	case "claude-stream", "opencode":
