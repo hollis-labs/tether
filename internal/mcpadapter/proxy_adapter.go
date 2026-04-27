@@ -126,6 +126,16 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	idx.Build(registry, serverTags)
 	slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
 
+	// Build allowed-server set. Empty = all servers (firehose).
+	// Threaded into mux_discover and mux_catalog_list_mcp_servers so their
+	// responses can mark which tools/servers are reachable directly vs. only
+	// via mux_call.
+	allowed := make(map[string]struct{}, len(opts.ServerFilter))
+	for _, id := range opts.ServerFilter {
+		allowed[id] = struct{}{}
+	}
+	firehose := len(allowed) == 0
+
 	if opts.BrokerMode {
 		// ── Broker mode (deprecated) ─────────────────────────────────────────
 		// Pure discovery: no upstream tools registered natively.
@@ -133,17 +143,12 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		slog.Warn("mcp-proxy: --broker is deprecated; use --proxy with optional --servers instead")
 		slog.Info("mcp-proxy: broker mode — registering mux_discover + mux_call only",
 			"upstream_tools", len(registry.AllDefinitions()))
-		a.registerDiscoverTool(s, idx)
+		// In broker mode no upstream tool is registered natively: pass an empty
+		// allowed set with firehose=false so every tool reports native=false.
+		a.registerDiscoverTool(s, idx, map[string]struct{}{}, false)
 		a.registerCallTool(s, plainRouter)
 	} else {
 		// ── Selective flat mode ───────────────────────────────────────────────
-		// Build allowed-server set. Empty = all servers (firehose).
-		allowed := make(map[string]struct{}, len(opts.ServerFilter))
-		for _, id := range opts.ServerFilter {
-			allowed[id] = struct{}{}
-		}
-		firehose := len(allowed) == 0
-
 		if firehose {
 			slog.Info("mcp-proxy: flat mode (firehose) — registering all upstream tools natively",
 				"upstream_tools", len(registry.AllDefinitions()))
@@ -172,12 +177,12 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 		// Always register mux_discover + mux_call as a safety hatch so agents
 		// can reach undeclared servers without needing a restart.
-		a.registerDiscoverTool(s, idx)
+		a.registerDiscoverTool(s, idx, allowed, firehose)
 		a.registerCallTool(s, plainRouter)
 	}
 
 	// Introspection tool — always registered in proxy mode.
-	a.registerMCPServersTool(s, pool, entries)
+	a.registerMCPServersTool(s, pool, entries, allowed, firehose)
 
 	// Register mux_events_tool_calls when a durable proxy store is wired.
 	// Falls back to EventStore for backwards compatibility when ProxyStore
@@ -196,18 +201,37 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 // registerDiscoverTool registers mux_discover on s. It lets the LLM search the
 // upstream tool catalog by intent, category, or tags without receiving every
 // tool schema upfront. Returns up to `limit` matching tool schemas as JSON.
-func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex) {
+//
+// nativeServers is the set of upstream server IDs whose tools were registered
+// natively at startup (the --servers filter). When firehose is true, every
+// server's tools are native and nativeServers is ignored. The discover handler
+// uses these to mark each result with native: bool so the LLM knows whether
+// to call the tool directly or wrap it in mux_call.
+func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
+	isNative := func(serverID string) bool {
+		if firehose {
+			return true
+		}
+		_, ok := nativeServers[serverID]
+		return ok
+	}
+
 	s.AddTool(
 		mcp.NewTool("mux_discover",
 			mcp.WithDescription(
 				"Search the upstream tool catalog by intent, category, or tags. "+
-					"Returns matching tool names, descriptions, and input schemas so you can "+
-					"construct calls to mux_call. Use this before calling mux_call when you "+
-					"don't know the exact tool name or need to explore what's available.\n\n"+
+					"Returns matching tool names, descriptions, input schemas, and a `native` flag.\n\n"+
+					"How to use the result:\n"+
+					"  • If a result has `native: true`, the tool is already in your tool list — "+
+					"call it directly by its `tool_name` (do NOT wrap it in mux_call).\n"+
+					"  • If a result has `native: false`, the tool is reachable only via "+
+					"mux_call(tool_name, arguments).\n"+
+					"  • If the response includes `truncated: true`, narrow your query (more "+
+					"specific intent/category/tags) or raise `limit` (max 50).\n\n"+
 					"Examples:\n"+
-					"  mux_discover(intent=\"create a task\") → clockwork task tools\n"+
-					"  mux_discover(category=\"automation\") → hadron blueprint tools\n"+
-					"  mux_discover(intent=\"list sessions\") → session management tools",
+					"  mux_discover(intent=\"create a task\")\n"+
+					"  mux_discover(category=\"memory\")\n"+
+					"  mux_discover(intent=\"list sessions\", limit=20)",
 			),
 			mcp.WithString("intent",
 				mcp.Description("Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')"),
@@ -236,13 +260,38 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex)
 				}
 			}
 
-			results := idx.Search(intent, category, extraTags, limit)
-			return toolJSON(map[string]any{
-				"ok":    true,
-				"count": len(results),
-				"tools": results,
-				"hint":  "Use mux_call(tool_name, arguments) to execute tools not already in your native tool list.",
-			}), nil
+			results, totalMatches := idx.Search(intent, category, extraTags, limit)
+
+			tools := make([]map[string]any, 0, len(results))
+			for _, r := range results {
+				tools = append(tools, map[string]any{
+					"tool_name":    r.ToolName,
+					"server":       r.ServerID,
+					"description":  r.Description,
+					"tags":         r.Tags,
+					"input_schema": r.InputSchema,
+					"score":        r.Score,
+					"native":       isNative(r.ServerID),
+				})
+			}
+
+			truncated := totalMatches > len(results)
+			payload := map[string]any{
+				"ok":                true,
+				"count":             len(tools),
+				"total_match_count": totalMatches,
+				"truncated":         truncated,
+				"tools":             tools,
+				"hint": "Tools with native: true are in your tool list — call them directly by tool_name. " +
+					"Tools with native: false require mux_call(tool_name, arguments).",
+			}
+			if truncated {
+				payload["more_hint"] = fmt.Sprintf(
+					"Returned %d of %d matches. Narrow the query or raise `limit` (max 50) to see more.",
+					len(tools), totalMatches,
+				)
+			}
+			return toolJSON(payload), nil
 		},
 	)
 }
@@ -256,11 +305,16 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 	s.AddTool(
 		mcp.NewTool("mux_call",
 			mcp.WithDescription(
-				"Execute any upstream MCP tool by name. Use this for tools not natively listed — "+
-					"call mux_discover first to find the tool name and input schema. "+
+				"Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. "+
+					"If the tool you need already appears in your tool list (e.g. memory_recall, "+
+					"clockwork_task_create), call it directly — do NOT wrap it in mux_call.\n\n"+
+					"Use mux_call only when:\n"+
+					"  • A tool's `native: false` flag was returned by mux_discover, OR\n"+
+					"  • You need a tool from a server outside the current --servers filter.\n\n"+
+					"Run mux_discover first if you don't know the exact tool name or input schema. "+
 					"Arguments must match the tool's input schema exactly.\n\n"+
 					"Example:\n"+
-					"  mux_call(tool_name=\"clockwork_task_create\", arguments={\"title\":\"Fix bug\",\"description\":\"...\"})",
+					"  mux_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
 			),
 			mcp.WithString("tool_name",
 				mcp.Required(),
@@ -302,7 +356,12 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 
 // registerMCPServersTool adds the mux_catalog_list_mcp_servers native tool to s.
 // It uses the pool for live status and the original entries slice for disabled entries.
-func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, allEntries []config.MCPServerEntry) {
+//
+// nativeServers is the set of server IDs whose tools were registered natively
+// at startup. firehose=true means every server is native. Each server entry in
+// the response carries `surface: "native_flat"` (call tools directly) or
+// `surface: "proxy_only"` (only reachable via mux_discover/mux_call).
+func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, allEntries []config.MCPServerEntry, nativeServers map[string]struct{}, firehose bool) {
 	// Build a set of IDs that are enabled (present in pool).
 	enabledIDs := make(map[string]struct{})
 	for _, e := range allEntries {
@@ -311,12 +370,29 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 		}
 	}
 
+	surfaceOf := func(serverID string, enabled bool) string {
+		if !enabled {
+			return "disabled"
+		}
+		if firehose {
+			return "native_flat"
+		}
+		if _, ok := nativeServers[serverID]; ok {
+			return "native_flat"
+		}
+		return "proxy_only"
+	}
+
 	s.AddTool(
 		mcp.NewTool(
 			"mux_catalog_list_mcp_servers",
 			mcp.WithDescription(
-				"List all upstream MCP servers configured in the agent-mux catalog. "+
-					"Returns each server's ID, transport, connection status, tool count, and tags.",
+				"List all upstream MCP servers configured in the agent-mux catalog.\n\n"+
+					"Each server reports `surface`:\n"+
+					"  • \"native_flat\" — this server's tools are in your tool list; call them directly.\n"+
+					"  • \"proxy_only\"  — this server's tools are reachable only via mux_discover + mux_call.\n"+
+					"  • \"disabled\"    — server is configured but not connected.\n\n"+
+					"Use mux_discover to search the catalog by intent/category when you don't know a tool name.",
 			),
 		),
 		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -326,29 +402,42 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 				liveByID[s.ID] = s
 			}
 
-			// Merge live status with disabled entries into a uniform ServerStatus slice.
-			out := make([]ServerStatus, 0, len(allEntries))
+			// Merge live status with disabled entries into a uniform shape, attaching
+			// the surface field per server.
+			type serverEntry struct {
+				ServerStatus
+				Surface string `json:"surface"`
+			}
+			out := make([]serverEntry, 0, len(allEntries))
 			for _, e := range allEntries {
 				if !e.IsEnabled() {
-					out = append(out, ServerStatus{
-						ID:        e.ID,
-						Transport: e.Transport,
-						Status:    "disabled",
-						Tags:      e.Tags,
+					out = append(out, serverEntry{
+						ServerStatus: ServerStatus{
+							ID:        e.ID,
+							Transport: e.Transport,
+							Status:    "disabled",
+							Tags:      e.Tags,
+						},
+						Surface: surfaceOf(e.ID, false),
 					})
 					continue
 				}
 				if ls, ok := liveByID[e.ID]; ok {
-					out = append(out, ls)
+					out = append(out, serverEntry{
+						ServerStatus: ls,
+						Surface:      surfaceOf(e.ID, true),
+					})
 				}
 			}
 
 			sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 
 			return toolJSON(map[string]any{
-				"ok":      true,
-				"servers": out,
-				"count":   len(out),
+				"ok":       true,
+				"servers":  out,
+				"count":    len(out),
+				"firehose": firehose,
+				"hint":     "Servers with surface=native_flat have their tools in your tool list — call them directly. Use mux_discover + mux_call for proxy_only servers.",
 			}), nil
 		},
 	)

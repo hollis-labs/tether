@@ -85,7 +85,9 @@ type SearchResult struct {
 	Score       int             `json:"score"` // match word count; 0 = unfiltered return
 }
 
-// Search returns up to limit entries matching the intent/category/tags query.
+// Search returns up to limit entries matching the intent/category/tags query,
+// along with the total number of matches before truncation. Callers compare
+// totalMatches to len(results) to know whether to widen the query or raise limit.
 // When all filter fields are empty, the top `limit` entries sorted by name
 // are returned.
 //
@@ -95,7 +97,7 @@ type SearchResult struct {
 //   - tags: additional tag filters (comma-separated or slice); AND semantics
 //     within tags, OR across intent words.
 //   - limit: capped at 50; 0 means 10.
-func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, limit int) []SearchResult {
+func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, limit int) ([]SearchResult, int) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -163,6 +165,8 @@ func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, l
 		return results[i].entry.ToolName < results[j].entry.ToolName
 	})
 
+	totalMatches := len(results)
+
 	// Cap and convert.
 	if len(results) > limit {
 		results = results[:limit]
@@ -183,7 +187,7 @@ func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, l
 			Score:       r.score,
 		}
 	}
-	return out
+	return out, totalMatches
 }
 
 // Len returns the number of indexed upstream tools.
