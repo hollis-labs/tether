@@ -56,14 +56,14 @@ type RuntimeHealthResult struct {
 // struct carries a *workspace.Session and a Wait closure; the API only
 // needs the primitive strings for the response body.
 type LaunchResult struct {
-	SessionID      string
-	Workspace      string
-	LogPath        string
-	ProviderID     string
+	SessionID  string
+	Workspace  string
+	LogPath    string
+	ProviderID string
 	// ProviderKind is the runtime family ("cli" | "api"). Consumers may
 	// branch on this to select PTY-specific affordances (resize, raw input)
 	// vs. API-mode affordances (structured turns). Matches provider.RuntimeKind.
-	ProviderKind   string
+	ProviderKind string
 	// LogicalAgentID is the durable identity that accumulates checkpoints
 	// across sessions. Returned on create and launch so consumers can
 	// correlate a new session to its logical agent without a follow-up get.
@@ -133,11 +133,11 @@ type ListSessionsResponse struct {
 }
 
 type SessionDTO struct {
-	ID              string  `json:"id"`
-	LaunchID        string  `json:"launch_id"`
-	ProjectID       string  `json:"project_id"`
-	LogicalAgentID  string  `json:"logical_agent_id"`
-	ProviderID      string  `json:"provider_id"`
+	ID             string `json:"id"`
+	LaunchID       string `json:"launch_id"`
+	ProjectID      string `json:"project_id"`
+	LogicalAgentID string `json:"logical_agent_id"`
+	ProviderID     string `json:"provider_id"`
 	// ProviderKind is the runtime family ("cli" | "api"). Consumers branch
 	// on this to select PTY-specific affordances vs. API-mode affordances.
 	// Empty for sessions created before this field was added (pre-v0.0.3).

@@ -72,11 +72,11 @@ func TestProxyEventOKRoundtrip(t *testing.T) {
 	}
 
 	ev := ProxyEvent{
-		Server:    "myserver",
-		ToolName:  "my_tool",
+		Server:     "myserver",
+		ToolName:   "my_tool",
 		DurationMs: 77,
-		OK:        true,
-		Timestamp: time.Now().UTC().Truncate(time.Second),
+		OK:         true,
+		Timestamp:  time.Now().UTC().Truncate(time.Second),
 	}
 	if err := s.AppendProxyEvent(ev); err != nil {
 		t.Fatalf("append: %v", err)
@@ -117,11 +117,11 @@ func TestProxyEventsRingBuffer(t *testing.T) {
 	const total = 10
 	for i := 0; i < total; i++ {
 		ev := ProxyEvent{
-			Server:    "s",
-			ToolName:  "t",
+			Server:     "s",
+			ToolName:   "t",
 			DurationMs: int64(i),
-			OK:        true,
-			Timestamp: time.Now().UTC(),
+			OK:         true,
+			Timestamp:  time.Now().UTC(),
 		}
 		if err := s.AppendProxyEvent(ev); err != nil {
 			t.Fatalf("append %d: %v", i, err)
@@ -146,11 +146,11 @@ func TestQueryProxyEventsSince(t *testing.T) {
 	base := time.Now().UTC().Add(-10 * time.Second)
 	for i := 0; i < 5; i++ {
 		ev := ProxyEvent{
-			Server:    "s",
-			ToolName:  "t",
+			Server:     "s",
+			ToolName:   "t",
 			DurationMs: 1,
-			OK:        true,
-			Timestamp: base.Add(time.Duration(i) * time.Second),
+			OK:         true,
+			Timestamp:  base.Add(time.Duration(i) * time.Second),
 		}
 		if err := s.AppendProxyEvent(ev); err != nil {
 			t.Fatalf("append: %v", err)

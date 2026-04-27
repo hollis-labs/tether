@@ -102,7 +102,9 @@ type fakeRuntime struct {
 
 func (r *fakeRuntime) ID() string                 { return "fake" }
 func (r *fakeRuntime) Kind() provider.RuntimeKind { return provider.RuntimeKindCLI }
-func (r *fakeRuntime) Caps() provider.Capabilities { return provider.Capabilities{BinaryRequired: true} }
+func (r *fakeRuntime) Caps() provider.Capabilities {
+	return provider.Capabilities{BinaryRequired: true}
+}
 func (r *fakeRuntime) Prepare(_ context.Context, _ *launch.Plan) error {
 	return nil
 }

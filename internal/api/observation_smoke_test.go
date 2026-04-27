@@ -309,17 +309,17 @@ func TestObservationContract(t *testing.T) {
 			byAgent: map[string][]checkpoint.Checkpoint{
 				agentID: {
 					{
-						ID:             "cp-2",
-						LogicalAgentID: agentID,
-						Summary:        "newer checkpoint",
-						CreatedAt:      "2026-04-23T10:05:00Z",
+						ID:              "cp-2",
+						LogicalAgentID:  agentID,
+						Summary:         "newer checkpoint",
+						CreatedAt:       "2026-04-23T10:05:00Z",
 						SourceSessionID: sessionID,
 					},
 					{
-						ID:             "cp-1",
-						LogicalAgentID: agentID,
-						Summary:        "older checkpoint",
-						CreatedAt:      "2026-04-23T10:00:00Z",
+						ID:              "cp-1",
+						LogicalAgentID:  agentID,
+						Summary:         "older checkpoint",
+						CreatedAt:       "2026-04-23T10:00:00Z",
 						SourceSessionID: sessionID,
 					},
 				},

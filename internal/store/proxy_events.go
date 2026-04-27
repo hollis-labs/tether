@@ -28,11 +28,11 @@ type ProxyEvent struct {
 // ProxyEventFilter narrows which events are returned by QueryProxyEvents.
 // All fields are optional; empty/zero values match everything.
 type ProxyEventFilter struct {
-	ServerID  string
-	ToolName  string
-	SessionID string
-	Limit     int
-	Since     time.Time
+	ServerID   string
+	ToolName   string
+	SessionID  string
+	Limit      int
+	Since      time.Time
 	ErrorsOnly bool
 }
 

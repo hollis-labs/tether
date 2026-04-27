@@ -4,22 +4,23 @@
 // It uses the fakeLaunchService stub to exercise API surface without a live
 // provider runtime. Coverage matrix:
 //
-//   Layer 1: Launch Profile Inputs    — create request, boot_prompt override
-//   Layer 3: Session Identity         — logical_agent_id + provider_id in responses
-//   Layer 3a: Provider Kind           — provider_kind in session get + create/launch
-//   Layer 4: Lifecycle States         — create→launch, conflict, not_found
-//   Layer 7: Typed Error Envelope     — code shape, sentinels for not_found/conflict
+//	Layer 1: Launch Profile Inputs    — create request, boot_prompt override
+//	Layer 3: Session Identity         — logical_agent_id + provider_id in responses
+//	Layer 3a: Provider Kind           — provider_kind in session get + create/launch
+//	Layer 4: Lifecycle States         — create→launch, conflict, not_found
+//	Layer 7: Typed Error Envelope     — code shape, sentinels for not_found/conflict
 //
 // Gaps documented (not covered here):
-//   Layer 2: Boot Prompt Payload      — assembled by bootgen package; see bootgen_test.go
-//   Layer 5: Attach/Read              — streaming; see attach_test.go and daemon tests
-//   Layer 6: Checkpoint/Resume        — tested in checkpoints_test.go; resume 501 pending
-//   G1: metadata bag on create        — not yet implemented (medium priority)
-//   G4: boot_mode in catalog/DTO      — low priority; not yet implemented
-//   G5: StateReady unused             — low priority cleanup
-//   G7: referenced_artifacts typed    — medium priority; pending v003-04
-//   G8: resume 501 → full impl        — high priority; Sprint v003-04
-//   G9: MCP streaming output          — deferred to MCP resources proposal
+//
+//	Layer 2: Boot Prompt Payload      — assembled by bootgen package; see bootgen_test.go
+//	Layer 5: Attach/Read              — streaming; see attach_test.go and daemon tests
+//	Layer 6: Checkpoint/Resume        — tested in checkpoints_test.go; resume 501 pending
+//	G1: metadata bag on create        — not yet implemented (medium priority)
+//	G4: boot_mode in catalog/DTO      — low priority; not yet implemented
+//	G5: StateReady unused             — low priority cleanup
+//	G7: referenced_artifacts typed    — medium priority; pending v003-04
+//	G8: resume 501 → full impl        — high priority; Sprint v003-04
+//	G9: MCP streaming output          — deferred to MCP resources proposal
 package api
 
 import (
@@ -481,5 +482,3 @@ func TestContract_SessionDTO_ProviderKindPresentWhenSet(t *testing.T) {
 		t.Errorf("provider_kind = %v, want 'cli'", m["provider_kind"])
 	}
 }
-
-

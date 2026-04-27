@@ -451,5 +451,3 @@ func TestMessagingStore_Race_DispatcherConcurrent(t *testing.T) {
 		}
 	}
 }
-
-

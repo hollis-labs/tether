@@ -287,11 +287,11 @@ func (a *Adapter) handleSessionHealth(_ context.Context, req mcp.CallToolRequest
 	}
 	caps := result.Caps
 	data := map[string]any{
-		"ok":         true,
-		"session_id": id,
-		"alive":      result.Health.Alive,
-		"live_state": result.Health.State.String(),
-		"turn_id":    result.Health.TurnID,
+		"ok":            true,
+		"session_id":    id,
+		"alive":         result.Health.Alive,
+		"live_state":    result.Health.State.String(),
+		"turn_id":       result.Health.TurnID,
 		"provider_id":   result.ProviderID,
 		"provider_kind": result.ProviderKind,
 		"caps": map[string]any{

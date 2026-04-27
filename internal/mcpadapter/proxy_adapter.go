@@ -238,10 +238,10 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex)
 
 			results := idx.Search(intent, category, extraTags, limit)
 			return toolJSON(map[string]any{
-				"ok":      true,
-				"count":   len(results),
-				"tools":   results,
-				"hint":    "Use mux_call(tool_name, arguments) to execute tools not already in your native tool list.",
+				"ok":    true,
+				"count": len(results),
+				"tools": results,
+				"hint":  "Use mux_call(tool_name, arguments) to execute tools not already in your native tool list.",
 			}), nil
 		},
 	)
