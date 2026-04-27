@@ -53,7 +53,7 @@ func TestDiscoveryIndex_SearchByIntent(t *testing.T) {
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, serverTags)
 
-	results := idx.Search("create task", "", nil, 10)
+	results, _ := idx.Search("create task", "", nil, 10)
 	if len(results) == 0 {
 		t.Fatal("expected results for 'create task', got none")
 	}
@@ -85,7 +85,7 @@ func TestDiscoveryIndex_SearchByCategory(t *testing.T) {
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, serverTags)
 
-	results := idx.Search("", "automation", nil, 10)
+	results, _ := idx.Search("", "automation", nil, 10)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 automation tools, got %d", len(results))
 	}
@@ -102,7 +102,7 @@ func TestDiscoveryIndex_SearchEmpty_ReturnsAll(t *testing.T) {
 	idx.Build(reg, nil)
 
 	// Empty query with no filters returns up to limit entries.
-	results := idx.Search("", "", nil, 10)
+	results, _ := idx.Search("", "", nil, 10)
 	if len(results) != 5 {
 		t.Fatalf("empty search: expected 5, got %d", len(results))
 	}
@@ -113,9 +113,37 @@ func TestDiscoveryIndex_SearchLimit(t *testing.T) {
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
 
-	results := idx.Search("", "", nil, 2)
+	results, _ := idx.Search("", "", nil, 2)
 	if len(results) != 2 {
 		t.Fatalf("limit=2: expected 2, got %d", len(results))
+	}
+}
+
+func TestDiscoveryIndex_Search_TotalMatchesAndTruncation(t *testing.T) {
+	reg := buildTestRegistry()
+	idx := NewDiscoveryIndex()
+	idx.Build(reg, nil)
+
+	// Registry has 5 upstream tools. limit=2 → results capped at 2 but
+	// totalMatches reports the full 5 so callers know more exist.
+	results, total := idx.Search("", "", nil, 2)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results (capped), got %d", len(results))
+	}
+	if total != 5 {
+		t.Fatalf("expected totalMatches=5 (pre-cap), got %d", total)
+	}
+	if total <= len(results) {
+		t.Errorf("truncation signal broken: total=%d should exceed len(results)=%d", total, len(results))
+	}
+
+	// limit >= total → results == total, no truncation.
+	results, total = idx.Search("", "", nil, 50)
+	if len(results) != 5 || total != 5 {
+		t.Fatalf("uncapped: expected 5/5, got %d/%d", len(results), total)
+	}
+	if total != len(results) {
+		t.Errorf("expected total == len(results) when not truncated; got %d vs %d", total, len(results))
 	}
 }
 
@@ -130,7 +158,7 @@ func TestDiscoveryIndex_SearchResult_HasInputSchema(t *testing.T) {
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
 
-	results := idx.Search("test tool", "", nil, 5)
+	results, _ := idx.Search("test tool", "", nil, 5)
 	if len(results) == 0 {
 		t.Fatal("no results for 'test tool'")
 	}
@@ -162,7 +190,7 @@ func TestDiscoveryIndex_NoNativeTools(t *testing.T) {
 	if idx.Len() != 1 {
 		t.Fatalf("expected 1 indexed tool (upstream only), got %d", idx.Len())
 	}
-	results := idx.Search("", "", nil, 10)
+	results, _ := idx.Search("", "", nil, 10)
 	for _, r := range results {
 		if r.ToolName == "mux_health" {
 			t.Error("native tool mux_health must not appear in discovery results")
