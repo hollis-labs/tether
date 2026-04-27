@@ -11,20 +11,35 @@ import (
 	"github.com/chrispian/agent-mux/internal/store"
 )
 
-// stateSinkAdapter adapts *store.Store to agentsessions.StateSink. Lib's
-// typed State (launching/running/done/failed) maps 1:1 to mux's string-
-// based vocabulary; the only translation today is the lib's Done +
-// Reason="killed" → mux's "killed". That happens in eventSinkAdapter
-// (where Reason is observed), not here — by the time the StateSink fires,
-// the lib has already collapsed killed → done. Mux's mux-domain Killed
-// state is recoverable from the LifecycleEvent payload, not from the
-// state column.
+// stateSinkAdapter adapts *store.Store to agentsessions.StateSink. The
+// lib's vocabulary (launching/running/done/failed) does not match mux's
+// persisted vocabulary (launching/running/completed/failed/killed)
+// exactly: lib terminal "done" persists as mux's "completed".
+//
+// The StateSink callback does not receive the lib's stop reason, so this
+// path cannot distinguish an explicit kill from a clean completion at
+// the column level — both land as "completed". The killed-vs-completed
+// distinction is preserved in the events stream (eventSinkAdapter sees
+// Reason and emits to="killed" in the session.state_changed payload).
+// Consumers that need DB-level kill detection can join against the
+// events table; the column itself is best-effort.
 type stateSinkAdapter struct {
 	db *store.Store
 }
 
+// muxSessionState normalises a lib State value to mux's persisted
+// vocabulary. Lib "done" → mux "completed"; everything else passthrough.
+// "killed" is not a lib state today — it's recovered from LifecycleEvent
+// .Reason in eventSinkAdapter / mapLifecycleStates.
+func muxSessionState(state agentsessions.State) string {
+	if state == agentsessions.StateDone {
+		return "completed"
+	}
+	return string(state)
+}
+
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
-	return a.db.UpdateSessionState(id, string(state), pid, exit)
+	return a.db.UpdateSessionState(id, muxSessionState(state), pid, exit)
 }
 
 // attachmentSinkAdapter adapts *store.Store to agentsessions.AttachmentSink.
@@ -105,11 +120,15 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 }
 
 // mapLifecycleStates translates a lib LifecycleEvent's From/To pair into
-// mux's string state vocabulary. The only divergence is Done+killed →
-// "killed"; everything else passes through unchanged.
+// mux's string state vocabulary used in session.state_changed payloads.
+// Base translation via muxSessionState (Done → completed); when To is
+// Done with Reason="killed", override to "killed" so consumers reading
+// the events stream can distinguish kill from clean completion (a
+// distinction the StateSink-driven sessions.state column cannot
+// preserve).
 func mapLifecycleStates(ev agentsessions.LifecycleEvent) (from, to string) {
-	from = string(ev.From)
-	to = string(ev.To)
+	from = muxSessionState(ev.From)
+	to = muxSessionState(ev.To)
 	if ev.To == agentsessions.StateDone && ev.Reason == "killed" {
 		to = "killed"
 	}

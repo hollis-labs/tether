@@ -143,7 +143,17 @@ func (s *ptySession) SendInput(_ context.Context, data []byte) error {
 }
 
 func (s *ptySession) Resize(_ context.Context, rows, cols uint16) error {
-	return s.handle.Resize(rows, cols)
+	if err := s.handle.Resize(rows, cols); err != nil {
+		// Match SendInput's pattern — translate the PTY-closed sentinel
+		// to the agentsessions boundary error so a concurrent resize
+		// during teardown surfaces as a clean "no input channel" rather
+		// than an internal error.
+		if session.IsPTYClosed(err) {
+			return agentsessions.ErrNoInputChannel
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *ptySession) Health() agentsessions.HealthStatus {
