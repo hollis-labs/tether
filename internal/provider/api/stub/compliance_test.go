@@ -8,23 +8,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/go-agent-sessions/compliance"
+
 	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/provider/compliance"
 )
 
-// TestCompliance runs the shared provider compliance suite against the api-stub.
-// The stub is an in-process provider so no binary gating is needed.
+// TestCompliance runs the shared go-agent-sessions compliance suite against
+// the api-stub Runtime. The stub is in-process (no external binary) so all
+// caps tests that gate on BinaryRequired=false also run.
 func TestCompliance(t *testing.T) {
+	rt, err := New(&launch.Plan{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	compliance.Run(t, compliance.Harness{
-		NewRuntime: func(t *testing.T) provider.Runtime { return Runtime{} },
-		NewPlan:    func(t *testing.T) *launch.Plan { return &launch.Plan{} },
-		BinarySkip: false,
+		Runtime: rt,
+		NewStartOptions: func(t *testing.T) agentsessions.StartOptions {
+			return agentsessions.StartOptions{Workdir: t.TempDir()}
+		},
 	})
 }
 
 func TestStub_StartProducesAliveSession(t *testing.T) {
-	sess, err := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{})
+	rt, _ := New(&launch.Plan{})
+	sess, err := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -34,8 +42,9 @@ func TestStub_StartProducesAliveSession(t *testing.T) {
 }
 
 func TestStub_SendInputEchoesThroughFanout(t *testing.T) {
+	rt, _ := New(&launch.Plan{})
 	var buf threadsafeBuffer
-	sess, err := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{Fanout: &buf})
+	sess, err := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir(), Fanout: &buf})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -48,8 +57,9 @@ func TestStub_SendInputEchoesThroughFanout(t *testing.T) {
 }
 
 func TestStub_SendInputPreservesExplicitNewline(t *testing.T) {
+	rt, _ := New(&launch.Plan{})
 	var buf threadsafeBuffer
-	sess, _ := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{Fanout: &buf})
+	sess, _ := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir(), Fanout: &buf})
 	if err := sess.SendInput(context.Background(), []byte("hi\n")); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
@@ -59,7 +69,8 @@ func TestStub_SendInputPreservesExplicitNewline(t *testing.T) {
 }
 
 func TestStub_StopUnblocksWait(t *testing.T) {
-	sess, _ := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{})
+	rt, _ := New(&launch.Plan{})
+	sess, _ := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir()})
 	done := make(chan int, 1)
 	go func() {
 		code, _ := sess.Wait()
@@ -91,16 +102,18 @@ func TestStub_StopUnblocksWait(t *testing.T) {
 }
 
 func TestStub_SendInputAfterStopErrors(t *testing.T) {
-	sess, _ := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{})
+	rt, _ := New(&launch.Plan{})
+	sess, _ := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir()})
 	_ = sess.Stop(context.Background())
 	err := sess.SendInput(context.Background(), []byte("too late"))
-	if !errors.Is(err, provider.ErrNoInputChannel) {
-		t.Errorf("expected provider.ErrNoInputChannel; got %v", err)
+	if !errors.Is(err, agentsessions.ErrNoInputChannel) {
+		t.Errorf("expected agentsessions.ErrNoInputChannel; got %v", err)
 	}
 }
 
 func TestStub_StopIsIdempotent(t *testing.T) {
-	sess, _ := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{})
+	rt, _ := New(&launch.Plan{})
+	sess, _ := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: t.TempDir()})
 	if err := sess.Stop(context.Background()); err != nil {
 		t.Fatalf("first Stop: %v", err)
 	}
@@ -110,8 +123,10 @@ func TestStub_StopIsIdempotent(t *testing.T) {
 }
 
 func TestStub_BootPromptEchoesWhenModeStdin(t *testing.T) {
+	rt, _ := New(&launch.Plan{})
 	var buf threadsafeBuffer
-	_, err := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{
+	_, err := rt.Start(context.Background(), agentsessions.StartOptions{
+		Workdir:    t.TempDir(),
 		Fanout:     &buf,
 		BootPrompt: "boot",
 		BootMode:   "stdin",
@@ -125,8 +140,10 @@ func TestStub_BootPromptEchoesWhenModeStdin(t *testing.T) {
 }
 
 func TestStub_BootPromptSilentWhenModeNotStdin(t *testing.T) {
+	rt, _ := New(&launch.Plan{})
 	var buf threadsafeBuffer
-	_, err := Runtime{}.Start(context.Background(), &launch.Plan{}, provider.StartOptions{
+	_, err := rt.Start(context.Background(), agentsessions.StartOptions{
+		Workdir:    t.TempDir(),
 		Fanout:     &buf,
 		BootPrompt: "boot",
 		BootMode:   "",

@@ -19,9 +19,10 @@ type BusOptions struct {
 	MaxConsecDrops int64
 }
 
-// Publisher is the write half of the bus. Both runtime.Manager and
-// the daemon depend on this narrow interface rather than the full
-// Bus so they can't accidentally subscribe from a publisher seat.
+// Publisher is the write half of the bus. Lifecycle producers (the
+// agentsessions.Manager event sink in app/sinks.go, the daemon, the
+// broker service) depend on this narrow interface rather than the
+// full Bus so they can't accidentally subscribe from a publisher seat.
 type Publisher interface {
 	Publish(ctx context.Context, e Event) error
 }

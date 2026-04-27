@@ -313,3 +313,21 @@ The health endpoint is verified by the same smoke story:
 - [ADR 0006](0006-provider-contract-shape.md) — Runtime + Session interface split (superseded in part)
 - [ADR 0014](0014-pty-resize-endpoint.md) — PTY resize contract
 - [ADR 0022](0022-mux-as-optional-provider-substrate.md) — Provider/session contract for Clockwork + Nanite
+
+---
+
+## Addendum — 2026-04-27 (Sprint v005-03, Stage 2b)
+
+The compliance harness moved to `github.com/hollis-labs/go-agent-sessions/compliance`. Mux's `internal/provider/compliance/compliance.go` was deleted in `091fd0b`; each adapter's `compliance_test.go` now imports the lib's package and calls `compliance.Run(t, compliance.Harness{Runtime: <constructed>})`.
+
+The capability matrix in this ADR is unchanged — claude-stream/opencode/cli-goprovider declare `ProviderSessionID=true`, claude-code declares `PTY=true, Resize=true`, api-stub declares all caps false / `BinaryRequired=false`.
+
+Differences from the original mux harness:
+
+- `Harness.NewRuntime` / `NewPlan` collapsed into a single `Runtime` field — the lib's harness takes a constructed Runtime (plan baked in via the factory's `New(plan)` call), not a Plan.
+- `LiveState` enum stayed in place (`idle` / `processing` / `stopped`); mapped to `agentsessions.LiveState*` constants.
+- The lib's `compliance.Run` gates each suite on `Caps()` exactly as the mux suite did.
+
+PTY race resolution: the previously-documented PTY race (`followups.agent_mux.compliance_resize_pty_race`) — `Handle.Resize → pty.Setsize` racing the wait goroutine's `ptmx.Close()` — was resolved in this commit. `internal/session/runtime.go` now guards PTY ops behind a `sync.RWMutex`; the wait goroutine takes the write-lock to swap PTY → nil before closing, while Resize / Write hold the read-lock. `make check` (test-race included) is fully green.
+
+No supersede; this ADR's decisions stand and are now satisfied by the lib's harness.

@@ -1,6 +1,6 @@
 package config
 
-import "github.com/chrispian/agent-mux/internal/sandbox"
+import "github.com/hollis-labs/go-sandbox/sandbox"
 
 type Global struct {
 	Version string       `yaml:"version"`

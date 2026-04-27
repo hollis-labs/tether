@@ -26,7 +26,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/app"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 // Scope constants for mutating tool groups.
 const (

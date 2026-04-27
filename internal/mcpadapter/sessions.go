@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -11,7 +12,6 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/runtime"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -287,11 +287,11 @@ func (a *Adapter) handleSessionHealth(_ context.Context, req mcp.CallToolRequest
 	}
 	caps := result.Caps
 	data := map[string]any{
-		"ok":         true,
-		"session_id": id,
-		"alive":      result.Health.Alive,
-		"live_state": result.Health.State.String(),
-		"turn_id":    result.Health.TurnID,
+		"ok":            true,
+		"session_id":    id,
+		"alive":         result.Health.Alive,
+		"live_state":    result.Health.State.String(),
+		"turn_id":       result.Health.TurnID,
 		"provider_id":   result.ProviderID,
 		"provider_kind": result.ProviderKind,
 		"caps": map[string]any{
@@ -318,7 +318,7 @@ func isNotFound(err error) bool {
 		return false
 	}
 	return errors.Is(err, store.ErrSessionNotFound) ||
-		errors.Is(err, runtime.ErrSessionNotRunning) ||
+		errors.Is(err, agentsessions.ErrSessionNotRunning) ||
 		errors.Is(err, messaging.ErrNotFound)
 }
 

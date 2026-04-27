@@ -92,7 +92,7 @@ var daemonRunCmd = &cobra.Command{
 
 		server := &daemon.Server{
 			Config:       cfg,
-			Manager:      svc.Runtime,
+			Manager:      svc.Manager,
 			Service:      &serviceAdapter{svc: svc},
 			Checkpoints:  svc.Store,
 			Broker:       &brokerAdapter{write: svc.Broker, read: svc.Store},

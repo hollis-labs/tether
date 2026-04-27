@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 )
 
 // handleAttach streams the named session's live PTY output as an unframed
@@ -43,7 +43,7 @@ func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request, id string)
 
 	fw := &flushWriter{w: w, f: flusher}
 	if err := s.Service.AttachSession(r.Context(), id, fw, sinceSeq); err != nil {
-		if errors.Is(err, runtime.ErrSessionNotRunning) {
+		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			// Headers already sent — best we can do is close the stream.
 			return
 		}

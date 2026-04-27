@@ -1,45 +1,37 @@
 # internal/provider
 
-Provider runtime contract — the abstraction that lets one daemon launch
-sessions against many kinds of backends (PTY-based CLIs, API-streaming
-agents, …).
+Thin helper package — env-policy plumbing only.
 
-**Purpose:** defines the `Runtime` and `Session` interfaces plus the
-shared `BuildEnv` helper for composing child-process environments.
-Keeps the runtime manager decoupled from any specific backend.
+The runtime contract that used to live here (`Runtime`, `Session`,
+`Capabilities`, `HealthStatus`, `LiveState`, `CheckpointHint`,
+`StartOptions`, `Registry`) moved to
+[`github.com/hollis-labs/go-agent-sessions/agentsessions`](https://github.com/hollis-labs/go-agent-sessions)
+in `v005-03`. Mux composes adapters via `agentsessions.NewFromAdapter`
+(turn-based subprocess) or by implementing `agentsessions.Runtime`
+directly (PTY).
 
-**Entry points:**
+## What's left here
 
-- `Runtime` interface (`provider.go`) — `ID() / Kind() / Prepare(ctx, plan)
-  / Start(ctx, plan, opts)`. Implementations live in subpackages.
-- `Session` interface — `Wait() / Stop(ctx) / SendInput / Health /
-  CheckpointHints`. Returned by `Runtime.Start`.
-- `StartOptions` — Workdir, LogPath, BootPrompt, BootMode, Fanout writer.
 - `BuildEnv` (`env.go`) — merge-by-default env composition with
-  whitelist + redact opt-ins. See [ADR TBD on env-merge default].
-- Subpackages:
-  - [`cli/claudecode`](cli/claudecode) — PTY-backed runtime for the
-    Claude CLI.
-  - [`api/stub`](api/stub) — no-op API-kind runtime (echoes input).
+  whitelist + redact opt-ins. `app.Service` calls this once per
+  `LaunchSession` to build `agentsessions.StartOptions.Env`.
+- Adapter packages under `cli/` (`claudestream`, `claudecode`,
+  `opencode`) and `api/stub` — each ships a `New(plan)` factory that
+  returns an `agentsessions.Runtime` for app composition.
 
-**Neighbors:**
+## Where to look for the contract
 
-- [`internal/runtime`](../runtime) composes `StartOptions.Fanout` from
-  its attach broker; Manager owns the Session's lifecycle.
-- [`internal/launch`](../launch) resolves the `launch.Plan` that is
-  passed to `Runtime.Prepare` + `Runtime.Start`.
-- [`internal/app`](../app) registers concrete Runtime implementations
-  at startup.
+- Runtime / Session interfaces, capability flags, sentinel errors:
+  `agentsessions.{Runtime, Session, Capabilities, ErrNoInputChannel,
+  ErrSessionNotRunning, ErrTurnInFlight}`
+- Compliance harness: `github.com/hollis-labs/go-agent-sessions/compliance`
+- ADR addendums: `docs/adr/0004` (broker), `0006` (runtime contract),
+  `0025` (compliance suite).
 
-**Gotchas:**
+## Gotchas
 
-- **Fan-out lives in the Manager, not the Session.** If you feel the
-  urge to add `Attach(ctx, w)` to `Session`, stop — it duplicates the
-  attach broker and breaks CLI/API symmetry.
-- `CheckpointHints()` is deliberately opaque until v0.0.3 Sprint
-  v003-04 pins the shape. Return an empty slice if you have nothing.
 - Env handling is **merge-by-default**. Only `passthrough` / `redact` /
-  `overrides` alter the parent env. Do not reintroduce the v0.0.1
-  env-replace behavior.
-- `Kind()` distinguishes CLI vs API runtimes. The stub runtime returns
-  `api`; new vendor runtimes pick the appropriate kind.
+  `overrides` alter the parent env.
+- The catalog-driven `cli-goprovider` provider type is registered as a
+  factory in `app.New` via `claudestream.NewWithAdapter` — there is no
+  longer a `goprovider/` subpackage.

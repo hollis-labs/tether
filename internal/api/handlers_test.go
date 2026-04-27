@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -427,7 +427,7 @@ func TestHandleStopSession_Success(t *testing.T) {
 }
 
 func TestHandleStopSession_NotRunning(t *testing.T) {
-	svc := &fakeLaunchService{stopErr: runtime.ErrSessionNotRunning}
+	svc := &fakeLaunchService{stopErr: agentsessions.ErrSessionNotRunning}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/stop", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -458,7 +458,7 @@ func TestHandleWaitSession(t *testing.T) {
 }
 
 func TestHandleWaitSession_NotRunning(t *testing.T) {
-	svc := &fakeLaunchService{waitErr: runtime.ErrSessionNotRunning}
+	svc := &fakeLaunchService{waitErr: agentsessions.ErrSessionNotRunning}
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/wait", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -499,7 +499,7 @@ func TestHandleSendInput_Success(t *testing.T) {
 }
 
 func TestHandleSendInput_SessionNotRunning(t *testing.T) {
-	svc := &fakeLaunchService{inputErr: runtime.ErrSessionNotRunning}
+	svc := &fakeLaunchService{inputErr: agentsessions.ErrSessionNotRunning}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -509,7 +509,7 @@ func TestHandleSendInput_SessionNotRunning(t *testing.T) {
 }
 
 func TestHandleSendInput_NoInputChannelConflict(t *testing.T) {
-	svc := &fakeLaunchService{inputErr: provider.ErrNoInputChannel}
+	svc := &fakeLaunchService{inputErr: agentsessions.ErrNoInputChannel}
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/input", bytes.NewReader([]byte("x")))
 	rr := httptest.NewRecorder()
 	newTestHandler(svc).ServeHTTP(rr, req)
@@ -607,7 +607,7 @@ func TestHandleResize_BadJSON(t *testing.T) {
 }
 
 func TestHandleResize_SessionNotRunning(t *testing.T) {
-	svc := &fakeLaunchService{resizeErr: runtime.ErrSessionNotRunning}
+	svc := &fakeLaunchService{resizeErr: agentsessions.ErrSessionNotRunning}
 	body := bytes.NewReader([]byte(`{"rows":24,"cols":80}`))
 	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/resize", body)
 	rr := httptest.NewRecorder()
@@ -701,7 +701,7 @@ func TestHandleAttach_NegativeSinceSeq(t *testing.T) {
 }
 
 func TestHandleAttach_SessionNotRunning(t *testing.T) {
-	svc := &fakeLaunchService{attachErr: runtime.ErrSessionNotRunning}
+	svc := &fakeLaunchService{attachErr: agentsessions.ErrSessionNotRunning}
 	// With a real server we'd get 404 before streaming; our handler already
 	// wrote 200 + headers, so the check is that the stream terminates cleanly
 	// with no body and the handler returns.

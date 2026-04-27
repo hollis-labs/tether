@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/chrispian/agent-mux/internal/sandbox"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // Load reads the global catalog + subdirectories and returns a populated Catalog.

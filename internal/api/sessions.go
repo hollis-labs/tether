@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrispian/agent-mux/internal/runtime"
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/store"
 )
@@ -324,7 +325,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id str
 
 func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {
 	if err := s.Service.StopSession(id); err != nil {
-		if errors.Is(err, runtime.ErrSessionNotRunning) {
+		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
@@ -350,7 +351,7 @@ func (s *Server) handleResizeSession(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if err := s.Service.ResizeSession(id, req.Rows, req.Cols); err != nil {
-		if errors.Is(err, runtime.ErrSessionNotRunning) {
+		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
@@ -363,7 +364,7 @@ func (s *Server) handleResizeSession(w http.ResponseWriter, r *http.Request, id 
 func (s *Server) handleWaitSession(w http.ResponseWriter, r *http.Request, id string) {
 	code, err := s.Service.WaitSession(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, runtime.ErrSessionNotRunning) {
+		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
