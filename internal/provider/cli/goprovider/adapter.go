@@ -31,8 +31,8 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // ErrTurnInFlight is returned by SendInput when the previous turn's
@@ -166,12 +166,20 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 	cmd.Dir = s.opts.Workdir
 	cmd.Env = os.Environ()
 
+	var sandboxCleanup func()
 	if s.opts.Sandbox != nil {
-		if err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir); err != nil {
+		cleanup, err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir)
+		if err != nil {
 			s.mu.Unlock()
 			return fmt.Errorf("goprovider: sandbox: %w", err)
 		}
+		sandboxCleanup = cleanup
 	}
+	defer func() {
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
+	}()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

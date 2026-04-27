@@ -54,6 +54,8 @@ github.com/hollis-labs/go-messaging v0.2.0 h1:JypqjXMcgyFBbLmX+NlwTxJuwIAAjKd/3Q
 github.com/hollis-labs/go-messaging v0.2.0/go.mod h1:tMiHRx7QHV1GWw5pZ1khnursbIQuzikScSRXWVdP8nk=
 github.com/hollis-labs/go-providers v0.2.0 h1:JMAonjXnrS4awP/JRZu+0VvHoRYfYrKFmXpPfrGqGOI=
 github.com/hollis-labs/go-providers v0.2.0/go.mod h1:7S6zvE5didBoY5cA0JY/rtB0pzy8s9dltuqWMtUPwK0=
+github.com/hollis-labs/go-sandbox v0.1.0 h1:OESqWfu5OPq7s9bsu5BoGfOTf/m6EOig3/MKGbFXvog=
+github.com/hollis-labs/go-sandbox v0.1.0/go.mod h1:SY3Io7cTHnMahfN1zkQzHvVkcevXzus8mo9ZmtaaHPg=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=

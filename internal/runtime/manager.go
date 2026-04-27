@@ -20,9 +20,9 @@ import (
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/internal/session"
 	"github.com/chrispian/agent-mux/internal/workspace"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // StateSink persists session state transitions. The production implementation

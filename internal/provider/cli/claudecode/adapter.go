@@ -9,8 +9,8 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/internal/session"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // Adapter is the CLI-runtime implementation for the Claude Code provider.
@@ -55,30 +55,50 @@ func (a Adapter) Start(ctx context.Context, plan *launch.Plan, opts provider.Sta
 	cmd.Dir = opts.Workdir
 	cmd.Env = provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ())
 
+	var sandboxCleanup func()
 	if opts.Sandbox != nil {
-		if err := sandbox.Apply(cmd, *opts.Sandbox, opts.Workdir); err != nil {
+		cleanup, err := sandbox.Apply(cmd, *opts.Sandbox, opts.Workdir)
+		if err != nil {
 			return nil, fmt.Errorf("sandbox: %w", err)
 		}
+		sandboxCleanup = cleanup
 	}
 
 	h, err := session.Start(cmd, opts.LogPath, opts.BootPrompt, opts.BootMode, opts.Fanout)
 	if err != nil {
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
 		return nil, err
 	}
-	return &cliSession{handle: h}, nil
+	return &cliSession{handle: h, sandboxCleanup: sandboxCleanup}, nil
 }
 
 // cliSession wraps a *session.Handle to satisfy provider.Session. It keeps
 // PTY internals encapsulated so the runtime manager can treat CLI and API
 // runtimes identically.
 type cliSession struct {
-	handle   *session.Handle
-	mu       sync.Mutex
-	stopped  bool
-	stopOnce sync.Once
+	handle             *session.Handle
+	mu                 sync.Mutex
+	stopped            bool
+	stopOnce           sync.Once
+	sandboxCleanup     func()
+	sandboxCleanupOnce sync.Once
 }
 
-func (s *cliSession) Wait() (int, error) { return s.handle.Wait() }
+func (s *cliSession) doSandboxCleanup() {
+	s.sandboxCleanupOnce.Do(func() {
+		if s.sandboxCleanup != nil {
+			s.sandboxCleanup()
+		}
+	})
+}
+
+func (s *cliSession) Wait() (int, error) {
+	code, err := s.handle.Wait()
+	s.doSandboxCleanup()
+	return code, err
+}
 
 func (s *cliSession) Stop(_ context.Context) error {
 	var killErr error
@@ -88,6 +108,7 @@ func (s *cliSession) Stop(_ context.Context) error {
 		s.mu.Unlock()
 		killErr = s.handle.Kill()
 	})
+	s.doSandboxCleanup()
 	return killErr
 }
 

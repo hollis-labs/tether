@@ -24,7 +24,7 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/sandbox"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // ErrTurnInFlight is returned by SendInput when the previous turn's
@@ -156,28 +156,37 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 	cmd.Dir = s.opts.Workdir
 	cmd.Env = provider.BuildEnv(s.plan.EnvMode, s.plan.EnvPassthrough, s.plan.EnvRedact, s.plan.Env, os.Environ())
 
+	var sandboxCleanup func()
 	if s.opts.Sandbox != nil {
-		if err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir); err != nil {
+		cleanup, err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir)
+		if err != nil {
 			s.mu.Unlock()
 			return fmt.Errorf("opencode: sandbox: %w", err)
 		}
+		sandboxCleanup = cleanup
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.mu.Unlock()
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
 		return fmt.Errorf("opencode: stdout pipe: %w", err)
 	}
 	cmd.Stderr = s.logFile
 
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
 		return fmt.Errorf("opencode: start: %w", err)
 	}
 	s.current = cmd
 	s.mu.Unlock()
 
-	go s.readTurn(stdout, cmd)
+	go s.readTurn(stdout, cmd, sandboxCleanup)
 	return nil
 }
 
@@ -189,8 +198,11 @@ type eventEnvelope struct {
 
 // readTurn drains stdout line-by-line, forwarding to Fanout + log and
 // extracting the session ID for --session continuity on the next turn.
-func (s *Session) readTurn(stdout io.ReadCloser, cmd *exec.Cmd) {
+func (s *Session) readTurn(stdout io.ReadCloser, cmd *exec.Cmd, sandboxCleanup func()) {
 	defer stdout.Close()
+	if sandboxCleanup != nil {
+		defer sandboxCleanup()
+	}
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

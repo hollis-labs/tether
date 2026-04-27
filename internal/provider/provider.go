@@ -10,7 +10,7 @@ import (
 	"io"
 
 	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/sandbox"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // RuntimeKind names the execution family a provider runtime belongs to.

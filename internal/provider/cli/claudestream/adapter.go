@@ -19,8 +19,8 @@ import (
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/sandbox"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 // Adapter satisfies provider.Runtime. ID is "claude-stream" to make
@@ -155,16 +155,22 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 	cmd.Dir = s.opts.Workdir
 	cmd.Env = provider.BuildEnv(s.plan.EnvMode, s.plan.EnvPassthrough, s.plan.EnvRedact, s.plan.Env, os.Environ())
 
+	var sandboxCleanup func()
 	if s.opts.Sandbox != nil {
-		if err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir); err != nil {
+		cleanup, err := sandbox.Apply(cmd, *s.opts.Sandbox, s.opts.Workdir)
+		if err != nil {
 			s.mu.Unlock()
 			return fmt.Errorf("claudestream: sandbox: %w", err)
 		}
+		sandboxCleanup = cleanup
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.mu.Unlock()
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
 		return fmt.Errorf("claudestream: stdout pipe: %w", err)
 	}
 	// Swallow stderr into the log file so claude's debug spam doesn't
@@ -173,20 +179,26 @@ func (s *Session) SendInput(ctx context.Context, data []byte) error {
 
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
+		if sandboxCleanup != nil {
+			sandboxCleanup()
+		}
 		return fmt.Errorf("claudestream: start: %w", err)
 	}
 	s.current = cmd
 	s.mu.Unlock()
 
-	go s.readTurn(stdout, cmd)
+	go s.readTurn(stdout, cmd, sandboxCleanup)
 	return nil
 }
 
 // readTurn runs per-turn. Drains stdout line-by-line, forwards to
 // Fanout + log, captures session_id. Returns when the subprocess
 // closes stdout (claude emits `result` then exits).
-func (s *Session) readTurn(stdout io.ReadCloser, cmd *exec.Cmd) {
+func (s *Session) readTurn(stdout io.ReadCloser, cmd *exec.Cmd, sandboxCleanup func()) {
 	defer stdout.Close()
+	if sandboxCleanup != nil {
+		defer sandboxCleanup()
+	}
 
 	scanner := bufio.NewScanner(stdout)
 	// claude can emit ~100KB assistant blocks; bump the default 64KB cap.

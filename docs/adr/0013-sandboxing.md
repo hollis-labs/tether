@@ -163,7 +163,30 @@ A future sprint can tighten to default-deny with a well-tested allowlist. When t
 ## Follow-ups
 
 - When Apple removes `sandbox-exec`: supersede this ADR with an XPC/App Sandbox approach.
-- Per-host network ACLs (e.g., allow only `api.anthropic.com`) — deferred.
+- Per-host network ACLs (e.g., allow only `api.anthropic.com`) — deferred. Sibling primitive `go-egress-proxy` is the planned mechanism (composes with `go-sandbox` via `HTTP_PROXY`/`HTTPS_PROXY` env injection).
 - `landlock` as a Linux fallback for systems without `bwrap` — deferred.
 - Profile composition / inheritance — deferred.
 - Snapshot profile into plan JSON for deterministic replay — deferred.
+
+---
+
+## Addendum (2026-04-27): go-sandbox library adoption (Sprint v005-02)
+
+**Migration:** `internal/sandbox/` was deleted in favor of `github.com/hollis-labs/go-sandbox` v0.1.0. This ADR's contract — `Profile`, `FSSpec`, `LoadProfile`/`LoadProfiles`, three seed profile names — is preserved verbatim by the library; the swap is implementation-level. Profile YAML files in `<catalog-root>/sandbox-profiles/` continue to work unchanged.
+
+**API delta absorbed:** `Apply(cmd, Profile, workspace) error` → `Apply(cmd, Profile, workspace) (cleanup func(), error)`. The cleanup function removes the temp SBPL profile file on macOS (no-op on Linux). Per-adapter cleanup plumbing was added: `claudecode` stores the cleanup on `cliSession` and fires it via `sync.Once` in `Wait()`/`Stop()`; the per-turn adapters (`claudestream`, `opencode`, `goprovider`) capture cleanup in `SendInput` and defer it in `readTurn`/`SendInput` so it fires after each turn's `cmd.Wait()`.
+
+**Hardening absorbed (free upgrades over v0.0.4 implementation):**
+
+1. **`validateSeatbeltLiteral`** — non-optional validator rejects `"`, `\`, `()`, `;`, `'`, control chars in workspace path & FS entries, preventing SBPL profile-string injection. Mux's prior implementation had no literal validation.
+2. **bwrap narrowed `--ro-bind`** — limited to `/usr`, `/lib*`, `/bin`, `/sbin`, and 8 specific `/etc/*` files (was: blanket `--ro-bind /etc /etc`).
+3. **Linux namespace unsharing** — adds `--unshare-pid`, `--unshare-ipc`, `--unshare-uts`, `--unshare-cgroup-try`, `--unshare-user-try`. Mux's prior implementation was missing the unshares beyond `--unshare-net`.
+4. **Per-invocation `--tmpfs /tmp`** — prevents cross-session temp-file leakage on Linux.
+5. **`--die-with-parent`, `--new-session`** — prevent orphan escape and TTY hijacking on Linux.
+6. **Temp SBPL profile file cleanup** — the prior `internal/sandbox/macos.go` self-documented a leak: every sandboxed session left a `/tmp/<random>.sb` file behind. The cleanup-func return value fixes the regression at the source.
+
+**Why an addendum, not a supersede?** The decision-level content of this ADR — scope model, profile registry shape, seed profile names, platform strategy, resolution flow, degradation policy — is unchanged. The library swap is an implementation refactor that absorbs hardening; the ADR's contract still describes the system's behavior accurately.
+
+**Sequencing context:** This is Track A of the portfolio-libs adoption (decision: `decisions.portfolio.go_agent_sessions_composition_library`). Phase 2 will lift the runtime layer onto `go-agent-sessions` v0.1.0 — at that point, the per-adapter `sandboxCleanup` plumbing introduced here dissolves into the library, and `Profile` is consumed via the same library re-export rather than directly from `go-sandbox`. No further ADR changes anticipated.
+
+**Default-deny revisit deferred** as before — the v0.0.4 implementation note about default-allow + selective deny on macOS still stands. `go-sandbox` ships the same posture for the same reason. A future sprint that builds the well-tested allowlist will supersede this ADR.

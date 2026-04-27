@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/sandbox"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
 func TestLoadExampleCatalog(t *testing.T) {
