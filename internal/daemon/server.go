@@ -18,7 +18,7 @@ import (
 )
 
 // muxVersion labels daemon.started events. Bumped per release.
-const muxVersion = "0.0.2"
+const muxVersion = "0.2.0"
 
 // Config bundles the resolved daemon runtime parameters. Callers are
 // expected to have already run path expansion (config.Expand) on
