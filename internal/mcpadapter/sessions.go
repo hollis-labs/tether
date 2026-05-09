@@ -17,53 +17,53 @@ import (
 )
 
 func (a *Adapter) registerSessionTools(s *server.MCPServer) {
-	s.AddTool(mcp.NewTool("mux_session_list",
+	a.addTool(s, mcp.NewTool("mux_session_list",
 		mcp.WithDescription("List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit."),
 		mcp.WithString("state", mcp.Description("Filter by session state: created, running, stopped, failed")),
 		mcp.WithString("cursor", mcp.Description("RFC3339 pagination cursor — returns sessions older than this timestamp")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50, max 200)")),
 	), a.handleSessionList)
 
-	s.AddTool(mcp.NewTool("mux_session_get",
+	a.addTool(s, mcp.NewTool("mux_session_get",
 		mcp.WithDescription("Get a single agent session by ID."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 	), a.handleSessionGet)
 
-	s.AddTool(mcp.NewTool("mux_session_create",
+	a.addTool(s, mcp.NewTool("mux_session_create",
 		mcp.WithDescription("Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Optionally inject a boot prompt override."),
 		mcp.WithString("launch_id", mcp.Required(), mcp.Description("Launch profile ID from the catalog (see mux_catalog_list_launches)")),
 		mcp.WithString("boot_prompt", mcp.Description("Optional boot prompt override; replaces catalog static boot fragments")),
 	), a.handleSessionCreate)
 
-	s.AddTool(mcp.NewTool("mux_session_launch",
+	a.addTool(s, mcp.NewTool("mux_session_launch",
 		mcp.WithDescription("Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID returned by mux_session_create")),
 	), a.handleSessionLaunch)
 
-	s.AddTool(mcp.NewTool("mux_session_stop",
+	a.addTool(s, mcp.NewTool("mux_session_stop",
 		mcp.WithDescription("Send a stop signal to a running session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 	), a.handleSessionStop)
 
-	s.AddTool(mcp.NewTool("mux_session_wait",
+	a.addTool(s, mcp.NewTool("mux_session_wait",
 		mcp.WithDescription("Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 	), a.handleSessionWait)
 
-	s.AddTool(mcp.NewTool("mux_session_send_input",
+	a.addTool(s, mcp.NewTool("mux_session_send_input",
 		mcp.WithDescription("Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 		mcp.WithString("input", mcp.Required(), mcp.Description("Text to send to the session (a newline is NOT appended automatically)")),
 	), a.handleSessionSendInput)
 
-	s.AddTool(mcp.NewTool("mux_session_resize",
+	a.addTool(s, mcp.NewTool("mux_session_resize",
 		mcp.WithDescription("Resize the PTY terminal for a running session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 		mcp.WithNumber("rows", mcp.Required(), mcp.Description("Terminal rows (must be > 0)")),
 		mcp.WithNumber("cols", mcp.Required(), mcp.Description("Terminal columns (must be > 0)")),
 	), a.handleSessionResize)
 
-	s.AddTool(mcp.NewTool("mux_session_health",
+	a.addTool(s, mcp.NewTool("mux_session_health",
 		mcp.WithDescription("Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 	), a.handleSessionHealth)

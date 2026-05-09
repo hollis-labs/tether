@@ -24,7 +24,7 @@ var validMsgKinds = map[messaging.Kind]struct{}{
 }
 
 func (a *Adapter) registerMessageTools(s *server.MCPServer) {
-	s.AddTool(mcp.NewTool("mux_message_send",
+	a.addTool(s, mcp.NewTool("mux_message_send",
 		mcp.WithDescription("Send a message envelope via the agent-mux messaging store. Requires message.write scope."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("Sender URN (e.g. msg://agent/agent-mux/orchestrator)")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN (e.g. msg://agent/agent-mux/worker)")),
@@ -34,31 +34,31 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("in_reply_to", mcp.Description("Message ID this message is in reply to (optional)")),
 	), a.handleMessageSend)
 
-	s.AddTool(mcp.NewTool("mux_message_get",
+	a.addTool(s, mcp.NewTool("mux_message_get",
 		mcp.WithDescription("Get a message envelope by ID."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 	), a.handleMessageGet)
 
-	s.AddTool(mcp.NewTool("mux_message_inbox",
+	a.addTool(s, mcp.NewTool("mux_message_inbox",
 		mcp.WithDescription("List messages in a recipient's inbox. Optionally filter by kind and/or thread."),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
 	), a.handleMessageInbox)
 
-	s.AddTool(mcp.NewTool("mux_message_thread",
+	a.addTool(s, mcp.NewTool("mux_message_thread",
 		mcp.WithDescription("List all messages in a thread by thread ID."),
 		mcp.WithString("thread_id", mcp.Required(), mcp.Description("Thread ID")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter (optional)")),
 	), a.handleMessageThread)
 
-	s.AddTool(mcp.NewTool("mux_message_consume",
+	a.addTool(s, mcp.NewTool("mux_message_consume",
 		mcp.WithDescription("Mark a message as consumed by the recipient. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN consuming the message")),
 	), a.handleMessageConsume)
 
-	s.AddTool(mcp.NewTool("mux_message_cancel",
+	a.addTool(s, mcp.NewTool("mux_message_cancel",
 		mcp.WithDescription("Cancel a pending message. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 	), a.handleMessageCancel)

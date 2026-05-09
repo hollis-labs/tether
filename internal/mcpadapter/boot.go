@@ -13,7 +13,7 @@ import (
 )
 
 func (a *Adapter) registerBootTools(s *server.MCPServer) {
-	s.AddTool(mcp.NewTool("mux_boot_generate",
+	a.addTool(s, mcp.NewTool("mux_boot_generate",
 		mcp.WithDescription("Generate a boot prompt for an agent by profile ID. The boot prompt assembles slot content from static files, shell commands, and HTTP endpoints as defined in the profile YAML. Pipe the output to a CLI tool or capture it for an API provider."),
 		mcp.WithString("profile_id", mcp.Required(), mcp.Description("Boot profile ID (see mux_catalog_list_boot_profiles)")),
 	), a.handleBootGenerate)

@@ -9,11 +9,11 @@ import (
 )
 
 func (a *Adapter) registerLogicalAgentTools(s *server.MCPServer) {
-	s.AddTool(mcp.NewTool("mux_logical_agent_list",
+	a.addTool(s, mcp.NewTool("mux_logical_agent_list",
 		mcp.WithDescription("List all logical agents registered in the agent-mux store. Logical agents are durable identities that persist across sessions and accumulate checkpoints."),
 	), a.handleLogicalAgentList)
 
-	s.AddTool(mcp.NewTool("mux_logical_agent_resume",
+	a.addTool(s, mcp.NewTool("mux_logical_agent_resume",
 		mcp.WithDescription("Resume a logical agent: starts a new session using its most recent checkpoint as the boot context. Requires session.write scope."),
 		mcp.WithString("logical_agent_id", mcp.Required(), mcp.Description("Logical agent ID")),
 	), a.handleLogicalAgentResume)

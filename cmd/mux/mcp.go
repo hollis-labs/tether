@@ -90,6 +90,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = svc.Close() }()
 
 	adapter := mcpadapter.New(svc, token, scopes)
+	// Route the go-mcp-sanitize middleware's warn telemetry to stderr so the
+	// stdio MCP protocol stream on stdout stays clean.
+	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if mcpBroker && !mcpProxy {
 		return fmt.Errorf("--broker requires --proxy")
 	}

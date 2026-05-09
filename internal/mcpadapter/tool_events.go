@@ -61,8 +61,11 @@ type ProxyEventQuerier interface {
 // The in-memory ToolCallEventStore is retained for the live TUI feed (ADR 0021)
 // but mux_events_tool_calls now reads from the durable proxy_events table
 // (ADR 0024 §4).
-func registerToolCallEventsTool(s *server.MCPServer, proxyStore ProxyEventQuerier) {
-	s.AddTool(
+//
+// The handler is wrapped with the go-mcp-sanitize middleware via Adapter.addTool
+// so coverage stays uniform across every MCP tool the adapter exposes.
+func (a *Adapter) registerToolCallEventsTool(s *server.MCPServer, proxyStore ProxyEventQuerier) {
+	a.addTool(s,
 		mcp.NewTool("mux_events_tool_calls",
 			mcp.WithDescription(
 				"Query recent proxied tool call events recorded by agent-mux. "+

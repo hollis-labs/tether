@@ -32,7 +32,7 @@ func (a *Adapter) registerObservationTools(s *server.MCPServer) {
 // ─── mux_session_events ───────────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_session_events",
 			mcp.WithDescription(
 				"List historical lifecycle events for a session. "+
@@ -117,7 +117,7 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 // ─── mux_session_checkpoints ─────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_session_checkpoints",
 			mcp.WithDescription(
 				"List checkpoints for a session (via its logical agent). "+
@@ -159,7 +159,7 @@ func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
 // ─── mux_session_attachments ─────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_session_attachments",
 			mcp.WithDescription(
 				"List client attach/detach records for a session.",
@@ -214,7 +214,7 @@ func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
 // ─── mux_proxy_events ────────────────────────────────────────────────────────
 
 func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_proxy_events",
 			mcp.WithDescription(
 				"Query durable proxy/tool call events from the SQLite store. "+
