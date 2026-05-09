@@ -11,6 +11,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-sessions v0.1.0
+	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
 	github.com/hollis-labs/go-providers v0.5.0
 	github.com/hollis-labs/go-sandbox v0.1.0

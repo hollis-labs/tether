@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -39,6 +41,13 @@ type Adapter struct {
 	svc    *app.Service
 	token  string
 	scopes map[string]struct{}
+
+	// Logger receives the warn-level telemetry emitted by the
+	// go-mcp-sanitize middleware when it cleans a polluted tool call.
+	// Optional; nil falls back to slog.Default(). The MCP stdio command
+	// wires this to stderr so warn lines do not collide with the protocol
+	// stream on stdout.
+	Logger *slog.Logger
 }
 
 // New constructs an Adapter wrapping svc. token and scopes gate mutating
@@ -69,6 +78,22 @@ func (a *Adapter) Run(ctx context.Context) error {
 	a.registerTools(s)
 	ctxFunc := func(_ context.Context) context.Context { return ctx }
 	return server.ServeStdio(s, server.WithStdioContextFunc(ctxFunc))
+}
+
+// addTool wraps every MCP tool handler with the go-mcp-sanitize middleware,
+// which auto-cleans malformed agent tool-call XML in free-text params before
+// the handler runs. Clean calls are silent; cleaned calls emit one warn-level
+// slog line via a.Logger (see github.com/hollis-labs/go-mcp-sanitize).
+//
+// All registerXxx helpers must call a.addTool(s, tool, handler) instead of
+// s.AddTool(tool, handler) directly so the protection stays uniform across
+// every tool surface registered by the adapter.
+func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerFunc) {
+	logger := a.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s.AddTool(t, mcpsanitize.Middleware(logger)(h))
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

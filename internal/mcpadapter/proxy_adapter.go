@@ -170,7 +170,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 				}
 			}
 			slog.Debug("mcp-proxy: registering proxied tool", "tool", def.Name, "server", rt.ServerID)
-			s.AddTool(def, func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			a.addTool(s, def, func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return plainRouter.Handle(handlerCtx, req)
 			})
 		}
@@ -189,9 +189,9 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// is not set (e.g. tests that only wire the in-memory store).
 	switch {
 	case opts.ProxyStore != nil:
-		registerToolCallEventsTool(s, opts.ProxyStore)
+		a.registerToolCallEventsTool(s, opts.ProxyStore)
 	case opts.EventStore != nil:
-		registerToolCallEventsTool(s, &toolCallEventStoreQuerier{store: opts.EventStore})
+		a.registerToolCallEventsTool(s, &toolCallEventStoreQuerier{store: opts.EventStore})
 	}
 
 	ctxFunc := func(_ context.Context) context.Context { return ctx }
@@ -216,7 +216,7 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 		return ok
 	}
 
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_discover",
 			mcp.WithDescription(
 				"Search the upstream tool catalog by intent, category, or tags. "+
@@ -302,7 +302,7 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 // middleware layer (via s.Use()), not inside the router — all proxied calls
 // flow here so they are recorded in the event store.
 func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool("mux_call",
 			mcp.WithDescription(
 				"Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. "+
@@ -383,7 +383,7 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 		return "proxy_only"
 	}
 
-	s.AddTool(
+	a.addTool(s,
 		mcp.NewTool(
 			"mux_catalog_list_mcp_servers",
 			mcp.WithDescription(
