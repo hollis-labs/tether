@@ -190,3 +190,13 @@ A future sprint can tighten to default-deny with a well-tested allowlist. When t
 **Sequencing context:** This is Track A of the portfolio-libs adoption (decision: `decisions.portfolio.go_agent_sessions_composition_library`). Phase 2 will lift the runtime layer onto `go-agent-sessions` v0.1.0 — at that point, the per-adapter `sandboxCleanup` plumbing introduced here dissolves into the library, and `Profile` is consumed via the same library re-export rather than directly from `go-sandbox`. No further ADR changes anticipated.
 
 **Default-deny revisit deferred** as before — the v0.0.4 implementation note about default-allow + selective deny on macOS still stands. `go-sandbox` ships the same posture for the same reason. A future sprint that builds the well-tested allowlist will supersede this ADR.
+
+---
+
+## Addendum (2026-05-09): loopback enablement for workspace-plus-net
+
+Mux now consumes `go-sandbox v0.2.0`, which added `Profile.AllowLoopback` and Linux `LoopbackForwardPorts`.
+
+For mux's current launch model, the relevant behavior is simple: when the resolved sandbox profile is `workspace-plus-net`, mux force-sets `AllowLoopback=true` before launch. This keeps localhost MCP-style traffic available under the same profile shape even as the shared sandbox library evolves.
+
+On profiles where `net: true`, `AllowLoopback` is effectively a no-op today, but mux still records the intent explicitly because the provider/session layer now assumes loopback is part of the allowed local control plane.

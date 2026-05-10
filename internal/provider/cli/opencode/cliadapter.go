@@ -6,7 +6,9 @@ import (
 	"os/exec"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	gop "github.com/hollis-labs/go-providers/provider"
+	events "github.com/hollis-labs/go-providers/provider/events"
 
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
@@ -37,6 +39,8 @@ type cliAdapter struct{}
 
 func (cliAdapter) Name() string { return "opencode" }
 
+func (cliAdapter) Clone() gop.CLIAdapter { return &cliAdapter{} }
+
 // BuildArgs constructs the per-turn argv: --format json, optional --session
 // <id> when resuming, then the prompt. systemPrompt is unused (opencode
 // reads its system context from the ambient project state, not a flag).
@@ -63,16 +67,16 @@ type cliEventEnvelope struct {
 // the wire format unchanged. Lines that don't parse as JSON are still
 // forwarded as deltas — opencode emits the occasional non-JSON
 // diagnostic and dropping it would lose information.
-func (cliAdapter) ParseLine(line []byte) ([]gop.StreamEvent, error) {
+func (cliAdapter) ParseLine(line []byte) ([]llmtypes.StreamEvent, error) {
 	if len(line) == 0 {
 		return nil, nil
 	}
-	out := []gop.StreamEvent{
-		{Type: gop.EventDelta, Content: string(line) + "\n"},
+	out := []llmtypes.StreamEvent{
+		{Type: llmtypes.EventDelta, Content: string(line) + "\n"},
 	}
 	var ev cliEventEnvelope
 	if err := json.Unmarshal(line, &ev); err == nil && ev.SessionID != "" {
-		out = append(out, gop.StreamEvent{Type: gop.EventSessionID, SessionID: ev.SessionID})
+		out = append(out, llmtypes.StreamEvent{Type: llmtypes.EventSessionID, SessionID: ev.SessionID})
 	}
 	return out, nil
 }
@@ -90,4 +94,15 @@ func (cliAdapter) Detect() (string, bool) {
 		return "", false
 	}
 	return path, true
+}
+
+func (cliAdapter) BootDirSpec() gop.BootDirSpec {
+	return gop.NewOpencodeAdapter().BootDirSpec()
+}
+
+func (cliAdapter) ParseLineEvents(line []byte) ([]events.Event, error) {
+	if p, ok := any(gop.NewOpencodeAdapter()).(gop.EventParser); ok {
+		return p.ParseLineEvents(line)
+	}
+	return nil, nil
 }

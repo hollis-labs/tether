@@ -87,8 +87,7 @@ type Provider struct {
 	Command string   `yaml:"command" json:"command"`
 	Args    []string `yaml:"args" json:"args,omitempty"`
 	// Adapter names the go-providers CLIAdapter to use when Type is
-	// "cli-goprovider". Valid values: "claude", "codex", "gemini",
-	// "aider", "copilot", "junie", "kiro", "qwen".
+	// "cli-goprovider". Valid values: "claude", "codex".
 	// Command is optional — if empty, adapter.Detect() resolves the binary.
 	Adapter   string        `yaml:"adapter" json:"adapter,omitempty"`
 	Bootstrap BootstrapSpec `yaml:"bootstrap" json:"bootstrap"`

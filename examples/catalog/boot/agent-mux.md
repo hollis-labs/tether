@@ -11,7 +11,7 @@ uniformly — including via an MCP stdio server (`mux mcp`).
 |------|---------|
 | `cmd/mux/` | Cobra CLI entrypoint |
 | `internal/provider/` | Runtime + Session contracts; registry |
-| `internal/provider/cli/` | CLI-backed providers (claudecode, claudestream, goprovider, opencode) |
+| `internal/provider/cli/` | CLI-backed providers (Claude adapters, goprovider, opencode) |
 | `internal/runtime/` | Session lifecycle manager |
 | `internal/app/` | Composition root (Service) |
 | `internal/config/` | Catalog YAML schema + validation + loader |
@@ -35,7 +35,7 @@ go build ./...      # compile check
 
 All providers implement `provider.Runtime` (Start/Prepare/Caps) and
 `provider.Session` (SendInput/Stop/Wait/Health). CLI providers are either:
-- **PTY-backed**: claudecode (interactive, resizable, raw bytes)
+- **PTY-backed**: `claude-code` via the shared `claudestream` adapter runtime (interactive, resizable, raw bytes)
 - **Turn-based**: claudestream, opencode, goprovider (subprocess per turn, NDJSON stdout)
 
 `cli-goprovider` providers are registered in `internal/app/service.go` via the
