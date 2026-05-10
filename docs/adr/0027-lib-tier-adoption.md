@@ -41,7 +41,7 @@ Mux deletes its app-local long-lived Claude PTY runtime in `internal/provider/cl
 - `StartOptions.WorkspaceDir`
 - `StartOptions.AutoFireFirstTurn`
 
-Mux does not adopt `go-llm-contracts`, `go-llm-types`, or `go-embed-contracts` in this sprint. Those repos are reserved for the future API-provider sprint described in ADR 0029.
+Mux does not adopt `go-llm-contracts` or `go-embed-contracts` as first-class mux interfaces in this sprint. `go-llm-types` now appears as an implementation-side dependency pulled in by the upgraded shared CLI/session libraries, but mux still defers any direct API-provider surface shaped around the `go-llm-*` repos to the future sprint described in ADR 0029.
 
 ## Consequences
 

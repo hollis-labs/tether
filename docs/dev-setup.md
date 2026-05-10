@@ -52,7 +52,7 @@ internal/
   launch/         Launch plan resolution + boot-prompt composition
   provider/       Provider Runtime + Session interfaces
     api/stub/     No-op API-backed runtime (echo)
-    cli/claudecode/  PTY-backed runtime for the claude CLI
+    cli/claudestream/  Shared go-agent-sessions runtime for Claude adapters
   runtime/        Session registry + attach broker + lifecycle manager
   session/        PTY handle + Start primitive
   store/          SQLite storage (pure-Go, modernc driver) + migrations
@@ -151,9 +151,9 @@ directive in `go.mod` — bumping it to the patch that fixes the issue
 (e.g., `toolchain go1.26.2`) will pull the fixed stdlib on the next
 build. The `GOTOOLCHAIN=auto` default downloads it automatically.
 
-### Claude CLI adapter can't find `claude`
+### Claude CLI provider can't find `claude`
 
-The claudecode provider launches the real `claude` CLI. If you don't
+The `claude-code` and `claude-stream` providers launch the real `claude` CLI. If you don't
 have it installed, use the `api-stub-launch` profile for demos; real
 launches need `claude` on `$PATH`.
 

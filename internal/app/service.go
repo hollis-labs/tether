@@ -73,19 +73,9 @@ func New(catalogRoot string) (*Service, error) {
 
 	factories := map[string]RuntimeFactory{
 		"claude-stream": claudestream.New,
-		"claude-code": func(plan *launch.Plan) (agentsessions.Runtime, error) {
-			adapter := gop.NewClaudeAdapterPTY()
-			adapter.ApiKeyHelperPath = resolveAPIKeyHelperPath()
-			return claudestream.NewWithAdapter(plan, adapter, "claude-code", agentsessions.Capabilities{
-				PTY:               true,
-				Resize:            true,
-				ProviderSessionID: false,
-				CheckpointResume:  false,
-				BinaryRequired:    true,
-			})
-		},
-		"opencode": opencode.New,
-		"api-stub": stub.New,
+		"claude-code":   newClaudeCodeRuntime,
+		"opencode":      opencode.New,
+		"api-stub":      stub.New,
 	}
 	// Register cli-goprovider runtimes declared in the catalog. Each one
 	// is the same pattern as claude-stream — a per-turn subprocess driven
@@ -158,6 +148,18 @@ func (s *Service) Close() error {
 		return err
 	}
 	return s.Store.Close()
+}
+
+func newClaudeCodeRuntime(plan *launch.Plan) (agentsessions.Runtime, error) {
+	adapter := gop.NewClaudeAdapterPTY()
+	adapter.ApiKeyHelperPath = resolveAPIKeyHelperPath()
+	return claudestream.NewWithAdapter(plan, adapter, "claude-code", agentsessions.Capabilities{
+		PTY:               true,
+		Resize:            true,
+		ProviderSessionID: false,
+		CheckpointResume:  false,
+		BinaryRequired:    true,
+	})
 }
 
 func (s *Service) ListProjects() []config.Project {

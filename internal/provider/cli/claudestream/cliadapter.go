@@ -77,8 +77,9 @@ func (r *runtime) Prepare(_ context.Context) error {
 }
 
 func (r *runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
-	innerAdapter := r.adapter.Inner
-	layout, err := plantBootDir(r.providerID, innerAdapter, opts.BootPrompt, r.plan.RepoRoot)
+	sessionAdapter := r.adapter.Clone()
+	innerAdapter := sessionAdapter.Inner
+	layout, err := plantBootDir(r.providerID, innerAdapter, opts.BootPrompt, r.plan.RepoRoot, opts.WorkspaceDir)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +94,7 @@ func (r *runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 	}
 
 	buildArgs := func(prompt, sessionID string) []string {
-		args := r.adapter.BuildArgs(prompt, "", sessionID)
+		args := sessionAdapter.BuildArgs(prompt, "", sessionID)
 		if layout != nil && len(layout.ProjectDirArg) > 0 {
 			skipProjectDirArg := false
 			if claude, ok := innerAdapter.(*gop.ClaudeAdapter); ok && claude.Bare {
@@ -109,7 +110,7 @@ func (r *runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 	innerRuntime, err := agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
 		ID:        r.providerID,
 		Kind:      "cli",
-		Adapter:   r.adapter,
+		Adapter:   sessionAdapter,
 		Caps:      r.caps,
 		BuildArgs: buildArgs,
 	})
@@ -148,7 +149,7 @@ type bootDirLayout struct {
 	ProjectDirArg []string
 }
 
-func plantBootDir(providerID string, adapter gop.CLIAdapter, bootPrompt, projectDir string) (*bootDirLayout, error) {
+func plantBootDir(providerID string, adapter gop.CLIAdapter, bootPrompt, projectDir, workspaceDir string) (*bootDirLayout, error) {
 	bp, ok := adapter.(gop.BootDirProvider)
 	if !ok {
 		return nil, nil
@@ -157,7 +158,11 @@ func plantBootDir(providerID string, adapter gop.CLIAdapter, bootPrompt, project
 	if len(spec.PlantedFiles) == 0 {
 		return nil, nil
 	}
-	bootDir, err := os.MkdirTemp("", fmt.Sprintf("agent-mux-boot-%s-*", sanitizeID(providerID)))
+	bootRoot, err := bootDirRoot(workspaceDir)
+	if err != nil {
+		return nil, err
+	}
+	bootDir, err := os.MkdirTemp(bootRoot, fmt.Sprintf("agent-mux-boot-%s-*", sanitizeID(providerID)))
 	if err != nil {
 		return nil, fmt.Errorf("create boot dir: %w", err)
 	}
@@ -194,8 +199,19 @@ func plantBootDir(providerID string, adapter gop.CLIAdapter, bootPrompt, project
 		BootDir:       bootDir,
 		EnvAmendments: substituteTemplates(spec.EnvAmendments, bootDir, projectDir),
 		SpawnCwd:      spec.SpawnWorkdir(bootDir, projectDir),
-		ProjectDirArg: tokenizeArg(spec.ProjectDirArg, bootDir, projectDir),
+		ProjectDirArg: substituteArgTokens(spec.ProjectDirArg, bootDir, projectDir),
 	}, nil
+}
+
+func bootDirRoot(workspaceDir string) (string, error) {
+	if workspaceDir == "" {
+		return "", nil
+	}
+	root := filepath.Join(workspaceDir, "boot")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return "", fmt.Errorf("create boot root: %w", err)
+	}
+	return root, nil
 }
 
 func substituteTemplates(in []string, bootDir, projectDir string) []string {
@@ -211,13 +227,18 @@ func substituteTemplates(in []string, bootDir, projectDir string) []string {
 	return out
 }
 
-func tokenizeArg(template, bootDir, projectDir string) []string {
+func substituteArgTokens(template, bootDir, projectDir string) []string {
 	if template == "" || projectDir == "" {
 		return nil
 	}
-	expanded := strings.ReplaceAll(template, "{{.BootDir}}", bootDir)
-	expanded = strings.ReplaceAll(expanded, "{{.ProjectDir}}", projectDir)
-	return strings.Fields(expanded)
+	parts := strings.Fields(template)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ReplaceAll(part, "{{.BootDir}}", bootDir)
+		part = strings.ReplaceAll(part, "{{.ProjectDir}}", projectDir)
+		out = append(out, part)
+	}
+	return out
 }
 
 func sanitizeID(s string) string {
@@ -264,6 +285,14 @@ type PlanScopedAdapter struct {
 	BaseArgs []string
 }
 
+func (a *PlanScopedAdapter) Clone() *PlanScopedAdapter {
+	return &PlanScopedAdapter{
+		Inner:    cloneCLIAdapter(a.Inner),
+		Binary:   a.Binary,
+		BaseArgs: append([]string(nil), a.BaseArgs...),
+	}
+}
+
 func (a *PlanScopedAdapter) Name() string { return a.Inner.Name() }
 
 func (a *PlanScopedAdapter) BuildArgs(prompt, systemPrompt, cliSessionID string) []string {
@@ -295,4 +324,16 @@ func (a *PlanScopedAdapter) ParseLineEvents(line []byte) ([]events.Event, error)
 		return nil, nil
 	}
 	return p.ParseLineEvents(line)
+}
+
+func cloneCLIAdapter(adapter gop.CLIAdapter) gop.CLIAdapter {
+	switch a := adapter.(type) {
+	case *gop.ClaudeAdapter:
+		clone := *a
+		return &clone
+	case interface{ Clone() gop.CLIAdapter }:
+		return a.Clone()
+	default:
+		return adapter
+	}
 }

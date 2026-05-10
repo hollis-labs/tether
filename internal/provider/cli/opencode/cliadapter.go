@@ -39,6 +39,8 @@ type cliAdapter struct{}
 
 func (cliAdapter) Name() string { return "opencode" }
 
+func (cliAdapter) Clone() gop.CLIAdapter { return &cliAdapter{} }
+
 // BuildArgs constructs the per-turn argv: --format json, optional --session
 // <id> when resuming, then the prompt. systemPrompt is unused (opencode
 // reads its system context from the ambient project state, not a flag).
@@ -99,5 +101,8 @@ func (cliAdapter) BootDirSpec() gop.BootDirSpec {
 }
 
 func (cliAdapter) ParseLineEvents(line []byte) ([]events.Event, error) {
+	if p, ok := any(gop.NewOpencodeAdapter()).(gop.EventParser); ok {
+		return p.ParseLineEvents(line)
+	}
 	return nil, nil
 }

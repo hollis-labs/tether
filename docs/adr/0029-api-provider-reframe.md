@@ -45,5 +45,5 @@ Locked defaults for that future sprint:
 ## Consequences
 
 - The existing planning-pack sprint is renamed and repurposed to the lib-tier bump.
-- No `go-llm-contracts`, `go-llm-types`, or `go-embed-contracts` dependency is pulled into mux today.
+- Mux still does not expose an API-provider boundary built on `go-llm-contracts` or `go-embed-contracts` today. `go-llm-types` is now present as an implementation dependency of the upgraded shared CLI/session stack, not as a committed mux API-provider surface.
 - Future API-provider work must start from the portfolio guide, not from pre-reshape assumptions in old mux notes.
