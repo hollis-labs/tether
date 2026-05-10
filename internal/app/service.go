@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,7 +25,6 @@ import (
 	"github.com/chrispian/agent-mux/internal/launch"
 	"github.com/chrispian/agent-mux/internal/provider"
 	"github.com/chrispian/agent-mux/internal/provider/api/stub"
-	"github.com/chrispian/agent-mux/internal/provider/cli/claudecode"
 	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
 	"github.com/chrispian/agent-mux/internal/provider/cli/opencode"
 	"github.com/chrispian/agent-mux/internal/session"
@@ -73,9 +73,19 @@ func New(catalogRoot string) (*Service, error) {
 
 	factories := map[string]RuntimeFactory{
 		"claude-stream": claudestream.New,
-		"claude-code":   claudecode.New,
-		"opencode":      opencode.New,
-		"api-stub":      stub.New,
+		"claude-code": func(plan *launch.Plan) (agentsessions.Runtime, error) {
+			adapter := gop.NewClaudeAdapterPTY()
+			adapter.ApiKeyHelperPath = resolveAPIKeyHelperPath()
+			return claudestream.NewWithAdapter(plan, adapter, "claude-code", agentsessions.Capabilities{
+				PTY:               true,
+				Resize:            true,
+				ProviderSessionID: false,
+				CheckpointResume:  false,
+				BinaryRequired:    true,
+			})
+		},
+		"opencode": opencode.New,
+		"api-stub": stub.New,
 	}
 	// Register cli-goprovider runtimes declared in the catalog. Each one
 	// is the same pattern as claude-stream — a per-turn subprocess driven
@@ -322,6 +332,9 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		if name := a.Permissions.DefaultSandbox; name != "" {
 			if sp, ok := s.Catalog.SandboxProfiles[name]; ok {
 				profile = sp
+				if profile.ID == "workspace-plus-net" {
+					profile.AllowLoopback = true
+				}
 			}
 		}
 	}
@@ -349,6 +362,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		Runtime: rt,
 		Options: agentsessions.StartOptions{
 			Workdir:         plan.RepoRoot,
+			WorkspaceDir:    ws.Root,
 			LogPath:         ws.LogPath,
 			BootPrompt:      plan.BootPrompt,
 			BootMode:        plan.BootMode,
@@ -364,6 +378,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			"launch_id":        plan.LaunchID,
 			"provider_id":      plan.ProviderID,
 		},
+	}
+	if rt.Caps().PTY {
+		req.Options.AutoFireFirstTurn = true
+		req.Options.FirstTurnPayload = []byte("Boot @./boot.md\n")
 	}
 	if err := s.Manager.Start(context.Background(), req); err != nil {
 		return nil, err
@@ -586,21 +604,47 @@ func goproviderCLIAdapter(name string) gop.CLIAdapter {
 		return gop.NewClaudeAdapter()
 	case "codex":
 		return gop.NewCodexAdapter()
-	case "aider":
-		return gop.NewAiderAdapter()
-	case "copilot":
-		return gop.NewCopilotAdapter()
-	case "gemini":
-		return gop.NewGeminiAdapter()
-	case "junie":
-		return gop.NewJunieAdapter()
-	case "kiro":
-		return gop.NewKiroAdapter()
-	case "qwen":
-		return gop.NewQwenAdapter()
 	default:
 		return nil
 	}
+}
+
+func resolveAPIKeyHelperPath() string {
+	if override := os.Getenv("MUX_APIKEY_HELPER"); override != "" {
+		if abs, err := filepath.Abs(override); err == nil {
+			override = abs
+		}
+		if eval, err := filepath.EvalSymlinks(override); err == nil {
+			override = eval
+		}
+		if isExecutableFile(override) {
+			return override
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		if eval, eerr := filepath.EvalSymlinks(exe); eerr == nil {
+			exe = eval
+		}
+		candidate := filepath.Join(filepath.Dir(exe), "mux-apikey-helper")
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+	if path, err := exec.LookPath("mux-apikey-helper"); err == nil && isExecutableFile(path) {
+		return path
+	}
+	return ""
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path) //nolint:gosec // G703: operator-controlled override/path lookup is the intended trust boundary here
+	if err != nil {
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.

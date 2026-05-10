@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 
 	"github.com/chrispian/agent-mux/internal/launch"
 )
@@ -35,7 +36,7 @@ func (r *runtime) Caps() agentsessions.Capabilities {
 func (r *runtime) Prepare(_ context.Context) error { return nil }
 
 func (r *runtime) Start(_ context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
-	s := &echoSession{fanout: opts.Fanout, done: make(chan struct{})}
+	s := &echoSession{fanout: opts.Fanout, eventFanout: opts.EventFanout, done: make(chan struct{})}
 	if opts.BootMode == "stdin" && opts.BootPrompt != "" {
 		_ = s.writeEcho([]byte(opts.BootPrompt))
 	}
@@ -43,7 +44,8 @@ func (r *runtime) Start(_ context.Context, opts agentsessions.StartOptions) (age
 }
 
 type echoSession struct {
-	fanout io.Writer
+	fanout      io.Writer
+	eventFanout chan<- llmtypes.StreamEvent
 
 	mu     sync.Mutex
 	closed bool
@@ -79,6 +81,16 @@ func (s *echoSession) SendInput(_ context.Context, data []byte) error {
 // A trailing newline is added unless data already ends with one. A nil
 // fanout is a silent no-op.
 func (s *echoSession) writeEcho(data []byte) error {
+	if s.eventFanout != nil {
+		payload := string(data)
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			payload += "\n"
+		}
+		select {
+		case s.eventFanout <- llmtypes.StreamEvent{Type: llmtypes.EventDelta, Content: "echo: " + payload}:
+		default:
+		}
+	}
 	if s.fanout == nil {
 		return nil
 	}
