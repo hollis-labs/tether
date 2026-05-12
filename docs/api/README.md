@@ -199,8 +199,9 @@ count comparison.
 
 ### `POST /sessions/{id}/resize`
 
-Propagate a terminal resize to the session's PTY. Primary caller is
-`mux tui` forwarding `tea.WindowSizeMsg` events on the attach screen.
+Propagate a terminal resize to the session's PTY. Called by any attached
+client whose terminal needs to keep the underlying PTY's window size in
+sync (e.g. interactive shell wrappers around the attach stream).
 See ADR 0014 for the full rationale.
 
 ```json

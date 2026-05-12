@@ -8,11 +8,11 @@ event streams for any CLI-backed agent (Claude Code, Codex, Kiro, etc.).
 
 Agent Mux runs as a per-user daemon (`muxd`) on your machine. Every agent
 session — launch, attach, stop, checkpoint — goes through the daemon. Clients
-access it over a Unix-domain socket via the `mux` CLI, the TUI, the HTTP API,
-or the MCP adapter.
+access it over a Unix-domain socket via the `mux` CLI, the HTTP API, the MCP
+adapter, or the `go-agentmux-client` Go library.
 
 ```
-mux (CLI) / TUI / MCP client / go-agentmux-client
+mux (CLI) / MCP client / HTTP / go-agentmux-client
            │
            ▼
    muxd  (unix socket)

@@ -110,8 +110,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			}
 		}
 
-		// Wire observability — LoggingMiddleware + ToolCallEventStore (TUI) +
-		// durable proxy_events table (mux_events_tool_calls MCP tool).
+		// Wire observability — LoggingMiddleware + in-memory ToolCallEventStore
+		// (consumed by anyone subscribing to the event bus) + durable proxy_events
+		// table (queryable via the mux_events_tool_calls MCP tool).
 		eventStore := mcpadapter.NewToolCallEventStore(1000)
 		opts := mcpadapter.ProxyOptions{
 			Bus:          svc.Bus,
@@ -121,10 +122,11 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			ServerFilter: serverFilter,
 		}
 
-		// Forward tool_call_end events to the running muxd daemon so the TUI
-		// Activity feed can display them without sharing in-process memory.
-		// Best-effort: if the daemon is not reachable the MCP adapter still
-		// works normally — we just don't get TUI visibility.
+		// Forward tool_call_end events to the running muxd daemon's event bus so
+		// any consumer (HTTP /events SSE, MCP tools, downstream subscribers) can
+		// observe proxy activity without sharing in-process memory. Best-effort:
+		// if the daemon is not reachable the MCP adapter still works normally —
+		// the events just don't reach the daemon's bus.
 		//
 		// Subscribe live-only: get the current max event seq so the forwarder
 		// skips history replay. Replaying history causes a flood of stale
