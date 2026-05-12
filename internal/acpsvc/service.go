@@ -19,13 +19,25 @@ import (
 	"sync"
 
 	"github.com/chrispian/agent-mux/internal/acpadapter"
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/client"
 	"github.com/chrispian/agent-mux/pkg/claudestream"
 )
 
+// DaemonClient is the narrow subset of internal/client.Client that acpsvc
+// depends on. The concrete *client.Client satisfies this interface; tests
+// substitute a fake to exercise routing logic without a live daemon.
+type DaemonClient interface {
+	Launch(ctx context.Context, launchID string) (api.LaunchResponse, error)
+	AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error
+	SendTurn(ctx context.Context, id, text string) error
+	StopSession(ctx context.Context, id string) error
+	GetSession(ctx context.Context, id string) (api.SessionDTO, error)
+}
+
 // Service implements acpadapter.Service against a running mux daemon.
 type Service struct {
-	client   *client.Client
+	client   DaemonClient
 	launchID string
 	logger   *slog.Logger
 
@@ -38,7 +50,7 @@ type Service struct {
 // `mux acp --agent <launch_id>`. logger is used for warn-level events
 // during attach/parse — wire to stderr so it doesn't pollute the ACP
 // stdout protocol stream.
-func New(dc *client.Client, launchID string, logger *slog.Logger) *Service {
+func New(dc DaemonClient, launchID string, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -136,16 +148,17 @@ func (s *Service) startAttach(id acpadapter.SessionID) *sessionState {
 		}()
 
 		// Goroutine B (this one): parse the pipe reader as claudestream
-		// events and route into the current turn's update channel.
+		// events and route into the current turn's update channel. ok=false
+		// means the scanner is exhausted (clean EOF OR sticky I/O error);
+		// either way the attach is dead and we must break. err≠nil with
+		// ok=true is impossible per claudestream.Scanner.Next contract.
 		scanner := claudestream.NewScanner(pr)
 		for {
 			ev, ok, err := scanner.Next()
-			if err != nil {
-				s.logger.Warn("acp: claudestream parse error", "session_id", id, "err", err)
-				continue
-			}
 			if !ok {
-				// Clean EOF — attach closed.
+				if err != nil {
+					s.logger.Warn("acp: attach stream ended with error", "session_id", id, "err", err)
+				}
 				break
 			}
 			s.routeEvent(state, ev)
