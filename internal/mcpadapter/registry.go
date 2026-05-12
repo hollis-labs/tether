@@ -99,16 +99,3 @@ func (r *ToolRegistry) RemoveServer(serverID string) {
 		}
 	}
 }
-
-// ToolCount returns the number of tools registered for serverID.
-func (r *ToolRegistry) ToolCount(serverID string) int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	count := 0
-	for _, rt := range r.tools {
-		if rt.ServerID == serverID {
-			count++
-		}
-	}
-	return count
-}

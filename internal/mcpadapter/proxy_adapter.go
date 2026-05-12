@@ -14,7 +14,7 @@ import (
 	"github.com/chrispian/agent-mux/internal/events"
 )
 
-// ProxyOptions configures RunWithProxy behavior for Phase 2+.
+// ProxyOptions configures RunWithProxyOpts behavior for Phase 2+.
 type ProxyOptions struct {
 	// Bus, when non-nil, enables the LoggingMiddleware that emits
 	// tool_call_start / tool_call_end events for every proxied call.
@@ -50,19 +50,14 @@ type ProxyOptions struct {
 	ServerFilter []string
 }
 
-// RunWithProxy is identical to Run but additionally:
+// RunWithProxyOpts is identical to Run but additionally:
 //  1. Loads MCPServerEntry definitions from <catalogDir>/mcp-servers/
 //  2. Starts a ClientPool (spawning stdio subprocesses / SSE connections)
 //  3. Registers each upstream tool via AddTool with a ProxyRouter handler
 //  4. Registers the mux_catalog_list_mcp_servers introspection tool
-//  5. (Phase 2) Wires LoggingMiddleware + ToolCallEventStore when opts.Bus is set
+//  5. Wires LoggingMiddleware + ToolCallEventStore when opts.Bus is set (ADR 0021)
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
-func (a *Adapter) RunWithProxy(ctx context.Context, catalogDir string) error {
-	return a.RunWithProxyOpts(ctx, catalogDir, ProxyOptions{})
-}
-
-// RunWithProxyOpts is RunWithProxy with Phase 2 observability and broker options.
 func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts ProxyOptions) error {
 	entries, err := config.LoadMCPServers(catalogDir)
 	if err != nil {
