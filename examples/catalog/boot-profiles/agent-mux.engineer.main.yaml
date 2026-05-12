@@ -1,5 +1,7 @@
 id: agent-mux.engineer.main
 display_name: "Agent Mux — Engineer"
+# v005-08: per-profile MCP allowlist. Empty/omitted = proxy default (all).
+mcp_servers: []
 
 identity:
   lineage_alias:   agent-mux.engineer.main

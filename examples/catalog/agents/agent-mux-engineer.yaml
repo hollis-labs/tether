@@ -5,3 +5,7 @@ skills: []
 boot_fragments: []
 permissions:
   network: false
+# v005-08 extended schema fields (all optional; empty = unset).
+system_prompt: ""
+agent_prompt: ""
+provider_overrides: {}

@@ -51,6 +51,12 @@ type Profile struct {
 	Slots    map[string]SlotSource `yaml:"slots"`
 	// Template is optional; when empty the default 7-section template is used.
 	Template string `yaml:"template,omitempty"`
+	// MCPServers is the allowlist of upstream MCP server IDs this boot profile
+	// exposes via the proxy at launch time (v005-08). Pipes through to
+	// `mux mcp --proxy --servers <ids>`. Empty = no allowlist (proxy default).
+	// The list lives on the boot profile, not the agent, so a single agent
+	// can have multiple profiles with different tool surfaces.
+	MCPServers []string `yaml:"mcp_servers,omitempty"`
 }
 
 // Identity holds agent identity metadata per the Agent Identity Model:

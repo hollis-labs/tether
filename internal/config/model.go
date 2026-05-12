@@ -74,11 +74,30 @@ type Agent struct {
 	ContextFiles  []string         `yaml:"context_files" json:"context_files,omitempty"`
 	BootFragments []string         `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
 	Permissions   AgentPermissions `yaml:"permissions" json:"permissions"`
+
+	// SystemPrompt and AgentPrompt are the agent's persona payload (v005-08).
+	// Each may be an inline string (anything containing whitespace, `:`, or
+	// starting with text other than a path) or a file path; resolution happens
+	// at launch time by the BootDirSpec compilation pipeline. Empty = unset.
+	SystemPrompt string `yaml:"system_prompt" json:"system_prompt,omitempty"`
+	AgentPrompt  string `yaml:"agent_prompt" json:"agent_prompt,omitempty"`
+
+	// ProviderOverrides applies per-provider tweaks at launch time, keyed by
+	// provider ID (e.g. "claude-code", "codex-app-server"). Missing keys mean
+	// the agent uses provider defaults verbatim.
+	ProviderOverrides map[string]ProviderOverride `yaml:"provider_overrides" json:"provider_overrides,omitempty"`
 }
 
 type AgentPermissions struct {
 	Network        bool   `yaml:"network" json:"network"`
 	DefaultSandbox string `yaml:"default_sandbox" json:"default_sandbox,omitempty"`
+}
+
+// ProviderOverride carries per-provider customization for an Agent. Fields are
+// additive — start narrow and expand when concrete needs surface.
+type ProviderOverride struct {
+	ExtraArgs []string          `yaml:"extra_args" json:"extra_args,omitempty"`
+	Env       map[string]string `yaml:"env" json:"env,omitempty"`
 }
 
 type Provider struct {
