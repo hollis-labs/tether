@@ -3,6 +3,8 @@ package bootgen_test
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,5 +140,36 @@ func TestGenerate_DirectorySlot(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "foo.md") || !strings.Contains(out, "bar.md") {
 		t.Errorf("directory slot files not in output: %s", out)
+	}
+}
+
+func TestGenerate_HTTPSlot_BodyCap(t *testing.T) {
+	// Server returns 8 MiB of bytes; bootgen caps http slot bodies at 4 MiB.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		body := bytes.Repeat([]byte("a"), 8*1024*1024)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := bootgen.Profile{
+		ID: "test.http.cap",
+		Slots: map[string]bootgen.SlotSource{
+			"memory": {Type: "http", URL: srv.URL, Timeout: "5s"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, t.TempDir(), &buf); err != nil {
+		t.Fatalf("Generate should not error on slot failure, got: %v", err)
+	}
+	// The slot resolution should fail inline (bootgen swallows slot errors and
+	// records a placeholder); the body cap message should be threaded through.
+	out := buf.String()
+	if !strings.Contains(out, "slot:memory resolution failed") {
+		t.Errorf("expected inline failure marker for oversize http slot; got: %s", out)
+	}
+	if !strings.Contains(out, "slot cap") {
+		t.Errorf("expected slot-cap mention in failure inline; got: %s", out)
 	}
 }

@@ -36,6 +36,11 @@ import (
 // defaultHTTPClient is used for http slot sources.
 var defaultHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
+// maxHTTPSlotBytes caps the bytes read from an http slot response so a
+// misconfigured or malicious target URL can't exhaust memory via an
+// unbounded body.
+const maxHTTPSlotBytes int64 = 4 * 1024 * 1024
+
 // Profile is a boot profile configuration loaded from
 // <catalog-root>/boot-profiles/<id>.yaml.
 type Profile struct {
@@ -331,9 +336,12 @@ func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
 	}
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPSlotBytes+1))
 	if err != nil {
 		return "", err
+	}
+	if int64(len(b)) > maxHTTPSlotBytes {
+		return "", fmt.Errorf("GET %s: response exceeds %d-byte slot cap", rawURL, maxHTTPSlotBytes)
 	}
 	body := string(b)
 	if strings.ToLower(src.ResponseFormat) == "vanta_recall" {
