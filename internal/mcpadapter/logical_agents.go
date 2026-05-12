@@ -34,13 +34,31 @@ func (a *Adapter) handleLogicalAgentList(_ context.Context, _ mcp.CallToolReques
 	}), nil
 }
 
-func (a *Adapter) handleLogicalAgentResume(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleLogicalAgentResume(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
 	id := str(req, "logical_agent_id")
 	if id == "" {
 		return toolError("invalid_request", "logical_agent_id required"), nil
+	}
+	if a.client != nil {
+		res, err := a.client.ResumeLogicalAgent(ctx, id)
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{
+			"ok":               true,
+			"session_id":       res.ID,
+			"workspace":        res.Workspace,
+			"log":              res.Log,
+			"provider_id":      res.ProviderID,
+			"provider_kind":    res.ProviderKind,
+			"logical_agent_id": res.LogicalAgentID,
+		}), nil
 	}
 	res, err := a.svc.ResumeLogicalAgent(id)
 	if err != nil {

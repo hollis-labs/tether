@@ -129,7 +129,7 @@ func (a *Adapter) handleSessionGet(_ context.Context, req mcp.CallToolRequest) (
 	return toolJSON(map[string]any{"ok": true, "session": dto}), nil
 }
 
-func (a *Adapter) handleSessionCreate(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
@@ -143,6 +143,45 @@ func (a *Adapter) handleSessionCreate(_ context.Context, req mcp.CallToolRequest
 	bootProfile := str(req, "boot_profile")
 	override := str(req, "override")
 
+	if a.client != nil {
+		// Daemon-routed path (production "mux mcp"): the daemon owns session
+		// state, so creation must originate there. Otherwise the in-process
+		// app would race against the daemon's session store.
+		creq := api.LaunchRequest{
+			Launch:          launchID,
+			BootPrompt:      bootPrompt,
+			AgentFile:       agentFile,
+			AgentInline:     agentInline,
+			BootProfileFile: bootProfile,
+			Override:        override,
+		}
+		var res api.LaunchResponse
+		var err error
+		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" {
+			res, err = a.client.CreateSessionWithInput(ctx, creq)
+		} else if bootPrompt != "" {
+			res, err = a.client.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
+		} else {
+			res, err = a.client.CreateSession(ctx, launchID)
+		}
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return toolError("internal_error", err.Error()), nil
+		}
+		return toolJSON(map[string]any{
+			"ok":               true,
+			"session_id":       res.ID,
+			"workspace":        res.Workspace,
+			"log":              res.Log,
+			"provider_id":      res.ProviderID,
+			"provider_kind":    res.ProviderKind,
+			"logical_agent_id": res.LogicalAgentID,
+		}), nil
+	}
+
+	// In-process path (tests, dev with no daemon).
 	var res *app.Launched
 	var err error
 	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" {
@@ -179,13 +218,31 @@ func (a *Adapter) handleSessionCreate(_ context.Context, req mcp.CallToolRequest
 	}), nil
 }
 
-func (a *Adapter) handleSessionLaunch(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSessionLaunch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
 	id := str(req, "session_id")
 	if id == "" {
 		return toolError("invalid_request", "session_id required"), nil
+	}
+	if a.client != nil {
+		res, err := a.client.LaunchSession(ctx, id)
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{
+			"ok":               true,
+			"session_id":       res.ID,
+			"workspace":        res.Workspace,
+			"log":              res.Log,
+			"provider_id":      res.ProviderID,
+			"provider_kind":    res.ProviderKind,
+			"logical_agent_id": res.LogicalAgentID,
+		}), nil
 	}
 	res, err := a.svc.LaunchSession(id)
 	if err != nil {
@@ -214,13 +271,22 @@ func (a *Adapter) handleSessionLaunch(_ context.Context, req mcp.CallToolRequest
 	}), nil
 }
 
-func (a *Adapter) handleSessionStop(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSessionStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
 	id := str(req, "session_id")
 	if id == "" {
 		return toolError("invalid_request", "session_id required"), nil
+	}
+	if a.client != nil {
+		if err := a.client.StopSession(ctx, id); err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "session_id": id}), nil
 	}
 	if err := a.svc.StopSession(id); err != nil {
 		if isNotFound(err) {
@@ -236,6 +302,16 @@ func (a *Adapter) handleSessionWait(ctx context.Context, req mcp.CallToolRequest
 	if id == "" {
 		return toolError("invalid_request", "session_id required"), nil
 	}
+	if a.client != nil {
+		code, err := a.client.WaitSession(ctx, id)
+		if err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
+	}
 	code, err := a.svc.WaitSession(ctx, id)
 	if err != nil {
 		if isNotFound(err) {
@@ -246,7 +322,7 @@ func (a *Adapter) handleSessionWait(ctx context.Context, req mcp.CallToolRequest
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
 }
 
-func (a *Adapter) handleSessionSendInput(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSessionSendInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
@@ -257,6 +333,15 @@ func (a *Adapter) handleSessionSendInput(_ context.Context, req mcp.CallToolRequ
 	input := str(req, "input")
 	if input == "" {
 		return toolError("invalid_request", "input required"), nil
+	}
+	if a.client != nil {
+		if err := a.client.SendInput(ctx, id, []byte(input)); err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
 	}
 	if err := a.svc.SendInput(id, []byte(input)); err != nil {
 		if isNotFound(err) {
@@ -279,6 +364,15 @@ func (a *Adapter) handleSessionSendTurn(ctx context.Context, req mcp.CallToolReq
 	if text == "" {
 		return toolError("invalid_request", "text required"), nil
 	}
+	if a.client != nil {
+		if err := a.client.SendTurn(ctx, id, text); err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
+	}
 	if err := a.svc.SendTurn(ctx, id, text); err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "session not found: "+id), nil
@@ -288,7 +382,7 @@ func (a *Adapter) handleSessionSendTurn(ctx context.Context, req mcp.CallToolReq
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
 }
 
-func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleSessionResize(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
 	}
@@ -303,6 +397,15 @@ func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest
 	}
 	rows := uint16(rowsInt) //nolint:gosec // range validated above
 	cols := uint16(colsInt) //nolint:gosec // range validated above
+	if a.client != nil {
+		if err := a.client.ResizeSession(ctx, id, rows, cols); err != nil {
+			if isDaemonUnreachable(err) {
+				return daemonUnreachableError(err), nil
+			}
+			return classifyClientErr(err, id), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "session_id": id, "rows": rows, "cols": cols}), nil
+	}
 	if err := a.svc.ResizeSession(id, rows, cols); err != nil {
 		if isNotFound(err) {
 			return toolError("not_found", "session not running: "+id), nil

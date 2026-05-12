@@ -497,26 +497,29 @@ func (c *Client) CreateCheckpoint(ctx context.Context, sessionID, status, summar
 }
 
 // ResumeLogicalAgent posts a resume request for the given logical agent and
-// returns the new session ID on success.
-func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (string, error) {
+// returns the full launch response (new session ID + workspace/log/provider
+// metadata) on success. v005-09 widened the return shape from string-only to
+// the full envelope so MCP/ACP adapters can surface workspace + log paths
+// without a follow-up GetSession round-trip.
+func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (api.LaunchResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/logical-agents/"+url.PathEscape(agentID)+"/resume", nil)
 	if err != nil {
-		return "", err
+		return api.LaunchResponse{}, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", wrapIfUnreachable(err)
+		return api.LaunchResponse{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		return "", readError(resp)
+		return api.LaunchResponse{}, readError(resp)
 	}
 	var res api.LaunchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", fmt.Errorf("decode resume response: %w", err)
+		return api.LaunchResponse{}, fmt.Errorf("decode resume response: %w", err)
 	}
-	return res.ID, nil
+	return res, nil
 }
 
 // ListLogicalAgents fetches all logical agents from GET /logical-agents.

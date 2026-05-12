@@ -4,9 +4,14 @@
 //
 //	mux mcp [--token <tok>] [--scopes session.write,message.write]
 //
-// The adapter wraps app.Service directly (in-process) rather than going
-// through the daemon HTTP API. All mutating tools require a token and the
-// appropriate scope string.
+// The adapter wraps app.Service for catalog reads, message ops, and
+// read-only session inspection. Session-mutating tools (create, launch,
+// stop, send, resize, wait, logical-agent resume) route through the
+// running muxd daemon over UDS via internal/client.Client to avoid the
+// split-brain that an in-process app.New() instance would produce
+// against daemon-owned session state. v005-09 introduced the daemon
+// routing — see ADR 0034 (or 0035 if split). All mutating tools require
+// a token and the appropriate scope string.
 //
 // Scopes:
 //
@@ -17,6 +22,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -26,6 +32,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/client"
 )
 
 const version = "0.2.0"
@@ -39,6 +46,7 @@ const (
 // Adapter exposes the agent-mux runtime as MCP tools over stdio.
 type Adapter struct {
 	svc    *app.Service
+	client *client.Client // optional; when set, session-mutating tools route through the daemon
 	token  string
 	scopes map[string]struct{}
 
@@ -52,6 +60,10 @@ type Adapter struct {
 
 // New constructs an Adapter wrapping svc. token and scopes gate mutating
 // tools; pass an empty token to disable auth (development only).
+//
+// In this mode session-mutating tools execute against svc directly
+// in-process. Use NewWithDaemon for the production "mux mcp" path so
+// session ownership stays with the daemon.
 func New(svc *app.Service, token string, scopes []string) *Adapter {
 	scopeSet := make(map[string]struct{}, len(scopes))
 	for _, s := range scopes {
@@ -65,6 +77,18 @@ func New(svc *app.Service, token string, scopes []string) *Adapter {
 		token:  strings.TrimSpace(token),
 		scopes: scopeSet,
 	}
+}
+
+// NewWithDaemon constructs an Adapter that routes session-mutating tools
+// through the running muxd daemon at dc, while keeping catalog reads,
+// message ops, and read-only session inspection in-process via svc.
+//
+// Use this for the production "mux mcp" subcommand. dc must not be nil
+// — pass New for in-process-only mode.
+func NewWithDaemon(svc *app.Service, dc *client.Client, token string, scopes []string) *Adapter {
+	a := New(svc, token, scopes)
+	a.client = dc
+	return a
 }
 
 // Run starts the MCP stdio server. It blocks until ctx is canceled or
@@ -110,6 +134,40 @@ func toolJSON(v any) *mcp.CallToolResult {
 func toolError(code, message string) *mcp.CallToolResult {
 	b, _ := json.Marshal(map[string]any{"ok": false, "code": code, "message": message})
 	return mcp.NewToolResultError(string(b))
+}
+
+// daemonUnreachableError is the canonical tool-error response when a
+// session-mutating tool routes through the daemon but the daemon is not
+// running or otherwise unreachable. Code "daemon_unavailable" matches
+// ADR 0010's typed error envelope conventions; the message is actionable.
+func daemonUnreachableError(err error) *mcp.CallToolResult {
+	return toolError("daemon_unavailable",
+		"muxd daemon is not reachable; start it with `mux daemon up` ("+err.Error()+")")
+}
+
+// isDaemonUnreachable reports whether err signals that the daemon is not
+// running (socket missing, connection refused, dial timeout). Wraps
+// client.ErrDaemonUnreachable so handlers can branch on transport-vs-domain
+// failure consistently.
+func isDaemonUnreachable(err error) bool {
+	return errors.Is(err, client.ErrDaemonUnreachable)
+}
+
+// classifyClientErr maps a daemon HTTP error string into the same MCP
+// error codes the in-process path produces (not_found / conflict /
+// internal_error). The daemon already classifies via ADR 0010 typed
+// envelopes; we string-sniff the wrapped form ("daemon NNN (code): msg")
+// to recover the code without reaching into internal/api here.
+func classifyClientErr(err error, id string) *mcp.CallToolResult {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "(not_found)"), strings.Contains(msg, " 404 "):
+		return toolError("not_found", "session not found: "+id)
+	case strings.Contains(msg, "(conflict)"), strings.Contains(msg, " 409 "):
+		return toolError("conflict", err.Error())
+	default:
+		return toolError("internal_error", err.Error())
+	}
 }
 
 // checkScope verifies that the token is set and the named scope is present.

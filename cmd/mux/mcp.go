@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/chrispian/agent-mux/internal/client"
 	"github.com/chrispian/agent-mux/internal/daemon"
 	"github.com/chrispian/agent-mux/internal/events"
 	"github.com/chrispian/agent-mux/internal/mcpadapter"
@@ -89,7 +90,22 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = svc.Close() }()
 
-	adapter := mcpadapter.New(svc, token, scopes)
+	// v005-09 rescue: route session-mutating MCP tools through the running
+	// daemon over UDS to eliminate the in-process split-brain that the
+	// pre-v005-09 code path produced (mux mcp's app.New() and muxd both
+	// owned the same session store; daemon-only state like RuntimeManager
+	// was invisible to mux mcp). Catalog reads, message ops, and read-only
+	// session inspection still go in-process via svc — those are filesystem
+	// or shared-DB reads that don't have the OS-process-state coupling.
+	// When the daemon address can't be resolved the adapter falls back to
+	// fully in-process behavior so dev/test paths still work.
+	listenAddr, _ := resolveDaemonAddr()
+	var adapter *mcpadapter.Adapter
+	if listenAddr != "" {
+		adapter = mcpadapter.NewWithDaemon(svc, client.New(listenAddr), token, scopes)
+	} else {
+		adapter = mcpadapter.New(svc, token, scopes)
+	}
 	// Route the go-mcp-sanitize middleware's warn telemetry to stderr so the
 	// stdio MCP protocol stream on stdout stays clean.
 	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
