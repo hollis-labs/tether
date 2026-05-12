@@ -1,4 +1,4 @@
-.PHONY: build install run test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html clean-coverage
+.PHONY: build install run test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean-coverage
 
 # ---------------------------------------------------------------------------
 # Build / run
@@ -26,26 +26,37 @@ run: install
 # ---------------------------------------------------------------------------
 
 # test is the fast iteration loop — no race detector so it compiles + runs
-# quickly during TDD. Collects coverage into coverage.out (cheap, zero gate).
+# quickly during TDD. Collects cross-package coverage so integration tests
+# in /api and /daemon credit the packages they actually exercise.
 test:
 	@command -v gotestsum >/dev/null 2>&1 && \
-		gotestsum -- -coverprofile=coverage.out ./... || \
-		go test -coverprofile=coverage.out ./...
+		gotestsum -- -coverpkg=./... -coverprofile=coverage.out ./... || \
+		go test -coverpkg=./... -coverprofile=coverage.out ./...
 
-# test-race is the correctness gate: full suite with the race detector.
-# Coverage is omitted here — race-instrumented runs are already slow.
+# test-race is the correctness gate: full suite with the race detector
+# and the same cross-package coverage profile feeding `make coverage`.
 test-race:
 	@command -v gotestsum >/dev/null 2>&1 && \
-		gotestsum -- -race ./... || \
-		go test -race ./...
+		gotestsum -- -race -coverpkg=./... -coverprofile=coverage.out ./... || \
+		go test -race -coverpkg=./... -coverprofile=coverage.out ./...
 
-# Show total coverage percentage from the most recent `make test` run.
+# Show total coverage percentage from the most recent `make test` /
+# `make test-race` / `make check` run.
 coverage: coverage.out
 	@go tool cover -func=coverage.out | tail -1
 
 # Open coverage in the browser.
 coverage-html: coverage.out
 	go tool cover -html=coverage.out
+
+# coverage-report is the inline reporter for `make check`. Prints the
+# aggregate (cross-package) total without failing the gate — this sprint
+# captures the floor; v005-10b adds a hard threshold once the floor is
+# known.
+coverage-report: coverage.out
+	@echo ""
+	@echo "Coverage (aggregate, cross-package):"
+	@go tool cover -func=coverage.out | tail -1
 
 coverage.out:
 	$(MAKE) test
@@ -89,4 +100,7 @@ tools-install:
 # Gates
 # ---------------------------------------------------------------------------
 # check is the pre-commit full gate used by CI and local pre-push hooks.
-check: fmt vet lint test-race vuln
+# test-race emits coverage.out (cross-package); coverage-report prints the
+# aggregate total at the end without acting as a hard gate (v005-10
+# baselines the floor; v005-10b lands the threshold).
+check: fmt vet lint test-race vuln coverage-report
