@@ -181,7 +181,7 @@ func TestSendTurn_CancelBeforeDoneEmitsCancelled(t *testing.T) {
 	got := drainTurn(t, ch, 2*time.Second)
 	last := got[len(got)-1]
 	if last.Kind != acpadapter.TurnUpdateKindDone || last.StopReason != acpadapter.StopReasonCancelled {
-		t.Errorf("last update after CancelTurn: got %+v want done/cancelled", last)
+		t.Errorf("last update after CancelTurn: got %+v want done/canceled", last)
 	}
 }
 
