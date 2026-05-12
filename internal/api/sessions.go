@@ -209,7 +209,17 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	var res LaunchResult
 	var err error
-	if req.BootPrompt != "" {
+	if req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" {
+		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
+		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
+			LaunchID:           req.Launch,
+			BootPromptOverride: req.BootPrompt,
+			AgentFile:          req.AgentFile,
+			AgentInline:        req.AgentInline,
+			BootProfileFile:    req.BootProfileFile,
+			Override:           req.Override,
+		})
+	} else if req.BootPrompt != "" {
 		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)
 	} else {
 		res, err = s.Service.CreateSession(req.Launch)

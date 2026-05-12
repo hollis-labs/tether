@@ -22,6 +22,11 @@ import (
 type LaunchService interface {
 	CreateSession(launchID string) (LaunchResult, error)
 	CreateSessionWithBootPrompt(launchID, bootPrompt string) (LaunchResult, error)
+	// CreateSessionWithInput is the v005-08 Agent Ops entry point that accepts
+	// Tier-2 caller-provided agent/boot-profile/override payloads. The legacy
+	// CreateSession / CreateSessionWithBootPrompt methods route through it
+	// internally, so handlers that want either behavior can dispatch here.
+	CreateSessionWithInput(in CreateSessionInput) (LaunchResult, error)
 	LaunchSession(sessionID string) (LaunchResult, error)
 	ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error)
 	GetSession(id string) (*store.SessionRow, error)
@@ -86,6 +91,26 @@ type LaunchRequest struct {
 	// fragments. Used by `mux boot <profile_id>` to inject a dynamically
 	// generated boot prompt without modifying the catalog.
 	BootPrompt string `json:"boot_prompt,omitempty"`
+
+	// v005-08 Agent Ops Tier-2 caller-provided payload fields. All optional.
+	// Resolve order for agent: AgentInline > AgentFile > catalog agent.
+	AgentFile       string `json:"agent_file,omitempty"`
+	AgentInline     string `json:"agent_inline,omitempty"`
+	BootProfileFile string `json:"boot_profile,omitempty"`
+	Override        string `json:"override,omitempty"`
+}
+
+// CreateSessionInput mirrors app.CreateSessionInput in shape but is defined
+// here so the api package doesn't import internal/app (which would create a
+// cycle via internal/app importing api). The adapter in cmd/mux/daemon.go
+// translates between the two.
+type CreateSessionInput struct {
+	LaunchID           string
+	BootPromptOverride string
+	AgentFile          string
+	AgentInline        string
+	BootProfileFile    string
+	Override           string
 }
 
 type LaunchResponse struct {

@@ -198,6 +198,42 @@ func (c *Client) Launch(ctx context.Context, launchID string) (api.LaunchRespons
 	return c.LaunchSession(ctx, created.ID)
 }
 
+// CreateSessionWithInput POSTs /sessions with the v005-08 Agent Ops Tier-2
+// caller-provided payload fields. Returns the created session in state=created;
+// caller follows with LaunchSession to start it (or use LaunchWithInput for
+// the combined flow).
+func (c *Client) CreateSessionWithInput(ctx context.Context, req api.LaunchRequest) (api.LaunchResponse, error) {
+	body, _ := json.Marshal(req)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sessions", bytes.NewReader(body))
+	if err != nil {
+		return api.LaunchResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return api.LaunchResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated {
+		return api.LaunchResponse{}, readError(resp)
+	}
+	var res api.LaunchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return api.LaunchResponse{}, fmt.Errorf("decode create response: %w", err)
+	}
+	return res, nil
+}
+
+// LaunchWithInput is the combined create+launch convenience for v005-08
+// Tier-2 callers (analog of Launch but accepts an enriched request body).
+func (c *Client) LaunchWithInput(ctx context.Context, req api.LaunchRequest) (api.LaunchResponse, error) {
+	created, err := c.CreateSessionWithInput(ctx, req)
+	if err != nil {
+		return api.LaunchResponse{}, err
+	}
+	return c.LaunchSession(ctx, created.ID)
+}
+
 // ListOptions narrows a ListSessions request. Fields map 1:1 onto the
 // GET /sessions query params: ?limit=, ?cursor=, ?state=. A zero-valued
 // ListOptions retrieves the first default-size page with no filter.

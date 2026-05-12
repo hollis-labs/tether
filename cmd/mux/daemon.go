@@ -160,6 +160,28 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 	}, nil
 }
 
+func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
+	l, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
+		LaunchID:           in.LaunchID,
+		BootPromptOverride: in.BootPromptOverride,
+		AgentFile:          in.AgentFile,
+		AgentInline:        in.AgentInline,
+		BootProfileFile:    in.BootProfileFile,
+		Override:           in.Override,
+	})
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	return api.LaunchResult{
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
+	}, nil
+}
+
 func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, error) {
 	l, err := a.svc.LaunchSession(sessionID)
 	if err != nil {

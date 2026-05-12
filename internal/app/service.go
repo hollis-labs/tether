@@ -244,22 +244,37 @@ var ErrSessionNotCreated = session.ErrNotCreated
 // Used by `mux boot <profile_id>` to inject a dynamically generated
 // prompt without modifying the catalog.
 func (s *Service) CreateSessionWithBootPrompt(launchID, bootPrompt string) (*Launched, error) {
-	plan, err := s.Resolve(launchID)
-	if err != nil {
-		return nil, err
-	}
-	if bootPrompt != "" {
-		plan.BootPrompt = bootPrompt
-	}
-	return s.createSessionFromPlan(plan)
+	return s.CreateSessionWithInput(CreateSessionInput{
+		LaunchID:           launchID,
+		BootPromptOverride: bootPrompt,
+	})
 }
 
 // CreateSession resolves the launch plan, materializes the workspace,
 // and persists the session row in state=created along with the plan
 // JSON. It does not start the runtime — call LaunchSession for that.
 func (s *Service) CreateSession(launchID string) (*Launched, error) {
-	plan, err := s.Resolve(launchID)
+	return s.CreateSessionWithInput(CreateSessionInput{LaunchID: launchID})
+}
+
+// CreateSessionWithInput is the v005-08 Agent Ops entry point: resolves the
+// base launch plan, applies caller-provided agent/boot-profile/override
+// payloads, recomposes the boot prompt with skills, and persists the session.
+//
+// For Tier 1 (catalog-only) callers, pass LaunchID and leave the rest zero —
+// behavior matches the pre-v005-08 CreateSession exactly.
+//
+// For Tier 2 (caller-provided), populate AgentFile / AgentInline /
+// BootProfileFile / Override as needed. See CreateSessionInput for precedence.
+func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, error) {
+	if in.LaunchID == "" {
+		return nil, fmt.Errorf("launch id required")
+	}
+	plan, err := s.Resolve(in.LaunchID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.applyAgentOps(plan, in); err != nil {
 		return nil, err
 	}
 	return s.createSessionFromPlan(plan)

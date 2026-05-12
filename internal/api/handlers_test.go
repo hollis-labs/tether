@@ -73,6 +73,10 @@ func (f *fakeLaunchService) CreateSessionWithBootPrompt(id, _ string) (LaunchRes
 	return f.CreateSession(id)
 }
 
+func (f *fakeLaunchService) CreateSessionWithInput(in CreateSessionInput) (LaunchResult, error) {
+	return f.CreateSession(in.LaunchID)
+}
+
 func (f *fakeLaunchService) LaunchSession(id string) (LaunchResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

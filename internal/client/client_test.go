@@ -144,6 +144,9 @@ func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
 func (s *funcService) CreateSessionWithBootPrompt(id, _ string) (api.LaunchResult, error) {
 	return s.createFn(id)
 }
+func (s *funcService) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
+	return s.createFn(in.LaunchID)
+}
 func (s *funcService) LaunchSession(id string) (api.LaunchResult, error) {
 	return s.launchFn(id)
 }

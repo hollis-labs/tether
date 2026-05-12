@@ -9,12 +9,18 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chrispian/agent-mux/internal/api"
 	"github.com/chrispian/agent-mux/internal/client"
 )
 
 var (
-	launchID   string
-	launchWait bool
+	launchID           string
+	launchWait         bool
+	launchAgentFile    string
+	launchAgentInline  string
+	launchBootProfile  string
+	launchOverride     string
+	launchBootPromptOR string
 )
 
 var launchCmd = &cobra.Command{
@@ -31,7 +37,19 @@ var launchCmd = &cobra.Command{
 			ctx = context.Background()
 		}
 
-		res, err := c.Launch(ctx, launchID)
+		var res api.LaunchResponse
+		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || launchBootPromptOR != "" {
+			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
+				Launch:          launchID,
+				BootPrompt:      launchBootPromptOR,
+				AgentFile:       launchAgentFile,
+				AgentInline:     launchAgentInline,
+				BootProfileFile: launchBootProfile,
+				Override:        launchOverride,
+			})
+		} else {
+			res, err = c.Launch(ctx, launchID)
+		}
 		if err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
 				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
@@ -62,5 +80,10 @@ var launchCmd = &cobra.Command{
 func init() {
 	launchCmd.Flags().StringVar(&launchID, "launch", "", "launch ID (required)")
 	launchCmd.Flags().BoolVar(&launchWait, "wait", false, "wait for process to exit")
+	launchCmd.Flags().StringVar(&launchAgentFile, "agent-file", "", "v005-08: path to agent YAML; field-merged over the catalog agent")
+	launchCmd.Flags().StringVar(&launchAgentInline, "agent-inline", "", "v005-08: inline JSON agent definition (highest precedence)")
+	launchCmd.Flags().StringVar(&launchBootProfile, "boot-profile", "", "v005-08: path to bootgen boot-profile YAML (carries MCP allowlist)")
+	launchCmd.Flags().StringVar(&launchOverride, "override", "", `v005-08: per-launch JSON override, e.g. '{"system_prompt":"...","env":{"K":"V"}}'`)
+	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
 	_ = launchCmd.MarkFlagRequired("launch")
 }
