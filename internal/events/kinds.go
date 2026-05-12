@@ -27,4 +27,12 @@ const (
 	KindDaemonStarted           = "daemon.started"
 	KindDaemonShutdownStarted   = "daemon.shutdown_started"
 	KindDaemonShutdownCompleted = "daemon.shutdown_completed"
+
+	// KindSessionBootDirPlanted fires once per session start when
+	// go-agent-sessions v0.9.x materializes the adapter's BootDirSpec
+	// into a per-session tempdir. Carries {"path":"<absolute>"} so
+	// attach observers and operators can locate the planted files for
+	// the lifetime of the session (cleanup is automatic at terminal
+	// state).
+	KindSessionBootDirPlanted = "session.boot_dir_planted"
 )

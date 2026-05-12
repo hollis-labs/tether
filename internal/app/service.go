@@ -381,20 +381,24 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		}
 	}
 
+	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
+
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
 		Runtime: rt,
 		Options: agentsessions.StartOptions{
-			Workdir:         plan.RepoRoot,
-			WorkspaceDir:    ws.Root,
-			LogPath:         ws.LogPath,
-			BootPrompt:      plan.BootPrompt,
-			BootMode:        plan.BootMode,
-			Env:             provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
-			Profile:         profile,
-			SessionIDPreset: sessionIDPreset,
-			OnSessionID:     onSessionID,
-			AttachEnabled:   true,
+			Workdir:          plan.RepoRoot,
+			WorkspaceDir:     ws.Root,
+			LogPath:          ws.LogPath,
+			BootPrompt:       plan.BootPrompt,
+			BootMode:         plan.BootMode,
+			Env:              provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
+			Profile:          profile,
+			SessionIDPreset:  sessionIDPreset,
+			OnSessionID:      onSessionID,
+			AttachEnabled:    true,
+			AutoPlantBootDir: true,
+			OnBootDirPlanted: onBootDirPlanted,
 		},
 		SessionMeta: map[string]string{
 			"logical_agent_id": plan.LogicalAgentID,
@@ -512,7 +516,13 @@ func frameUserMessage(text string) ([]byte, error) {
 func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 	threadID, cached := s.codexThreads.Load(id)
 	if !cached {
-		if _, err := s.Manager.JsonRpcCall(ctx, id, "initialize", map[string]any{}); err != nil {
+		initParams := map[string]any{
+			"clientInfo": map[string]any{
+				"name":    "agent-mux",
+				"version": muxClientVersion,
+			},
+		}
+		if _, err := s.Manager.JsonRpcCall(ctx, id, "initialize", initParams); err != nil {
 			return fmt.Errorf("jsonrpc initialize: %w", err)
 		}
 		startRes, err := s.Manager.JsonRpcCall(ctx, id, "thread/start", map[string]any{})
@@ -520,25 +530,35 @@ func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 			return fmt.Errorf("jsonrpc thread/start: %w", err)
 		}
 		var parsed struct {
-			ThreadID string `json:"threadId"`
+			Thread struct {
+				ID string `json:"id"`
+			} `json:"thread"`
 		}
 		if err := json.Unmarshal(startRes, &parsed); err != nil {
 			return fmt.Errorf("decode thread/start response: %w", err)
 		}
-		if parsed.ThreadID == "" {
-			return fmt.Errorf("thread/start returned empty threadId")
+		if parsed.Thread.ID == "" {
+			return fmt.Errorf("thread/start returned empty thread.id")
 		}
-		threadID = parsed.ThreadID
+		threadID = parsed.Thread.ID
 		s.codexThreads.Store(id, threadID)
 	}
 	if _, err := s.Manager.JsonRpcCall(ctx, id, "turn/start", map[string]any{
 		"threadId": threadID,
-		"input":    text,
+		"input": []map[string]any{
+			{"type": "text", "text": text},
+		},
 	}); err != nil {
 		return fmt.Errorf("jsonrpc turn/start: %w", err)
 	}
 	return nil
 }
+
+// muxClientVersion is the value reported in the JSON-RPC initialize
+// clientInfo field. It's a build-time constant rather than wired from
+// the binary's version (no version package exists yet); the value is
+// used only for diagnostic identification by the Codex app-server.
+const muxClientVersion = "v005-07"
 
 // ResizeSession forwards a (rows, cols) winsize update. Thin wrapper over
 // agentsessions.Manager.Resize.

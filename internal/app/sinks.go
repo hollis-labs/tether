@@ -135,6 +135,32 @@ func mapLifecycleStates(ev agentsessions.LifecycleEvent) (from, to string) {
 	return from, to
 }
 
+// makeBootDirPlantedCallback returns a callback wired into
+// agentsessions.StartOptions.OnBootDirPlanted. Lib v0.9.x invokes it
+// once per session start after the planted boot dir is materialized.
+// Payload schema: {"path":"<absolute>"} — see events.KindSessionBootDirPlanted.
+// Returns a no-op when bus is nil (test composition that skips event wiring).
+func makeBootDirPlantedCallback(bus events.Publisher, sessionID, logicalAgentID string) func(string) {
+	return func(path string) {
+		if bus == nil {
+			return
+		}
+		payload, err := json.Marshal(struct {
+			Path string `json:"path"`
+		}{Path: path})
+		if err != nil {
+			return
+		}
+		_ = bus.Publish(context.Background(), events.Event{
+			Scope:          events.ScopeSession,
+			SessionID:      sessionID,
+			LogicalAgentID: logicalAgentID,
+			Kind:           events.KindSessionBootDirPlanted,
+			PayloadJSON:    string(payload),
+		})
+	}
+}
+
 // Static interface checks. The assertions let the linter see the types
 // as "used" and surface contract drift at build time if the lib's sink
 // shapes change.

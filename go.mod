@@ -10,7 +10,7 @@ require (
 	github.com/hollis-labs/go-llm-types v0.1.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
-	github.com/hollis-labs/go-providers v0.17.0
+	github.com/hollis-labs/go-providers v0.17.1
 	github.com/hollis-labs/go-sandbox v0.2.0
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/spf13/cobra v1.10.2
