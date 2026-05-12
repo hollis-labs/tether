@@ -3,7 +3,15 @@ type: cli
 command: claude
 args: []
 bootstrap:
-  mode: stdin
+  # streaming-stdio: the daemon launches Claude in NDJSON streaming-input
+  # mode (`claude -p --input-format stream-json --output-format stream-json
+  # --verbose`). System context rides via the planted CLAUDE.md /
+  # --append-system-prompt-file injection paths from go-providers'
+  # BootDirSpec; user turns flow via the daemon's /turn endpoint (or
+  # `mux sessions turn`, `mux_session_send_turn`). Per-turn payloads are
+  # framed as {"type":"user","message":{"role":"user","content":"..."}}\n
+  # by service.SendTurn.
+  mode: streaming-stdio
   prompt_prefix: ""
 env:
   # Default "merge" inherits the full daemon environment and applies redact +

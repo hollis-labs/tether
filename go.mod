@@ -9,10 +9,11 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-sessions v0.7.1
+	github.com/hollis-labs/go-agent-sessions v0.9.2
+	github.com/hollis-labs/go-llm-types v0.1.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.0
 	github.com/hollis-labs/go-messaging v0.2.0
-	github.com/hollis-labs/go-providers v0.13.0
+	github.com/hollis-labs/go-providers v0.17.0
 	github.com/hollis-labs/go-sandbox v0.2.0
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/sahilm/fuzzy v0.1.1
@@ -37,7 +38,6 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/hollis-labs/go-llm-contracts v0.1.0 // indirect
-	github.com/hollis-labs/go-llm-types v0.1.0 // indirect
 	github.com/hollis-labs/go-runner v0.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect

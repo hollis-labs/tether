@@ -118,6 +118,10 @@ func (f *fakeLaunchService) SendInput(id string, data []byte) error {
 	return f.inputErr
 }
 
+func (f *fakeLaunchService) SendTurn(_ context.Context, id, text string) error {
+	return f.SendInput(id, []byte(text))
+}
+
 func (f *fakeLaunchService) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
 	f.mu.Lock()
 	f.attachSinceSeqs = append(f.attachSinceSeqs, sinceSeq)

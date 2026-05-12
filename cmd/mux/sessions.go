@@ -136,6 +136,25 @@ var sessionsInputCmd = &cobra.Command{
 	},
 }
 
+var sessionsTurnCmd = &cobra.Command{
+	Use:   "turn <id> <text>",
+	Short: "Send a user turn with lifecycle-aware framing (streaming-stdio NDJSON, jsonrpc-stdio turn/start, or raw stdin fallback)",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return err
+		}
+		if err := c.SendTurn(cmd.Context(), args[0], args[1]); err != nil {
+			if errors.Is(err, client.ErrDaemonUnreachable) {
+				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+			}
+			return err
+		}
+		return nil
+	},
+}
+
 // detachByte is the keystroke that cleanly exits `mux sessions
 // attach` while leaving the session running. \x1d is Ctrl-] —
 // familiar to telnet users and rarely sent by any real program, so
@@ -353,6 +372,6 @@ func init() {
 		"follow live output (default); use --follow=false for a one-shot snapshot")
 	sessionsCmd.AddCommand(
 		sessionsListCmd, sessionsGetCmd, sessionsStopCmd,
-		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd,
+		sessionsTailCmd, sessionsAttachCmd, sessionsInputCmd, sessionsTurnCmd,
 	)
 }

@@ -80,6 +80,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSendInput(w, r, id)
+	case "turn":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSendTurn(w, r, id)
 	case "resize":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -177,6 +183,8 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id 
 		ProviderKind: result.ProviderKind,
 		Caps: CapabilitiesDTO{
 			PTY:               caps.PTY,
+			StreamingStdio:    caps.StreamingStdio,
+			JSONRPCStdio:      caps.JsonRpcStdio,
 			Resize:            caps.Resize,
 			ProviderSessionID: caps.ProviderSessionID,
 			CheckpointResume:  caps.CheckpointResume,

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +54,11 @@ type Service struct {
 	Broker      *broker.Service
 
 	factories map[string]RuntimeFactory
+
+	// codexThreads caches the JSON-RPC thread id per session id for
+	// JsonRpcStdio runtimes. Populated lazily on the first SendTurn call
+	// for a session (after initialize + thread/start succeed).
+	codexThreads sync.Map // map[string]string
 }
 
 func New(catalogRoot string) (*Service, error) {
@@ -72,10 +79,11 @@ func New(catalogRoot string) (*Service, error) {
 	}
 
 	factories := map[string]RuntimeFactory{
-		"claude-stream": claudestream.New,
-		"claude-code":   newClaudeCodeRuntime,
-		"opencode":      opencode.New,
-		"api-stub":      stub.New,
+		"claude-stream":    claudestream.New,
+		"claude-code":      newClaudeCodeRuntime,
+		"codex-app-server": newCodexAppServerRuntime,
+		"opencode":         opencode.New,
+		"api-stub":         stub.New,
 	}
 	// Register cli-goprovider runtimes declared in the catalog. Each one
 	// is the same pattern as claude-stream — a per-turn subprocess driven
@@ -104,16 +112,6 @@ func New(catalogRoot string) (*Service, error) {
 		}
 	}
 
-	// Reconcile stale rows from a prior daemon instance: sessions stuck in
-	// launching/running are orphaned (the process they tracked is gone),
-	// and open client_attachments are no longer live.
-	now := time.Now().UTC().Format(time.RFC3339)
-	if swept, err := db.SweepStaleSessions(now); err == nil && swept > 0 {
-		log.Printf("store: swept %d stale session(s) to failed", swept)
-	}
-	if swept, err := db.SweepStaleAttachments(now); err == nil && swept > 0 {
-		log.Printf("store: swept %d stale client_attachments row(s)", swept)
-	}
 	// Seed logical_agents from the catalog. Upsert — idempotent across
 	// restarts; preserves created_at + any future operator-set fields.
 	// See ADR 0003.
@@ -143,6 +141,23 @@ func New(catalogRoot string) (*Service, error) {
 	}, nil
 }
 
+// ReconcileStaleState sweeps any sessions stuck in launching/running and
+// any open client_attachments to terminal state. Intended for daemon
+// startup only — `mux mcp` and other catalog-reading subcommands MUST
+// NOT call this, because they may run concurrently with a live daemon
+// (e.g. when a session spawns mux mcp as an MCP subprocess), and
+// sweeping would clobber the daemon's actively-tracked sessions. See
+// ADR 0030 §sweep-race for the original incident.
+func (s *Service) ReconcileStaleState() {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if swept, err := s.Store.SweepStaleSessions(now); err == nil && swept > 0 {
+		log.Printf("store: swept %d stale session(s) to failed", swept)
+	}
+	if swept, err := s.Store.SweepStaleAttachments(now); err == nil && swept > 0 {
+		log.Printf("store: swept %d stale client_attachments row(s)", swept)
+	}
+}
+
 func (s *Service) Close() error {
 	if err := s.Manager.Shutdown(context.Background()); err != nil {
 		return err
@@ -151,14 +166,21 @@ func (s *Service) Close() error {
 }
 
 func newClaudeCodeRuntime(plan *launch.Plan) (agentsessions.Runtime, error) {
-	adapter := gop.NewClaudeAdapterPTY()
+	adapter := gop.NewClaudeAdapterStreamingStdio()
 	adapter.ApiKeyHelperPath = resolveAPIKeyHelperPath()
 	return claudestream.NewWithAdapter(plan, adapter, "claude-code", agentsessions.Capabilities{
-		PTY:               true,
-		Resize:            true,
-		ProviderSessionID: false,
+		StreamingStdio:    true,
+		ProviderSessionID: true,
 		CheckpointResume:  false,
 		BinaryRequired:    true,
+	})
+}
+
+func newCodexAppServerRuntime(plan *launch.Plan) (agentsessions.Runtime, error) {
+	return claudestream.NewWithAdapter(plan, gop.NewCodexAdapterAppServer(), "codex-app-server", agentsessions.Capabilities{
+		JsonRpcStdio:     true,
+		CheckpointResume: false,
+		BinaryRequired:   true,
 	})
 }
 
@@ -381,10 +403,6 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			"provider_id":      plan.ProviderID,
 		},
 	}
-	if rt.Caps().PTY {
-		req.Options.AutoFireFirstTurn = true
-		req.Options.FirstTurnPayload = []byte("Boot @./boot.md\n")
-	}
 	if err := s.Manager.Start(context.Background(), req); err != nil {
 		return nil, err
 	}
@@ -430,6 +448,96 @@ func (s *Service) WaitSession(ctx context.Context, id string) (int, error) {
 // over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
 	return s.Manager.SendInput(id, data)
+}
+
+// SendTurn delivers a user message to the named session, applying the
+// per-runtime framing required by the session's lifecycle mode:
+//
+//   - StreamingStdio (Claude): wraps text as
+//     {"type":"user","message":{"role":"user","content":"<text>"}}\n
+//     and writes to stdin.
+//   - JsonRpcStdio (Codex app-server): performs lazy initialize +
+//     thread/start on first call (caching the thread id per session id),
+//     then issues turn/start with the cached thread id and the text input.
+//   - PTY or unknown: falls back to raw SendInput([]byte(text)) so PTY
+//     consumers still work without per-call framing.
+//
+// Existing SendInput callers are unaffected — SendTurn is additive and
+// intended for callers that want lifecycle-aware framing without
+// hand-rolling the per-mode envelope.
+func (s *Service) SendTurn(ctx context.Context, id, text string) error {
+	info, ok := s.Manager.Get(id)
+	if !ok {
+		return agentsessions.ErrSessionNotRunning
+	}
+	switch {
+	case info.Caps.StreamingStdio:
+		payload, err := frameUserMessage(text)
+		if err != nil {
+			return err
+		}
+		return s.Manager.SendInput(id, payload)
+	case info.Caps.JsonRpcStdio:
+		return s.sendTurnJSONRPC(ctx, id, text)
+	default:
+		return s.Manager.SendInput(id, []byte(text))
+	}
+}
+
+// frameUserMessage encodes the NDJSON user-message envelope Claude's
+// streaming-input mode (mode-5) expects on stdin. The envelope shape is
+// {"type":"user","message":{"role":"user","content":"<text>"}} with a
+// trailing newline. Exported for unit testing; SendTurn is the public
+// caller.
+func frameUserMessage(text string) ([]byte, error) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": text,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode user message: %w", err)
+	}
+	return append(payload, '\n'), nil
+}
+
+// sendTurnJSONRPC implements the JSON-RPC turn delivery for codex
+// app-server style runtimes. Routes through Manager.JsonRpcCall (added
+// in go-agent-sessions v0.9.0) so the raw Session reference stays
+// hidden behind the Manager surface. Lazily runs initialize +
+// thread/start on the first call for a session, caches the thread id,
+// and issues turn/start with the cached id + user input.
+func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
+	threadID, cached := s.codexThreads.Load(id)
+	if !cached {
+		if _, err := s.Manager.JsonRpcCall(ctx, id, "initialize", map[string]any{}); err != nil {
+			return fmt.Errorf("jsonrpc initialize: %w", err)
+		}
+		startRes, err := s.Manager.JsonRpcCall(ctx, id, "thread/start", map[string]any{})
+		if err != nil {
+			return fmt.Errorf("jsonrpc thread/start: %w", err)
+		}
+		var parsed struct {
+			ThreadID string `json:"threadId"`
+		}
+		if err := json.Unmarshal(startRes, &parsed); err != nil {
+			return fmt.Errorf("decode thread/start response: %w", err)
+		}
+		if parsed.ThreadID == "" {
+			return fmt.Errorf("thread/start returned empty threadId")
+		}
+		threadID = parsed.ThreadID
+		s.codexThreads.Store(id, threadID)
+	}
+	if _, err := s.Manager.JsonRpcCall(ctx, id, "turn/start", map[string]any{
+		"threadId": threadID,
+		"input":    text,
+	}); err != nil {
+		return fmt.Errorf("jsonrpc turn/start: %w", err)
+	}
+	return nil
 }
 
 // ResizeSession forwards a (rows, cols) winsize update. Thin wrapper over
@@ -591,7 +699,7 @@ func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
 // flags to maintain conversation continuity across daemon restarts.
 func providerHasSessionIDContinuity(providerID string) bool {
 	switch providerID {
-	case "claude-stream", "opencode":
+	case "claude-code", "claude-stream", "opencode":
 		return true
 	}
 	return false

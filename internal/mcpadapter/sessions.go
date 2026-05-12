@@ -56,6 +56,12 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 		mcp.WithString("input", mcp.Required(), mcp.Description("Text to send to the session (a newline is NOT appended automatically)")),
 	), a.handleSessionSendInput)
 
+	a.addTool(s, mcp.NewTool("mux_session_send_turn",
+		mcp.WithDescription("Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden."),
+		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
+		mcp.WithString("text", mcp.Required(), mcp.Description("User-facing message body. Framing is applied per the session's caps.")),
+	), a.handleSessionSendTurn)
+
 	a.addTool(s, mcp.NewTool("mux_session_resize",
 		mcp.WithDescription("Resize the PTY terminal for a running session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
@@ -244,6 +250,27 @@ func (a *Adapter) handleSessionSendInput(_ context.Context, req mcp.CallToolRequ
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
 }
 
+func (a *Adapter) handleSessionSendTurn(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
+		return denied, nil
+	}
+	id := str(req, "session_id")
+	if id == "" {
+		return toolError("invalid_request", "session_id required"), nil
+	}
+	text := str(req, "text")
+	if text == "" {
+		return toolError("invalid_request", "text required"), nil
+	}
+	if err := a.svc.SendTurn(ctx, id, text); err != nil {
+		if isNotFound(err) {
+			return toolError("not_found", "session not found: "+id), nil
+		}
+		return toolError("internal_error", err.Error()), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
+}
+
 func (a *Adapter) handleSessionResize(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
 		return denied, nil
@@ -296,6 +323,8 @@ func (a *Adapter) handleSessionHealth(_ context.Context, req mcp.CallToolRequest
 		"provider_kind": result.ProviderKind,
 		"caps": map[string]any{
 			"pty":                 caps.PTY,
+			"streaming_stdio":     caps.StreamingStdio,
+			"jsonrpc_stdio":       caps.JsonRpcStdio, //nolint:staticcheck // mirrors lib's Caps.JsonRpcStdio field name
 			"resize":              caps.Resize,
 			"provider_session_id": caps.ProviderSessionID,
 			"checkpoint_resume":   caps.CheckpointResume,

@@ -83,6 +83,11 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Sweep stale sessions ONLY at daemon startup, never from short-
+		// lived subcommands (`mux mcp`, `mux agents`, etc.) — those may
+		// run concurrently with the daemon (e.g. as an MCP subprocess
+		// spawned by a session) and would clobber actively-tracked rows.
+		svc.ReconcileStaleState()
 
 		cfg, err := daemonConfigFromCatalog(svc.Catalog)
 		if err != nil {
@@ -188,6 +193,10 @@ func (a *serviceAdapter) WaitSession(ctx context.Context, id string) (int, error
 
 func (a *serviceAdapter) SendInput(id string, data []byte) error {
 	return a.svc.SendInput(id, data)
+}
+
+func (a *serviceAdapter) SendTurn(ctx context.Context, id, text string) error {
+	return a.svc.SendTurn(ctx, id, text)
 }
 
 func (a *serviceAdapter) ResizeSession(id string, rows, cols uint16) error {

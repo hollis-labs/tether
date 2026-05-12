@@ -28,6 +28,7 @@ type LaunchService interface {
 	StopSession(id string) error
 	WaitSession(ctx context.Context, id string) (int, error)
 	SendInput(id string, data []byte) error
+	SendTurn(ctx context.Context, id, text string) error
 	AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error
 	AttachedClients(id string) int
 	ResizeSession(id string, rows, cols uint16) error
@@ -103,6 +104,8 @@ type WaitResponse struct {
 // CapabilitiesDTO is the on-the-wire representation of agentsessions.Capabilities.
 type CapabilitiesDTO struct {
 	PTY               bool `json:"pty"`
+	StreamingStdio    bool `json:"streaming_stdio"`
+	JSONRPCStdio      bool `json:"jsonrpc_stdio"`
 	Resize            bool `json:"resize"`
 	ProviderSessionID bool `json:"provider_session_id"`
 	CheckpointResume  bool `json:"checkpoint_resume"`

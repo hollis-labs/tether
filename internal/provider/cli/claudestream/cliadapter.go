@@ -272,6 +272,19 @@ func (s *bootDirSession) Stop(ctx context.Context) error {
 	return err
 }
 
+// ProviderSessionID forwards to the wrapped Session's optional
+// SessionIDer when present. The embedded Session interface does not
+// include this method (it's an optional capability assertion), so we
+// can't rely on Go interface promotion — explicit forwarding is needed
+// so type-assertions like sess.(SessionIDer) succeed against the
+// wrapper.
+func (s *bootDirSession) ProviderSessionID() string {
+	if ider, ok := s.Session.(agentsessions.SessionIDer); ok {
+		return ider.ProviderSessionID()
+	}
+	return ""
+}
+
 // PlanScopedAdapter wraps a go-providers CLIAdapter so the catalog-
 // resolved binary path + prefix args stick. Detect returns the catalog's
 // binary unconditionally (catalog is the source of truth — env-var

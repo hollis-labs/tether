@@ -158,6 +158,9 @@ func (s *funcService) WaitSession(ctx context.Context, id string) (int, error) {
 	return s.waitFn(ctx, id)
 }
 func (s *funcService) SendInput(id string, data []byte) error { return s.inputFn(id, data) }
+func (s *funcService) SendTurn(_ context.Context, id, text string) error {
+	return s.inputFn(id, []byte(text))
+}
 func (s *funcService) AttachSession(ctx context.Context, id string, w io.Writer, _ int64) error {
 	return s.attachFn(ctx, id, w)
 }

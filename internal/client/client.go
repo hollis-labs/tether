@@ -308,6 +308,33 @@ func (c *Client) SendInput(ctx context.Context, id string, data []byte) error {
 	return readError(resp)
 }
 
+// SendTurn delivers a user message to the named session via the daemon's
+// /turn endpoint. The daemon applies lifecycle-aware framing — NDJSON
+// envelope for streaming-stdio, JSON-RPC turn/start for jsonrpc-stdio,
+// raw write for PTY. Prefer this over SendInput for long-lived agent
+// turns; SendInput stays for callers that own their own framing.
+func (c *Client) SendTurn(ctx context.Context, id, text string) error {
+	body, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/sessions/"+url.PathEscape(id)+"/turn", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
 // AttachSession opens a streaming GET and copies live PTY output to w until
 // ctx is canceled or the session exits (server closes the response).
 // Returns nil on clean EOF (session terminated); returns a wrapped ctx.Err

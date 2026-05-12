@@ -1,0 +1,25 @@
+id: codex-app-server
+type: cli
+command: codex
+args:
+  - app-server
+bootstrap:
+  # jsonrpc-stdio: codex `app-server` defaults to `--listen stdio://` and
+  # speaks JSON-RPC 2.0 over stdin/stdout. The same engine backs the
+  # official OpenAI VS Code extension. Thread state lives in-process
+  # until 30 min idle; disk rollouts allow cold-start via thread/resume.
+  # System context rides via the planted AGENTS.md from go-providers'
+  # BootDirSpec; user turns flow via service.SendTurn which performs
+  # lazy initialize + thread/start (caches threadId per session) then
+  # turn/start with the user input.
+  mode: jsonrpc-stdio
+  prompt_prefix: ""
+env:
+  mode: merge
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - OPENAI_API_KEY
+  redact:
+    - ANTHROPIC_API_KEY
