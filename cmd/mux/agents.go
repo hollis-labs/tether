@@ -67,7 +67,7 @@ var agentsCreateCmd = &cobra.Command{
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Errorf("agent already exists at %s — edit with `mux agents edit %s` (or remove the file first)", path, id)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return err
 		}
 		name := agentsCreateName
@@ -84,7 +84,7 @@ var agentsCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(path, body, 0o644); err != nil {
+		if err := os.WriteFile(path, body, 0o600); err != nil {
 			return err
 		}
 		fmt.Printf("wrote %s (%s layer)\n", path, layer.String())
@@ -138,7 +138,9 @@ var agentsShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		os.Stdout.Write(body)
+		if _, err := os.Stdout.Write(body); err != nil {
+			return err
+		}
 		return nil
 	},
 }
