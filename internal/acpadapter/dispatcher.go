@@ -40,6 +40,12 @@ type Dispatcher struct {
 	methodHandlers       map[string]HandlerFunc
 	notificationHandlers map[string]NotificationFunc
 
+	// inFlight tracks goroutines spawned for inbound request and
+	// notification handlers so Run() can drain them before returning
+	// on EOF. Without this drain, tests (and any caller using a
+	// finite input source) race against the handler write.
+	inFlight sync.WaitGroup
+
 	// outbound request correlation: outbound id → response chan.
 	// Outbound IDs use a separate counter from inbound to avoid
 	// collisions. They use negative integers (encoded as JSON numbers)
@@ -89,16 +95,28 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 		msg, err := d.r.Read()
 		if err != nil {
-			// EOF or transport error: terminate the dispatcher.
+			// EOF or transport error: drain in-flight handlers so
+			// their responses make it onto the wire before we exit
+			// (otherwise finite-input callers like tests race the
+			// goroutine), then terminate.
+			d.inFlight.Wait()
 			d.cancelPending(err)
 			return err
 		}
 
 		switch {
 		case msg.IsRequest():
-			go d.dispatchRequest(ctx, msg)
+			d.inFlight.Add(1)
+			go func() {
+				defer d.inFlight.Done()
+				d.dispatchRequest(ctx, msg)
+			}()
 		case msg.IsNotification():
-			go d.dispatchNotification(ctx, msg)
+			d.inFlight.Add(1)
+			go func() {
+				defer d.inFlight.Done()
+				d.dispatchNotification(ctx, msg)
+			}()
 		case msg.IsResponse():
 			d.dispatchResponse(msg)
 		default:
