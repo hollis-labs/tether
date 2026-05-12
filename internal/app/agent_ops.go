@@ -71,52 +71,90 @@ type LaunchOverride struct {
 // Returns an error when any of the parse / merge steps fails. The plan is
 // left in an undefined state on error — callers must abort.
 func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error {
+	effectiveAgent, err := s.resolveEffectiveAgent(plan, in)
+	if err != nil {
+		return err
+	}
+
+	bootProfile, err := loadBootProfile(in.BootProfileFile)
+	if err != nil {
+		return err
+	}
+
+	composedPrompt, err := s.composeBootPrompt(plan, effectiveAgent)
+	if err != nil {
+		return err
+	}
+
+	composedPrompt, err = applyOverride(plan, composedPrompt, in.Override)
+	if err != nil {
+		return err
+	}
+
+	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
+	applyMCPAllowlist(plan, bootProfile)
+
+	// BootPromptOverride wins last — explicit "give me exactly this prompt."
+	if in.BootPromptOverride != "" {
+		composedPrompt = in.BootPromptOverride
+	}
+	plan.BootPrompt = composedPrompt
+	return nil
+}
+
+// resolveEffectiveAgent starts from the catalog-resolved agent and applies the
+// Tier-2 file then inline merges (inline wins).
+func (s *Service) resolveEffectiveAgent(plan *launch.Plan, in CreateSessionInput) (config.Agent, error) {
 	baseAgent, ok := s.Catalog.Agents[plan.LogicalAgentID]
 	if !ok {
 		// The catalog should always have the agent the launch references;
 		// missing here means the launch resolver let through an inconsistent
 		// state. Treat as a hard error rather than silently falling back to
 		// an empty Agent — downstream code expects Permissions to be set.
-		return fmt.Errorf("agent %q referenced by launch %q not found in catalog", plan.LogicalAgentID, plan.LaunchID)
+		return config.Agent{}, fmt.Errorf("agent %q referenced by launch %q not found in catalog", plan.LogicalAgentID, plan.LaunchID)
 	}
-
 	effectiveAgent := baseAgent
 
-	// Field-merge from file (mid precedence).
 	if in.AgentFile != "" {
 		data, err := os.ReadFile(in.AgentFile) //nolint:gosec // G304: operator-provided path
 		if err != nil {
-			return fmt.Errorf("agent_file: read %s: %w", in.AgentFile, err)
+			return config.Agent{}, fmt.Errorf("agent_file: read %s: %w", in.AgentFile, err)
 		}
 		var fileAgent config.Agent
 		if err := yaml.Unmarshal(data, &fileAgent); err != nil {
-			return fmt.Errorf("agent_file: parse %s: %w", in.AgentFile, err)
+			return config.Agent{}, fmt.Errorf("agent_file: parse %s: %w", in.AgentFile, err)
 		}
 		mergeAgent(&effectiveAgent, fileAgent)
 	}
 
-	// Field-merge from inline JSON (highest precedence).
 	if in.AgentInline != "" {
 		var inlineAgent config.Agent
 		if err := json.Unmarshal([]byte(in.AgentInline), &inlineAgent); err != nil {
-			return fmt.Errorf("agent_inline: parse: %w", err)
+			return config.Agent{}, fmt.Errorf("agent_inline: parse: %w", err)
 		}
 		mergeAgent(&effectiveAgent, inlineAgent)
 	}
+	return effectiveAgent, nil
+}
 
-	// Resolve effective boot profile (file-only; no inline). Used today for
-	// the MCP allowlist; future fields can layer on without touching callers.
-	var bootProfile bootgen.Profile
-	if in.BootProfileFile != "" {
-		p, err := bootgen.LoadProfile(in.BootProfileFile)
-		if err != nil {
-			return fmt.Errorf("boot_profile: %w", err)
-		}
-		bootProfile = p
+// loadBootProfile loads the caller-provided boot profile (file-only; no
+// inline). Empty path returns the zero-value Profile and no error.
+func loadBootProfile(path string) (bootgen.Profile, error) {
+	if path == "" {
+		return bootgen.Profile{}, nil
 	}
+	p, err := bootgen.LoadProfile(path)
+	if err != nil {
+		return bootgen.Profile{}, fmt.Errorf("boot_profile: %w", err)
+	}
+	return p, nil
+}
 
-	// Compose the BootPrompt — append SystemPrompt / AgentPrompt / compiled
-	// skills onto the catalog-resolved boot prompt.
+// composeBootPrompt assembles the catalog boot prompt + SystemPrompt +
+// AgentPrompt + provider-compiled skills sections into a single composed
+// prompt. Returns the composed string; skill compilation errors surface
+// unless they're "unsupported provider" (skip silently).
+func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Agent) (string, error) {
 	var sb strings.Builder
 	if plan.BootPrompt != "" {
 		sb.WriteString(plan.BootPrompt)
@@ -151,17 +189,12 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	// for Claude, AGENTS.md for Codex). Today it joins as inline sections.
 	skillSet, err := s.loadEffectiveSkills(effectiveAgent.Skills)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(skillSet) > 0 {
 		compiled, cerr := skills.CompileForProvider(plan.ProviderID, skillSet)
-		if cerr != nil {
-			// Unknown providers are not a hard error here; skip silently so
-			// non-Claude/Codex sessions still launch. Hard-fail only on
-			// genuine compilation faults (none today, but keep the slot).
-			if !isUnsupportedProvider(cerr) {
-				return fmt.Errorf("compile skills for %s: %w", plan.ProviderID, cerr)
-			}
+		if cerr != nil && !isUnsupportedProvider(cerr) {
+			return "", fmt.Errorf("compile skills for %s: %w", plan.ProviderID, cerr)
 		}
 		for _, f := range compiled {
 			if sb.Len() > 0 {
@@ -174,57 +207,63 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 			}
 		}
 	}
+	return sb.String(), nil
+}
 
-	composedPrompt := sb.String()
-
-	// Apply override JSON — system_prompt fully replaces the composed prompt;
-	// env merges into plan.Env so the existing env-mode pipeline picks it up.
-	if in.Override != "" {
-		var ov LaunchOverride
-		if err := json.Unmarshal([]byte(in.Override), &ov); err != nil {
-			return fmt.Errorf("override: parse: %w", err)
-		}
-		if ov.SystemPrompt != "" {
-			composedPrompt = ov.SystemPrompt
-		}
-		if len(ov.Env) > 0 {
-			if plan.Env == nil {
-				plan.Env = map[string]string{}
-			}
-			for k, v := range ov.Env {
-				plan.Env[k] = v
-			}
-		}
+// applyOverride parses the caller's JSON override and applies it. SystemPrompt
+// fully replaces the composed prompt; Env merges into plan.Env. Empty JSON is
+// a no-op returning the composed prompt unchanged.
+func applyOverride(plan *launch.Plan, composedPrompt, overrideJSON string) (string, error) {
+	if overrideJSON == "" {
+		return composedPrompt, nil
 	}
-
-	// Apply provider-specific overrides from the agent definition.
-	if po, ok := effectiveAgent.ProviderOverrides[plan.ProviderID]; ok {
+	var ov LaunchOverride
+	if err := json.Unmarshal([]byte(overrideJSON), &ov); err != nil {
+		return "", fmt.Errorf("override: parse: %w", err)
+	}
+	if ov.SystemPrompt != "" {
+		composedPrompt = ov.SystemPrompt
+	}
+	if len(ov.Env) > 0 {
 		if plan.Env == nil {
 			plan.Env = map[string]string{}
 		}
-		for k, v := range po.Env {
+		for k, v := range ov.Env {
 			plan.Env[k] = v
 		}
-		if len(po.ExtraArgs) > 0 {
-			plan.Args = append(plan.Args, po.ExtraArgs...)
-		}
 	}
+	return composedPrompt, nil
+}
 
-	// MUX_MCP_SERVERS: boot profile (this call) > catalog (launch/project).
-	if len(bootProfile.MCPServers) > 0 {
-		if plan.Env == nil {
-			plan.Env = map[string]string{}
-		}
-		plan.Env["MUX_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
+// applyProviderOverrides applies the per-provider env / extra-args block from
+// the resolved agent. No-op when the plan's ProviderID has no override entry.
+func applyProviderOverrides(plan *launch.Plan, overrides map[string]config.ProviderOverride) {
+	po, ok := overrides[plan.ProviderID]
+	if !ok {
+		return
 	}
-
-	// BootPromptOverride wins last — explicit "give me exactly this prompt."
-	if in.BootPromptOverride != "" {
-		composedPrompt = in.BootPromptOverride
+	if plan.Env == nil {
+		plan.Env = map[string]string{}
 	}
+	for k, v := range po.Env {
+		plan.Env[k] = v
+	}
+	if len(po.ExtraArgs) > 0 {
+		plan.Args = append(plan.Args, po.ExtraArgs...)
+	}
+}
 
-	plan.BootPrompt = composedPrompt
-	return nil
+// applyMCPAllowlist threads the boot profile's MCP allowlist into MUX_MCP_SERVERS.
+// Precedence: boot profile (this call) > catalog (launch/project). No-op when
+// the boot profile is empty.
+func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
+	if len(bootProfile.MCPServers) == 0 {
+		return
+	}
+	if plan.Env == nil {
+		plan.Env = map[string]string{}
+	}
+	plan.Env["MUX_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
 }
 
 // loadEffectiveSkills resolves a list of skill IDs against the layered
