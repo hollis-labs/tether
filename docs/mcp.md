@@ -427,7 +427,7 @@ still-open or pre-tracking attachments.
 
 ```json
 // Response
-{ "ok": true, "attachments": [{"id":"...","session_id":"...","client_kind":"tui","attached_at":"...","detached_at":"..."}], "count": 1 }
+{ "ok": true, "attachments": [{"id":"...","session_id":"...","client_kind":"cli","attached_at":"...","detached_at":"..."}], "count": 1 }
 ```
 
 #### `mux_proxy_events`
