@@ -209,23 +209,26 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 
 	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
 
+	startOpts := agentsessions.StartOptions{
+		Workdir:          plan.RepoRoot,
+		WorkspaceDir:     ws.Root,
+		LogPath:          ws.LogPath,
+		BootPrompt:       plan.BootPrompt,
+		BootMode:         plan.BootMode,
+		Env:              provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
+		Profile:          profile,
+		SessionIDPreset:  sessionIDPreset,
+		OnSessionID:      onSessionID,
+		AttachEnabled:    true,
+		AutoPlantBootDir: true,
+		OnBootDirPlanted: onBootDirPlanted,
+	}
+	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
+
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
 		Runtime: rt,
-		Options: agentsessions.StartOptions{
-			Workdir:          plan.RepoRoot,
-			WorkspaceDir:     ws.Root,
-			LogPath:          ws.LogPath,
-			BootPrompt:       plan.BootPrompt,
-			BootMode:         plan.BootMode,
-			Env:              provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
-			Profile:          profile,
-			SessionIDPreset:  sessionIDPreset,
-			OnSessionID:      onSessionID,
-			AttachEnabled:    true,
-			AutoPlantBootDir: true,
-			OnBootDirPlanted: onBootDirPlanted,
-		},
+		Options: startOpts,
 		SessionMeta: map[string]string{
 			"logical_agent_id": plan.LogicalAgentID,
 			"project_id":       plan.ProjectID,
@@ -252,6 +255,20 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return s.Manager.WaitSession(ctx, sessionID)
 		},
 	}, nil
+}
+
+// deferPTYStdinBootPrompt avoids a PTY launch deadlock in go-agent-sessions
+// v0.9.x: that runtime writes BootPrompt to the PTY before its reader starts,
+// so large generated boot prompts can fill the PTY input buffer and block
+// Runtime.Start forever. AutoFireFirstTurn runs after the reader is active.
+func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsessions.StartOptions) {
+	if opts == nil || !caps.PTY || opts.BootMode != "stdin" || opts.BootPrompt == "" {
+		return
+	}
+	opts.AutoFireFirstTurn = true
+	opts.FirstTurnPayload = []byte(opts.BootPrompt)
+	opts.BootPrompt = ""
+	opts.BootMode = ""
 }
 
 // ListSessions delegates to the store with the given list filter.
