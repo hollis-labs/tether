@@ -10,9 +10,13 @@ import (
 // participates in the CLI session-ID continuity mechanism (preset +
 // OnSessionID callback). Adapters in this set use --resume or --session
 // flags to maintain conversation continuity across daemon restarts.
+//
+// Interactive PTY launches intentionally do not participate. A stale
+// stored Claude session id makes `claude --resume <id>` exit before the
+// user ever sees the TUI; explicit TUI resume needs its own launch path.
 func providerHasSessionIDContinuity(providerID string) bool {
 	switch providerID {
-	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode":
+	case "claude-code", "claude-stream", "claude-goprovider", "opencode":
 		return true
 	}
 	return false

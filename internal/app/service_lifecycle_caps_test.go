@@ -124,6 +124,17 @@ func TestRuntimeFactoryForProvider_UnsupportedCombination(t *testing.T) {
 	}
 }
 
+func TestProviderHasSessionIDContinuity_ExcludesClaudePTY(t *testing.T) {
+	if providerHasSessionIDContinuity("claude-pty") {
+		t.Fatal("claude-pty should not inherit stored --resume session ids")
+	}
+	for _, providerID := range []string{"claude-code", "claude-stream", "claude-goprovider", "opencode"} {
+		if !providerHasSessionIDContinuity(providerID) {
+			t.Fatalf("%s should keep session-id continuity", providerID)
+		}
+	}
+}
+
 func TestDeferPTYStdinBootPrompt(t *testing.T) {
 	opts := agentsessions.StartOptions{
 		BootPrompt: "large generated boot prompt\n",
