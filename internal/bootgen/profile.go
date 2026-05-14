@@ -9,10 +9,11 @@
 //
 // Slot source types:
 //
-//	static      — read one or more files from disk (supports glob + directories)
-//	skill_index — list skill pointers from layered discovery
-//	cmd         — run a shell command and capture stdout
-//	http        — GET a URL and use the response body
+//	static       — read one or more files from disk (supports glob + directories)
+//	role_summary — summarize a role file and point to its full path
+//	skill_index  — list skill pointers from layered discovery
+//	cmd          — run a shell command and capture stdout
+//	http         — GET a URL and use the response body
 package bootgen
 
 import (
@@ -86,7 +87,7 @@ type Identity struct {
 
 // SlotSource describes how to populate a single named slot.
 type SlotSource struct {
-	// Type is "static", "skill_index", "cmd", or "http".
+	// Type is "static", "role_summary", "skill_index", "cmd", or "http".
 	Type string `yaml:"type"`
 
 	// Static source fields.
@@ -206,6 +207,8 @@ func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (strin
 	switch src.Type {
 	case "static":
 		return resolveStatic(src, catalogRoot)
+	case "role_summary":
+		return resolveRoleSummary(src, catalogRoot)
 	case "skill_index":
 		return resolveSkillIndex(src, catalogRoot)
 	case "cmd":
@@ -215,7 +218,7 @@ func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (strin
 	case "":
 		return "", fmt.Errorf("slot source missing type")
 	default:
-		return "", fmt.Errorf("unknown source type %q (supported: static, skill_index, cmd, http)", src.Type)
+		return "", fmt.Errorf("unknown source type %q (supported: static, role_summary, skill_index, cmd, http)", src.Type)
 	}
 }
 
@@ -277,6 +280,126 @@ func resolveStatic(src SlotSource, catalogRoot string) (string, error) {
 		parts = append(parts, fmt.Sprintf("### %s\n\n%s", filepath.Base(m), string(b)))
 	}
 	return strings.Join(parts, "\n\n---\n\n"), nil
+}
+
+func resolveRoleSummary(src SlotSource, catalogRoot string) (string, error) {
+	path := resolvePath(src.Path, catalogRoot)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("role_summary path must be a file: %s", path)
+	}
+	b, err := os.ReadFile(path) //nolint:gosec
+	if err != nil {
+		return "", err
+	}
+
+	title, mission := summarizeRoleMarkdown(string(b), path)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "### Role Identity\n\n")
+	fmt.Fprintf(&sb, "- Role: %s\n", title)
+	fmt.Fprintf(&sb, "- Full role file: `%s`\n\n", path)
+	fmt.Fprintf(&sb, "%s", mission)
+	return sb.String(), nil
+}
+
+func summarizeRoleMarkdown(markdown, path string) (string, string) {
+	lines := stripYAMLFrontMatter(strings.Split(markdown, "\n"))
+	title := firstMarkdownHeading(lines)
+	if title == "" {
+		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	title = strings.TrimSpace(strings.TrimPrefix(title, "Role:"))
+	mission := paragraphAfterHeading(lines, "mission", "purpose")
+	if mission == "" {
+		mission = firstMarkdownParagraph(lines)
+	}
+	if mission == "" {
+		mission = "See the full role file for mission details."
+	}
+	return title, mission
+}
+
+func stripYAMLFrontMatter(lines []string) []string {
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return lines
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return lines[i+1:]
+		}
+	}
+	return lines
+}
+
+func firstMarkdownHeading(lines []string) string {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			return strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		}
+	}
+	return ""
+}
+
+func paragraphAfterHeading(lines []string, headingWords ...string) string {
+	for i, line := range lines {
+		heading := strings.TrimSpace(line)
+		if !strings.HasPrefix(heading, "#") {
+			continue
+		}
+		heading = strings.ToLower(strings.TrimSpace(strings.TrimLeft(heading, "#")))
+		for _, word := range headingWords {
+			if strings.Contains(heading, word) {
+				return paragraphFrom(lines[i+1:])
+			}
+		}
+	}
+	return ""
+}
+
+func firstMarkdownParagraph(lines []string) string {
+	return paragraphFrom(lines)
+}
+
+func paragraphFrom(lines []string) string {
+	var parts []string
+	inCodeBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			continue
+		}
+		if trimmed == "" {
+			if len(parts) > 0 {
+				break
+			}
+			continue
+		}
+		if isStructuralMarkdownLine(trimmed) {
+			if len(parts) > 0 {
+				break
+			}
+			continue
+		}
+		parts = append(parts, trimmed)
+	}
+	return strings.Join(parts, " ")
+}
+
+func isStructuralMarkdownLine(line string) bool {
+	return strings.HasPrefix(line, "#") ||
+		strings.HasPrefix(line, "- ") ||
+		strings.HasPrefix(line, "* ") ||
+		strings.HasPrefix(line, ">") ||
+		strings.HasPrefix(line, "|") ||
+		strings.HasPrefix(line, "```")
 }
 
 func resolveCmd(ctx context.Context, src SlotSource) (string, error) {
@@ -386,4 +509,12 @@ func expandPath(p string) string {
 		}
 	}
 	return os.ExpandEnv(p)
+}
+
+func resolvePath(path, catalogRoot string) string {
+	path = expandPath(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(catalogRoot, path)
+	}
+	return path
 }

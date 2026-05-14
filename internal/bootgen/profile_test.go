@@ -78,6 +78,86 @@ func TestGenerate_StaticSlot(t *testing.T) {
 	}
 }
 
+func TestGenerate_RoleSummarySlot(t *testing.T) {
+	dir := t.TempDir()
+	rolePath := filepath.Join(dir, "backend.md")
+	if err := os.WriteFile(rolePath, []byte(`# Backend Engineer
+
+## Mission
+
+Build compact, reliable backend changes that respect existing interfaces and leave enough context for the next operator.
+
+## Detailed Operating Rules
+
+- This line should stay in the full role file.
+- This one should not be inlined either.
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := bootgen.Profile{
+		ID: "test.role-summary.main",
+		Slots: map[string]bootgen.SlotSource{
+			"agent": {Type: "role_summary", Path: rolePath},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"### Role Identity",
+		"- Role: Backend Engineer",
+		"- Full role file: `" + rolePath + "`",
+		"Build compact, reliable backend changes",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("role summary missing %q in:\n%s", want, out)
+		}
+	}
+	for _, leaked := range []string{"Detailed Operating Rules", "This line should stay in the full role file"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("role summary leaked full role content %q in:\n%s", leaked, out)
+		}
+	}
+}
+
+func TestGenerate_RoleSummarySlotTrimsRoleHeadingPrefix(t *testing.T) {
+	dir := t.TempDir()
+	rolePath := filepath.Join(dir, "worker.md")
+	if err := os.WriteFile(rolePath, []byte(`# Role: Backend
+
+## Identity
+
+You are a backend engineer focused on APIs, services, data pipelines, and system reliability.
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := bootgen.Profile{
+		ID: "test.role-summary-role-prefix.main",
+		Slots: map[string]bootgen.SlotSource{
+			"agent": {Type: "role_summary", Path: rolePath},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "- Role: Backend") {
+		t.Fatalf("role summary did not normalize role heading:\n%s", out)
+	}
+	if strings.Contains(out, "- Role: Role: Backend") {
+		t.Fatalf("role summary duplicated role prefix:\n%s", out)
+	}
+}
+
 func TestGenerate_CmdSlot(t *testing.T) {
 	p := bootgen.Profile{
 		ID: "test.cmd.main",
