@@ -18,10 +18,10 @@ func providerRecordsSessionID(providerID string) bool {
 	return false
 }
 
-// resolveAPIKeyHelperPath returns an absolute path to the mux-apikey-helper
+// ResolveAPIKeyHelperPath returns an absolute path to the mux-apikey-helper
 // binary. Resolution order: $MUX_APIKEY_HELPER env override, then a sibling
 // next to the mux binary, then $PATH lookup. Returns empty when not found.
-func resolveAPIKeyHelperPath() string {
+func ResolveAPIKeyHelperPath() string {
 	if override := os.Getenv("MUX_APIKEY_HELPER"); override != "" {
 		if abs, err := filepath.Abs(override); err == nil {
 			override = abs
@@ -47,6 +47,8 @@ func resolveAPIKeyHelperPath() string {
 	}
 	return ""
 }
+
+func resolveAPIKeyHelperPath() string { return ResolveAPIKeyHelperPath() }
 
 // isExecutableFile reports whether path is a regular file with any execute
 // bit set. Used by API key helper resolution to skip non-executable matches.

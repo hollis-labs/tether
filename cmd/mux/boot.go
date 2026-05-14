@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/bootexec"
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -124,30 +128,144 @@ Run 'mux list-boot-profiles' to see which profiles support booting.`,
 	},
 }
 
+var bootExecCmd = &cobra.Command{
+	Use:   "boot-exec <profile_id>",
+	Short: "Generate boot prompt and run the provider CLI directly",
+	Long: `Generate a dynamic boot prompt from the named profile, materialize the
+provider boot files, and run the underlying Claude CLI directly in the current
+terminal. This bypasses Tether session creation, daemon attach, and log replay.
+
+  mux boot-exec torque.engineer.tui
+
+The profile must have a 'launch:' field pointing to a catalog launch ID.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		profileID := args[0]
+
+		p, profilePath, err := loadBootProfileFile(profileID)
+		if err != nil {
+			return err
+		}
+		if p.Launch == "" {
+			return fmt.Errorf("profile %q has no 'launch:' field — add one pointing to a catalog launch ID", profileID)
+		}
+
+		catalogRoot := expandCatalogPath()
+		fmt.Fprintf(cmd.ErrOrStderr(), "generating boot prompt for %s...\n", profileID)
+		var buf bytes.Buffer
+		if err := bootgen.Generate(cmd.Context(), p, catalogRoot, &buf); err != nil {
+			return fmt.Errorf("generate boot prompt: %w", err)
+		}
+
+		cat, err := config.Load(catalogRoot)
+		if err != nil {
+			return err
+		}
+		if err := cat.Validate(); err != nil {
+			return err
+		}
+		svc := &app.Service{CatalogRoot: catalogRoot, Catalog: cat}
+		plan, err := svc.BuildLaunchPlan(app.CreateSessionInput{
+			LaunchID:           p.Launch,
+			BootPromptOverride: buf.String(),
+			BootProfileFile:    profilePath,
+		})
+		if err != nil {
+			return err
+		}
+
+		muxCommand := ""
+		if exe, err := os.Executable(); err == nil && exe != "" {
+			muxCommand = exe
+		}
+		muxEnv := muxEnvFromPlan(plan.Env)
+		tempRoot := config.Expand(cat.Global.Catalog.Defaults.TempRoot)
+		if tempRoot != "" {
+			tempRoot = filepath.Join(tempRoot, "boot-exec")
+		}
+
+		prepared, err := bootexec.PrepareClaudeTUI(plan, bootexec.Options{
+			BootDirRoot:      tempRoot,
+			APIKeyHelperPath: app.ResolveAPIKeyHelperPath(),
+			MuxCommand:       muxCommand,
+			MuxArgs:          []string{"--catalog", catalogRoot, "mcp", "--proxy"},
+			MuxEnv:           muxEnv,
+			ParentEnv:        os.Environ(),
+		})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(prepared.BootDir) }()
+
+		fmt.Fprintf(cmd.ErrOrStderr(), "boot dir: %s\n", prepared.BootDir)
+		fmt.Fprintf(cmd.ErrOrStderr(), "launching %s directly...\n", prepared.Command)
+		return runPreparedCLI(cmd, prepared)
+	},
+}
+
 // loadBootProfile is a shared helper used by generate-boot and boot commands.
 func loadBootProfile(profileID string) (bootgen.Profile, error) {
+	p, _, err := loadBootProfileFile(profileID)
+	return p, err
+}
+
+func loadBootProfileFile(profileID string) (bootgen.Profile, string, error) {
 	profilesDir := filepath.Join(config.Expand(catalogPath), "boot-profiles")
-	profiles, err := bootgen.LoadProfiles(profilesDir)
+	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
-		return bootgen.Profile{}, fmt.Errorf("load boot profiles: %w", err)
-	}
-	p, ok := profiles[profileID]
-	if !ok {
-		available := make([]string, 0, len(profiles))
-		for id := range profiles {
-			available = append(available, id)
+		if errors.Is(err, os.ErrNotExist) {
+			return bootgen.Profile{}, "", fmt.Errorf("no boot profiles found in %s", profilesDir)
 		}
-		if len(available) == 0 {
-			return bootgen.Profile{}, fmt.Errorf("no boot profiles found in %s", profilesDir)
-		}
-		return bootgen.Profile{}, fmt.Errorf("boot profile %q not found\n\nAvailable:\n  %s",
-			profileID, strings.Join(available, "\n  "))
+		return bootgen.Profile{}, "", fmt.Errorf("load boot profiles: %w", err)
 	}
-	return p, nil
+	available := []string{}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		path := filepath.Join(profilesDir, e.Name())
+		p, err := bootgen.LoadProfile(path)
+		if err != nil {
+			return bootgen.Profile{}, "", fmt.Errorf("load boot profiles: %w", err)
+		}
+		available = append(available, p.ID)
+		if p.ID == profileID {
+			return p, path, nil
+		}
+	}
+	if len(available) == 0 {
+		return bootgen.Profile{}, "", fmt.Errorf("no boot profiles found in %s", profilesDir)
+	}
+	return bootgen.Profile{}, "", fmt.Errorf("boot profile %q not found\n\nAvailable:\n  %s",
+		profileID, strings.Join(available, "\n  "))
 }
 
 // expandCatalogPath returns the absolute catalog root with ~ expanded.
 func expandCatalogPath() string { return config.Expand(catalogPath) }
+
+func muxEnvFromPlan(env map[string]string) []string {
+	if env == nil || env["MUX_MCP_SERVERS"] == "" {
+		return nil
+	}
+	return []string{"MUX_MCP_SERVERS=" + env["MUX_MCP_SERVERS"]}
+}
+
+func runPreparedCLI(cmd *cobra.Command, prepared *bootexec.Prepared) error {
+	child := exec.CommandContext(cmd.Context(), prepared.Command, prepared.Args...) //nolint:gosec // command comes from operator-controlled catalog
+	child.Dir = prepared.Dir
+	child.Env = prepared.Env
+	child.Stdin = os.Stdin
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+	if err := child.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+			os.Exit(exitErr.ExitCode())
+		}
+		return err
+	}
+	return nil
+}
 
 func init() {
 	bootPromptsCmd.AddCommand(generateBootCmd, listBootProfilesCmd)
