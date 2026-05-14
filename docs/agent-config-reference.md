@@ -56,7 +56,7 @@ id: my-agent.research.main
 display_name: "My Agent — Research"
 launch: my-agent-research-launch   # optional, catalog launch ID
 identity: { ... }                  # Agent Identity Model fields (see internal/bootgen/profile.go)
-slots: { ... }                     # boot prompt slot sources (static / cmd / http)
+slots: { ... }                     # boot prompt slot sources (static / skill_index / cmd / http)
 mcp_servers: [vanta, hadron]       # optional v005-08 — MCP allowlist for this profile
 ```
 

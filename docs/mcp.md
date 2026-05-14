@@ -215,6 +215,30 @@ skill locations:
 }
 ```
 
+#### `mux_skill_list`
+List every skill visible through the same resolver used by `mux_skill_get`.
+Returns metadata only; call `mux_skill_get` to load the full body.
+
+Read-only; no auth required.
+
+```json
+// Response
+{
+  "ok": true,
+  "items": [
+    {
+      "id": "refactor-go",
+      "name": "Refactor Go",
+      "description": "Apply Go refactoring patterns.",
+      "triggers": ["refactor", "cleanup"],
+      "path": "/home/user/.nanite/skills/refactor-go.md",
+      "layer": "legacy-nanite"
+    }
+  ],
+  "meta": { "returned": 1 }
+}
+```
+
 ---
 
 ### Sessions
@@ -387,7 +411,9 @@ Cancel a pending message.
 #### `mux_boot_generate`
 Generate a boot prompt for an agent profile and return it as a string. The
 profile YAML in `<catalog>/boot-profiles/<id>.yaml` defines how to assemble
-slot content from static files, shell commands, and HTTP endpoints.
+slot content from static files, skill indexes, shell commands, and HTTP
+endpoints. Use `type: skill_index` for the `skills` slot to emit compact
+`/skill-id — description` pointers instead of inlining full skill bodies.
 
 Read-only; no auth required.
 

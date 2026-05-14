@@ -9,9 +9,10 @@
 //
 // Slot source types:
 //
-//	static — read one or more files from disk (supports glob + directories)
-//	cmd    — run a shell command and capture stdout
-//	http   — GET a URL and use the response body
+//	static      — read one or more files from disk (supports glob + directories)
+//	skill_index — list skill pointers from layered discovery
+//	cmd         — run a shell command and capture stdout
+//	http        — GET a URL and use the response body
 package bootgen
 
 import (
@@ -30,6 +31,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/skills"
 	"gopkg.in/yaml.v3"
 )
 
@@ -84,7 +86,7 @@ type Identity struct {
 
 // SlotSource describes how to populate a single named slot.
 type SlotSource struct {
-	// Type is "static", "cmd", or "http".
+	// Type is "static", "skill_index", "cmd", or "http".
 	Type string `yaml:"type"`
 
 	// Static source fields.
@@ -204,6 +206,8 @@ func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (strin
 	switch src.Type {
 	case "static":
 		return resolveStatic(src, catalogRoot)
+	case "skill_index":
+		return resolveSkillIndex(src, catalogRoot)
 	case "cmd":
 		return resolveCmd(ctx, src)
 	case "http":
@@ -211,8 +215,32 @@ func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (strin
 	case "":
 		return "", fmt.Errorf("slot source missing type")
 	default:
-		return "", fmt.Errorf("unknown source type %q (supported: static, cmd, http)", src.Type)
+		return "", fmt.Errorf("unknown source type %q (supported: static, skill_index, cmd, http)", src.Type)
 	}
+}
+
+func resolveSkillIndex(src SlotSource, catalogRoot string) (string, error) {
+	workingDir, _ := os.Getwd()
+	all, err := skills.DiscoverLayered(catalogRoot, workingDir)
+	if err != nil {
+		return "", err
+	}
+	limit := src.Limit
+	if limit <= 0 || limit > len(all) {
+		limit = len(all)
+	}
+	var lines []string
+	for _, s := range all[:limit] {
+		description := strings.TrimSpace(s.Skill.Description)
+		if description == "" {
+			description = strings.TrimSpace(s.Skill.Name)
+		}
+		if description == "" {
+			description = "No description"
+		}
+		lines = append(lines, fmt.Sprintf("/%s — %s", s.Skill.ID, description))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func resolveStatic(src SlotSource, catalogRoot string) (string, error) {

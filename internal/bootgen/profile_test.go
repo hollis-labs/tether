@@ -143,6 +143,53 @@ func TestGenerate_DirectorySlot(t *testing.T) {
 	}
 }
 
+func TestGenerate_SkillIndexSlot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeBootgenSkillFixture(t, dir, "plan", `---
+id: plan
+name: Plan
+description: Plan work before editing.
+---
+
+This body should not be in the boot prompt.
+`)
+	writeBootgenSkillFixture(t, dir, "refactor-go", `---
+id: refactor-go
+name: Refactor Go
+description: Apply Go refactoring patterns.
+---
+
+Nor should this body.
+`)
+
+	p := bootgen.Profile{
+		ID: "test.skill-index.main",
+		Slots: map[string]bootgen.SlotSource{
+			"skills": {Type: "skill_index"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"/plan — Plan work before editing.",
+		"/refactor-go — Apply Go refactoring patterns.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skill index missing %q in:\n%s", want, out)
+		}
+	}
+	for _, body := range []string{"This body should not be in the boot prompt.", "Nor should this body."} {
+		if strings.Contains(out, body) {
+			t.Errorf("skill index leaked body %q in:\n%s", body, out)
+		}
+	}
+}
+
 func TestGenerate_HTTPSlot_BodyCap(t *testing.T) {
 	// Server returns 8 MiB of bytes; bootgen caps http slot bodies at 4 MiB.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -171,5 +218,16 @@ func TestGenerate_HTTPSlot_BodyCap(t *testing.T) {
 	}
 	if !strings.Contains(out, "slot cap") {
 		t.Errorf("expected slot-cap mention in failure inline; got: %s", out)
+	}
+}
+
+func writeBootgenSkillFixture(t *testing.T, root, id, body string) {
+	t.Helper()
+	path := filepath.Join(root, "skills", id+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

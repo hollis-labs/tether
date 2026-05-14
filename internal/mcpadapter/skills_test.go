@@ -13,6 +13,7 @@ import (
 )
 
 func TestSkillTool_LoadsSkillByID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 	writeSkillFixture(t, a.svc.CatalogRoot, "refactor-go", `---
@@ -44,7 +45,51 @@ Prefer small, tested changes.
 	}
 }
 
+func TestSkillTool_ListsSkills(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newTestAdapter(t)
+	a.svc.CatalogRoot = t.TempDir()
+	writeSkillFixture(t, a.svc.CatalogRoot, "refactor-go", `---
+id: refactor-go
+name: Refactor Go
+description: Apply Go refactoring patterns.
+triggers: [refactor, cleanup]
+---
+
+Prefer small, tested changes.
+`)
+	writeSkillFixture(t, a.svc.CatalogRoot, "plan", `---
+id: plan
+name: Plan
+description: Plan work before editing.
+---
+
+Plan first.
+`)
+
+	res := callSkillTool(t, a, "mux_skill_list", nil)
+	if res.IsError {
+		t.Fatalf("mux_skill_list returned error: %s", textOf(res))
+	}
+	body := parseToolJSON(t, res)
+	items, ok := body["items"].([]any)
+	if !ok {
+		t.Fatalf("items = %T; want []any", body["items"])
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d; want 2 (%v)", len(items), body["items"])
+	}
+	first := items[0].(map[string]any)
+	if first["id"] != "plan" {
+		t.Errorf("items sorted by id; first id = %v", first["id"])
+	}
+	if _, hasBody := first["body"]; hasBody {
+		t.Errorf("mux_skill_list should not return skill body: %v", first)
+	}
+}
+
 func TestSkillTool_AcceptsSlashPrefixedID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 	writeSkillFixture(t, a.svc.CatalogRoot, "plan", "---\nid: plan\nname: Plan\n---\nPlan first.\n")
@@ -60,6 +105,7 @@ func TestSkillTool_AcceptsSlashPrefixedID(t *testing.T) {
 }
 
 func TestSkillTool_RejectsPathTraversal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 
@@ -73,6 +119,7 @@ func TestSkillTool_RejectsPathTraversal(t *testing.T) {
 }
 
 func TestSkillTool_MissingSkillReturnsNotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 
@@ -102,15 +149,22 @@ func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
+	found := map[string]bool{}
 	for _, tool := range resp.Tools {
-		if tool.Name == "mux_skill_get" {
-			return
+		found[tool.Name] = true
+	}
+	for _, name := range []string{"mux_skill_get", "mux_skill_list"} {
+		if !found[name] {
+			t.Fatalf("%s tool was not registered", name)
 		}
 	}
-	t.Fatal("mux_skill_get tool was not registered")
 }
 
 func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallToolResult {
+	return callSkillTool(t, a, "mux_skill_get", args)
+}
+
+func callSkillTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
 	a.registerSkillTools(s)
@@ -124,7 +178,7 @@ func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallTo
 		t.Fatalf("Initialize: %v", err)
 	}
 	req := mcp.CallToolRequest{}
-	req.Params.Name = "mux_skill_get"
+	req.Params.Name = name
 	req.Params.Arguments = args
 	res, err := c.CallTool(context.Background(), req)
 	if err != nil {
