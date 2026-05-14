@@ -25,9 +25,9 @@ triggers: [refactor, cleanup]
 Prefer small, tested changes.
 `)
 
-	res := callSkillTool(t, a, map[string]any{"skill_id": "refactor-go"})
+	res := callSkillGetTool(t, a, map[string]any{"skill_id": "refactor-go"})
 	if res.IsError {
-		t.Fatalf("Skill returned error: %s", textOf(res))
+		t.Fatalf("mux_skill_get returned error: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	if body["id"] != "refactor-go" {
@@ -49,9 +49,9 @@ func TestSkillTool_AcceptsSlashPrefixedID(t *testing.T) {
 	a.svc.CatalogRoot = t.TempDir()
 	writeSkillFixture(t, a.svc.CatalogRoot, "plan", "---\nid: plan\nname: Plan\n---\nPlan first.\n")
 
-	res := callSkillTool(t, a, map[string]any{"skill_id": "/plan"})
+	res := callSkillGetTool(t, a, map[string]any{"skill_id": "/plan"})
 	if res.IsError {
-		t.Fatalf("Skill returned error for slash-prefixed id: %s", textOf(res))
+		t.Fatalf("mux_skill_get returned error for slash-prefixed id: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	if body["id"] != "plan" {
@@ -63,7 +63,7 @@ func TestSkillTool_RejectsPathTraversal(t *testing.T) {
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 
-	res := callSkillTool(t, a, map[string]any{"skill_id": "../secret"})
+	res := callSkillGetTool(t, a, map[string]any{"skill_id": "../secret"})
 	if !res.IsError {
 		t.Fatalf("expected error for path traversal, got %s", textOf(res))
 	}
@@ -76,7 +76,7 @@ func TestSkillTool_MissingSkillReturnsNotFound(t *testing.T) {
 	a := newTestAdapter(t)
 	a.svc.CatalogRoot = t.TempDir()
 
-	res := callSkillTool(t, a, map[string]any{"skill_id": "missing"})
+	res := callSkillGetTool(t, a, map[string]any{"skill_id": "missing"})
 	if !res.IsError {
 		t.Fatalf("expected missing skill error, got %s", textOf(res))
 	}
@@ -103,14 +103,14 @@ func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	for _, tool := range resp.Tools {
-		if tool.Name == "Skill" {
+		if tool.Name == "mux_skill_get" {
 			return
 		}
 	}
-	t.Fatal("Skill tool was not registered")
+	t.Fatal("mux_skill_get tool was not registered")
 }
 
-func callSkillTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallToolResult {
+func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
 	a.registerSkillTools(s)
@@ -124,7 +124,7 @@ func callSkillTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallToolR
 		t.Fatalf("Initialize: %v", err)
 	}
 	req := mcp.CallToolRequest{}
-	req.Params.Name = "Skill"
+	req.Params.Name = "mux_skill_get"
 	req.Params.Arguments = args
 	res, err := c.CallTool(context.Background(), req)
 	if err != nil {

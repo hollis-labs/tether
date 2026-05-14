@@ -180,11 +180,11 @@ List boot-profile YAMLs from `<catalog>/boot-profiles/`. Used with `mux_boot_gen
 
 ### Skills
 
-#### `Skill`
+#### `mux_skill_get`
 Load a skill by id and return its instructions. This is the provider-neutral
 counterpart to Claude Code's built-in skill loader: when a boot prompt lists a
 pointer such as `/refactor-go — Apply Go refactoring patterns`, non-Claude
-providers can call `Skill` with `skill_id: "refactor-go"` and follow the
+providers can call `mux_skill_get` with `skill_id: "refactor-go"` and follow the
 returned body.
 
 Read-only; no auth required.

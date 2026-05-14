@@ -15,9 +15,9 @@ import (
 )
 
 func (a *Adapter) registerSkillTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("Skill",
+	a.addTool(s, mcp.NewTool("mux_skill_get",
 		mcp.WithDescription("Load a Tether skill by id and return its instructions. Use when a boot prompt lists a skill pointer like `/refactor-go`; pass `refactor-go` as skill_id, then follow the returned body."),
-		mcp.WithString("skill_id", mcp.Required(), mcp.Description("Skill id from the boot prompt, without the leading slash")),
+		mcp.WithString("skill_id", mcp.Required(), mcp.Description("Skill id from the boot prompt, with or without the leading slash")),
 	), a.handleSkill)
 }
 
