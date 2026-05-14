@@ -1,6 +1,6 @@
 package api
 
-import "github.com/chrispian/agent-mux/internal/config"
+import "github.com/hollis-labs/tether/internal/config"
 
 // CatalogLoader returns a fresh catalog view for each call. The default
 // daemon-side implementation re-reads the filesystem, so edits to the

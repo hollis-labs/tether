@@ -6,7 +6,7 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // LaunchService is the subset of app.Service that the HTTP handlers

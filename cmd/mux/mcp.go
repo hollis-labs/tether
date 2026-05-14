@@ -13,11 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/client"
-	"github.com/chrispian/agent-mux/internal/daemon"
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/mcpadapter"
 )
 
 var mcpCmd = &cobra.Command{

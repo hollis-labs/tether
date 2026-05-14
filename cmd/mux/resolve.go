@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/app"
+	"github.com/hollis-labs/tether/internal/app"
 )
 
 var resolveLaunchID string

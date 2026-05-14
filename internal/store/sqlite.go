@@ -13,7 +13,7 @@ import (
 	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
 	_ "modernc.org/sqlite"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // ErrSessionNotFound is returned by GetSession when no row matches the

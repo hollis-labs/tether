@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 var agentsCmd = &cobra.Command{

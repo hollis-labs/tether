@@ -7,8 +7,8 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // stateSinkAdapter adapts *store.Store to agentsessions.StateSink. The

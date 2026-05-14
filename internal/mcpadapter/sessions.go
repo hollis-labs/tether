@@ -10,10 +10,10 @@ import (
 
 	messaging "github.com/hollis-labs/go-messaging"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/session"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func (a *Adapter) registerSessionTools(s *server.MCPServer) {

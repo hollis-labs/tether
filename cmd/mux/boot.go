@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/bootgen"
-	"github.com/chrispian/agent-mux/internal/client"
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/bootgen"
+	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 var bootCmd = &cobra.Command{

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // ProxyEventStore is the narrow store contract for the /proxy/events handler.

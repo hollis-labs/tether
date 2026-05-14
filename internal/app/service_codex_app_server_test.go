@@ -7,7 +7,7 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-agent-sessions/compliance"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 func TestCodexAppServerRuntimeCompliance(t *testing.T) {

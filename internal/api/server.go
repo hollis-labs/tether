@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // AttachmentStore is the narrow storage contract for listing client

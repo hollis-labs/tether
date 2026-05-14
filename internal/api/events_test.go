@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // fakeBus is a minimal events.Bus that lets tests drive the

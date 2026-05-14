@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // fakeCatalogLoader is a struct-style CatalogLoader stub. Tests either

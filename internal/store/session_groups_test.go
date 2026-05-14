@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 func TestSessionGroup_CreateGetList(t *testing.T) {

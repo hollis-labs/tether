@@ -10,8 +10,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // ProxyOptions configures RunWithProxyOpts behavior for Phase 2+.

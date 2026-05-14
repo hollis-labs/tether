@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 type Session struct {

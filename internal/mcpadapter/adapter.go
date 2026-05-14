@@ -31,8 +31,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/client"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 )
 
 const version = "0.2.0"

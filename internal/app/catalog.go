@@ -1,8 +1,8 @@
 package app
 
 import (
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // ListProjects returns a flat slice of the catalog projects in iteration order.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/broker"
+	"github.com/hollis-labs/tether/internal/broker"
 )
 
 func TestEnvelopes_RoundTripAndRecipient(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	gop "github.com/hollis-labs/go-providers/provider"
 	events "github.com/hollis-labs/go-providers/provider/events"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // New constructs an agentsessions.Runtime that drives the claude CLI's

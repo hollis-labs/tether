@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/broker"
+	"github.com/hollis-labs/tether/internal/broker"
 )
 
 // fakeBroker records every write and satisfies read-side queries from

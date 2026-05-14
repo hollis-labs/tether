@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // TestSeedLogicalAgents covers the seed helper directly (no catalog

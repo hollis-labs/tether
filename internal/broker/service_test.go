@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 type fakeStore struct {

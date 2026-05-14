@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/bootgen"
+	"github.com/hollis-labs/tether/internal/bootgen"
 )
 
 func TestLoadProfile_RoundTrip(t *testing.T) {

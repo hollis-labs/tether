@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 func makeEvent(tool, server, session string, ok bool) events.ToolCallEvent {

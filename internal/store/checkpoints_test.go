@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/agent"
-	"github.com/chrispian/agent-mux/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/checkpoint"
 )
 
 func TestCheckpoints_CreateGetList(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/daemon"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/daemon"
 )
 
 // ErrDaemonUnreachable means the daemon process is not accepting

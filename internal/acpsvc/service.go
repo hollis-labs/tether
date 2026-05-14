@@ -18,10 +18,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/chrispian/agent-mux/internal/acpadapter"
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/client"
-	"github.com/chrispian/agent-mux/pkg/claudestream"
+	"github.com/hollis-labs/tether/internal/acpadapter"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/pkg/claudestream"
 )
 
 // DaemonClient is the narrow subset of internal/client.Client that acpsvc

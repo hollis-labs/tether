@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/chrispian/agent-mux/internal/broker"
+	"github.com/hollis-labs/tether/internal/broker"
 )
 
 // CreateEnvelope inserts a new broker_envelopes row. id + created_at

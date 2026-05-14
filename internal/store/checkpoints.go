@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/chrispian/agent-mux/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/checkpoint"
 )
 
 // CheckpointRow mirrors the checkpoints table. Nullable TEXT columns

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 func TestResolveDemoLaunch(t *testing.T) {

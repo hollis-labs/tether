@@ -16,7 +16,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // TestProxySmokeHadronHealth is the Phase 1 exit-gate smoke test.

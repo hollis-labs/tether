@@ -34,8 +34,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/session"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

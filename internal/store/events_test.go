@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 func TestInsertEvent_SessionAndDaemonScopes(t *testing.T) {

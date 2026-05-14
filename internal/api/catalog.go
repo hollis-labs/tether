@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // registerCatalogRoutes wires GET /catalog/<type> handlers onto mux.

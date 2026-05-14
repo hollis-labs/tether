@@ -7,7 +7,7 @@ import (
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/messagingtest"
 
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // TestMessagingStore_Contract runs the full go-messaging contract suite

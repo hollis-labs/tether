@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // ToolCallEventFilter narrows which events are returned by ToolCallEventStore.Query.

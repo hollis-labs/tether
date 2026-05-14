@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/acpadapter"
-	"github.com/chrispian/agent-mux/internal/acpsvc"
-	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/client"
+	"github.com/hollis-labs/tether/internal/acpadapter"
+	"github.com/hollis-labs/tether/internal/acpsvc"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 )
 
 var acpCmd = &cobra.Command{

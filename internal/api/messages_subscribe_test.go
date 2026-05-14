@@ -13,7 +13,7 @@ import (
 
 	"github.com/hollis-labs/go-messaging"
 
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func newMessageTestServer(t *testing.T) (*httptest.Server, *store.Store) {

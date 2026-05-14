@@ -9,7 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/chrispian/agent-mux/internal/bootgen"
+	"github.com/hollis-labs/tether/internal/bootgen"
 )
 
 func (a *Adapter) registerBootTools(s *server.MCPServer) {

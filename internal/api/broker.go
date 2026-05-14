@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/chrispian/agent-mux/internal/broker"
+	"github.com/hollis-labs/tether/internal/broker"
 )
 
 // defaultRequestTimeout is applied when the caller doesn't specify ?timeout=.

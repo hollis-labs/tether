@@ -8,7 +8,7 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // New constructs an agentsessions.Runtime that runs entirely in-process:

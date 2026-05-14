@@ -16,13 +16,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/app"
-	"github.com/chrispian/agent-mux/internal/broker"
-	"github.com/chrispian/agent-mux/internal/client"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/daemon"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/broker"
+	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 var daemonCmd = &cobra.Command{

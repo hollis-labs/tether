@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/store"
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // MessageStore is the seam the /messages/* handlers depend on.

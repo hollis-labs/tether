@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // InsertEvent persists an event row and returns its assigned id

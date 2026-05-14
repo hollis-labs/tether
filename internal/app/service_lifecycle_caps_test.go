@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // TestNewClaudeCodeRuntime_UsesStreamingStdio pins the v005-05 lifecycle

@@ -13,10 +13,10 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/daemon"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newMockDaemon spins up a real httptest.Server with the daemon handlers

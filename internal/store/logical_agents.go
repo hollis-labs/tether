@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/chrispian/agent-mux/internal/agent"
+	"github.com/hollis-labs/tether/internal/agent"
 )
 
 // LogicalAgentRow mirrors the logical_agents table. All nullable TEXT

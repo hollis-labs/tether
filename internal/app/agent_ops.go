@@ -9,10 +9,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/chrispian/agent-mux/internal/bootgen"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/skills"
+	"github.com/hollis-labs/tether/internal/bootgen"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/skills"
 )
 
 // CreateSessionInput is the v005-08 Agent Ops surface for session creation.

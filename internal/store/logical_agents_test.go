@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/agent"
+	"github.com/hollis-labs/tether/internal/agent"
 )
 
 func TestUpsertLogicalAgent_InsertAndUpdate(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/chrispian/agent-mux
+module github.com/hollis-labs/tether
 
 go 1.26.1
 

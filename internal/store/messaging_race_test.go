@@ -31,7 +31,7 @@ import (
 
 	messaging "github.com/hollis-labs/go-messaging"
 
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // openRaceDB opens a fresh SQLite store in a temp directory.

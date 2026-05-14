@@ -16,8 +16,8 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
-	"github.com/chrispian/agent-mux/internal/session"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // fakeLaunchService is a LaunchService stub for handler tests. Each method

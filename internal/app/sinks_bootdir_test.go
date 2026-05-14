@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // fakePublisher captures every Publish call for assertion in tests.

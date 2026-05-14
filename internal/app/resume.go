@@ -7,12 +7,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/checkpoint"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/session"
-	"github.com/chrispian/agent-mux/internal/store"
-	"github.com/chrispian/agent-mux/internal/workspace"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workspace"
 )
 
 // ResumeLogicalAgent starts a new session for the given logical agent

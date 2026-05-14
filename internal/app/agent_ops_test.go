@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/launch"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // buildTestService is the minimal Service for agent-ops unit tests. It

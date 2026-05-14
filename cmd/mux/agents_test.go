@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/config"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 func TestResolveScope_KnownValues(t *testing.T) {

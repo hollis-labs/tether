@@ -12,13 +12,13 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
-	"github.com/chrispian/agent-mux/internal/api"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider"
-	"github.com/chrispian/agent-mux/internal/session"
-	"github.com/chrispian/agent-mux/internal/store"
-	"github.com/chrispian/agent-mux/internal/workspace"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/provider"
+	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workspace"
 )
 
 // Launched is the success return of CreateSession / LaunchSession. Wait is nil

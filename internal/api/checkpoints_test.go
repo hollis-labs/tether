@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/chrispian/agent-mux/internal/checkpoint"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // fakeCheckpoints records calls for assertion and lets tests override

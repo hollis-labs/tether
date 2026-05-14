@@ -10,8 +10,8 @@ import (
 	gop "github.com/hollis-labs/go-providers/provider"
 	events "github.com/hollis-labs/go-providers/provider/events"
 
-	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
 )
 
 // New constructs an agentsessions.Runtime that drives the opencode CLI's

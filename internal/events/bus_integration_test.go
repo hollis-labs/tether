@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // The bus must accept *store.Store as a Persister. This test exists

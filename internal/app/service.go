@@ -18,15 +18,15 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
 
-	"github.com/chrispian/agent-mux/internal/agent"
-	"github.com/chrispian/agent-mux/internal/broker"
-	"github.com/chrispian/agent-mux/internal/config"
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/launch"
-	"github.com/chrispian/agent-mux/internal/provider/api/stub"
-	"github.com/chrispian/agent-mux/internal/provider/cli/claudestream"
-	"github.com/chrispian/agent-mux/internal/provider/cli/opencode"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/broker"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/provider/api/stub"
+	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
+	"github.com/hollis-labs/tether/internal/provider/cli/opencode"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // RuntimeFactory builds an agentsessions.Runtime for a single launch. The

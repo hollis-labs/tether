@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/acpadapter"
-	"github.com/chrispian/agent-mux/internal/acpsvc"
-	"github.com/chrispian/agent-mux/internal/api"
+	"github.com/hollis-labs/tether/internal/acpadapter"
+	"github.com/hollis-labs/tether/internal/acpsvc"
+	"github.com/hollis-labs/tether/internal/api"
 )
 
 // fakeDaemon implements acpsvc.DaemonClient and lets tests drive the attach

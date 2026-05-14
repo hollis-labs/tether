@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/checkpoint"
-	"github.com/chrispian/agent-mux/internal/events"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // ─── minimal fake stores for observation tests ────────────────────────────────

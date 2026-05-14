@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/chrispian/agent-mux/internal/checkpoint"
-	"github.com/chrispian/agent-mux/internal/store"
+	"github.com/hollis-labs/tether/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // CheckpointStore is the narrow storage seam the checkpoint handlers

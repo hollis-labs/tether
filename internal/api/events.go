@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrispian/agent-mux/internal/events"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // EventsStore is the narrow read contract the /sessions/{id}/events
