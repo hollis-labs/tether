@@ -1,5 +1,7 @@
 id: claude-goprovider
 type: cli-goprovider
+provider: claude
+runtime_kind: subprocess
 adapter: claude
 # command: /Users/chrispian/.local/bin/claude
 # Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.

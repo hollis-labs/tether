@@ -1,0 +1,50 @@
+id: torque.engineer.tui
+display_name: "Torque — Claude TUI"
+launch: torque-claude-tui
+mcp_servers: []
+
+identity:
+  lineage_alias:   torque.engineer.tui
+  lineage_id:      ""
+  profile_id:      torque-engineer-tui
+  profile_version: 1
+  role:            backend
+  project:         torque
+  work_root:       ~/Projects-apps/agent-mux
+  tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
+  vanta_primary:   "2026-05-14"
+
+slots:
+  agent:
+    type: static
+    path: ~/.nanite/roles/domain/backend.md
+
+  recap:
+    type: cmd
+    run: |
+      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md" ]; then
+        head -80 "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md"
+      else
+        echo "(no recap available)"
+      fi
+    timeout: 5s
+
+  history:
+    type: cmd
+    run: "git -C ~/Projects-apps/agent-mux log --oneline -20 2>/dev/null || echo '(git unavailable)'"
+    timeout: 5s
+
+  status:
+    type: cmd
+    run: "cd ~/Projects-apps/agent-mux 2>/dev/null && git status --short -b 2>/dev/null"
+    timeout: 5s
+
+  memory:
+    type: cmd
+    run: |
+      echo "[ memory slot: configure vanta recall for scope:torque.engineer.tui ]"
+    timeout: 3s
+
+  skills:
+    type: skill_index
+    limit: 6

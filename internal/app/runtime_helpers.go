@@ -4,8 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	gop "github.com/hollis-labs/go-providers/provider"
 )
 
 // providerHasSessionIDContinuity reports whether the given provider ID
@@ -14,24 +12,10 @@ import (
 // flags to maintain conversation continuity across daemon restarts.
 func providerHasSessionIDContinuity(providerID string) bool {
 	switch providerID {
-	case "claude-code", "claude-stream", "opencode":
+	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode":
 		return true
 	}
 	return false
-}
-
-// goproviderCLIAdapter maps a catalog adapter name to the corresponding
-// go-providers CLIAdapter. Returns nil for unknown names; callers skip
-// registration silently (a validation error catches unknown names earlier).
-func goproviderCLIAdapter(name string) gop.CLIAdapter {
-	switch name {
-	case "claude":
-		return gop.NewClaudeAdapter()
-	case "codex":
-		return gop.NewCodexAdapter()
-	default:
-		return nil
-	}
 }
 
 // resolveAPIKeyHelperPath returns an absolute path to the mux-apikey-helper

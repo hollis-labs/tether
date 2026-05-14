@@ -74,6 +74,8 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		ProjectID:      proj.ID,
 		LogicalAgentID: agent.ID,
 		ProviderID:     prov.ID,
+		ProviderBrand:  prov.ProviderBrand(),
+		RuntimeKind:    prov.EffectiveRuntimeKind(),
 		RepoRoot:       config.Expand(proj.RepoRoot),
 		WriteHome:      config.Expand(writeHome),
 		Command:        prov.Command,

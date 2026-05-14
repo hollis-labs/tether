@@ -7,6 +7,7 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-agent-sessions/compliance"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
@@ -15,9 +16,17 @@ func TestCodexAppServerRuntimeCompliance(t *testing.T) {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	rt, err := newCodexAppServerRuntime(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	factory, err := runtimeFactoryForProvider(config.Provider{
+		ID:          "codex-app-server",
+		Provider:    "codex",
+		RuntimeKind: config.RuntimeKindJSONRPCStdio,
+	})
 	if err != nil {
-		t.Fatalf("newCodexAppServerRuntime: %v", err)
+		t.Fatalf("runtimeFactoryForProvider: %v", err)
+	}
+	rt, err := factory(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
 	}
 	compliance.Run(t, compliance.Harness{
 		Runtime: rt,

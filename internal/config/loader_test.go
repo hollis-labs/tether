@@ -24,6 +24,12 @@ func TestLoadExampleCatalog(t *testing.T) {
 	if _, ok := cat.Providers["claude-code"]; !ok {
 		t.Fatalf("missing claude-code provider")
 	}
+	if got := cat.Providers["claude-code"].EffectiveRuntimeKind(); got != RuntimeKindStreamingStdio {
+		t.Fatalf("claude-code runtime_kind = %q, want %q", got, RuntimeKindStreamingStdio)
+	}
+	if got := cat.Providers["claude-pty"].EffectiveRuntimeKind(); got != RuntimeKindPTY {
+		t.Fatalf("claude-pty runtime_kind = %q, want %q", got, RuntimeKindPTY)
+	}
 	if _, ok := cat.Launches["demo-launch"]; !ok {
 		t.Fatalf("missing demo-launch")
 	}
@@ -40,6 +46,38 @@ func TestLoadExampleCatalog(t *testing.T) {
 	}
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
 		t.Errorf("daemon.shutdown_timeout = %q, want default %q", got, want)
+	}
+}
+
+func TestProviderRuntimeDefaults_BackCompat(t *testing.T) {
+	tests := []struct {
+		name string
+		in   Provider
+		want string
+	}{
+		{name: "streaming bootstrap", in: Provider{Bootstrap: BootstrapSpec{Mode: RuntimeKindStreamingStdio}}, want: RuntimeKindStreamingStdio},
+		{name: "jsonrpc bootstrap", in: Provider{Bootstrap: BootstrapSpec{Mode: RuntimeKindJSONRPCStdio}}, want: RuntimeKindJSONRPCStdio},
+		{name: "api type", in: Provider{Type: "api"}, want: RuntimeKindAPI},
+		{name: "default subprocess", in: Provider{Type: "cli"}, want: RuntimeKindSubprocess},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.in.EffectiveRuntimeKind(); got != tt.want {
+				t.Fatalf("EffectiveRuntimeKind() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate_UnsupportedRuntimeKind(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{},
+		Providers: map[string]Provider{"p": {ID: "p", Type: "cli", Command: "echo", RuntimeKind: "websocket"}},
+		Launches:  map[string]Launch{},
+	}
+	if err := cat.Validate(); err == nil {
+		t.Fatal("expected unsupported runtime_kind error, got nil")
 	}
 }
 

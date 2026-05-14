@@ -1,5 +1,7 @@
 id: codex-cli
 type: cli-goprovider
+provider: codex
+runtime_kind: subprocess
 adapter: codex
 # Leave command empty to let the adapter auto-detect via $CODEX_CLI_PATH or PATH.
 # command: /usr/local/bin/codex

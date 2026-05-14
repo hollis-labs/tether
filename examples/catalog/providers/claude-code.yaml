@@ -1,5 +1,7 @@
 id: claude-code
 type: cli
+provider: claude
+runtime_kind: streaming-stdio
 command: claude
 args: []
 bootstrap:

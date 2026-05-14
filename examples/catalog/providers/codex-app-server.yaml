@@ -1,5 +1,7 @@
 id: codex-app-server
 type: cli
+provider: codex
+runtime_kind: jsonrpc-stdio
 command: codex
 args:
   - app-server

@@ -34,10 +34,13 @@ go build ./...      # compile check
 ## Provider contract
 
 All providers implement `provider.Runtime` (Start/Prepare/Caps) and
-`provider.Session` (SendInput/Stop/Wait/Health). CLI providers are either:
-- **PTY-backed**: `claude-code` via the shared `claudestream` adapter runtime (interactive, resizable, raw bytes)
-- **Turn-based**: claudestream, opencode, goprovider (subprocess per turn, NDJSON stdout)
+`provider.Session` (SendInput/Stop/Wait/Health). CLI providers are selected by
+provider brand plus `runtime_kind`:
+- **Managed streaming stdio**: `claude-code` (`provider: claude`, `runtime_kind: streaming-stdio`)
+- **Interactive PTY/TUI**: `claude-pty` (`provider: claude`, `runtime_kind: pty`)
+- **JSON-RPC stdio**: `codex-app-server` (`provider: codex`, `runtime_kind: jsonrpc-stdio`)
+- **Subprocess per turn**: `claude-goprovider`, `codex-cli`, `opencode`
 
-`cli-goprovider` providers are registered in `internal/app/service.go` via the
-`goproviderCLIAdapter()` switch. Boot mode `agents_md` writes the boot prompt to
-`AGENTS.md` in the session workdir before the first turn.
+Boot mode `agents_md` writes the boot prompt to `AGENTS.md` in the session
+workdir before the first turn. PTY launches use `bootstrap.mode: stdin` plus
+AutoPlantBootDir so `mux sessions attach` can drive the live TUI.
