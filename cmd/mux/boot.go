@@ -15,9 +15,14 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 )
 
-var bootCmd = &cobra.Command{
-	Use:   "boot",
+var bootPromptsCmd = &cobra.Command{
+	Use:   "boot-prompts",
 	Short: "Boot prompt commands",
+	Long: `Utilities for listing and generating boot prompts.
+
+For the all-in-one launch flow, use:
+
+  mux boot <profile_id>`,
 }
 
 var generateBootCmd = &cobra.Command{
@@ -145,7 +150,7 @@ func loadBootProfile(profileID string) (bootgen.Profile, error) {
 func expandCatalogPath() string { return config.Expand(catalogPath) }
 
 func init() {
-	bootCmd.AddCommand(generateBootCmd, listBootProfilesCmd)
+	bootPromptsCmd.AddCommand(generateBootCmd, listBootProfilesCmd)
 	// Alias: mux boot <profile_id> at top level for one-command flow
 	bootLaunchCmd.Use = "boot <profile_id>"
 }
