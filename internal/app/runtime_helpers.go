@@ -18,7 +18,7 @@ func providerRecordsSessionID(providerID string) bool {
 	return false
 }
 
-// resolveAPIKeyHelperPath returns an absolute path to the mux-apikey-helper
+// ResolveAPIKeyHelperPath returns an absolute path to the mux-apikey-helper
 // binary. Resolution order: $MUX_APIKEY_HELPER env override, then a sibling
 // next to the mux binary, then $PATH lookup. Returns empty when not found.
 func ResolveAPIKeyHelperPath() string {
