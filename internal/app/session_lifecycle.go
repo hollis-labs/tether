@@ -78,6 +78,18 @@ func (s *Service) CreateSession(launchID string) (*Launched, error) {
 // For Tier 2 (caller-provided), populate AgentFile / AgentInline /
 // BootProfileFile / Override as needed. See CreateSessionInput for precedence.
 func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, error) {
+	plan, err := s.BuildLaunchPlan(in)
+	if err != nil {
+		return nil, err
+	}
+	return s.createSessionFromPlan(plan)
+}
+
+// BuildLaunchPlan resolves and applies Agent Ops input without materializing a
+// Tether session. It is used by direct-exec flows that need the same launch
+// prompt/env composition as CreateSessionWithInput but must not persist a
+// session row or involve the daemon/attach broker.
+func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	if in.LaunchID == "" {
 		return nil, fmt.Errorf("launch id required")
 	}
@@ -88,7 +100,7 @@ func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, erro
 	if err := s.applyAgentOps(plan, in); err != nil {
 		return nil, err
 	}
-	return s.createSessionFromPlan(plan)
+	return plan, nil
 }
 
 func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
