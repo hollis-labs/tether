@@ -6,17 +6,13 @@ import (
 	"path/filepath"
 )
 
-// providerHasSessionIDContinuity reports whether the given provider ID
-// participates in the CLI session-ID continuity mechanism (preset +
-// OnSessionID callback). Adapters in this set use --resume or --session
-// flags to maintain conversation continuity across daemon restarts.
-//
-// Interactive PTY launches intentionally do not participate. A stale
-// stored Claude session id makes `claude --resume <id>` exit before the
-// user ever sees the TUI; explicit TUI resume needs its own launch path.
-func providerHasSessionIDContinuity(providerID string) bool {
+// providerRecordsSessionID reports whether the provider emits a
+// provider-side session id worth persisting for crash-recovery flows.
+// Normal launches do not consume the stored id; `--resume` is reserved for
+// an explicit recovery path.
+func providerRecordsSessionID(providerID string) bool {
 	switch providerID {
-	case "claude-code", "claude-stream", "claude-goprovider", "opencode":
+	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode":
 		return true
 	}
 	return false

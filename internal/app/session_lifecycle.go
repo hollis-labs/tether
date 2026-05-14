@@ -189,14 +189,11 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		}
 	}
 
-	// Resume continuity for turn-based providers that use a CLI session ID
-	// (--resume / --session). Adapters that don't use this are inert.
-	var sessionIDPreset string
+	// Record provider-side session IDs for crash-recovery flows. Normal
+	// launches must not feed the stored ID back as SessionIDPreset; that
+	// would turn every boot into an implicit `--resume`.
 	var onSessionID func(string)
-	if providerHasSessionIDContinuity(plan.ProviderID) {
-		if preset, err := s.Store.GetClaudeSessionID(plan.LogicalAgentID); err == nil {
-			sessionIDPreset = preset
-		}
+	if providerRecordsSessionID(plan.ProviderID) {
 		logicalAgentID := plan.LogicalAgentID
 		storeRef := s.Store
 		providerID := plan.ProviderID
@@ -217,7 +214,6 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		BootMode:         plan.BootMode,
 		Env:              provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
 		Profile:          profile,
-		SessionIDPreset:  sessionIDPreset,
 		OnSessionID:      onSessionID,
 		AttachEnabled:    true,
 		AutoPlantBootDir: true,

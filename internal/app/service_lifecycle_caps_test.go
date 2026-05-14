@@ -124,14 +124,14 @@ func TestRuntimeFactoryForProvider_UnsupportedCombination(t *testing.T) {
 	}
 }
 
-func TestProviderHasSessionIDContinuity_ExcludesClaudePTY(t *testing.T) {
-	if providerHasSessionIDContinuity("claude-pty") {
-		t.Fatal("claude-pty should not inherit stored --resume session ids")
-	}
-	for _, providerID := range []string{"claude-code", "claude-stream", "claude-goprovider", "opencode"} {
-		if !providerHasSessionIDContinuity(providerID) {
-			t.Fatalf("%s should keep session-id continuity", providerID)
+func TestProviderRecordsSessionID(t *testing.T) {
+	for _, providerID := range []string{"claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode"} {
+		if !providerRecordsSessionID(providerID) {
+			t.Fatalf("%s should record provider session IDs", providerID)
 		}
+	}
+	if providerRecordsSessionID("api-stub") {
+		t.Fatal("api-stub should not record provider session IDs")
 	}
 }
 
