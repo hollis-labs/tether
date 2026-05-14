@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
@@ -119,6 +121,50 @@ func TestRuntimeFactoryForProvider_UnsupportedCombination(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsupported combination error, got nil")
+	}
+}
+
+func TestProviderRecordsSessionID(t *testing.T) {
+	for _, providerID := range []string{"claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode"} {
+		if !providerRecordsSessionID(providerID) {
+			t.Fatalf("%s should record provider session IDs", providerID)
+		}
+	}
+	if providerRecordsSessionID("api-stub") {
+		t.Fatal("api-stub should not record provider session IDs")
+	}
+}
+
+func TestDeferPTYStdinBootPrompt(t *testing.T) {
+	opts := agentsessions.StartOptions{
+		BootPrompt: "large generated boot prompt\n",
+		BootMode:   "stdin",
+	}
+	deferPTYStdinBootPrompt(agentsessions.Capabilities{PTY: true}, &opts)
+
+	if opts.BootPrompt != "" {
+		t.Fatalf("BootPrompt = %q, want cleared", opts.BootPrompt)
+	}
+	if opts.BootMode != "" {
+		t.Fatalf("BootMode = %q, want cleared", opts.BootMode)
+	}
+	if !opts.AutoFireFirstTurn {
+		t.Fatal("AutoFireFirstTurn = false, want true")
+	}
+	if got := string(opts.FirstTurnPayload); got != "large generated boot prompt\n" {
+		t.Fatalf("FirstTurnPayload = %q", got)
+	}
+}
+
+func TestDeferPTYStdinBootPrompt_NonPTYUnchanged(t *testing.T) {
+	opts := agentsessions.StartOptions{
+		BootPrompt: "prompt",
+		BootMode:   "stdin",
+	}
+	deferPTYStdinBootPrompt(agentsessions.Capabilities{StreamingStdio: true}, &opts)
+
+	if opts.BootPrompt != "prompt" || opts.BootMode != "stdin" || opts.AutoFireFirstTurn {
+		t.Fatalf("non-PTY options changed unexpectedly: %+v", opts)
 	}
 }
 
