@@ -344,7 +344,8 @@ func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
 		return "", fmt.Errorf("GET %s: response exceeds %d-byte slot cap", rawURL, maxHTTPSlotBytes)
 	}
 	body := string(b)
-	if strings.ToLower(src.ResponseFormat) == "vanta_recall" {
+	switch strings.ToLower(src.ResponseFormat) {
+	case "vanta_recall", "tesseract_recall":
 		return formatVantaRecall(body), nil
 	}
 	return body, nil

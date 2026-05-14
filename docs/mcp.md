@@ -178,6 +178,45 @@ List boot-profile YAMLs from `<catalog>/boot-profiles/`. Used with `mux_boot_gen
 
 ---
 
+### Skills
+
+#### `mux_skill_get`
+Load a skill by id and return its instructions. This is the provider-neutral
+counterpart to Claude Code's built-in skill loader: when a boot prompt lists a
+pointer such as `/refactor-go — Apply Go refactoring patterns`, non-Claude
+providers can call `mux_skill_get` with `skill_id: "refactor-go"` and follow the
+returned body.
+
+Read-only; no auth required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `skill_id` | string | ✓ | Skill id from the boot prompt, with or without the leading `/` |
+
+Resolution order follows Tether's layered skill discovery and then legacy
+skill locations:
+
+1. `<catalog>/skills/<id>.md`, `~/.agent-mux/skills/<id>.md`, and project
+   `.agent-mux/skills/<id>.md`
+2. `~/.tether/skills/<id>.md`
+3. `~/.nanite/skills/<id>.md`
+
+```json
+// Response
+{
+  "ok": true,
+  "id": "refactor-go",
+  "name": "Refactor Go",
+  "description": "Apply Go refactoring patterns.",
+  "triggers": ["refactor", "cleanup"],
+  "body": "Prefer small, tested changes.",
+  "path": "/home/user/.nanite/skills/refactor-go.md",
+  "layer": "legacy-nanite"
+}
+```
+
+---
+
 ### Sessions
 
 #### `mux_session_list`
