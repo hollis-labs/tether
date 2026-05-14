@@ -10,6 +10,8 @@ type Plan struct {
 	ProjectID      string   `json:"project_id"`
 	LogicalAgentID string   `json:"logical_agent_id"`
 	ProviderID     string   `json:"provider_id"`
+	ProviderBrand  string   `json:"provider_brand,omitempty"`
+	RuntimeKind    string   `json:"runtime_kind,omitempty"`
 	RepoRoot       string   `json:"repo_root"`
 	WriteHome      string   `json:"write_home"`
 	Command        string   `json:"command"`

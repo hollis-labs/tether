@@ -16,16 +16,12 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
-	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
-	"github.com/hollis-labs/tether/internal/provider/api/stub"
-	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
-	"github.com/hollis-labs/tether/internal/provider/cli/opencode"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -78,38 +74,14 @@ func New(catalogRoot string) (*Service, error) {
 		return nil, err
 	}
 
-	factories := map[string]RuntimeFactory{
-		"claude-stream":    claudestream.New,
-		"claude-code":      newClaudeCodeRuntime,
-		"codex-app-server": newCodexAppServerRuntime,
-		"opencode":         opencode.New,
-		"api-stub":         stub.New,
-	}
-	// Register cli-goprovider runtimes declared in the catalog. Each one
-	// is the same pattern as claude-stream — a per-turn subprocess driven
-	// by a go-providers CLIAdapter — so claudestream.NewWithAdapter is
-	// the shared constructor. Catalog ids that match a built-in name
-	// override the built-in (last write wins, matching the legacy
-	// provider.Registry semantics).
+	factories := map[string]RuntimeFactory{}
 	for _, p := range cat.Providers {
-		if p.Type != "cli-goprovider" {
-			continue
+		factory, err := runtimeFactoryForProvider(p)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("provider %q runtime resolver: %w", p.ID, err)
 		}
-		adapter := goproviderCLIAdapter(p.Adapter)
-		if adapter == nil {
-			continue
-		}
-		providerID := p.ID
-		ad := adapter
-		factories[providerID] = func(plan *launch.Plan) (agentsessions.Runtime, error) {
-			return claudestream.NewWithAdapter(plan, ad, providerID, agentsessions.Capabilities{
-				PTY:               false,
-				Resize:            false,
-				ProviderSessionID: true,
-				CheckpointResume:  false,
-				BinaryRequired:    true,
-			})
-		}
+		factories[p.ID] = factory
 	}
 
 	// Seed logical_agents from the catalog. Upsert — idempotent across
@@ -166,29 +138,6 @@ func (s *Service) Close() error {
 		return err
 	}
 	return s.Store.Close()
-}
-
-// newClaudeCodeRuntime builds the built-in claude-code runtime backed by
-// the streaming-stdio CLI adapter from go-providers.
-func newClaudeCodeRuntime(plan *launch.Plan) (agentsessions.Runtime, error) {
-	adapter := gop.NewClaudeAdapterStreamingStdio()
-	adapter.ApiKeyHelperPath = resolveAPIKeyHelperPath()
-	return claudestream.NewWithAdapter(plan, adapter, "claude-code", agentsessions.Capabilities{
-		StreamingStdio:    true,
-		ProviderSessionID: true,
-		CheckpointResume:  false,
-		BinaryRequired:    true,
-	})
-}
-
-// newCodexAppServerRuntime builds the built-in codex-app-server runtime
-// backed by the JSON-RPC app-server adapter from go-providers.
-func newCodexAppServerRuntime(plan *launch.Plan) (agentsessions.Runtime, error) {
-	return claudestream.NewWithAdapter(plan, gop.NewCodexAdapterAppServer(), "codex-app-server", agentsessions.Capabilities{
-		JsonRpcStdio:     true,
-		CheckpointResume: false,
-		BinaryRequired:   true,
-	})
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.

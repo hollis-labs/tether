@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
@@ -17,9 +18,17 @@ func TestNewClaudeCodeRuntime_UsesStreamingStdio(t *testing.T) {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	rt, err := newClaudeCodeRuntime(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	factory, err := runtimeFactoryForProvider(config.Provider{
+		ID:          "claude-code",
+		Provider:    "claude",
+		RuntimeKind: config.RuntimeKindStreamingStdio,
+	})
 	if err != nil {
-		t.Fatalf("newClaudeCodeRuntime: %v", err)
+		t.Fatalf("runtimeFactoryForProvider: %v", err)
+	}
+	rt, err := factory(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
 	}
 	caps := rt.Caps()
 	if caps.PTY {
@@ -43,9 +52,17 @@ func TestNewCodexAppServerRuntime_UsesJsonRpcStdio(t *testing.T) {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	rt, err := newCodexAppServerRuntime(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	factory, err := runtimeFactoryForProvider(config.Provider{
+		ID:          "codex-app-server",
+		Provider:    "codex",
+		RuntimeKind: config.RuntimeKindJSONRPCStdio,
+	})
 	if err != nil {
-		t.Fatalf("newCodexAppServerRuntime: %v", err)
+		t.Fatalf("runtimeFactoryForProvider: %v", err)
+	}
+	rt, err := factory(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
 	}
 	caps := rt.Caps()
 	if !caps.JsonRpcStdio {
@@ -59,6 +76,49 @@ func TestNewCodexAppServerRuntime_UsesJsonRpcStdio(t *testing.T) {
 	}
 	if !caps.BinaryRequired {
 		t.Errorf("Caps.BinaryRequired = false, want true")
+	}
+}
+
+func TestRuntimeFactoryForProvider_ClaudePTY(t *testing.T) {
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	factory, err := runtimeFactoryForProvider(config.Provider{
+		ID:          "claude-pty",
+		Provider:    "claude",
+		RuntimeKind: config.RuntimeKindPTY,
+	})
+	if err != nil {
+		t.Fatalf("runtimeFactoryForProvider: %v", err)
+	}
+	rt, err := factory(&launch.Plan{Command: shPath, Args: []string{"-c", "cat"}})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	caps := rt.Caps()
+	if !caps.PTY {
+		t.Errorf("Caps.PTY = false, want true")
+	}
+	if !caps.Resize {
+		t.Errorf("Caps.Resize = false, want true")
+	}
+	if caps.StreamingStdio || caps.JsonRpcStdio {
+		t.Errorf("PTY runtime should not declare stdio lifecycle caps: %+v", caps)
+	}
+	if !caps.BinaryRequired {
+		t.Errorf("Caps.BinaryRequired = false, want true")
+	}
+}
+
+func TestRuntimeFactoryForProvider_UnsupportedCombination(t *testing.T) {
+	_, err := runtimeFactoryForProvider(config.Provider{
+		ID:          "opencode-jsonrpc",
+		Provider:    "opencode",
+		RuntimeKind: config.RuntimeKindJSONRPCStdio,
+	})
+	if err == nil {
+		t.Fatal("expected unsupported combination error, got nil")
 	}
 }
 

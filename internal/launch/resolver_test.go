@@ -26,6 +26,12 @@ func TestResolveDemoLaunch(t *testing.T) {
 	if plan.LogicalAgentID != "demo-agent" {
 		t.Fatalf("want LogicalAgentID=demo-agent, got %q", plan.LogicalAgentID)
 	}
+	if plan.ProviderBrand != "claude" {
+		t.Fatalf("want ProviderBrand=claude, got %q", plan.ProviderBrand)
+	}
+	if plan.RuntimeKind != config.RuntimeKindStreamingStdio {
+		t.Fatalf("want RuntimeKind=%q, got %q", config.RuntimeKindStreamingStdio, plan.RuntimeKind)
+	}
 	if !strings.Contains(plan.BootPrompt, "Agent Mux") {
 		t.Fatalf("boot prompt missing common fragment: %q", plan.BootPrompt)
 	}

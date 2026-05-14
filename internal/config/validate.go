@@ -19,6 +19,11 @@ func (c *Catalog) Validate() error {
 		if typ == "" {
 			typ = "cli"
 		}
+		switch p.EffectiveRuntimeKind() {
+		case RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio, RuntimeKindSubprocess, RuntimeKindAPI:
+		default:
+			return fmt.Errorf("provider %q has unsupported runtime_kind %q", id, p.EffectiveRuntimeKind())
+		}
 		switch typ {
 		case "cli":
 			if p.Command == "" {
@@ -28,7 +33,15 @@ func (c *Catalog) Validate() error {
 			if p.Adapter == "" {
 				return fmt.Errorf("provider %q (cli-goprovider) missing adapter field", id)
 			}
+			switch p.Adapter {
+			case "claude", "codex":
+			default:
+				return fmt.Errorf("provider %q (cli-goprovider) has unsupported adapter %q", id, p.Adapter)
+			}
+		case "api":
 			// "api" type (api-stub, future API-backed) has no command requirement.
+		default:
+			return fmt.Errorf("provider %q has unsupported type %q", id, typ)
 		}
 	}
 	for id, a := range c.Agents {
