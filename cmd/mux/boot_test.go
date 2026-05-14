@@ -13,6 +13,9 @@ func TestRootCommandsBootNameIsUnique(t *testing.T) {
 	if got := seen["boot-prompts"]; got != 1 {
 		t.Fatalf("root command name %q appears %d times, want 1", "boot-prompts", got)
 	}
+	if got := seen["boot-exec"]; got != 1 {
+		t.Fatalf("root command name %q appears %d times, want 1", "boot-exec", got)
+	}
 }
 
 func TestBootPromptUtilitiesLiveUnderBootPrompts(t *testing.T) {
@@ -26,5 +29,11 @@ func TestBootPromptUtilitiesLiveUnderBootPrompts(t *testing.T) {
 		t.Fatalf("find boot example.profile: %v", err)
 	} else if child != bootLaunchCmd {
 		t.Fatalf("boot example.profile resolved to %q, want bootLaunchCmd", child.CommandPath())
+	}
+
+	if child, _, err := rootCmd.Find([]string{"boot-exec", "example.profile"}); err != nil {
+		t.Fatalf("find boot-exec example.profile: %v", err)
+	} else if child != bootExecCmd {
+		t.Fatalf("boot-exec example.profile resolved to %q, want bootExecCmd", child.CommandPath())
 	}
 }
