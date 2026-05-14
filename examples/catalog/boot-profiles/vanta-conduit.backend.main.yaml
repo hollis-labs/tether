@@ -44,7 +44,5 @@ slots:
     timeout: 3s
 
   skills:
-    type: static
-    path: ~/.nanite/skills/
-    glob: "*.md"
+    type: skill_index
     limit: 6
