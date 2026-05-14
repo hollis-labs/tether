@@ -411,9 +411,11 @@ Cancel a pending message.
 #### `mux_boot_generate`
 Generate a boot prompt for an agent profile and return it as a string. The
 profile YAML in `<catalog>/boot-profiles/<id>.yaml` defines how to assemble
-slot content from static files, skill indexes, shell commands, and HTTP
-endpoints. Use `type: skill_index` for the `skills` slot to emit compact
+slot content from static files, role summaries, skill indexes, shell commands,
+and HTTP endpoints. Use `type: skill_index` for the `skills` slot to emit compact
 `/skill-id — description` pointers instead of inlining full skill bodies.
+Use `type: role_summary` for the `agent` slot to emit role identity, a mission
+paragraph, and a pointer to the full role file.
 
 Read-only; no auth required.
 

@@ -16,8 +16,8 @@ identity:
 
 slots:
   agent:
-    type: static
-    path: ~/.nanite/roles/domain/backend.md
+    type: role_summary
+    path: ~/.nanite/roles/domain/backend/worker.md
 
   recap:
     type: cmd
