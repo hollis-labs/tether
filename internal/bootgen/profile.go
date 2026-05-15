@@ -25,6 +25,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,8 @@ var defaultHTTPClient = &http.Client{Timeout: 15 * time.Second}
 // misconfigured or malicious target URL can't exhaust memory via an
 // unbounded body.
 const maxHTTPSlotBytes int64 = 4 * 1024 * 1024
+
+const defaultBootHTTPBaseURL = "http://127.0.0.1:8089"
 
 // Profile is a boot profile configuration loaded from
 // <catalog-root>/boot-profiles/<id>.yaml.
@@ -577,8 +580,10 @@ func formatVantaRecall(body string) string {
 }
 
 func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
-	// Expand env vars in URL so profiles can use ${VANTA_URL}, ${CLOCKWORK_URL}, etc.
-	rawURL := os.ExpandEnv(src.URL)
+	rawURL, err := resolveHTTPURL(src)
+	if err != nil {
+		return "", err
+	}
 	if rawURL == "" {
 		return "", fmt.Errorf("http slot URL is empty after env expansion")
 	}
@@ -611,6 +616,40 @@ func resolveHTTP(ctx context.Context, src SlotSource) (string, error) {
 		return formatVantaRecall(body), nil
 	}
 	return body, nil
+}
+
+func resolveHTTPURL(src SlotSource) (string, error) {
+	// Expand env vars in URL so profiles can use ${TESSERACT_URL}, ${VANTA_URL}, etc.
+	rawURL := os.ExpandEnv(src.URL)
+	if rawURL == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(rawURL, "/") {
+		return rawURL, nil
+	}
+
+	baseURL := bootHTTPBaseURL()
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse boot HTTP base URL %q: %w", baseURL, err)
+	}
+	if base.Scheme == "" || base.Host == "" {
+		return "", fmt.Errorf("boot HTTP base URL %q must include scheme and host", baseURL)
+	}
+	rel, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse relative http slot URL %q: %w", rawURL, err)
+	}
+	return base.ResolveReference(rel).String(), nil
+}
+
+func bootHTTPBaseURL() string {
+	for _, key := range []string{"TETHER_BOOT_HTTP_BASE_URL", "TESSERACT_URL", "VANTA_URL"} {
+		if value := strings.TrimRight(os.Getenv(key), "/"); value != "" {
+			return value
+		}
+	}
+	return defaultBootHTTPBaseURL
 }
 
 func expandPath(p string) string {
