@@ -118,6 +118,9 @@ func worktreeBranchName(name string) string {
 	if strings.ContainsAny(name, " \t") {
 		return ""
 	}
+	if strings.ContainsAny(name, `/\`) {
+		return ""
+	}
 	return name
 }
 
@@ -165,6 +168,7 @@ func RemoveWorktreeAt(repoRoot, workRoot string) error {
 		}
 		return fmt.Errorf("remove git worktree %s: %w", workRoot, err)
 	}
+	_ = runGit(repoRoot, "worktree", "prune")
 	return nil
 }
 

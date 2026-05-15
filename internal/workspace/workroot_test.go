@@ -110,6 +110,19 @@ func TestMaterializeWorkRootNamedBranch(t *testing.T) {
 	}
 }
 
+func TestMaterializeWorkRootPathLikeNameStaysDetached(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree", WorktreeName: "feature/launchpad"}
+	if err := MaterializeWorkRoot(root, "session-pathlike", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	if out := gitOutput(t, repo, "branch", "--list", "feature/launchpad"); out != "" {
+		t.Fatalf("path-like worktree_name created a branch: %q", out)
+	}
+}
+
 func TestMaterializeWorkRootTemplateNameStaysDetached(t *testing.T) {
 	repo := initGitRepo(t)
 	root := t.TempDir()

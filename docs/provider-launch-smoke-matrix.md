@@ -8,15 +8,15 @@ in isolation; this matrix covers what unit tests cannot — that real provider
 binaries actually start, accept input, and exit cleanly through the shared
 launch (`go-agent-launch` compile → prepare → plant) flow.
 
-It is written as a **runnable procedure**: each scenario lists the exact
-commands, the expected observable result, and the provider/version assumptions
-it depends on. The result columns are intentionally unfilled — a live run fills
-them in and files follow-up tasks for any failure (see
-[Recording results](#recording-results)).
+It is written as a **runnable procedure plus run log**: each scenario lists the
+exact commands, the expected observable result, and the provider/version
+assumptions it depends on. The matrix below records the 2026-05-15 live run;
+future runs should update the version table, matrix result cells, and
+[Execution status](#execution-status).
 
-> Scope note: per the CW-20260515-0001 closeout decision, this sprint produced
-> the matrix as a documented procedure only. No live provider launches were
-> executed. Live execution is tracked as a follow-up task.
+> Scope note: the original closeout sprint produced this matrix as a documented
+> procedure only. Follow-up task `CW-20260515-0140` executed the live provider
+> smoke run recorded here.
 
 ## Assumptions and version pins
 
