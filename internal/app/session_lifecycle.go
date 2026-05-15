@@ -94,7 +94,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	if in.LaunchID == "" {
 		return nil, fmt.Errorf("launch id required")
 	}
-	plan, err := s.Resolve(in.LaunchID)
+	plan, err := s.resolveWithInput(in)
 	if err != nil {
 		return nil, err
 	}

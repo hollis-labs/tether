@@ -10,8 +10,9 @@ import (
 )
 
 type Input struct {
-	LaunchID    string
-	CatalogRoot string
+	LaunchID            string
+	CatalogRoot         string
+	SkipPromptFragments bool
 }
 
 func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
@@ -24,14 +25,16 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	prov := cat.Providers[l.Provider]
 
 	var fragments []string
-	if l.Prompt.IncludeProjectBoot {
-		fragments = append(fragments, proj.BootFragments...)
-	}
-	if l.Prompt.IncludeAgentBoot {
-		fragments = append(fragments, agent.BootFragments...)
-	}
-	if l.Prompt.IncludeKnowledgeBase {
-		fragments = append(fragments, proj.KnowledgeBase...)
+	if !in.SkipPromptFragments {
+		if l.Prompt.IncludeProjectBoot {
+			fragments = append(fragments, proj.BootFragments...)
+		}
+		if l.Prompt.IncludeAgentBoot {
+			fragments = append(fragments, agent.BootFragments...)
+		}
+		if l.Prompt.IncludeKnowledgeBase {
+			fragments = append(fragments, proj.KnowledgeBase...)
+		}
 	}
 	boot, err := Compose(in.CatalogRoot, fragments)
 	if err != nil {

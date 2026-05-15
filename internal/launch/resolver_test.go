@@ -239,6 +239,46 @@ func TestResolve_InjectionFiles(t *testing.T) {
 	}
 }
 
+func TestResolve_SkipPromptFragmentsAllowsGeneratedBootReplacement(t *testing.T) {
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"demo": {
+				ID:            "demo",
+				RepoRoot:      "/tmp/demo",
+				BootFragments: []string{"missing/.agentrc/boot-prompt.md"},
+				Workspace:     config.WorkspaceSpec{SessionRoot: "/tmp/sessions"},
+			},
+		},
+		Agents: map[string]config.Agent{
+			"demo-agent": {ID: "demo-agent"},
+		},
+		Providers: map[string]config.Provider{
+			"provider": {ID: "provider", Command: "echo"},
+		},
+		Launches: map[string]config.Launch{
+			"launch": {
+				ID:       "launch",
+				Project:  "demo",
+				Agent:    "demo-agent",
+				Provider: "provider",
+				Prompt:   config.PromptSpec{IncludeProjectBoot: true},
+			},
+		},
+	}
+
+	if _, err := Resolve(cat, Input{LaunchID: "launch", CatalogRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected missing legacy boot fragment to fail without SkipPromptFragments")
+	}
+
+	plan, err := Resolve(cat, Input{LaunchID: "launch", CatalogRoot: t.TempDir(), SkipPromptFragments: true})
+	if err != nil {
+		t.Fatalf("resolve with SkipPromptFragments: %v", err)
+	}
+	if plan.BootPrompt != "\n" {
+		t.Fatalf("BootPrompt = %q, want empty composed prompt newline", plan.BootPrompt)
+	}
+}
+
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
