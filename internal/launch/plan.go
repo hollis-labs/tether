@@ -6,16 +6,21 @@ package launch
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
-	LaunchID       string   `json:"launch_id"`
-	ProjectID      string   `json:"project_id"`
-	LogicalAgentID string   `json:"logical_agent_id"`
-	ProviderID     string   `json:"provider_id"`
-	ProviderBrand  string   `json:"provider_brand,omitempty"`
-	RuntimeKind    string   `json:"runtime_kind,omitempty"`
-	RepoRoot       string   `json:"repo_root"`
-	WriteHome      string   `json:"write_home"`
-	Command        string   `json:"command"`
-	Args           []string `json:"args"`
+	LaunchID        string   `json:"launch_id"`
+	ProjectID       string   `json:"project_id"`
+	LogicalAgentID  string   `json:"logical_agent_id"`
+	ProviderID      string   `json:"provider_id"`
+	ProviderBrand   string   `json:"provider_brand,omitempty"`
+	RuntimeKind     string   `json:"runtime_kind,omitempty"`
+	RepoRoot        string   `json:"repo_root"`
+	WorkRoot        string   `json:"work_root,omitempty"`
+	WriteHome       string   `json:"write_home"`
+	WorkspaceMode   string   `json:"workspace_mode,omitempty"`
+	WorktreeBase    string   `json:"worktree_base,omitempty"`
+	WorktreeName    string   `json:"worktree_name,omitempty"`
+	BootProfileFile string   `json:"boot_profile_file,omitempty"`
+	Command         string   `json:"command"`
+	Args            []string `json:"args"`
 
 	// Env holds explicit overrides (from the launch's overrides.env block).
 	// The adapter applies these last, after composing the base environment
@@ -33,4 +38,37 @@ type Plan struct {
 
 	BootPrompt string `json:"boot_prompt"`
 	BootMode   string `json:"boot_mode"`
+
+	NativeFiles    []NativeFile       `json:"native_files,omitempty"`
+	BootDirOverlay map[string]string  `json:"boot_dir_overlay,omitempty"`
+	Shared         *SharedLaunchState `json:"shared_launch,omitempty"`
+}
+
+type NativeFile struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id,omitempty"`
+	RelPath string `json:"rel_path,omitempty"`
+	Content string `json:"content,omitempty"`
+	Mode    uint32 `json:"mode,omitempty"`
+}
+
+type SharedLaunchState struct {
+	PlanHash        string `json:"plan_hash,omitempty"`
+	CompilerVersion string `json:"compiler_version,omitempty"`
+	ProviderID      string `json:"provider_id,omitempty"`
+	RuntimeKind     string `json:"runtime_kind,omitempty"`
+	WorkspaceMode   string `json:"workspace_mode,omitempty"`
+	BootFile        string `json:"boot_file,omitempty"`
+	TransientFile   string `json:"transient_file,omitempty"`
+	MCPFile         string `json:"mcp_file,omitempty"`
+}
+
+func (p *Plan) EffectiveWorkRoot() string {
+	if p != nil && p.WorkRoot != "" {
+		return p.WorkRoot
+	}
+	if p != nil {
+		return p.RepoRoot
+	}
+	return ""
 }

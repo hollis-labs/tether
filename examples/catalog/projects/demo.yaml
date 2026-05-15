@@ -5,5 +5,5 @@ tracking_root: ~/agent-mux/tracking/demo
 boot_fragments:
   - boot/common.md
 workspace:
-  default_mode: hybrid
+  default_mode: worktree
   session_root: ~/agent-mux/workspaces/demo

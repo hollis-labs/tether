@@ -13,6 +13,9 @@ func (c *Catalog) Validate() error {
 		if _, ok := c.Providers[l.Provider]; !ok {
 			return fmt.Errorf("launch %q references unknown provider %q", id, l.Provider)
 		}
+		if err := validateLaunchInjection(id, l.Injection); err != nil {
+			return err
+		}
 	}
 	for id, p := range c.Providers {
 		typ := p.Type
@@ -49,6 +52,39 @@ func (c *Catalog) Validate() error {
 			if _, ok := c.SandboxProfiles[name]; !ok {
 				return fmt.Errorf("agent %q references unknown sandbox profile %q", id, name)
 			}
+		}
+	}
+	return nil
+}
+
+func validateLaunchInjection(launchID string, in LaunchInjection) error {
+	for i, f := range in.NativeFiles {
+		if f.Content != "" && f.Source != "" {
+			return fmt.Errorf("launch %q injection.native_files[%d] sets both content and source", launchID, i)
+		}
+		kind := f.Kind
+		if kind == "" {
+			kind = "raw"
+		}
+		switch kind {
+		case "raw":
+			if f.RelPath == "" {
+				return fmt.Errorf("launch %q injection.native_files[%d] missing rel_path", launchID, i)
+			}
+		case "skill":
+			if f.ID == "" {
+				return fmt.Errorf("launch %q injection.native_files[%d] missing id", launchID, i)
+			}
+		default:
+			return fmt.Errorf("launch %q injection.native_files[%d] has unsupported kind %q", launchID, i, f.Kind)
+		}
+	}
+	for i, f := range in.BootDirOverlay {
+		if f.RelPath == "" {
+			return fmt.Errorf("launch %q injection.boot_dir_overlay[%d] missing rel_path", launchID, i)
+		}
+		if f.Content != "" && f.Source != "" {
+			return fmt.Errorf("launch %q injection.boot_dir_overlay[%d] sets both content and source", launchID, i)
 		}
 	}
 	return nil

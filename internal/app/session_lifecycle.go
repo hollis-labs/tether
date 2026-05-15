@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
@@ -100,6 +101,9 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	if err := s.applyAgentOps(plan, in); err != nil {
 		return nil, err
 	}
+	if err := s.compileSharedLaunch(context.Background(), plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
@@ -109,6 +113,15 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 	wsRoot := plan.WriteHome
 	if wsRoot == "" {
 		wsRoot = filepath.Join(config.Expand(s.Catalog.Global.Catalog.Defaults.WorkspaceRoot), plan.ProjectID)
+	}
+	if err := workspace.MaterializeWorkRoot(wsRoot, sessID, plan); err != nil {
+		return nil, err
+	}
+	if err := s.RefreshBootProfilePrompt(context.Background(), plan); err != nil {
+		return nil, err
+	}
+	if err := s.compileSharedLaunch(context.Background(), plan); err != nil {
+		return nil, err
 	}
 	ws, err := workspace.Create(wsRoot, sessID, plan)
 	if err != nil {
@@ -216,21 +229,36 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		}
 	}
 
-	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
-
-	startOpts := agentsessions.StartOptions{
-		Workdir:          plan.RepoRoot,
-		WorkspaceDir:     ws.Root,
-		LogPath:          ws.LogPath,
-		BootPrompt:       plan.BootPrompt,
-		BootMode:         plan.BootMode,
-		Env:              provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
-		Profile:          profile,
-		OnSessionID:      onSessionID,
-		AttachEnabled:    true,
-		AutoPlantBootDir: true,
-		OnBootDirPlanted: onBootDirPlanted,
+	prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
+		MuxCommand: muxCommandPath(),
+		MuxArgs:    []string{"--catalog", s.CatalogRoot, "mcp", "--proxy"},
+		MuxEnv:     muxEnvMap(plan.Env),
+	})
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, fmt.Errorf("prepare shared launch: %w", err)
 	}
+
+	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
+	onBootDirPlanted(prepared.PlantedBootDir)
+	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, fmt.Errorf("prepare session launch: %w", err)
+	}
+
+	startOpts := sessionLaunch.Options
+	startOpts.LogPath = ws.LogPath
+	startOpts.WorkspaceDir = ws.Root
+	startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
+	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
+	startOpts.Profile = profile
+	startOpts.OnSessionID = onSessionID
+	startOpts.AttachEnabled = true
+	startOpts.AutoPlantBootDir = false
+
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 
 	req := agentsessions.StartRequest{

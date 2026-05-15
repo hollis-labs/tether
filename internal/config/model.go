@@ -147,6 +147,7 @@ type Launch struct {
 	Prompt    PromptSpec      `yaml:"prompt" json:"prompt"`
 	Overrides LaunchOverrides `yaml:"overrides" json:"overrides"`
 	MCP       MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
+	Injection LaunchInjection `yaml:"injection" json:"injection,omitempty"`
 }
 
 type LaunchWorkspace struct {
@@ -163,6 +164,20 @@ type PromptSpec struct {
 
 type LaunchOverrides struct {
 	Env map[string]string `yaml:"env" json:"env,omitempty"`
+}
+
+type LaunchInjection struct {
+	NativeFiles    []InjectedFile `yaml:"native_files" json:"native_files,omitempty"`
+	BootDirOverlay []InjectedFile `yaml:"boot_dir_overlay" json:"boot_dir_overlay,omitempty"`
+}
+
+type InjectedFile struct {
+	Kind    string `yaml:"kind" json:"kind,omitempty"`
+	ID      string `yaml:"id" json:"id,omitempty"`
+	RelPath string `yaml:"rel_path" json:"rel_path,omitempty"`
+	Content string `yaml:"content" json:"content,omitempty"`
+	Source  string `yaml:"source" json:"source,omitempty"`
+	Mode    uint32 `yaml:"mode" json:"mode,omitempty"`
 }
 
 type Catalog struct {

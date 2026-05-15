@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -71,6 +74,7 @@ type LaunchOverride struct {
 // Returns an error when any of the parse / merge steps fails. The plan is
 // left in an undefined state on error — callers must abort.
 func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error {
+	plan.BootProfileFile = in.BootProfileFile
 	effectiveAgent, err := s.resolveEffectiveAgent(plan, in)
 	if err != nil {
 		return err
@@ -93,12 +97,37 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 
 	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
 	applyMCPAllowlist(plan, bootProfile)
+	if err := s.compileNativeFiles(plan, effectiveAgent); err != nil {
+		return err
+	}
 
 	// BootPromptOverride wins last — explicit "give me exactly this prompt."
 	if in.BootPromptOverride != "" {
 		composedPrompt = in.BootPromptOverride
 	}
 	plan.BootPrompt = composedPrompt
+	return nil
+}
+
+// RefreshBootProfilePrompt regenerates a boot-profile prompt after launch
+// workspace materialization so identity.work_root can point at the executable
+// worktree instead of the canonical source repo.
+func (s *Service) RefreshBootProfilePrompt(ctx context.Context, plan *launch.Plan) error {
+	if plan == nil || plan.BootProfileFile == "" {
+		return nil
+	}
+	p, err := bootgen.LoadProfile(plan.BootProfileFile)
+	if err != nil {
+		return fmt.Errorf("boot_profile: %w", err)
+	}
+	if workRoot := plan.EffectiveWorkRoot(); workRoot != "" {
+		p.Identity.WorkRoot = workRoot
+	}
+	var buf bytes.Buffer
+	if err := bootgen.Generate(ctx, p, s.CatalogRoot, &buf); err != nil {
+		return fmt.Errorf("generate boot profile: %w", err)
+	}
+	plan.BootPrompt = buf.String()
 	return nil
 }
 
@@ -151,9 +180,7 @@ func loadBootProfile(path string) (bootgen.Profile, error) {
 }
 
 // composeBootPrompt assembles the catalog boot prompt + SystemPrompt +
-// AgentPrompt + provider-compiled skills sections into a single composed
-// prompt. Returns the composed string; skill compilation errors surface
-// unless they're "unsupported provider" (skip silently).
+// AgentPrompt into a single composed prompt.
 func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Agent) (string, error) {
 	var sb strings.Builder
 	if plan.BootPrompt != "" {
@@ -183,31 +210,49 @@ func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Age
 		}
 	}
 
-	// Compile skills for the provider. Skills are appended to the BootPrompt
-	// as text — once go-agent-sessions exposes an app-side PlantedFiles append
-	// hook, this can shift to native per-file placement (.claude/skills/<id>.md
-	// for Claude, AGENTS.md for Codex). Today it joins as inline sections.
+	return sb.String(), nil
+}
+
+func (s *Service) compileNativeFiles(plan *launch.Plan, effectiveAgent config.Agent) error {
+	nativeFiles := append([]launch.NativeFile(nil), plan.NativeFiles...)
 	skillSet, err := s.loadEffectiveSkills(effectiveAgent.Skills)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if len(skillSet) > 0 {
-		compiled, cerr := skills.CompileForProvider(plan.ProviderID, skillSet)
-		if cerr != nil && !isUnsupportedProvider(cerr) {
-			return "", fmt.Errorf("compile skills for %s: %w", plan.ProviderID, cerr)
-		}
-		for _, f := range compiled {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			fmt.Fprintf(&sb, "<!-- %s -->\n", f.RelPath)
-			sb.WriteString(f.Content)
-			if !strings.HasSuffix(f.Content, "\n") {
-				sb.WriteString("\n")
+	if len(skillSet) == 0 {
+		plan.NativeFiles = nativeFiles
+		return nil
+	}
+	compiled, cerr := skills.CompileForProvider(plan.ProviderID, skillSet)
+	if cerr != nil && !isUnsupportedProvider(cerr) {
+		return fmt.Errorf("compile skills for %s: %w", plan.ProviderID, cerr)
+	}
+	for _, f := range compiled {
+		nativeFiles = append(nativeFiles, nativeFileFromCompiled(f))
+	}
+	plan.NativeFiles = nativeFiles
+	return nil
+}
+
+func nativeFileFromCompiled(f skills.CompiledFile) launch.NativeFile {
+	rel := filepath.ToSlash(f.RelPath)
+	if strings.HasPrefix(rel, ".claude/skills/") && strings.HasSuffix(rel, ".md") {
+		id := strings.TrimSuffix(strings.TrimPrefix(rel, ".claude/skills/"), ".md")
+		if id != "" && !strings.Contains(id, "/") {
+			return launch.NativeFile{
+				Kind:    "skill",
+				ID:      id,
+				Content: f.Content,
+				Mode:    uint32(f.Mode),
 			}
 		}
 	}
-	return sb.String(), nil
+	return launch.NativeFile{
+		Kind:    "raw",
+		RelPath: rel,
+		Content: f.Content,
+		Mode:    uint32(f.Mode),
+	}
 }
 
 // applyOverride parses the caller's JSON override and applies it. SystemPrompt

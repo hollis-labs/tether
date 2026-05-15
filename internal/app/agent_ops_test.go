@@ -255,7 +255,7 @@ func TestApplyAgentOps_BadOverrideJSON_HardErrors(t *testing.T) {
 	}
 }
 
-func TestApplyAgentOps_SkillsCompiled(t *testing.T) {
+func TestApplyAgentOps_SkillsCompileToNativeFiles(t *testing.T) {
 	tmp := t.TempDir()
 	// Plant a system-layer skill discoverable via DefaultLayers(catalogRoot, catalogRoot).
 	skillsDir := filepath.Join(tmp, "skills")
@@ -273,12 +273,50 @@ func TestApplyAgentOps_SkillsCompiled(t *testing.T) {
 	if err := svc.applyAgentOps(plan, CreateSessionInput{LaunchID: "test-launch"}); err != nil {
 		t.Fatalf("applyAgentOps: %v", err)
 	}
-	if !strings.Contains(plan.BootPrompt, "refactor body") {
-		t.Errorf("compiled skill body missing from BootPrompt: %q", plan.BootPrompt)
+	if strings.Contains(plan.BootPrompt, "refactor body") {
+		t.Errorf("compiled skill body should not be appended to BootPrompt: %q", plan.BootPrompt)
 	}
-	// Claude compiler emits .claude/skills/<id>.md; the relpath comment should show.
-	if !strings.Contains(plan.BootPrompt, ".claude/skills/refactor.md") {
-		t.Errorf("compiled skill marker missing: %q", plan.BootPrompt)
+	if len(plan.NativeFiles) != 1 {
+		t.Fatalf("NativeFiles len = %d, want 1", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].Kind != "skill" {
+		t.Errorf("NativeFiles[0].Kind = %q, want skill", plan.NativeFiles[0].Kind)
+	}
+	if plan.NativeFiles[0].ID != "refactor" {
+		t.Errorf("NativeFiles[0].ID = %q, want refactor", plan.NativeFiles[0].ID)
+	}
+	if !strings.Contains(plan.NativeFiles[0].Content, "refactor body") {
+		t.Errorf("compiled skill body missing from native file: %q", plan.NativeFiles[0].Content)
+	}
+}
+
+func TestApplyAgentOps_PreservesLaunchNativeFiles(t *testing.T) {
+	tmp := t.TempDir()
+	skillsDir := filepath.Join(tmp, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "refactor.md"), []byte("---\nid: refactor\nname: Refactor\n---\nrefactor body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent", Skills: []string{"refactor"}},
+	}, tmp)
+	plan := basePlan()
+	plan.NativeFiles = []launch.NativeFile{
+		{Kind: "raw", RelPath: ".mux/context.md", Content: "profile file\n"},
+	}
+	if err := svc.applyAgentOps(plan, CreateSessionInput{LaunchID: "test-launch"}); err != nil {
+		t.Fatalf("applyAgentOps: %v", err)
+	}
+	if len(plan.NativeFiles) != 2 {
+		t.Fatalf("NativeFiles len = %d, want profile file + compiled skill", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].RelPath != ".mux/context.md" {
+		t.Fatalf("profile native file was not preserved first: %#v", plan.NativeFiles)
+	}
+	if plan.NativeFiles[1].Kind != "skill" || plan.NativeFiles[1].ID != "refactor" {
+		t.Fatalf("compiled skill missing after profile file: %#v", plan.NativeFiles)
 	}
 }
 

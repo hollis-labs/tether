@@ -2,6 +2,8 @@ package launch
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -68,6 +70,23 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	if writeHome == "" {
 		writeHome = proj.Workspace.SessionRoot
 	}
+	writeHome = config.Expand(writeHome)
+	if writeHome == "" {
+		writeHome = filepath.Join(config.Expand(cat.Global.Catalog.Defaults.WorkspaceRoot), proj.ID)
+	}
+
+	workspaceMode := l.Workspace.Mode
+	if workspaceMode == "" {
+		workspaceMode = proj.Workspace.DefaultMode
+	}
+	if workspaceMode == "" {
+		workspaceMode = "worktree"
+	}
+
+	nativeFiles, bootDirOverlay, err := resolveInjection(in.CatalogRoot, l.Injection)
+	if err != nil {
+		return nil, fmt.Errorf("resolve injection: %w", err)
+	}
 
 	return &Plan{
 		LaunchID:       l.ID,
@@ -77,7 +96,10 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		ProviderBrand:  prov.ProviderBrand(),
 		RuntimeKind:    prov.EffectiveRuntimeKind(),
 		RepoRoot:       config.Expand(proj.RepoRoot),
-		WriteHome:      config.Expand(writeHome),
+		WriteHome:      writeHome,
+		WorkspaceMode:  workspaceMode,
+		WorktreeBase:   config.Expand(proj.Workspace.WorktreeBase),
+		WorktreeName:   l.Workspace.WorktreeName,
 		Command:        prov.Command,
 		Args:           prov.Args,
 		Env:            overrides,
@@ -86,5 +108,67 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		EnvRedact:      prov.Env.Redact,
 		BootPrompt:     boot,
 		BootMode:       prov.Bootstrap.Mode,
+		NativeFiles:    nativeFiles,
+		BootDirOverlay: bootDirOverlay,
 	}, nil
+}
+
+func resolveInjection(catalogRoot string, in config.LaunchInjection) ([]NativeFile, map[string]string, error) {
+	nativeFiles := make([]NativeFile, 0, len(in.NativeFiles))
+	for _, f := range in.NativeFiles {
+		content, err := resolveInjectedContent(catalogRoot, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		kind := f.Kind
+		if kind == "" {
+			kind = "raw"
+		}
+		nativeFiles = append(nativeFiles, NativeFile{
+			Kind:    kind,
+			ID:      f.ID,
+			RelPath: filepath.ToSlash(f.RelPath),
+			Content: content,
+			Mode:    f.Mode,
+		})
+	}
+
+	overlay := map[string]string{}
+	for _, f := range in.BootDirOverlay {
+		rel := filepath.ToSlash(f.RelPath)
+		if rel == "" {
+			return nil, nil, fmt.Errorf("boot_dir_overlay entry missing rel_path")
+		}
+		content, err := resolveInjectedContent(catalogRoot, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		overlay[rel] = content
+	}
+	if len(overlay) == 0 {
+		overlay = nil
+	}
+	return nativeFiles, overlay, nil
+}
+
+func resolveInjectedContent(catalogRoot string, f config.InjectedFile) (string, error) {
+	if f.Content != "" && f.Source != "" {
+		return "", fmt.Errorf("injected file %q sets both content and source", f.RelPath)
+	}
+	if f.Source == "" {
+		return f.Content, nil
+	}
+	path := os.ExpandEnv(f.Source)
+	if strings.HasPrefix(path, "~") {
+		path = config.Expand(path)
+	} else if !filepath.IsAbs(path) {
+		path = filepath.Join(catalogRoot, path)
+	} else {
+		path = config.Expand(path)
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // G304: operator-provided catalog injection source.
+	if err != nil {
+		return "", fmt.Errorf("read injected source %s: %w", path, err)
+	}
+	return string(b), nil
 }

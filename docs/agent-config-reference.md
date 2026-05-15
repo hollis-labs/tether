@@ -1,6 +1,8 @@
 # Agent Config Reference (v005-08)
 
 Mux's two-tier agent configuration model. See ADR 0033 for the design rationale.
+For launch profile, boot profile, workspace, and slot fields, see
+`docs/catalog-launch-profiles.md`.
 
 ## Discovery layers
 
@@ -76,9 +78,10 @@ slots:
 For Tier-1 (catalog-only) launches:
 
 1. Launch profile resolves project + agent + provider from the catalog.
-2. Skills referenced by `agent.skills` are loaded via discovery, compiled for the resolved provider, and appended to the boot prompt.
-3. Provider-overrides (`agent.provider_overrides[providerID]`) apply env + extra args.
-4. `system_prompt` and `agent_prompt` are appended to the boot prompt under `# System` / `# Agent` headings.
+2. Launch-profile `injection.native_files` and `injection.boot_dir_overlay` are resolved from inline content or catalog-root-relative source files.
+3. Skills referenced by `agent.skills` are loaded via discovery, compiled for the resolved provider, and appended to the native files list.
+4. Provider-overrides (`agent.provider_overrides[providerID]`) apply env + extra args.
+5. `system_prompt` and `agent_prompt` are appended to the boot prompt under `# System` / `# Agent` headings.
 
 For Tier-2 (caller-provided) launches, see `docs/caller-launched-sessions.md`.
 

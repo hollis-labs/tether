@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -192,6 +193,50 @@ func TestResolve_MCPServerChain(t *testing.T) {
 			t.Fatalf("want MUX_MCP_SERVERS=hadron, got %q", plan.Env["MUX_MCP_SERVERS"])
 		}
 	})
+}
+
+func TestResolve_InjectionFiles(t *testing.T) {
+	catalogRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(catalogRoot, "context.md"), []byte("from source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+		},
+		Agents:    map[string]config.Agent{"a": {ID: "a"}},
+		Providers: map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+		Launches: map[string]config.Launch{
+			"l": {
+				ID: "l", Project: "proj", Agent: "a", Provider: "p",
+				Injection: config.LaunchInjection{
+					NativeFiles: []config.InjectedFile{
+						{RelPath: ".mux/inline.md", Content: "inline\n", Mode: 0o600},
+						{RelPath: ".mux/context.md", Source: "context.md"},
+					},
+					BootDirOverlay: []config.InjectedFile{
+						{RelPath: "extra.md", Content: "overlay\n"},
+					},
+				},
+			},
+		},
+	}
+	plan, err := Resolve(cat, Input{LaunchID: "l", CatalogRoot: catalogRoot})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.NativeFiles) != 2 {
+		t.Fatalf("NativeFiles len = %d, want 2", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].Kind != "raw" || plan.NativeFiles[0].RelPath != ".mux/inline.md" || plan.NativeFiles[0].Content != "inline\n" || plan.NativeFiles[0].Mode != 0o600 {
+		t.Fatalf("unexpected inline native file: %#v", plan.NativeFiles[0])
+	}
+	if plan.NativeFiles[1].Content != "from source\n" {
+		t.Fatalf("source native file content = %q", plan.NativeFiles[1].Content)
+	}
+	if plan.BootDirOverlay["extra.md"] != "overlay\n" {
+		t.Fatalf("boot overlay = %#v", plan.BootDirOverlay)
+	}
 }
 
 func equalStringSlices(a, b []string) bool {
