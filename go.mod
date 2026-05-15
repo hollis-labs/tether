@@ -39,7 +39,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/hollis-labs/go-agent-launch => ../../libs/go-agent-launch
-
-replace github.com/hollis-labs/go-agent-context => ../../libs/go-agent-context

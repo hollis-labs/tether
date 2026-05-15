@@ -85,10 +85,7 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 
-	composedPrompt, err := s.composeBootPrompt(plan, effectiveAgent)
-	if err != nil {
-		return err
-	}
+	composedPrompt := s.composeBootPrompt(plan, effectiveAgent)
 
 	composedPrompt, err = applyOverride(plan, composedPrompt, in.Override)
 	if err != nil {
@@ -181,7 +178,7 @@ func loadBootProfile(path string) (bootgen.Profile, error) {
 
 // composeBootPrompt assembles the catalog boot prompt + SystemPrompt +
 // AgentPrompt into a single composed prompt.
-func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Agent) (string, error) {
+func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Agent) string {
 	var sb strings.Builder
 	if plan.BootPrompt != "" {
 		sb.WriteString(plan.BootPrompt)
@@ -210,7 +207,7 @@ func (s *Service) composeBootPrompt(plan *launch.Plan, effectiveAgent config.Age
 		}
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }
 
 func (s *Service) compileNativeFiles(plan *launch.Plan, effectiveAgent config.Agent) error {
