@@ -56,9 +56,7 @@ func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []mcp.Tool) [
 		}
 	}
 	out := make([]mcp.Tool, 0, len(defs))
-	for _, def := range defs {
-		out = append(out, def)
-	}
+	out = append(out, defs...)
 	return out
 }
 
@@ -69,9 +67,7 @@ func (c *liveProxyCatalog) filterNativeToolNames(serverID string, names []string
 		}
 	}
 	out := make([]string, 0, len(names))
-	for _, name := range names {
-		out = append(out, name)
-	}
+	out = append(out, names...)
 	return out
 }
 

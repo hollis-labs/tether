@@ -82,7 +82,7 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 		t.Fatalf("downstream.Initialize: %v", err)
 	}
 
-	assertToolPresent(t, ctx, downstream, "clockwork_alpha")
+	assertToolPresent(ctx, t, downstream, "clockwork_alpha")
 
 	upstream.AddTool(mcp.NewTool("clockwork_beta", mcp.WithDescription("beta tool for inbox ordering")), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("beta"), nil
@@ -98,7 +98,7 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	if ok, _ := refreshBody["ok"].(bool); !ok {
 		t.Fatalf("mux_catalog_refresh failed: %v", refreshBody)
 	}
-	waitForTool(t, ctx, downstream, "clockwork_beta")
+	waitForTool(ctx, t, downstream, "clockwork_beta")
 
 	res, err := downstream.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{Name: "clockwork_beta"},
@@ -126,7 +126,7 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	}
 }
 
-func waitForTool(t *testing.T, ctx context.Context, client mcpclient.MCPClient, toolName string) {
+func waitForTool(ctx context.Context, t *testing.T, client mcpclient.MCPClient, toolName string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -143,7 +143,7 @@ func waitForTool(t *testing.T, ctx context.Context, client mcpclient.MCPClient, 
 	t.Fatalf("timed out waiting for tool %q", toolName)
 }
 
-func assertToolPresent(t *testing.T, ctx context.Context, client mcpclient.MCPClient, toolName string) {
+func assertToolPresent(ctx context.Context, t *testing.T, client mcpclient.MCPClient, toolName string) {
 	t.Helper()
 	resp, err := client.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {

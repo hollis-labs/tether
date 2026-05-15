@@ -101,7 +101,11 @@ func (p *ClientPool) startOne(ctx context.Context, entry config.MCPServerEntry) 
 		if notification.Method != mcp.MethodNotificationToolsListChanged {
 			return
 		}
-		go p.refreshServer(ctx, entry.ID, client, "notification")
+		go func() {
+			if _, err := p.refreshServer(ctx, entry.ID, client, "notification"); err != nil {
+				slog.Debug("mcp-proxy: ignoring upstream tool refresh error", "server", entry.ID, "err", err)
+			}
+		}()
 	})
 
 	// MCP initialize handshake.

@@ -2,7 +2,6 @@ package skills
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
@@ -256,9 +255,4 @@ func tokeniseList(s string) []string {
 		tokens = append(tokens, token)
 	}
 	return normalizeStringList(tokens)
-}
-
-func brokerWorkingDir() string {
-	workingDir, _ := os.Getwd()
-	return workingDir
 }
