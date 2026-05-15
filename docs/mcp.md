@@ -239,6 +239,67 @@ Read-only; no auth required.
 }
 ```
 
+#### `mux_skill_broker`
+Return ranked skill recommendations for a specific task, role, project, or
+trigger set. This is the progressive-discovery companion to `mux_skill_list`:
+it returns metadata, ranking, and reasons, then the caller uses
+`mux_skill_get` only for the chosen skill body.
+
+Read-only; no auth required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `query` | string |  | Free-text task or intent |
+| `role` | string |  | Optional requester role signal |
+| `project` | string |  | Optional project signal |
+| `task_id` | string |  | Optional Torque task id for forward-compatible enrichment |
+| `triggers` | string |  | Optional comma-separated preferred trigger terms |
+| `layers` | string |  | Optional comma-separated layer filter |
+| `limit` | integer |  | Optional max results, default 5, max 20 |
+
+```json
+// Response
+{
+  "ok": true,
+  "items": [
+    {
+      "id": "refactor-go",
+      "name": "Refactor Go",
+      "description": "Apply Go refactoring patterns.",
+      "triggers": ["refactor", "cleanup"],
+      "path": "/home/user/.nanite/skills/refactor-go.md",
+      "layer": "legacy-nanite",
+      "score": {
+        "query_matches": 1,
+        "signal_matches": 1,
+        "preferred_matches": 2,
+        "priority": 10
+      },
+      "reasons": [
+        "matched query: refactor",
+        "matched role/project: backend",
+        "preferred triggers: refactor"
+      ],
+      "next": "mux_skill_get"
+    }
+  ],
+  "meta": {
+    "returned": 1,
+    "total_visible": 8,
+    "filters": {
+      "query": "refactor handler",
+      "role": "backend",
+      "project": "",
+      "task_id": "",
+      "triggers": ["refactor"],
+      "layers": []
+    },
+    "progressive_discovery": true,
+    "task_context_resolved": false
+  }
+}
+```
+
 ---
 
 ### Sessions
@@ -411,9 +472,11 @@ Cancel a pending message.
 #### `mux_boot_generate`
 Generate a boot prompt for an agent profile and return it as a string. The
 profile YAML in `<catalog>/boot-profiles/<id>.yaml` defines how to assemble
-slot content from static files, skill indexes, shell commands, and HTTP
-endpoints. Use `type: skill_index` for the `skills` slot to emit compact
+slot content from static files, role summaries, skill indexes, shell commands,
+and HTTP endpoints. Use `type: skill_index` for the `skills` slot to emit compact
 `/skill-id — description` pointers instead of inlining full skill bodies.
+Use `type: role_summary` for the `agent` slot to emit role identity, a mission
+paragraph, and a pointer to the full role file.
 
 Read-only; no auth required.
 

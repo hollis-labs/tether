@@ -78,6 +78,86 @@ func TestGenerate_StaticSlot(t *testing.T) {
 	}
 }
 
+func TestGenerate_RoleSummarySlot(t *testing.T) {
+	dir := t.TempDir()
+	rolePath := filepath.Join(dir, "backend.md")
+	if err := os.WriteFile(rolePath, []byte(`# Backend Engineer
+
+## Mission
+
+Build compact, reliable backend changes that respect existing interfaces and leave enough context for the next operator.
+
+## Detailed Operating Rules
+
+- This line should stay in the full role file.
+- This one should not be inlined either.
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := bootgen.Profile{
+		ID: "test.role-summary.main",
+		Slots: map[string]bootgen.SlotSource{
+			"agent": {Type: "role_summary", Path: rolePath},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"### Role Identity",
+		"- Role: Backend Engineer",
+		"- Full role file: `" + rolePath + "`",
+		"Build compact, reliable backend changes",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("role summary missing %q in:\n%s", want, out)
+		}
+	}
+	for _, leaked := range []string{"Detailed Operating Rules", "This line should stay in the full role file"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("role summary leaked full role content %q in:\n%s", leaked, out)
+		}
+	}
+}
+
+func TestGenerate_RoleSummarySlotTrimsRoleHeadingPrefix(t *testing.T) {
+	dir := t.TempDir()
+	rolePath := filepath.Join(dir, "worker.md")
+	if err := os.WriteFile(rolePath, []byte(`# Role: Backend
+
+## Identity
+
+You are a backend engineer focused on APIs, services, data pipelines, and system reliability.
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := bootgen.Profile{
+		ID: "test.role-summary-role-prefix.main",
+		Slots: map[string]bootgen.SlotSource{
+			"agent": {Type: "role_summary", Path: rolePath},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "- Role: Backend") {
+		t.Fatalf("role summary did not normalize role heading:\n%s", out)
+	}
+	if strings.Contains(out, "- Role: Role: Backend") {
+		t.Fatalf("role summary duplicated role prefix:\n%s", out)
+	}
+}
+
 func TestGenerate_CmdSlot(t *testing.T) {
 	p := bootgen.Profile{
 		ID: "test.cmd.main",
@@ -188,6 +268,145 @@ Nor should this body.
 			t.Errorf("skill index leaked body %q in:\n%s", body, out)
 		}
 	}
+}
+
+func TestGenerate_SkillIndexSlotRanksByProfileRelevance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeBootgenSkillFixture(t, dir, "capture", `---
+id: capture
+description: Capture session outcomes.
+triggers: [nanite, backend]
+---
+`)
+	writeBootgenSkillFixture(t, dir, "refactor-go", `---
+id: refactor-go
+description: Apply Go refactoring patterns.
+triggers: [refactor, backend]
+---
+`)
+	writeBootgenSkillFixture(t, dir, "adr", `---
+id: adr
+description: Capture architecture decisions.
+triggers: [decision]
+---
+`)
+
+	p := bootgen.Profile{
+		ID:   "nanite.backend.main",
+		Tags: []string{"refactor"},
+		Identity: bootgen.Identity{
+			Role:    "backend",
+			Project: "nanite",
+		},
+		Slots: map[string]bootgen.SlotSource{
+			"skills": {Type: "skill_index", Limit: 2},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	lines := skillIndexLines(t, buf.String())
+	if got, want := lines[0], "/capture — Capture session outcomes."; got != want {
+		t.Fatalf("first ranked skill = %q, want %q\nfull output:\n%s", got, want, buf.String())
+	}
+	if got, want := lines[1], "/refactor-go — Apply Go refactoring patterns."; got != want {
+		t.Fatalf("second ranked skill = %q, want %q\nfull output:\n%s", got, want, buf.String())
+	}
+}
+
+func TestGenerate_SkillIndexSlotPreferTriggersNudgesTie(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeBootgenSkillFixture(t, dir, "capture", `---
+id: capture
+description: Capture session outcomes.
+triggers: [backend, capture]
+---
+`)
+	writeBootgenSkillFixture(t, dir, "refactor-go", `---
+id: refactor-go
+description: Apply Go refactoring patterns.
+triggers: [backend, refactor]
+---
+`)
+
+	p := bootgen.Profile{
+		ID: "nanite.backend.main",
+		Identity: bootgen.Identity{
+			Role: "backend",
+		},
+		Slots: map[string]bootgen.SlotSource{
+			"skills": {Type: "skill_index", Limit: 2, PreferTriggers: []string{"refactor"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	lines := skillIndexLines(t, buf.String())
+	if got, want := lines[0], "/refactor-go — Apply Go refactoring patterns."; got != want {
+		t.Fatalf("preferred trigger did not nudge ordering: got %q want %q\nfull output:\n%s", got, want, buf.String())
+	}
+}
+
+func TestGenerate_SkillIndexSlotPriorityBreaksTriggerTie(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeBootgenSkillFixture(t, dir, "capture", `---
+id: capture
+description: Capture session outcomes.
+triggers: [backend]
+priority: 10
+---
+`)
+	writeBootgenSkillFixture(t, dir, "refactor-go", `---
+id: refactor-go
+description: Apply Go refactoring patterns.
+triggers: [backend]
+priority: 5
+---
+`)
+
+	p := bootgen.Profile{
+		ID: "nanite.backend.main",
+		Identity: bootgen.Identity{
+			Role: "backend",
+		},
+		Slots: map[string]bootgen.SlotSource{
+			"skills": {Type: "skill_index", Limit: 2},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	lines := skillIndexLines(t, buf.String())
+	if got, want := lines[0], "/capture — Capture session outcomes."; got != want {
+		t.Fatalf("priority did not break trigger tie: got %q want %q\nfull output:\n%s", got, want, buf.String())
+	}
+}
+
+func skillIndexLines(t *testing.T, out string) []string {
+	t.Helper()
+	var lines []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "/") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		t.Fatalf("no skill index lines found in output:\n%s", out)
+	}
+	return lines
 }
 
 func TestGenerate_HTTPSlot_BodyCap(t *testing.T) {

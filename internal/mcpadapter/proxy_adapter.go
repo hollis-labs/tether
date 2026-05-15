@@ -6,13 +6,95 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 )
+
+type liveProxyCatalog struct {
+	mu         sync.Mutex
+	adapter    *Adapter
+	server     *server.MCPServer
+	registry   *ToolRegistry
+	router     *ProxyRouter
+	index      *DiscoveryIndex
+	serverTags map[string][]string
+	allowed    map[string]struct{}
+	firehose   bool
+}
+
+func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.index.Build(c.registry, c.serverTags)
+	if len(refresh.Delta.Removed) > 0 {
+		c.server.DeleteTools(c.filterNativeToolNames(refresh.ServerID, refresh.Delta.Removed)...)
+	}
+
+	updatedNames := make([]string, 0, len(refresh.Delta.Updated))
+	for _, def := range refresh.Delta.Updated {
+		updatedNames = append(updatedNames, def.Name)
+	}
+	if len(updatedNames) > 0 {
+		c.server.DeleteTools(c.filterNativeToolNames(refresh.ServerID, updatedNames)...)
+	}
+
+	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Added)...)
+	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Updated)...)
+}
+
+func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []mcp.Tool) []mcp.Tool {
+	if !c.firehose {
+		if _, ok := c.allowed[serverID]; !ok {
+			return nil
+		}
+	}
+	out := make([]mcp.Tool, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, def)
+	}
+	return out
+}
+
+func (c *liveProxyCatalog) filterNativeToolNames(serverID string, names []string) []string {
+	if !c.firehose {
+		if _, ok := c.allowed[serverID]; !ok {
+			return nil
+		}
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name)
+	}
+	return out
+}
+
+func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
+	if len(defs) == 0 {
+		return
+	}
+	logger := c.adapter.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	tools := make([]server.ServerTool, 0, len(defs))
+	for _, def := range defs {
+		def := def
+		tools = append(tools, server.ServerTool{
+			Tool: def,
+			Handler: mcpsanitize.Middleware(logger)(func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return c.router.Handle(handlerCtx, req)
+			}),
+		})
+	}
+	c.server.AddTools(tools...)
+}
 
 // ProxyOptions configures RunWithProxyOpts behavior for Phase 2+.
 type ProxyOptions struct {
@@ -67,12 +149,6 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	registry := NewToolRegistry()
 	pool := NewClientPool(entries, registry)
 
-	// Start pool concurrently — failed upstreams are logged but do not abort.
-	if err := pool.Start(ctx); err != nil {
-		return fmt.Errorf("client pool start: %w", err)
-	}
-	defer pool.Shutdown()
-
 	// Wire LoggingMiddleware when a Bus is provided.
 	var mws []ToolCallMiddleware
 	if opts.Bus != nil {
@@ -118,8 +194,6 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		serverTags[e.ID] = e.Tags
 	}
 	idx := NewDiscoveryIndex()
-	idx.Build(registry, serverTags)
-	slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
 
 	// Build allowed-server set. Empty = all servers (firehose).
 	// Threaded into mux_discover and mux_catalog_list_mcp_servers so their
@@ -130,6 +204,25 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		allowed[id] = struct{}{}
 	}
 	firehose := len(allowed) == 0
+	liveCatalog := &liveProxyCatalog{
+		adapter:    a,
+		server:     s,
+		registry:   registry,
+		router:     plainRouter,
+		index:      idx,
+		serverTags: serverTags,
+		allowed:    allowed,
+		firehose:   firehose,
+	}
+	pool.SetToolRefreshHandler(liveCatalog.applyRefresh)
+
+	// Start pool concurrently — failed upstreams are logged but do not abort.
+	if err := pool.Start(ctx); err != nil {
+		return fmt.Errorf("client pool start: %w", err)
+	}
+	defer pool.Shutdown()
+	idx.Build(registry, serverTags)
+	slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
 
 	if opts.BrokerMode {
 		// ── Broker mode (deprecated) ─────────────────────────────────────────
@@ -153,8 +246,8 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 				"upstream_tools", len(registry.AllDefinitions()))
 		}
 
+		proxied := make([]mcp.Tool, 0)
 		for _, def := range registry.AllDefinitions() {
-			def := def // capture loop var
 			rt, ok := registry.Lookup(def.Name)
 			if !ok || rt.ServerID == "" {
 				continue
@@ -165,10 +258,9 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 				}
 			}
 			slog.Debug("mcp-proxy: registering proxied tool", "tool", def.Name, "server", rt.ServerID)
-			a.addTool(s, def, func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return plainRouter.Handle(handlerCtx, req)
-			})
+			proxied = append(proxied, def)
 		}
+		liveCatalog.addProxyTools(proxied...)
 
 		// Always register mux_discover + mux_call as a safety hatch so agents
 		// can reach undeclared servers without needing a restart.
@@ -178,6 +270,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	// Introspection tool — always registered in proxy mode.
 	a.registerMCPServersTool(s, pool, entries, allowed, firehose)
+	a.registerCatalogRefreshTool(s, pool)
 
 	// Register mux_events_tool_calls when a durable proxy store is wired.
 	// Falls back to EventStore for backwards compatibility when ProxyStore
@@ -436,4 +529,61 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 			}), nil
 		},
 	)
+}
+
+func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPool) {
+	a.addTool(s,
+		mcp.NewTool(
+			"mux_catalog_refresh",
+			mcp.WithDescription(
+				"Refresh one upstream MCP server's tools/list cache in the running mux process, or all upstreams when no server is specified. "+
+					"Use this when an upstream added or removed tools and you want mux to rescan immediately without restarting.",
+			),
+			mcp.WithString("server",
+				mcp.Description("Optional upstream server ID to refresh. Empty refreshes every connected upstream."),
+			),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			serverID := strings.TrimSpace(str(req, "server"))
+
+			var (
+				results []ToolRefreshResult
+				err     error
+			)
+			if serverID == "" {
+				results, err = pool.RefreshAll(ctx)
+			} else {
+				var single ToolRefreshResult
+				single, err = pool.RefreshServer(ctx, serverID)
+				results = []ToolRefreshResult{single}
+			}
+			if err != nil {
+				return toolError("refresh_failed", err.Error()), nil
+			}
+
+			items := make([]map[string]any, 0, len(results))
+			for _, res := range results {
+				items = append(items, map[string]any{
+					"server":     res.ServerID,
+					"tool_count": res.ToolCount,
+					"added":      toolNames(res.Delta.Added),
+					"updated":    toolNames(res.Delta.Updated),
+					"removed":    res.Delta.Removed,
+				})
+			}
+			return toolJSON(map[string]any{
+				"ok":        true,
+				"count":     len(items),
+				"refreshed": items,
+			}), nil
+		},
+	)
+}
+
+func toolNames(defs []mcp.Tool) []string {
+	out := make([]string, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, def.Name)
+	}
+	return out
 }

@@ -14,7 +14,7 @@ identity:
 
 slots:
   agent:
-    type: static
+    type: role_summary
     path: ~/.nanite/roles/meta/steward.md
 
   recap:

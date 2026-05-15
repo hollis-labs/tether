@@ -6,7 +6,7 @@ package bootgen
 // Sections are omitted when their slot is empty.
 const defaultTemplate = `# Boot Prompt — {{if .Profile.DisplayName}}{{ .Profile.DisplayName }}{{else}}{{ .Profile.ID }}{{end}}
 
-> **Memory + knowledge:** Vanta-primary. Recall Vanta first (` + "`" + `memory_recall` + "`" + ` / ` + "`" + `conduit_lookup` + "`" + `), file-based is legacy fallback. Writes → Vanta only via ` + "`" + `capture-to-vanta` + "`" + `.
+> **Memory + knowledge:** Tesseract-primary. Recall Tesseract first (` + "`" + `memory_recall` + "`" + ` / ` + "`" + `conduit_lookup` + "`" + `), file-based is legacy fallback. Writes → Tesseract only via ` + "`" + `capture-to-vanta` + "`" + `.
 
 ---
 
@@ -15,14 +15,14 @@ const defaultTemplate = `# Boot Prompt — {{if .Profile.DisplayName}}{{ .Profil
 ` + "```yaml" + `
 compiled_at:     {{ .CompiledAt }}
 lineage_alias:   {{ .Profile.Identity.LineageAlias }}
-lineage_id:      {{ if .Profile.Identity.LineageID }}{{ .Profile.Identity.LineageID }}{{ else }}(pending — Agent Mux profile registry){{ end }}
+lineage_id:      {{ if .Profile.Identity.LineageID }}{{ .Profile.Identity.LineageID }}{{ else }}(pending — Tether profile registry){{ end }}
 profile_id:      {{ .Profile.Identity.ProfileID }}
 profile_version: {{ .Profile.Identity.ProfileVersion }}
 role:            {{ .Profile.Identity.Role }}
 project:         {{ .Profile.Identity.Project }}
 work_root:       {{ .Profile.Identity.WorkRoot }}
 tracking_root:   {{ .Profile.Identity.TrackingRoot }}
-vanta_primary:   {{ .Profile.Identity.VantaPrimary }}
+tesseract_primary: {{ .Profile.Identity.VantaPrimary }}
 ` + "```" + `
 {{- if hasSlot "agent" }}
 

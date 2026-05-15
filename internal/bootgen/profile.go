@@ -9,10 +9,11 @@
 //
 // Slot source types:
 //
-//	static      — read one or more files from disk (supports glob + directories)
-//	skill_index — list skill pointers from layered discovery
-//	cmd         — run a shell command and capture stdout
-//	http        — GET a URL and use the response body
+//	static       — read one or more files from disk (supports glob + directories)
+//	role_summary — summarize a role file and point to its full path
+//	skill_index  — list skill pointers from layered discovery
+//	cmd          — run a shell command and capture stdout
+//	http         — GET a URL and use the response body
 package bootgen
 
 import (
@@ -27,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -46,8 +48,9 @@ const maxHTTPSlotBytes int64 = 4 * 1024 * 1024
 // Profile is a boot profile configuration loaded from
 // <catalog-root>/boot-profiles/<id>.yaml.
 type Profile struct {
-	ID          string `yaml:"id"`
-	DisplayName string `yaml:"display_name"`
+	ID          string   `yaml:"id"`
+	DisplayName string   `yaml:"display_name"`
+	Tags        []string `yaml:"tags,omitempty"`
 	// Launch is the catalog launch ID to use when this profile is used to
 	// start a session via `mux boot <profile_id>` or the TUI boot-launch flow.
 	// When empty, generate-boot only writes to stdout (no session created).
@@ -86,7 +89,7 @@ type Identity struct {
 
 // SlotSource describes how to populate a single named slot.
 type SlotSource struct {
-	// Type is "static", "skill_index", "cmd", or "http".
+	// Type is "static", "role_summary", "skill_index", "cmd", or "http".
 	Type string `yaml:"type"`
 
 	// Static source fields.
@@ -96,6 +99,8 @@ type SlotSource struct {
 	Glob string `yaml:"glob,omitempty"`
 	// Limit caps the number of files when Glob produces multiple matches.
 	Limit int `yaml:"limit,omitempty"`
+	// PreferTriggers nudges skill_index ordering toward the listed trigger terms.
+	PreferTriggers []string `yaml:"prefer_triggers,omitempty"`
 
 	// Cmd source fields.
 	Run     string `yaml:"run,omitempty"`
@@ -155,7 +160,7 @@ func LoadProfiles(dir string) (map[string]Profile, error) {
 func Generate(ctx context.Context, p Profile, catalogRoot string, w io.Writer) error {
 	resolved := make(map[string]string, len(p.Slots))
 	for name, src := range p.Slots {
-		content, err := resolveSlot(ctx, src, catalogRoot)
+		content, err := resolveSlot(ctx, p, src, catalogRoot)
 		if err != nil {
 			resolved[name] = fmt.Sprintf("<!-- slot:%s resolution failed: %v -->", name, err)
 		} else {
@@ -202,12 +207,14 @@ func Generate(ctx context.Context, p Profile, catalogRoot string, w io.Writer) e
 
 // ─── slot resolution ─────────────────────────────────────────────────────────
 
-func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (string, error) {
+func resolveSlot(ctx context.Context, p Profile, src SlotSource, catalogRoot string) (string, error) {
 	switch src.Type {
 	case "static":
 		return resolveStatic(src, catalogRoot)
+	case "role_summary":
+		return resolveRoleSummary(src, catalogRoot)
 	case "skill_index":
-		return resolveSkillIndex(src, catalogRoot)
+		return resolveSkillIndex(p, src, catalogRoot)
 	case "cmd":
 		return resolveCmd(ctx, src)
 	case "http":
@@ -215,16 +222,17 @@ func resolveSlot(ctx context.Context, src SlotSource, catalogRoot string) (strin
 	case "":
 		return "", fmt.Errorf("slot source missing type")
 	default:
-		return "", fmt.Errorf("unknown source type %q (supported: static, skill_index, cmd, http)", src.Type)
+		return "", fmt.Errorf("unknown source type %q (supported: static, role_summary, skill_index, cmd, http)", src.Type)
 	}
 }
 
-func resolveSkillIndex(src SlotSource, catalogRoot string) (string, error) {
+func resolveSkillIndex(p Profile, src SlotSource, catalogRoot string) (string, error) {
 	workingDir, _ := os.Getwd()
 	all, err := skills.DiscoverLayered(catalogRoot, workingDir)
 	if err != nil {
 		return "", err
 	}
+	rankSkillsForProfile(all, p, src.PreferTriggers)
 	limit := src.Limit
 	if limit <= 0 || limit > len(all) {
 		limit = len(all)
@@ -241,6 +249,112 @@ func resolveSkillIndex(src SlotSource, catalogRoot string) (string, error) {
 		lines = append(lines, fmt.Sprintf("/%s — %s", s.Skill.ID, description))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func rankSkillsForProfile(all []skills.LayeredSkill, p Profile, preferTriggers []string) {
+	profileSignals := makeProfileSignalSet(p)
+	fallbackSignals := makeFallbackSignalSet(p)
+	preferredWeights := makeOrderedWeightSet(preferTriggers)
+	sort.SliceStable(all, func(i, j int) bool {
+		left := scoreSkill(all[i].Skill, profileSignals, fallbackSignals, preferredWeights)
+		right := scoreSkill(all[j].Skill, profileSignals, fallbackSignals, preferredWeights)
+		switch {
+		case left.coreMatches != right.coreMatches:
+			return left.coreMatches > right.coreMatches
+		case left.preferredMatches != right.preferredMatches:
+			return left.preferredMatches > right.preferredMatches
+		case left.priority != right.priority:
+			return left.priority > right.priority
+		default:
+			return all[i].Skill.ID < all[j].Skill.ID
+		}
+	})
+}
+
+type skillScore struct {
+	coreMatches      int
+	preferredMatches int
+	priority         int
+}
+
+func scoreSkill(s skills.Skill, profileSignals, fallbackSignals map[string]struct{}, preferredWeights map[string]int) skillScore {
+	score := skillScore{priority: s.Priority}
+	signals := skillSignals(s)
+	matchingSignals := profileSignals
+	if len(s.Triggers) == 0 {
+		matchingSignals = fallbackSignals
+	}
+	for _, signal := range signals {
+		if _, ok := matchingSignals[signal]; ok {
+			score.coreMatches++
+		}
+		if weight, ok := preferredWeights[signal]; ok {
+			score.preferredMatches += weight
+		}
+	}
+	return score
+}
+
+func skillSignals(s skills.Skill) []string {
+	if len(s.Triggers) > 0 {
+		return normalizeStringList(s.Triggers)
+	}
+	return normalizeStringList(strings.FieldsFunc(
+		strings.Join([]string{s.ID, s.Name, s.Description}, " "),
+		func(r rune) bool {
+			return (r < 'a' || r > 'z') &&
+				(r < 'A' || r > 'Z') &&
+				(r < '0' || r > '9')
+		},
+	))
+}
+
+func makeProfileSignalSet(p Profile) map[string]struct{} {
+	var signals []string
+	signals = append(signals, p.Identity.Role, p.Identity.Project)
+	signals = append(signals, p.Tags...)
+	return normalizeStringSet(signals)
+}
+
+func makeFallbackSignalSet(p Profile) map[string]struct{} {
+	var signals []string
+	signals = append(signals, p.Identity.Role)
+	signals = append(signals, p.Tags...)
+	return normalizeStringSet(signals)
+}
+
+func normalizeStringSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range normalizeStringList(values) {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func makeOrderedWeightSet(values []string) map[string]int {
+	normalized := normalizeStringList(values)
+	out := make(map[string]int, len(normalized))
+	for i, value := range normalized {
+		out[value] = len(normalized) - i
+	}
+	return out
 }
 
 func resolveStatic(src SlotSource, catalogRoot string) (string, error) {
@@ -277,6 +391,126 @@ func resolveStatic(src SlotSource, catalogRoot string) (string, error) {
 		parts = append(parts, fmt.Sprintf("### %s\n\n%s", filepath.Base(m), string(b)))
 	}
 	return strings.Join(parts, "\n\n---\n\n"), nil
+}
+
+func resolveRoleSummary(src SlotSource, catalogRoot string) (string, error) {
+	path := resolvePath(src.Path, catalogRoot)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("role_summary path must be a file: %s", path)
+	}
+	b, err := os.ReadFile(path) //nolint:gosec
+	if err != nil {
+		return "", err
+	}
+
+	title, mission := summarizeRoleMarkdown(string(b), path)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "### Role Identity\n\n")
+	fmt.Fprintf(&sb, "- Role: %s\n", title)
+	fmt.Fprintf(&sb, "- Full role file: `%s`\n\n", path)
+	fmt.Fprintf(&sb, "%s", mission)
+	return sb.String(), nil
+}
+
+func summarizeRoleMarkdown(markdown, path string) (string, string) {
+	lines := stripYAMLFrontMatter(strings.Split(markdown, "\n"))
+	title := firstMarkdownHeading(lines)
+	if title == "" {
+		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	title = strings.TrimSpace(strings.TrimPrefix(title, "Role:"))
+	mission := paragraphAfterHeading(lines, "mission", "purpose")
+	if mission == "" {
+		mission = firstMarkdownParagraph(lines)
+	}
+	if mission == "" {
+		mission = "See the full role file for mission details."
+	}
+	return title, mission
+}
+
+func stripYAMLFrontMatter(lines []string) []string {
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return lines
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return lines[i+1:]
+		}
+	}
+	return lines
+}
+
+func firstMarkdownHeading(lines []string) string {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			return strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		}
+	}
+	return ""
+}
+
+func paragraphAfterHeading(lines []string, headingWords ...string) string {
+	for i, line := range lines {
+		heading := strings.TrimSpace(line)
+		if !strings.HasPrefix(heading, "#") {
+			continue
+		}
+		heading = strings.ToLower(strings.TrimSpace(strings.TrimLeft(heading, "#")))
+		for _, word := range headingWords {
+			if strings.Contains(heading, word) {
+				return paragraphFrom(lines[i+1:])
+			}
+		}
+	}
+	return ""
+}
+
+func firstMarkdownParagraph(lines []string) string {
+	return paragraphFrom(lines)
+}
+
+func paragraphFrom(lines []string) string {
+	var parts []string
+	inCodeBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			continue
+		}
+		if trimmed == "" {
+			if len(parts) > 0 {
+				break
+			}
+			continue
+		}
+		if isStructuralMarkdownLine(trimmed) {
+			if len(parts) > 0 {
+				break
+			}
+			continue
+		}
+		parts = append(parts, trimmed)
+	}
+	return strings.Join(parts, " ")
+}
+
+func isStructuralMarkdownLine(line string) bool {
+	return strings.HasPrefix(line, "#") ||
+		strings.HasPrefix(line, "- ") ||
+		strings.HasPrefix(line, "* ") ||
+		strings.HasPrefix(line, ">") ||
+		strings.HasPrefix(line, "|") ||
+		strings.HasPrefix(line, "```")
 }
 
 func resolveCmd(ctx context.Context, src SlotSource) (string, error) {
@@ -386,4 +620,12 @@ func expandPath(p string) string {
 		}
 	}
 	return os.ExpandEnv(p)
+}
+
+func resolvePath(path, catalogRoot string) string {
+	path = expandPath(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(catalogRoot, path)
+	}
+	return path
 }

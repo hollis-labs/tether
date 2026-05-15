@@ -122,3 +122,33 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 	}
 	<-done
 }
+
+func TestToolRegistry_ReplaceServer(t *testing.T) {
+	r := NewToolRegistry()
+	r.RegisterNative([]mcp.Tool{makeTool("health")})
+	r.Register("clockwork", nil, []mcp.Tool{makeTool("alpha"), makeTool("health")})
+
+	delta := r.ReplaceServer("clockwork", nil, []mcp.Tool{
+		makeTool("beta"),
+		mcp.NewTool("clockwork__health", mcp.WithDescription("updated health")),
+	})
+
+	if _, ok := r.Lookup("alpha"); ok {
+		t.Fatal("alpha should have been removed")
+	}
+	if _, ok := r.Lookup("beta"); !ok {
+		t.Fatal("beta should have been added")
+	}
+	if _, ok := r.Lookup("clockwork__health"); !ok {
+		t.Fatal("clockwork__health should still exist")
+	}
+	if len(delta.Added) != 1 || delta.Added[0].Name != "beta" {
+		t.Fatalf("unexpected added delta: %+v", delta.Added)
+	}
+	if len(delta.Updated) != 1 || delta.Updated[0].Name != "clockwork__health" {
+		t.Fatalf("unexpected updated delta: %+v", delta.Updated)
+	}
+	if len(delta.Removed) != 1 || delta.Removed[0] != "alpha" {
+		t.Fatalf("unexpected removed delta: %+v", delta.Removed)
+	}
+}

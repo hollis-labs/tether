@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -11,7 +12,11 @@ import (
 
 // mockClient satisfies mcpclient.MCPClient for testing.
 type mockClient struct {
-	callToolFunc func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	callToolFunc  func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	listToolsFunc func(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+
+	mu            sync.Mutex
+	notifications []func(mcp.JSONRPCNotification)
 }
 
 func (m *mockClient) Initialize(ctx context.Context, req mcp.InitializeRequest) (*mcp.InitializeResult, error) {
@@ -50,6 +55,9 @@ func (m *mockClient) ListToolsByPage(ctx context.Context, req mcp.ListToolsReque
 	return nil, nil
 }
 func (m *mockClient) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	if m.listToolsFunc != nil {
+		return m.listToolsFunc(ctx, req)
+	}
 	return &mcp.ListToolsResult{}, nil
 }
 func (m *mockClient) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -62,8 +70,21 @@ func (m *mockClient) SetLevel(ctx context.Context, req mcp.SetLevelRequest) erro
 func (m *mockClient) Complete(ctx context.Context, req mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 	return nil, nil
 }
-func (m *mockClient) Close() error                                         { return nil }
-func (m *mockClient) OnNotification(handler func(mcp.JSONRPCNotification)) {}
+func (m *mockClient) Close() error { return nil }
+func (m *mockClient) OnNotification(handler func(mcp.JSONRPCNotification)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications = append(m.notifications, handler)
+}
+
+func (m *mockClient) notify(notification mcp.JSONRPCNotification) {
+	m.mu.Lock()
+	handlers := append([]func(mcp.JSONRPCNotification){}, m.notifications...)
+	m.mu.Unlock()
+	for _, handler := range handlers {
+		handler(notification)
+	}
+}
 
 var _ mcpclient.MCPClient = (*mockClient)(nil)
 

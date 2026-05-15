@@ -22,6 +22,13 @@ type clientStatus struct {
 	err       error // non-nil if startup or ListTools failed
 }
 
+// ToolRefreshResult reports one live refresh attempt for an upstream server.
+type ToolRefreshResult struct {
+	ServerID  string
+	ToolCount int
+	Delta     ToolDelta
+}
+
 // ClientPool manages upstream MCP server connections. It spawns stdio
 // subprocesses or connects to SSE endpoints, performs the MCP handshake,
 // fetches tool lists, and populates a ToolRegistry.
@@ -29,17 +36,36 @@ type ClientPool struct {
 	entries  []config.MCPServerEntry
 	registry *ToolRegistry
 
-	mu       sync.Mutex
-	statuses map[string]*clientStatus // serverID → status
+	mu                 sync.Mutex
+	statuses           map[string]*clientStatus // serverID → status
+	refreshing         map[string]bool
+	connectFn          func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error)
+	toolRefreshHandler func(ToolRefreshResult)
 }
 
 // NewClientPool creates a pool from the given catalog entries and registry.
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
 	return &ClientPool{
-		entries:  entries,
-		registry: registry,
-		statuses: make(map[string]*clientStatus, len(entries)),
+		entries:    entries,
+		registry:   registry,
+		statuses:   make(map[string]*clientStatus, len(entries)),
+		refreshing: make(map[string]bool, len(entries)),
 	}
+}
+
+// SetConnectFunc overrides the upstream dialer. Used by tests.
+func (p *ClientPool) SetConnectFunc(fn func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.connectFn = fn
+}
+
+// SetToolRefreshHandler configures a callback invoked after a successful
+// upstream tool refresh updates the registry.
+func (p *ClientPool) SetToolRefreshHandler(handler func(ToolRefreshResult)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.toolRefreshHandler = handler
 }
 
 // Start connects to all configured upstream servers concurrently.
@@ -71,6 +97,12 @@ func (p *ClientPool) startOne(ctx context.Context, entry config.MCPServerEntry) 
 		return
 	}
 	status.client = client
+	client.OnNotification(func(notification mcp.JSONRPCNotification) {
+		if notification.Method != mcp.MethodNotificationToolsListChanged {
+			return
+		}
+		go p.refreshServer(ctx, entry.ID, client, "notification")
+	})
 
 	// MCP initialize handshake.
 	_, err = client.Initialize(ctx, mcp.InitializeRequest{
@@ -111,6 +143,13 @@ func (p *ClientPool) startOne(ctx context.Context, entry config.MCPServerEntry) 
 // connect creates (and starts) the appropriate MCP client for the entry.
 // ctx is threaded through so SSE startup cancels promptly on shutdown.
 func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
+	p.mu.Lock()
+	connectFn := p.connectFn
+	p.mu.Unlock()
+	if connectFn != nil {
+		return connectFn(ctx, entry)
+	}
+
 	switch entry.Transport {
 	case "stdio":
 		if entry.Command == "" {
@@ -145,6 +184,43 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 	default:
 		return nil, fmt.Errorf("unknown transport %q (want stdio or sse)", entry.Transport)
 	}
+}
+
+// RefreshServer forces a one-server tools/list refresh without reconnecting the client.
+func (p *ClientPool) RefreshServer(ctx context.Context, serverID string) (ToolRefreshResult, error) {
+	p.mu.Lock()
+	status, ok := p.statuses[serverID]
+	p.mu.Unlock()
+	if !ok {
+		return ToolRefreshResult{}, fmt.Errorf("unknown upstream server %q", serverID)
+	}
+	if status.client == nil {
+		if status.err != nil {
+			return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable: %w", serverID, status.err)
+		}
+		return ToolRefreshResult{}, fmt.Errorf("upstream %q unavailable", serverID)
+	}
+	return p.refreshServer(ctx, serverID, status.client, "manual")
+}
+
+// RefreshAll forces a tools/list refresh for every connected upstream.
+func (p *ClientPool) RefreshAll(ctx context.Context) ([]ToolRefreshResult, error) {
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.statuses))
+	for id := range p.statuses {
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+
+	out := make([]ToolRefreshResult, 0, len(ids))
+	for _, id := range ids {
+		res, err := p.RefreshServer(ctx, id)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, res)
+	}
+	return out, nil
 }
 
 // Shutdown terminates all upstream connections gracefully.
@@ -200,4 +276,78 @@ func (p *ClientPool) setStatus(id string, s *clientStatus) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.statuses[id] = s
+}
+
+func (p *ClientPool) refreshServer(ctx context.Context, serverID string, client mcpclient.MCPClient, source string) (ToolRefreshResult, error) {
+	if !p.beginRefresh(serverID) {
+		return ToolRefreshResult{}, nil
+	}
+	defer p.endRefresh(serverID)
+
+	result, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		p.setRefreshError(serverID, fmt.Errorf("refresh list tools: %w", err))
+		slog.Warn("mcp-proxy: upstream tool refresh failed", "server", serverID, "source", source, "err", err)
+		return ToolRefreshResult{}, err
+	}
+
+	delta := p.registry.ReplaceServer(serverID, client, result.Tools)
+	p.updateToolCount(serverID, len(result.Tools))
+
+	refresh := ToolRefreshResult{
+		ServerID:  serverID,
+		ToolCount: len(result.Tools),
+		Delta:     delta,
+	}
+	if handler := p.getToolRefreshHandler(); handler != nil {
+		handler(refresh)
+	}
+
+	slog.Info("mcp-proxy: upstream tools refreshed",
+		"server", serverID,
+		"source", source,
+		"tools", len(result.Tools),
+		"added", len(delta.Added),
+		"updated", len(delta.Updated),
+		"removed", len(delta.Removed))
+	return refresh, nil
+}
+
+func (p *ClientPool) beginRefresh(serverID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.refreshing[serverID] {
+		return false
+	}
+	p.refreshing[serverID] = true
+	return true
+}
+
+func (p *ClientPool) endRefresh(serverID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.refreshing, serverID)
+}
+
+func (p *ClientPool) updateToolCount(serverID string, count int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if status, ok := p.statuses[serverID]; ok {
+		status.toolCount = count
+		status.err = nil
+	}
+}
+
+func (p *ClientPool) setRefreshError(serverID string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if status, ok := p.statuses[serverID]; ok {
+		status.err = err
+	}
+}
+
+func (p *ClientPool) getToolRefreshHandler() func(ToolRefreshResult) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.toolRefreshHandler
 }
