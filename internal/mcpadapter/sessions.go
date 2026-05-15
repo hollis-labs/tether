@@ -37,6 +37,7 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 		mcp.WithString("agent_inline", mcp.Description("v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order.")),
 		mcp.WithString("boot_profile", mcp.Description("v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers).")),
 		mcp.WithString("override", mcp.Description("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).")),
+		mcp.WithString("injection", mcp.Description("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.")),
 	), a.handleSessionCreate)
 
 	a.addTool(s, mcp.NewTool("mux_session_launch",
@@ -142,6 +143,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	agentInline := str(req, "agent_inline")
 	bootProfile := str(req, "boot_profile")
 	override := str(req, "override")
+	injection := str(req, "injection")
 
 	if a.client != nil {
 		// Daemon-routed path (production "mux mcp"): the daemon owns session
@@ -154,10 +156,11 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 			AgentInline:     agentInline,
 			BootProfileFile: bootProfile,
 			Override:        override,
+			Injection:       injection,
 		}
 		var res api.LaunchResponse
 		var err error
-		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" {
+		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" {
 			res, err = a.client.CreateSessionWithInput(ctx, creq)
 		} else if bootPrompt != "" {
 			res, err = a.client.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
@@ -184,7 +187,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	// In-process path (tests, dev with no daemon).
 	var res *app.Launched
 	var err error
-	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" {
+	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" {
 		res, err = a.svc.CreateSessionWithInput(app.CreateSessionInput{
 			LaunchID:           launchID,
 			BootPromptOverride: bootPrompt,
@@ -192,6 +195,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 			AgentInline:        agentInline,
 			BootProfileFile:    bootProfile,
 			Override:           override,
+			Injection:          injection,
 		})
 	} else if bootPrompt != "" {
 		res, err = a.svc.CreateSessionWithBootPrompt(launchID, bootPrompt)

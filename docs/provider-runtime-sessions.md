@@ -42,6 +42,11 @@ session manager. Detach leaves the session running under the daemon.
 
 ## Smoke Checklist
 
+The quick checks below cover managed Claude streaming and TUI. The full
+cross-provider smoke matrix — Claude/Codex/Opencode, injection, skills,
+worktree isolation — lives in
+[`provider-launch-smoke-matrix.md`](provider-launch-smoke-matrix.md).
+
 Managed streaming:
 
 ```sh

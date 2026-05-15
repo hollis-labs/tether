@@ -11,7 +11,7 @@ Tier-2 doesn't replace the launch profile entirely — the catalog still supplie
 
 ## Payload fields
 
-All four are optional; any one set routes through the Tier-2 path.
+All five are optional; any one set routes through the Tier-2 path.
 
 | Field | Shape | Effect |
 |---|---|---|
@@ -19,8 +19,47 @@ All four are optional; any one set routes through the Tier-2 path.
 | `agent_inline` | JSON string | Same shape as `agent_file` but inline. Highest precedence in the agent resolve order (inline > file > catalog). |
 | `boot_profile` | filesystem path | Loads a `bootgen.Profile` YAML. Currently consumed for `mcp_servers` (the MCP allowlist for this launch). |
 | `override` | JSON string | Per-launch override applied last over the resolved plan. Shape: `{"system_prompt": "...", "env": {"KEY": "VAL"}}`. |
+| `injection` | JSON string | Caller-provided native files + boot-dir overlay, supplied outside catalog YAML. JSON-encoded `config.LaunchInjection` — the same shape as the catalog `injection` block. See [Caller injection](#caller-injection) below. |
 
 Plus `boot_prompt` (string) — the pre-v005-08 raw boot-prompt override, preserved for back-compat. Wins over all v005-08 composition layers when set.
+
+## Caller injection
+
+The `injection` field carries native files and boot-dir overlay entries the
+caller wants planted into this launch, without registering them in catalog
+YAML. It is a JSON-encoded `config.LaunchInjection`:
+
+```jsonc
+{
+  "native_files": [
+    { "kind": "raw", "rel_path": "NOTES.md", "content": "task handoff notes" },
+    { "kind": "raw", "rel_path": ".mux/ctx.md", "source": "boot/ctx.md" }
+  ],
+  "boot_dir_overlay": [
+    { "rel_path": "extra.md", "content": "extra boot-dir content" }
+  ]
+}
+```
+
+Precedence and merge rules:
+
+- **Native files** — caller native files are appended *after* catalog native
+  files, and compiled `agent.skills` are appended last:
+  `catalog native files → caller injection → compiled agent.skills`.
+- **Boot-dir overlay** — caller entries merge into the catalog overlay map
+  (keyed by `rel_path`). On a duplicate `rel_path`, the **caller value wins**.
+- **`source` paths** — relative `source` paths in caller injection resolve from
+  the catalog/config root, not the process CWD. Each entry sets exactly one of
+  `content` or `source`.
+
+> ⚠️ **Persisted at rest — non-secret content only.** Caller `injection` content
+> (and any file body read from a `source` path) is resolved into the launch
+> plan and persisted verbatim as JSON in the `launch_plans` table. The same
+> applies to `override.env`. **Never route API keys, tokens, or other secrets
+> through `injection` or `override.env`.** Secrets must flow through provider
+> env `passthrough`/`whitelist` mode (parent env, never persisted) or an
+> external api-key-helper/keychain. There is no separate non-persisted
+> runtime-only injection layer today.
 
 ## Resolve precedence
 
@@ -53,7 +92,8 @@ For env: provider-overrides + override.env merge into `plan.Env`; the existing p
 mux launch --launch my-launch-id \
   --agent-file ./my-agent.yaml \
   --boot-profile ./research-mode.yaml \
-  --override '{"system_prompt":"You are now a code reviewer."}'
+  --override '{"system_prompt":"You are now a code reviewer."}' \
+  --injection '{"native_files":[{"rel_path":"NOTES.md","content":"task handoff"}]}'
 ```
 
 ### MCP (`mux_session_create`)
@@ -63,7 +103,8 @@ mux launch --launch my-launch-id \
   "launch_id": "my-launch-id",
   "agent_inline": "{\"id\":\"reviewer\",\"system_prompt\":\"You are a code reviewer.\"}",
   "boot_profile": "/path/to/research-mode.yaml",
-  "override": "{\"env\":{\"REVIEW_MODE\":\"strict\"}}"
+  "override": "{\"env\":{\"REVIEW_MODE\":\"strict\"}}",
+  "injection": "{\"native_files\":[{\"rel_path\":\"NOTES.md\",\"content\":\"task handoff\"}]}"
 }
 ```
 
@@ -78,6 +119,7 @@ Follow with `mux_session_launch` to start the session.
   "boot_profile": "/path/to/profile.yaml",
   "agent_inline": "",
   "override": "{\"system_prompt\":\"...\"}",
+  "injection": "{\"native_files\":[{\"rel_path\":\"NOTES.md\",\"content\":\"...\"}]}",
   "boot_prompt": ""
 }
 ```
@@ -108,7 +150,7 @@ launched, err := c.LaunchSession(ctx, created.ID)
 
 ## Error semantics
 
-- Malformed JSON in `agent_inline` or `override` returns `invalid_request` (HTTP 400 / MCP error code `invalid_request`).
+- Malformed JSON in `agent_inline`, `override`, or `injection` returns `invalid_request` (HTTP 400 / MCP error code `invalid_request`). A caller-injection `source` path that cannot be read returns `internal_error`.
 - Missing `agent_file` / `boot_profile` paths return `internal_error` with the underlying `read <path>: no such file or directory` wrapped.
 - Skill resolution errors (a skill referenced by `agent.skills` not found in any discovery layer) return `internal_error`. Provider-unsupported skill compilation is silently skipped (the session still launches). Supported providers receive compiled skill files in the planted bootdir.
 

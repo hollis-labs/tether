@@ -20,6 +20,7 @@ var (
 	launchAgentInline  string
 	launchBootProfile  string
 	launchOverride     string
+	launchInjection    string
 	launchBootPromptOR string
 )
 
@@ -38,7 +39,7 @@ var launchCmd = &cobra.Command{
 		}
 
 		var res api.LaunchResponse
-		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || launchBootPromptOR != "" {
+		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || launchInjection != "" || launchBootPromptOR != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Launch:          launchID,
 				BootPrompt:      launchBootPromptOR,
@@ -46,6 +47,7 @@ var launchCmd = &cobra.Command{
 				AgentInline:     launchAgentInline,
 				BootProfileFile: launchBootProfile,
 				Override:        launchOverride,
+				Injection:       launchInjection,
 			})
 		} else {
 			res, err = c.Launch(ctx, launchID)
@@ -84,6 +86,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchAgentInline, "agent-inline", "", "v005-08: inline JSON agent definition (highest precedence)")
 	launchCmd.Flags().StringVar(&launchBootProfile, "boot-profile", "", "v005-08: path to bootgen boot-profile YAML (carries MCP allowlist)")
 	launchCmd.Flags().StringVar(&launchOverride, "override", "", `v005-08: per-launch JSON override, e.g. '{"system_prompt":"...","env":{"K":"V"}}'`)
+	launchCmd.Flags().StringVar(&launchInjection, "injection", "", `caller-provided JSON config.LaunchInjection, e.g. '{"native_files":[{"rel_path":"NOTES.md","content":"..."}]}' (non-secret only — persisted at rest)`)
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
 	_ = launchCmd.MarkFlagRequired("launch")
 }

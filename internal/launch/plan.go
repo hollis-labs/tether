@@ -39,6 +39,15 @@ type Plan struct {
 	BootPrompt string `json:"boot_prompt"`
 	BootMode   string `json:"boot_mode"`
 
+	// NativeFiles and BootDirOverlay carry injected file content (from catalog
+	// injection and caller-provided injection alike).
+	//
+	// SECURITY — PERSISTED AT REST, NON-SECRET ONLY. The whole Plan, including
+	// these fields, is persisted verbatim as JSON in the launch_plans table.
+	// Injected content is therefore at-rest data. Never route secrets through
+	// injection — see config.LaunchInjection. Secrets belong in provider env
+	// passthrough/whitelist mode (EnvPassthrough), which pulls from the live
+	// parent environment and is NOT materialized into the plan.
 	NativeFiles    []NativeFile       `json:"native_files,omitempty"`
 	BootDirOverlay map[string]string  `json:"boot_dir_overlay,omitempty"`
 	Shared         *SharedLaunchState `json:"shared_launch,omitempty"`

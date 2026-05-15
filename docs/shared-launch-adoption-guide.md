@@ -111,9 +111,28 @@ injection:
 Use `native_files` for provider-aware planted files. Use `boot_dir_overlay` only
 for intentional provider boot-dir overrides or extra boot-dir-only artifacts.
 
-Do not persist secrets in `content` or `source` files that are copied into a
-stored launch plan. If an app needs secret material, keep it in env/keychain
-plumbing or add a non-persisted secret injection path.
+Callers can also supply the same injection shape per-launch *outside* catalog
+YAML via the Tier-2 `injection` field (a JSON-encoded `config.LaunchInjection`)
+on the API/MCP/CLI surfaces. Caller native files are appended after catalog
+native files (and before compiled `agent.skills`); caller `boot_dir_overlay`
+entries merge into the catalog overlay map and the caller value wins on a
+duplicate `rel_path`. Relative `source` paths in caller injection resolve from
+the catalog/config root, not the process CWD.
+
+> ⚠️ **Downstream adopters (Torque, Nanite): injection content is persisted at
+> rest.** Both catalog `injection` and the Tier-2 caller `injection` field
+> resolve into `launch.Plan`, which Tether persists verbatim as JSON in the
+> `launch_plans` table. Any `content` value — and the file body read from a
+> `source` path — is therefore stored unencrypted at rest. The same is true of
+> explicit `overrides.env` entries. **Never route API keys, tokens, or other
+> secrets through `injection.content`, `injection.source`, or `overrides.env`.**
+> Secrets must flow through provider env `passthrough`/`whitelist` mode — which
+> pulls from the live parent environment at launch time and is *not*
+> materialized into the persisted plan — or through an external
+> api-key-helper/keychain. Tether deliberately does not provide a separate
+> non-persisted runtime-only injection layer today; if your app needs one,
+> raise it for alignment rather than smuggling secrets through the persisted
+> path.
 
 ## Sharp Edges
 
@@ -129,6 +148,11 @@ plumbing or add a non-persisted secret injection path.
   cleanup/preservation semantics explicitly.
 - Direct `boot-exec` is not the same as managed session attach. Native TUI
   direct exec can bypass daemon/session persistence by design.
+- `boot-exec` is Claude-TUI-only. It execs into the native Claude PTY runtime
+  and rejects Codex/Opencode launch profiles. Catalog launch support for a
+  provider does not imply `boot-exec` support — Codex and Opencode are reached
+  through managed sessions (`mux launch`). See
+  `docs/adr/0039-boot-exec-claude-only-scope.md`.
 - Provider support and provider polish are separate. The shared layer can carry
   NativeFiles/BootDirOverlay even when a provider-specific skill compiler is not
   implemented yet.

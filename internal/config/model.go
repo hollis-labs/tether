@@ -166,11 +166,29 @@ type LaunchOverrides struct {
 	Env map[string]string `yaml:"env" json:"env,omitempty"`
 }
 
+// LaunchInjection declares native files and boot-dir overlay entries to plant
+// into a launched session's workspace.
+//
+// SECURITY — PERSISTED AT REST, NON-SECRET ONLY. Every InjectedFile resolved
+// from this struct (whether its content is inline or loaded from a Source
+// path) is materialized into launch.Plan, which is persisted verbatim as JSON
+// in the launch_plans table. Injected content is therefore at-rest data.
+// NEVER place API keys, tokens, or other secrets in injection content/source.
+// Secrets must flow through provider env passthrough/whitelist mode (parent
+// env, never persisted) or an external api-key-helper/keychain — see
+// ProviderEnv and docs/shared-launch-adoption-guide.md.
 type LaunchInjection struct {
 	NativeFiles    []InjectedFile `yaml:"native_files" json:"native_files,omitempty"`
 	BootDirOverlay []InjectedFile `yaml:"boot_dir_overlay" json:"boot_dir_overlay,omitempty"`
 }
 
+// InjectedFile describes one file to plant into a launched session.
+//
+// SECURITY — PERSISTED AT REST, NON-SECRET ONLY. Both Content (inline) and the
+// file read from Source are resolved into launch.Plan and persisted as JSON in
+// the launch_plans table. Treat all injected content as non-secret. Routing a
+// secret through Content or Source persists it at rest — use provider env
+// passthrough/whitelist instead.
 type InjectedFile struct {
 	Kind    string `yaml:"kind" json:"kind,omitempty"`
 	ID      string `yaml:"id" json:"id,omitempty"`

@@ -104,17 +104,31 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	return plan, nil
 }
 
-func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
+func (s *Service) createSessionFromPlan(plan *launch.Plan) (launched *Launched, err error) {
 	sessID := uuid.NewString()
 
 	wsRoot := plan.WriteHome
 	if wsRoot == "" {
 		wsRoot = filepath.Join(config.Expand(s.Catalog.Global.Catalog.Defaults.WorkspaceRoot), plan.ProjectID)
 	}
-	if err := workspace.MaterializeWorkRoot(wsRoot, sessID, plan); err != nil {
+	if err = workspace.MaterializeWorkRoot(wsRoot, sessID, plan); err != nil {
 		return nil, err
 	}
-	if err := s.RefreshBootProfilePrompt(context.Background(), plan); err != nil {
+	// Cleanup-on-error: if any step after MaterializeWorkRoot fails, remove the
+	// worktree this call just materialized so a failed create does not leak a
+	// git worktree (and its stale registration). RemoveMaterializedWorkRoot is
+	// a no-op for shared/hybrid plans, so this never touches a shared repo_root.
+	// Cleared once the session row is committed — at that point the worktree is
+	// owned by the persisted session and follows the daemon retention policy.
+	defer func() {
+		if err != nil {
+			if rmErr := workspace.RemoveMaterializedWorkRoot(plan); rmErr != nil {
+				log.Printf("app: cleanup worktree for failed session create %s: %v", sessID, rmErr)
+			}
+		}
+	}()
+
+	if err = s.RefreshBootProfilePrompt(context.Background(), plan); err != nil {
 		return nil, err
 	}
 	ws, err := workspace.Create(wsRoot, sessID, plan)
@@ -127,11 +141,13 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 	// user thinks they have a created session.
 	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
-		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+		err = fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+		return nil, err
 	}
 	probe, err := factory(plan)
 	if err != nil {
-		return nil, fmt.Errorf("build runtime for %q: %w", plan.ProviderID, err)
+		err = fmt.Errorf("build runtime for %q: %w", plan.ProviderID, err)
+		return nil, err
 	}
 	providerKind := probe.Kind()
 
@@ -145,7 +161,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 	}
-	if err := s.Store.CreateSession(row, plan); err != nil {
+	if err = s.Store.CreateSession(row, plan); err != nil {
 		return nil, err
 	}
 

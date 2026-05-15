@@ -59,6 +59,24 @@ type CreateSessionInput struct {
 	//   system_prompt: string  — replaces the composed boot prompt
 	//   env:           {KEY: VALUE, ...} — merged onto plan.Env (Env mode)
 	Override string
+
+	// Injection is a JSON-encoded config.LaunchInjection: caller-provided
+	// native files + boot-dir overlay entries supplied OUTSIDE catalog YAML,
+	// using the exact same shape as the catalog `launch.injection` block.
+	//
+	// Precedence: caller native files are appended AFTER catalog native files
+	// (and compiled agent.skills are appended last). For the boot-dir overlay
+	// (keyed by rel_path) caller entries merge into the catalog map and the
+	// caller value WINS on a duplicate rel_path.
+	//
+	// Relative `source` paths in caller injection resolve from the catalog/
+	// config root (Service.CatalogRoot), NOT the process CWD.
+	//
+	// SECURITY — PERSISTED AT REST, NON-SECRET ONLY. Injected content lands in
+	// launch.Plan and is persisted as JSON in the launch_plans table. Never
+	// route secrets through this field — use provider env passthrough/
+	// whitelist mode instead. See config.LaunchInjection.
+	Injection string
 }
 
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
@@ -94,6 +112,9 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 
 	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
 	applyMCPAllowlist(plan, bootProfile)
+	if err := s.applyCallerInjection(plan, in.Injection); err != nil {
+		return err
+	}
 	if err := s.compileNativeFiles(plan, effectiveAgent); err != nil {
 		return err
 	}
@@ -275,6 +296,50 @@ func applyOverride(plan *launch.Plan, composedPrompt, overrideJSON string) (stri
 		}
 	}
 	return composedPrompt, nil
+}
+
+// applyCallerInjection parses the caller's JSON-encoded config.LaunchInjection
+// and merges it into the plan. It runs AFTER catalog injection is already in
+// the plan but BEFORE compileNativeFiles appends compiled agent.skills, so the
+// resulting native-file precedence is:
+//
+//	catalog native files → caller-provided native files → compiled agent.skills
+//
+// For the boot-dir overlay (a map keyed by rel_path) caller entries merge into
+// the catalog map; on a duplicate rel_path the CALLER value WINS, overwriting
+// the catalog entry.
+//
+// Relative `source` paths resolve from s.CatalogRoot (the catalog/config
+// root) via launch.ResolveInjection — NOT the process CWD — so the resolution
+// semantics match catalog injection exactly.
+//
+// SECURITY: caller injection content is persisted at rest in launch.Plan; it
+// is non-secret-only. See config.LaunchInjection.
+func (s *Service) applyCallerInjection(plan *launch.Plan, injectionJSON string) error {
+	if injectionJSON == "" {
+		return nil
+	}
+	var inj config.LaunchInjection
+	if err := json.Unmarshal([]byte(injectionJSON), &inj); err != nil {
+		return fmt.Errorf("injection: parse: %w", err)
+	}
+	nativeFiles, overlay, err := launch.ResolveInjection(s.CatalogRoot, inj)
+	if err != nil {
+		return fmt.Errorf("injection: resolve: %w", err)
+	}
+	if len(nativeFiles) > 0 {
+		plan.NativeFiles = append(plan.NativeFiles, nativeFiles...)
+	}
+	if len(overlay) > 0 {
+		if plan.BootDirOverlay == nil {
+			plan.BootDirOverlay = map[string]string{}
+		}
+		// Caller wins on duplicate rel_path.
+		for rel, content := range overlay {
+			plan.BootDirOverlay[rel] = content
+		}
+	}
+	return nil
 }
 
 // applyProviderOverrides applies the per-provider env / extra-args block from

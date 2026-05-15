@@ -98,6 +98,15 @@ type LaunchRequest struct {
 	AgentInline     string `json:"agent_inline,omitempty"`
 	BootProfileFile string `json:"boot_profile,omitempty"`
 	Override        string `json:"override,omitempty"`
+
+	// Injection is a JSON-encoded config.LaunchInjection: caller-provided
+	// native files + boot-dir overlay supplied outside catalog YAML. Caller
+	// native files are appended after catalog native files; caller boot-dir
+	// overlay entries win over catalog entries on a duplicate rel_path.
+	//
+	// SECURITY: injected content is persisted at rest in launch_plans —
+	// non-secret-only. See config.LaunchInjection.
+	Injection string `json:"injection,omitempty"`
 }
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined
@@ -111,6 +120,8 @@ type CreateSessionInput struct {
 	AgentInline        string
 	BootProfileFile    string
 	Override           string
+	// Injection is a JSON-encoded config.LaunchInjection. See LaunchRequest.
+	Injection string
 }
 
 type LaunchResponse struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/hollis-labs/tether/internal/workspace"
 )
 
 var workspacesCmd = &cobra.Command{
@@ -28,7 +31,11 @@ var workspacesPruneCmd = &cobra.Command{
 	Long: `Scans the workspace root and removes directories for sessions that are in a
 terminal state (completed, failed, killed) and whose session was last updated
 more than --older-than ago. Sessions not found in the database at all are also
-pruned. Pass --dry-run to preview without deleting.`,
+pruned. Pass --dry-run to preview without deleting.
+
+For worktree/isolated-mode sessions the prune first runs 'git worktree remove'
+against the source repo so the repo's worktree registry stays consistent — a
+bare directory delete would leave a stale worktree registration behind.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cat, err := config.Load(catalogPath)
 		if err != nil {
@@ -113,7 +120,18 @@ pruned. Pass --dry-run to preview without deleting.`,
 				if shouldPrune {
 					if pruneDryRun {
 						fmt.Printf("would remove %s (%s)\n", sessDir, reason)
+						if wt := worktreeFromSessionDir(sessDir); wt.workRoot != "" {
+							fmt.Printf("  would deregister git worktree %s from %s\n", wt.workRoot, wt.repoRoot)
+						}
 					} else {
+						// Deregister the git worktree first so the source
+						// repo's worktree registry does not keep a stale
+						// entry after the directory is removed.
+						if wt := worktreeFromSessionDir(sessDir); wt.workRoot != "" {
+							if err := workspace.RemoveWorktreeAt(wt.repoRoot, wt.workRoot); err != nil {
+								fmt.Fprintf(cmd.ErrOrStderr(), "warning: deregister worktree %s: %v\n", wt.workRoot, err)
+							}
+						}
 						if err := os.RemoveAll(sessDir); err != nil {
 							fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove %s: %v\n", sessDir, err)
 						} else {
@@ -132,6 +150,39 @@ pruned. Pass --dry-run to preview without deleting.`,
 		}
 		return nil
 	},
+}
+
+// worktreeRef names the source repo and materialized work_root of a
+// worktree/isolated-mode session.
+type worktreeRef struct {
+	repoRoot string
+	workRoot string
+}
+
+// worktreeFromSessionDir inspects a session's persisted plan (state/plan.json)
+// and returns the git worktree it materialized, or a zero worktreeRef when the
+// session was not worktree-mode (shared/hybrid sessions have nothing to
+// deregister). Any read/parse failure yields a zero value — the caller then
+// falls back to a plain directory delete.
+func worktreeFromSessionDir(sessDir string) worktreeRef {
+	planPath := filepath.Join(sessDir, "state", "plan.json")
+	raw, err := os.ReadFile(planPath) //nolint:gosec // path derived from the operator-configured workspace root.
+	if err != nil {
+		return worktreeRef{}
+	}
+	var plan launch.Plan
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		return worktreeRef{}
+	}
+	switch plan.WorkspaceMode {
+	case workspace.WorktreeMode, "isolated":
+	default:
+		return worktreeRef{}
+	}
+	if plan.WorkRoot == "" || plan.WorkRoot == plan.RepoRoot || plan.RepoRoot == "" {
+		return worktreeRef{}
+	}
+	return worktreeRef{repoRoot: plan.RepoRoot, workRoot: plan.WorkRoot}
 }
 
 func init() {

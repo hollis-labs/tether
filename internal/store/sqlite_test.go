@@ -69,6 +69,47 @@ func TestGetLaunchPlan_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestGetLaunchPlan_InjectionContentPersisted locks in the documented
+// security-relevant behavior of CW-0115: injected file content (catalog and
+// caller injection alike) IS persisted at rest in the launch_plans table.
+// Plan native files and boot-dir overlay survive the JSON round-trip verbatim
+// — which is exactly why injection content must be treated as non-secret.
+func TestGetLaunchPlan_InjectionContentPersisted(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	want := &launch.Plan{
+		LaunchID:       "l1",
+		ProjectID:      "p",
+		LogicalAgentID: "a",
+		ProviderID:     "pv",
+		NativeFiles: []launch.NativeFile{
+			{Kind: "raw", RelPath: "NOTES.md", Content: "injected native file content"},
+		},
+		BootDirOverlay: map[string]string{
+			"overlay.md": "injected overlay content",
+		},
+	}
+	row := SessionRow{ID: "s1", LaunchID: "l1", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv", Workspace: "/tmp/ws", State: "created"}
+	if err := db.CreateSession(row, want); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := db.GetLaunchPlan("s1")
+	if err != nil {
+		t.Fatalf("GetLaunchPlan: %v", err)
+	}
+	if len(got.NativeFiles) != 1 || got.NativeFiles[0].Content != "injected native file content" {
+		t.Errorf("native file content not persisted at rest: %+v", got.NativeFiles)
+	}
+	if got.BootDirOverlay["overlay.md"] != "injected overlay content" {
+		t.Errorf("boot-dir overlay content not persisted at rest: %+v", got.BootDirOverlay)
+	}
+}
+
 func TestListSessions_LimitCursorState(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

@@ -132,14 +132,20 @@ Run 'mux list-boot-profiles' to see which profiles support booting.`,
 
 var bootExecCmd = &cobra.Command{
 	Use:   "boot-exec <profile_id>",
-	Short: "Generate boot prompt and run the provider CLI directly",
+	Short: "Generate boot prompt and run the Claude CLI directly (Claude TUI only)",
 	Long: `Generate a dynamic boot prompt from the named profile, materialize the
 provider boot files, and run the underlying Claude CLI directly in the current
 terminal. This bypasses Tether session creation, daemon attach, and log replay.
 
   mux boot-exec torque.engineer.tui
 
-The profile must have a 'launch:' field pointing to a catalog launch ID.`,
+The profile must have a 'launch:' field pointing to a catalog launch ID.
+
+boot-exec supports Claude TUI launch profiles only — it execs into the native
+Claude PTY runtime. Profiles whose provider is Codex or Opencode are rejected
+with a clear error. Codex and Opencode are fully supported as managed
+sessions: use 'mux boot <profile>' or 'mux launch' for those providers. See
+docs/adr/0039-boot-exec-claude-only-scope.md.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profileID := args[0]

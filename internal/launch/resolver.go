@@ -86,7 +86,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		workspaceMode = "worktree"
 	}
 
-	nativeFiles, bootDirOverlay, err := resolveInjection(in.CatalogRoot, l.Injection)
+	nativeFiles, bootDirOverlay, err := ResolveInjection(in.CatalogRoot, l.Injection)
 	if err != nil {
 		return nil, fmt.Errorf("resolve injection: %w", err)
 	}
@@ -114,6 +114,20 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		NativeFiles:    nativeFiles,
 		BootDirOverlay: bootDirOverlay,
 	}, nil
+}
+
+// ResolveInjection resolves a config.LaunchInjection into the plan-shaped
+// native files and boot-dir overlay map. Relative Source paths on injected
+// files resolve against root (the catalog/config root) — NOT the process CWD.
+//
+// It is the single shared resolution entry point: both the catalog launch
+// resolver and the caller-provided injection path in package app call it, so
+// path-resolution and content/source semantics never drift between the two.
+//
+// SECURITY: the returned content is persisted at rest in launch.Plan — see
+// config.LaunchInjection. Callers must treat injection content as non-secret.
+func ResolveInjection(root string, in config.LaunchInjection) ([]NativeFile, map[string]string, error) {
+	return resolveInjection(root, in)
 }
 
 func resolveInjection(catalogRoot string, in config.LaunchInjection) ([]NativeFile, map[string]string, error) {
