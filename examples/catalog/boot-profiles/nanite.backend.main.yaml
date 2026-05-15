@@ -15,8 +15,8 @@ identity:
 slots:
   # §1 — role definition
   agent:
-    type: static
-    path: ~/.nanite/roles/domain/backend.md
+    type: role_summary
+    path: ~/.nanite/roles/domain/backend/worker.md
 
   # §2 — resume now: recent session-close records
   # Vanta recall (configure when CLI available):
@@ -61,3 +61,11 @@ slots:
   skills:
     type: skill_index
     limit: 8
+    prefer_triggers:
+      - capture
+      - vanta
+      - end
+      - session
+      - backlog
+      - backend
+      - refactor

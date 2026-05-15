@@ -47,6 +47,7 @@ type Skill struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Triggers    []string `yaml:"triggers"`
+	Priority    int      `yaml:"priority,omitempty"`
 	// Body is the markdown content after the closing frontmatter delimiter.
 	// Populated by Parse; not declared in the YAML schema.
 	Body string `yaml:"-"`

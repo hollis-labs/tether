@@ -56,11 +56,20 @@ id: my-agent.research.main
 display_name: "My Agent — Research"
 launch: my-agent-research-launch   # optional, catalog launch ID
 identity: { ... }                  # Agent Identity Model fields (see internal/bootgen/profile.go)
-slots: { ... }                     # boot prompt slot sources (static / skill_index / cmd / http)
+slots: { ... }                     # boot prompt slot sources (static / role_summary / skill_index / cmd / http)
 mcp_servers: [vanta, hadron]       # optional v005-08 — MCP allowlist for this profile
 ```
 
 `mcp_servers` empty / omitted means the proxy default (all servers). The launch path pipes the list into `MUX_MCP_SERVERS` so the spawned agent's `mux mcp --proxy` sees it.
+
+Use `type: role_summary` for the `agent` slot when a full role markdown file should remain fetchable by path without being inlined into every boot prompt:
+
+```yaml
+slots:
+  agent:
+    type: role_summary
+    path: ~/.nanite/roles/domain/backend/worker.md
+```
 
 ## Resolution at launch
 
