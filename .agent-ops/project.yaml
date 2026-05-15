@@ -1,0 +1,65 @@
+project:
+  id: tether
+  display_name: Tether
+  status: active
+  purpose: |
+    Tether is the local agent session control plane for the hollis-labs
+    portfolio — the per-user daemon (muxd) that owns session lifecycle,
+    process/PTY management, sandboxed execution, checkpoint/resume, brokered
+    messaging, and event streams for any CLI-backed agent (Claude Code, Codex,
+    Kiro, opencode, etc.). Clients reach it over a Unix-domain socket via the
+    mux CLI, the HTTP API, the MCP stdio adapter, the ACP surface, or the
+    go-agentmux-client Go library. Tether is the runtime fabric, not the
+    orchestrator: when Nanite, Torque, or another app needs to run a session
+    or send a cross-system message, it goes through Tether. Renamed from
+    Agent Mux; Go module is github.com/hollis-labs/tether.
+catalog:
+  torque_project_id: null            # no Torque project ID found in catalog or knowledge sources
+  cerberus_project_id: tether        # cerberus config.yaml projects: id=tether
+  tether_catalog_project: tether     # ~/.tether/catalog/projects/tether.yaml
+locations:
+  repo: ~/dev/hollis-labs/apps/tether
+  agent_os_tracking: ~/dev/agent-os/workspaces/execution/tether
+  state_dir: ~/.tether
+  catalog: ~/.tether/catalog
+  artifacts: ~/.cerberus/apps/tether
+build:
+  authority: cerberus
+  resource: tether-daemon-service
+  command: make build
+deployment:
+  type: launchd
+  service_name: tether-daemon-service
+  binary: ~/.cerberus/apps/tether/tether-daemon-service/bin/tether-daemon-service
+docs:
+  readme: README.md
+  architecture: null                 # no docs/architecture.md; see docs/adr/ + planning/docs/02-v0-architecture.md
+  adrs: docs/adr/
+  roadmap: planning/docs/roadmap.md
+roadmap:
+  current_phase: 'v0.1 — Session Routing + Provider Surface (next); v0.0.5 MCP + Provider Integration shipped/stabilizing'
+  pointer: null
+usage_examples:
+  - intent: Build the mux binary and run the full quality gate
+    command: make build && make check
+    note: Go 1.26+ required; make check runs fmt + vet + lint + test-race + vuln.
+  - intent: Install mux so the system command reflects current code
+    command: make install
+    note: Installs to $GOBIN; use this instead of `go build` before invoking `mux`.
+  - intent: Start the daemon and launch an agent session
+    command: mux daemon start && mux sessions launch <launch-profile>
+    note: Launch profiles are defined in the YAML catalog at ~/.tether/catalog/.
+  - intent: Expose the runtime as MCP tools for an LLM agent
+    command: mux mcp
+    note: Requires AGENT_MUX_MCP_TOKEN and AGENT_MUX_MCP_SCOPES env vars; see docs/mcp.md.
+  - intent: Render a boot prompt from a catalog boot profile
+    command: mux generate-boot <profile_id>
+    note: Use `mux boot-exec <profile_id>` for direct boot-exec CLI mode.
+scopes:
+  - tether.backend.main
+related_projects:
+  - nanite
+  - torque
+  - tesseract
+  - cerberus
+  - ion
