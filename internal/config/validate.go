@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 func (c *Catalog) Validate() error {
 	for id, l := range c.Launches {
@@ -71,6 +75,9 @@ func validateLaunchInjection(launchID string, in LaunchInjection) error {
 			if f.RelPath == "" {
 				return fmt.Errorf("launch %q injection.native_files[%d] missing rel_path", launchID, i)
 			}
+			if !isSafeInjectedRelPath(f.RelPath) {
+				return fmt.Errorf("launch %q injection.native_files[%d] has unsafe rel_path %q", launchID, i, f.RelPath)
+			}
 		case "skill":
 			if f.ID == "" {
 				return fmt.Errorf("launch %q injection.native_files[%d] missing id", launchID, i)
@@ -83,9 +90,28 @@ func validateLaunchInjection(launchID string, in LaunchInjection) error {
 		if f.RelPath == "" {
 			return fmt.Errorf("launch %q injection.boot_dir_overlay[%d] missing rel_path", launchID, i)
 		}
+		if !isSafeInjectedRelPath(f.RelPath) {
+			return fmt.Errorf("launch %q injection.boot_dir_overlay[%d] has unsafe rel_path %q", launchID, i, f.RelPath)
+		}
 		if f.Content != "" && f.Source != "" {
 			return fmt.Errorf("launch %q injection.boot_dir_overlay[%d] sets both content and source", launchID, i)
 		}
 	}
 	return nil
+}
+
+func isSafeInjectedRelPath(rel string) bool {
+	if strings.HasPrefix(rel, "~") || filepath.IsAbs(rel) {
+		return false
+	}
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." || strings.HasPrefix(filepath.ToSlash(clean), "../") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
 }
