@@ -101,9 +101,6 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	if err := s.applyAgentOps(plan, in); err != nil {
 		return nil, err
 	}
-	if err := s.compileSharedLaunch(context.Background(), plan); err != nil {
-		return nil, err
-	}
 	return plan, nil
 }
 
@@ -118,9 +115,6 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (*Launched, error) {
 		return nil, err
 	}
 	if err := s.RefreshBootProfilePrompt(context.Background(), plan); err != nil {
-		return nil, err
-	}
-	if err := s.compileSharedLaunch(context.Background(), plan); err != nil {
 		return nil, err
 	}
 	ws, err := workspace.Create(wsRoot, sessID, plan)

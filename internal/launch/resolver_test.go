@@ -239,6 +239,30 @@ func TestResolve_InjectionFiles(t *testing.T) {
 	}
 }
 
+func TestResolve_InjectionRejectsDuplicateBootOverlayPaths(t *testing.T) {
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+		},
+		Agents:    map[string]config.Agent{"a": {ID: "a"}},
+		Providers: map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+		Launches: map[string]config.Launch{
+			"l": {
+				ID: "l", Project: "proj", Agent: "a", Provider: "p",
+				Injection: config.LaunchInjection{
+					BootDirOverlay: []config.InjectedFile{
+						{RelPath: "extra.md", Content: "one\n"},
+						{RelPath: "extra.md", Content: "two\n"},
+					},
+				},
+			},
+		},
+	}
+	if _, err := Resolve(cat, Input{LaunchID: "l", CatalogRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected duplicate boot overlay rel_path to fail")
+	}
+}
+
 func TestResolve_SkipPromptFragmentsAllowsGeneratedBootReplacement(t *testing.T) {
 	cat := &config.Catalog{
 		Projects: map[string]config.Project{

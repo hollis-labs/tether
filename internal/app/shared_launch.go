@@ -23,6 +23,14 @@ func (s *Service) compileSharedLaunch(ctx context.Context, plan *launch.Plan) er
 	if err != nil {
 		return err
 	}
+	storeSharedLaunchState(plan, compiled)
+	return nil
+}
+
+func storeSharedLaunchState(plan *launch.Plan, compiled *agentlaunch.CompiledLaunch) {
+	if plan == nil || compiled == nil {
+		return
+	}
 	plan.Shared = &launch.SharedLaunchState{
 		PlanHash:        compiled.Provenance.PlanHash,
 		CompilerVersion: compiled.Provenance.CompilerVersion,
@@ -33,7 +41,6 @@ func (s *Service) compileSharedLaunch(ctx context.Context, plan *launch.Plan) er
 		TransientFile:   compiled.BootDirIntent.TransientBootFile,
 		MCPFile:         compiled.BootDirIntent.MCPDescriptorFile,
 	}
-	return nil
 }
 
 func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, workspaceDir string, plant plantContextInput) (*agentlaunch.PreparedLaunch, error) {
@@ -51,6 +58,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
+	storeSharedLaunchState(plan, compiled)
 	prepared, err := launcher.Prepare(ctx, compiled)
 	if err != nil {
 		return nil, err

@@ -131,9 +131,10 @@ slots:
 ```
 
 `launch` is required when using `mux boot <profile>` or
-`mux boot-exec <profile>`. When worktree mode is active, Tether regenerates
-boot-profile prompts after the worktree exists so `identity.work_root` points at
-the materialized worktree.
+`mux boot-exec <profile>`. `mux boot-exec` and Tier-2 launch calls that provide
+`BootProfileFile` regenerate boot-profile prompts after the worktree exists, so
+`identity.work_root` can point at the materialized worktree. `mux boot` renders
+the prompt client-side before creating the managed session.
 
 Useful commands:
 

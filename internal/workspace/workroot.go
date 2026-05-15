@@ -48,57 +48,29 @@ func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 		return fmt.Errorf("create worktree parent: %w", err)
 	}
 
-	branch := worktreeBranchName(plan, runID)
-	if err := runGit(plan.RepoRoot, "worktree", "add", "-b", branch, workRoot, "HEAD"); err != nil {
+	if err := runGit(plan.RepoRoot, "worktree", "add", "--detach", workRoot, "HEAD"); err != nil {
 		return fmt.Errorf("create git worktree %s from %s: %w", workRoot, plan.RepoRoot, err)
 	}
 	plan.WorkRoot = workRoot
 	return nil
 }
 
-func worktreeBranchName(plan *launch.Plan, runID string) string {
-	name := plan.WorktreeName
-	if name == "" {
-		name = "tether/{{.ProjectID}}/{{.AgentID}}/{{.SessionID}}"
+// RemoveMaterializedWorkRoot removes a worktree created by MaterializeWorkRoot.
+// Shared/hybrid launches are left untouched.
+func RemoveMaterializedWorkRoot(plan *launch.Plan) error {
+	if plan == nil || plan.WorkRoot == "" || plan.WorkRoot == plan.RepoRoot {
+		return nil
 	}
-	repl := map[string]string{
-		"{{.SessionID}}": runID,
-		"{{.RunID}}":     runID,
-		"{{.ProjectID}}": plan.ProjectID,
-		"{{.LaunchID}}":  plan.LaunchID,
-		"{{.AgentID}}":   plan.LogicalAgentID,
+	mode := strings.ToLower(strings.TrimSpace(plan.WorkspaceMode))
+	switch mode {
+	case WorktreeMode, "isolated":
+	default:
+		return nil
 	}
-	for k, v := range repl {
-		name = strings.ReplaceAll(name, k, v)
+	if err := runGit(plan.RepoRoot, "worktree", "remove", "--force", plan.WorkRoot); err != nil {
+		return fmt.Errorf("remove git worktree %s: %w", plan.WorkRoot, err)
 	}
-	return sanitizeGitBranch(name)
-}
-
-func sanitizeGitBranch(name string) string {
-	name = strings.TrimSpace(name)
-	var b strings.Builder
-	lastSlash := false
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-			lastSlash = false
-		case r == '/':
-			if !lastSlash {
-				b.WriteRune(r)
-				lastSlash = true
-			}
-		default:
-			b.WriteRune('-')
-			lastSlash = false
-		}
-	}
-	out := strings.Trim(b.String(), "/.-")
-	out = strings.ReplaceAll(out, "..", "-")
-	if out == "" {
-		return "tether/worktree"
-	}
-	return out
+	return nil
 }
 
 func runGit(repoRoot string, args ...string) error {

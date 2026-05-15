@@ -142,6 +142,9 @@ func resolveInjection(catalogRoot string, in config.LaunchInjection) ([]NativeFi
 		if rel == "" {
 			return nil, nil, fmt.Errorf("boot_dir_overlay entry missing rel_path")
 		}
+		if _, exists := overlay[rel]; exists {
+			return nil, nil, fmt.Errorf("boot_dir_overlay duplicate rel_path %q", rel)
+		}
 		content, err := resolveInjectedContent(catalogRoot, f)
 		if err != nil {
 			return nil, nil, err

@@ -36,6 +36,15 @@ func TestMaterializeWorkRootCreatesIsolatedGitWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "agent.txt")); !os.IsNotExist(err) {
 		t.Fatalf("agent edit leaked into source repo, stat err=%v", err)
 	}
+	if out := gitOutput(t, repo, "branch", "--list", "tether/*"); out != "" {
+		t.Fatalf("worktree launch created local tether branch: %s", out)
+	}
+	if err := RemoveMaterializedWorkRoot(plan); err != nil {
+		t.Fatalf("RemoveMaterializedWorkRoot: %v", err)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) {
+		t.Fatalf("worktree dir still exists after cleanup, stat err=%v", err)
+	}
 }
 
 func TestMaterializeWorkRootSharedUsesRepoRoot(t *testing.T) {
@@ -68,6 +77,16 @@ func run(t *testing.T, dir string, name string, args ...string) {
 	if err != nil {
 		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 func writeFile(t *testing.T, path, body string) {

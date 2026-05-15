@@ -172,6 +172,7 @@ The profile must have a 'launch:' field pointing to a catalog launch ID.`,
 		if err := workspace.MaterializeWorkRoot(wsRoot, "boot-exec-"+uuid.NewString(), plan); err != nil {
 			return err
 		}
+		defer func() { _ = workspace.RemoveMaterializedWorkRoot(plan) }()
 		if err := svc.RefreshBootProfilePrompt(cmd.Context(), plan); err != nil {
 			return err
 		}
