@@ -440,6 +440,42 @@ func TestGenerate_HTTPSlot_BodyCap(t *testing.T) {
 	}
 }
 
+func TestGenerate_HTTPSlot_RelativeRecallURLUsesBootBase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.String(), "/v1/recall?format=brief"; got != want {
+			t.Fatalf("request URL = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"memory_key":"recap","summary":"Recovered launch context."}],"meta":{"namespace":"test","returned":1}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("TETHER_BOOT_HTTP_BASE_URL", srv.URL)
+	t.Setenv("TESSERACT_URL", "")
+
+	p := bootgen.Profile{
+		ID: "test.http.relative",
+		Slots: map[string]bootgen.SlotSource{
+			"memory": {
+				Type:           "http",
+				URL:            "${TESSERACT_URL}/v1/recall?format=brief",
+				ResponseFormat: "tesseract_recall",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, t.TempDir(), &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "slot:memory resolution failed") {
+		t.Fatalf("relative URL was not resolved through boot base:\n%s", out)
+	}
+	if !strings.Contains(out, "Recovered launch context.") {
+		t.Fatalf("formatted recall body missing from output:\n%s", out)
+	}
+}
+
 func writeBootgenSkillFixture(t *testing.T, root, id, body string) {
 	t.Helper()
 	path := filepath.Join(root, "skills", id+".md")

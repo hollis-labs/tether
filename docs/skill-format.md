@@ -29,7 +29,7 @@ When refactoring Go code in this repository:
 
 ## Per-provider compilation
 
-The skills package compiles a `[]Skill` into `[]CompiledFile` (relpath + content + mode) per provider. Provider IDs are matched case-insensitively against a small alias table:
+The skills package compiles a `[]Skill` into `[]CompiledFile` (relpath + content + mode) per provider. Tether plants those files into the provider bootdir before the session bootdir-planted event is published. Provider IDs are matched case-insensitively against a small alias table:
 
 | Provider IDs | Compiler | Output |
 |---|---|---|
@@ -39,7 +39,7 @@ The skills package compiles a `[]Skill` into `[]CompiledFile` (relpath + content
 
 ## Transport (v005-08)
 
-For v005-08, compiled skill content is appended to the assembled BootPrompt text (with `<!-- relpath -->` markers per section) and reaches the agent via the standard system-prompt pipeline. Native per-file placement (so Claude reads `.claude/skills/<id>.md` from the planted boot dir, and Codex picks up `AGENTS.md`) waits on a future `go-agent-sessions` enhancement that lets apps inject extra `PlantedFiles` into the BootDirSpec.
+For managed sessions and `boot-exec`, compiled skill content is not appended to the assembled BootPrompt. It is written as native files such as `.claude/skills/<id>.md` for Claude and `AGENTS.md` for Codex.
 
 ## Authoring round-trip
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -17,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/workspace"
 )
 
 var bootPromptsCmd = &cobra.Command{
@@ -151,12 +153,6 @@ The profile must have a 'launch:' field pointing to a catalog launch ID.`,
 		}
 
 		catalogRoot := expandCatalogPath()
-		fmt.Fprintf(cmd.ErrOrStderr(), "generating boot prompt for %s...\n", profileID)
-		var buf bytes.Buffer
-		if err := bootgen.Generate(cmd.Context(), p, catalogRoot, &buf); err != nil {
-			return fmt.Errorf("generate boot prompt: %w", err)
-		}
-
 		cat, err := config.Load(catalogRoot)
 		if err != nil {
 			return err
@@ -166,11 +162,18 @@ The profile must have a 'launch:' field pointing to a catalog launch ID.`,
 		}
 		svc := &app.Service{CatalogRoot: catalogRoot, Catalog: cat}
 		plan, err := svc.BuildLaunchPlan(app.CreateSessionInput{
-			LaunchID:           p.Launch,
-			BootPromptOverride: buf.String(),
-			BootProfileFile:    profilePath,
+			LaunchID:        p.Launch,
+			BootProfileFile: profilePath,
 		})
 		if err != nil {
+			return err
+		}
+		wsRoot := plan.WriteHome
+		if err := workspace.MaterializeWorkRoot(wsRoot, "boot-exec-"+uuid.NewString(), plan); err != nil {
+			return err
+		}
+		defer func() { _ = workspace.RemoveMaterializedWorkRoot(plan) }()
+		if err := svc.RefreshBootProfilePrompt(cmd.Context(), plan); err != nil {
 			return err
 		}
 
@@ -195,7 +198,10 @@ The profile must have a 'launch:' field pointing to a catalog launch ID.`,
 		if err != nil {
 			return err
 		}
-		defer func() { _ = os.RemoveAll(prepared.BootDir) }()
+		defer func() {
+			_ = os.RemoveAll(prepared.BootDir)
+			_ = os.RemoveAll(prepared.WorkspaceDir)
+		}()
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "boot dir: %s\n", prepared.BootDir)
 		fmt.Fprintf(cmd.ErrOrStderr(), "launching %s directly...\n", prepared.Command)

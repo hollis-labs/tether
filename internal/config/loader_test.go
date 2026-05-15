@@ -139,6 +139,43 @@ func TestValidate_EmptySandboxProfile(t *testing.T) {
 	}
 }
 
+func TestValidate_LaunchInjectionRejectsUnsafeRelPaths(t *testing.T) {
+	base := func(relPath string, overlay bool) *Catalog {
+		injection := LaunchInjection{}
+		if overlay {
+			injection.BootDirOverlay = []InjectedFile{{RelPath: relPath, Content: "overlay"}}
+		} else {
+			injection.NativeFiles = []InjectedFile{{Kind: "raw", RelPath: relPath, Content: "native"}}
+		}
+		return &Catalog{
+			Projects:  map[string]Project{"p": {ID: "p"}},
+			Agents:    map[string]Agent{"a": {ID: "a"}},
+			Providers: map[string]Provider{"provider": {ID: "provider", Type: "cli", Command: "echo"}},
+			Launches: map[string]Launch{
+				"launch": {ID: "launch", Project: "p", Agent: "a", Provider: "provider", Injection: injection},
+			},
+		}
+	}
+
+	for _, tt := range []struct {
+		name    string
+		relPath string
+		overlay bool
+	}{
+		{name: "overlay parent traversal", relPath: "../CLAUDE.md", overlay: true},
+		{name: "overlay nested traversal", relPath: "safe/../../CLAUDE.md", overlay: true},
+		{name: "overlay absolute", relPath: "/tmp/CLAUDE.md", overlay: true},
+		{name: "native parent traversal", relPath: "../.mux/context.md", overlay: false},
+		{name: "native home expansion", relPath: "~/context.md", overlay: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := base(tt.relPath, tt.overlay).Validate(); err == nil {
+				t.Fatalf("expected unsafe rel_path %q to fail validation", tt.relPath)
+			}
+		})
+	}
+}
+
 func TestApplyDaemonDefaults_OverrideRespected(t *testing.T) {
 	d := DaemonConfig{
 		ListenAddr:      "tcp:127.0.0.1:9999",

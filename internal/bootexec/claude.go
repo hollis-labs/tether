@@ -1,13 +1,18 @@
 package bootexec
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
 	gop "github.com/hollis-labs/go-providers/provider"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	tetherprovider "github.com/hollis-labs/tether/internal/provider"
 )
@@ -25,11 +30,12 @@ type Options struct {
 
 // Prepared is the fully materialized direct CLI invocation.
 type Prepared struct {
-	Command string
-	Args    []string
-	Dir     string
-	Env     []string
-	BootDir string
+	Command      string
+	Args         []string
+	Dir          string
+	Env          []string
+	BootDir      string
+	WorkspaceDir string
 }
 
 // PrepareClaudeTUI materializes the Claude boot-dir layout and returns a
@@ -42,122 +48,171 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		return nil, fmt.Errorf("boot-exec currently supports claude launch profiles only (got provider %q)", plan.ProviderBrand)
 	}
 
-	adapter := gop.NewClaudeAdapterPTY()
-	adapter.ApiKeyHelperPath = opts.APIKeyHelperPath
-	spec := adapter.BootDirSpec()
-	bootDir, err := materializeBootDir(spec, plan, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	env := tetherprovider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, opts.ParentEnv)
-	env = append(env, substituteTemplates(spec.EnvAmendments, bootDir, plan.RepoRoot)...)
-
-	args := append([]string(nil), plan.Args...)
-	args = append(args, adapter.BuildArgs("", "", "")...)
-	args = append(args, substituteArgTokens(spec.ProjectDirArg, bootDir, plan.RepoRoot)...)
-
-	command := plan.Command
-	if command == "" {
-		if detected, ok := adapter.Detect(); ok {
-			command = detected
-		}
-	}
-	if command == "" {
-		return nil, fmt.Errorf("claude command is empty and could not be detected")
-	}
-
-	return &Prepared{
-		Command: command,
-		Args:    args,
-		Dir:     spec.SpawnWorkdir(bootDir, plan.RepoRoot),
-		Env:     env,
-		BootDir: bootDir,
-	}, nil
-}
-
-func materializeBootDir(spec gop.BootDirSpec, plan *launch.Plan, opts Options) (string, error) {
-	if len(spec.PlantedFiles) == 0 {
-		return "", fmt.Errorf("provider has no boot-dir planting spec")
-	}
 	root := opts.BootDirRoot
 	if root == "" {
 		root = os.TempDir()
 	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
-		return "", fmt.Errorf("ensure boot-exec root %s: %w", root, err)
+		return nil, fmt.Errorf("ensure boot-exec root %s: %w", root, err)
 	}
-	bootDir, err := os.MkdirTemp(root, "tether-boot-exec-claude-*")
+	workspaceDir, err := os.MkdirTemp(root, "tether-boot-exec-workspace-*")
 	if err != nil {
-		return "", fmt.Errorf("create boot-exec dir: %w", err)
+		return nil, fmt.Errorf("create boot-exec workspace: %w", err)
 	}
 
-	ctx := gop.PlantContext{
-		SystemPrompt: plan.BootPrompt,
-		BootContent:  plan.BootPrompt,
-		AgentName:    plan.LogicalAgentID,
-		ProjectDir:   plan.RepoRoot,
-		BootDir:      bootDir,
-		MuxCommand:   opts.MuxCommand,
-		MuxArgs:      append([]string(nil), opts.MuxArgs...),
-		MuxEnv:       append([]string(nil), opts.MuxEnv...),
+	lp := agentLaunchPlan(plan, workspaceDir)
+	lp.Workspace.TempPrefix = root
+	compiled, err := launcher.Compile(context.Background(), lp)
+	if err != nil {
+		_ = os.RemoveAll(workspaceDir)
+		return nil, err
+	}
+	prepared, err := launcher.Prepare(context.Background(), compiled)
+	if err != nil {
+		_ = os.RemoveAll(workspaceDir)
+		return nil, err
+	}
+	prepared.PlantContext.MuxCommand = opts.MuxCommand
+	prepared.PlantContext.MuxArgs = append([]string(nil), opts.MuxArgs...)
+	prepared.PlantContext.MuxEnv = muxEnvMap(opts.MuxEnv)
+
+	adapter := gop.NewClaudeAdapterPTY()
+	adapter.ApiKeyHelperPath = opts.APIKeyHelperPath
+	if err := providerplant.Plant(context.Background(), prepared, providerplant.WithAdapter(adapter)); err != nil {
+		_ = os.RemoveAll(workspaceDir)
+		return nil, err
 	}
 
-	for _, pf := range spec.PlantedFiles {
-		path := filepath.Join(bootDir, pf.RelPath)
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			_ = os.RemoveAll(bootDir)
-			return "", fmt.Errorf("plant %s: mkdir: %w", pf.RelPath, err)
-		}
-		if pf.Render == nil {
-			continue
-		}
-		content, err := pf.Render(ctx)
-		if err != nil {
-			_ = os.RemoveAll(bootDir)
-			return "", fmt.Errorf("plant %s: render: %w", pf.RelPath, err)
-		}
-		if err := os.WriteFile(path, []byte(content), plantedFileMode(pf)); err != nil {
-			_ = os.RemoveAll(bootDir)
-			return "", fmt.Errorf("plant %s: write: %w", pf.RelPath, err)
-		}
-	}
-	return bootDir, nil
+	env := tetherprovider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, opts.ParentEnv)
+	env = mergeEnv(env, prepared.Env)
+
+	return &Prepared{
+		Command:      prepared.Argv[0],
+		Args:         append([]string(nil), prepared.Argv[1:]...),
+		Dir:          prepared.Workdir,
+		Env:          env,
+		BootDir:      prepared.PlantedBootDir,
+		WorkspaceDir: workspaceDir,
+	}, nil
 }
 
-func plantedFileMode(pf gop.PlantedFile) os.FileMode {
-	if pf.Mode != 0 {
-		return pf.Mode
+func agentLaunchPlan(plan *launch.Plan, workspaceDir string) agentlaunch.LaunchPlan {
+	projectID := plan.ProjectID
+	if projectID == "" {
+		projectID = "project"
 	}
-	if pf.RelPath == ".mcp.json" || strings.HasSuffix(pf.RelPath, "settings.json") {
-		return 0o600
+	agentID := plan.LogicalAgentID
+	if agentID == "" {
+		agentID = "agent"
 	}
-	return 0o644
+	return agentlaunch.LaunchPlan{
+		Project: agentlaunch.ProjectSpec{ID: projectID, Root: plan.RepoRoot},
+		Agent:   agentlaunch.AgentSpec{ID: agentID},
+		Provider: agentlaunch.ProviderSpec{
+			ID:     plan.ProviderBrand,
+			Binary: plan.Command,
+			Flags:  append([]string(nil), plan.Args...),
+			Env:    copyMap(plan.Env),
+		},
+		Runtime: mapRuntime(plan.RuntimeKind),
+		Workspace: agentlaunch.WorkspaceSpec{
+			Mode:         agentlaunch.WorkspacePersistent,
+			Workdir:      plan.EffectiveWorkRoot(),
+			WorkspaceDir: workspaceDir,
+		},
+		BootProfile: agentlaunch.BootProfileRef{
+			Inline: &agentlaunch.BootProfileInline{
+				BootPrompt: plan.BootPrompt,
+				BootMode:   mapBootMode(plan.BootMode),
+			},
+		},
+		Injection: agentlaunch.InjectionSpec{
+			NativeFiles:    nativeFiles(plan.NativeFiles),
+			BootDirOverlay: copyMap(plan.BootDirOverlay),
+		},
+		Mode: agentlaunch.LaunchInteractive,
+	}
 }
 
-func substituteTemplates(in []string, bootDir, projectDir string) []string {
+func mapRuntime(runtime string) agentlaunch.RuntimeKind {
+	switch runtime {
+	case config.RuntimeKindPTY:
+		return agentlaunch.RuntimePTY
+	case config.RuntimeKindStreamingStdio:
+		return agentlaunch.RuntimeStreamingStdio
+	case config.RuntimeKindJSONRPCStdio:
+		return agentlaunch.RuntimeJsonRpcStdio
+	default:
+		return agentlaunch.RuntimeSubprocess
+	}
+}
+
+func mapBootMode(mode string) string {
+	switch mode {
+	case agentlaunch.BootModeNone, agentlaunch.BootModeStdin, agentlaunch.BootModePlanted:
+		return mode
+	default:
+		return agentlaunch.BootModePlanted
+	}
+}
+
+func nativeFiles(in []launch.NativeFile) []agentlaunch.NativeFile {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		s = strings.ReplaceAll(s, "{{.BootDir}}", bootDir)
-		s = strings.ReplaceAll(s, "{{.ProjectDir}}", projectDir)
-		out = append(out, s)
+	out := make([]agentlaunch.NativeFile, 0, len(in))
+	for _, f := range in {
+		out = append(out, agentlaunch.NativeFile{
+			Kind:    agentlaunch.NativeFileKind(f.Kind),
+			ID:      f.ID,
+			RelPath: filepath.ToSlash(f.RelPath),
+			Content: f.Content,
+			Mode:    os.FileMode(f.Mode),
+		})
 	}
 	return out
 }
 
-func substituteArgTokens(template, bootDir, projectDir string) []string {
-	if template == "" || projectDir == "" {
+func muxEnvMap(env []string) map[string]string {
+	if len(env) == 0 {
 		return nil
 	}
-	parts := strings.Fields(template)
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.ReplaceAll(part, "{{.BootDir}}", bootDir)
-		part = strings.ReplaceAll(part, "{{.ProjectDir}}", projectDir)
-		out = append(out, part)
+	out := map[string]string{}
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && k != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func mergeEnv(base []string, overlay map[string]string) []string {
+	out := append([]string(nil), base...)
+	for k, v := range overlay {
+		prefix := k + "="
+		replaced := false
+		for i, kv := range out {
+			if strings.HasPrefix(kv, prefix) {
+				out[i] = prefix + v
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, prefix+v)
+		}
+	}
+	return out
+}
+
+func copyMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
 	}
 	return out
 }

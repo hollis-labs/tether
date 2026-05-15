@@ -38,3 +38,11 @@ func (s *Service) ListProviders() []config.Provider {
 func (s *Service) Resolve(launchID string) (*launch.Plan, error) {
 	return launch.Resolve(s.Catalog, launch.Input{LaunchID: launchID, CatalogRoot: s.CatalogRoot})
 }
+
+func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) {
+	return launch.Resolve(s.Catalog, launch.Input{
+		LaunchID:            in.LaunchID,
+		CatalogRoot:         s.CatalogRoot,
+		SkipPromptFragments: in.BootPromptOverride != "" || in.BootProfileFile != "",
+	})
+}

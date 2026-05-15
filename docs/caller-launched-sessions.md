@@ -38,7 +38,7 @@ For the BootPrompt composition (later wins on conflict):
 catalog fragments
 + effective_agent.system_prompt    # heading "# System"
 + effective_agent.agent_prompt     # heading "# Agent"
-+ compiled skills (per-provider)
++ native skill files (per-provider, planted in the bootdir)
 + override.system_prompt           # if set, replaces verbatim
 + boot_prompt                      # if set, replaces verbatim (last word)
 ```
@@ -110,7 +110,7 @@ launched, err := c.LaunchSession(ctx, created.ID)
 
 - Malformed JSON in `agent_inline` or `override` returns `invalid_request` (HTTP 400 / MCP error code `invalid_request`).
 - Missing `agent_file` / `boot_profile` paths return `internal_error` with the underlying `read <path>: no such file or directory` wrapped.
-- Skill resolution errors (a skill referenced by `agent.skills` not found in any discovery layer) return `internal_error`. Provider-unsupported skill compilation is silently skipped (the session still launches).
+- Skill resolution errors (a skill referenced by `agent.skills` not found in any discovery layer) return `internal_error`. Provider-unsupported skill compilation is silently skipped (the session still launches). Supported providers receive compiled skill files in the planted bootdir.
 
 ## See also
 

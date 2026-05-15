@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -192,6 +193,114 @@ func TestResolve_MCPServerChain(t *testing.T) {
 			t.Fatalf("want MUX_MCP_SERVERS=hadron, got %q", plan.Env["MUX_MCP_SERVERS"])
 		}
 	})
+}
+
+func TestResolve_InjectionFiles(t *testing.T) {
+	catalogRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(catalogRoot, "context.md"), []byte("from source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+		},
+		Agents:    map[string]config.Agent{"a": {ID: "a"}},
+		Providers: map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+		Launches: map[string]config.Launch{
+			"l": {
+				ID: "l", Project: "proj", Agent: "a", Provider: "p",
+				Injection: config.LaunchInjection{
+					NativeFiles: []config.InjectedFile{
+						{RelPath: ".mux/inline.md", Content: "inline\n", Mode: 0o600},
+						{RelPath: ".mux/context.md", Source: "context.md"},
+					},
+					BootDirOverlay: []config.InjectedFile{
+						{RelPath: "extra.md", Content: "overlay\n"},
+					},
+				},
+			},
+		},
+	}
+	plan, err := Resolve(cat, Input{LaunchID: "l", CatalogRoot: catalogRoot})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(plan.NativeFiles) != 2 {
+		t.Fatalf("NativeFiles len = %d, want 2", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].Kind != "raw" || plan.NativeFiles[0].RelPath != ".mux/inline.md" || plan.NativeFiles[0].Content != "inline\n" || plan.NativeFiles[0].Mode != 0o600 {
+		t.Fatalf("unexpected inline native file: %#v", plan.NativeFiles[0])
+	}
+	if plan.NativeFiles[1].Content != "from source\n" {
+		t.Fatalf("source native file content = %q", plan.NativeFiles[1].Content)
+	}
+	if plan.BootDirOverlay["extra.md"] != "overlay\n" {
+		t.Fatalf("boot overlay = %#v", plan.BootDirOverlay)
+	}
+}
+
+func TestResolve_InjectionRejectsDuplicateBootOverlayPaths(t *testing.T) {
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+		},
+		Agents:    map[string]config.Agent{"a": {ID: "a"}},
+		Providers: map[string]config.Provider{"p": {ID: "p", Command: "echo"}},
+		Launches: map[string]config.Launch{
+			"l": {
+				ID: "l", Project: "proj", Agent: "a", Provider: "p",
+				Injection: config.LaunchInjection{
+					BootDirOverlay: []config.InjectedFile{
+						{RelPath: "extra.md", Content: "one\n"},
+						{RelPath: "extra.md", Content: "two\n"},
+					},
+				},
+			},
+		},
+	}
+	if _, err := Resolve(cat, Input{LaunchID: "l", CatalogRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected duplicate boot overlay rel_path to fail")
+	}
+}
+
+func TestResolve_SkipPromptFragmentsAllowsGeneratedBootReplacement(t *testing.T) {
+	cat := &config.Catalog{
+		Projects: map[string]config.Project{
+			"demo": {
+				ID:            "demo",
+				RepoRoot:      "/tmp/demo",
+				BootFragments: []string{"missing/.agentrc/boot-prompt.md"},
+				Workspace:     config.WorkspaceSpec{SessionRoot: "/tmp/sessions"},
+			},
+		},
+		Agents: map[string]config.Agent{
+			"demo-agent": {ID: "demo-agent"},
+		},
+		Providers: map[string]config.Provider{
+			"provider": {ID: "provider", Command: "echo"},
+		},
+		Launches: map[string]config.Launch{
+			"launch": {
+				ID:       "launch",
+				Project:  "demo",
+				Agent:    "demo-agent",
+				Provider: "provider",
+				Prompt:   config.PromptSpec{IncludeProjectBoot: true},
+			},
+		},
+	}
+
+	if _, err := Resolve(cat, Input{LaunchID: "launch", CatalogRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected missing legacy boot fragment to fail without SkipPromptFragments")
+	}
+
+	plan, err := Resolve(cat, Input{LaunchID: "launch", CatalogRoot: t.TempDir(), SkipPromptFragments: true})
+	if err != nil {
+		t.Fatalf("resolve with SkipPromptFragments: %v", err)
+	}
+	if plan.BootPrompt != "\n" {
+		t.Fatalf("BootPrompt = %q, want empty composed prompt newline", plan.BootPrompt)
+	}
 }
 
 func equalStringSlices(a, b []string) bool {

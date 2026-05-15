@@ -22,6 +22,17 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 		EnvMode:        "merge",
 		Env:            map[string]string{"MUX_MCP_SERVERS": "vanta,clockwork"},
 		BootPrompt:     "dynamic boot prompt",
+		BootDirOverlay: map[string]string{
+			"extra.md": "overlay body\n",
+		},
+		NativeFiles: []launch.NativeFile{
+			{
+				Kind:    "skill",
+				ID:      "refactor",
+				Content: "refactor body\n",
+				Mode:    0o600,
+			},
+		},
 	}
 	prepared, err := PrepareClaudeTUI(plan, Options{
 		BootDirRoot: bootRoot,
@@ -61,6 +72,14 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 		if !strings.Contains(mcpJSON, want) {
 			t.Fatalf(".mcp.json missing %q: %s", want, mcpJSON)
 		}
+	}
+	skill := readFile(t, filepath.Join(prepared.BootDir, ".claude", "skills", "refactor.md"))
+	if skill != "refactor body\n" {
+		t.Fatalf("native skill = %q", skill)
+	}
+	overlay := readFile(t, filepath.Join(prepared.BootDir, "extra.md"))
+	if overlay != "overlay body\n" {
+		t.Fatalf("boot overlay = %q", overlay)
 	}
 }
 
