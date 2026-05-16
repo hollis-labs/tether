@@ -221,4 +221,6 @@ starting so results are attributable.
 - **Caller injection content is persisted** in `launch_plans` — scenario 9 must
   not use secret material. A non-persisted runtime-only injection layer is a
   documented follow-up, not yet implemented.
-- Live execution against real providers is deferred to a follow-up task.
+- Live execution against real providers was performed on 2026-05-15 (see
+  [Execution status](#execution-status)); re-run after provider-CLI upgrades or
+  launch-path changes and update the version table and matrix result cells.
