@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -91,6 +92,31 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		return nil, fmt.Errorf("resolve injection: %w", err)
 	}
 
+	// Resolve the Claude Code permission posture (agent override > global
+	// default > "default") and thread the concrete CLI flags into the argv
+	// for claude providers. plan.Args feeds both the boot-exec composeArgv
+	// path and the daemon PlanScopedAdapter.BuildArgs path, so injecting
+	// here is the single chokepoint that covers every claude launch.
+	permMode := config.EffectivePermissionMode(cat.Global, agent)
+	args := append([]string(nil), prov.Args...)
+	if prov.ProviderBrand() == "claude" {
+		// --mcp-config loads the planted .mcp.json explicitly. Explicit
+		// loading is not subject to the project-scoped .mcp.json "Use this
+		// MCP server?" trust prompt that fires in interactive (PTY) mode.
+		// cwd is the boot dir (claude BootDirSpec CwdBootDir), so the
+		// relative path resolves to <bootDir>/.mcp.json.
+		//
+		// Each flag is added only if the provider config didn't already
+		// declare it — so a catalog that hardcodes a flag in provider.args
+		// never gets a duplicate.
+		if !slices.Contains(args, "--mcp-config") {
+			args = append(args, "--mcp-config", ".mcp.json")
+		}
+		if permMode == config.PermissionModeBypass && !slices.Contains(args, "--dangerously-skip-permissions") {
+			args = append(args, "--dangerously-skip-permissions")
+		}
+	}
+
 	return &Plan{
 		LaunchID:       l.ID,
 		ProjectID:      proj.ID,
@@ -98,13 +124,14 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		ProviderID:     prov.ID,
 		ProviderBrand:  prov.ProviderBrand(),
 		RuntimeKind:    prov.EffectiveRuntimeKind(),
+		PermissionMode: permMode,
 		RepoRoot:       config.Expand(proj.RepoRoot),
 		WriteHome:      writeHome,
 		WorkspaceMode:  workspaceMode,
 		WorktreeBase:   config.Expand(proj.Workspace.WorktreeBase),
 		WorktreeName:   l.Workspace.WorktreeName,
 		Command:        prov.Command,
-		Args:           prov.Args,
+		Args:           args,
 		Env:            overrides,
 		EnvMode:        mode,
 		EnvPassthrough: prov.Env.Passthrough,

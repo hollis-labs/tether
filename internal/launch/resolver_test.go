@@ -195,6 +195,93 @@ func TestResolve_MCPServerChain(t *testing.T) {
 	})
 }
 
+func TestResolve_PermissionMode(t *testing.T) {
+	// argv contains the flag value pair "<flag> <value>" in order.
+	hasFlag := func(args []string, flag, value string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == flag && args[i+1] == value {
+				return true
+			}
+		}
+		return false
+	}
+	base := func(brand, globalMode, agentMode string) *config.Catalog {
+		cat := &config.Catalog{
+			Projects: map[string]config.Project{
+				"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+			},
+			Agents: map[string]config.Agent{
+				"a": {ID: "a", Permissions: config.AgentPermissions{PermissionMode: agentMode}},
+			},
+			Providers: map[string]config.Provider{
+				"p": {ID: "p", Command: "echo", Provider: brand},
+			},
+			Launches: map[string]config.Launch{
+				"l": {ID: "l", Project: "proj", Agent: "a", Provider: "p"},
+			},
+		}
+		cat.Global.Catalog.Defaults.PermissionMode = globalMode
+		return cat
+	}
+
+	t.Run("claude + global bypass → skip-permissions + mcp-config", func(t *testing.T) {
+		plan, err := Resolve(base("claude", config.PermissionModeBypass, ""), Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.PermissionMode != config.PermissionModeBypass {
+			t.Fatalf("PermissionMode = %q, want bypass", plan.PermissionMode)
+		}
+		if !strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
+			t.Errorf("args missing --dangerously-skip-permissions: %v", plan.Args)
+		}
+		if !hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
+			t.Errorf("args missing --mcp-config .mcp.json: %v", plan.Args)
+		}
+	})
+
+	t.Run("claude + agent override default beats global bypass", func(t *testing.T) {
+		plan, err := Resolve(base("claude", config.PermissionModeBypass, config.PermissionModeDefault), Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.PermissionMode != config.PermissionModeDefault {
+			t.Fatalf("PermissionMode = %q, want default", plan.PermissionMode)
+		}
+		if strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
+			t.Errorf("default mode must not emit --dangerously-skip-permissions: %v", plan.Args)
+		}
+		// --mcp-config is independent of permission mode — always on for claude.
+		if !hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
+			t.Errorf("args missing --mcp-config .mcp.json: %v", plan.Args)
+		}
+	})
+
+	t.Run("claude + nothing set → conservative default fallback", func(t *testing.T) {
+		plan, err := Resolve(base("claude", "", ""), Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.PermissionMode != config.PermissionModeDefault {
+			t.Fatalf("PermissionMode = %q, want default fallback", plan.PermissionMode)
+		}
+	})
+
+	t.Run("non-claude provider gets no claude flags", func(t *testing.T) {
+		plan, err := Resolve(base("codex", config.PermissionModeBypass, ""), Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.PermissionMode != config.PermissionModeBypass {
+			t.Fatalf("PermissionMode = %q, want bypass (recorded even for non-claude)", plan.PermissionMode)
+		}
+		joined := strings.Join(plan.Args, " ")
+		if strings.Contains(joined, "--dangerously-skip-permissions") || strings.Contains(joined, "--mcp-config") {
+			t.Errorf("non-claude provider must not get claude CLI flags: %v", plan.Args)
+		}
+	})
+}
+
 func TestResolve_InjectionFiles(t *testing.T) {
 	catalogRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(catalogRoot, "context.md"), []byte("from source\n"), 0o644); err != nil {

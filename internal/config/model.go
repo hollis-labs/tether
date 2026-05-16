@@ -39,6 +39,12 @@ type Defaults struct {
 	WorkspaceRoot string `yaml:"workspace_root"`
 	StateDB       string `yaml:"state_db"`
 	TempRoot      string `yaml:"temp_root"`
+	// PermissionMode is the fleet-wide default Claude Code permission
+	// posture for launched agents: "bypass" (start the agent with
+	// --dangerously-skip-permissions) or "default" (prompt). Empty
+	// resolves to "default". An agent's permissions.permission_mode
+	// overrides this per-agent. See config.EffectivePermissionMode.
+	PermissionMode string `yaml:"permission_mode"`
 }
 
 // MCPConfig holds per-project or per-launch MCP proxy settings that are
@@ -91,6 +97,10 @@ type Agent struct {
 type AgentPermissions struct {
 	Network        bool   `yaml:"network" json:"network"`
 	DefaultSandbox string `yaml:"default_sandbox" json:"default_sandbox,omitempty"`
+	// PermissionMode overrides the global defaults.permission_mode for
+	// this agent: "bypass" or "default". Empty inherits the global
+	// default. See config.EffectivePermissionMode.
+	PermissionMode string `yaml:"permission_mode" json:"permission_mode,omitempty"`
 }
 
 // ProviderOverride carries per-provider customization for an Agent. Fields are
