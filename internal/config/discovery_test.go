@@ -115,7 +115,7 @@ func TestDefaultLayers_StackShape(t *testing.T) {
 	if last.Layer != LayerProject {
 		t.Errorf("last layer = %s; want project", last.Layer)
 	}
-	if want := filepath.Join("/tmp/cwd", ".agent-mux"); last.Root != want {
+	if want := filepath.Join("/tmp/cwd", ".tether"); last.Root != want {
 		t.Errorf("project root = %q; want %q", last.Root, want)
 	}
 }

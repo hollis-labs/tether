@@ -7,6 +7,7 @@ import "github.com/mark3labs/mcp-go/server"
 func (a *Adapter) registerTools(s *server.MCPServer) {
 	a.registerHealthTools(s)
 	a.registerCatalogTools(s)
+	a.registerAgentOpsTools(s)
 	a.registerSkillTools(s)
 	a.registerSessionTools(s)
 	a.registerLogicalAgentTools(s)

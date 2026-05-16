@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/agentops"
 	"github.com/hollis-labs/tether/internal/config"
 )
 
@@ -15,26 +16,26 @@ func TestResolveScope_KnownValues(t *testing.T) {
 		in   string
 		want config.Layer
 	}{
-		{"", config.LayerUser},
-		{"user", config.LayerUser},
-		{"USER", config.LayerUser},
+		{"", config.LayerProject}, // empty defaults to the project layer
 		{"project", config.LayerProject},
+		{"PROJECT", config.LayerProject},
+		{"user", config.LayerUser},
 		{"system", config.LayerSystem},
 	}
 	for _, tc := range cases {
-		got, err := resolveScope(tc.in)
+		got, err := agentops.ParseScope(tc.in)
 		if err != nil {
-			t.Errorf("resolveScope(%q): unexpected error %v", tc.in, err)
+			t.Errorf("ParseScope(%q): unexpected error %v", tc.in, err)
 			continue
 		}
 		if got != tc.want {
-			t.Errorf("resolveScope(%q) = %s; want %s", tc.in, got, tc.want)
+			t.Errorf("ParseScope(%q) = %s; want %s", tc.in, got, tc.want)
 		}
 	}
 }
 
 func TestResolveScope_UnknownErrors(t *testing.T) {
-	if _, err := resolveScope("garbage"); err == nil {
+	if _, err := agentops.ParseScope("garbage"); err == nil {
 		t.Fatal("expected error for unknown scope, got nil")
 	}
 }

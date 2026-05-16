@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -79,15 +80,67 @@ func Load(catalogRoot string) (*Catalog, error) {
 	return cat, nil
 }
 
+// LoadLayered loads the catalog like Load, then overlays agents discovered in
+// the user and per-project discovery layers. Use it anywhere the catalog's
+// launches are resolved or validated.
+//
+// Plain Load only reads agents from the system-catalog root
+// (<catalogRoot>/agents/). But `mux agents create` and project-local config
+// write agents into the user layer (~/.tether/agents/) or a project layer
+// (<repo_root>/.tether/agents/) instead. A launch referencing such an agent
+// would otherwise fail validation with "references unknown agent" even though
+// the agent exists — the agent is simply invisible to the single-root loader.
+// LoadLayered closes that gap so layered agents are first-class for launches.
+//
+// Precedence (later wins): system catalog < user layer < project layer. When
+// two projects define the same agent ID, projects are merged in sorted ID
+// order so the result is deterministic.
+func LoadLayered(catalogRoot string) (*Catalog, error) {
+	catalogRoot = Expand(catalogRoot)
+	cat, err := Load(catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	// The system layer is already populated by Load above; Discover here
+	// only walks the user + project layers so it is not read twice.
+	var layers []LayerSpec
+	if home, err := os.UserHomeDir(); err == nil {
+		layers = append(layers, LayerSpec{Layer: LayerUser, Root: filepath.Join(home, ".tether")})
+	}
+	projectIDs := make([]string, 0, len(cat.Projects))
+	for id := range cat.Projects {
+		projectIDs = append(projectIDs, id)
+	}
+	sort.Strings(projectIDs)
+	for _, id := range projectIDs {
+		repoRoot := cat.Projects[id].RepoRoot
+		if repoRoot == "" {
+			continue
+		}
+		layers = append(layers, LayerSpec{
+			Layer: LayerProject,
+			Root:  filepath.Join(Expand(repoRoot), ".tether"),
+		})
+	}
+	layered, err := Discover(layers)
+	if err != nil {
+		return nil, fmt.Errorf("discover layered agents: %w", err)
+	}
+	for id, la := range layered.Agents {
+		cat.Agents[id] = la.Agent
+	}
+	return cat, nil
+}
+
 // applyDaemonDefaults fills in listen_addr / pid_file / shutdown_timeout when
 // the catalog's global.yaml omits them. Paths are left un-expanded; callers
 // that need filesystem paths should run them through config.Expand.
 func applyDaemonDefaults(d *DaemonConfig) {
 	if d.ListenAddr == "" {
-		d.ListenAddr = "unix:~/.agent-mux/run/muxd.sock"
+		d.ListenAddr = "unix:~/.tether/run/muxd.sock"
 	}
 	if d.PIDFile == "" {
-		d.PIDFile = "~/.agent-mux/run/muxd.pid"
+		d.PIDFile = "~/.tether/run/muxd.pid"
 	}
 	if d.ShutdownTimeout == "" {
 		d.ShutdownTimeout = "10s"

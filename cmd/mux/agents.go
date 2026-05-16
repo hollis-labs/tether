@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hollis-labs/tether/internal/agentops"
 	"github.com/hollis-labs/tether/internal/config"
 )
 
@@ -52,10 +53,30 @@ var (
 var agentsCreateCmd = &cobra.Command{
 	Use:   "create <id>",
 	Short: "Create a new agent YAML in the chosen discovery layer",
-	Args:  cobra.ExactArgs(1),
+	Long: `Create a new agent YAML file in one of the three discovery layers.
+
+The --scope flag selects which layer the file is written to, which determines
+which launches can reference the agent:
+
+  project   <repo>/.tether/agents/      Visible to launches for that repo only.
+                                        Commit the file to share it with the
+                                        team. Best for repo-specific agents
+                                        (auditors, builders for one codebase).
+                                        (default)
+  user      ~/.tether/agents/           Visible to all of your launches on this
+                                        machine, across every project. Use for
+                                        personal, cross-project agents.
+  system    <catalog>/agents/           The curated, shared system catalog.
+
+Launch validation resolves agents across all three layers, with project
+overriding user overriding system — so a launch may reference an agent
+created at any scope. Pick the narrowest scope that fits: project for
+repo-specific work, user for your own cross-project agents, system only for
+the deliberately-curated shared catalog.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
-		layer, err := resolveScope(agentsCreateScope)
+		layer, err := agentops.ParseScope(agentsCreateScope)
 		if err != nil {
 			return err
 		}
@@ -63,28 +84,12 @@ var agentsCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		path := filepath.Join(root, "agents", id+".yaml")
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("agent already exists at %s — edit with `mux agents edit %s` (or remove the file first)", path, id)
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			return err
-		}
-		name := agentsCreateName
-		if name == "" {
-			name = id
-		}
-		a := config.Agent{
-			ID:           id,
-			Name:         name,
+		path, err := agentops.Create(root, id, agentops.Params{
+			Name:         agentsCreateName,
 			SystemPrompt: agentsCreateSystem,
 			AgentPrompt:  agentsCreateAgentPrompt,
-		}
-		body, err := yaml.Marshal(a)
+		})
 		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, body, 0o600); err != nil {
 			return err
 		}
 		fmt.Printf("wrote %s (%s layer)\n", path, layer.String())
@@ -146,8 +151,8 @@ var agentsShowCmd = &cobra.Command{
 }
 
 // agentDiscovery returns the LayeredCatalog assembled from the system catalog
-// (catalogPath), the user layer (~/.agent-mux/), and the project layer
-// (./.agent-mux/, relative to the daemon's CWD).
+// (catalogPath), the user layer (~/.tether/), and the project layer
+// (./.tether/, relative to the daemon's CWD).
 func agentDiscovery() (*config.LayeredCatalog, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -155,20 +160,6 @@ func agentDiscovery() (*config.LayeredCatalog, error) {
 	}
 	layers := config.DefaultLayers(catalogPath, cwd)
 	return config.Discover(layers)
-}
-
-// resolveScope maps the --scope flag to a Layer. Defaults to user when empty.
-func resolveScope(s string) (config.Layer, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "user":
-		return config.LayerUser, nil
-	case "project":
-		return config.LayerProject, nil
-	case "system":
-		return config.LayerSystem, nil
-	default:
-		return 0, fmt.Errorf("unknown scope %q (want one of: user, project, system)", s)
-	}
 }
 
 // layerRoot returns the on-disk root for the given layer.
@@ -181,19 +172,19 @@ func layerRoot(layer config.Layer) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(home, ".agent-mux"), nil
+		return filepath.Join(home, ".tether"), nil
 	case config.LayerProject:
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(cwd, ".agent-mux"), nil
+		return filepath.Join(cwd, ".tether"), nil
 	}
 	return "", fmt.Errorf("unknown layer: %s", layer)
 }
 
 func init() {
-	agentsCreateCmd.Flags().StringVar(&agentsCreateScope, "scope", "user", "discovery layer to write into: user | project | system")
+	agentsCreateCmd.Flags().StringVar(&agentsCreateScope, "scope", "project", "discovery layer to write the agent into: project (this repo) | user (all your projects) | system (shared catalog) — see 'mux agents create --help'")
 	agentsCreateCmd.Flags().StringVar(&agentsCreateName, "name", "", "human-readable name (defaults to id)")
 	agentsCreateCmd.Flags().StringVar(&agentsCreateSystem, "system-prompt", "", "agent's system prompt (inline string)")
 	agentsCreateCmd.Flags().StringVar(&agentsCreateAgentPrompt, "agent-prompt", "", "agent's persona prompt (inline string)")

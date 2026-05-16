@@ -17,6 +17,7 @@
 //
 //	session.write  — create, launch, stop, wait, input, resize, resume
 //	message.write  — send, consume, cancel
+//	catalog.write  — agent create/edit (catalog file writes)
 package mcpadapter
 
 import (
@@ -41,6 +42,11 @@ const version = "0.2.0"
 const (
 	ScopeSessionWrite = "session.write"
 	ScopeMessageWrite = "message.write"
+	// ScopeCatalogWrite gates tools that write catalog files (agent
+	// create/edit). It is deliberately separate from session/message
+	// scopes so an operator can grant runtime control without granting
+	// the ability to mutate catalog definitions, and vice versa.
+	ScopeCatalogWrite = "catalog.write"
 )
 
 // Adapter exposes the agent-mux runtime as MCP tools over stdio.
@@ -172,7 +178,7 @@ func classifyClientErr(err error, id string) *mcp.CallToolResult {
 
 // checkScope verifies that the token is set and the named scope is present.
 // Returns a non-nil error result when the check fails.
-func (a *Adapter) checkScope(scope string) *mcp.CallToolResult { //nolint:unparam // scope will expand beyond ScopeSessionWrite as more tool groups are registered
+func (a *Adapter) checkScope(scope string) *mcp.CallToolResult {
 	if a.token == "" {
 		return toolError("auth_required", "no token configured; pass --token to enable mutating tools")
 	}

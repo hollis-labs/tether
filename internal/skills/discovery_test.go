@@ -15,7 +15,7 @@ func TestDiscoverLayered_IncludesLegacySkillDirs(t *testing.T) {
 	if err := writeFileEnsureDir(filepath.Join(systemRoot, "skills", "catalog.md"), "---\nid: catalog\nname: Catalog\n---\nCatalog body.\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileEnsureDir(filepath.Join(home, ".tether", "skills", "legacy.md"), "# Legacy Skill (:legacy)\n\nUse the old skill shape.\n"); err != nil {
+	if err := writeFileEnsureDir(filepath.Join(home, ".tether", "skills", "legacy.md"), "---\nid: legacy\nname: Legacy Skill\ndescription: Use the old skill shape.\n---\nLegacy body.\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeFileEnsureDir(filepath.Join(home, ".nanite", "skills", "nanite.md"), "# Nanite Skill\n\nLegacy Nanite skill.\n"); err != nil {
@@ -38,7 +38,7 @@ func TestDiscoverLayered_IncludesLegacySkillDirs(t *testing.T) {
 	if byID["catalog"].Layer != "system" {
 		t.Errorf("catalog layer = %q", byID["catalog"].Layer)
 	}
-	if byID["legacy"].Layer != "user-tether" {
+	if byID["legacy"].Layer != "user" {
 		t.Errorf("legacy layer = %q", byID["legacy"].Layer)
 	}
 	if byID["nanite"].Layer != "legacy-nanite" {

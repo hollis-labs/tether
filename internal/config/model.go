@@ -12,10 +12,10 @@ type Global struct {
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
 	// ListenAddr accepts "unix:/path" or "tcp:host:port". If empty, defaults
-	// to "unix:~/.agent-mux/run/muxd.sock".
+	// to "unix:~/.tether/run/muxd.sock".
 	ListenAddr string `yaml:"listen_addr"`
 	// PIDFile records the child process PID. Defaults to
-	// "~/.agent-mux/run/muxd.pid".
+	// "~/.tether/run/muxd.pid".
 	PIDFile string `yaml:"pid_file"`
 	// ShutdownTimeout caps how long Shutdown waits for in-flight sessions to
 	// reach a terminal state. Go duration string; defaults to "10s".

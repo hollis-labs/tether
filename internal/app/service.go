@@ -58,7 +58,7 @@ type Service struct {
 // with state/attachment/event sinks, and registers the built-in + catalog-
 // declared runtime factories.
 func New(catalogRoot string) (*Service, error) {
-	cat, err := config.Load(catalogRoot)
+	cat, err := config.LoadLayered(catalogRoot)
 	if err != nil {
 		return nil, err
 	}

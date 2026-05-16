@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -38,10 +39,10 @@ func TestLoadExampleCatalog(t *testing.T) {
 	}
 
 	// Daemon defaults are applied when the catalog omits the block.
-	if got, want := cat.Global.Daemon.ListenAddr, "unix:~/.agent-mux/run/muxd.sock"; got != want {
+	if got, want := cat.Global.Daemon.ListenAddr, "unix:~/.tether/run/muxd.sock"; got != want {
 		t.Errorf("daemon.listen_addr = %q, want default %q", got, want)
 	}
-	if got, want := cat.Global.Daemon.PIDFile, "~/.agent-mux/run/muxd.pid"; got != want {
+	if got, want := cat.Global.Daemon.PIDFile, "~/.tether/run/muxd.pid"; got != want {
 		t.Errorf("daemon.pid_file = %q, want default %q", got, want)
 	}
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
@@ -191,5 +192,70 @@ func TestApplyDaemonDefaults_OverrideRespected(t *testing.T) {
 	}
 	if d.ShutdownTimeout != "30s" {
 		t.Errorf("shutdown_timeout overwritten: %q", d.ShutdownTimeout)
+	}
+}
+
+// TestLoadLayered_ResolvesUserAndProjectAgents builds a system catalog whose
+// launches reference agents that live only in the user and project discovery
+// layers. Plain Load cannot see those agents, so cat.Validate would fail with
+// "references unknown agent"; LoadLayered must overlay them so validation
+// passes. This is the regression guard for the catalog-profile launch bug.
+func TestLoadLayered_ResolvesUserAndProjectAgents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := t.TempDir()
+	catalogRoot := t.TempDir()
+
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	// System catalog: a project, a provider, and one launch per layered agent.
+	write(filepath.Join(catalogRoot, "global.yaml"), "version: 0.1.0\n")
+	write(filepath.Join(catalogRoot, "projects", "p.yaml"),
+		"id: p\nname: P\nrepo_root: "+repoRoot+"\n")
+	write(filepath.Join(catalogRoot, "providers", "cli.yaml"),
+		"id: cli\ntype: cli\ncommand: echo\n")
+	write(filepath.Join(catalogRoot, "launches", "user-launch.yaml"),
+		"id: user-launch\nproject: p\nagent: user-agent\nprovider: cli\n")
+	write(filepath.Join(catalogRoot, "launches", "project-launch.yaml"),
+		"id: project-launch\nproject: p\nagent: project-agent\nprovider: cli\n")
+
+	// user-agent lives only in the user layer (~/.tether/agents/).
+	write(filepath.Join(home, ".tether", "agents", "user-agent.yaml"),
+		"id: user-agent\nname: User Agent\n")
+	// project-agent lives only in the project layer (<repo>/.tether/agents/).
+	write(filepath.Join(repoRoot, ".tether", "agents", "project-agent.yaml"),
+		"id: project-agent\nname: Project Agent\n")
+
+	// Plain Load cannot see the layered agents — validation must fail.
+	plain, err := Load(catalogRoot)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := plain.Validate(); err == nil {
+		t.Fatal("Load + Validate: expected unknown-agent error, got nil")
+	}
+
+	// LoadLayered overlays them — validation must pass.
+	cat, err := LoadLayered(catalogRoot)
+	if err != nil {
+		t.Fatalf("LoadLayered: %v", err)
+	}
+	if _, ok := cat.Agents["user-agent"]; !ok {
+		t.Error("LoadLayered: missing user-layer agent")
+	}
+	if _, ok := cat.Agents["project-agent"]; !ok {
+		t.Error("LoadLayered: missing project-layer agent")
+	}
+	if err := cat.Validate(); err != nil {
+		t.Fatalf("LoadLayered + Validate: %v", err)
 	}
 }

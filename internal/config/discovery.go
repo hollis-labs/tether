@@ -13,9 +13,9 @@ type Layer int
 const (
 	// LayerSystem is the bundled Mux catalog (the existing single-root catalog).
 	LayerSystem Layer = iota
-	// LayerUser is ~/.agent-mux/ — personal customization.
+	// LayerUser is ~/.tether/ — personal customization.
 	LayerUser
-	// LayerProject is ./.agent-mux/ — repo-local, highest precedence.
+	// LayerProject is ./.tether/ — repo-local, highest precedence.
 	LayerProject
 )
 
@@ -48,10 +48,10 @@ func DefaultLayers(systemRoot, workingDir string) []LayerSpec {
 		{Layer: LayerSystem, Root: Expand(systemRoot)},
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		layers = append(layers, LayerSpec{Layer: LayerUser, Root: filepath.Join(home, ".agent-mux")})
+		layers = append(layers, LayerSpec{Layer: LayerUser, Root: filepath.Join(home, ".tether")})
 	}
 	if workingDir != "" {
-		layers = append(layers, LayerSpec{Layer: LayerProject, Root: filepath.Join(Expand(workingDir), ".agent-mux")})
+		layers = append(layers, LayerSpec{Layer: LayerProject, Root: filepath.Join(Expand(workingDir), ".tether")})
 	}
 	return layers
 }

@@ -96,15 +96,18 @@ type LegacySkillDir struct {
 	Path  string
 }
 
-// LegacySkillDirs returns post-rename and legacy skill directories. Missing
-// directories are handled by LoadDir.
+// LegacySkillDirs returns legacy skill directories that live outside the
+// layered catalog. Since the agent-mux→tether rename, ~/.tether/skills is the
+// user discovery layer (see config.DefaultLayers) and is parsed strictly via
+// the layered path above — so only genuinely foreign dirs remain here, kept
+// for lenient back-compat parsing. Missing directories are handled by
+// loadLegacyDir.
 func LegacySkillDirs() []LegacySkillDir {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
 	return []LegacySkillDir{
-		{Layer: "user-tether", Path: filepath.Join(home, ".tether", "skills")},
 		{Layer: "legacy-nanite", Path: filepath.Join(home, ".nanite", "skills")},
 	}
 }
