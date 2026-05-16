@@ -6,6 +6,7 @@
 package agentops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 )
+
+// ErrExists is returned by Create when an agent file already exists at the
+// target path. Callers should classify it distinctly from I/O failures — an
+// already-exists is a caller/action error, not an internal fault.
+var ErrExists = errors.New("agent already exists")
 
 // ParseScope maps a --scope flag / scope argument to a discovery Layer. An
 // empty string defaults to the project layer — the narrowest scope, and the
@@ -63,7 +69,7 @@ func Create(layerRoot, id string, p Params) (string, error) {
 	}
 	path := filepath.Join(layerRoot, "agents", id+".yaml")
 	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("agent already exists at %s", path)
+		return "", fmt.Errorf("%w at %s", ErrExists, path)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
@@ -85,8 +91,19 @@ func Create(layerRoot, id string, p Params) (string, error) {
 	return path, nil
 }
 
-// Update loads the agent file at path, applies the non-empty fields of p, and
+// Update loads the agent file at path, applies the populated fields of p, and
 // rewrites the file in place. Returns the resulting agent.
+//
+// Update is a partial patch, not a full replace:
+//   - An empty string leaves a scalar field (Name/SystemPrompt/AgentPrompt)
+//     unchanged — scalars cannot be cleared to "" through Update.
+//   - A non-nil slice (even empty) replaces Roles/Skills; a nil slice leaves
+//     the existing list untouched. This is how a caller clears a list.
+//
+// The file is rewritten in canonical YAML form: comments and any keys not
+// modeled by config.Agent are NOT preserved. Agent files that carry
+// hand-authored comments or forward-compatible unknown fields should be
+// edited by hand rather than through Update.
 func Update(path string, p Params) (config.Agent, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: catalog-sourced path
 	if err != nil {

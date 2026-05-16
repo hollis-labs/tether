@@ -15,7 +15,12 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	defaultCatalog := filepath.Join(os.Getenv("HOME"), ".tether", "catalog")
+	// os.UserHomeDir is cross-platform (HOME on unix, USERPROFILE on Windows)
+	// and the right primitive here. If it fails (no home env), the default
+	// degrades to a relative ".tether/catalog" — callers must then pass
+	// --catalog explicitly rather than silently hitting the wrong path.
+	home, _ := os.UserHomeDir()
+	defaultCatalog := filepath.Join(home, ".tether", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
 	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd)
 	// Top-level aliases for discoverability.

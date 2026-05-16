@@ -1,6 +1,7 @@
 package agentops
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,9 +85,14 @@ func TestCreate_WritesFileAndRejectsDuplicate(t *testing.T) {
 		t.Errorf("roles = %v", a.Roles)
 	}
 
-	// A second create at the same path must fail rather than clobber.
-	if _, err := Create(root, "auditor", Params{}); err == nil {
+	// A second create at the same path must fail with ErrExists (so callers
+	// can classify it as a conflict) rather than clobber the file.
+	_, err = Create(root, "auditor", Params{})
+	if err == nil {
 		t.Fatal("Create: expected duplicate error, got nil")
+	}
+	if !errors.Is(err, ErrExists) {
+		t.Errorf("Create duplicate: error = %v, want errors.Is ErrExists", err)
 	}
 }
 
@@ -149,6 +155,29 @@ func TestUpdate_PatchesProvidedFieldsOnly(t *testing.T) {
 	_ = yaml.Unmarshal(data, &onDisk)
 	if onDisk.Name != "Renamed Auditor" || onDisk.SystemPrompt != "original prompt" {
 		t.Errorf("on-disk agent = %+v", onDisk)
+	}
+}
+
+func TestUpdate_ClearsListWithEmptySlice(t *testing.T) {
+	root := t.TempDir()
+	path, err := Create(root, "auditor", Params{
+		Roles:  []string{"auditor"},
+		Skills: []string{"audit"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// A non-nil empty slice replaces (clears) the list; a nil slice would
+	// leave it unchanged.
+	got, err := Update(path, Params{Roles: []string{}, Skills: []string{}})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(got.Roles) != 0 {
+		t.Errorf("Roles = %v, want cleared", got.Roles)
+	}
+	if len(got.Skills) != 0 {
+		t.Errorf("Skills = %v, want cleared", got.Skills)
 	}
 }
 

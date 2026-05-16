@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +31,7 @@ func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
 
 	a.addTool(s, mcp.NewTool("mux_agent_create",
 		mcp.WithDescription("Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase)."),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID — kebab-case, becomes the YAML filename. No path separators.")),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended.")),
 		mcp.WithString("scope", mcp.Description("Discovery layer: project (default) | user | system.")),
 		mcp.WithString("project", mcp.Description("Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/.")),
 		mcp.WithString("name", mcp.Description("Human-readable name (defaults to id).")),
@@ -41,11 +42,11 @@ func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
 	), a.handleAgentCreate)
 
 	a.addTool(s, mcp.NewTool("mux_agent_edit",
-		mcp.WithDescription("Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope. Only the fields you pass are changed; omitted fields are left as-is. Comma-separated roles/skills replace the existing lists."),
+		mcp.WithDescription("Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID to edit.")),
 		mcp.WithString("name", mcp.Description("New human-readable name (optional).")),
-		mcp.WithString("roles", mcp.Description("Comma-separated role list — replaces existing roles (optional).")),
-		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list — replaces existing skills (optional).")),
+		mcp.WithString("roles", mcp.Description("Comma-separated role list — replaces existing roles; empty string clears them (optional).")),
+		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list — replaces existing skills; empty string clears them (optional).")),
 		mcp.WithString("system_prompt", mcp.Description("New system prompt (optional).")),
 		mcp.WithString("agent_prompt", mcp.Description("New persona prompt (optional).")),
 	), a.handleAgentEdit)
@@ -116,13 +117,18 @@ func (a *Adapter) handleAgentCreate(_ context.Context, req mcp.CallToolRequest) 
 	}
 	path, err := agentops.Create(root, id, agentops.Params{
 		Name:         str(req, "name"),
-		Roles:        splitCSV(str(req, "roles")),
-		Skills:       splitCSV(str(req, "skills")),
+		Roles:        csvArgPresent(req, "roles"),
+		Skills:       csvArgPresent(req, "skills"),
 		SystemPrompt: str(req, "system_prompt"),
 		AgentPrompt:  str(req, "agent_prompt"),
 	})
 	if err != nil {
-		return toolError("conflict", err.Error()), nil
+		// An already-exists is a caller error (conflict); anything else
+		// (permission denied, bad layer root, write failure) is internal.
+		if errors.Is(err, agentops.ErrExists) {
+			return toolError("conflict", err.Error()), nil
+		}
+		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -150,8 +156,8 @@ func (a *Adapter) handleAgentEdit(_ context.Context, req mcp.CallToolRequest) (*
 	}
 	updated, err := agentops.Update(la.Path, agentops.Params{
 		Name:         str(req, "name"),
-		Roles:        splitCSV(str(req, "roles")),
-		Skills:       splitCSV(str(req, "skills")),
+		Roles:        csvArgPresent(req, "roles"),
+		Skills:       csvArgPresent(req, "skills"),
 		SystemPrompt: str(req, "system_prompt"),
 		AgentPrompt:  str(req, "agent_prompt"),
 	})
@@ -213,23 +219,23 @@ func (a *Adapter) layerRoot(layer config.Layer, projectID string) (string, *mcp.
 	}
 }
 
-// splitCSV splits a comma-separated argument into trimmed, non-empty values.
-// It returns nil for an empty input so Params treats the field as "unset"
-// rather than "replace with empty list".
-func splitCSV(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
+// csvArgPresent reads a comma-separated list argument with presence
+// semantics — distinct from csvArg in skills.go, which is nil-on-empty. A
+// missing key returns nil, which agentops.Params treats as "leave unchanged".
+// A key that is present (even as an empty string) returns a non-nil slice,
+// so a caller can deliberately clear Roles/Skills to an empty list. Trimmed,
+// empty elements are dropped.
+func csvArgPresent(req mcp.CallToolRequest, key string) []string {
+	raw, ok := req.GetArguments()[key]
+	if !ok {
 		return nil
 	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
+	s, _ := raw.(string)
+	out := []string{}
+	for _, p := range strings.Split(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }

@@ -74,11 +74,14 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 		t.Fatalf("create did not write the agent file: %v", err)
 	}
 
-	// duplicate create rejected
-	if dup := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	// duplicate create rejected — classified as conflict, not internal_error
+	dup := callAgentTool(t, a, "mux_agent_create", map[string]any{
 		"id": "auditor", "scope": "system",
-	}); !dup.IsError {
+	})
+	if !dup.IsError {
 		t.Error("duplicate create: expected error result")
+	} else if code := parseToolJSON(t, dup)["code"]; code != "conflict" {
+		t.Errorf("duplicate create: code = %v, want conflict", code)
 	}
 
 	// list
@@ -112,6 +115,35 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 	}
 	if edited["system_prompt"] != "you audit code" {
 		t.Errorf("edit clobbered system_prompt: %v", edited["system_prompt"])
+	}
+}
+
+// TestAgentOps_EditClearsRoles confirms an explicitly-passed empty roles
+// argument clears the list, while an omitted argument leaves it untouched.
+func TestAgentOps_EditClearsRoles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
+
+	if res := callAgentTool(t, a, "mux_agent_create", map[string]any{
+		"id": "auditor", "scope": "system", "roles": "auditor,reviewer",
+	}); res.IsError {
+		t.Fatalf("create returned error: %s", textOf(res))
+	}
+
+	// Omitting roles leaves them intact.
+	keep := parseToolJSON(t, callAgentTool(t, a, "mux_agent_edit", map[string]any{
+		"id": "auditor", "name": "Renamed",
+	}))
+	if roles, _ := keep["agent"].(map[string]any)["roles"].([]any); len(roles) != 2 {
+		t.Errorf("omitted roles arg should leave 2 roles, got %v", roles)
+	}
+
+	// Passing roles as an empty string clears the list.
+	cleared := parseToolJSON(t, callAgentTool(t, a, "mux_agent_edit", map[string]any{
+		"id": "auditor", "roles": "",
+	}))
+	if roles, _ := cleared["agent"].(map[string]any)["roles"].([]any); len(roles) != 0 {
+		t.Errorf("empty roles arg should clear the list, got %v", roles)
 	}
 }
 
