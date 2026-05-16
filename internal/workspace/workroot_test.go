@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/launch"
@@ -44,6 +45,119 @@ func TestMaterializeWorkRootCreatesIsolatedGitWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(want); !os.IsNotExist(err) {
 		t.Fatalf("worktree dir still exists after cleanup, stat err=%v", err)
+	}
+}
+
+func TestMaterializeWorkRootCollisionSurfacesClearError(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree"}
+	if err := MaterializeWorkRoot(root, "session-collide", plan); err != nil {
+		t.Fatalf("first MaterializeWorkRoot: %v", err)
+	}
+
+	// A second materialize with the same run id collides on the existing path.
+	dup := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree"}
+	err := MaterializeWorkRoot(root, "session-collide", dup)
+	if err == nil {
+		t.Fatal("expected collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("collision error not actionable: %v", err)
+	}
+	if dup.WorkRoot != "" {
+		t.Fatalf("colliding plan got a WorkRoot set: %q", dup.WorkRoot)
+	}
+}
+
+func TestMaterializeWorkRootRegisteredPathSurfacesClearError(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree"}
+	if err := MaterializeWorkRoot(root, "session-reg", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	// Delete the directory but leave the git worktree registration intact —
+	// `git worktree add` to the same path must still fail with a framed error.
+	if err := os.RemoveAll(plan.WorkRoot); err != nil {
+		t.Fatalf("remove worktree dir: %v", err)
+	}
+	dup := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree"}
+	err := MaterializeWorkRoot(root, "session-reg", dup)
+	if err == nil {
+		t.Fatal("expected registered-path error, got nil")
+	}
+	if !strings.Contains(err.Error(), "worktree") {
+		t.Fatalf("registered-path error not framed: %v", err)
+	}
+}
+
+func TestMaterializeWorkRootNamedBranch(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree", WorktreeName: "tether-session-abc"}
+	if err := MaterializeWorkRoot(root, "session-named", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	if out := gitOutput(t, repo, "branch", "--list", "tether-session-abc"); !strings.Contains(out, "tether-session-abc") {
+		t.Fatalf("named worktree did not create branch: %q", out)
+	}
+	if err := RemoveMaterializedWorkRoot(plan); err != nil {
+		t.Fatalf("RemoveMaterializedWorkRoot: %v", err)
+	}
+}
+
+func TestMaterializeWorkRootPathLikeNameStaysDetached(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree", WorktreeName: "feature/launchpad"}
+	if err := MaterializeWorkRoot(root, "session-pathlike", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	if out := gitOutput(t, repo, "branch", "--list", "feature/launchpad"); out != "" {
+		t.Fatalf("path-like worktree_name created a branch: %q", out)
+	}
+}
+
+func TestMaterializeWorkRootTemplateNameStaysDetached(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	// An unrendered template must NOT be fed to git as a branch name.
+	plan := &launch.Plan{
+		RepoRoot:      repo,
+		WorkspaceMode: "worktree",
+		WorktreeName:  "tether/{{.ProjectID}}/{{.SessionID}}",
+	}
+	if err := MaterializeWorkRoot(root, "session-tmpl", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	if out := gitOutput(t, repo, "branch", "--list", "tether/*"); out != "" {
+		t.Fatalf("template worktree_name leaked a branch: %q", out)
+	}
+}
+
+func TestRemoveWorktreeAtDeregistersRegistration(t *testing.T) {
+	repo := initGitRepo(t)
+	root := t.TempDir()
+
+	plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree"}
+	if err := MaterializeWorkRoot(root, "session-dereg", plan); err != nil {
+		t.Fatalf("MaterializeWorkRoot: %v", err)
+	}
+	if err := RemoveWorktreeAt(repo, plan.WorkRoot); err != nil {
+		t.Fatalf("RemoveWorktreeAt: %v", err)
+	}
+	if out := gitOutput(t, repo, "worktree", "list"); strings.Contains(out, plan.WorkRoot) {
+		t.Fatalf("worktree still registered after RemoveWorktreeAt: %q", out)
+	}
+	// Idempotent: removing an already-gone worktree must not error.
+	if err := RemoveWorktreeAt(repo, plan.WorkRoot); err != nil {
+		t.Fatalf("second RemoveWorktreeAt: %v", err)
 	}
 }
 

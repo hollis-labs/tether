@@ -354,13 +354,18 @@ func (c *Client) SendTurn(ctx context.Context, id, text string) error {
 	if err != nil {
 		return err
 	}
+	// Turns may block until a provider finishes a request. The default daemon
+	// client timeout is intentionally short for health/catalog calls, so use an
+	// unbounded transport here and let the caller's context own cancellation.
+	longClient := *c.http
+	longClient.Timeout = 0
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/sessions/"+url.PathEscape(id)+"/turn", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := longClient.Do(req)
 	if err != nil {
 		return wrapIfUnreachable(err)
 	}

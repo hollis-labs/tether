@@ -31,6 +31,12 @@ fields such as logs, sandbox, attach policy, and provider session ID capture.
 `boot-exec` uses the same compile/prepare/plant flow, then execs into the
 prepared provider command so the user lands in the native TUI.
 
+`boot-exec` is **Claude-TUI-only** — it execs into the native Claude PTY
+runtime and rejects Codex/Opencode launch profiles with a clear error. Codex
+and Opencode are fully supported as managed sessions (`mux launch`); only the
+direct-exec convenience path is Claude-specific. See
+`docs/adr/0039-boot-exec-claude-only-scope.md`.
+
 ## Tether Launch Profile Injection
 
 Tether launch profiles expose the shared injection surface as catalog YAML:
@@ -63,6 +69,11 @@ Rules:
 - `kind` defaults to `raw`; `kind: skill` requires `id`.
 - Tether preserves catalog `native_files` and appends compiled `agent.skills`
   afterward.
+- **Injected content is persisted at rest.** `content` and the body read from
+  `source` are resolved into the launch plan and stored as JSON in the
+  `launch_plans` table. Injection is for non-secret content only — route
+  secrets through provider env `passthrough`/`whitelist` (parent env, not
+  persisted) or a keychain helper.
 
 ## Skills
 

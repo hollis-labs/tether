@@ -64,6 +64,51 @@ Workspace modes:
 Unset `workspace.mode` resolves to the project `workspace.default_mode`; if both
 are unset, the default is `worktree`.
 
+### Workspace roots and worktree lifecycle
+
+Three roots are easy to confuse — they are distinct:
+
+| Root | What it is | Mutated/removed by Tether? |
+|---|---|---|
+| `repo_root` | The source checkout a launch derives from. | Never. Tether never edits or deletes `repo_root`. |
+| `work_root` | The editable/exec root the provider runs against. In `shared`/`hybrid` mode it aliases `repo_root`; in `worktree`/`isolated` mode it is a freshly materialized git worktree at `<base>/repo`. | In worktree mode only — see retention below. |
+| `workspace_dir` | The per-session bookkeeping directory (`logs/`, `prompts/`, `state/plan.json`, …) under the workspace root. Distinct from `work_root`. | Removed by `mux workspaces prune`. |
+
+`worktree_name` is a per-launch field. If set to a plain git ref (no spaces, no
+Go-template `{{ }}` markers) it becomes the branch name for the materialized
+worktree (`git worktree add -b <name>`). A template-style value such as
+`tether/{{.ProjectID}}/{{.SessionID}}` is currently **reserved** — Tether has no
+renderer for it yet, so such a value is ignored and the worktree is created
+detached rather than feeding an unrendered string to git. An empty
+`worktree_name` always yields a detached worktree.
+
+If the target worktree path already exists, or git rejects the
+`worktree add` because the path/branch is already registered, materialization
+fails with an actionable error naming the `git worktree remove` / `git worktree
+prune` remedy — it never clobbers an existing checkout.
+
+**Retention / preservation policy:**
+
+- **`boot-exec` worktrees** are removed on process exit (a `defer` calls
+  `RemoveMaterializedWorkRoot`). A one-shot exec leaves nothing behind.
+- **Failed session create** — if any step after worktree materialization fails,
+  `createSessionFromPlan` removes the worktree it just created before returning
+  the error, so a failed create never leaks a worktree or a stale registration.
+- **Daemon-managed sessions** that reach a terminal state (`completed`,
+  `failed`, `killed`) **keep their worktree and `workspace_dir`** — the work
+  product and logs stay inspectable. Session teardown does *not* remove the
+  worktree.
+- **Explicit reclaim** is `mux workspaces prune`: it removes `workspace_dir`s
+  for terminal/orphaned sessions older than `--older-than`, and for
+  worktree/isolated-mode sessions it first runs `git worktree remove` against
+  the source repo so the repo's worktree registry stays consistent — a bare
+  directory delete would leave a stale worktree registration. `shared`/`hybrid`
+  sessions have no worktree to deregister; only their `workspace_dir` is
+  removed, never `repo_root`.
+
+Removing a *terminated* session's worktree never affects a running session, and
+attach (log replay) and resume (which creates a fresh session) are unaffected.
+
 Tether compiles launch profiles through `go-agent-launch` and stores shared
 provenance (`plan_hash`, compiler version, provider/runtime/workspace, and
 bootdir layout intent) in the persisted launch plan. Managed sessions and
@@ -112,6 +157,14 @@ Tether preserves launch-profile native files and appends compiled
 `agent.skills` after them. This makes catalog/profile files the stable base and
 provider-specific skill compilation an additive layer.
 
+> **Persisted at rest — non-secret content only.** Injected `content`, and the
+> file body read from `source`, are resolved into the launch plan and persisted
+> verbatim as JSON in the `launch_plans` table. Never place API keys, tokens,
+> or other secrets in `injection`. Secrets must flow through provider env
+> `passthrough`/`whitelist` mode (which pulls from the live parent environment
+> and is *not* persisted) or an external api-key-helper/keychain. The same rule
+> applies to `overrides.env` — explicit env overrides are persisted too.
+
 ## Boot Profile
 
 ```yaml
@@ -135,6 +188,14 @@ slots:
 `BootProfileFile` regenerate boot-profile prompts after the worktree exists, so
 `identity.work_root` can point at the materialized worktree. `mux boot` renders
 the prompt client-side before creating the managed session.
+
+> **`boot-exec` is Claude-TUI-only.** `mux boot-exec` execs directly into the
+> native Claude PTY runtime; launch profiles whose provider is Codex or
+> Opencode are rejected with a clear error. This is a boundary of the
+> direct-exec convenience path, not a provider gap — Codex and Opencode are
+> fully supported as managed sessions. For those providers use
+> `mux boot <profile>` or `mux launch`, which create a daemon-managed session
+> you attach to. See `docs/adr/0039-boot-exec-claude-only-scope.md`.
 
 Useful commands:
 

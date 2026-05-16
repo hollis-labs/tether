@@ -320,6 +320,119 @@ func TestApplyAgentOps_PreservesLaunchNativeFiles(t *testing.T) {
 	}
 }
 
+// TestApplyAgentOps_CallerInjection_Precedence locks in the documented
+// native-file precedence: catalog native files → caller-provided native
+// files → compiled agent.skills last.
+func TestApplyAgentOps_CallerInjection_Precedence(t *testing.T) {
+	tmp := t.TempDir()
+	skillsDir := filepath.Join(tmp, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "refactor.md"), []byte("---\nid: refactor\nname: Refactor\n---\nrefactor body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent", Skills: []string{"refactor"}},
+	}, tmp)
+	plan := basePlan()
+	// Catalog native file already in the plan (as resolveInjection would leave it).
+	plan.NativeFiles = []launch.NativeFile{
+		{Kind: "raw", RelPath: ".mux/catalog.md", Content: "catalog file\n"},
+	}
+	in := CreateSessionInput{
+		LaunchID:  "test-launch",
+		Injection: `{"native_files":[{"kind":"raw","rel_path":"NOTES.md","content":"caller note\n"}]}`,
+	}
+	if err := svc.applyAgentOps(plan, in); err != nil {
+		t.Fatalf("applyAgentOps: %v", err)
+	}
+	if len(plan.NativeFiles) != 3 {
+		t.Fatalf("NativeFiles len = %d, want catalog + caller + skill", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].RelPath != ".mux/catalog.md" {
+		t.Errorf("NativeFiles[0] = %#v; want catalog file first", plan.NativeFiles[0])
+	}
+	if plan.NativeFiles[1].RelPath != "NOTES.md" || plan.NativeFiles[1].Content != "caller note\n" {
+		t.Errorf("NativeFiles[1] = %#v; want caller-provided file second", plan.NativeFiles[1])
+	}
+	if plan.NativeFiles[2].Kind != "skill" || plan.NativeFiles[2].ID != "refactor" {
+		t.Errorf("NativeFiles[2] = %#v; want compiled skill last", plan.NativeFiles[2])
+	}
+}
+
+// TestApplyAgentOps_CallerInjection_BootDirOverlayCallerWins asserts the
+// caller boot-dir overlay value wins over a catalog overlay entry that shares
+// the same rel_path, while non-conflicting entries are preserved.
+func TestApplyAgentOps_CallerInjection_BootDirOverlayCallerWins(t *testing.T) {
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent"},
+	}, t.TempDir())
+	plan := basePlan()
+	plan.BootDirOverlay = map[string]string{
+		"shared.md":  "catalog value",
+		"catalog.md": "catalog only",
+	}
+	in := CreateSessionInput{
+		LaunchID: "test-launch",
+		Injection: `{"boot_dir_overlay":[` +
+			`{"rel_path":"shared.md","content":"caller value"},` +
+			`{"rel_path":"caller.md","content":"caller only"}]}`,
+	}
+	if err := svc.applyAgentOps(plan, in); err != nil {
+		t.Fatalf("applyAgentOps: %v", err)
+	}
+	if got := plan.BootDirOverlay["shared.md"]; got != "caller value" {
+		t.Errorf("shared.md = %q; want caller value (caller wins on duplicate rel_path)", got)
+	}
+	if got := plan.BootDirOverlay["catalog.md"]; got != "catalog only" {
+		t.Errorf("catalog.md = %q; want catalog-only entry preserved", got)
+	}
+	if got := plan.BootDirOverlay["caller.md"]; got != "caller only" {
+		t.Errorf("caller.md = %q; want caller-only entry merged in", got)
+	}
+}
+
+// TestApplyAgentOps_CallerInjection_SourceResolvesFromCatalogRoot confirms a
+// relative `source` path in caller injection resolves against CatalogRoot,
+// not the process CWD.
+func TestApplyAgentOps_CallerInjection_SourceResolvesFromCatalogRoot(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "fragment.md"), []byte("fragment from catalog root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent"},
+	}, tmp)
+	plan := basePlan()
+	in := CreateSessionInput{
+		LaunchID:  "test-launch",
+		Injection: `{"native_files":[{"kind":"raw","rel_path":"FRAG.md","source":"fragment.md"}]}`,
+	}
+	if err := svc.applyAgentOps(plan, in); err != nil {
+		t.Fatalf("applyAgentOps: %v", err)
+	}
+	if len(plan.NativeFiles) != 1 {
+		t.Fatalf("NativeFiles len = %d, want 1", len(plan.NativeFiles))
+	}
+	if plan.NativeFiles[0].Content != "fragment from catalog root\n" {
+		t.Errorf("source content = %q; want resolved from CatalogRoot", plan.NativeFiles[0].Content)
+	}
+}
+
+// TestApplyAgentOps_BadInjectionJSON_HardErrors verifies malformed injection
+// JSON aborts plan assembly rather than silently dropping the payload.
+func TestApplyAgentOps_BadInjectionJSON_HardErrors(t *testing.T) {
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent"},
+	}, t.TempDir())
+	plan := basePlan()
+	in := CreateSessionInput{LaunchID: "test-launch", Injection: `{not json`}
+	if err := svc.applyAgentOps(plan, in); err == nil {
+		t.Fatal("expected error for malformed injection JSON, got nil")
+	}
+}
+
 func TestApplyAgentOps_MissingSkillHardErrors(t *testing.T) {
 	svc := buildTestService(t, map[string]config.Agent{
 		"test-agent": {ID: "test-agent", Skills: []string{"no-such-skill"}},

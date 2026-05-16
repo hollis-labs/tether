@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
@@ -391,6 +392,22 @@ func TestClient_SendInput_DaemonError(t *testing.T) {
 	c := New(m.addr())
 	if err := c.SendInput(context.Background(), "s1", []byte("x")); err == nil {
 		t.Fatal("expected error from daemon")
+	}
+}
+
+func TestClient_SendTurn_UsesCallerContextNotTransportTimeout(t *testing.T) {
+	m := newMockDaemon(t)
+	m.input = func(string, []byte) error {
+		time.Sleep(20 * time.Millisecond)
+		return nil
+	}
+	c := New(m.addr())
+	c.http.Timeout = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.SendTurn(ctx, "s1", "hello"); err != nil {
+		t.Fatalf("SendTurn: %v", err)
 	}
 }
 
