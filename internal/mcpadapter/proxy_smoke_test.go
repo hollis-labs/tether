@@ -1,7 +1,7 @@
 //go:build smoke
 
 // Package mcpadapter smoke tests require hadrond on PATH and a populated
-// ~/.agent-mux/catalog/mcp-servers/hadron.yaml. Run with:
+// ~/.tether/catalog/mcp-servers/hadron.yaml. Run with:
 //
 //	go test -tags smoke -v -run TestProxySmoke ./internal/mcpadapter/
 package mcpadapter
@@ -33,7 +33,7 @@ func TestProxySmokeHadronHealth(t *testing.T) {
 	}
 	t.Logf("hadrond: %s", hadrondPath)
 
-	catalogDir := filepath.Join(os.Getenv("HOME"), ".agent-mux", "catalog")
+	catalogDir := filepath.Join(os.Getenv("HOME"), ".tether", "catalog")
 	if _, err := os.Stat(filepath.Join(catalogDir, "mcp-servers")); os.IsNotExist(err) {
 		t.Skipf("catalog mcp-servers dir not found at %s", catalogDir)
 	}

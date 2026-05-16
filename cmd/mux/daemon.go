@@ -243,15 +243,16 @@ func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool
 }
 
 // catalogLoader is the production api.CatalogLoader: each Load call
-// re-reads the catalog root with config.Load, so live YAML edits are
-// picked up without a daemon restart. The read cost is trivial (O(100s)
-// YAML files at most) and matches ADR 0012's fresh-read stance.
+// re-reads the catalog root with config.LoadLayered, so live YAML edits —
+// including agents in the user/project discovery layers — are picked up
+// without a daemon restart. The read cost is trivial (O(100s) YAML files at
+// most) and matches ADR 0012's fresh-read stance.
 type catalogLoader struct {
 	root string
 }
 
 func (c *catalogLoader) Load() (*config.Catalog, error) {
-	return config.Load(c.root)
+	return config.LoadLayered(c.root)
 }
 
 // brokerAdapter bundles broker.Service (writes with event emission)

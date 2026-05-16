@@ -24,7 +24,7 @@ func (a *Adapter) registerSkillTools(s *server.MCPServer) {
 		mcp.WithString("project", mcp.Description("Optional project signal, for example 'nanite'")),
 		mcp.WithString("task_id", mcp.Description("Optional Torque task id for forward-compatible enrichment; v1 does not dereference it in-process")),
 		mcp.WithString("triggers", mcp.Description("Optional comma-separated preferred trigger terms, for example 'refactor,cleanup'")),
-		mcp.WithString("layers", mcp.Description("Optional comma-separated layer filter, for example 'project,user-tether'")),
+		mcp.WithString("layers", mcp.Description("Optional comma-separated layer filter, for example 'project,user'")),
 		mcp.WithNumber("limit", mcp.Description("Optional max results, default 5, max 20")),
 	), a.handleSkillBroker)
 	a.addTool(s, mcp.NewTool("mux_skill_get",

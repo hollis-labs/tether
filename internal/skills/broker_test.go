@@ -81,7 +81,7 @@ User.
 
 	got, err := BrokerLayered(root, root, BrokerQuery{
 		Role:   "backend",
-		Layers: []string{"user-tether"},
+		Layers: []string{"user"},
 		Limit:  5,
 	})
 	if err != nil {

@@ -178,7 +178,7 @@ User.
 
 	res := callSkillTool(t, a, "mux_skill_broker", map[string]any{
 		"role":   "backend",
-		"layers": "user-tether",
+		"layers": "user",
 	})
 	if res.IsError {
 		t.Fatalf("mux_skill_broker returned error: %s", textOf(res))

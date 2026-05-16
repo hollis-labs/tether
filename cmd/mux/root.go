@@ -15,7 +15,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	defaultCatalog := filepath.Join(os.Getenv("HOME"), ".agent-mux", "catalog")
+	defaultCatalog := filepath.Join(os.Getenv("HOME"), ".tether", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
 	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd)
 	// Top-level aliases for discoverability.

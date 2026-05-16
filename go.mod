@@ -1,17 +1,17 @@
 module github.com/hollis-labs/tether
 
-go 1.26.1
+go 1.26.2
 
 toolchain go1.26.3
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-sessions v0.9.4
-	github.com/hollis-labs/go-llm-types v0.1.0
-	github.com/hollis-labs/go-mcp-sanitize v0.1.0
-	github.com/hollis-labs/go-messaging v0.2.0
+	github.com/hollis-labs/go-llm-types v0.2.0
+	github.com/hollis-labs/go-mcp-sanitize v0.1.1
+	github.com/hollis-labs/go-messaging v0.2.1
 	github.com/hollis-labs/go-providers v0.17.1
-	github.com/hollis-labs/go-sandbox v0.2.0
+	github.com/hollis-labs/go-sandbox v0.2.1
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.42.0
@@ -24,8 +24,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/hollis-labs/go-agent-launch v0.1.0
-	github.com/hollis-labs/go-llm-contracts v0.1.0 // indirect
-	github.com/hollis-labs/go-runner v0.4.0 // indirect
+	github.com/hollis-labs/go-llm-contracts v0.2.0 // indirect
+	github.com/hollis-labs/go-runner v0.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

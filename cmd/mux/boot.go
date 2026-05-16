@@ -159,7 +159,7 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 		}
 
 		catalogRoot := expandCatalogPath()
-		cat, err := config.Load(catalogRoot)
+		cat, err := config.LoadLayered(catalogRoot)
 		if err != nil {
 			return err
 		}
