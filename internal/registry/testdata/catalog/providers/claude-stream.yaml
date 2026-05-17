@@ -1,0 +1,12 @@
+id: claude-stream
+type: cli
+command: /usr/local/bin/claude
+args:
+  - --print
+bootstrap:
+  mode: streaming-stdio
+  prompt_prefix: ""
+env:
+  passthrough:
+    - HOME
+    - PATH

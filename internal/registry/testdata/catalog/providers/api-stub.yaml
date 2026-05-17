@@ -1,0 +1,5 @@
+id: api-stub
+type: api
+provider: api-stub
+bootstrap:
+  mode: api

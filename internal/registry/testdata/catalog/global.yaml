@@ -1,0 +1,8 @@
+version: 0.1.0
+catalog:
+  roots:
+    projects: projects
+    agents: agents
+    providers: providers
+    launches: launches
+    boot: boot
