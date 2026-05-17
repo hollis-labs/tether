@@ -4,7 +4,7 @@
 spec: tether.launch
 name: stack-explorer-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/stack-explorer
+  work_dir: ~/dev/hollis-labs/apps/stack-explorer
   runner: claude-code
   isolation: worktree
   project: stack-explorer

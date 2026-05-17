@@ -4,7 +4,7 @@
 spec: tether.launch
 name: spinamp-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/projects/spinamp
+  work_dir: ~/dev/projects/spinamp
   runner: claude-code
   isolation: worktree
   project: spinamp

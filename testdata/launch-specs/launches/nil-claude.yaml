@@ -4,7 +4,7 @@
 spec: tether.launch
 name: nil-claude
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/nil
+  work_dir: ~/dev/hollis-labs/apps/nil
   runner: claude-code
   isolation: hybrid
   project: nil

@@ -4,7 +4,7 @@
 spec: tether.launch
 name: fragments-engine-claude-tui-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/fragments-engine
+  work_dir: ~/dev/hollis-labs/apps/fragments-engine
   runner: claude-pty
   isolation: worktree
   project: fragments-engine

@@ -4,7 +4,7 @@
 spec: tether.launch
 name: tesseract-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/tesseract
+  work_dir: ~/dev/hollis-labs/apps/tesseract
   runner: claude-code
   isolation: worktree
   project: tesseract

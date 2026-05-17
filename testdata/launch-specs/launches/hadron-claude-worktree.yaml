@@ -4,7 +4,7 @@
 spec: tether.launch
 name: hadron-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/hadron
+  work_dir: ~/dev/hollis-labs/apps/hadron
   runner: claude-code
   isolation: worktree
   project: hadron

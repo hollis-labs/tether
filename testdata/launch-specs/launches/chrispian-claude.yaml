@@ -4,7 +4,7 @@
 spec: tether.launch
 name: chrispian-claude
 inputs:
-  work_dir: /Users/chrispian/dev/chrispian
+  work_dir: ~/dev/chrispian
   runner: claude-code
   isolation: hybrid
   project: chrispian

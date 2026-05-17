@@ -4,7 +4,7 @@
 spec: tether.launch
 name: cerberus-claude
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/cerberus
+  work_dir: ~/dev/hollis-labs/apps/cerberus
   runner: claude-code
   isolation: hybrid
   project: cerberus

@@ -4,7 +4,7 @@
 spec: tether.launch
 name: launchpad-orchestrator-claude-stream
 inputs:
-  work_dir: /Users/chrispian/dev/agent-os/launchpad
+  work_dir: ~/dev/agent-os/launchpad
   runner: claude-stream
   isolation: hybrid
   project: launchpad

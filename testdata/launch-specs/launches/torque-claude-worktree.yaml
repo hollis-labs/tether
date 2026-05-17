@@ -4,7 +4,7 @@
 spec: tether.launch
 name: torque-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/torque
+  work_dir: ~/dev/hollis-labs/apps/torque
   runner: claude-code
   isolation: worktree
   project: torque

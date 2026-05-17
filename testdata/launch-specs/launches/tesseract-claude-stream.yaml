@@ -4,7 +4,7 @@
 spec: tether.launch
 name: tesseract-claude-stream
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/tesseract
+  work_dir: ~/dev/hollis-labs/apps/tesseract
   runner: claude-stream
   isolation: hybrid
   project: tesseract

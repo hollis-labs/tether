@@ -117,7 +117,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 		{
 			launchID:     "tether-claude",
 			wantProject:  "tether",
-			wantWorkdir:  "/Users/chrispian/dev/hollis-labs/apps/tether",
+			wantWorkdir:  "~/dev/hollis-labs/apps/tether",
 			wantProvider: "claude",
 			wantRuntime:  agentlaunch.RuntimeStreamingStdio,
 			wantAgent:    "general",
@@ -126,7 +126,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 		{
 			launchID:     "nanite-claude-stream",
 			wantProject:  "nanite",
-			wantWorkdir:  "/Users/chrispian/dev/hollis-labs/apps/nanite",
+			wantWorkdir:  "~/dev/hollis-labs/apps/nanite",
 			wantProvider: "claude",
 			wantRuntime:  agentlaunch.RuntimeStreamingStdio,
 			wantAgent:    "general",
@@ -134,8 +134,8 @@ func TestResolve_RealLaunches(t *testing.T) {
 		},
 		{
 			launchID:     "agent-mux-codex-launch",
-			wantProject:  "tether",
-			wantWorkdir:  "/Users/chrispian/dev/hollis-labs/apps/tether",
+			wantProject:  "agent-mux",
+			wantWorkdir:  "~/dev/hollis-labs/apps/agent-mux",
 			wantProvider: "codex",
 			wantRuntime:  agentlaunch.RuntimeSubprocess,
 			wantAgent:    "general",

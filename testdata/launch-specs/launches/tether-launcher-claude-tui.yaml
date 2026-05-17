@@ -4,7 +4,7 @@
 spec: tether.launch
 name: tether-launcher-claude-tui
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether-launcher
+  work_dir: ~/dev/hollis-labs/apps/tether-launcher
   runner: claude-pty
   isolation: hybrid
   project: tether-launcher

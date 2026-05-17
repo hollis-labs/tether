@@ -4,7 +4,7 @@
 spec: tether.launch
 name: sigil-claude
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/sigil
+  work_dir: ~/dev/hollis-labs/apps/sigil
   runner: claude-code
   isolation: hybrid
   project: sigil

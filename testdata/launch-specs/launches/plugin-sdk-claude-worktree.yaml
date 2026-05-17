@@ -4,7 +4,7 @@
 spec: tether.launch
 name: plugin-sdk-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/libs/plugin-sdk
+  work_dir: ~/dev/hollis-labs/libs/plugin-sdk
   runner: claude-code
   isolation: worktree
   project: plugin-sdk

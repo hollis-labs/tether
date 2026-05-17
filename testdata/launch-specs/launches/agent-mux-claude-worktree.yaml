@@ -4,10 +4,10 @@
 spec: tether.launch
 name: agent-mux-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether
+  work_dir: ~/dev/hollis-labs/apps/agent-mux
   runner: claude-code
   isolation: worktree
-  project: tether
+  project: agent-mux
   agent: general
   agent_role: domain/backend/worker
   display_name: "Agent Mux — Backend (Worktree)"

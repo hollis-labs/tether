@@ -4,7 +4,7 @@
 spec: tether.launch
 name: tether-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether
+  work_dir: ~/dev/hollis-labs/apps/tether
   runner: claude-code
   isolation: worktree
   project: tether

@@ -4,7 +4,7 @@
 spec: tether.launch
 name: nanite-claude-worktree
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/apps/nanite
+  work_dir: ~/dev/hollis-labs/apps/nanite
   runner: claude-code
   isolation: worktree
   project: nanite

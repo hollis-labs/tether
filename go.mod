@@ -23,7 +23,7 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/hollis-labs/go-agent-launch v0.3.3
+	github.com/hollis-labs/go-agent-launch v0.3.5
 	github.com/hollis-labs/go-llm-contracts v0.2.0 // indirect
 	github.com/hollis-labs/go-runner v0.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

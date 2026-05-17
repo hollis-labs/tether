@@ -4,7 +4,7 @@
 spec: tether.launch
 name: lnklst-claude
 inputs:
-  work_dir: /Users/chrispian/dev/projects/lnklst
+  work_dir: ~/dev/projects/lnklst
   runner: claude-code
   isolation: hybrid
   project: lnklst

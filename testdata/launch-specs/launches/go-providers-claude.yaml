@@ -4,7 +4,7 @@
 spec: tether.launch
 name: go-providers-claude
 inputs:
-  work_dir: /Users/chrispian/dev/hollis-labs/libs/go-providers
+  work_dir: ~/dev/hollis-labs/libs/go-providers
   runner: claude-code
   isolation: hybrid
   project: go-providers
