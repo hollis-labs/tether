@@ -10,7 +10,7 @@ import (
 var errRegistrarDown = errors.New("test: registrar unreachable")
 
 // faultRegistrar is a test double that delegates to an inner Registrar
-// until tripped, then fails every call — modelling a directory outage so
+// until tripped, then fails every call — modeling a directory outage so
 // the DegradingRegistrar's cache-fallback path can be exercised.
 type faultRegistrar struct {
 	inner   agentlaunch.Registrar

@@ -81,6 +81,8 @@ func sourceGate(src agentlaunch.VarSource) agentlaunch.TrustGate {
 		if src.Cmd != nil {
 			return src.Cmd.Gate
 		}
+	case agentlaunch.VarSourceLiteral, agentlaunch.VarSourceFile:
+		// literal/file sources carry no gate — fall through to the zero gate
 	}
 	return agentlaunch.TrustGate{}
 }

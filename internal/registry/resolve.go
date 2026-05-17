@@ -256,10 +256,10 @@ func mapRuntimeKind(kind string) agentlaunch.RuntimeKind {
 func readCatalogYAML(path string, out any) error {
 	raw, err := os.ReadFile(path) //nolint:gosec // catalog-sourced path from registry handle
 	if err != nil {
-		return fmt.Errorf("%w: read %s: %v", ErrCatalogFileUnreadable, path, err)
+		return fmt.Errorf("%w: read %s: %w", ErrCatalogFileUnreadable, path, err)
 	}
 	if err := yaml.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("%w: parse %s: %v", ErrCatalogFileUnreadable, path, err)
+		return fmt.Errorf("%w: parse %s: %w", ErrCatalogFileUnreadable, path, err)
 	}
 	return nil
 }

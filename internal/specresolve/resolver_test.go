@@ -61,7 +61,7 @@ func newResolver(t *testing.T, opts ...Option) *Resolver {
 	return r
 }
 
-// recallStub is an httptest server modelling the Tesseract recall
+// recallStub is an httptest server modeling the Tesseract recall
 // endpoint behind the recap/memory call vars. It records whether it was
 // hit so a test can assert the call path ran.
 type recallStub struct {

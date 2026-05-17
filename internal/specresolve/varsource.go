@@ -46,6 +46,8 @@ func expandVarSources(vars []agentlaunch.VarSpec, inputs map[string]any) []agent
 // copy with fresh pointer branches.
 func expandSource(src agentlaunch.VarSource, inputs map[string]any) agentlaunch.VarSource {
 	switch src.Kind {
+	case agentlaunch.VarSourceLiteral:
+		// a literal source has no path/target/argv — nothing to expand
 	case agentlaunch.VarSourceFile:
 		if src.File != nil {
 			f := *src.File
