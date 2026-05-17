@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Activity, Boxes, Gauge, LayoutDashboard, Mail } from 'lucide-react'
+import { Activity, Boxes, Gauge, LayoutDashboard, Mail, Plug } from 'lucide-react'
 import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { OverviewPage } from './pages/overview'
 import { OperationsPage } from './pages/operations'
 import { MessagingPage } from './pages/messaging'
+import { MCPPage } from './pages/mcp'
 import { ActivityPage } from './pages/activity'
 
 /**
@@ -11,12 +12,13 @@ import { ActivityPage } from './pages/activity'
  * active page. Add pages by extending `Route`, `nav`, `TITLES`, and the
  * route switch below.
  */
-type Route = 'overview' | 'operations' | 'messaging' | 'activity'
+type Route = 'overview' | 'operations' | 'messaging' | 'mcp' | 'activity'
 
 const TITLES: Record<Route, string> = {
   overview: 'Agent Ops',
   operations: 'Operations',
   messaging: 'Messaging',
+  mcp: 'MCP',
   activity: 'Activity Monitor',
 }
 
@@ -46,6 +48,13 @@ export function App() {
       onSelect: () => setRoute('messaging'),
     },
     {
+      key: 'mcp',
+      label: 'MCP',
+      icon: <Plug className="h-4 w-4" />,
+      active: route === 'mcp',
+      onSelect: () => setRoute('mcp'),
+    },
+    {
       key: 'activity',
       label: 'Activity Monitor',
       icon: <Activity className="h-4 w-4" />,
@@ -65,6 +74,7 @@ export function App() {
           {route === 'overview' && <OverviewPage />}
           {route === 'operations' && <OperationsPage />}
           {route === 'messaging' && <MessagingPage />}
+          {route === 'mcp' && <MCPPage />}
           {route === 'activity' && <ActivityPage />}
         </main>
       </div>

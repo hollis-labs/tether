@@ -222,9 +222,48 @@ export interface SessionDetailInfo {
   error?: string
 }
 
+// MCPServerInfo mirrors the catalog mcp-servers/*.yaml entry. `token` and
+// env values are not surfaced (secret-bearing); only `has_token` + env keys.
+export interface MCPServerInfo {
+  id: string
+  transport: string
+  command?: string
+  args?: string[]
+  url?: string
+  env_keys?: string[]
+  has_token: boolean
+  scopes?: string[]
+  tags?: string[]
+  enabled: boolean
+}
+
+export interface MCPServersInfo {
+  servers: MCPServerInfo[]
+  error?: string
+}
+
+// MCPToolInfo is a usage aggregate over the proxy_events ring buffer.
+export interface MCPToolInfo {
+  name: string
+  server: string
+  calls: number
+  errors: number
+  success_pct: number
+  avg_ms: number
+  p95_ms: number
+  last_seen: string
+}
+
+export interface MCPToolsInfo {
+  tools: MCPToolInfo[]
+  error?: string
+}
+
 export const apiClient = {
   getHealth: () => http.get<HealthInfo>('/api/health'),
   getOverview: () => http.get<OverviewInfo>('/api/overview'),
+  getMCPServers: () => http.get<MCPServersInfo>('/api/mcp/servers'),
+  getMCPTools: () => http.get<MCPToolsInfo>('/api/mcp/tools'),
   getCatalog: () => http.get<CatalogInfo>('/api/catalog'),
   getSessions: () => http.get<SessionsInfo>('/api/sessions'),
   getSessionDetail: (id: string) =>
