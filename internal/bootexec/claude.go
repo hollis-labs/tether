@@ -95,6 +95,16 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 
 	adapter := gop.NewClaudeAdapterPTY()
 	adapter.ApiKeyHelperPath = opts.APIKeyHelperPath
+	// boot-exec plants with an explicit adapter, which bypasses
+	// providerplant.DefaultResolver — so the permission posture the Spec
+	// plan carries on Provider.Permission would otherwise be dropped.
+	// Thread it onto the adapter so the planted .claude/settings.json
+	// keeps permissions.defaultMode. (boot-exec runs the TUI with a TTY,
+	// so this is consistency, not a headless-hang fix — but a launch
+	// must not silently lose its posture on the engine it ran through.)
+	if opts.SpecPlan != nil {
+		adapter.PermissionMode = lp.Provider.Permission
+	}
 	if err := providerplant.Plant(context.Background(), prepared, providerplant.WithAdapter(adapter)); err != nil {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
