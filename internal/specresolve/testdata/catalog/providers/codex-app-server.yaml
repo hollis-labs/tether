@@ -1,0 +1,7 @@
+id: codex-app-server
+type: cli-goprovider
+provider: codex
+adapter: codex
+runtime_kind: jsonrpc-stdio
+bootstrap:
+  mode: jsonrpc-stdio

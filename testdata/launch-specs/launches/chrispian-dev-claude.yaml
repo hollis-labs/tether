@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/chrispian-dev-claude.yaml.
+# Boot-profile folded: chrispian-dev.backend.main.yaml
+# Legacy: project=chrispian-dev / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: chrispian-dev-claude
+inputs:
+  work_dir: ~/Projects/chrispian.dev
+  runner: claude-code
+  isolation: hybrid
+  project: chrispian-dev
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "chrispian.dev — Backend"

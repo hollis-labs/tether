@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/launchpad-explorer-claude-stream.yaml.
+# Boot-profile folded: launchpad.explorer.main.yaml
+# Legacy: project=launchpad / agent=launchpad-explorer / provider=claude-stream / workspace.mode=hybrid.
+spec: tether.launch
+name: launchpad-explorer-claude-stream
+inputs:
+  work_dir: ~/dev/agent-os/launchpad
+  runner: claude-stream
+  isolation: hybrid
+  project: launchpad
+  agent: launchpad-explorer
+  agent_role: meta/steward
+  display_name: "Launchpad — Explorer (Stream)"

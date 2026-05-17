@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/cerberus-claude-worktree.yaml.
+# Boot-profile folded: cerberus.backend.main.worktree.yaml
+# Legacy: project=cerberus / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: cerberus-claude-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/cerberus
+  runner: claude-code
+  isolation: worktree
+  project: cerberus
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Cerberus — Backend (Worktree)"

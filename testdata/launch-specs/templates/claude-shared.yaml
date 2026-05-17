@@ -1,0 +1,5 @@
+# Common-setup template: Claude Code, shared workspace.
+# Replaces the legacy `-claude` launch suffix. Compose with a launch bag
+# that supplies work_dir + project + agent + agent_role.
+runner: claude-code
+isolation: hybrid

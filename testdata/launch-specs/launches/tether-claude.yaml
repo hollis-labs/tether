@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-claude.yaml.
+# Boot-profile folded: tether.backend.main.yaml
+# Legacy: project=tether / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: tether-claude
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: claude-code
+  isolation: hybrid
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tether — Backend"

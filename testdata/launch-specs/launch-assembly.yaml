@@ -1,0 +1,302 @@
+# S5 — The canonical Tether LaunchSpec, LIVE var-source variant.
+#
+# This single parameterized spec re-expresses the ENTIRE legacy
+# ~/.tether/catalog/launches/ directory (64 files) plus the folded
+# ~/.tether/catalog/boot-profiles/ slot payload (55 profiles). Every
+# historical launch — every (agent x project x provider x workspace-mode)
+# tuple, AND every `.worktree` twin — collapses to one LaunchBag (see
+# launches/*.yaml) handed to THIS spec.
+#
+# It is the S5-cutover sibling of the S4.4 reference spec
+# (libs/go-agent-launch/.../testdata/specs/launch-assembly.yaml). The
+# difference: the S4.4 spec used LITERAL placeholder var sources so it
+# rendered standalone in unit tests. THIS spec carries the LIVE var
+# sources — `file`, `cmd`, and `call` — mapped one-to-one from the legacy
+# boot-profile `slots:` block, parameterized by `{{ inputs.* }}` merge
+# tags so a single spec serves all 21 projects. This corpus is the input
+# to the S4.5 parity harness.
+#
+# What changed vs. the legacy file model:
+#
+#   * workspace MODE is now the `isolation` INPUT. The legacy catalog
+#     had a `.worktree` TWIN file for every launch (e.g. nanite-claude
+#     + nanite-claude-worktree) differing only in workspace.mode. In
+#     this model there is ONE spec and the worktree launch is just a
+#     bag with `isolation: worktree`. The twins are gone.
+#
+#   * PROVIDER is now the `runner` INPUT. The legacy catalog had a
+#     separate launch file per provider (nanite-claude, nanite-codex-*,
+#     nanite-opencode). Per D3 the provider feeds the runtime-binding,
+#     NOT the blueprint identity — so it is an input, not a filename.
+#
+#   * Boot-profile SLOTS (agent / recap / history / status / memory /
+#     skills) fold into the vars + template body below. Each legacy slot
+#     becomes a VarSpec with its LIVE source; the boot-prompt body is the
+#     merge-tag Template.
+#
+# Minimum valid config: a bag need only supply `work_dir` + `runner`.
+# `isolation` and `bus` are the only other knobs and both default here.
+# Every other input carries a default, so the two-knob minimum holds.
+
+id: tether.launch
+display_name: "Tether Launch — canonical parameterized spec (S5 live vars)"
+
+# ---------------------------------------------------------------------
+# Typed input surface. work_dir + runner are the REQUIRED minimum-config
+# knobs; isolation + bus are the only other knobs (optional, defaulted).
+# Everything below them is a convenience input with a default so it never
+# has to appear in a minimum bag.
+# ---------------------------------------------------------------------
+inputs:
+  # --- minimum config: the two required knobs ---
+  - name: work_dir
+    type: string
+    required: true
+    description: "Agent working directory — the repo/tree the session operates on. Sourced from the matching project's repo_root."
+
+  - name: runner
+    type: string
+    required: true
+    description: "Runner/provider id (claude-code, claude-stream, claude-pty, codex-cli, codex-app-server, opencode). Feeds the runtime-binding per D3 — never blueprint identity."
+
+  # --- minimum config: the two optional knobs ---
+  - name: isolation
+    type: string
+    required: false
+    default: hybrid
+    description: "Workspace-isolation mode. Replaces the legacy .worktree twin files: 'hybrid' = shared tree, 'worktree' = git-worktree isolation."
+
+  - name: bus
+    type: string
+    required: false
+    default: ""
+    description: "Message-bus topic / attach posture. Empty = the runner's default bus posture."
+
+  # --- convenience inputs: all defaulted, never required ---
+  - name: project
+    type: string
+    required: false
+    default: ""
+    description: "Project id this launch is scoped to. Drives the recap/memory recall namespace + tags. The work_dir is authoritative for where work happens."
+
+  - name: agent
+    type: string
+    required: false
+    default: general
+    description: "Agent id this launch runs (legacy launch `agent` field). Per the locked bridge-review decision this is a defaulted convenience input — a peer of `project` — and does NOT widen minimum-config. Distinct from agent_role: this is agent IDENTITY, agent_role is a boot-slot role token."
+
+  - name: agent_role
+    type: string
+    required: false
+    default: domain/backend/worker
+    description: "Agent role token — the path stem under ~/.nanite/roles/ of the role file the agent_summary var reads (legacy boot-profile `agent` static slot's `path`). Examples: domain/backend/worker, meta/steward, domain/frontend, domain/writer."
+
+  - name: display_name
+    type: string
+    required: false
+    default: "Tether agent"
+    description: "Human-readable label for the launched agent."
+
+  - name: include_project_boot
+    type: bool
+    required: false
+    default: true
+    description: "Whether to fold project boot context into the prompt (legacy prompt.include_project_boot)."
+
+  - name: include_agent_boot
+    type: bool
+    required: false
+    default: true
+    description: "Whether to fold agent role context into the prompt (legacy prompt.include_agent_boot)."
+
+# ---------------------------------------------------------------------
+# Derived vars — the LIVE S5 variant. These fold the legacy boot-profile
+# SLOTS into the S4.2 var model with their REAL sources, not literal
+# placeholders. Each var is session-start phase (prompt-text sink) so the
+# boot prompt is assembled fresh and nothing secret-bearing is persisted
+# at rest. on_error=warn keeps a degraded boot working when a slot source
+# (git, recall endpoint, role file) is unavailable.
+#
+# Slot -> VarSpec source mapping (from internal/bootgen/profile.go):
+#
+#   boot-profile slot   legacy slot type   S4.2 var source kind
+#   -----------------   ----------------   --------------------
+#   agent               role_summary       file   (the role .md)
+#   recap               http               call   (http transport)
+#   history             cmd                cmd    (git log)
+#   status              cmd                cmd    (git status)
+#   memory              http               call   (http transport)
+#   skills              skill_index        cmd    (see GAP note)
+#
+# Parameterization: sources reference {{ inputs.work_dir }},
+# {{ inputs.project }}, and {{ inputs.agent_role }} merge tags so this
+# ONE spec serves every project. The S4.2 VarResolver expands the inputs
+# before resolving the source (the same merge-tag surface the template
+# body uses).
+# ---------------------------------------------------------------------
+vars:
+  # agent_summary <- boot-profile `agent` slot (type: role_summary).
+  # Legacy resolver (resolveRoleSummary) reads a role .md file from disk.
+  # LIVE source: a `file` source keyed off agent_role. The path stem maps
+  # 1:1 to the legacy slot `path` (e.g. domain/backend/worker ->
+  # ~/.nanite/roles/domain/backend/worker.md).
+  - name: agent_summary
+    source:
+      kind: file
+      file:
+        path: "~/.nanite/roles/{{ inputs.agent_role }}.md"
+        trim_space: true
+    freshness: cache_ok
+    on_error: warn
+    phase: session-start
+
+  # recap <- boot-profile `recap` slot (type: http,
+  # response_format: tesseract_recall). Session-close records for the
+  # project. LIVE source: a `call` source over http transport to the
+  # Tesseract recall endpoint, namespace + tags parameterized by project.
+  - name: recap
+    source:
+      kind: call
+      call:
+        transport: http
+        target: "${TESSERACT_URL}/v1/recall"
+        operation: GET
+        args:
+          namespace: "user/chrispian/knowledge/session-close/{{ inputs.project }}"
+          tags: "{{ inputs.project }},session-close"
+          limit: 3
+          format: brief
+          response_format: tesseract_recall
+        timeout: 15s
+        gate:
+          trust: catalog-recall-endpoint
+    freshness: best_effort
+    on_error: warn
+    phase: session-start
+
+  # history <- boot-profile `history` slot (type: cmd).
+  # Legacy run: `git -C <work_dir> log --oneline -15`. LIVE source: a
+  # `cmd` source with that argv, work_dir parameterized by the input.
+  - name: history
+    source:
+      kind: cmd
+      cmd:
+        argv: ["git", "-C", "{{ inputs.work_dir }}", "log", "--oneline", "-15"]
+        timeout: 5s
+        gate:
+          trust: catalog-git-readonly
+    freshness: fresh
+    on_error: warn
+    phase: session-start
+
+  # status <- boot-profile `status` slot (type: cmd).
+  # Legacy run: `cd <work_dir> && git status --short -b`. LIVE source: a
+  # `cmd` source running `git status --short -b` with workdir set to the
+  # work_dir input (argv form — no shell `cd` needed).
+  - name: status
+    source:
+      kind: cmd
+      cmd:
+        argv: ["git", "status", "--short", "-b"]
+        workdir: "{{ inputs.work_dir }}"
+        timeout: 5s
+        gate:
+          trust: catalog-git-readonly
+    freshness: fresh
+    on_error: warn
+    phase: session-start
+
+  # memory <- boot-profile `memory` slot (type: http,
+  # response_format: tesseract_recall). Durable decisions + follow-ups.
+  # LIVE source: a `call` source over http transport to the same recall
+  # endpoint, namespace user/chrispian/memory, tags scoped by project.
+  - name: memory
+    source:
+      kind: call
+      call:
+        transport: http
+        target: "${TESSERACT_URL}/v1/recall"
+        operation: GET
+        args:
+          namespace: "user/chrispian/memory"
+          tags: "{{ inputs.project }}"
+          limit: 15
+          format: brief
+          response_format: tesseract_recall
+        timeout: 15s
+        gate:
+          trust: catalog-recall-endpoint
+    freshness: best_effort
+    on_error: warn
+    phase: session-start
+
+  # skills <- boot-profile `skills` slot (type: skill_index, limit: 5).
+  #
+  # GAP: S4.2 has NO native `skill_index` var source kind — the source
+  # union is literal | file | call | cmd only (bootspec.go VarSourceKind).
+  # The legacy skill_index slot ran an in-process layered-discovery +
+  # profile-aware ranking pass (resolveSkillIndex / skills.DiscoverLayered).
+  # There is no off-the-shelf S4.2 source that reproduces the RANKING.
+  #
+  # Closest faithful S4.2 source is `cmd`: invoke Tether's own skill-index
+  # path as an external command. Tether exposes `mux generate-boot` /
+  # skill discovery via the CLI; here we model the slot as a `cmd` source
+  # running the skill-index subcommand. This preserves the var name + the
+  # template wiring; the ranking fidelity gap is surfaced in the S5 report.
+  - name: skills
+    source:
+      kind: cmd
+      cmd:
+        argv: ["mux", "skills", "index", "--limit", "5", "--project", "{{ inputs.project }}", "--role", "{{ inputs.agent_role }}"]
+        workdir: "{{ inputs.work_dir }}"
+        timeout: 10s
+        gate:
+          trust: catalog-skill-index
+    freshness: cache_ok
+    on_error: warn
+    phase: session-start
+
+# ---------------------------------------------------------------------
+# Runtime binding. Per D3 this is the runtime-binding kind, distinct from
+# the blueprint identity. Provider here is a placeholder — the live
+# launcher overlays the resolved `runner` input onto this binding before
+# spawn (provider-as-input feeds the runtime-binding, not identity).
+# ---------------------------------------------------------------------
+runtime:
+  provider: claude-code
+  runtime_kind: streaming-stdio
+
+# ---------------------------------------------------------------------
+# Merge-tag template body — the boot prompt. This is the folded
+# boot-profile: the legacy `slots:` block becomes these {{ vars.* }}
+# references, and the legacy launch fields become {{ inputs.* }}.
+# ---------------------------------------------------------------------
+template: |
+  # Boot Prompt — {{ inputs.display_name }}
+
+  ## 1. Identity
+  - Project:    {{ inputs.project }}
+  - Agent:      {{ inputs.agent }}
+  - Role:       {{ inputs.agent_role }}
+  - Work dir:   {{ inputs.work_dir }}
+  - Runner:     {{ inputs.runner }}
+  - Isolation:  {{ inputs.isolation }}
+  - Bus:        {{ inputs.bus }}
+
+  ## 2. Role
+  {{ vars.agent_summary }}
+
+  ## 3. Resume Now
+  {{ vars.recap }}
+
+  ## 4. Active State
+  ### Git history
+  {{ vars.history }}
+  ### Status
+  {{ vars.status }}
+
+  ## 5. Durable Context
+  ### Memory
+  {{ vars.memory }}
+  ### Skills
+  {{ vars.skills }}

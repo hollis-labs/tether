@@ -1,0 +1,7 @@
+id: opencode
+type: cli
+provider: opencode
+runtime_kind: subprocess
+command: /usr/local/bin/opencode
+bootstrap:
+  mode: agents_md

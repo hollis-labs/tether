@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/fragments-engine-claude-tui-worktree.yaml.
+# Boot-profile folded: fragments-engine.backend.tui.worktree.yaml
+# Legacy: project=fragments-engine / agent=general / provider=claude-pty / workspace.mode=worktree.
+spec: tether.launch
+name: fragments-engine-claude-tui-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/fragments-engine
+  runner: claude-pty
+  isolation: worktree
+  project: fragments-engine
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Fragments Engine — Backend (TUI, Worktree)"

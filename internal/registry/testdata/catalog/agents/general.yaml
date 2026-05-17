@@ -1,0 +1,8 @@
+id: general
+name: General Agent
+roles: [general, backend]
+skills: []
+context_files: []
+boot_fragments: []
+permissions:
+  network: true

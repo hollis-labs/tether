@@ -1,0 +1,4 @@
+# Common-setup template: Claude streaming runner, shared workspace.
+# Replaces the legacy `-claude-stream` launch suffix.
+runner: claude-stream
+isolation: hybrid

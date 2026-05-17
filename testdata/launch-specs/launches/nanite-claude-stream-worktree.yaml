@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/nanite-claude-stream-worktree.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=nanite / agent=general / provider=claude-stream / workspace.mode=worktree.
+spec: tether.launch
+name: nanite-claude-stream-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/nanite
+  runner: claude-stream
+  isolation: worktree
+  project: nanite
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Nanite — Backend (Stream, Worktree)"

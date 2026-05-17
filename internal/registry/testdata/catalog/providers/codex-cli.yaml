@@ -1,0 +1,9 @@
+id: codex-cli
+type: cli-goprovider
+provider: codex
+adapter: codex
+runtime_kind: subprocess
+bootstrap:
+  mode: agents_md
+env:
+  mode: merge

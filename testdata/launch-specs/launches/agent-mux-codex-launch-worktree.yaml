@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-codex-launch-worktree.yaml.
+# Boot-profile folded: agent-mux.codex.main.worktree.yaml
+# Legacy: project=tether / agent=general / provider=codex-cli / workspace.mode=worktree.
+spec: tether.launch
+name: agent-mux-codex-launch-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/agent-mux
+  runner: codex-cli
+  isolation: worktree
+  project: agent-mux
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — Codex CLI (Worktree)"

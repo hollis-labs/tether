@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/stack-explorer-claude-worktree.yaml.
+# Boot-profile folded: stack-explorer.backend.main.worktree.yaml
+# Legacy: project=stack-explorer / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: stack-explorer-claude-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/stack-explorer
+  runner: claude-code
+  isolation: worktree
+  project: stack-explorer
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Stack Explorer — Backend (Worktree)"

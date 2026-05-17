@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -20,11 +21,21 @@ var resolveCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = svc.Close() }()
-		plan, err := svc.Resolve(resolveLaunchID)
+
+		// S5 toggle: when the launch engine is "spec", this dry-run
+		// inspector prints the Spec-resolved agentlaunch.LaunchPlan — the
+		// exact plan that engine feeds launcher.Compile. The default
+		// ("catalog") prints the legacy launch.Plan unchanged.
+		var payload any
+		if svc.LaunchEngineIsSpec() {
+			payload, err = svc.SpecResolveLaunchPlan(cmd.Context(), resolveLaunchID, agentlaunch.FrontEndInteractive)
+		} else {
+			payload, err = svc.Resolve(resolveLaunchID)
+		}
 		if err != nil {
 			return err
 		}
-		b, err := json.MarshalIndent(plan, "", "  ")
+		b, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			return err
 		}

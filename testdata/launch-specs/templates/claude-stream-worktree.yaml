@@ -1,0 +1,4 @@
+# Common-setup template: Claude streaming runner, git-worktree isolation.
+# Replaces the legacy `-claude-stream-worktree` TWIN file.
+runner: claude-stream
+isolation: worktree

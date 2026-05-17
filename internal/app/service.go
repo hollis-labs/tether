@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -50,6 +51,15 @@ type Service struct {
 	// JsonRpcStdio runtimes. Populated lazily on the first SendTurn call
 	// for a session (after initialize + thread/start succeed).
 	codexThreads sync.Map // map[string]string
+
+	// specResolver is the S5 Spec-path launch resolver. It is constructed
+	// lazily on first use (only when the launch engine is "spec") via
+	// specResolverOnce and reused across launches. specResolverErr records
+	// a construction failure so it surfaces on every callsite, not just
+	// the first. See launch_engine.go and specResolverFor.
+	specResolverOnce sync.Once
+	specResolver     *specresolve.Resolver
+	specResolverErr  error
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the

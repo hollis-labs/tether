@@ -1,0 +1,6 @@
+id: web-engineer
+name: Web Engineer
+roles: [frontend,web]
+skills: []
+permissions:
+  network: true

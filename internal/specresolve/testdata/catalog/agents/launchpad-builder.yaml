@@ -1,0 +1,6 @@
+id: launchpad-builder
+name: Launchpad Builder
+roles: [backend,builder]
+skills: []
+permissions:
+  network: true

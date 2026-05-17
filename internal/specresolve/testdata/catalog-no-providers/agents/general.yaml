@@ -1,0 +1,6 @@
+id: general
+name: General Agent
+roles: [general,backend]
+skills: []
+permissions:
+  network: true

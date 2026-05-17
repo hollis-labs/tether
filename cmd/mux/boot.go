@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -193,6 +194,19 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 			tempRoot = filepath.Join(tempRoot, "boot-exec")
 		}
 
+		// S5 toggle: when the launch engine is "spec", obtain the
+		// agentlaunch.LaunchPlan from the Spec resolver instead of from the
+		// catalog walk. Compile/Prepare/Plant inside PrepareClaudeTUI are
+		// unchanged. Default ("catalog") leaves specPlan nil.
+		var specPlan *agentlaunch.LaunchPlan
+		if svc.LaunchEngineIsSpec() {
+			resolved, err := svc.SpecResolveLaunchPlan(cmd.Context(), p.Launch, agentlaunch.FrontEndInteractive)
+			if err != nil {
+				return fmt.Errorf("spec launch engine: resolve %q: %w", p.Launch, err)
+			}
+			specPlan = &resolved
+		}
+
 		prepared, err := bootexec.PrepareClaudeTUI(plan, bootexec.Options{
 			BootDirRoot:      tempRoot,
 			APIKeyHelperPath: app.ResolveAPIKeyHelperPath(),
@@ -200,6 +214,7 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 			MuxArgs:          []string{"--catalog", catalogRoot, "mcp", "--proxy"},
 			MuxEnv:           muxEnv,
 			ParentEnv:        os.Environ(),
+			SpecPlan:         specPlan,
 		})
 		if err != nil {
 			return err

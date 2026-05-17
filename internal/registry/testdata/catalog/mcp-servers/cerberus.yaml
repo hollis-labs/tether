@@ -1,0 +1,6 @@
+id: cerberus
+transport: stdio
+command: /usr/local/bin/cerberus
+args: [mcp]
+tags: [services, builds]
+enabled: true

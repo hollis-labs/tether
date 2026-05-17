@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-codex-launch.yaml.
+# Boot-profile folded: agent-mux.codex.main.yaml
+# Legacy: project=tether / agent=general / provider=codex-cli / workspace.mode=hybrid.
+spec: tether.launch
+name: agent-mux-codex-launch
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/agent-mux
+  runner: codex-cli
+  isolation: hybrid
+  project: agent-mux
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — Codex CLI"

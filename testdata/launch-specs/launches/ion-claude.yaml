@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/ion-claude.yaml.
+# Boot-profile folded: ion.backend.main.yaml
+# Legacy: project=ion / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: ion-claude
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/ion
+  runner: claude-code
+  isolation: hybrid
+  project: ion
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Ion — Backend"

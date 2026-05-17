@@ -19,7 +19,11 @@ func (s *Service) compileSharedLaunch(ctx context.Context, plan *launch.Plan) er
 	if plan == nil || plan.ProviderBrand == "api-stub" || plan.RuntimeKind == config.RuntimeKindAPI {
 		return nil
 	}
-	compiled, err := launcher.Compile(ctx, s.agentLaunchPlan(plan, plan.WriteHome), launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
+	lp, err := s.agentLaunchPlanFor(ctx, plan, plan.WriteHome)
+	if err != nil {
+		return err
+	}
+	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
 	if err != nil {
 		return err
 	}
@@ -52,7 +56,10 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 		return nil, fmt.Errorf("create boot root: %w", err)
 	}
 
-	lp := s.agentLaunchPlan(plan, workspaceDir)
+	lp, err := s.agentLaunchPlanFor(ctx, plan, workspaceDir)
+	if err != nil {
+		return nil, err
+	}
 	lp.Workspace.TempPrefix = bootRoot
 	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
 	if err != nil {
@@ -76,6 +83,40 @@ type plantContextInput struct {
 	MuxCommand string
 	MuxArgs    []string
 	MuxEnv     map[string]string
+}
+
+// agentLaunchPlanFor produces the agentlaunch.LaunchPlan that feeds
+// launcher.Compile. It is the single S5 toggle branch point.
+//
+//   - EngineCatalog (default): the plan is built from the daemon's already-
+//     resolved launch.Plan via agentLaunchPlan — byte-identical to the
+//     pre-S5 path.
+//   - EngineSpec: the plan is resolved from plan.LaunchID by the S5
+//     LaunchSpec resolver (internal/specresolve). The daemon's own
+//     launch.Resolve still runs upstream for launch.Plan bookkeeping
+//     (persistence/rehydration/provenance) — that transitional double-
+//     resolve is intended for the soak. Only the workspace dir, which the
+//     daemon owns, is folded back onto the resolver's plan.
+//
+// The toggle changes only HOW this plan is produced; launch.Plan and every
+// path downstream of Compile are untouched.
+func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, workspaceDir string) (agentlaunch.LaunchPlan, error) {
+	if s.launchEngine() != EngineSpec {
+		return s.agentLaunchPlan(plan, workspaceDir), nil
+	}
+	resolver, err := s.specResolverFor()
+	if err != nil {
+		return agentlaunch.LaunchPlan{}, fmt.Errorf("spec launch engine: %w", err)
+	}
+	lp, err := resolver.ResolveContext(ctx, plan.LaunchID, agentlaunch.FrontEndInteractive)
+	if err != nil {
+		return agentlaunch.LaunchPlan{}, fmt.Errorf("spec launch engine: resolve %q: %w", plan.LaunchID, err)
+	}
+	// The daemon owns the materialized workspace directory; the Spec
+	// resolver does not know it. Fold it onto the resolved plan so the
+	// boot-dir layout plants into the daemon's workspace.
+	lp.Workspace.WorkspaceDir = workspaceDir
+	return lp, nil
 }
 
 func (s *Service) agentLaunchPlan(plan *launch.Plan, workspaceDir string) agentlaunch.LaunchPlan {

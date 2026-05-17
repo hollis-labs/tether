@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-workspaces-claude.yaml.
+# Boot-profile folded: agent-ops.steward.main.yaml
+# Legacy: project=agent-workspaces / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: agent-workspaces-claude
+inputs:
+  work_dir: ~/dev/agent-os/workspaces
+  runner: claude-code
+  isolation: hybrid
+  project: agent-workspaces
+  agent: general
+  agent_role: meta/steward
+  display_name: "Agent Workspaces — Steward"

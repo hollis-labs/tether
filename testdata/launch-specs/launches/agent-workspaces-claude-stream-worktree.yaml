@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-workspaces-claude-stream-worktree.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=agent-workspaces / agent=general / provider=claude-stream / workspace.mode=worktree.
+spec: tether.launch
+name: agent-workspaces-claude-stream-worktree
+inputs:
+  work_dir: ~/dev/agent-os/workspaces
+  runner: claude-stream
+  isolation: worktree
+  project: agent-workspaces
+  agent: general
+  agent_role: meta/steward
+  display_name: "Agent Workspaces — Steward (Stream, Worktree)"

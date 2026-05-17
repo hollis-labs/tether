@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-opencode.yaml.
+# Boot-profile folded: agent-mux.engineer.opencode.yaml
+# Legacy: project=tether / agent=general / provider=opencode / workspace.mode=hybrid.
+spec: tether.launch
+name: agent-mux-opencode
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/agent-mux
+  runner: opencode
+  isolation: hybrid
+  project: agent-mux
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — OpenCode"
