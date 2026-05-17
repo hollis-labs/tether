@@ -110,6 +110,8 @@ func main() {
 	mux.HandleFunc("/api/messages/read", server.handleMessageMarkRead)
 	mux.HandleFunc("/api/activity/events", server.handleActivityEvents)
 	mux.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
+	mux.HandleFunc("/api/mcp/servers", server.handleMCPServers)
+	mux.HandleFunc("/api/mcp/tools", server.handleMCPTools)
 
 	// The Agent Ops UI — served from the embedded frontend build by go-webui.
 	webui.Mount(mux)
@@ -972,6 +974,163 @@ func bucketCounts(times []time.Time, n int) []int {
 		buckets[idx]++
 	}
 	return buckets
+}
+
+// ─── MCP ─────────────────────────────────────────────────────────────────────
+
+type mcpServerDTO struct {
+	ID        string   `json:"id"`
+	Transport string   `json:"transport"`
+	Command   string   `json:"command,omitempty"`
+	Args      []string `json:"args,omitempty"`
+	URL       string   `json:"url,omitempty"`
+	EnvKeys   []string `json:"env_keys,omitempty"`
+	HasToken  bool     `json:"has_token"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Enabled   bool     `json:"enabled"`
+}
+
+type mcpServersResponse struct {
+	Servers []mcpServerDTO `json:"servers"`
+	Error   string         `json:"error,omitempty"`
+}
+
+// handleMCPServers lists the upstream MCP servers from the catalog
+// (<catalog>/mcp-servers/*.yaml). Token is redacted to a boolean and only
+// env keys are returned, since both can carry secrets.
+func (s *appServer) handleMCPServers(w http.ResponseWriter, _ *http.Request) {
+	entries, err := config.LoadMCPServers(s.catalogRoot)
+	if err != nil {
+		writeJSON(w, http.StatusOK, mcpServersResponse{Servers: []mcpServerDTO{}, Error: err.Error()})
+		return
+	}
+	out := make([]mcpServerDTO, 0, len(entries))
+	for _, e := range entries {
+		envKeys := make([]string, 0, len(e.Env))
+		for k := range e.Env {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+		out = append(out, mcpServerDTO{
+			ID:        e.ID,
+			Transport: e.Transport,
+			Command:   e.Command,
+			Args:      e.Args,
+			URL:       e.URL,
+			EnvKeys:   envKeys,
+			HasToken:  e.Token != "",
+			Scopes:    e.Scopes,
+			Tags:      e.Tags,
+			Enabled:   e.Enabled == nil || *e.Enabled,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	writeJSON(w, http.StatusOK, mcpServersResponse{Servers: out})
+}
+
+type mcpToolDTO struct {
+	Name       string `json:"name"`
+	Server     string `json:"server"`
+	Calls      int    `json:"calls"`
+	Errors     int    `json:"errors"`
+	SuccessPct int    `json:"success_pct"`
+	AvgMs      int64  `json:"avg_ms"`
+	P95ms      int64  `json:"p95_ms"`
+	LastSeen   string `json:"last_seen"`
+}
+
+type mcpToolsResponse struct {
+	Tools []mcpToolDTO `json:"tools"`
+	Error string       `json:"error,omitempty"`
+}
+
+// handleMCPTools returns a usage-centric tool list aggregated from the
+// proxy_events ring buffer: per tool, its owning server, call volume,
+// success rate, and latency. The live registry of *available* tools is
+// daemon-only — see Torque CW-20260517-0047.
+func (s *appServer) handleMCPTools(w http.ResponseWriter, _ *http.Request) {
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusOK, mcpToolsResponse{Tools: []mcpToolDTO{}})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, mcpToolsResponse{Error: err.Error()})
+		return
+	}
+	defer db.Close()
+
+	events, err := db.QueryProxyEvents(store.ProxyEventFilter{Limit: 500})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, mcpToolsResponse{Error: err.Error()})
+		return
+	}
+
+	type agg struct {
+		server   string
+		calls    int
+		errors   int
+		durs     []int64
+		lastSeen time.Time
+	}
+	byTool := map[string]*agg{}
+	for _, ev := range events {
+		a := byTool[ev.ToolName]
+		if a == nil {
+			a = &agg{}
+			byTool[ev.ToolName] = a
+		}
+		if ev.Server != "" {
+			a.server = ev.Server
+		}
+		a.calls++
+		if !ev.OK {
+			a.errors++
+		}
+		a.durs = append(a.durs, ev.DurationMs)
+		if ev.Timestamp.After(a.lastSeen) {
+			a.lastSeen = ev.Timestamp
+		}
+	}
+
+	out := make([]mcpToolDTO, 0, len(byTool))
+	for name, a := range byTool {
+		sort.Slice(a.durs, func(i, j int) bool { return a.durs[i] < a.durs[j] })
+		var sum int64
+		for _, d := range a.durs {
+			sum += d
+		}
+		var avg int64
+		if len(a.durs) > 0 {
+			avg = sum / int64(len(a.durs))
+		}
+		successPct := 0
+		if a.calls > 0 {
+			successPct = (a.calls - a.errors) * 100 / a.calls
+		}
+		server := a.server
+		if server == "" {
+			server = "native"
+		}
+		out = append(out, mcpToolDTO{
+			Name:       name,
+			Server:     server,
+			Calls:      a.calls,
+			Errors:     a.errors,
+			SuccessPct: successPct,
+			AvgMs:      avg,
+			P95ms:      pctile(a.durs, 0.95),
+			LastSeen:   a.lastSeen.Format(time.RFC3339Nano),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		return out[i].Name < out[j].Name
+	})
+	writeJSON(w, http.StatusOK, mcpToolsResponse{Tools: out})
 }
 
 // openStateDB loads the catalog and opens the Tether state DB. Returns
