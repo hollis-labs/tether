@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Activity, Boxes, LayoutDashboard, Mail } from 'lucide-react'
+import { Activity, Boxes, Gauge, LayoutDashboard, Mail } from 'lucide-react'
 import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-labs/sysop-ui'
+import { OverviewPage } from './pages/overview'
 import { OperationsPage } from './pages/operations'
 import { MessagingPage } from './pages/messaging'
 import { ActivityPage } from './pages/activity'
@@ -10,18 +11,26 @@ import { ActivityPage } from './pages/activity'
  * active page. Add pages by extending `Route`, `nav`, `TITLES`, and the
  * route switch below.
  */
-type Route = 'operations' | 'messaging' | 'activity'
+type Route = 'overview' | 'operations' | 'messaging' | 'activity'
 
 const TITLES: Record<Route, string> = {
-  operations: 'Agent Ops',
+  overview: 'Agent Ops',
+  operations: 'Operations',
   messaging: 'Messaging',
   activity: 'Activity Monitor',
 }
 
 export function App() {
-  const [route, setRoute] = useState<Route>('operations')
+  const [route, setRoute] = useState<Route>('overview')
 
   const nav: NavRailItem[] = [
+    {
+      key: 'overview',
+      label: 'Overview',
+      icon: <Gauge className="h-4 w-4" />,
+      active: route === 'overview',
+      onSelect: () => setRoute('overview'),
+    },
     {
       key: 'operations',
       label: 'Operations',
@@ -53,6 +62,7 @@ export function App() {
           <ThemeSwitcher />
         </PageHeader>
         <main className="flex min-h-0 flex-1 flex-col">
+          {route === 'overview' && <OverviewPage />}
           {route === 'operations' && <OperationsPage />}
           {route === 'messaging' && <MessagingPage />}
           {route === 'activity' && <ActivityPage />}

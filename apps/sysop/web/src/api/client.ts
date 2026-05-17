@@ -142,10 +142,93 @@ export interface ToolCallsInfo {
   error?: string
 }
 
+export interface NameCount {
+  name: string
+  count: number
+}
+
+// OverviewInfo mirrors the /api/overview aggregate payload. `trend` arrays
+// are time-bucketed counts, oldest → newest.
+export interface OverviewInfo {
+  sessions: {
+    total: number
+    running: number
+    ended: number
+    success_pct: number
+    avg_seconds: number
+    trend: number[]
+  }
+  tool_calls: {
+    total: number
+    ok: number
+    errors: number
+    success_pct: number
+    p50_ms: number
+    p95_ms: number
+    top_tools: NameCount[]
+    top_errors: NameCount[]
+    trend: number[]
+  }
+  messages: {
+    total: number
+    unread: number
+    archived: number
+    by_kind: NameCount[]
+    trend: number[]
+  }
+  events: {
+    total: number
+    by_scope: NameCount[]
+    trend: number[]
+  }
+  catalog: {
+    projects: number
+    agents: number
+    providers: number
+    launches: number
+  }
+  health: HealthInfo
+  error?: string
+}
+
+export interface AttachmentInfo {
+  id: string
+  client_kind: string
+  attached_at: string
+  detached_at?: string
+}
+
+export interface CheckpointInfo {
+  id: string
+  status?: string
+  task_id?: string
+  workflow_id?: string
+  summary?: string
+  completed_work?: string
+  pending_work?: string
+  key_decisions?: string
+  next_recommendation?: string
+  created_at: string
+  source_session_id?: string
+}
+
+export interface SessionDetailInfo {
+  session: SessionInfo
+  group_id?: string
+  events: EventInfo[]
+  attachments: AttachmentInfo[]
+  launch_plan?: string
+  checkpoints: CheckpointInfo[]
+  error?: string
+}
+
 export const apiClient = {
   getHealth: () => http.get<HealthInfo>('/api/health'),
+  getOverview: () => http.get<OverviewInfo>('/api/overview'),
   getCatalog: () => http.get<CatalogInfo>('/api/catalog'),
   getSessions: () => http.get<SessionsInfo>('/api/sessions'),
+  getSessionDetail: (id: string) =>
+    http.get<SessionDetailInfo>('/api/sessions/detail', { query: { id } }),
   getMessages: () => http.get<MessagesInfo>('/api/messages'),
   sendReply: (body: ReplyRequest) =>
     http.post<MessageInfo>('/api/messages', body as unknown as JsonObject),

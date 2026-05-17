@@ -12,8 +12,16 @@ import {
   type ColumnDef,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
-import type { CatalogInfo, HealthInfo, LaunchInfo, SessionInfo, SessionsInfo } from '../api/client'
+import type {
+  CatalogInfo,
+  HealthInfo,
+  LaunchInfo,
+  SessionDetailInfo,
+  SessionInfo,
+  SessionsInfo,
+} from '../api/client'
 import { TabStrip, type TabItem } from '../components/tab-strip'
+import { SessionDetailDialog } from '../components/session-detail-dialog'
 
 type TabKey = 'launches' | 'sessions'
 
@@ -100,6 +108,9 @@ export function OperationsPage() {
   const [sessions, setSessions] = useState<SessionsInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [detail, setDetail] = useState<SessionDetailInfo | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(() => {
@@ -125,6 +136,28 @@ export function OperationsPage() {
   }, [api])
 
   useEffect(() => load(), [load])
+
+  function openSession(id: string) {
+    setDetail(null)
+    setDetailError(null)
+    setDetailLoading(true)
+    api
+      .getSessionDetail(id)
+      .then((info) => {
+        setDetail(info)
+        setDetailError(info.error ?? null)
+      })
+      .catch((err: unknown) => {
+        setDetailError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => setDetailLoading(false))
+  }
+
+  function closeSession() {
+    setDetail(null)
+    setDetailError(null)
+    setDetailLoading(false)
+  }
 
   const launches = catalog?.launches ?? []
   const sessionList = sessions?.sessions ?? []
@@ -219,6 +252,8 @@ export function OperationsPage() {
               getRowId={(session) => session.id}
               initialSort={{ key: 'updated', dir: 'desc' }}
               scrollRootRef={scrollRef}
+              onRowOpen={(id) => openSession(id)}
+              rowAriaLabel={(session) => `Open session ${session.id.slice(0, 12)}`}
               emptyState={
                 <EmptyState
                   variant="empty"
@@ -237,6 +272,13 @@ export function OperationsPage() {
           </>
         )}
       </div>
+
+      <SessionDetailDialog
+        detail={detail}
+        loading={detailLoading}
+        error={detailError}
+        onClose={closeSession}
+      />
     </div>
   )
 }
