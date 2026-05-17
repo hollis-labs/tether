@@ -9,6 +9,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	messaging "github.com/hollis-labs/go-messaging"
+
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // validMsgKinds is the closed set of allowed kind values for mux_message_send.
@@ -40,11 +42,21 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 	), a.handleMessageGet)
 
 	a.addTool(s, mcp.NewTool("mux_message_inbox",
-		mcp.WithDescription("List messages in a recipient's inbox. Optionally filter by kind and/or thread."),
+		mcp.WithDescription("Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call. For a non-destructive, repeatable listing use mux_message_list instead."),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
 	), a.handleMessageInbox)
+
+	a.addTool(s, mcp.NewTool("mux_message_list",
+		mcp.WithDescription("List a recipient's messages non-destructively. Repeatable: no delivered_at/read_at side effects. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set."),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
+		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation")),
+		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
+		mcp.WithBoolean("include_archived", mcp.Description("Include archived messages (default false)")),
+		mcp.WithBoolean("unread_only", mcp.Description("Return only unread messages (default false)")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default 100)")),
+	), a.handleMessageList)
 
 	a.addTool(s, mcp.NewTool("mux_message_thread",
 		mcp.WithDescription("List all messages in a thread by thread ID."),
@@ -62,6 +74,24 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithDescription("Cancel a pending message. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 	), a.handleMessageCancel)
+
+	a.addTool(s, mcp.NewTool("mux_message_mark_read",
+		mcp.WithDescription("Mark a message as read by its recipient (idempotent). Does not consume or delete it. Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN marking the message read")),
+	), a.handleMessageMarkRead)
+
+	a.addTool(s, mcp.NewTool("mux_message_archive",
+		mcp.WithDescription("Archive (soft-delete) a message for its recipient (idempotent). Archived messages drop out of default mux_message_list results. Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN archiving the message")),
+	), a.handleMessageArchive)
+
+	a.addTool(s, mcp.NewTool("mux_message_unarchive",
+		mcp.WithDescription("Restore an archived message for its recipient (idempotent). Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN restoring the message")),
+	), a.handleMessageUnarchive)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
@@ -203,4 +233,85 @@ func (a *Adapter) handleMessageCancel(ctx context.Context, req mcp.CallToolReque
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
+}
+
+func (a *Adapter) handleMessageList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	toURN := str(req, "to")
+	if toURN == "" {
+		return toolError("invalid_request", "to required"), nil
+	}
+	to, parseErr := messaging.ParseURN(toURN)
+	if parseErr != nil {
+		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	var f store.ListFilter
+	if ks := str(req, "kind"); ks != "" {
+		for _, k := range strings.Split(ks, ",") {
+			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
+		}
+	}
+	f.ThreadID = str(req, "thread_id")
+	f.IncludeArchived = boolArg(req, "include_archived")
+	f.UnreadOnly = boolArg(req, "unread_only")
+	f.Limit = intArg(req, "limit", 0)
+	msgs, err := a.svc.Store.MessagingStore().List(ctx, to, f)
+	if err != nil {
+		return toolError("internal_error", err.Error()), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "messages": msgs, "count": len(msgs)}), nil
+}
+
+func (a *Adapter) handleMessageMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().MarkRead)
+}
+
+func (a *Adapter) handleMessageArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().Archive)
+}
+
+func (a *Adapter) handleMessageUnarchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().Unarchive)
+}
+
+// messageRecipientAction is the shared body for the recipient-scoped,
+// idempotent state transitions (mark_read / archive / unarchive). Each
+// requires message.write scope plus message_id + as arguments.
+func (a *Adapter) messageRecipientAction(ctx context.Context, req mcp.CallToolRequest,
+	fn func(context.Context, string, messaging.Address) error) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
+		return denied, nil
+	}
+	id := str(req, "message_id")
+	asURN := str(req, "as")
+	if id == "" || asURN == "" {
+		return toolError("invalid_request", "message_id and as are required"), nil
+	}
+	recipient, parseErr := messaging.ParseURN(asURN)
+	if parseErr != nil {
+		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	if err := fn(ctx, id, recipient); err != nil {
+		if isNotFound(err) {
+			return toolError("not_found", "message not found: "+id), nil
+		}
+		if isWrongRecipient(err) {
+			return toolError("conflict", "caller is not the intended recipient of message: "+id), nil
+		}
+		return toolError("internal_error", err.Error()), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
+}
+
+// boolArg extracts a boolean argument. JSON booleans arrive as bool;
+// LLM clients sometimes emit "true"/"1" strings. Both forms are handled;
+// any other value (or absence) yields false.
+func boolArg(req mcp.CallToolRequest, key string) bool {
+	switch v := req.GetArguments()[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" || v == "1"
+	default:
+		return false
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +15,12 @@ import (
 )
 
 // MessageStore is the seam the /messages/* handlers depend on.
-// *store.Store.MessagingStore() satisfies it.
+// *store.Store.MessagingStore() satisfies it. It is the non-destructive
+// InboxStore superset of messaging.Store, so the handlers can serve both
+// the atomic-delivery pull (Inbox) and the repeatable List/read/archive
+// surface.
 type MessageStore interface {
-	messaging.Store
+	store.InboxStore
 }
 
 // registerMessageRoutes mounts the go-messaging-native HTTP surface.
@@ -29,6 +33,7 @@ func (s *Server) registerMessageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/messages/request", s.handleMessageRequest)
 	mux.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
 	mux.HandleFunc("/messages/inbox", s.handleMessagesInbox)
+	mux.HandleFunc("/messages/list", s.handleMessagesList)
 	mux.HandleFunc("/messages/thread/", s.handleMessagesThread)
 	mux.HandleFunc("/messages/", s.handleMessagesItem)
 }
@@ -59,11 +64,16 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "":
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleMessageGet(w, r, id)
+		case http.MethodDelete:
+			// DELETE /messages/{id} is a soft-delete: it archives the
+			// message for the recipient rather than removing the row.
+			s.handleMessageArchive(w, r, id)
+		default:
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
-			return
 		}
-		s.handleMessageGet(w, r, id)
 	case "consume":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -76,6 +86,24 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMessageCancel(w, r, id)
+	case "read":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageMarkRead(w, r, id)
+	case "archive":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageArchive(w, r, id)
+	case "unarchive":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageUnarchive(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}
@@ -173,6 +201,102 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+}
+
+// GET /messages/list?to=<urn>[&kind=request,notice][&thread_id=X][&limit=N]
+//                    [&include_archived=true][&unread_only=true]
+//
+// Non-destructive, repeatable listing of a recipient's messages. Unlike
+// /messages/inbox this never stamps delivered_at — a UI can poll it
+// without consuming the inbox. Archived messages are excluded unless
+// include_archived=true. Each message carries read_at/archived_at state
+// and a subject/body payload projection.
+func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	q := r.URL.Query()
+	toURN := q.Get("to")
+	if toURN == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "to query param required")
+		return
+	}
+	to, err := messaging.ParseURN(toURN)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid to URN: "+err.Error())
+		return
+	}
+
+	var f store.ListFilter
+	if ks := q.Get("kind"); ks != "" {
+		for _, k := range strings.Split(ks, ",") {
+			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
+		}
+	}
+	f.ThreadID = q.Get("thread_id")
+	f.IncludeArchived = q.Get("include_archived") == "true"
+	f.UnreadOnly = q.Get("unread_only") == "true"
+	if ls := q.Get("limit"); ls != "" {
+		if n, convErr := strconv.Atoi(ls); convErr == nil {
+			f.Limit = n
+		}
+	}
+
+	msgs, err := s.MessageStore.List(r.Context(), to, f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "count": len(msgs)})
+}
+
+// recipientAction is the shared body for the recipient-scoped, idempotent
+// state transitions (read / archive / unarchive). Each requires ?as=<urn>
+// identifying the recipient and returns 204 on success, 404 when the id is
+// absent, and 409 when the caller is not the intended recipient.
+func (s *Server) recipientAction(w http.ResponseWriter, r *http.Request, id string,
+	fn func(context.Context, string, messaging.Address) error) {
+	asURN := r.URL.Query().Get("as")
+	if asURN == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as query param required")
+		return
+	}
+	recipient, err := messaging.ParseURN(asURN)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid as URN: "+err.Error())
+		return
+	}
+	if err := fn(r.Context(), id, recipient); err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "message not found")
+			return
+		}
+		if isWrongRecipient(err) {
+			writeError(w, http.StatusConflict, CodeConflict, "caller is not the intended recipient")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /messages/{id}/read?as=<urn> — mark a message read (idempotent).
+func (s *Server) handleMessageMarkRead(w http.ResponseWriter, r *http.Request, id string) {
+	s.recipientAction(w, r, id, s.MessageStore.MarkRead)
+}
+
+// POST /messages/{id}/archive?as=<urn> or DELETE /messages/{id}?as=<urn>
+// — soft-delete a message (idempotent). Archived messages drop out of
+// default /messages/list results.
+func (s *Server) handleMessageArchive(w http.ResponseWriter, r *http.Request, id string) {
+	s.recipientAction(w, r, id, s.MessageStore.Archive)
+}
+
+// POST /messages/{id}/unarchive?as=<urn> — restore an archived message.
+func (s *Server) handleMessageUnarchive(w http.ResponseWriter, r *http.Request, id string) {
+	s.recipientAction(w, r, id, s.MessageStore.Unarchive)
 }
 
 // GET /messages/thread/{thread_id}[?kind=X][&limit=N]
