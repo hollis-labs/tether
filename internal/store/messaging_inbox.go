@@ -181,27 +181,38 @@ func (ms *messagingStore) Unarchive(ctx context.Context, id string, recipient me
 	return ms.stampRecipientField(ctx, id, recipient, "archived_at", true)
 }
 
-// stampRecipientField sets (clear=false) or clears (clear=true) a
-// timestamp column scoped to the (id, recipient) pair. It mirrors the
-// Consume idempotency pattern: a no-op UPDATE is disambiguated into
-// not-found / wrong-recipient / already-in-target-state.
+// stampRecipientField sets (clr=false) or clears (clr=true) a timestamp
+// column scoped to the (id, recipient) pair. It mirrors the Consume
+// idempotency pattern: a no-op UPDATE is disambiguated into not-found /
+// wrong-recipient / already-in-target-state.
 //
-// col is an internal constant ("read_at"/"archived_at"), never caller
-// input — it is safe to interpolate into the statement.
-func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, recipient messaging.Address, col string, clear bool) error {
+// col selects the column ("read_at"/"archived_at"); each branch uses a
+// fully static statement so no SQL is ever assembled from a variable.
+func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, recipient messaging.Address, col string, clr bool) error {
 	var (
 		res sql.Result
 		err error
 	)
-	if clear {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	switch {
+	case col == "read_at" && !clr:
 		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET `+col+`=NULL WHERE id=? AND to_urn=? AND `+col+` IS NOT NULL`,
-			id, recipient.URN())
-	} else {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET `+col+`=? WHERE id=? AND to_urn=? AND `+col+` IS NULL`,
+			`UPDATE messages SET read_at=? WHERE id=? AND to_urn=? AND read_at IS NULL`,
 			now, id, recipient.URN())
+	case col == "read_at" && clr:
+		res, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET read_at=NULL WHERE id=? AND to_urn=? AND read_at IS NOT NULL`,
+			id, recipient.URN())
+	case col == "archived_at" && !clr:
+		res, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET archived_at=? WHERE id=? AND to_urn=? AND archived_at IS NULL`,
+			now, id, recipient.URN())
+	case col == "archived_at" && clr:
+		res, err = ms.db.ExecContext(ctx,
+			`UPDATE messages SET archived_at=NULL WHERE id=? AND to_urn=? AND archived_at IS NOT NULL`,
+			id, recipient.URN())
+	default:
+		return fmt.Errorf("messaging store: stampRecipientField: unknown column %q", col)
 	}
 	if err != nil {
 		return err

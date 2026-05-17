@@ -30,7 +30,7 @@ func inboxAddr(id string) messaging.Address {
 }
 
 // mustPage runs List and fails the test on error, returning the page.
-func mustPage(t *testing.T, ms store.InboxStore, ctx context.Context, to messaging.Address, f store.ListFilter) store.ListPage {
+func mustPage(ctx context.Context, t *testing.T, ms store.InboxStore, to messaging.Address, f store.ListFilter) store.ListPage {
 	t.Helper()
 	page, err := ms.List(ctx, to, f)
 	if err != nil {
@@ -337,8 +337,8 @@ func TestList_PaginationAndCap(t *testing.T) {
 	}
 
 	// Offset + limit yield non-overlapping windows that cover every row.
-	first := mustPage(t, ms, ctx, to, store.ListFilter{Limit: 75, Offset: 0})
-	second := mustPage(t, ms, ctx, to, store.ListFilter{Limit: 75, Offset: 75})
+	first := mustPage(ctx, t, ms, to, store.ListFilter{Limit: 75, Offset: 0})
+	second := mustPage(ctx, t, ms, to, store.ListFilter{Limit: 75, Offset: 75})
 	seen := map[string]bool{}
 	for _, m := range append(first.Messages, second.Messages...) {
 		if seen[m.ID] {
