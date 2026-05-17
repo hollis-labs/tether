@@ -6,3 +6,5 @@ catalog:
     providers: providers
     launches: launches
     boot: boot
+  defaults:
+    permission_mode: bypass
