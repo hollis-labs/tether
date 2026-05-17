@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/torque-claude-stream.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=torque / agent=general / provider=claude-stream / workspace.mode=hybrid.
+spec: tether.launch
+name: torque-claude-stream
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/torque
+  runner: claude-stream
+  isolation: hybrid
+  project: torque
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Torque — Backend (Stream)"

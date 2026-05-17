@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-codex-app-server.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=tether / agent=general / provider=codex-app-server / workspace.mode=hybrid.
+spec: tether.launch
+name: agent-mux-codex-app-server
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether
+  runner: codex-app-server
+  isolation: hybrid
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — Codex App-Server"

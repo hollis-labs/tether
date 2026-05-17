@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/hollislabs-web-writer-claude.yaml.
+# Boot-profile folded: hollislabs-web.writer.main.yaml
+# Legacy: project=hollislabs-web / agent=web-writer / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: hollislabs-web-writer-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/sites/hollis-labs.com
+  runner: claude-code
+  isolation: hybrid
+  project: hollislabs-web
+  agent: web-writer
+  agent_role: domain/writer
+  display_name: "hollislabs.com — Web Writer"

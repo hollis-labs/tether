@@ -1,0 +1,4 @@
+# Common-setup template: OpenCode runner, shared workspace.
+# Replaces the legacy `-opencode` launch suffix.
+runner: opencode
+isolation: hybrid

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-claude-stream.yaml.
+# Boot-profile folded: agent-mux.engineer.main.yaml
+# Legacy: project=tether / agent=general / provider=claude-stream / workspace.mode=hybrid.
+spec: tether.launch
+name: agent-mux-claude-stream
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether
+  runner: claude-stream
+  isolation: hybrid
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — Backend (Stream)"

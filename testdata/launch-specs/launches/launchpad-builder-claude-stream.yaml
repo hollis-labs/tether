@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/launchpad-builder-claude-stream.yaml.
+# Boot-profile folded: launchpad.builder.main.yaml
+# Legacy: project=launchpad / agent=launchpad-builder / provider=claude-stream / workspace.mode=hybrid.
+spec: tether.launch
+name: launchpad-builder-claude-stream
+inputs:
+  work_dir: /Users/chrispian/dev/agent-os/launchpad
+  runner: claude-stream
+  isolation: hybrid
+  project: launchpad
+  agent: launchpad-builder
+  agent_role: domain/backend/implementer
+  display_name: "Launchpad — Builder (Stream)"

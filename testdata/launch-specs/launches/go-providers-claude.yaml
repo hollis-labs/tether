@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/go-providers-claude.yaml.
+# Boot-profile folded: go-providers.backend.main.yaml
+# Legacy: project=go-providers / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: go-providers-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/libs/go-providers
+  runner: claude-code
+  isolation: hybrid
+  project: go-providers
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Go Providers — Backend"

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/stack-explorer-claude.yaml.
+# Boot-profile folded: stack-explorer.backend.main.yaml
+# Legacy: project=stack-explorer / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: stack-explorer-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/stack-explorer
+  runner: claude-code
+  isolation: hybrid
+  project: stack-explorer
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Stack Explorer — Backend"

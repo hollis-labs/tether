@@ -1,0 +1,4 @@
+# Common-setup template: Codex app-server runner, shared workspace.
+# Replaces the legacy `-codex-app-server` launch suffix.
+runner: codex-app-server
+isolation: hybrid

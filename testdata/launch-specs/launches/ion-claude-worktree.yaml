@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/ion-claude-worktree.yaml.
+# Boot-profile folded: ion.backend.main.worktree.yaml
+# Legacy: project=ion / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: ion-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/ion
+  runner: claude-code
+  isolation: worktree
+  project: ion
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Ion — Backend (Worktree)"

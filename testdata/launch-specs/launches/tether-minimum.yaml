@@ -1,0 +1,10 @@
+# MINIMUM-CONFIG launch bag — NOT one of the 64 legacy launches.
+# Demonstrates the S4.4 minimum valid config: ONLY work_dir + runner.
+# isolation defaults to hybrid, bus defaults to empty, every convenience
+# input defaults on the spec. This is the smallest bag that
+# ValidateMinimumConfig accepts.
+spec: tether.launch
+name: tether-minimum
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: claude-code

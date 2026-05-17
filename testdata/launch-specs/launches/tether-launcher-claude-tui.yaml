@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-launcher-claude-tui.yaml.
+# Boot-profile folded: tether-launcher.frontend.tui.yaml
+# Legacy: project=tether-launcher / agent=frontend / provider=claude-pty / workspace.mode=hybrid.
+spec: tether.launch
+name: tether-launcher-claude-tui
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether-launcher
+  runner: claude-pty
+  isolation: hybrid
+  project: tether-launcher
+  agent: frontend
+  agent_role: domain/frontend
+  display_name: "Tether Taxi — Frontend (TUI)"

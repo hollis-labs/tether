@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/hollislabs-web-claude.yaml.
+# Boot-profile folded: hollislabs-web.engineer.main.yaml
+# Legacy: project=hollislabs-web / agent=web-engineer / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: hollislabs-web-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/sites/hollis-labs.com
+  runner: claude-code
+  isolation: hybrid
+  project: hollislabs-web
+  agent: web-engineer
+  agent_role: domain/backend/worker
+  display_name: "hollislabs.com — Web Engineer"

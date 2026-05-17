@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/sigil-claude.yaml.
+# Boot-profile folded: sigil.backend.main.yaml
+# Legacy: project=sigil / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: sigil-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/sigil
+  runner: claude-code
+  isolation: hybrid
+  project: sigil
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Sigil — Backend"

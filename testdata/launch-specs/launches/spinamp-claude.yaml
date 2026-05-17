@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/spinamp-claude.yaml.
+# Boot-profile folded: spinamp.backend.main.yaml
+# Legacy: project=spinamp / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: spinamp-claude
+inputs:
+  work_dir: /Users/chrispian/dev/projects/spinamp
+  runner: claude-code
+  isolation: hybrid
+  project: spinamp
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Spinamp — Backend"

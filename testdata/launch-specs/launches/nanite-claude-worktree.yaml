@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/nanite-claude-worktree.yaml.
+# Boot-profile folded: nanite.backend.main.worktree.yaml
+# Legacy: project=nanite / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: nanite-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/nanite
+  runner: claude-code
+  isolation: worktree
+  project: nanite
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Nanite — Backend (Worktree)"

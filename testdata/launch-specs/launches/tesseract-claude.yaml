@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tesseract-claude.yaml.
+# Boot-profile folded: tesseract.backend.main.yaml
+# Legacy: project=tesseract / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: tesseract-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tesseract
+  runner: claude-code
+  isolation: hybrid
+  project: tesseract
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tesseract — Backend"

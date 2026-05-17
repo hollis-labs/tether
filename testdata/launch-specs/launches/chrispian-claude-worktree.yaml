@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/chrispian-claude-worktree.yaml.
+# Boot-profile folded: chrispian.steward.main.worktree.yaml
+# Legacy: project=chrispian / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: chrispian-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/chrispian
+  runner: claude-code
+  isolation: worktree
+  project: chrispian
+  agent: general
+  agent_role: meta/steward
+  display_name: "chrispian launchpad — Steward (Worktree)"

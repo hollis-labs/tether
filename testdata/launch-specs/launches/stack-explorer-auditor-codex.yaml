@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/stack-explorer-auditor-codex.yaml.
+# Boot-profile folded: (no boot-profile for auditor agent; uses backend role)
+# Legacy: project=stack-explorer / agent=stack-explorer-auditor / provider=codex-cli / workspace.mode=hybrid.
+spec: tether.launch
+name: stack-explorer-auditor-codex
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/stack-explorer
+  runner: codex-cli
+  isolation: hybrid
+  project: stack-explorer
+  agent: stack-explorer-auditor
+  agent_role: domain/backend/worker
+  display_name: "Stack Explorer — Auditor (Codex CLI)"

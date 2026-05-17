@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tesseract-claude-stream.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=tesseract / agent=general / provider=claude-stream / workspace.mode=hybrid.
+spec: tether.launch
+name: tesseract-claude-stream
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tesseract
+  runner: claude-stream
+  isolation: hybrid
+  project: tesseract
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tesseract — Backend (Stream)"

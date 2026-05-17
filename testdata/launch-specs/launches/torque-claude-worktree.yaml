@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/torque-claude-worktree.yaml.
+# Boot-profile folded: torque.engineer.main.worktree.yaml
+# Legacy: project=torque / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: torque-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/torque
+  runner: claude-code
+  isolation: worktree
+  project: torque
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Torque — Backend (Worktree)"

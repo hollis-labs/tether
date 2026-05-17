@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/plugin-sdk-claude-worktree.yaml.
+# Boot-profile folded: plugin-sdk.backend.main.worktree.yaml
+# Legacy: project=plugin-sdk / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: plugin-sdk-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/libs/plugin-sdk
+  runner: claude-code
+  isolation: worktree
+  project: plugin-sdk
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Plugin SDK — Backend (Worktree)"

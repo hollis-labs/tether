@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/cerberus-claude.yaml.
+# Boot-profile folded: cerberus.backend.main.yaml
+# Legacy: project=cerberus / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: cerberus-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/cerberus
+  runner: claude-code
+  isolation: hybrid
+  project: cerberus
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Cerberus — Backend"

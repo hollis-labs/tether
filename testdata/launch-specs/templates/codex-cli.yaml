@@ -1,0 +1,4 @@
+# Common-setup template: Codex CLI runner, shared workspace.
+# Replaces the legacy `-codex-launch` launch suffix (legacy provider: codex-cli).
+runner: codex-cli
+isolation: hybrid

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/chrispian-claude.yaml.
+# Boot-profile folded: chrispian.steward.main.yaml
+# Legacy: project=chrispian / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: chrispian-claude
+inputs:
+  work_dir: /Users/chrispian/dev/chrispian
+  runner: claude-code
+  isolation: hybrid
+  project: chrispian
+  agent: general
+  agent_role: meta/steward
+  display_name: "chrispian launchpad — Steward"

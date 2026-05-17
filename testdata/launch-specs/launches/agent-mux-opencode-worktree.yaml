@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/agent-mux-opencode-worktree.yaml.
+# Boot-profile folded: agent-mux.engineer.opencode.worktree.yaml
+# Legacy: project=tether / agent=general / provider=opencode / workspace.mode=worktree.
+spec: tether.launch
+name: agent-mux-opencode-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/apps/tether
+  runner: opencode
+  isolation: worktree
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Agent Mux — OpenCode (Worktree)"

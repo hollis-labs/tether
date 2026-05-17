@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/plugin-sdk-claude.yaml.
+# Boot-profile folded: plugin-sdk.backend.main.yaml
+# Legacy: project=plugin-sdk / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: plugin-sdk-claude
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/libs/plugin-sdk
+  runner: claude-code
+  isolation: hybrid
+  project: plugin-sdk
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Plugin SDK — Backend"

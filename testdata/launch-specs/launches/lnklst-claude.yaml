@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/lnklst-claude.yaml.
+# Boot-profile folded: lnklst.backend.main.yaml
+# Legacy: project=lnklst / agent=general / provider=claude-code / workspace.mode=hybrid.
+spec: tether.launch
+name: lnklst-claude
+inputs:
+  work_dir: /Users/chrispian/dev/projects/lnklst
+  runner: claude-code
+  isolation: hybrid
+  project: lnklst
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Lnklst — Backend"

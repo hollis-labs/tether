@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/go-providers-claude-worktree.yaml.
+# Boot-profile folded: go-providers.backend.main.worktree.yaml
+# Legacy: project=go-providers / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: go-providers-claude-worktree
+inputs:
+  work_dir: /Users/chrispian/dev/hollis-labs/libs/go-providers
+  runner: claude-code
+  isolation: worktree
+  project: go-providers
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Go Providers — Backend (Worktree)"
