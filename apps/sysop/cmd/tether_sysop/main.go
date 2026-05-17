@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -103,6 +104,8 @@ func main() {
 	mux.HandleFunc("/api/catalog", server.handleCatalog)
 	mux.HandleFunc("/api/sessions", server.handleSessions)
 	mux.HandleFunc("/api/messages", server.handleMessages)
+	mux.HandleFunc("/api/messages/archive", server.handleMessageArchive)
+	mux.HandleFunc("/api/messages/read", server.handleMessageMarkRead)
 	mux.HandleFunc("/api/activity/events", server.handleActivityEvents)
 	mux.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
 
@@ -241,7 +244,11 @@ type messageDTO struct {
 	To          string `json:"to"`
 	ThreadID    string `json:"thread_id,omitempty"`
 	InReplyTo   string `json:"in_reply_to,omitempty"`
+	// Subject and Body are the projected display fields; Payload is the raw
+	// (possibly structured-JSON) message payload, kept for detail views.
+	Subject     string `json:"subject,omitempty"`
 	Body        string `json:"body"`
+	Payload     string `json:"payload,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	// Scope is derived from the recipient URN kind: "user", "agent", or "other".
 	Scope       string `json:"scope"`
@@ -249,6 +256,8 @@ type messageDTO struct {
 	DeliveredAt string `json:"delivered_at,omitempty"`
 	ConsumedAt  string `json:"consumed_at,omitempty"`
 	CanceledAt  string `json:"canceled_at,omitempty"`
+	ReadAt      string `json:"read_at,omitempty"`
+	ArchivedAt  string `json:"archived_at,omitempty"`
 }
 
 type replyRequest struct {
@@ -300,13 +309,17 @@ func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
 			To:          m.ToURN,
 			ThreadID:    m.ThreadID,
 			InReplyTo:   m.InReplyTo,
-			Body:        payloadBody(m.Payload),
+			Subject:     m.Subject,
+			Body:        m.Body,
+			Payload:     m.Payload,
 			ContentType: m.ContentType,
 			Scope:       scopeOf(m.ToURN),
 			CreatedAt:   m.CreatedAt,
 			DeliveredAt: m.DeliveredAt,
 			ConsumedAt:  m.ConsumedAt,
 			CanceledAt:  m.CanceledAt,
+			ReadAt:      m.ReadAt,
+			ArchivedAt:  m.ArchivedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, messagesResponse{Messages: out})
@@ -380,6 +393,72 @@ func (s *appServer) handleMessageReply(w http.ResponseWriter, r *http.Request) {
 		Scope:       scopeOf(sent.To.URN()),
 		CreatedAt:   sent.CreatedAt.Format(time.RFC3339Nano),
 	})
+}
+
+// recipientActionRequest is the POST body for the recipient-scoped,
+// idempotent message state transitions (archive / mark-read).
+type recipientActionRequest struct {
+	ID string `json:"id"`
+	As string `json:"as"` // recipient URN
+}
+
+// handleMessageArchive soft-deletes (archives) a message for its recipient.
+func (s *appServer) handleMessageArchive(w http.ResponseWriter, r *http.Request) {
+	s.messageRecipientAction(w, r, store.InboxStore.Archive)
+}
+
+// handleMessageMarkRead marks a message read by its recipient (idempotent).
+func (s *appServer) handleMessageMarkRead(w http.ResponseWriter, r *http.Request) {
+	s.messageRecipientAction(w, r, store.InboxStore.MarkRead)
+}
+
+// messageRecipientAction runs an idempotent (id, recipient)-scoped message
+// transition — Archive or MarkRead — from a POST {id, as} body, mapping the
+// store's not-found / wrong-recipient errors to 404 / 409.
+func (s *appServer) messageRecipientAction(w http.ResponseWriter, r *http.Request,
+	action func(store.InboxStore, context.Context, string, messaging.Address) error) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req recipientActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+		return
+	}
+	if req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+		return
+	}
+	recipient, err := messaging.ParseURN(req.As)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid recipient urn: " + req.As})
+		return
+	}
+
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no state db configured"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer db.Close()
+
+	if err := action(db.MessagingStore(), r.Context(), req.ID, recipient); err != nil {
+		switch {
+		case errors.Is(err, messaging.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "message not found"})
+		case errors.Is(err, store.ErrWrongRecipient):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "not the intended recipient"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ─── Activity ────────────────────────────────────────────────────────────────

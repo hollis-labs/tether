@@ -72,6 +72,8 @@ export interface SessionInfo {
 
 // MessageInfo mirrors the messageDTO served by GET /api/messages. `scope`
 // is derived from the recipient URN: 'user', 'agent', or 'other'.
+// `subject`/`body` are the projected display fields; `payload` is the raw
+// (possibly structured-JSON) message payload.
 export interface MessageInfo {
   id: string
   kind: string
@@ -80,13 +82,17 @@ export interface MessageInfo {
   to: string
   thread_id?: string
   in_reply_to?: string
+  subject?: string
   body: string
+  payload?: string
   content_type?: string
   scope: string
   created_at: string
   delivered_at?: string
   consumed_at?: string
   canceled_at?: string
+  read_at?: string
+  archived_at?: string
 }
 
 export interface MessagesInfo {
@@ -143,6 +149,11 @@ export const apiClient = {
   getMessages: () => http.get<MessagesInfo>('/api/messages'),
   sendReply: (body: ReplyRequest) =>
     http.post<MessageInfo>('/api/messages', body as unknown as JsonObject),
+  // Recipient-scoped, idempotent message actions. `as` is the recipient URN.
+  archiveMessage: (id: string, as: string) =>
+    http.post<{ status: string }>('/api/messages/archive', { id, as }),
+  markRead: (id: string, as: string) =>
+    http.post<{ status: string }>('/api/messages/read', { id, as }),
   getEvents: () => http.get<EventsInfo>('/api/activity/events'),
   getToolCalls: () => http.get<ToolCallsInfo>('/api/activity/tool-calls'),
 }

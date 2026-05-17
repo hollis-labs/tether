@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, RefreshCw, Send, Trash2, User } from 'lucide-react'
+import { Archive, Bot, RefreshCw, Send, User } from 'lucide-react'
 import {
   Button,
   CopyableId,
@@ -21,53 +21,30 @@ import { CopyButton, safeParseObject, scalarStr } from '../components/json-paylo
 
 type ScopeKey = 'user' | 'agent'
 
-// Payload keys, in priority order, that map onto an email-shaped message.
-const SUBJECT_KEYS = ['subject', 'title', 'headline']
-const TEXT_KEYS = ['summary', 'body', 'text', 'message', 'detail', 'description', 'content']
+// Payload keys the backend's projectPayload already folds into subject/body —
+// excluded from the modal's "Details" decomposition.
+const PROJECTED_KEYS = new Set(['subject', 'title', 'body', 'summary', 'text', 'message'])
 
-interface ParsedMessage {
-  subject?: string
-  text: string
-  fields: [string, unknown][]
-  isJson: boolean
+/** Structured payload fields not already shown as subject/body. */
+function extraFields(payload?: string): [string, unknown][] {
+  if (!payload) return []
+  const obj = safeParseObject(payload)
+  if (!obj) return []
+  return Object.entries(obj).filter(([k]) => !PROJECTED_KEYS.has(k))
 }
 
-/** Decompose a message body into an email shape: subject, text, and any
- * remaining structured fields. Plain-text bodies pass through verbatim. */
-function parseMessage(body: string): ParsedMessage {
-  const obj = safeParseObject(body)
-  if (!obj) return { text: body, fields: [], isJson: false }
-  const consumed = new Set<string>()
-  let subject: string | undefined
-  for (const k of SUBJECT_KEYS) {
-    if (typeof obj[k] === 'string' && obj[k]) {
-      subject = obj[k] as string
-      consumed.add(k)
-      break
-    }
-  }
-  let text = ''
-  for (const k of TEXT_KEYS) {
-    if (typeof obj[k] === 'string' && obj[k]) {
-      text = obj[k] as string
-      consumed.add(k)
-      break
-    }
-  }
-  const fields = Object.entries(obj).filter(([k]) => !consumed.has(k))
-  return { subject, text, fields, isJson: true }
-}
-
-/** One-line label for the table — subject, else the first line of text. */
+/** One-line label for the table — backend subject, else first line of body. */
 function messageHeadline(m: MessageInfo): string {
-  const p = parseMessage(m.body)
-  return p.subject || p.text.split('\n').find((l) => l.trim()) || ''
+  if (m.subject) return m.subject
+  return m.body.split('\n').find((l) => l.trim()) ?? ''
 }
 
-/** Lifecycle status of a message, newest terminal state wins. */
+/** Lifecycle status of a message, most salient state wins. */
 function messageStatus(m: MessageInfo): string {
   if (m.canceled_at) return 'canceled'
+  if (m.archived_at) return 'archived'
   if (m.consumed_at) return 'consumed'
+  if (m.read_at) return 'read'
   if (m.delivered_at) return 'delivered'
   return 'unread'
 }
@@ -105,8 +82,11 @@ const columns: ColumnDef<MessageInfo>[] = [
     width: 'fill',
     cell: (m) => {
       const headline = messageHeadline(m)
+      const unread = messageStatus(m) === 'unread'
       return headline ? (
-        <span className="block truncate text-[12px] text-text">{headline}</span>
+        <span className={cn('block truncate text-[12px]', unread ? 'font-medium text-text' : 'text-text-soft')}>
+          {headline}
+        </span>
       ) : (
         <span className="text-[12px] text-text-subtle">(no subject)</span>
       )
@@ -136,8 +116,9 @@ export function MessagingPage() {
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [replyText, setReplyText] = useState('')
-  const [replyError, setReplyError] = useState<string | null>(null)
+  const [dialogError, setDialogError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [archiving, setArchiving] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(() => {
@@ -169,10 +150,10 @@ export function MessagingPage() {
   const agentCount = useMemo(() => all.filter((m) => m.scope === 'agent').length, [all])
 
   const selected = selectedId ? all.find((m) => m.id === selectedId) ?? null : null
-  const parsed = useMemo(() => (selected ? parseMessage(selected.body) : null), [selected])
+  const details = useMemo(() => (selected ? extraFields(selected.payload) : []), [selected])
 
   const unread = scoped.filter((m) => messageStatus(m) === 'unread').length
-  const consumed = scoped.filter((m) => m.consumed_at).length
+  const archived = scoped.filter((m) => m.archived_at).length
 
   const tabs: TabItem<ScopeKey>[] = [
     { key: 'user', label: 'User', icon: User, count: userCount },
@@ -182,13 +163,27 @@ export function MessagingPage() {
   function closeDialog() {
     setSelectedId(null)
     setReplyText('')
-    setReplyError(null)
+    setDialogError(null)
+  }
+
+  // Opening a message marks it read (fire-and-forget; reload reflects it).
+  function openMessage(id: string) {
+    setSelectedId(id)
+    setReplyText('')
+    setDialogError(null)
+    const m = all.find((x) => x.id === id)
+    if (m && !m.read_at && !m.canceled_at) {
+      api
+        .markRead(m.id, m.to)
+        .then(() => load())
+        .catch(() => {})
+    }
   }
 
   async function sendReply() {
     if (!selected || !replyText.trim()) return
     setSending(true)
-    setReplyError(null)
+    setDialogError(null)
     try {
       await api.sendReply({
         from: selected.to,
@@ -201,9 +196,24 @@ export function MessagingPage() {
       closeDialog()
       load()
     } catch (err: unknown) {
-      setReplyError(err instanceof Error ? err.message : String(err))
+      setDialogError(err instanceof Error ? err.message : String(err))
     } finally {
       setSending(false)
+    }
+  }
+
+  async function archiveMessage() {
+    if (!selected) return
+    setArchiving(true)
+    setDialogError(null)
+    try {
+      await api.archiveMessage(selected.id, selected.to)
+      closeDialog()
+      load()
+    } catch (err: unknown) {
+      setDialogError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setArchiving(false)
     }
   }
 
@@ -233,13 +243,13 @@ export function MessagingPage() {
         cards={[
           { label: scope === 'user' ? 'User Messages' : 'Agent Messages', value: scoped.length },
           { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
-          { label: 'Consumed', value: consumed, accentColor: 'var(--color-status-done)' },
+          { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
         ]}
       />
 
       <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-        {scope === 'user' ? 'Messages addressed to users.' : 'Messages addressed to agents.'} Non-destructive
-        read-only view — delete is pending backend inbox semantics (Torque CW-20260517-0003).
+        {scope === 'user' ? 'Messages addressed to users.' : 'Messages addressed to agents.'} Opening
+        a message marks it read; Archive soft-deletes it.
       </p>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
@@ -249,7 +259,7 @@ export function MessagingPage() {
           getRowId={(m) => m.id}
           initialSort={{ key: 'created', dir: 'desc' }}
           scrollRootRef={scrollRef}
-          onRowOpen={(id) => setSelectedId(id)}
+          onRowOpen={(id) => openMessage(id)}
           rowAriaLabel={(m) => `Open message from ${shortUrn(m.from)}`}
           emptyState={
             <EmptyState
@@ -269,7 +279,7 @@ export function MessagingPage() {
         open={selected !== null}
         onClose={closeDialog}
         widthClassName="max-w-4xl"
-        title={selected ? parsed?.subject || `${selected.kind} message` : ''}
+        title={selected ? messageHeadline(selected) || `${selected.kind} message` : ''}
         badge={selected ? <StatusBadge status={messageStatus(selected)} /> : null}
         meta={
           selected ? (
@@ -286,41 +296,49 @@ export function MessagingPage() {
         }
         footer={
           selected ? (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span title="Delete is pending backend inbox semantics — Torque CW-20260517-0003">
-                  <Button variant="outline" size="sm" disabled>
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Delete
-                  </Button>
-                </span>
-                <CopyButton text={selected.body} label="Copy payload" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={archiveMessage}
+                  disabled={archiving || selected.archived_at !== undefined}
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                  {selected.archived_at ? 'Archived' : archiving ? 'Archiving...' : 'Archive'}
+                </Button>
+                <CopyButton text={selected.payload || selected.body} label="Copy payload" />
               </div>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={sendReply}
-                disabled={sending || !replyText.trim()}
-              >
-                <Send className={cn('h-3.5 w-3.5', sending && 'animate-pulse')} />
-                {sending ? 'Sending...' : 'Send reply'}
-              </Button>
+              <div className="flex items-center gap-3">
+                {dialogError && (
+                  <span className="text-[12px] text-status-blocked">{dialogError}</span>
+                )}
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={sendReply}
+                  disabled={sending || !replyText.trim()}
+                >
+                  <Send className={cn('h-3.5 w-3.5', sending && 'animate-pulse')} />
+                  {sending ? 'Sending...' : 'Send reply'}
+                </Button>
+              </div>
             </div>
           ) : null
         }
       >
-        {selected && parsed && (
+        {selected && (
           <>
             <DetailSection title="Message">
               <div className="whitespace-pre-wrap break-words rounded-md border border-border bg-panel px-4 py-3 text-[13px] leading-6 text-text">
-                {parsed.text || (parsed.isJson ? '(no message text)' : '(no body)')}
+                {selected.body || '(no message text)'}
               </div>
             </DetailSection>
 
-            {parsed.fields.length > 0 && (
+            {details.length > 0 && (
               <DetailSection title="Details">
                 <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-                  {parsed.fields.map(([k, v]) => (
+                  {details.map(([k, v]) => (
                     <div key={k} className="contents">
                       <dt className="truncate text-text-subtle">{k}</dt>
                       <dd className="break-words font-mono text-text-soft">
@@ -340,7 +358,6 @@ export function MessagingPage() {
                 rows={5}
                 className="w-full"
               />
-              {replyError && <p className="mt-2 text-[12px] text-status-blocked">{replyError}</p>}
             </DetailSection>
           </>
         )}
