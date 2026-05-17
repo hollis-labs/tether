@@ -27,6 +27,7 @@ type Message struct {
 	messaging.Envelope
 	ReadAt     *time.Time `json:"read_at"`
 	ArchivedAt *time.Time `json:"archived_at"`
+	CanceledAt *time.Time `json:"canceled_at"`
 	// Subject and Body are a display projection of Payload — see
 	// projectPayload for the contract. Empty when Payload yields nothing.
 	Subject string `json:"subject,omitempty"`
@@ -38,9 +39,20 @@ type Message struct {
 type ListFilter struct {
 	Kind            []messaging.Kind
 	ThreadID        string
-	Limit           int
+	Limit           int  // clamped to [1,100] by List; 0 → default 100
+	Offset          int  // floored at 0 by List
 	IncludeArchived bool // when true, archived messages are included
 	UnreadOnly      bool // when true, only messages with read_at IS NULL
+}
+
+// ListPage is the paginated result of List: the page of messages plus the
+// total count of rows matching the filter (before LIMIT/OFFSET) and the
+// effective Limit/Offset that were applied.
+type ListPage struct {
+	Messages []Message `json:"messages"`
+	Total    int       `json:"total"`
+	Limit    int       `json:"limit"`
+	Offset   int       `json:"offset"`
 }
 
 // InboxStore extends messaging.Store with non-destructive inbox semantics:
@@ -51,10 +63,12 @@ type ListFilter struct {
 type InboxStore interface {
 	messaging.Store
 
-	// List returns the recipient's messages with no lifecycle side effect.
-	// It may be called repeatedly; delivered_at/read_at are never touched.
-	// Archived messages are excluded unless ListFilter.IncludeArchived.
-	List(ctx context.Context, to messaging.Address, f ListFilter) ([]Message, error)
+	// List returns a page of the recipient's messages with no lifecycle
+	// side effect. It may be called repeatedly; delivered_at/read_at are
+	// never touched. Archived messages are excluded unless
+	// ListFilter.IncludeArchived. The returned ListPage carries the total
+	// count of matching rows for pagination.
+	List(ctx context.Context, to messaging.Address, f ListFilter) (ListPage, error)
 
 	// MarkRead stamps read_at for (id, recipient). Idempotent: a second
 	// call is a no-op. Returns messaging.ErrNotFound if the id is absent
@@ -79,10 +93,21 @@ var _ InboxStore = (*messagingStore)(nil)
 // List returns a recipient's messages without any lifecycle side effect.
 // Unlike Inbox it never stamps delivered_at, so a UI can poll it
 // repeatedly. Results are ordered newest-first (created_at DESC, id DESC).
-func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f ListFilter) ([]Message, error) {
+//
+// Limit is clamped to [1,100] (0 → default 100, hard max 100) and Offset
+// is floored at 0. The returned ListPage.Total is a COUNT(*) over the same
+// WHERE clause, taken before LIMIT/OFFSET, so callers can paginate.
+func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f ListFilter) (ListPage, error) {
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
 	}
 
 	where := "to_urn=?"
@@ -106,26 +131,37 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		args = append(args, f.ThreadID)
 	}
 
+	page := ListPage{Limit: limit, Offset: offset}
+
+	// Total count over the same WHERE clause, before LIMIT/OFFSET.
+	if err := ms.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE `+where, args...,
+	).Scan(&page.Total); err != nil {
+		return ListPage{}, fmt.Errorf("messaging store: list count: %w", err)
+	}
+
 	rows, err := ms.db.QueryContext(ctx,
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,
-		        delivered_at, consumed_at, read_at, archived_at
-		 FROM messages WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT ?`,
-		append(args, limit)...)
+		        delivered_at, consumed_at, read_at, archived_at, canceled_at
+		 FROM messages WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...)
 	if err != nil {
-		return nil, fmt.Errorf("messaging store: list query: %w", err)
+		return ListPage{}, fmt.Errorf("messaging store: list query: %w", err)
 	}
 	defer rows.Close()
 
-	var out []Message
 	for rows.Next() {
 		m, err := scanMessage(rows.Scan)
 		if err != nil {
-			return nil, err
+			return ListPage{}, err
 		}
-		out = append(out, m)
+		page.Messages = append(page.Messages, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return ListPage{}, err
+	}
+	return page, nil
 }
 
 // ─── MarkRead / Archive / Unarchive ─────────────────────────────────────────
@@ -190,8 +226,9 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 
 // ─── Scan + payload projection ──────────────────────────────────────────────
 
-// scanMessage scans a 15-column messages row (the 13 envelope columns plus
-// read_at, archived_at) into a Message and derives its subject/body.
+// scanMessage scans a 16-column messages row (the 13 envelope columns plus
+// read_at, archived_at, canceled_at) into a Message and derives its
+// subject/body.
 func scanMessage(scan scanFunc) (Message, error) {
 	var (
 		m                                                     Message
@@ -199,11 +236,13 @@ func scanMessage(scan scanFunc) (Message, error) {
 		threadID, inReplyTo, payloadStr, contentType, metaStr sql.NullString
 		createdStr                                            string
 		deliveredStr, consumedStr, readStr, archivedStr       sql.NullString
+		canceledStr                                           sql.NullString
 	)
 	err := scan(
 		&m.ID, &kindStr, &channelStr, &fromURN, &toURN,
 		&threadID, &inReplyTo, &payloadStr, &contentType, &metaStr,
 		&createdStr, &deliveredStr, &consumedStr, &readStr, &archivedStr,
+		&canceledStr,
 	)
 	if err != nil {
 		return Message{}, err
@@ -238,6 +277,7 @@ func scanMessage(scan scanFunc) (Message, error) {
 	m.ConsumedAt = parseMsgNullTime(consumedStr)
 	m.ReadAt = parseMsgNullTime(readStr)
 	m.ArchivedAt = parseMsgNullTime(archivedStr)
+	m.CanceledAt = parseMsgNullTime(canceledStr)
 
 	m.Subject, m.Body = projectPayload(m.Payload)
 	return m, nil

@@ -17,8 +17,17 @@ func listTestAddr(id string) messaging.Address {
 	return messaging.Address{Kind: messaging.KindAgent, Authority: "list-test", ID: id}
 }
 
-// listMessages decodes GET /messages/list and returns the message slice.
-func listMessages(t *testing.T, base, query string) []map[string]any {
+// listPageBody is the decoded GET /messages/list response.
+type listPageBody struct {
+	Messages []map[string]any `json:"messages"`
+	Count    int              `json:"count"`
+	Total    int              `json:"total"`
+	Limit    int              `json:"limit"`
+	Offset   int              `json:"offset"`
+}
+
+// listPage decodes GET /messages/list and returns the full paged response.
+func listPage(t *testing.T, base, query string) listPageBody {
 	t.Helper()
 	resp, err := http.Get(base + "/messages/list?" + query)
 	if err != nil {
@@ -28,17 +37,20 @@ func listMessages(t *testing.T, base, query string) []map[string]any {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET list status = %d, want 200", resp.StatusCode)
 	}
-	var body struct {
-		Messages []map[string]any `json:"messages"`
-		Count    int              `json:"count"`
-	}
+	var body listPageBody
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
 	if body.Count != len(body.Messages) {
 		t.Errorf("count = %d, len(messages) = %d", body.Count, len(body.Messages))
 	}
-	return body.Messages
+	return body
+}
+
+// listMessages decodes GET /messages/list and returns the message slice.
+func listMessages(t *testing.T, base, query string) []map[string]any {
+	t.Helper()
+	return listPage(t, base, query).Messages
 }
 
 // postAction fires POST base+path and returns the status code.
@@ -160,5 +172,95 @@ func TestMessagesList_ErrorCases(t *testing.T) {
 	// read unknown id → 404.
 	if code := postAction(t, srv.URL, "/messages/no-such-id/read?as="+to.URN()); code != http.StatusNotFound {
 		t.Errorf("read unknown id = %d, want 404", code)
+	}
+}
+
+// TestMessagesList_Pagination covers the limit cap, offset paging, and the
+// total count over the HTTP surface.
+func TestMessagesList_Pagination(t *testing.T) {
+	srv, db := newMessageTestServer(t)
+	ms := db.MessagingStore()
+	ctx := context.Background()
+	to := listTestAddr("paged")
+
+	const n = 150
+	for i := 0; i < n; i++ {
+		if _, err := ms.Send(ctx, messaging.Envelope{
+			Kind: messaging.MsgKindNotice, From: listTestAddr("s"), To: to,
+		}); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+
+	// Requesting >100 → response is hard-capped at 100, total reports n.
+	capped := listPage(t, srv.URL, "to="+to.URN()+"&limit=500")
+	if len(capped.Messages) != 100 {
+		t.Errorf("limit=500: got %d messages, want 100", len(capped.Messages))
+	}
+	if capped.Limit != 100 {
+		t.Errorf("limit=500: limit field = %d, want 100", capped.Limit)
+	}
+	if capped.Total != n {
+		t.Errorf("limit=500: total = %d, want %d", capped.Total, n)
+	}
+
+	// Default (no limit) → 100 returned, limit field 100.
+	def := listPage(t, srv.URL, "to="+to.URN())
+	if def.Limit != 100 || len(def.Messages) != 100 {
+		t.Errorf("default: limit=%d len=%d, want 100/100", def.Limit, len(def.Messages))
+	}
+
+	// Offset paging: second page yields the remaining 50.
+	page2 := listPage(t, srv.URL, "to="+to.URN()+"&limit=100&offset=100")
+	if len(page2.Messages) != 50 {
+		t.Errorf("offset=100: got %d messages, want 50", len(page2.Messages))
+	}
+	if page2.Offset != 100 {
+		t.Errorf("offset=100: offset field = %d, want 100", page2.Offset)
+	}
+	if page2.Total != n {
+		t.Errorf("offset=100: total = %d, want %d", page2.Total, n)
+	}
+}
+
+// TestMessagesList_SurfacesCanceledAt verifies a canceled message is still
+// listed and carries a non-null canceled_at over the HTTP surface.
+func TestMessagesList_SurfacesCanceledAt(t *testing.T) {
+	srv, db := newMessageTestServer(t)
+	ms := db.MessagingStore()
+	ctx := context.Background()
+	to := listTestAddr("cancel-vis")
+
+	live, err := ms.Send(ctx, messaging.Envelope{
+		Kind: messaging.MsgKindNotice, From: listTestAddr("s"), To: to,
+	})
+	if err != nil {
+		t.Fatalf("send live: %v", err)
+	}
+	canceled, err := ms.Send(ctx, messaging.Envelope{
+		Kind: messaging.MsgKindNotice, From: listTestAddr("s"), To: to,
+	})
+	if err != nil {
+		t.Fatalf("send canceled: %v", err)
+	}
+	if code := postAction(t, srv.URL, "/messages/"+canceled.ID+"/cancel"); code != http.StatusNoContent {
+		t.Fatalf("POST cancel = %d, want 204", code)
+	}
+
+	msgs := listMessages(t, srv.URL, "to="+to.URN())
+	if len(msgs) != 2 {
+		t.Fatalf("list after cancel: got %d, want 2 (canceled not filtered)", len(msgs))
+	}
+	for _, m := range msgs {
+		switch m["id"] {
+		case canceled.ID:
+			if m["canceled_at"] == nil {
+				t.Errorf("canceled message: canceled_at = nil, want non-null")
+			}
+		case live.ID:
+			if m["canceled_at"] != nil {
+				t.Errorf("live message: canceled_at = %v, want null", m["canceled_at"])
+			}
+		}
 	}
 }

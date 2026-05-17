@@ -203,14 +203,20 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
 }
 
-// GET /messages/list?to=<urn>[&kind=request,notice][&thread_id=X][&limit=N]
-//                    [&include_archived=true][&unread_only=true]
+// GET /messages/list?to=<urn>[&kind=request,notice][&thread_id=X]
+//
+//	[&limit=N][&offset=N]
+//	[&include_archived=true][&unread_only=true]
 //
 // Non-destructive, repeatable listing of a recipient's messages. Unlike
 // /messages/inbox this never stamps delivered_at — a UI can poll it
 // without consuming the inbox. Archived messages are excluded unless
-// include_archived=true. Each message carries read_at/archived_at state
-// and a subject/body payload projection.
+// include_archived=true. Each message carries read_at/archived_at/
+// canceled_at state and a subject/body payload projection.
+//
+// Pagination: limit is clamped to [1,100] (default 100), offset floored at
+// 0. The response includes limit, offset, and total (the count of matching
+// messages before paging).
 func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -242,13 +248,24 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 			f.Limit = n
 		}
 	}
+	if os := q.Get("offset"); os != "" {
+		if n, convErr := strconv.Atoi(os); convErr == nil {
+			f.Offset = n
+		}
+	}
 
-	msgs, err := s.MessageStore.List(r.Context(), to, f)
+	page, err := s.MessageStore.List(r.Context(), to, f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "count": len(msgs)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": page.Messages,
+		"count":    len(page.Messages),
+		"total":    page.Total,
+		"limit":    page.Limit,
+		"offset":   page.Offset,
+	})
 }
 
 // recipientAction is the shared body for the recipient-scoped, idempotent

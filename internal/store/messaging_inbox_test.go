@@ -29,6 +29,16 @@ func inboxAddr(id string) messaging.Address {
 	return messaging.Address{Kind: messaging.KindAgent, Authority: "inbox-test", ID: id}
 }
 
+// mustPage runs List and fails the test on error, returning the page.
+func mustPage(t *testing.T, ms store.InboxStore, ctx context.Context, to messaging.Address, f store.ListFilter) store.ListPage {
+	t.Helper()
+	page, err := ms.List(ctx, to, f)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	return page
+}
+
 // sendTo persists a notice envelope to `to` with the given payload.
 func sendTo(t *testing.T, ms store.InboxStore, to messaging.Address, payload string) messaging.Envelope {
 	t.Helper()
@@ -60,14 +70,17 @@ func TestList_RepeatableNonDestructive(t *testing.T) {
 
 	// List three times — the result set must be identical and stable.
 	for call := 0; call < 3; call++ {
-		got, err := ms.List(ctx, to, store.ListFilter{})
+		page, err := ms.List(ctx, to, store.ListFilter{})
 		if err != nil {
 			t.Fatalf("list call %d: %v", call, err)
 		}
-		if len(got) != 3 {
-			t.Fatalf("list call %d: got %d messages, want 3", call, len(got))
+		if len(page.Messages) != 3 {
+			t.Fatalf("list call %d: got %d messages, want 3", call, len(page.Messages))
 		}
-		for _, m := range got {
+		if page.Total != 3 {
+			t.Errorf("list call %d: total = %d, want 3", call, page.Total)
+		}
+		for _, m := range page.Messages {
 			if m.DeliveredAt != nil {
 				t.Errorf("list call %d: message %s has delivered_at set — List must not consume", call, m.ID)
 			}
@@ -85,12 +98,12 @@ func TestList_RepeatableNonDestructive(t *testing.T) {
 	}
 
 	// After Inbox consumed them, List still returns them (delivered ≠ gone).
-	got, err := ms.List(ctx, to, store.ListFilter{})
+	page, err := ms.List(ctx, to, store.ListFilter{})
 	if err != nil {
 		t.Fatalf("list after inbox: %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("list after inbox: got %d, want 3", len(got))
+	if len(page.Messages) != 3 {
+		t.Fatalf("list after inbox: got %d, want 3", len(page.Messages))
 	}
 }
 
@@ -110,12 +123,12 @@ func TestMarkRead_IdempotentAndScoped(t *testing.T) {
 		t.Fatalf("second MarkRead (idempotent): %v", err)
 	}
 
-	got, err := ms.List(ctx, to, store.ListFilter{})
+	page, err := ms.List(ctx, to, store.ListFilter{})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(got) != 1 || got[0].ReadAt == nil {
-		t.Fatalf("expected one message with read_at set, got %+v", got)
+	if len(page.Messages) != 1 || page.Messages[0].ReadAt == nil {
+		t.Fatalf("expected one message with read_at set, got %+v", page.Messages)
 	}
 
 	// Unread-only filter now excludes it.
@@ -123,8 +136,8 @@ func TestMarkRead_IdempotentAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list unread: %v", err)
 	}
-	if len(unread) != 0 {
-		t.Errorf("unread_only list: got %d, want 0 after MarkRead", len(unread))
+	if len(unread.Messages) != 0 {
+		t.Errorf("unread_only list: got %d, want 0 after MarkRead", len(unread.Messages))
 	}
 
 	// Unknown id → ErrNotFound.
@@ -159,8 +172,8 @@ func TestArchive_ExcludedFromDefaultListAndRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != keep.ID {
-		t.Fatalf("default list: got %+v, want only %s", got, keep.ID)
+	if len(got.Messages) != 1 || got.Messages[0].ID != keep.ID {
+		t.Fatalf("default list: got %+v, want only %s", got.Messages, keep.ID)
 	}
 
 	// include_archived surfaces both.
@@ -168,8 +181,8 @@ func TestArchive_ExcludedFromDefaultListAndRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list include_archived: %v", err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("include_archived list: got %d, want 2", len(all))
+	if len(all.Messages) != 2 {
+		t.Fatalf("include_archived list: got %d, want 2", len(all.Messages))
 	}
 
 	// Unarchive restores it to the default list.
@@ -180,8 +193,8 @@ func TestArchive_ExcludedFromDefaultListAndRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list after unarchive: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("list after unarchive: got %d, want 2", len(got))
+	if len(got.Messages) != 2 {
+		t.Fatalf("list after unarchive: got %d, want 2", len(got.Messages))
 	}
 
 	// Recipient scoping holds for archive too.
@@ -220,14 +233,14 @@ func TestList_PayloadProjection(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list: %v", err)
 			}
-			if len(got) != 1 {
-				t.Fatalf("got %d messages, want 1", len(got))
+			if len(got.Messages) != 1 {
+				t.Fatalf("got %d messages, want 1", len(got.Messages))
 			}
-			if got[0].Subject != tc.wantSubject {
-				t.Errorf("Subject = %q, want %q", got[0].Subject, tc.wantSubject)
+			if got.Messages[0].Subject != tc.wantSubject {
+				t.Errorf("Subject = %q, want %q", got.Messages[0].Subject, tc.wantSubject)
 			}
-			if got[0].Body != tc.wantBody {
-				t.Errorf("Body = %q, want %q", got[0].Body, tc.wantBody)
+			if got.Messages[0].Body != tc.wantBody {
+				t.Errorf("Body = %q, want %q", got.Messages[0].Body, tc.wantBody)
 			}
 		})
 	}
@@ -253,15 +266,121 @@ func TestList_KindAndThreadFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list by kind: %v", err)
 	}
-	if len(byKind) != 1 || byKind[0].Kind != messaging.MsgKindRequest {
-		t.Fatalf("kind filter: got %+v, want one request", byKind)
+	if len(byKind.Messages) != 1 || byKind.Messages[0].Kind != messaging.MsgKindRequest {
+		t.Fatalf("kind filter: got %+v, want one request", byKind.Messages)
 	}
 
 	byThread, err := ms.List(ctx, to, store.ListFilter{ThreadID: "T2"})
 	if err != nil {
 		t.Fatalf("list by thread: %v", err)
 	}
-	if len(byThread) != 1 || byThread[0].ThreadID != "T2" {
-		t.Fatalf("thread filter: got %+v, want one T2 message", byThread)
+	if len(byThread.Messages) != 1 || byThread.Messages[0].ThreadID != "T2" {
+		t.Fatalf("thread filter: got %+v, want one T2 message", byThread.Messages)
+	}
+}
+
+// ─── Pagination: limit cap, offset paging, total count ──────────────────────
+
+func TestList_PaginationAndCap(t *testing.T) {
+	ms := openInboxDB(t)
+	ctx := context.Background()
+	to := inboxAddr("paged")
+
+	const n = 150
+	for i := 0; i < n; i++ {
+		sendTo(t, ms, to, "")
+	}
+
+	// Limit hard-caps at 100 even when a larger value is requested.
+	capped, err := ms.List(ctx, to, store.ListFilter{Limit: 500})
+	if err != nil {
+		t.Fatalf("list limit=500: %v", err)
+	}
+	if len(capped.Messages) != 100 {
+		t.Errorf("limit=500: got %d messages, want 100 (hard cap)", len(capped.Messages))
+	}
+	if capped.Limit != 100 {
+		t.Errorf("limit=500: page.Limit = %d, want 100", capped.Limit)
+	}
+	if capped.Total != n {
+		t.Errorf("limit=500: total = %d, want %d", capped.Total, n)
+	}
+
+	// Zero limit defaults to 100.
+	def, err := ms.List(ctx, to, store.ListFilter{})
+	if err != nil {
+		t.Fatalf("list default: %v", err)
+	}
+	if def.Limit != 100 || len(def.Messages) != 100 {
+		t.Errorf("default limit: page.Limit=%d len=%d, want 100/100", def.Limit, len(def.Messages))
+	}
+
+	// Offset paging: page 2 picks up the remaining 50 rows.
+	page2, err := ms.List(ctx, to, store.ListFilter{Limit: 100, Offset: 100})
+	if err != nil {
+		t.Fatalf("list offset=100: %v", err)
+	}
+	if len(page2.Messages) != 50 {
+		t.Errorf("offset=100: got %d messages, want 50", len(page2.Messages))
+	}
+	if page2.Offset != 100 || page2.Total != n {
+		t.Errorf("offset=100: offset=%d total=%d, want 100/%d", page2.Offset, page2.Total, n)
+	}
+
+	// Negative offset floors at 0; limit below 1 defaults to 100.
+	floored, err := ms.List(ctx, to, store.ListFilter{Limit: -5, Offset: -10})
+	if err != nil {
+		t.Fatalf("list negative args: %v", err)
+	}
+	if floored.Offset != 0 || floored.Limit != 100 {
+		t.Errorf("negative args: offset=%d limit=%d, want 0/100", floored.Offset, floored.Limit)
+	}
+
+	// Offset + limit yield non-overlapping windows that cover every row.
+	first := mustPage(t, ms, ctx, to, store.ListFilter{Limit: 75, Offset: 0})
+	second := mustPage(t, ms, ctx, to, store.ListFilter{Limit: 75, Offset: 75})
+	seen := map[string]bool{}
+	for _, m := range append(first.Messages, second.Messages...) {
+		if seen[m.ID] {
+			t.Errorf("paging overlap: id %s appeared twice", m.ID)
+		}
+		seen[m.ID] = true
+	}
+	if len(seen) != n {
+		t.Errorf("paging coverage: saw %d unique ids across two pages, want %d", len(seen), n)
+	}
+}
+
+// ─── canceled_at is surfaced (not filtered) ─────────────────────────────────
+
+func TestList_SurfacesCanceledAt(t *testing.T) {
+	ms := openInboxDB(t)
+	ctx := context.Background()
+	to := inboxAddr("cancel-vis")
+
+	live := sendTo(t, ms, to, "")
+	canceled := sendTo(t, ms, to, "")
+
+	if err := ms.Cancel(ctx, canceled.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	page, err := ms.List(ctx, to, store.ListFilter{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	// Canceled messages are NOT filtered out — both still listed.
+	if len(page.Messages) != 2 {
+		t.Fatalf("list after cancel: got %d, want 2 (canceled not filtered)", len(page.Messages))
+	}
+	byID := map[string]store.Message{}
+	for _, m := range page.Messages {
+		byID[m.ID] = m
+	}
+	if got := byID[canceled.ID]; got.CanceledAt == nil {
+		t.Errorf("canceled message %s: CanceledAt = nil, want non-nil", canceled.ID)
+	}
+	if got := byID[live.ID]; got.CanceledAt != nil {
+		t.Errorf("live message %s: CanceledAt = %v, want nil", live.ID, got.CanceledAt)
 	}
 }

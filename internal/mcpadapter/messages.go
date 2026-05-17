@@ -55,7 +55,8 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
 		mcp.WithBoolean("include_archived", mcp.Description("Include archived messages (default false)")),
 		mcp.WithBoolean("unread_only", mcp.Description("Return only unread messages (default false)")),
-		mcp.WithNumber("limit", mcp.Description("Max results (default 100)")),
+		mcp.WithNumber("limit", mcp.Description("Max results per page, clamped to [1,100] (default 100)")),
+		mcp.WithNumber("offset", mcp.Description("Number of messages to skip for pagination (default 0)")),
 	), a.handleMessageList)
 
 	a.addTool(s, mcp.NewTool("mux_message_thread",
@@ -254,11 +255,19 @@ func (a *Adapter) handleMessageList(ctx context.Context, req mcp.CallToolRequest
 	f.IncludeArchived = boolArg(req, "include_archived")
 	f.UnreadOnly = boolArg(req, "unread_only")
 	f.Limit = intArg(req, "limit", 0)
-	msgs, err := a.svc.Store.MessagingStore().List(ctx, to, f)
+	f.Offset = intArg(req, "offset", 0)
+	page, err := a.svc.Store.MessagingStore().List(ctx, to, f)
 	if err != nil {
 		return toolError("internal_error", err.Error()), nil
 	}
-	return toolJSON(map[string]any{"ok": true, "messages": msgs, "count": len(msgs)}), nil
+	return toolJSON(map[string]any{
+		"ok":       true,
+		"messages": page.Messages,
+		"count":    len(page.Messages),
+		"total":    page.Total,
+		"limit":    page.Limit,
+		"offset":   page.Offset,
+	}), nil
 }
 
 func (a *Adapter) handleMessageMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
