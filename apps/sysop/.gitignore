@@ -1,0 +1,31 @@
+# Go binary built from `make build`
+/tether_sysop
+
+# Go test + build artefacts
+*.exe
+*.test
+*.out
+coverage.out
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Built Sysop UI assets — produced by `make ui-build`, embedded by Go.
+# The dist/ directory and its .gitkeep are kept so `//go:embed` compiles.
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local

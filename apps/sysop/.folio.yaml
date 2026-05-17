@@ -1,0 +1,83 @@
+folio_version: "0.1"
+generated_at: 2026-05-16T00:10:05.408713-05:00
+generator: folio/0.1.0
+presets:
+  - id: sysop-ui
+    version: 1.0.0
+    source: bundled
+    resolved_path: bundled:presets/sysop-ui
+inputs:
+  base_path: /sysop
+  description: Tether sysop UI
+  github_owner: hollis-labs
+  go_webui_version: v0.1.0
+  project_name: tether_sysop
+  sysop_ui_version: v0.1.0
+computed:
+  app_title: TetherSysop
+  module_path: github.com/hollis-labs/tether_sysop
+  year: "2026"
+files:
+  .github/workflows/ci.yml:
+    preset: sysop-ui
+    digest_at_gen: sha256:05a63240a081d471016ef69d01fc3d532f08eed0deefd9431b63db2a8f9d57e8
+  .gitignore:
+    preset: sysop-ui
+    digest_at_gen: sha256:5a57cd8697ddbf27d96aa520909b04fc169845dab2e3eaab35bbd226cb311e66
+  LICENSE:
+    preset: sysop-ui
+    digest_at_gen: sha256:1986445efff599a321ae0f93151d161a8810d3035ddf8adc45832e1788c90c47
+  Makefile:
+    preset: sysop-ui
+    digest_at_gen: sha256:4e53ad60b68fc1a3d3c4e7e26b02c2355c3dc08846970014974b8c3763a8ea4e
+  README.md:
+    preset: sysop-ui
+    digest_at_gen: sha256:ce03c36d034b97eda92f14280d0a0d8c2b022fd46d0a7835e950b5d03248b432
+  cmd/tether_sysop/main.go:
+    preset: sysop-ui
+    digest_at_gen: sha256:da6ec830f1dda51dc1c5de271b39cd69f2b225e9728a18d16bba9385d2bedb6b
+  go.mod:
+    preset: sysop-ui
+    digest_at_gen: sha256:0bbc973583973ca08f27d50e58b3acfd5091c2705cff38a9d473bba87ce581a6
+  internal/webui/dist/.gitkeep:
+    preset: sysop-ui
+    digest_at_gen: sha256:b071f7f9b5cb72296d0e5030c17497ca641fbfdd7d413fd30fa85b74eb2c59cb
+  internal/webui/embed.go:
+    preset: sysop-ui
+    digest_at_gen: sha256:9d1899259ae4c94e7a76fa8d63ea5d3880b459212564fe4bf185a5a6f3d394b4
+  web/index.html:
+    preset: sysop-ui
+    digest_at_gen: sha256:47ce66da5b9fd53549366b2c2c893f91188ddd1d67f6bf95b7a28578963cde9e
+  web/package.json:
+    preset: sysop-ui
+    digest_at_gen: sha256:9a1c454a9e200ee691637d34b912efe8c4e1a952d95d17fa5477d886b6bb74d9
+  web/src/App.tsx:
+    preset: sysop-ui
+    digest_at_gen: sha256:183216562b770c9308c53de6b5fb96a400b486168183e527655fe29cacbdf295
+  web/src/api/client.ts:
+    preset: sysop-ui
+    digest_at_gen: sha256:2ed02217c9d68f55aa7e2cd5d00eee06c327ceb4808e7477bbbd1802d0eda617
+  web/src/api/context.tsx:
+    preset: sysop-ui
+    digest_at_gen: sha256:89705063afb7f832195e599209c6a5a78fb960d4d3a8752e1b71fce141b8e0e2
+  web/src/index.css:
+    preset: sysop-ui
+    digest_at_gen: sha256:76471f6b92fe2b098166858e2f48eb19ba276ba2ebadc55ac83712276dfa5f29
+  web/src/main.tsx:
+    preset: sysop-ui
+    digest_at_gen: sha256:899928b101dd268c2d3d93543e24090d51665f4cc36682ce71ce02f8ab48c5dc
+  web/src/pages/dashboard.tsx:
+    preset: sysop-ui
+    digest_at_gen: sha256:be08be3861e131a61ff9e1621e72d98745f06840da26bc5b0305d0e02564d9fc
+  web/tsconfig.json:
+    preset: sysop-ui
+    digest_at_gen: sha256:cedfb706483b4f605f648289e499c031cc92d2ce22755ec282bdc0dff9a4b42c
+  web/vite.config.ts:
+    preset: sysop-ui
+    digest_at_gen: sha256:ee4e87fc459e740b8b8d4c0578c44f2b9a5d37fb7b058bb5b45852da8f3e80e3
+sync_history:
+  - at: 2026-05-16T00:10:05.408713-05:00
+    operation: init
+    presets:
+      - id: sysop-ui
+        version: 1.0.0
