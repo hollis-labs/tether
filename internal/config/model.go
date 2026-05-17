@@ -45,6 +45,17 @@ type Defaults struct {
 	// resolves to "default". An agent's permissions.permission_mode
 	// overrides this per-agent. See config.EffectivePermissionMode.
 	PermissionMode string `yaml:"permission_mode"`
+	// LaunchEngine selects how the agentlaunch.LaunchPlan that feeds
+	// launcher.Compile is produced: "catalog" (default — the legacy
+	// bespoke static-catalog walk) or "spec" (the S5 LaunchSpec resolver,
+	// internal/specresolve). Empty resolves to "catalog". The
+	// TETHER_LAUNCH_ENGINE env var overrides this. See app.LaunchEngine.
+	LaunchEngine string `yaml:"launch_engine"`
+	// LaunchSpecsRoot is the LaunchSpec corpus directory the "spec" launch
+	// engine reads from. Empty resolves to <home>/.tether/launch-specs
+	// (specresolve.DefaultSpecsRoot). The TETHER_LAUNCH_SPECS_ROOT env var
+	// overrides this. Path expansion (~) is applied.
+	LaunchSpecsRoot string `yaml:"launch_specs_root"`
 }
 
 // MCPConfig holds per-project or per-launch MCP proxy settings that are

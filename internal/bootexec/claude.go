@@ -26,6 +26,14 @@ type Options struct {
 	MuxArgs          []string
 	MuxEnv           []string
 	ParentEnv        []string
+
+	// SpecPlan, when non-nil, is the agentlaunch.LaunchPlan that feeds
+	// launcher.Compile. The S5 "spec" launch engine sets it to the plan
+	// resolved by internal/specresolve; the legacy "catalog" engine leaves
+	// it nil, in which case PrepareClaudeTUI builds the plan from the
+	// launch.Plan via agentLaunchPlan exactly as before. The toggle changes
+	// only this plan's provenance — Compile/Prepare/Plant are unchanged.
+	SpecPlan *agentlaunch.LaunchPlan
 }
 
 // Prepared is the fully materialized direct CLI invocation.
@@ -60,7 +68,16 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		return nil, fmt.Errorf("create boot-exec workspace: %w", err)
 	}
 
-	lp := agentLaunchPlan(plan, workspaceDir)
+	var lp agentlaunch.LaunchPlan
+	if opts.SpecPlan != nil {
+		// S5 "spec" engine: use the caller's Spec-resolved plan. The daemon
+		// owns the materialized workspace dir; the resolver does not know
+		// it, so fold it on here just as the catalog path does.
+		lp = *opts.SpecPlan
+		lp.Workspace.WorkspaceDir = workspaceDir
+	} else {
+		lp = agentLaunchPlan(plan, workspaceDir)
+	}
 	lp.Workspace.TempPrefix = root
 	compiled, err := launcher.Compile(context.Background(), lp)
 	if err != nil {
