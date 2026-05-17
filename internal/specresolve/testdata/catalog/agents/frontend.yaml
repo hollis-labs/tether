@@ -1,0 +1,6 @@
+id: frontend
+name: Frontend Agent
+roles: [frontend]
+skills: []
+permissions:
+  network: true

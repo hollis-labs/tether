@@ -1,0 +1,7 @@
+id: claude-pty
+type: cli
+provider: claude
+runtime_kind: pty
+command: /usr/local/bin/claude
+bootstrap:
+  mode: pty

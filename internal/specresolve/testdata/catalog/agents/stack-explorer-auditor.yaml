@@ -1,0 +1,6 @@
+id: stack-explorer-auditor
+name: Stack Explorer Auditor
+roles: [auditor]
+skills: []
+permissions:
+  network: true

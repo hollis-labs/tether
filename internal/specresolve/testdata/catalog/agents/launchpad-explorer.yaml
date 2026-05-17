@@ -1,0 +1,6 @@
+id: launchpad-explorer
+name: Launchpad Explorer
+roles: [explorer]
+skills: []
+permissions:
+  network: true

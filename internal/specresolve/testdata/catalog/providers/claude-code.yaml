@@ -1,0 +1,9 @@
+id: claude-code
+type: cli
+provider: claude
+runtime_kind: streaming-stdio
+command: /usr/local/bin/claude
+args:
+  - --print
+bootstrap:
+  mode: streaming-stdio
