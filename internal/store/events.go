@@ -96,6 +96,28 @@ func (s *Store) EventsSince(sinceSeq int64) ([]events.Event, error) {
 	return scanEvents(rows)
 }
 
+// ListRecentEvents returns the newest events across all scopes, newest
+// first, up to limit (defaulted to 200, capped at 1000). A pure read for
+// operator / dashboard views — the events table is otherwise consumed via
+// EventsSince (replay) and Subscribe (live).
+func (s *Store) ListRecentEvents(limit int) ([]events.Event, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.Query(
+		`SELECT id, scope, session_id, at, kind, payload_json FROM events ORDER BY id DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
 // scanEvents is shared by EventsSince + ListEventsBySession. Row shape
 // is identical; only ORDER BY differs.
 func scanEvents(rows *sql.Rows) ([]events.Event, error) {

@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+@import '@hollis-labs/sysop-ui/theme.css';
+
+/* Tailwind v4 scans the kit's built output so the utility classes baked
+   into its components (bg-panel, text-status-*, …) are generated here. */
+@source '../node_modules/@hollis-labs/sysop-ui/dist';

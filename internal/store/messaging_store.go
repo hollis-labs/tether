@@ -39,11 +39,15 @@ type msgSubscription struct {
 	done   <-chan struct{}
 }
 
-// MessagingStore returns the singleton go-messaging Store backed by this
+// MessagingStore returns the singleton messaging store backed by this
 // SQLite store. The same instance is returned on every call so that
 // in-memory fan-out (Subscribe → Send) works correctly across all callers
 // within one process.
-func (s *Store) MessagingStore() messaging.Store {
+//
+// The returned InboxStore is a superset of messaging.Store: it adds the
+// non-destructive List/MarkRead/Archive/Unarchive surface (migration 0013)
+// alongside the atomic-delivery pull model.
+func (s *Store) MessagingStore() InboxStore {
 	s.msgOnce.Do(func() {
 		s.msgStore = &messagingStore{db: s.db}
 	})
