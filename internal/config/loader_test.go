@@ -140,6 +140,46 @@ func TestValidate_EmptySandboxProfile(t *testing.T) {
 	}
 }
 
+func TestValidate_InvalidAgentPermissionMode(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{PermissionMode: "loose"}}},
+		Providers: map[string]Provider{},
+		Launches:  map[string]Launch{},
+	}
+	if err := cat.Validate(); err == nil {
+		t.Error("expected error for invalid agent permission_mode, got nil")
+	}
+}
+
+func TestValidate_InvalidGlobalPermissionMode(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{},
+		Providers: map[string]Provider{},
+		Launches:  map[string]Launch{},
+	}
+	cat.Global.Catalog.Defaults.PermissionMode = "yolo"
+	if err := cat.Validate(); err == nil {
+		t.Error("expected error for invalid global defaults.permission_mode, got nil")
+	}
+}
+
+func TestValidate_AcceptedPermissionModes(t *testing.T) {
+	for _, m := range []string{"", PermissionModeDefault, PermissionModeBypass} {
+		cat := &Catalog{
+			Projects:  map[string]Project{},
+			Agents:    map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{PermissionMode: m}}},
+			Providers: map[string]Provider{},
+			Launches:  map[string]Launch{},
+		}
+		cat.Global.Catalog.Defaults.PermissionMode = m
+		if err := cat.Validate(); err != nil {
+			t.Errorf("permission_mode %q should be accepted, got: %v", m, err)
+		}
+	}
+}
+
 func TestValidate_LaunchInjectionRejectsUnsafeRelPaths(t *testing.T) {
 	base := func(relPath string, overlay bool) *Catalog {
 		injection := LaunchInjection{}

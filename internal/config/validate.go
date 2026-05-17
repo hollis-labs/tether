@@ -51,11 +51,17 @@ func (c *Catalog) Validate() error {
 			return fmt.Errorf("provider %q has unsupported type %q", id, typ)
 		}
 	}
+	if m := c.Global.Catalog.Defaults.PermissionMode; !ValidPermissionMode(m) {
+		return fmt.Errorf("global defaults.permission_mode %q is invalid (want %q or %q)", m, PermissionModeDefault, PermissionModeBypass)
+	}
 	for id, a := range c.Agents {
 		if name := a.Permissions.DefaultSandbox; name != "" {
 			if _, ok := c.SandboxProfiles[name]; !ok {
 				return fmt.Errorf("agent %q references unknown sandbox profile %q", id, name)
 			}
+		}
+		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
+			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}
 	}
 	return nil

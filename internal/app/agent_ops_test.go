@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,6 +171,59 @@ func TestApplyAgentOps_AgentInline_OverridesFile(t *testing.T) {
 	if strings.Contains(plan.BootPrompt, "from file") || strings.Contains(plan.BootPrompt, "from catalog") {
 		t.Errorf("lower-precedence content leaked: %q", plan.BootPrompt)
 	}
+}
+
+// TestApplyAgentOps_PermissionMode_CallerOverride pins that a caller-provided
+// agent (AgentInline) overriding permissions.permission_mode is honored:
+// mergeAgent carries the field, and applyPermissionMode reconciles both
+// plan.PermissionMode and the --dangerously-skip-permissions flag that
+// launch.Resolve baked in from the catalog agent. --mcp-config is left alone.
+func TestApplyAgentOps_PermissionMode_CallerOverride(t *testing.T) {
+	// Simulate the plan as launch.Resolve leaves it for a claude provider.
+	claudePlan := func(mode string, args ...string) *launch.Plan {
+		p := basePlan()
+		p.ProviderBrand = "claude"
+		p.PermissionMode = mode
+		p.Args = append([]string(nil), args...)
+		return p
+	}
+
+	t.Run("inline default beats catalog bypass — skip flag removed", func(t *testing.T) {
+		svc := buildTestService(t, map[string]config.Agent{
+			"test-agent": {ID: "test-agent", Permissions: config.AgentPermissions{PermissionMode: config.PermissionModeBypass}},
+		}, t.TempDir())
+		plan := claudePlan(config.PermissionModeBypass, "--mcp-config", ".mcp.json", "--dangerously-skip-permissions")
+		in := CreateSessionInput{LaunchID: "test-launch", AgentInline: `{"id":"i","permissions":{"permission_mode":"default"}}`}
+		if err := svc.applyAgentOps(plan, in); err != nil {
+			t.Fatal(err)
+		}
+		if plan.PermissionMode != config.PermissionModeDefault {
+			t.Errorf("PermissionMode = %q, want default", plan.PermissionMode)
+		}
+		if slices.Contains(plan.Args, "--dangerously-skip-permissions") {
+			t.Errorf("--dangerously-skip-permissions should be removed: %v", plan.Args)
+		}
+		if !slices.Contains(plan.Args, "--mcp-config") {
+			t.Errorf("--mcp-config must be preserved: %v", plan.Args)
+		}
+	})
+
+	t.Run("inline bypass beats catalog default — skip flag added", func(t *testing.T) {
+		svc := buildTestService(t, map[string]config.Agent{
+			"test-agent": {ID: "test-agent", Permissions: config.AgentPermissions{PermissionMode: config.PermissionModeDefault}},
+		}, t.TempDir())
+		plan := claudePlan(config.PermissionModeDefault, "--mcp-config", ".mcp.json")
+		in := CreateSessionInput{LaunchID: "test-launch", AgentInline: `{"id":"i","permissions":{"permission_mode":"bypass"}}`}
+		if err := svc.applyAgentOps(plan, in); err != nil {
+			t.Fatal(err)
+		}
+		if plan.PermissionMode != config.PermissionModeBypass {
+			t.Errorf("PermissionMode = %q, want bypass", plan.PermissionMode)
+		}
+		if !slices.Contains(plan.Args, "--dangerously-skip-permissions") {
+			t.Errorf("--dangerously-skip-permissions should be added: %v", plan.Args)
+		}
+	})
 }
 
 func TestApplyAgentOps_BootProfile_PopulatesMCPServers(t *testing.T) {

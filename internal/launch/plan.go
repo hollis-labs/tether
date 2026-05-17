@@ -12,6 +12,13 @@ type Plan struct {
 	ProviderID      string   `json:"provider_id"`
 	ProviderBrand   string   `json:"provider_brand,omitempty"`
 	RuntimeKind     string   `json:"runtime_kind,omitempty"`
+	// PermissionMode is the resolved Claude Code permission posture for the
+	// launched agent ("bypass" or "default"), computed by the launch
+	// resolver from the agent's permissions.permission_mode falling back to
+	// global defaults. For claude providers the resolver also threads the
+	// concrete CLI flags into Args; this field records the decision for
+	// inspection and for non-claude providers that may map it differently.
+	PermissionMode  string   `json:"permission_mode,omitempty"`
 	RepoRoot        string   `json:"repo_root"`
 	WorkRoot        string   `json:"work_root,omitempty"`
 	WriteHome       string   `json:"write_home"`
