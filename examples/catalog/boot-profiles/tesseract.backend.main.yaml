@@ -1,0 +1,48 @@
+id: tesseract.backend.main
+display_name: "Tesseract — Backend"
+
+identity:
+  lineage_alias:   tesseract.backend.main
+  lineage_id:      ""
+  profile_id:      tesseract-backend
+  profile_version: 1
+  role:            backend
+  project:         tesseract
+  work_root:       ~/Projects-apps/tesseract
+  tracking_root:   ~/Projects-apps/agent-workspaces/execution/tesseract/
+  tesseract_primary:   "2026-04-19"
+
+slots:
+  agent:
+    type: role_summary
+    path: ~/.nanite/roles/domain/backend/worker.md
+
+  recap:
+    type: cmd
+    run: |
+      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/tesseract/boot-prompt.md" ]; then
+        head -80 "$HOME/Projects-apps/agent-workspaces/boot/tesseract/boot-prompt.md"
+      else
+        echo "(no recap available)"
+      fi
+    timeout: 5s
+
+  history:
+    type: cmd
+    run: "git -C ~/Projects-apps/tesseract log --oneline -20 2>/dev/null || echo '(git unavailable)'"
+    timeout: 5s
+
+  status:
+    type: cmd
+    run: "cd ~/Projects-apps/tesseract 2>/dev/null && git status --short -b 2>/dev/null"
+    timeout: 5s
+
+  memory:
+    type: cmd
+    run: |
+      echo "[ memory slot: configure tesseract recall for scope:tesseract.backend.main ]"
+    timeout: 3s
+
+  skills:
+    type: skill_index
+    limit: 6
