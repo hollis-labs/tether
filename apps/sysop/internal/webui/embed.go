@@ -11,7 +11,7 @@ import (
 )
 
 // BasePath is the URL prefix the Sysop UI is mounted at. Keep it in sync
-// with `base` in web/vite.config.ts.
+// with `base` in frontend/vite.config.ts.
 const BasePath = "/operations"
 
 // embedded holds the frontend build. `make ui-build` (vite) writes the

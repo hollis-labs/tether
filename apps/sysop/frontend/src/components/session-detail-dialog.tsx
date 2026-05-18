@@ -3,12 +3,21 @@ import {
   CopyableId,
   DetailDialog,
   DetailSection,
+  JsonViewer,
   StatusBadge,
   cn,
   formatRelativeTime,
 } from '@hollis-labs/sysop-ui'
 import type { SessionDetailInfo } from '../api/client'
-import { highlightJson } from './json-payload'
+
+/** Parse a stored JSON string to a value; fall back to the raw string. */
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -129,9 +138,7 @@ export function SessionDetailDialog({
 
           <DetailSection title="Launch Plan">
             {detail.launch_plan ? (
-              <pre className="overflow-x-auto rounded-md border border-border bg-panel px-4 py-3 font-mono text-[11px] leading-5 text-text-subtle">
-                {highlightJson(detail.launch_plan)}
-              </pre>
+              <JsonViewer value={parseJson(detail.launch_plan)} />
             ) : (
               <p className="text-[12px] text-text-subtle">No launch plan stored for this session.</p>
             )}

@@ -5,36 +5,23 @@ import {
   CopyableId,
   DataTable,
   EmptyState,
+  ListPageLayout,
+  Pill,
   SummaryCards,
+  TabStrip,
   cn,
   formatRelativeTime,
   type ColumnDef,
+  type TabStripItem,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
 import type { EventInfo, ToolCallInfo } from '../api/client'
-import { TabStrip, type TabItem } from '../components/tab-strip'
 import { JsonModal, PayloadActions, PayloadSummary } from '../components/json-payload'
 
 type TabKey = 'events' | 'tool-calls'
 
 /** Open payload in the shared JSON modal. */
 type ViewPayload = { title: string; raw: string }
-
-/** Small ok/error pill — colored from the shared status tokens. */
-function OkPill({ ok }: { ok: boolean }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider',
-        ok
-          ? 'border-status-done/40 bg-status-done/10 text-status-done'
-          : 'border-status-blocked/40 bg-status-blocked/10 text-status-blocked',
-      )}
-    >
-      {ok ? 'ok' : 'error'}
-    </span>
-  )
-}
 
 export function ActivityPage() {
   const api = useApi()
@@ -160,7 +147,9 @@ export function ActivityPage() {
       {
         key: 'ok',
         header: 'Result',
-        cell: (t) => <OkPill ok={t.ok} />,
+        cell: (t) => (
+          <Pill tone={t.ok ? 'success' : 'danger'}>{t.ok ? 'ok' : 'error'}</Pill>
+        ),
         sortValue: (t) => (t.ok ? 1 : 0),
       },
       {
@@ -182,9 +171,19 @@ export function ActivityPage() {
   const toolCallList = toolCalls ?? []
   const toolErrors = toolCallList.filter((t) => !t.ok).length
 
-  const tabs: TabItem<TabKey>[] = [
-    { key: 'events', label: 'Events', icon: Activity, count: eventList.length },
-    { key: 'tool-calls', label: 'Tool Calls', icon: Wrench, count: toolCallList.length },
+  const tabs: TabStripItem<TabKey>[] = [
+    {
+      key: 'events',
+      label: 'Events',
+      icon: <Activity className="h-3.5 w-3.5" />,
+      count: eventList.length,
+    },
+    {
+      key: 'tool-calls',
+      label: 'Tool Calls',
+      icon: <Wrench className="h-3.5 w-3.5" />,
+      count: toolCallList.length,
+    },
   ]
 
   const summaryCards =
@@ -225,28 +224,32 @@ export function ActivityPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <TabStrip
-        tabs={tabs}
-        active={tab}
-        onSelect={setTab}
-        actions={
-          <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
+    <>
+      <ListPageLayout
+        header={null}
+        scrollRef={scrollRef}
+        tabs={
+          <TabStrip
+            tabs={tabs}
+            value={tab}
+            onChange={setTab}
+            actions={
+              <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                Refresh
+              </Button>
+            }
+          />
         }
-      />
-
-      <SummaryCards cards={summaryCards} />
-
-      <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-        {tab === 'events'
-          ? 'Session, daemon, and broker lifecycle events — newest first (latest 500).'
-          : 'MCP proxy tool-call telemetry — newest first (ring buffer, latest 500).'}
-      </p>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        summary={<SummaryCards cards={summaryCards} />}
+        filters={
+          <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
+            {tab === 'events'
+              ? 'Session, daemon, and broker lifecycle events — newest first (latest 500).'
+              : 'MCP proxy tool-call telemetry — newest first (ring buffer, latest 500).'}
+          </p>
+        }
+      >
         {tab === 'events' ? (
           <DataTable
             items={eventList}
@@ -286,7 +289,7 @@ export function ActivityPage() {
             }
           />
         )}
-      </div>
+      </ListPageLayout>
 
       <JsonModal
         open={payloadView !== null}
@@ -294,6 +297,6 @@ export function ActivityPage() {
         title={payloadView?.title ?? ''}
         raw={payloadView?.raw ?? ''}
       />
-    </div>
+    </>
   )
 }

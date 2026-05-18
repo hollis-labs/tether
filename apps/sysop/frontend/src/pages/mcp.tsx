@@ -5,32 +5,19 @@ import {
   CopyableId,
   DataTable,
   EmptyState,
+  ListPageLayout,
+  Pill,
   SummaryCards,
+  TabStrip,
   cn,
   formatRelativeTime,
   type ColumnDef,
+  type TabStripItem,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
 import type { MCPServerInfo, MCPToolInfo } from '../api/client'
-import { TabStrip, type TabItem } from '../components/tab-strip'
 
 type TabKey = 'servers' | 'tools'
-
-/** Small colored pill from the shared status tokens. */
-function Pill({ tone, children }: { tone: 'on' | 'off'; children: React.ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider',
-        tone === 'on'
-          ? 'border-status-done/40 bg-status-done/10 text-status-done'
-          : 'border-border bg-panel-2/50 text-text-subtle',
-      )}
-    >
-      {children}
-    </span>
-  )
-}
 
 const serverColumns: ColumnDef<MCPServerInfo>[] = [
   {
@@ -69,13 +56,22 @@ const serverColumns: ColumnDef<MCPServerInfo>[] = [
   {
     key: 'token',
     header: 'Token',
-    cell: (s) => (s.has_token ? <Pill tone="on">set</Pill> : <span className="text-[11px] text-text-subtle">—</span>),
+    cell: (s) =>
+      s.has_token ? (
+        <Pill tone="success">set</Pill>
+      ) : (
+        <span className="text-[11px] text-text-subtle">—</span>
+      ),
     sortValue: (s) => (s.has_token ? 1 : 0),
   },
   {
     key: 'enabled',
     header: 'State',
-    cell: (s) => <Pill tone={s.enabled ? 'on' : 'off'}>{s.enabled ? 'enabled' : 'disabled'}</Pill>,
+    cell: (s) => (
+      <Pill tone={s.enabled ? 'success' : 'neutral'}>
+        {s.enabled ? 'enabled' : 'disabled'}
+      </Pill>
+    ),
     sortValue: (s) => (s.enabled ? 1 : 0),
   },
 ]
@@ -203,9 +199,19 @@ export function MCPPage() {
   const totalCalls = useMemo(() => toolList.reduce((n, t) => n + t.calls, 0), [toolList])
   const totalErrors = useMemo(() => toolList.reduce((n, t) => n + t.errors, 0), [toolList])
 
-  const tabs: TabItem<TabKey>[] = [
-    { key: 'servers', label: 'Servers', icon: Plug, count: serverList.length },
-    { key: 'tools', label: 'Tools', icon: Wrench, count: toolList.length },
+  const tabs: TabStripItem<TabKey>[] = [
+    {
+      key: 'servers',
+      label: 'Servers',
+      icon: <Plug className="h-3.5 w-3.5" />,
+      count: serverList.length,
+    },
+    {
+      key: 'tools',
+      label: 'Tools',
+      icon: <Wrench className="h-3.5 w-3.5" />,
+      count: toolList.length,
+    },
   ]
 
   const summaryCards =
@@ -238,28 +244,31 @@ export function MCPPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <TabStrip
-        tabs={tabs}
-        active={tab}
-        onSelect={setTab}
-        actions={
-          <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
-        }
-      />
-
-      <SummaryCards cards={summaryCards} />
-
-      <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-        {tab === 'servers'
-          ? 'Upstream MCP servers from the catalog (mcp-servers/*.yaml). Live connection status is daemon-only — pending CW-20260517-0047.'
-          : 'Tool usage aggregated from the MCP proxy ring buffer (latest 500 calls).'}
-      </p>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+    <ListPageLayout
+      header={null}
+      scrollRef={scrollRef}
+      tabs={
+        <TabStrip
+          tabs={tabs}
+          value={tab}
+          onChange={setTab}
+          actions={
+            <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              Refresh
+            </Button>
+          }
+        />
+      }
+      summary={<SummaryCards cards={summaryCards} />}
+      filters={
+        <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
+          {tab === 'servers'
+            ? 'Upstream MCP servers from the catalog (mcp-servers/*.yaml). Live connection status is daemon-only — pending CW-20260517-0047.'
+            : 'Tool usage aggregated from the MCP proxy ring buffer (latest 500 calls).'}
+        </p>
+      }
+    >
         {tab === 'servers' ? (
           <DataTable
             items={serverList}
@@ -299,7 +308,6 @@ export function MCPPage() {
             }
           />
         )}
-      </div>
-    </div>
+    </ListPageLayout>
   )
 }

@@ -7,16 +7,18 @@ import {
   DetailDialog,
   DetailSection,
   EmptyState,
+  ListPageLayout,
   StatusBadge,
   SummaryCards,
+  TabStrip,
   Textarea,
   cn,
   formatRelativeTime,
   type ColumnDef,
+  type TabStripItem,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
 import type { MessageInfo } from '../api/client'
-import { TabStrip, type TabItem } from '../components/tab-strip'
 import { CopyButton, safeParseObject, scalarStr } from '../components/json-payload'
 
 type ScopeKey = 'user' | 'agent'
@@ -155,9 +157,9 @@ export function MessagingPage() {
   const unread = scoped.filter((m) => messageStatus(m) === 'unread').length
   const archived = scoped.filter((m) => m.archived_at).length
 
-  const tabs: TabItem<ScopeKey>[] = [
-    { key: 'user', label: 'User', icon: User, count: userCount },
-    { key: 'agent', label: 'Agents', icon: Bot, count: agentCount },
+  const tabs: TabStripItem<ScopeKey>[] = [
+    { key: 'user', label: 'User', icon: <User className="h-3.5 w-3.5" />, count: userCount },
+    { key: 'agent', label: 'Agents', icon: <Bot className="h-3.5 w-3.5" />, count: agentCount },
   ]
 
   function closeDialog() {
@@ -226,33 +228,39 @@ export function MessagingPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <TabStrip
-        tabs={tabs}
-        active={scope}
-        onSelect={setScope}
-        actions={
-          <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
+    <>
+      <ListPageLayout
+        header={null}
+        scrollRef={scrollRef}
+        tabs={
+          <TabStrip
+            tabs={tabs}
+            value={scope}
+            onChange={setScope}
+            actions={
+              <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                Refresh
+              </Button>
+            }
+          />
         }
-      />
-
-      <SummaryCards
-        cards={[
-          { label: scope === 'user' ? 'User Messages' : 'Agent Messages', value: scoped.length },
-          { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
-          { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
-        ]}
-      />
-
-      <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-        {scope === 'user' ? 'Messages addressed to users.' : 'Messages addressed to agents.'} Opening
-        a message marks it read; Archive soft-deletes it.
-      </p>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        summary={
+          <SummaryCards
+            cards={[
+              { label: scope === 'user' ? 'User Messages' : 'Agent Messages', value: scoped.length },
+              { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
+              { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
+            ]}
+          />
+        }
+        filters={
+          <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
+            {scope === 'user' ? 'Messages addressed to users.' : 'Messages addressed to agents.'}{' '}
+            Opening a message marks it read; Archive soft-deletes it.
+          </p>
+        }
+      >
         <DataTable
           items={scoped}
           columns={columns}
@@ -273,7 +281,7 @@ export function MessagingPage() {
             />
           }
         />
-      </div>
+      </ListPageLayout>
 
       <DetailDialog
         open={selected !== null}
@@ -362,6 +370,6 @@ export function MessagingPage() {
           </>
         )}
       </DetailDialog>
-    </div>
+    </>
   )
 }

@@ -65,11 +65,14 @@ export function App() {
 
   return (
     <div className="flex h-screen bg-bg text-text">
-      <NavRail items={nav} logo={<Boxes className="h-4 w-4" />} logoLabel="Tether" />
+      <NavRail
+        items={nav}
+        logo={<Boxes className="h-4 w-4" />}
+        logoLabel="Tether"
+        footerExtra={<ThemeSwitcher />}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <PageHeader title={TITLES[route]}>
-          <ThemeSwitcher />
-        </PageHeader>
+        <PageHeader title={TITLES[route]} />
         <main className="flex min-h-0 flex-1 flex-col">
           {route === 'overview' && <OverviewPage />}
           {route === 'operations' && <OperationsPage />}

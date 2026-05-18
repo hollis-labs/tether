@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { Button, EmptyState, cn } from '@hollis-labs/sysop-ui'
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Metric,
+  cn,
+} from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
 import type { OverviewInfo } from '../api/client'
 import { BarList, Sparkbars } from '../components/charts'
@@ -16,28 +25,17 @@ function formatDuration(s: number): string {
   return `${sec}s`
 }
 
+/** Dashboard panel — a titled content block on the kit's Card. */
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-md border border-border bg-panel/40 p-4">
-      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[.18em] text-text-muted">
-        {title}
-      </h2>
-      {children}
-    </section>
-  )
-}
-
-function Metric({ label, value, accent }: { label: string; value: ReactNode; accent?: string }) {
-  return (
-    <div className="min-w-[3.5rem]">
-      <div
-        className="font-mono text-[20px] font-semibold leading-tight tabular-nums text-text"
-        style={accent ? { color: accent } : undefined}
-      >
-        {value}
-      </div>
-      <div className="text-[10px] uppercase tracking-[.14em] text-text-subtle">{label}</div>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-[.18em] text-text-muted">
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   )
 }
 
@@ -110,7 +108,11 @@ export function OverviewPage() {
           <Panel title="Sessions">
             <MetricRow>
               <Metric label="Total" value={s?.total ?? '...'} />
-              <Metric label="Running" value={s?.running ?? '...'} accent="var(--color-status-doing)" />
+              <Metric
+                label="Running"
+                value={s?.running ?? '...'}
+                accentColor="var(--color-status-doing)"
+              />
               <Metric label="Ended" value={s?.ended ?? '...'} />
               <Metric label="Success" value={s ? `${s.success_pct}%` : '...'} />
               <Metric label="Avg" value={s ? formatDuration(s.avg_seconds) : '...'} />
@@ -128,7 +130,7 @@ export function OverviewPage() {
               <Metric
                 label="Errors"
                 value={t?.errors ?? '...'}
-                accent={t && t.errors > 0 ? 'var(--color-status-blocked)' : undefined}
+                accentColor={t && t.errors > 0 ? 'var(--color-status-blocked)' : undefined}
               />
               <Metric label="p50" value={t ? `${t.p50_ms}ms` : '...'} />
               <Metric label="p95" value={t ? `${t.p95_ms}ms` : '...'} />
@@ -149,7 +151,7 @@ export function OverviewPage() {
               <Metric
                 label="Unread"
                 value={m?.unread ?? '...'}
-                accent={m && m.unread > 0 ? 'var(--color-status-inbox)' : undefined}
+                accentColor={m && m.unread > 0 ? 'var(--color-status-inbox)' : undefined}
               />
               <Metric label="Archived" value={m?.archived ?? '...'} />
             </MetricRow>
@@ -191,7 +193,7 @@ export function OverviewPage() {
               <Metric
                 label="Catalog"
                 value={h?.status ?? '...'}
-                accent={
+                accentColor={
                   h?.status === 'ok'
                     ? 'var(--color-status-done)'
                     : h
