@@ -13,14 +13,19 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    // Pinned so the Cerberus `tether-sysop-ui-dev` resource and this dev
-    // server agree on a port. `strictPort` fails loudly on a collision
-    // rather than silently drifting to the next free port.
+    // Bind the IPv4 loopback explicitly. Vite's default host (`localhost`)
+    // resolves to IPv6 `::1` first on macOS, so the dev server is only
+    // reachable at `localhost:5177` and not `127.0.0.1:5177` — the form
+    // the Cerberus `tether-ui-dev` resource (and its console links) use.
+    host: '127.0.0.1',
+    // Pinned so the Cerberus `tether-ui-dev` resource and this dev server
+    // agree on a port. `strictPort` fails loudly on a collision rather
+    // than silently drifting to the next free port.
     port: 5177,
     strictPort: true,
     // `make ui-dev` proxies same-origin /api calls to `make run` on :8947.
     proxy: {
-      '/api': 'http://localhost:8947',
+      '/api': 'http://127.0.0.1:8947',
     },
   },
 })
