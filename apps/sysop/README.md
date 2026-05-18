@@ -12,7 +12,7 @@ embed harness. Scaffolded by `folio new sysop-ui`. Served at `/operations`.
 ```
 cmd/tether_sysop/   Go entrypoint — HTTP server + /api
 internal/webui/             //go:embed all:dist + the go-webui handler
-web/                        Vite + React frontend (the Sysop UI)
+frontend/                   Vite + React frontend (the Sysop UI)
   src/App.tsx               app shell — nav rail + page header
   src/pages/                one page per screen
   src/api/                  same-origin API client + typed context
@@ -31,11 +31,12 @@ embeds — so a single binary serves both the API and the UI.
 Two processes during development:
 
 ```sh
-make run      # Go server on :8080 (serves /api and the last UI build)
-make ui-dev   # Vite dev server with hot reload — proxies /api to :8080
+make run      # Go server on :8947 (serves /api and the last UI build)
+make ui-dev   # Vite dev server with hot reload — proxies /api to :8947
 ```
 
-Open the Vite dev server URL for the live-reloading UI.
+Open the Vite dev server URL — the app is served under `/operations/`,
+not the root path.
 
 ## Build a release binary
 
@@ -56,23 +57,24 @@ placeholder in place of the app.
 | `make build` | Build the Go binary |
 | `make all` | `ui-build` then `build` |
 | `make run` | Build and run the server |
+| `make install` | Build the embedded UI + install `tether_sysop` to `$GOBIN` |
 | `make test` / `make vet` | Go test / vet |
 
 ## Adding a page
 
 A page is generic kit chrome plus app-specific content. Add a component
-under `web/src/pages/`, then wire it into `web/src/App.tsx` (extend the
-`nav` array and the active-route switch). Add API endpoints to
-`web/src/api/client.ts`. See the
+under `frontend/src/pages/`, then wire it into `frontend/src/App.tsx`
+(extend the `nav` array and the active-route switch). Add API endpoints
+to `frontend/src/api/client.ts`. See the
 [`@hollis-labs/sysop-ui` README](https://github.com/hollis-labs/sysop-ui)
 for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 
 ## Dependencies
 
-- **`@hollis-labs/sysop-ui`** (`v0.1.0`) — the React
+- **`@hollis-labs/sysop-ui`** (`v0.4.0`) — the React
   kit + canonical theme. Consumed as a git dependency, pinned to a release
   tag. For local kit development, link a working copy:
-  `npm install file:../../libs/sysop-ui` from `web/`.
+  `npm install file:<path-to>/libs/sysop-ui` from `frontend/`.
 - **`github.com/hollis-labs/go-webui`** (`v0.1.0`) —
   the SPA-serving harness.
 

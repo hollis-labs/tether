@@ -5,11 +5,14 @@ import {
   CopyableId,
   DataTable,
   EmptyState,
+  ListPageLayout,
   StatusBadge,
   SummaryCards,
+  TabStrip,
   cn,
   formatRelativeTime,
   type ColumnDef,
+  type TabStripItem,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
 import type {
@@ -20,7 +23,6 @@ import type {
   SessionInfo,
   SessionsInfo,
 } from '../api/client'
-import { TabStrip, type TabItem } from '../components/tab-strip'
 import { SessionDetailDialog } from '../components/session-detail-dialog'
 
 type TabKey = 'launches' | 'sessions'
@@ -163,9 +165,19 @@ export function OperationsPage() {
   const sessionList = sessions?.sessions ?? []
   const runningSessions = sessionList.filter((s) => s.state === 'running').length
 
-  const tabs: TabItem<TabKey>[] = [
-    { key: 'launches', label: 'Launch Profiles', icon: Boxes, count: launches.length },
-    { key: 'sessions', label: 'Sessions', icon: Activity, count: sessionList.length },
+  const tabs: TabStripItem<TabKey>[] = [
+    {
+      key: 'launches',
+      label: 'Launch Profiles',
+      icon: <Boxes className="h-3.5 w-3.5" />,
+      count: launches.length,
+    },
+    {
+      key: 'sessions',
+      label: 'Sessions',
+      icon: <Activity className="h-3.5 w-3.5" />,
+      count: sessionList.length,
+    },
   ]
 
   const summaryCards =
@@ -199,32 +211,32 @@ export function OperationsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      {/* Tab strip — pinned. Refresh action sits on the right edge. */}
-      <TabStrip
-        tabs={tabs}
-        active={tab}
-        onSelect={setTab}
-        actions={
-          <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            Refresh
-          </Button>
+    <>
+      <ListPageLayout
+        header={null}
+        scrollRef={scrollRef}
+        tabs={
+          <TabStrip
+            tabs={tabs}
+            value={tab}
+            onChange={setTab}
+            actions={
+              <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                Refresh
+              </Button>
+            }
+          />
         }
-      />
-
-      {/* Metric strip — pinned, swaps with the active tab. */}
-      <SummaryCards cards={summaryCards} />
-
-      {/* Context caption — pinned. */}
-      <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-        {tab === 'launches'
-          ? health?.catalog_root ?? 'Loading catalog...'
-          : 'Latest 50 entries from the configured Tether state DB.'}
-      </p>
-
-      {/* Full-screen scrollable table for the active tab. */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        summary={<SummaryCards cards={summaryCards} />}
+        filters={
+          <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
+            {tab === 'launches'
+              ? health?.catalog_root ?? 'Loading catalog...'
+              : 'Latest 50 entries from the configured Tether state DB.'}
+          </p>
+        }
+      >
         {tab === 'launches' ? (
           <DataTable
             items={launches}
@@ -271,7 +283,7 @@ export function OperationsPage() {
             )}
           </>
         )}
-      </div>
+      </ListPageLayout>
 
       <SessionDetailDialog
         detail={detail}
@@ -279,6 +291,6 @@ export function OperationsPage() {
         error={detailError}
         onClose={closeSession}
       />
-    </div>
+    </>
   )
 }

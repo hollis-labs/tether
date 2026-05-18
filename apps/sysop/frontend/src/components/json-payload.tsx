@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Check, Copy, Eye } from 'lucide-react'
-import { Button, DetailDialog } from '@hollis-labs/sysop-ui'
+import { Button, DetailDialog, JsonViewer } from '@hollis-labs/sysop-ui'
 
 /** Parse `raw` as a JSON object, or null when it is not one. */
 export function safeParseObject(raw: string): Record<string, unknown> | null {
@@ -15,15 +15,6 @@ export function safeParseObject(raw: string): Record<string, unknown> | null {
   }
 }
 
-/** Pretty-print a JSON string; returns the input unchanged when not JSON. */
-function prettyJson(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
-}
-
 /** Compact display string for a decomposed payload value. */
 export function scalarStr(v: unknown): string {
   if (v === null) return 'null'
@@ -31,53 +22,6 @@ export function scalarStr(v: unknown): string {
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   const s = JSON.stringify(v)
   return s.length > 48 ? `${s.slice(0, 47)}…` : s
-}
-
-// Token regex: quoted string (maybe a key, when followed by `:`), keyword,
-// or number. Gaps between matches are punctuation / whitespace.
-const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g
-
-/** Render pretty-printed JSON as colorized React nodes (theme-token colors). */
-export function highlightJson(pretty: string): ReactNode[] {
-  const nodes: ReactNode[] = []
-  let last = 0
-  let key = 0
-  let m: RegExpExecArray | null
-  TOKEN.lastIndex = 0
-  while ((m = TOKEN.exec(pretty)) !== null) {
-    if (m.index > last) nodes.push(pretty.slice(last, m.index))
-    if (m[1] !== undefined) {
-      if (m[2] !== undefined) {
-        nodes.push(
-          <span key={key++} className="text-status-routed">
-            {m[1]}
-          </span>,
-        )
-        nodes.push(m[2])
-      } else {
-        nodes.push(
-          <span key={key++} className="text-status-done">
-            {m[1]}
-          </span>,
-        )
-      }
-    } else if (m[3] !== undefined) {
-      nodes.push(
-        <span key={key++} className="text-status-blocked">
-          {m[3]}
-        </span>,
-      )
-    } else if (m[4] !== undefined) {
-      nodes.push(
-        <span key={key++} className="text-status-inbox">
-          {m[4]}
-        </span>,
-      )
-    }
-    last = TOKEN.lastIndex
-  }
-  if (last < pretty.length) nodes.push(pretty.slice(last))
-  return nodes
 }
 
 /** Clipboard hook — `copied` flips true for 1.5s after a successful copy. */
@@ -180,7 +124,7 @@ export function PayloadSummary({ raw }: { raw: string }) {
   )
 }
 
-/** Modal showing a colorized, pretty-printed payload with a copy action. */
+/** Modal showing a syntax-highlighted payload with a copy action. */
 export function JsonModal({
   open,
   onClose,
@@ -192,7 +136,15 @@ export function JsonModal({
   title: string
   raw: string
 }) {
-  const pretty = useMemo(() => prettyJson(raw), [raw])
+  // The kit's JsonViewer pretty-prints + highlights any value; parse the
+  // payload to an object when possible, otherwise hand it the raw string.
+  const value = useMemo<unknown>(() => {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return raw
+    }
+  }, [raw])
   return (
     <DetailDialog
       open={open}
@@ -205,9 +157,9 @@ export function JsonModal({
         </div>
       }
     >
-      <pre className="overflow-x-auto rounded-md border border-border bg-panel px-4 py-3 font-mono text-[12px] leading-5 text-text-subtle">
-        {highlightJson(pretty)}
-      </pre>
+      <div className="px-4 py-3">
+        <JsonViewer value={value} />
+      </div>
     </DetailDialog>
   )
 }

@@ -8,8 +8,8 @@
 coverage.out
 
 # Frontend
-web/node_modules/
-web/dist/
+frontend/node_modules/
+frontend/dist/
 
 # Built Sysop UI assets — produced by `make ui-build`, embedded by Go.
 # The dist/ directory and its .gitkeep are kept so `//go:embed` compiles.
