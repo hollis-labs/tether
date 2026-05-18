@@ -7,6 +7,7 @@ toolchain go1.26.3
 require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/go-agent-sessions v0.9.5
+	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.2.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.1
 	github.com/hollis-labs/go-messaging v0.2.1
@@ -18,6 +19,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.49.1
 )
+
+require github.com/adrg/xdg v0.5.3 // indirect
 
 require (
 	github.com/creack/pty v1.1.24 // indirect

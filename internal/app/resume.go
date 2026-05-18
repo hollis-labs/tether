@@ -46,7 +46,9 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
 	if wsRoot == "" {
-		wsRoot = filepath.Join(config.Expand(s.Catalog.Global.Catalog.Defaults.WorkspaceRoot), plan.ProjectID)
+		// Explicit catalog workspace_root wins; cat.Paths supplies the
+		// go-apppaths fallback only when global.yaml omits the key.
+		wsRoot = filepath.Join(config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths), plan.ProjectID)
 	}
 	ws, err := workspace.Create(wsRoot, sessID, plan)
 	if err != nil {

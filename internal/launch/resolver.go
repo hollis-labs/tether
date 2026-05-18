@@ -76,7 +76,9 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	}
 	writeHome = config.Expand(writeHome)
 	if writeHome == "" {
-		writeHome = filepath.Join(config.Expand(cat.Global.Catalog.Defaults.WorkspaceRoot), proj.ID)
+		// Explicit catalog workspace_root wins; cat.Paths supplies the
+		// go-apppaths fallback only when global.yaml omits the key.
+		writeHome = filepath.Join(config.ResolveWorkspaceRoot(cat.Global.Catalog.Defaults, cat.Paths), proj.ID)
 	}
 
 	workspaceMode := l.Workspace.Mode

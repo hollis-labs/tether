@@ -397,7 +397,9 @@ func openStoreReadOnly(catalogRoot string) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbPath := config.Expand(cat.Global.Catalog.Defaults.StateDB)
+	// Explicit catalog state_db wins; cat.Paths supplies the go-apppaths
+	// fallback only when global.yaml omits the key.
+	dbPath := config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)
 	if dbPath == "" {
 		return nil, fmt.Errorf("global.defaults.state_db missing")
 	}

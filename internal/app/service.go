@@ -75,7 +75,9 @@ func New(catalogRoot string) (*Service, error) {
 	if err := cat.Validate(); err != nil {
 		return nil, err
 	}
-	dbPath := config.Expand(cat.Global.Catalog.Defaults.StateDB)
+	// Explicit catalog state_db wins; the go-apppaths Layout (cat.Paths)
+	// supplies the fallback only when global.yaml omits the key.
+	dbPath := config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)
 	if dbPath == "" {
 		return nil, fmt.Errorf("global.defaults.state_db missing")
 	}

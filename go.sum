@@ -1,3 +1,5 @@
+github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
+github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
@@ -23,6 +25,8 @@ github.com/hollis-labs/go-agent-launch v0.3.5 h1:YNffpuMtA/n0l1gaBSQxgtoyIFlBRTE
 github.com/hollis-labs/go-agent-launch v0.3.5/go.mod h1:LKS9xKT+zyckf42FMbUqfcLl7OwqEBEz/MgOXDc2aVs=
 github.com/hollis-labs/go-agent-sessions v0.9.5 h1:fGNtF4Ewtu20Wq1YUwwMu32ZjrTg3yBl9Cm02PnF+AE=
 github.com/hollis-labs/go-agent-sessions v0.9.5/go.mod h1:43q5MrOpmLhPviKG9/s4VX0hq4+XPv+dOqiBtI++6Po=
+github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
+github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-llm-contracts v0.2.0 h1:ypBqpsU2PkndUYaiw5+NLz86sZpD/bdo26JTXePfE2c=
 github.com/hollis-labs/go-llm-contracts v0.2.0/go.mod h1:msDaHCBEemyTbXhk0Q8lm5doK79aWK5VR/hdzjWgqbU=
 github.com/hollis-labs/go-llm-types v0.2.0 h1:xh0e5//SgIWAdN6PXqvl7r/y1dfdIcFRILQirx7y/GE=
