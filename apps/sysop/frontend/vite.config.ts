@@ -13,6 +13,11 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // Pinned so the Cerberus `tether-sysop-ui-dev` resource and this dev
+    // server agree on a port. `strictPort` fails loudly on a collision
+    // rather than silently drifting to the next free port.
+    port: 5177,
+    strictPort: true,
     // `make ui-dev` proxies same-origin /api calls to `make run` on :8947.
     proxy: {
       '/api': 'http://localhost:8947',
