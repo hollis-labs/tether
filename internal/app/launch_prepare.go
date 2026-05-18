@@ -19,6 +19,21 @@ func muxEnvMap(env map[string]string) map[string]string {
 	return map[string]string{"MUX_MCP_SERVERS": env["MUX_MCP_SERVERS"]}
 }
 
+// MuxMCPArgs builds the argv for the `mux mcp` server planted into a launched
+// worker's .mcp.json. Workers get a full-scope connection on purpose: an agent
+// that cannot reply to a message or launch a session is not sandboxed, it is
+// broken. The --token here is only the adapter's presence check — it is opaque
+// and unvalidated (see docs/mcp.md), not a secret. Meaningful per-call
+// authorization belongs in the broker, not in a launch-time scope flag.
+func MuxMCPArgs(catalogRoot string) []string {
+	return []string{
+		"--catalog", catalogRoot,
+		"mcp", "--proxy",
+		"--token", "tether-worker",
+		"--scopes", "session.write,message.write,catalog.write",
+	}
+}
+
 func mergeEnv(base []string, overlay map[string]string) []string {
 	if len(overlay) == 0 {
 		return base

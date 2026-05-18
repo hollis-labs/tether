@@ -243,7 +243,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 
 	prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 		MuxCommand: muxCommandPath(),
-		MuxArgs:    []string{"--catalog", s.CatalogRoot, "mcp", "--proxy"},
+		MuxArgs:    MuxMCPArgs(s.CatalogRoot),
 		MuxEnv:     muxEnvMap(plan.Env),
 	})
 	if err != nil {
