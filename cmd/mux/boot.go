@@ -189,7 +189,9 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 			muxCommand = exe
 		}
 		muxEnv := muxEnvFromPlan(plan.Env)
-		tempRoot := config.Expand(cat.Global.Catalog.Defaults.TempRoot)
+		// Explicit catalog temp_root wins; cat.Paths supplies the go-apppaths
+		// fallback (CacheDir) only when global.yaml omits the key.
+		tempRoot := config.ResolveTempRoot(cat.Global.Catalog.Defaults, cat.Paths)
 		if tempRoot != "" {
 			tempRoot = filepath.Join(tempRoot, "boot-exec")
 		}

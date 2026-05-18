@@ -41,11 +41,13 @@ bare directory delete would leave a stale worktree registration behind.`,
 		if err != nil {
 			return err
 		}
-		wsRoot := config.Expand(cat.Global.Catalog.Defaults.WorkspaceRoot)
+		// Explicit catalog values win; cat.Paths supplies the go-apppaths
+		// fallback only when global.yaml omits the corresponding key.
+		wsRoot := config.ResolveWorkspaceRoot(cat.Global.Catalog.Defaults, cat.Paths)
 		if wsRoot == "" {
 			return fmt.Errorf("workspace_root not configured in catalog")
 		}
-		dbPath := config.Expand(cat.Global.Catalog.Defaults.StateDB)
+		dbPath := config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)
 		if dbPath == "" {
 			return fmt.Errorf("state_db not configured in catalog")
 		}

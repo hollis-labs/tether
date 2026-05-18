@@ -1,6 +1,9 @@
 package config
 
-import "github.com/hollis-labs/go-sandbox/sandbox"
+import (
+	"github.com/hollis-labs/go-apppaths/paths"
+	"github.com/hollis-labs/go-sandbox/sandbox"
+)
 
 type Global struct {
 	Version string       `yaml:"version"`
@@ -226,4 +229,10 @@ type Catalog struct {
 	Providers       map[string]Provider
 	Launches        map[string]Launch
 	SandboxProfiles map[string]sandbox.Profile
+	// Paths is the go-apppaths Layout resolved by Load. It supplies the
+	// FALLBACK storage paths (state_db, workspace_root, temp_root) for the
+	// case where global.yaml omits the corresponding catalog default. The
+	// explicit catalog value, when set, always wins — see
+	// ResolveStateDB / ResolveWorkspaceRoot / ResolveTempRoot.
+	Paths paths.Layout
 }

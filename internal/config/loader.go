@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hollis-labs/go-apppaths/paths"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
@@ -76,6 +77,19 @@ func Load(catalogRoot string) (*Catalog, error) {
 		return nil, fmt.Errorf("load sandbox-profiles: %w", err)
 	}
 	cat.SandboxProfiles = profiles
+
+	// Resolve the go-apppaths Layout once per Load. It backs the FALLBACK
+	// storage paths (state_db / workspace_root / temp_root) used only when
+	// global.yaml omits the corresponding catalog default. WithoutMaterialize
+	// keeps a plain Load (including read-only commands and `mux path`) from
+	// creating ~/.local/share/tether/...; the actual consumers (store.Open,
+	// workspace.Materialize*) create the directories they need when the
+	// fallback path is reached.
+	layout, err := ResolveLayout(paths.WithoutMaterialize())
+	if err != nil {
+		return nil, fmt.Errorf("resolve layout: %w", err)
+	}
+	cat.Paths = layout
 
 	return cat, nil
 }
