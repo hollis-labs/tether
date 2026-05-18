@@ -3,14 +3,16 @@ module github.com/hollis-labs/tether/apps/sysop
 go 1.26.2
 
 require (
+	github.com/hollis-labs/go-messaging v0.2.1
 	github.com/hollis-labs/go-webui v0.1.0
 	github.com/hollis-labs/tether v0.0.0
 )
 
 require (
+	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/hollis-labs/go-messaging v0.2.1 // indirect
+	github.com/hollis-labs/go-apppaths v0.1.0 // indirect
 	github.com/hollis-labs/go-sandbox v0.2.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
