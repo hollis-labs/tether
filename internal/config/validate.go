@@ -54,6 +54,9 @@ func (c *Catalog) Validate() error {
 	if m := c.Global.Catalog.Defaults.PermissionMode; !ValidPermissionMode(m) {
 		return fmt.Errorf("global defaults.permission_mode %q is invalid (want %q or %q)", m, PermissionModeDefault, PermissionModeBypass)
 	}
+	if err := c.Global.Federation.Validate(); err != nil {
+		return err
+	}
 	for id, a := range c.Agents {
 		if name := a.Permissions.DefaultSandbox; name != "" {
 			if _, ok := c.SandboxProfiles[name]; !ok {

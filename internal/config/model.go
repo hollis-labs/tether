@@ -3,12 +3,19 @@ package config
 import (
 	"github.com/hollis-labs/go-apppaths/paths"
 	"github.com/hollis-labs/go-sandbox/sandbox"
+
+	"github.com/hollis-labs/tether/internal/federation"
 )
 
 type Global struct {
 	Version string       `yaml:"version"`
 	Catalog CatalogRoots `yaml:"catalog"`
 	Daemon  DaemonConfig `yaml:"daemon"`
+	// Federation is the authority-routing messaging block. Its zero value
+	// (enabled: false) is a standalone install — no peers, no routing,
+	// behavior identical to pre-federation Tether. See internal/federation
+	// and docs/messaging-federation.md.
+	Federation federation.Config `yaml:"federation"`
 }
 
 // DaemonConfig controls the long-lived muxd process. See ADR 0002 for the

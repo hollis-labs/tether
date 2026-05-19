@@ -21,6 +21,7 @@ import (
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
@@ -44,6 +45,12 @@ type Service struct {
 	Manager     *agentsessions.Manager
 	Bus         events.Bus
 	Broker      *broker.Service
+
+	// Federation is the authority-routing messaging Router, or nil when
+	// federation is disabled (the standalone default). When non-nil it
+	// decorates the local messaging store so envelopes addressed to a
+	// configured peer authority route cross-host. See internal/federation.
+	Federation *federation.Router
 
 	factories map[string]RuntimeFactory
 
@@ -114,6 +121,24 @@ func New(catalogRoot string) (*Service, error) {
 	evSink.SetManager(mgr)
 
 	brk := broker.NewService(db, bus)
+
+	// Compose the authority-routing federation Router over the local
+	// messaging store. Returns nil when federation is disabled (the
+	// standalone default) — the daemon then behaves exactly as before.
+	fedRouter, err := federation.BuildRouter(
+		cat.Global.Federation,
+		db.MessagingStore(),
+		federation.HTTPDialer(nil),
+	)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("federation: %w", err)
+	}
+	if fedRouter != nil {
+		log.Printf("federation: enabled — local authority %q, %d peer(s): %v",
+			fedRouter.LocalAuthority(), len(fedRouter.Authorities()), fedRouter.Authorities())
+	}
+
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
@@ -121,6 +146,7 @@ func New(catalogRoot string) (*Service, error) {
 		Manager:     mgr,
 		Bus:         bus,
 		Broker:      brk,
+		Federation:  fedRouter,
 		factories:   factories,
 	}, nil
 }
