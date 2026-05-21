@@ -426,7 +426,7 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 - [x] ADR 0041 lands, dated, sequential, linked from API docs.
 - [x] API docs cover all six endpoints with example payloads (including a partial-merge PATCH example).
 - [x] `docs/registry/overview.md` exists.
-- [ ] Ship notice envelope sent and message_id captured in the sprint close notes. _(Sent below — msg_id at sprint-close.)_
+- [x] Ship notice envelope sent and message_id captured in the sprint close notes. _(msg_id `019e48a3-8f0b-7000-aab8-12f4f35626dc`.)_
 
 ---
 
@@ -450,8 +450,8 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 - [x] `make check` green.
 - [x] ADR 0041 committed.
 - [ ] Branch FF-merged to `main`, branch deleted. _(Pending operator review of the 10-commit series on `feature/v060-01-registry-foundation`.)_
-- [ ] Ship notice sent to `msg://agent/agent-mux/agridd-keeper`; message_id recorded here.
-- [ ] CW-20260520-0046 (agridd FU-31) notified via peer-link.
+- [x] Ship notice sent to `msg://agent/agent-mux/agridd-keeper`; message_id `019e48a3-8f0b-7000-aab8-12f4f35626dc` (sent 2026-05-21 UTC from `msg://agent/agent-mux/tether-registry-design`, the sprint authority).
+- [x] CW-20260520-0046 (agridd FU-31) notified via peer-link. _(Torque comment id 1841.)_
 
 ---
 
