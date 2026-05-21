@@ -10,12 +10,12 @@ import (
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/launchresolve"
 )
 
 // DefaultSpecsRoot is the documented default location of the LaunchSpec
 // corpus, relative to the user home directory. It mirrors the catalog
-// convention internal/registry uses (~/.tether/catalog) — the launch-spec
+// convention internal/launchresolve uses (~/.tether/catalog) — the launch-spec
 // corpus is a sibling directory under the same root.
 //
 // It is a DEFAULT, not a hardcode: NewResolver always accepts an explicit
@@ -55,7 +55,7 @@ var (
 // the S5 Spec path. It is constructed once with NewResolver and is safe to
 // reuse across launches: the trust authorizer and call resolver are
 // stateless, and runner/agent resolution dispatches through the
-// concurrency-safe *registry.Registry.
+// concurrency-safe *launchresolve.Registry.
 type Resolver struct {
 	// specsRoot is the absolute path of the LaunchSpec corpus directory
 	// (containing launch-assembly.yaml and launches/).
@@ -63,7 +63,7 @@ type Resolver struct {
 
 	// reg resolves the bag's runner input to a RuntimeBinding and the
 	// agent input to an AgentSpec.
-	reg *registry.Registry
+	reg *launchresolve.Registry
 
 	// authorizer gates call/cmd var sources (D6c).
 	authorizer agentlaunch.TrustAuthorizer
@@ -115,7 +115,7 @@ func WithTrustAuthorizer(ta agentlaunch.TrustAuthorizer) Option {
 //
 // Construction performs no I/O beyond resolving the home directory for the
 // default specsRoot; the corpus files are read lazily by Resolve.
-func NewResolver(reg *registry.Registry, opts ...Option) (*Resolver, error) {
+func NewResolver(reg *launchresolve.Registry, opts ...Option) (*Resolver, error) {
 	if reg == nil {
 		return nil, errors.New("specresolve: NewResolver requires a non-nil registry")
 	}
@@ -358,7 +358,7 @@ func (r *Resolver) resolveVars(ctx context.Context, spec agentlaunch.LaunchSpec,
 func (r *Resolver) resolveRunner(inputs map[string]any) (agentlaunch.RuntimeBinding, error) {
 	runner := stringInput(inputs, agentlaunch.LaunchInputRunner)
 	if runner == "" {
-		return agentlaunch.RuntimeBinding{}, fmt.Errorf("%w: bag supplies no runner", registry.ErrRuntimeBindingNotFound)
+		return agentlaunch.RuntimeBinding{}, fmt.Errorf("%w: bag supplies no runner", launchresolve.ErrRuntimeBindingNotFound)
 	}
 	binding, err := r.reg.ResolveRuntimeBinding(runner)
 	if err != nil {
@@ -375,7 +375,7 @@ func (r *Resolver) resolveRunner(inputs map[string]any) (agentlaunch.RuntimeBind
 func (r *Resolver) resolveAgent(inputs map[string]any) (agentlaunch.AgentSpec, error) {
 	agentID := stringInput(inputs, "agent")
 	if agentID == "" {
-		return agentlaunch.AgentSpec{}, fmt.Errorf("%w: bag supplies no agent", registry.ErrAgentNotFound)
+		return agentlaunch.AgentSpec{}, fmt.Errorf("%w: bag supplies no agent", launchresolve.ErrAgentNotFound)
 	}
 	spec, err := r.reg.ResolveAgent(agentID)
 	if err != nil {

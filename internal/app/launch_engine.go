@@ -7,7 +7,7 @@ import (
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"
 )
 
@@ -79,7 +79,7 @@ func (s *Service) launchEngine() LaunchEngine {
 
 // specResolverFor lazily constructs the S5 Spec-path resolver and returns
 // it. Construction happens at most once per Service: it opens a
-// *registry.Registry over the Service's catalog root and wraps it in a
+// *launchresolve.Registry over the Service's catalog root and wraps it in a
 // *specresolve.Resolver pointed at the configured specsRoot. Both are
 // concurrency-safe after construction and reused across every launch.
 //
@@ -87,7 +87,7 @@ func (s *Service) launchEngine() LaunchEngine {
 // touches it, so a Service running the default engine pays no cost.
 func (s *Service) specResolverFor() (*specresolve.Resolver, error) {
 	s.specResolverOnce.Do(func() {
-		reg, err := registry.OpenAt(registry.Options{CatalogRoot: s.CatalogRoot})
+		reg, err := launchresolve.OpenAt(launchresolve.Options{CatalogRoot: s.CatalogRoot})
 		if err != nil {
 			s.specResolverErr = err
 			return

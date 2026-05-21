@@ -1,4 +1,4 @@
-package registry
+package launchresolve
 
 import (
 	"path/filepath"

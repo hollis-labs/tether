@@ -11,7 +11,7 @@ import (
 
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 
-	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/launchresolve"
 )
 
 // corpusRoot is the in-repo S5 LaunchSpec corpus. It lives at the repo
@@ -40,9 +40,9 @@ func catalogRoot(t *testing.T) string {
 }
 
 // openRegistry builds a Registry over the fixture catalog.
-func openRegistry(t *testing.T) *registry.Registry {
+func openRegistry(t *testing.T) *launchresolve.Registry {
 	t.Helper()
-	reg, err := registry.OpenAt(registry.Options{CatalogRoot: catalogRoot(t)})
+	reg, err := launchresolve.OpenAt(launchresolve.Options{CatalogRoot: catalogRoot(t)})
 	if err != nil {
 		t.Fatalf("open fixture registry: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestResolve_UnresolvableLaunchID(t *testing.T) {
 func TestResolve_UnresolvableRunner(t *testing.T) {
 	// Build a registry over a catalog that has agents but NO providers,
 	// so every runner is unresolvable.
-	reg, err := registry.OpenAt(registry.Options{
+	reg, err := launchresolve.OpenAt(launchresolve.Options{
 		CatalogRoot: filepath.Join("testdata", "catalog-no-providers"),
 	})
 	if err != nil {
@@ -223,7 +223,7 @@ func TestResolve_UnresolvableRunner(t *testing.T) {
 		t.Fatalf("NewResolver: %v", err)
 	}
 	_, err = r.Resolve("tether-claude", agentlaunch.FrontEndAutonomous)
-	if !errors.Is(err, registry.ErrRuntimeBindingNotFound) {
+	if !errors.Is(err, launchresolve.ErrRuntimeBindingNotFound) {
 		t.Fatalf("Resolve with no runner error = %v, want ErrRuntimeBindingNotFound", err)
 	}
 }

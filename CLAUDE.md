@@ -33,12 +33,14 @@ before sending any ship notice or transitioning a Torque task to review.
   how pieces wire together.
 - **`internal/api/`** — HTTP/UDS daemon API. Typed error envelope per ADR
   0010. New endpoints (e.g. `/registry/*` from v060-01) extend this.
-- **`internal/registry/` — TWO MEANINGS** (resolved at v060-01 Task 1):
-  - The pre-v060-01 `internal/registry/` was the **launch-resolution layer**
-    over `~/.tether/catalog/*` (read-only YAML walk for the launch path).
-  - The post-v060-01 `internal/registry/` is the **federation directory
-    service** (Register/Lookup/Search/UpdateSelf/Deregister/Sync). One of
-    them is renamed in v060-01 Task 1; check `doc.go` for the current shape.
+- **`internal/registry/`** — **federation directory service** (the v0.6
+  epic). Register/Lookup/Search/UpdateSelf/Deregister/Sync over a thin
+  identity table; substrates own the ops config behind `callback`. New in
+  v060-01.
+- **`internal/launchresolve/`** — **launch-resolution layer** over
+  `~/.tether/catalog/*` (read-only YAML walk for the launch path). The
+  pre-v060-01 `internal/registry/` package was renamed here in
+  v060-01 Task 1 to free the `registry` name for the directory service.
 - **`internal/mcpadapter/`** — MCP stdio adapter + proxy aggregation. New
   registry MCP tools (`tether_registry_*`) land here per v060-01 Task 6.
 - **`internal/store/`** — SQLite migrator + storage primitives.
