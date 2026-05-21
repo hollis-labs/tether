@@ -35,9 +35,13 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ErrInvalidRequest is returned for caller-supplied input that violates a
@@ -64,19 +68,54 @@ type storageBackend interface {
 	RemoveSkills(ctx context.Context, urn string, names []string) error
 	RemoveLinks(ctx context.Context, urn string, links []Link) error
 	SoftDelete(ctx context.Context, urn string) error
+	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 }
 
 // Service is the registry service core: validation, URN minting, and the
 // UpdateSelf partial-merge implementation. Hold one per process.
+//
+// Resolvers (T-v060-01-04). The resolvers map dispatches Sync to a Resolver
+// keyed on the row's callback Scheme. Callers wire resolvers at
+// construction time via WithResolver — see NewService. The map is read-
+// only after construction; v1 has no hot-swap or dynamic registration.
 type Service struct {
-	storage storageBackend
+	storage   storageBackend
+	resolvers map[string]Resolver
+}
+
+// ServiceOption configures a Service at construction time. v1 ships
+// WithResolver; future options (rate limit, audit hook) extend the same
+// shape without breaking the variadic signature.
+type ServiceOption func(*Service)
+
+// WithResolver registers a Resolver under its Scheme() key. Multiple
+// WithResolver options compose; a later WithResolver for the same scheme
+// replaces the earlier one (last-wins).
+func WithResolver(r Resolver) ServiceOption {
+	return func(s *Service) {
+		if s.resolvers == nil {
+			s.resolvers = map[string]Resolver{}
+		}
+		s.resolvers[r.Scheme()] = r
+	}
 }
 
 // NewService binds a Service to a production *Storage. Tests bypass this
 // constructor via export_test.go to inject a stub storageBackend (used
 // only for URN-collision-retry coverage).
-func NewService(s *Storage) *Service {
-	return &Service{storage: s}
+//
+// Optional ServiceOptions configure Sync resolvers — without at least one
+// Resolver, Sync returns ErrNoResolver. Production wiring should pass
+// WithResolver(NewFileResolver(...)) and WithResolver(NewCLIResolver()).
+func NewService(s *Storage, opts ...ServiceOption) *Service {
+	svc := &Service{
+		storage:   s,
+		resolvers: map[string]Resolver{},
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // Register validates the inbound Profile, mints a URN of the correct
@@ -251,6 +290,179 @@ func (s *Service) Deregister(ctx context.Context, urn string) (Profile, error) {
 		return Profile{}, fmt.Errorf("registry: deregister: reload: %w", err)
 	}
 	return out, nil
+}
+
+// ─── Sync ────────────────────────────────────────────────────────────────────
+
+// Sync refreshes the row's thin-profile columns by calling the registered
+// Resolver for the row's Callback.Scheme. The Resolver returns raw payload
+// bytes; Sync parses them (JSON or YAML — sniffed on first non-whitespace
+// byte) into a fresh Profile and applies a full-REPLACE UpdatePatch via
+// UpdateSelf. cached_at is bumped via BumpCachedAt after the update.
+//
+// Raw payload is NOT cached (D18): substrate ops-store files commonly
+// contain plaintext secrets, so the registry never echoes the bytes back
+// to state.db. Only the thin-profile columns (display_name, role, etc.)
+// + capabilities/skills/links arrays are mirrored.
+//
+// Empty-array nuance. UpdateSelf treats an ArrayPatch with len(Value)==0
+// as a no-op (D5), so Sync cannot clear arrays in v1. A payload that
+// omits "capabilities" leaves existing capabilities intact; a payload
+// with an explicit "capabilities": [] also leaves them intact. v060-02
+// or v060-03 may add an explicit "clear" semantic if substrates need it.
+//
+// Errors:
+//   - ErrNotFound — urn not in the registry.
+//   - ErrNoCallback — the row exists but has no callback (HTTP 204).
+//   - ErrNoResolver — no Resolver registered for the row's Scheme.
+//   - ErrPayloadInvalid / ErrPayloadTooLarge / ErrPathOutsideRoot —
+//     resolver-layer errors propagate verbatim.
+//   - other errors wrapped from storage / Resolve.
+func (s *Service) Sync(ctx context.Context, urn string) (Profile, error) {
+	existing, err := s.storage.GetProfile(ctx, urn)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Profile{}, err
+		}
+		return Profile{}, fmt.Errorf("registry: sync: lookup: %w", err)
+	}
+	if existing.Callback == nil {
+		return Profile{}, fmt.Errorf("registry: sync %q: %w", urn, ErrNoCallback)
+	}
+
+	resolver, ok := s.resolvers[existing.Callback.Scheme]
+	if !ok {
+		return Profile{}, fmt.Errorf("registry: sync %q: %w: %q", urn, ErrNoResolver, existing.Callback.Scheme)
+	}
+
+	payload, err := resolver.Resolve(ctx, existing.Callback.Target)
+	if err != nil {
+		// Resolver errors already carry the registry: file/cli resolver:
+		// prefix and the sentinel wrap, so propagate verbatim.
+		return Profile{}, err
+	}
+
+	parsed, err := parseSyncPayload(payload)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: sync %q: %w", urn, err)
+	}
+
+	patch := buildSyncPatch(parsed)
+	if _, err := s.UpdateSelf(ctx, urn, patch); err != nil {
+		return Profile{}, fmt.Errorf("registry: sync %q: update_self: %w", urn, err)
+	}
+
+	if err := s.storage.BumpCachedAt(ctx, urn, time.Now().UTC()); err != nil {
+		return Profile{}, fmt.Errorf("registry: sync %q: bump cached_at: %w", urn, err)
+	}
+
+	out, err := s.storage.GetProfile(ctx, urn)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: sync %q: reload: %w", urn, err)
+	}
+	return out, nil
+}
+
+// parseSyncPayload sniffs the first non-whitespace byte of the payload to
+// pick a decoder: '{' or '[' → JSON direct into Profile; otherwise → YAML
+// via an intermediate map (so Profile's existing JSON tags drive the
+// field mapping without needing a parallel set of yaml tags).
+//
+// A parse failure wraps ErrPayloadInvalid so callers can errors.Is.
+func parseSyncPayload(payload []byte) (Profile, error) {
+	if len(payload) == 0 {
+		return Profile{}, fmt.Errorf("%w: empty payload", ErrPayloadInvalid)
+	}
+	// Find the first non-whitespace byte to decide JSON vs YAML.
+	var first byte
+	for _, b := range payload {
+		if !unicode.IsSpace(rune(b)) {
+			first = b
+			break
+		}
+	}
+	var p Profile
+	if first == '{' || first == '[' {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return Profile{}, fmt.Errorf("%w: json: %w", ErrPayloadInvalid, err)
+		}
+		return p, nil
+	}
+	// YAML route. Profile has JSON tags but no YAML tags; yaml.v3 would
+	// otherwise look for lowercased field names. Decode into a generic
+	// map first, then re-marshal to JSON so Profile's JSON tags pick up
+	// the snake_case field names from the YAML document.
+	var generic map[string]any
+	if err := yaml.Unmarshal(payload, &generic); err != nil {
+		return Profile{}, fmt.Errorf("%w: yaml: %w", ErrPayloadInvalid, err)
+	}
+	canon, err := json.Marshal(generic)
+	if err != nil {
+		return Profile{}, fmt.Errorf("%w: yaml->json: %w", ErrPayloadInvalid, err)
+	}
+	if err := json.Unmarshal(canon, &p); err != nil {
+		return Profile{}, fmt.Errorf("%w: yaml->profile: %w", ErrPayloadInvalid, err)
+	}
+	return p, nil
+}
+
+// buildSyncPatch translates a parsed Profile into a full-REPLACE
+// UpdatePatch. Scalar fields with empty values are omitted from the patch
+// (avoids unintentionally clearing columns on a sparse payload); array
+// fields are always wrapped in ArrayModeReplace, though len(Value)==0
+// hits the UpdateSelf no-op path (see Sync godoc for the nuance).
+//
+// LastUpdatedBy is hard-coded to "system:sync" — v060-02's token-based
+// identity supersedes this placeholder.
+func buildSyncPatch(p Profile) UpdatePatch {
+	patch := UpdatePatch{LastUpdatedBy: "system:sync"}
+	if p.DisplayName != "" {
+		v := p.DisplayName
+		patch.DisplayName = &v
+	}
+	if p.Title != "" {
+		v := p.Title
+		patch.Title = &v
+	}
+	if p.Role != "" {
+		v := p.Role
+		patch.Role = &v
+	}
+	if p.Description != "" {
+		v := p.Description
+		patch.Description = &v
+	}
+	if p.Avatar != "" {
+		v := p.Avatar
+		patch.Avatar = &v
+	}
+	if p.Project != "" {
+		v := p.Project
+		patch.Project = &v
+	}
+	if p.Status != "" {
+		v := p.Status
+		patch.Status = &v
+	}
+	if p.HealthStatus != "" {
+		v := p.HealthStatus
+		patch.HealthStatus = &v
+	}
+	if p.HostAddress != "" {
+		v := p.HostAddress
+		patch.HostAddress = &v
+	}
+	if p.LastSeenAt != nil {
+		t := *p.LastSeenAt
+		patch.LastSeenAt = &t
+	}
+	if len(p.KindMeta) > 0 {
+		patch.KindMeta = p.KindMeta
+	}
+	patch.Capabilities = &ArrayPatch[string]{Mode: ArrayModeReplace, Value: p.Capabilities}
+	patch.Skills = &ArrayPatch[Skill]{Mode: ArrayModeReplace, Value: p.Skills}
+	patch.Links = &ArrayPatch[Link]{Mode: ArrayModeReplace, Value: p.Links}
+	return patch
 }
 
 // ─── array patch dispatch ────────────────────────────────────────────────────

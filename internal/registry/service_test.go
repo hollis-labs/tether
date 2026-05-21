@@ -26,6 +26,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -271,6 +273,9 @@ func (s *stubStorage) RemoveLinks(context.Context, string, []registry.Link) erro
 }
 func (s *stubStorage) SoftDelete(context.Context, string) error {
 	panic("stubStorage.SoftDelete: unexpected call")
+}
+func (s *stubStorage) BumpCachedAt(context.Context, string, time.Time) error {
+	panic("stubStorage.BumpCachedAt: unexpected call")
 }
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
@@ -745,6 +750,213 @@ func TestService_Deregister_UnknownURN(t *testing.T) {
 	svc := newService(t)
 	ctx := context.Background()
 	_, err := svc.Deregister(ctx, "msg://agent/agent-mux/agt_missing0099")
+	if !errors.Is(err, registry.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// ─── Sync ────────────────────────────────────────────────────────────────────
+
+// newServiceWithResolvers returns a Service backed by an in-memory SQLite
+// + a FileResolver rooted at root + a CLIResolver. Used by Sync tests.
+func newServiceWithResolvers(t *testing.T, root string) *registry.Service {
+	t.Helper()
+	storage := newStorage(t)
+	fr, err := registry.NewFileResolver(root)
+	if err != nil {
+		t.Fatalf("NewFileResolver: %v", err)
+	}
+	return registry.NewService(storage,
+		registry.WithResolver(fr),
+		registry.WithResolver(registry.NewCLIResolver()))
+}
+
+func TestService_Sync_FileResolverHappyPath(t *testing.T) {
+	root := canonTempDir(t)
+	target := filepath.Join(root, "agent.json")
+	body := []byte(`{
+		"display_name": "Synced Alpha",
+		"role": "implementer-after-sync",
+		"title": "Engineer",
+		"capabilities": ["go", "rust"],
+		"links": [{"kind": "repo", "target": "https://r.invalid"}]
+	}`)
+	if err := os.WriteFile(target, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Pre-Sync Name",
+		Role:        "pre-sync",
+		Callback: &registry.Callback{
+			Scheme: "file",
+			Target: "file://" + target,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	before := reg.CachedAt
+
+	got, err := svc.Sync(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got.DisplayName != "Synced Alpha" {
+		t.Errorf("DisplayName = %q, want %q", got.DisplayName, "Synced Alpha")
+	}
+	if got.Role != "implementer-after-sync" {
+		t.Errorf("Role = %q, want %q", got.Role, "implementer-after-sync")
+	}
+	if got.Title != "Engineer" {
+		t.Errorf("Title = %q, want %q", got.Title, "Engineer")
+	}
+	if !stringSetEqual(got.Capabilities, []string{"go", "rust"}) {
+		t.Errorf("Capabilities = %v, want [go rust]", got.Capabilities)
+	}
+	if len(got.Links) != 1 || got.Links[0].Kind != "repo" {
+		t.Errorf("Links = %v, want one repo link", got.Links)
+	}
+	if got.LastUpdatedBy != "system:sync" {
+		t.Errorf("LastUpdatedBy = %q, want system:sync", got.LastUpdatedBy)
+	}
+	if got.CachedAt == nil {
+		t.Fatal("CachedAt = nil, want bumped value")
+	}
+	if before != nil && !got.CachedAt.After(*before) {
+		t.Errorf("CachedAt not bumped: before=%v after=%v", *before, *got.CachedAt)
+	}
+}
+
+func TestService_Sync_CLIResolverHappyPath(t *testing.T) {
+	root := canonTempDir(t)
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+
+	// Single-token printf payload (no quoting v1).
+	payload := `{"display_name":"CLI-Synced","title":"FromCLI"}`
+	cmd := "cli://printf " + payload
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "PreCLI",
+		Callback:    &registry.Callback{Scheme: "cli", Target: cmd},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	got, err := svc.Sync(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got.DisplayName != "CLI-Synced" {
+		t.Errorf("DisplayName = %q, want CLI-Synced", got.DisplayName)
+	}
+	if got.Title != "FromCLI" {
+		t.Errorf("Title = %q, want FromCLI", got.Title)
+	}
+}
+
+func TestService_Sync_NoCallback(t *testing.T) {
+	root := canonTempDir(t)
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Naked",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, err = svc.Sync(ctx, reg.URN)
+	if !errors.Is(err, registry.ErrNoCallback) {
+		t.Errorf("err = %v, want ErrNoCallback", err)
+	}
+}
+
+func TestService_Sync_NoResolverForScheme(t *testing.T) {
+	// Build a service WITHOUT any resolvers registered, then point a row
+	// at a file:// callback. Sync should surface ErrNoResolver.
+	storage := newStorage(t)
+	svc := registry.NewService(storage)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Stranded",
+		Callback:    &registry.Callback{Scheme: "file", Target: "file:///nowhere"},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, err = svc.Sync(ctx, reg.URN)
+	if !errors.Is(err, registry.ErrNoResolver) {
+		t.Errorf("err = %v, want ErrNoResolver", err)
+	}
+}
+
+func TestService_Sync_MalformedJSONPayload(t *testing.T) {
+	root := canonTempDir(t)
+	target := filepath.Join(root, "broken.json")
+	if err := os.WriteFile(target, []byte(`{ "display_name": broken`), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Before",
+		Callback:    &registry.Callback{Scheme: "file", Target: "file://" + target},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, err = svc.Sync(ctx, reg.URN)
+	if !errors.Is(err, registry.ErrPayloadInvalid) {
+		t.Errorf("err = %v, want ErrPayloadInvalid", err)
+	}
+}
+
+func TestService_Sync_YAMLPayload(t *testing.T) {
+	root := canonTempDir(t)
+	target := filepath.Join(root, "agent.yaml")
+	body := []byte("display_name: YAML Alpha\nrole: yamler\ntitle: YAMLWriter\n")
+	if err := os.WriteFile(target, body, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Before",
+		Callback:    &registry.Callback{Scheme: "file", Target: "file://" + target},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	got, err := svc.Sync(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got.DisplayName != "YAML Alpha" {
+		t.Errorf("DisplayName = %q, want YAML Alpha", got.DisplayName)
+	}
+	if got.Role != "yamler" {
+		t.Errorf("Role = %q, want yamler", got.Role)
+	}
+	if got.Title != "YAMLWriter" {
+		t.Errorf("Title = %q, want YAMLWriter", got.Title)
+	}
+}
+
+func TestService_Sync_UnknownURN(t *testing.T) {
+	root := canonTempDir(t)
+	svc := newServiceWithResolvers(t, root)
+	ctx := context.Background()
+	_, err := svc.Sync(ctx, "msg://agent/agent-mux/agt_absent00099")
 	if !errors.Is(err, registry.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}

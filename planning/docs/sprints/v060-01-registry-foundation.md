@@ -221,11 +221,11 @@ The storage layer is dumb; the service is where validation, ID minting, the part
 
 #### Acceptance criteria
 
-- [ ] Unit tests for each resolver: happy path, missing file, symlink-escape attempt, oversize payload, CLI timeout, CLI non-zero exit.
-- [ ] Sync test with a fixture file callback (round-trip: register → write fixture → sync → assert cached_payload + thin-profile columns updated).
-- [ ] Sync test with `cli://echo <json>` style fixture.
-- [ ] Sync on a row with no callback returns `ErrNoCallback` not panic.
-- [ ] `make test-race` green.
+- [x] Unit tests for each resolver: happy path, missing file, symlink-escape attempt, oversize payload, CLI timeout, CLI non-zero exit.
+- [x] Sync test with a fixture file callback (round-trip: register → write fixture → sync → assert `cached_at` + thin-profile columns updated). _(D18 supersedes `cached_payload` — no raw payload column exists.)_
+- [x] Sync test with `cli://echo <json>` style fixture.
+- [x] Sync on a row with no callback returns `ErrNoCallback` not panic.
+- [x] `make test-race` green.
 
 #### Scope fences
 
