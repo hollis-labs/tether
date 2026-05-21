@@ -171,11 +171,11 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, req mcp.CallToolReque
 		return toolError("invalid_request",
 			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)), nil
 	}
-	if _, err := messaging.ParseURN(fromURN); err != nil {
-		return toolError("invalid_request", "invalid from URN: "+err.Error()), nil
+	if _, parseErr := messaging.ParseURN(fromURN); parseErr != nil {
+		return toolError("invalid_request", "invalid from URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	if _, err := messaging.ParseURN(toURN); err != nil {
-		return toolError("invalid_request", "invalid to URN: "+err.Error()), nil
+	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
+		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
 	if a.client == nil {
 		return toolError("internal_error", "mux_message_notify requires daemon routing; start MCP with mux mcp"), nil
