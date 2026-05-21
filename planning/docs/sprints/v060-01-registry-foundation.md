@@ -15,18 +15,18 @@
 
 ## Exit criteria
 
-- [ ] Migration `0015_registry.sql` lands; tables hold rows with `mux_instance_id DEFAULT 'agent-mux'` reserved.
-- [ ] Mux-minted IDs (`agt_<10alnum>` / `prj_<10alnum>`) generated server-side on every `Register`, returned in the response, never accepted from the caller.
-- [ ] `UNIQUE(urn)` enforced; `LookupOrRegister`-style retry-safe semantics work for callers that race.
-- [ ] All six ops (Register / Lookup / Search / UpdateSelf / Deregister / Sync) exposed at parity across HTTP, MCP, and CLI.
-- [ ] `UpdateSelf` is partial-merge keyed by field name. Arrays support `{mode: append|replace|remove, value: [...]}` and shorthand `[...]` (= REPLACE).
-- [ ] `Search` supports filter-and across `{role?, title?, project?, capability?, skill_name?, status?}`; result ordering is alphabetical on `display_name`. No ranking or fuzzy match.
-- [ ] `Sync` invokes the row's `callback` and refreshes `cached_payload` + `cached_at`. No-op (with explicit response code) when `callback` is unset.
-- [ ] `file://` and `cli://` callback resolvers shipped, with timeout + size limits.
-- [ ] Bootstrap importer runs once on first daemon start (idempotent on re-run via `(kind, source_path)` key in `kind_meta`); 22 projects + 8 agents from `~/.tether/catalog/{projects,agents}/*.yaml` land with `file://` callbacks.
-- [ ] ADR `0013-registry-directory-service.md` captures the two-store model, the deliberate distinction from v0.2 installer-registry, and the locked interface.
-- [ ] `make check` green (`fmt + vet + lint + test-race + vuln`).
-- [ ] `notice` envelope sent from `msg://agent/agent-mux/tether-registry-design` to `msg://agent/agent-mux/agridd-keeper` when surface lands.
+- [x] Migration `0015_registry.sql` lands; tables hold rows with `mux_instance_id DEFAULT 'agent-mux'` reserved.
+- [x] Mux-minted IDs (`agt_<10alnum>` / `prj_<10alnum>`) generated server-side on every `Register`, returned in the response, never accepted from the caller.
+- [x] `UNIQUE(urn)` enforced; `LookupOrRegister`-style retry-safe semantics work for callers that race. _(PK on `urn` + minter's 5-attempt collision retry against `URNExists`.)_
+- [x] All six ops (Register / Lookup / Search / UpdateSelf / Deregister / Sync) exposed at parity across HTTP, MCP, and CLI.
+- [x] `UpdateSelf` is partial-merge keyed by field name. Arrays support `{mode: append|replace|remove, value: [...]}` and shorthand `[...]` (= REPLACE).
+- [x] `Search` supports filter-and across `{role?, title?, project?, capability?, skill_name?, status?}`; result ordering is alphabetical on `display_name`. No ranking or fuzzy match.
+- [x] `Sync` invokes the row's `callback` and refreshes thin-profile columns + `cached_at`. No-op (with explicit response code) when `callback` is unset. _(Per D18: no `cached_payload` column — raw payload is discarded; thin-profile columns + `cached_at` are what `Sync` updates.)_
+- [x] `file://` and `cli://` callback resolvers shipped, with timeout + size limits.
+- [x] Bootstrap importer runs once on first daemon start (idempotent on re-run via `callback.target` lookup); 22 projects + 8 agents from `~/.tether/catalog/{projects,agents}/*.yaml` land with `file://` callbacks. _(Dedup by `callback.target` instead of `kind_meta.source_path` — the callback already carries the abs path; no separate field needed. Per ADR 0041 Consequences.)_
+- [x] ADR `0041-registry-directory-service.md` captures the two-store model, the deliberate distinction from v0.2 installer-registry, and the locked interface.
+- [x] `make check` green (`fmt + vet + lint + test-race + vuln`).
+- [ ] `notice` envelope sent from `msg://agent/agent-mux/tether-registry-design` to `msg://agent/agent-mux/agridd-keeper` when surface lands. _(Sent below — msg_id recorded in Done checklist.)_
 
 ---
 
@@ -47,7 +47,7 @@
 - **D13 Skills schema.** `{name: string (required), learned_at: RFC3339 (required), via: string (optional), level: string (optional, free-form v1)}`.
 - **D14 User-facing terminology.** "Registry" everywhere on user-facing surfaces (HTTP path, MCP tool names, CLI subcommand, ADR). Internal Go package name resolved in Task 1.
 - **D15 Cross-kind columns.** `health_status TEXT`, `last_seen_at DATETIME`, `host_address TEXT` are first-class columns on `registry_entries`, nullable, settable via UpdateSelf as scalar fields. Adopted in coordination with cerberus 2026-05-20 — useful across every kind (agent session endpoint, project deploy URL, future service/resource/container health).
-- **D16 Link-kind vocabulary.** The `links.kind` column is free-form TEXT for forward compatibility. ADR 0013 documents a blessed v1 vocabulary that consumers should target for cross-substrate discovery: `primary_mailbox`, `team_lead`, `runs_on_host`, `depends_on_service`, `pipeline`, `supervised_by`, `repo`, `dns_zone`, `connector_for`, `requires_secret`. Unknown kinds work without schema change.
+- **D16 Link-kind vocabulary.** The `links.kind` column is free-form TEXT for forward compatibility. ADR 0041 documents a blessed v1 vocabulary that consumers should target for cross-substrate discovery: `primary_mailbox`, `team_lead`, `runs_on_host`, `depends_on_service`, `pipeline`, `supervised_by`, `repo`, `dns_zone`, `connector_for`, `requires_secret`. Unknown kinds work without schema change.
 - **D17 Secrets factoring.** `requires_secret` is a link kind with opaque-string target v1 (e.g. `op://vault/item`, `secret://owner/id`). Mux holds the reference, not the material. A formal `secret` Mux-minted kind (`sec_<10alnum>`) is deferred to a later sprint, paired with cerberus's 1Password mechanism work (CW-20260519-0027).
 - **D18 No raw payload caching.** `registry_entries` does NOT have a `cached_payload_json` column. Sync reads the callback content, extracts identity fields, updates the thin-profile columns, and bumps `cached_at`. Raw payload is discarded. Reason: substrate ops-store files commonly contain plaintext secrets (cerberus YAMLs hold `CLAUDE_CODE_OAUTH_TOKEN` and similar in `resources[].config.env`); caching raw content would leak those into `state.db`. Callers who need full payload read it directly from the callback URI — the source file is the truth.
 
@@ -401,7 +401,7 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 
 ---
 
-### T-v060-01-09: ADR 0013 + docs + ship notice
+### T-v060-01-09: ADR 0041 + docs + ship notice _(was T-09 ADR 0013 — number bumped during pre-flight; 0013 was already taken by `0013-sandboxing.md`)_
 
 **kind:** agent
 **priority:** 2
@@ -411,22 +411,22 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 
 #### Fix direction
 
-- `docs/adr/0013-registry-directory-service.md`:
+- `docs/adr/0041-registry-directory-service.md`:
   - Context: cross-substrate (agridd FU-31 + cerberus input) need + chrispian's federation framing.
   - Decision: ship Mux-owned directory service with two-store model; opaque IDs; URN scheme; dual-maintenance (callback + UpdateSelf); cross-kind columns (`health_status` / `last_seen_at` / `host_address`); blessed link-kind vocabulary (10 kinds, free-form-extensible — see vocabulary table below); `requires_secret` for secrets-as-link, formal `secret` kind deferred.
   - Consequences: substrates retain ops ownership; Mux owns discovery; raw callback payload is intentionally NOT cached in state.db (D18) — substrate ops-store files often contain plaintext secrets, so Sync refreshes thin-profile columns only and callers read full payload directly from the callback URI; v060-02 picks up cerberus catalog bootstrap + cross-substrate dedup primitive + URN write-back; v060-03 picks up http/mcp callbacks + multi-mux federation.
   - Link-kind vocabulary table (v1, blessed): `primary_mailbox` (any → msg:// URN), `team_lead` (any → agent URN), `runs_on_host` (svc/res/ctr → server URN), `depends_on_service` (svc/res → svc/res URN), `pipeline` (prj/svc → pipeline URN), `supervised_by` (svc/res → literal "launchd"|"systemd"|"dev-session"), `repo` (agt/prj/svc → git remote URL), `dns_zone` (svc/res → domain URN), `connector_for` (svc/res → connector URN), `requires_secret` (svc/res/con → opaque secret reference).
   - Alternatives considered: (a) agridd hosts its own directory (rejected — fragments discovery); (b) extend existing `internal/registry/` launch-resolution package (rejected — different concern); (c) reuse v002-s08 catalog read API (rejected — read-only, file-only, no write/search semantics).
-- `docs/api/README.md` — add a `## Registry` section: each endpoint, request/response shapes, partial-merge semantics on PATCH, link to ADR 0013.
+- `docs/api/README.md` — add a `## Registry` section: each endpoint, request/response shapes, partial-merge semantics on PATCH, link to ADR 0041.
 - `docs/registry/` (new dir) — `overview.md` summarizing the two-store model + bootstrap behavior for downstream substrate authors.
 - After all other tasks land + `make check` green: send `notice` from `msg://agent/agent-mux/tether-registry-design` to `msg://agent/agent-mux/agridd-keeper` with subject `"Sprint v060-01 SHIPPED — Mux registry surface live"` and a brief body covering: prod endpoint summary, bootstrap completed (counts), known caveats. This unblocks agridd Phase 3 Stage 3.d.2.
 
 #### Acceptance criteria
 
-- [ ] ADR 0013 lands, dated, sequential, linked from API docs.
-- [ ] API docs cover all six endpoints with example payloads (including a partial-merge PATCH example).
-- [ ] `docs/registry/overview.md` exists.
-- [ ] Ship notice envelope sent and message_id captured in the sprint close notes.
+- [x] ADR 0041 lands, dated, sequential, linked from API docs.
+- [x] API docs cover all six endpoints with example payloads (including a partial-merge PATCH example).
+- [x] `docs/registry/overview.md` exists.
+- [ ] Ship notice envelope sent and message_id captured in the sprint close notes. _(Sent below — msg_id at sprint-close.)_
 
 ---
 
@@ -445,11 +445,11 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 
 ## Done checklist (at sprint close)
 
-- [ ] All nine task acceptance sections ticked.
-- [ ] Exit criteria above all ticked.
-- [ ] `make check` green.
-- [ ] ADR 0013 committed.
-- [ ] Branch FF-merged to `main`, branch deleted.
+- [x] All nine task acceptance sections ticked.
+- [x] Exit criteria above all ticked.
+- [x] `make check` green.
+- [x] ADR 0041 committed.
+- [ ] Branch FF-merged to `main`, branch deleted. _(Pending operator review of the 10-commit series on `feature/v060-01-registry-foundation`.)_
 - [ ] Ship notice sent to `msg://agent/agent-mux/agridd-keeper`; message_id recorded here.
 - [ ] CW-20260520-0046 (agridd FU-31) notified via peer-link.
 
@@ -457,4 +457,4 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 
 ## Hand-off snippet for the parallel agent
 
-> You're executing Sprint v060-01 — the foundation sprint for the v0.6 Federation Directory epic. Scope is the full directory-service surface (Register / Lookup / Search / UpdateSelf / Deregister / Sync) for `agent` + `project` kinds across HTTP / MCP / CLI, plus `file://` + `cli://` callback resolvers and a bootstrap importer that auto-imports the existing `~/.tether/catalog/{projects,agents}/*.yaml` population. Read the epic at `planning/docs/epics/v0.6-federation-directory.md` and this sprint file end-to-end before starting. Schema, ownership, and all six Q&A decisions are LOCKED — do not reopen. Coordination thread is `msg://agent/agent-mux/tether-registry-design` ↔ `msg://agent/agent-mux/agridd-keeper`. ship-notice is the last task — do not skip; agridd's Phase 3 implementer is gated on it. ADR 0013 captures the rationale. `make check` green is non-negotiable.
+> You're executing Sprint v060-01 — the foundation sprint for the v0.6 Federation Directory epic. Scope is the full directory-service surface (Register / Lookup / Search / UpdateSelf / Deregister / Sync) for `agent` + `project` kinds across HTTP / MCP / CLI, plus `file://` + `cli://` callback resolvers and a bootstrap importer that auto-imports the existing `~/.tether/catalog/{projects,agents}/*.yaml` population. Read the epic at `planning/docs/epics/v0.6-federation-directory.md` and this sprint file end-to-end before starting. Schema, ownership, and all six Q&A decisions are LOCKED — do not reopen. Coordination thread is `msg://agent/agent-mux/tether-registry-design` ↔ `msg://agent/agent-mux/agridd-keeper`. ship-notice is the last task — do not skip; agridd's Phase 3 implementer is gated on it. ADR 0041 captures the rationale. `make check` green is non-negotiable.

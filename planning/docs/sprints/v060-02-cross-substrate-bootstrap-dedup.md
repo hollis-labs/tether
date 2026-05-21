@@ -292,7 +292,7 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 #### Acceptance criteria
 
 - [ ] ADR 0014 lands, dated, sequential, linked from API + registry docs.
-- [ ] Vocabulary aligned between ADR 0013 + 0014 (consistent terminology for `external_id`, `substrate`, `URN`).
+- [ ] Vocabulary aligned between ADR 0041 + the v060-02 dedup ADR (consistent terminology for `external_id`, `substrate`, `URN`).
 
 ---
 
