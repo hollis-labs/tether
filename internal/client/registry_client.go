@@ -44,8 +44,14 @@ func (c *Client) Registry() *RegistryClient {
 }
 
 // Register POSTs a Profile under /registry/{kind}. The server mints the
-// URN and ignores caller-supplied identity fields (URN, Kind,
-// MuxInstanceID, CreatedAt, UpdatedAt). Returns the canonical Profile.
+// URN; the server REJECTS a non-empty caller-supplied URN with
+// registry.ErrInvalidRequest (this is a contract, not a server-side
+// strip). Kind, MuxInstanceID, CreatedAt, UpdatedAt are server-assigned
+// and the HTTP handler strips them defensively before storage. Returns
+// the canonical Profile.
+//
+// We don't pre-strip p.URN here either — if a caller sets it, the 400
+// teaches them the contract.
 func (rc *RegistryClient) Register(ctx context.Context, kind registry.Kind, p registry.Profile) (registry.Profile, error) {
 	seg, err := pluralSegment(kind)
 	if err != nil {

@@ -90,6 +90,12 @@ var daemonRunCmd = &cobra.Command{
 		// spawned by a session) and would clobber actively-tracked rows.
 		svc.ReconcileStaleState()
 
+		// Signal-cancellable context spans the bootstrap + the HTTP serve so
+		// SIGINT/SIGTERM during a slow bootstrap (large catalog, slow disk)
+		// aborts cleanly instead of running to completion before shutdown.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+
 		// Bootstrap the federation directory from ~/.tether/catalog/. Runs
 		// after migrations (already applied via store.Open in app.New) and
 		// BEFORE the HTTP listener binds (server.Run, below) so the daemon
@@ -98,7 +104,7 @@ var daemonRunCmd = &cobra.Command{
 		// alone; only new files import. Operators apply catalog drift via
 		// `mux registry bootstrap --force`.
 		if svc.Registry != nil && svc.CatalogRoot != "" {
-			report, err := svc.Registry.BootstrapFromCatalog(context.Background(), svc.CatalogRoot, false)
+			report, err := svc.Registry.BootstrapFromCatalog(ctx, svc.CatalogRoot, false)
 			if err != nil {
 				log.Printf("registry bootstrap: %v", err)
 			} else {
@@ -138,9 +144,6 @@ var daemonRunCmd = &cobra.Command{
 				return svc.Store.Close()
 			},
 		}
-
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
 
 		return server.Run(ctx)
 	},

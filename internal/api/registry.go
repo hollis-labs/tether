@@ -201,9 +201,10 @@ func (s *Server) handleRegistry(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRegistryRegister services POST /registry/{kind}. Body is a
-// Profile JSON; URN/Kind/CreatedAt/UpdatedAt/MuxInstanceID are
-// server-assigned (whatever the caller supplies in those fields is
-// ignored by Service.Register's validation + storage's defaulting).
+// Profile JSON. Kind/CreatedAt/UpdatedAt/MuxInstanceID are stripped here
+// so the storage path's defaults apply. A non-empty URN is NOT stripped —
+// Service.Register rejects it with ErrInvalidRequest (400) so callers
+// learn the contract (server mints URNs; never accepted from input).
 // Response: 201 + canonical Profile.
 func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, kind registry.Kind) {
 	var p registry.Profile

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -137,11 +138,15 @@ type ArrayPatch[T any] struct {
 }
 
 // UnmarshalJSON accepts both the shorthand and explicit wire shapes.
+// encoding/json may pass the raw token with leading/trailing whitespace,
+// so we trim before inspecting the first byte (otherwise shorthand `  [...]`
+// would mis-detect as the object form).
 func (p *ArrayPatch[T]) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
 		return fmt.Errorf("registry: empty array patch")
 	}
-	if data[0] == '[' {
+	if trimmed[0] == '[' {
 		var arr []T
 		if err := json.Unmarshal(data, &arr); err != nil {
 			return fmt.Errorf("registry: array patch shorthand: %w", err)
