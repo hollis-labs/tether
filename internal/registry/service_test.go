@@ -299,6 +299,18 @@ func (s *stubStorage) ListGroupsForMember(context.Context, string) ([]registry.P
 func (s *stubStorage) SetProfileStatus(context.Context, string, registry.Status) error {
 	panic("stubStorage.SetProfileStatus: unexpected call")
 }
+func (s *stubStorage) ListMembers(context.Context, string) ([]registry.GroupMember, error) {
+	panic("stubStorage.ListMembers: unexpected call")
+}
+func (s *stubStorage) RemoveGroupMember(context.Context, string, string) error {
+	panic("stubStorage.RemoveGroupMember: unexpected call")
+}
+func (s *stubStorage) UpdateGroupMemberRole(context.Context, string, string, registry.MemberRole) error {
+	panic("stubStorage.UpdateGroupMemberRole: unexpected call")
+}
+func (s *stubStorage) CountModeratorsExcluding(context.Context, string, string) (int, error) {
+	panic("stubStorage.CountModeratorsExcluding: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's
@@ -1268,6 +1280,253 @@ func TestService_ArchiveGroup_NotFound(t *testing.T) {
 	_, err := svc.ArchiveGroup(context.Background(), "msg://group/agent-mux/grp_doesnotexist", owner.URN)
 	if !errors.Is(err, registry.ErrNotFound) {
 		t.Fatalf("err = %v; want ErrNotFound", err)
+	}
+}
+
+// ─── v060-05 T-03: membership service ────────────────────────────────────────
+
+// groupFixture is a helper that registers an owner + a group and returns
+// (group, owner). Used as the starting point for most membership tests.
+func groupFixture(t *testing.T, svc *registry.Service, groupName string) (registry.Profile, registry.Profile) {
+	t.Helper()
+	owner := registerCreator(t, svc, "Owner-"+groupName)
+	g, err := svc.Register(context.Background(), registry.KindGroup, registry.Profile{
+		DisplayName:   groupName,
+		LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register group %q: %v", groupName, err)
+	}
+	return g, owner
+}
+
+func TestService_AddMember_HappyPath(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Add-OK")
+	newMember := registerCreator(t, svc, "Newbie")
+
+	got, err := svc.AddMember(ctx, g.URN, newMember.URN, owner.URN, registry.MemberRoleMember)
+	if err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	if got.Role != registry.MemberRoleMember {
+		t.Errorf("Role = %q; want %q", got.Role, registry.MemberRoleMember)
+	}
+	if got.GroupURN != g.URN {
+		t.Errorf("GroupURN = %q; want %q", got.GroupURN, g.URN)
+	}
+}
+
+func TestService_AddMember_RejectsNonModerator(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, _ := groupFixture(t, svc, "Add-Forbid")
+	stranger := registerCreator(t, svc, "Stranger")
+	candidate := registerCreator(t, svc, "Candidate")
+
+	_, err := svc.AddMember(ctx, g.URN, candidate.URN, stranger.URN, registry.MemberRoleMember)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_AddMember_RejectsUnknownMember(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Add-Unknown")
+	_, err := svc.AddMember(ctx, g.URN, "msg://agent/agent-mux/agt_xxxxxxxxxx", owner.URN, registry.MemberRoleMember)
+	if !errors.Is(err, registry.ErrNotFound) {
+		t.Fatalf("err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestService_AddMember_RejectsDuplicate(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Add-Dup")
+	newMember := registerCreator(t, svc, "Dup")
+	if _, err := svc.AddMember(ctx, g.URN, newMember.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+	_, err := svc.AddMember(ctx, g.URN, newMember.URN, owner.URN, registry.MemberRoleMember)
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_RemoveMember_HappyPath(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Remove-OK")
+	target := registerCreator(t, svc, "Target")
+	if _, err := svc.AddMember(ctx, g.URN, target.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := svc.RemoveMember(ctx, g.URN, target.URN, owner.URN); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	members, err := svc.ListMembers(ctx, g.URN)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].MemberURN != owner.URN {
+		t.Errorf("members after remove = %v; want only the owner", members)
+	}
+}
+
+func TestService_RemoveMember_CannotRemoveOwner(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Remove-Owner")
+	// Promote a second member to moderator (so byURN passes the role check)
+	// and have them try to remove the owner.
+	mod := registerCreator(t, svc, "Moderator")
+	if _, err := svc.AddMember(ctx, g.URN, mod.URN, owner.URN, registry.MemberRoleModerator); err != nil {
+		t.Fatalf("seed mod: %v", err)
+	}
+	err := svc.RemoveMember(ctx, g.URN, owner.URN, mod.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_LeaveGroup_MemberSelfRemoves(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Leave-Member")
+	mem := registerCreator(t, svc, "Leaver")
+	if _, err := svc.AddMember(ctx, g.URN, mem.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := svc.LeaveGroup(ctx, g.URN, mem.URN); err != nil {
+		t.Fatalf("LeaveGroup: %v", err)
+	}
+}
+
+func TestService_LeaveGroup_OwnerWithModeratorSucceeds(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Leave-Owner-OK")
+	mod := registerCreator(t, svc, "Successor")
+	if _, err := svc.AddMember(ctx, g.URN, mod.URN, owner.URN, registry.MemberRoleModerator); err != nil {
+		t.Fatalf("seed mod: %v", err)
+	}
+	if err := svc.LeaveGroup(ctx, g.URN, owner.URN); err != nil {
+		t.Fatalf("LeaveGroup owner with mod: %v", err)
+	}
+}
+
+func TestService_LeaveGroup_OwnerWithoutModForbidden(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Leave-Owner-Forbid")
+	// Add only a plain member, no moderator/owner successor.
+	mem := registerCreator(t, svc, "Just A Member")
+	if _, err := svc.AddMember(ctx, g.URN, mem.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := svc.LeaveGroup(ctx, g.URN, owner.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_SetMemberRole_OwnerPromotesToModerator(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "SetRole-Owner-Mod")
+	target := registerCreator(t, svc, "Promotee")
+	if _, err := svc.AddMember(ctx, g.URN, target.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := svc.SetMemberRole(ctx, g.URN, target.URN, registry.MemberRoleModerator, owner.URN); err != nil {
+		t.Fatalf("SetMemberRole: %v", err)
+	}
+	members, err := svc.ListMembers(ctx, g.URN)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	var found bool
+	for _, m := range members {
+		if m.MemberURN == target.URN && m.Role == registry.MemberRoleModerator {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("target not promoted; members = %v", members)
+	}
+}
+
+func TestService_SetMemberRole_ModeratorCannotPromoteToOwner(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "SetRole-Mod-Owner")
+	mod := registerCreator(t, svc, "Mod")
+	target := registerCreator(t, svc, "Promotee")
+	if _, err := svc.AddMember(ctx, g.URN, mod.URN, owner.URN, registry.MemberRoleModerator); err != nil {
+		t.Fatalf("seed mod: %v", err)
+	}
+	if _, err := svc.AddMember(ctx, g.URN, target.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	err := svc.SetMemberRole(ctx, g.URN, target.URN, registry.MemberRoleOwner, mod.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_SetMemberRole_NonAuthByForbidden(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "SetRole-NoAuth")
+	stranger := registerCreator(t, svc, "Stranger")
+	target := registerCreator(t, svc, "Promotee")
+	if _, err := svc.AddMember(ctx, g.URN, target.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := svc.SetMemberRole(ctx, g.URN, target.URN, registry.MemberRoleModerator, stranger.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_ListMembers_OrderedByJoinedAt(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "List-Order")
+	// Add three more members in order; verify display_name + ordering.
+	for i, name := range []string{"Beta", "Charlie", "Delta"} {
+		m := registerCreator(t, svc, name)
+		if _, err := svc.AddMember(ctx, g.URN, m.URN, owner.URN, registry.MemberRoleMember); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+		// Tiny sleep to ensure joined_at ordering is stable (sqlite has
+		// 1s formatTime resolution otherwise).
+		time.Sleep(2 * time.Millisecond)
+	}
+	members, err := svc.ListMembers(ctx, g.URN)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	if len(members) != 4 {
+		t.Fatalf("members = %d; want 4", len(members))
+	}
+	// First is the owner, then Beta/Charlie/Delta in join order.
+	wantNames := []string{"Owner-List-Order", "Beta", "Charlie", "Delta"}
+	for i, m := range members {
+		if m.DisplayName != wantNames[i] {
+			t.Errorf("members[%d].DisplayName = %q; want %q", i, m.DisplayName, wantNames[i])
+		}
+	}
+}
+
+func TestService_ListMembers_RejectsAgentURN(t *testing.T) {
+	svc := newService(t)
+	owner := registerCreator(t, svc, "Owner")
+	_, err := svc.ListMembers(context.Background(), owner.URN)
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
 	}
 }
 

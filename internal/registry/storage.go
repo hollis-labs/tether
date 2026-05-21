@@ -1171,10 +1171,117 @@ func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]
 	return out, nil
 }
 
+// ListMembers returns the group_members rows for grpURN with display_name
+// hydrated from registry_entries via JOIN. Ordered by joined_at ASC so
+// older members surface first. Used by T-03's Service.ListMembers.
+func (s *Storage) ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error) {
+	if grpURN == "" {
+		return nil, errors.New("registry: list members: grpURN required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.grp_urn, m.member_urn, m.role, m.joined_at, m.last_read_seq,
+		        e.display_name
+		   FROM group_members m
+		   LEFT JOIN registry_entries e ON e.urn = m.member_urn
+		  WHERE m.grp_urn = ?
+		  ORDER BY m.joined_at ASC`, grpURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list members: %w", err)
+	}
+	defer rows.Close()
+	var out []GroupMember
+	for rows.Next() {
+		var (
+			gm          GroupMember
+			role        string
+			joinedAt    string
+			displayName sql.NullString
+		)
+		if err := rows.Scan(&gm.GroupURN, &gm.MemberURN, &role, &joinedAt, &gm.LastReadSeq, &displayName); err != nil {
+			return nil, fmt.Errorf("registry: list members scan: %w", err)
+		}
+		gm.Role = MemberRole(role)
+		gm.JoinedAt = parseTime(joinedAt)
+		if displayName.Valid {
+			gm.DisplayName = displayName.String
+		}
+		out = append(out, gm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list members rows: %w", err)
+	}
+	return out, nil
+}
+
+// RemoveGroupMember deletes a row from group_members. Returns ErrNotFound
+// if no row was deleted. Used by T-03's RemoveMember / LeaveGroup.
+func (s *Storage) RemoveGroupMember(ctx context.Context, grpURN, memberURN string) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: remove group member: grpURN + memberURN required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove group member: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: remove group member rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: remove group member: %w: (%q,%q)", ErrNotFound, grpURN, memberURN)
+	}
+	return nil
+}
+
+// UpdateGroupMemberRole sets the role of memberURN in grpURN. Returns
+// ErrNotFound if no row matched. Used by T-03's SetMemberRole.
+func (s *Storage) UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: update group member role: grpURN + memberURN required")
+	}
+	if role == "" {
+		return errors.New("registry: update group member role: role required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE group_members SET role = ? WHERE grp_urn = ? AND member_urn = ?`,
+		string(role), grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: update group member role: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: update group member role rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: update group member role: %w: (%q,%q)", ErrNotFound, grpURN, memberURN)
+	}
+	return nil
+}
+
+// CountModeratorsExcluding counts members of grpURN with role='moderator'
+// or role='owner', excluding excludeURN. Used by T-03's LeaveGroup to
+// guard the "owner cannot leave without a moderator successor" semantic.
+// Counting owner-role rows defensively in case multiple owners ever exist.
+func (s *Storage) CountModeratorsExcluding(ctx context.Context, grpURN, excludeURN string) (int, error) {
+	if grpURN == "" {
+		return 0, errors.New("registry: count moderators: grpURN required")
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM group_members
+		  WHERE grp_urn = ? AND member_urn <> ?
+		    AND role IN ('moderator','owner')`,
+		grpURN, excludeURN).Scan(&n); err != nil {
+		return 0, fmt.Errorf("registry: count moderators: %w", err)
+	}
+	return n, nil
+}
+
 // SetProfileStatus updates only the status column + updated_at. Used by
-// ArchiveGroup (sets status='deprecated' or status='archived'). v1 group
-// archive uses StatusDeprecated to share the soft-delete pattern from
-// D11; consumers detecting "archived" should check status='deprecated'.
+// ArchiveGroup (sets status='archived' per D9). Returns ErrNotFound if
+// no row matched.
 func (s *Storage) SetProfileStatus(ctx context.Context, urn string, status Status) error {
 	if urn == "" {
 		return errors.New("registry: set status: urn required")

@@ -78,12 +78,16 @@ type storageBackend interface {
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
 
-	// v060-05 group ops (T-02).
+	// v060-05 group ops (T-02 + T-03).
 	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
 	InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error
 	GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error)
 	ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error)
 	SetProfileStatus(ctx context.Context, urn string, status Status) error
+	ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error)
+	RemoveGroupMember(ctx context.Context, grpURN, memberURN string) error
+	UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole) error
+	CountModeratorsExcluding(ctx context.Context, grpURN, excludeURN string) (int, error)
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -308,6 +312,222 @@ func (s *Service) ArchiveGroup(ctx context.Context, grpURN, byURN string) (Profi
 	out, err := s.storage.GetProfile(ctx, grpURN)
 	if err != nil {
 		return Profile{}, fmt.Errorf("registry: archive group: reload: %w", err)
+	}
+	return out, nil
+}
+
+// ─── group membership (v060-05 T-03) ─────────────────────────────────────────
+
+// AddMember inserts memberURN as a member of grpURN. byURN must be the
+// group's owner or a moderator (D8). memberURN must be a valid
+// registry URN that exists. role defaults to MemberRoleMember.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, group URN not a group, member already in group.
+//   - ErrNotFound       — grpURN not in registry; memberURN not in registry.
+//   - ErrForbidden      — byURN is not owner or moderator of the group.
+func (s *Service) AddMember(ctx context.Context, grpURN, memberURN, byURN string, role MemberRole) (GroupMember, error) {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: invalid memberURN: %w", ErrInvalidRequest, err)
+	}
+	if role == "" {
+		role = MemberRoleMember
+	}
+	switch role {
+	case MemberRoleMember, MemberRoleModerator, MemberRoleOwner:
+	default:
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: invalid role %q", ErrInvalidRequest, role)
+	}
+	// Group must exist + member must exist.
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return GroupMember{}, err
+		}
+		return GroupMember{}, fmt.Errorf("registry: add member: group lookup: %w", err)
+	}
+	if _, err := s.storage.GetProfile(ctx, memberURN); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return GroupMember{}, fmt.Errorf("registry: add member: %w: memberURN %q not in registry", ErrNotFound, memberURN)
+		}
+		return GroupMember{}, fmt.Errorf("registry: add member: member lookup: %w", err)
+	}
+	// byURN must be owner/moderator of grpURN.
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: byURN must be owner or moderator (role=%q, member=%v)", ErrForbidden, byRole, ok)
+	}
+	// Reject duplicate membership.
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: existing-membership check: %w", err)
+	} else if present {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: memberURN %q already in group", ErrInvalidRequest, memberURN)
+	}
+	now := time.Now().UTC()
+	if err := s.storage.InsertGroupMember(ctx, grpURN, memberURN, role, now); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: insert: %w", err)
+	}
+	return GroupMember{
+		GroupURN:  grpURN,
+		MemberURN: memberURN,
+		Role:      role,
+		JoinedAt:  now,
+	}, nil
+}
+
+// RemoveMember removes memberURN from grpURN. byURN must be owner or
+// moderator (D8). The group's owner cannot be removed by RemoveMember
+// — the owner must use LeaveGroup after transferring ownership.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, not a group URN.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — byURN not owner/moderator; attempting to remove an owner.
+func (s *Service) RemoveMember(ctx context.Context, grpURN, memberURN, byURN string) error {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return fmt.Errorf("registry: remove member: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: remove member: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove member: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return fmt.Errorf("registry: remove member: %w: byURN must be owner or moderator", ErrForbidden)
+	}
+	targetRole, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove member: target-role check: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("registry: remove member: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	if targetRole == MemberRoleOwner {
+		return fmt.Errorf("registry: remove member: %w: cannot remove owner — owner must LeaveGroup after transferring ownership", ErrForbidden)
+	}
+	return s.storage.RemoveGroupMember(ctx, grpURN, memberURN)
+}
+
+// LeaveGroup is the self-remove path. If the leaver is the owner and no
+// other owner/moderator exists, the leave is refused — the caller must
+// SetMemberRole(other, 'owner') first or ArchiveGroup. byURN is the
+// leaver (must equal memberURN in v1 — this is a self-action).
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, byURN ≠ memberURN (not self), not a group URN.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — owner leaving without a moderator successor.
+func (s *Service) LeaveGroup(ctx context.Context, grpURN, memberURN string) error {
+	if grpURN == "" || memberURN == "" {
+		return fmt.Errorf("registry: leave group: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: leave group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	role, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: leave group: role check: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("registry: leave group: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	if role == MemberRoleOwner {
+		others, err := s.storage.CountModeratorsExcluding(ctx, grpURN, memberURN)
+		if err != nil {
+			return fmt.Errorf("registry: leave group: moderator count: %w", err)
+		}
+		if others == 0 {
+			return fmt.Errorf("registry: leave group: %w: cannot_leave_without_owner_transfer — promote another member to owner/moderator first or ArchiveGroup", ErrForbidden)
+		}
+	}
+	return s.storage.RemoveGroupMember(ctx, grpURN, memberURN)
+}
+
+// SetMemberRole changes memberURN's role within grpURN. Promotion to
+// owner is restricted to owner-only-by (transfers ownership). Promotion
+// to moderator may be done by owner or moderator. byURN itself must be
+// owner or moderator.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, invalid role, missing args.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — byURN not authorized for this transition.
+func (s *Service) SetMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole, byURN string) error {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return fmt.Errorf("registry: set member role: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: set member role: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	switch role {
+	case MemberRoleMember, MemberRoleModerator, MemberRoleOwner:
+	default:
+		return fmt.Errorf("registry: set member role: %w: invalid role %q", ErrInvalidRequest, role)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return fmt.Errorf("registry: set member role: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return fmt.Errorf("registry: set member role: %w: byURN must be owner or moderator", ErrForbidden)
+	}
+	// Promotion to owner is owner-only. Moderators can promote to moderator
+	// but NOT to owner.
+	if role == MemberRoleOwner && byRole != MemberRoleOwner {
+		return fmt.Errorf("registry: set member role: %w: only an owner can promote to owner (transfers ownership)", ErrForbidden)
+	}
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN); err != nil {
+		return fmt.Errorf("registry: set member role: target-role check: %w", err)
+	} else if !present {
+		return fmt.Errorf("registry: set member role: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	return s.storage.UpdateGroupMemberRole(ctx, grpURN, memberURN, role)
+}
+
+// ListMembers returns the members of grpURN, ordered by joined_at ASC,
+// with display_name hydrated from registry_entries. v1 has no access
+// control on this call — member lists are visible to all members per
+// the sprint's review notes. If/when private membership lands, this is
+// where the access check goes.
+//
+// Errors:
+//   - ErrInvalidRequest — empty/malformed grpURN, not a group URN.
+//   - ErrNotFound       — grpURN not in registry.
+func (s *Service) ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error) {
+	if grpURN == "" {
+		return nil, fmt.Errorf("registry: list members: %w: grpURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return nil, fmt.Errorf("registry: list members: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return nil, err
+	}
+	out, err := s.storage.ListMembers(ctx, grpURN)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMember{}
 	}
 	return out, nil
 }
