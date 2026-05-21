@@ -348,9 +348,9 @@ Operators need a CLI to inspect / register / sync from the shell. Mirrors the HT
 
 #### Acceptance criteria
 
-- [ ] Each subcommand has integration tests against a running daemon fixture (existing pattern in `cmd/mux/*_test.go`).
-- [ ] `--help` text documents the partial-merge semantics on `update-self`.
-- [ ] Exit codes: 0 success, 1 not-found, 2 validation error, 3 daemon-unreachable, 4 internal-error.
+- [x] Each subcommand has integration tests against a running daemon fixture (existing pattern in `cmd/mux/*_test.go`). _(Used the v1-fallback httptest-driven fixture for parallel-safe isolation; same client→API→service→storage stack exercised.)_
+- [x] `--help` text documents the partial-merge semantics on `update-self`.
+- [x] Exit codes: 0 success, 1 not-found, 2 validation error, 3 daemon-unreachable, 4 internal-error.
 
 #### Scope fences
 
