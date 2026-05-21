@@ -25,6 +25,7 @@ package registry_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -310,6 +311,24 @@ func (s *stubStorage) UpdateGroupMemberRole(context.Context, string, string, reg
 }
 func (s *stubStorage) CountModeratorsExcluding(context.Context, string, string) (int, error) {
 	panic("stubStorage.CountModeratorsExcluding: unexpected call")
+}
+func (s *stubStorage) InsertGroupMessage(context.Context, string, string, string, string, string, json.RawMessage) (registry.GroupMessage, error) {
+	panic("stubStorage.InsertGroupMessage: unexpected call")
+}
+func (s *stubStorage) ListGroupMessages(context.Context, string, int64, string, int, time.Time) ([]registry.GroupMessage, error) {
+	panic("stubStorage.ListGroupMessages: unexpected call")
+}
+func (s *stubStorage) BumpGroupReadCursor(context.Context, string, string, int64) error {
+	panic("stubStorage.BumpGroupReadCursor: unexpected call")
+}
+func (s *stubStorage) GroupMemberJoinedAt(context.Context, string, string) (time.Time, bool, error) {
+	panic("stubStorage.GroupMemberJoinedAt: unexpected call")
+}
+func (s *stubStorage) GroupMemberLastReadSeq(context.Context, string, string) (int64, bool, error) {
+	panic("stubStorage.GroupMemberLastReadSeq: unexpected call")
+}
+func (s *stubStorage) ListMentionsForMember(context.Context, string, time.Time, int) ([]registry.GroupMessage, error) {
+	panic("stubStorage.ListMentionsForMember: unexpected call")
 }
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
@@ -1527,6 +1546,375 @@ func TestService_ListMembers_RejectsAgentURN(t *testing.T) {
 	_, err := svc.ListMembers(context.Background(), owner.URN)
 	if !errors.Is(err, registry.ErrInvalidRequest) {
 		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+// ─── v060-05 T-04: group messaging service ───────────────────────────────────
+
+func TestService_SendToGroup_HappyPath(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Send-OK")
+
+	gm, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "application/json", json.RawMessage(`{"text":"hello"}`))
+	if err != nil {
+		t.Fatalf("SendToGroup: %v", err)
+	}
+	if gm.GroupSeq != 1 {
+		t.Errorf("GroupSeq = %d; want 1", gm.GroupSeq)
+	}
+	if gm.ID == "" {
+		t.Error("ID is empty")
+	}
+	if gm.GroupURN != g.URN {
+		t.Errorf("GroupURN = %q; want %q", gm.GroupURN, g.URN)
+	}
+	if gm.FromURN != owner.URN {
+		t.Errorf("FromURN = %q; want %q", gm.FromURN, owner.URN)
+	}
+}
+
+func TestService_SendToGroup_AssignsSequentialSeqs(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Send-Seq")
+	for i := 1; i <= 5; i++ {
+		gm, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+		if gm.GroupSeq != int64(i) {
+			t.Errorf("send %d: GroupSeq = %d; want %d", i, gm.GroupSeq, i)
+		}
+	}
+}
+
+func TestService_SendToGroup_NonMemberForbidden(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, _ := groupFixture(t, svc, "Send-NonMember")
+	stranger := registerCreator(t, svc, "Stranger")
+	_, err := svc.SendToGroup(ctx, g.URN, stranger.URN, "notice", "", "", nil)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_SendToGroup_ArchivedRejected(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "Send-Archived")
+	if _, err := svc.ArchiveGroup(ctx, g.URN, owner.URN); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	_, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", nil)
+	if !errors.Is(err, registry.ErrGroupArchived) {
+		t.Fatalf("err = %v; want ErrGroupArchived", err)
+	}
+}
+
+func TestService_SendToGroup_RejectsAgentURN(t *testing.T) {
+	svc := newService(t)
+	owner := registerCreator(t, svc, "Owner")
+	_, err := svc.SendToGroup(context.Background(), owner.URN, owner.URN, "notice", "", "", nil)
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+// TestService_SendToGroup_ConcurrentSeqAssignment verifies the MAX+1
+// counter under concurrent sends produces a contiguous 1..N sequence
+// with no duplicates and no skips (D10 — per-group monotonic counter).
+// Uses newServiceForConcurrency to pin MaxOpenConns=1 (the production
+// invariant that makes MAX+1 race-safe via connection-pool
+// serialization).
+func TestService_SendToGroup_ConcurrentSeqAssignment(t *testing.T) {
+	svc := newServiceForConcurrency(t)
+	ctx := context.Background()
+	owner, err := svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Owner"})
+	if err != nil {
+		t.Fatalf("register owner: %v", err)
+	}
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Concurrent", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register group: %v", err)
+	}
+
+	const N = 20
+	var wg sync.WaitGroup
+	seqs := make(chan int64, N)
+	errs := make(chan error, N)
+	for range N {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gm, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`))
+			if err != nil {
+				errs <- err
+				return
+			}
+			seqs <- gm.GroupSeq
+		}()
+	}
+	wg.Wait()
+	close(seqs)
+	close(errs)
+	for e := range errs {
+		t.Fatalf("send error: %v", e)
+	}
+	got := make([]int64, 0, N)
+	for s := range seqs {
+		got = append(got, s)
+	}
+	if len(got) != N {
+		t.Fatalf("got %d seqs; want %d", len(got), N)
+	}
+	seen := make(map[int64]bool, N)
+	for _, s := range got {
+		if s < 1 || s > int64(N) {
+			t.Errorf("seq %d outside [1, %d]", s, N)
+		}
+		if seen[s] {
+			t.Errorf("duplicate seq %d", s)
+		}
+		seen[s] = true
+	}
+	for i := int64(1); i <= int64(N); i++ {
+		if !seen[i] {
+			t.Errorf("missing seq %d", i)
+		}
+	}
+}
+
+func TestService_ListGroupMessages_HappyPath(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "List-OK")
+	for i := 0; i < 3; i++ {
+		if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, owner.URN, -1, "", 100)
+	if err != nil {
+		t.Fatalf("ListGroupMessages: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d; want 3", len(msgs))
+	}
+	for i, m := range msgs {
+		if m.GroupSeq != int64(i+1) {
+			t.Errorf("messages[%d].GroupSeq = %d; want %d", i, m.GroupSeq, i+1)
+		}
+	}
+}
+
+func TestService_ListGroupMessages_RespectsJoinedAtGate(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "List-JoinedGate")
+	// Owner sends 2 messages before adding a new member.
+	for i := 0; i < 2; i++ {
+		if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("pre-add send %d: %v", i, err)
+		}
+	}
+	// Ensure timestamp resolution boundary: sleep so joined_at strictly
+	// exceeds the pre-send created_at values.
+	time.Sleep(5 * time.Millisecond)
+	newMember := registerCreator(t, svc, "Latecomer")
+	if _, err := svc.AddMember(ctx, g.URN, newMember.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	// Owner sends 1 more after the new member joined.
+	if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("post-add send: %v", err)
+	}
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, newMember.URN, -1, "", 100)
+	if err != nil {
+		t.Fatalf("ListGroupMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("late member messages = %d; want 1 (only post-join)", len(msgs))
+	}
+	if msgs[0].GroupSeq != 3 {
+		t.Errorf("seq = %d; want 3", msgs[0].GroupSeq)
+	}
+}
+
+func TestService_ListGroupMessages_SinceSeqZeroUsesCursor(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "List-Cursor")
+	for i := 0; i < 5; i++ {
+		if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	// Mark read up to 3. sinceSeq=0 should now substitute 3 → return seqs 4,5.
+	if err := svc.MarkRead(ctx, g.URN, owner.URN, 3); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, owner.URN, 0, "", 100)
+	if err != nil {
+		t.Fatalf("ListGroupMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %d; want 2", len(msgs))
+	}
+	wantSeqs := []int64{4, 5}
+	for i, m := range msgs {
+		if m.GroupSeq != wantSeqs[i] {
+			t.Errorf("messages[%d].GroupSeq = %d; want %d", i, m.GroupSeq, wantSeqs[i])
+		}
+	}
+}
+
+func TestService_ListGroupMessages_ThreadFilter(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "List-Thread")
+	if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "thread-a", "", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("send A1: %v", err)
+	}
+	if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "thread-b", "", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("send B: %v", err)
+	}
+	if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "thread-a", "", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("send A2: %v", err)
+	}
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, owner.URN, -1, "thread-a", 100)
+	if err != nil {
+		t.Fatalf("ListGroupMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("thread-a messages = %d; want 2", len(msgs))
+	}
+}
+
+func TestService_ListGroupMessages_NonMemberForbidden(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, _ := groupFixture(t, svc, "List-NonMember")
+	stranger := registerCreator(t, svc, "Stranger")
+	_, err := svc.ListGroupMessages(ctx, g.URN, stranger.URN, -1, "", 100)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_MarkRead_Monotonic(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	g, owner := groupFixture(t, svc, "MarkRead-Mono")
+	for i := 0; i < 5; i++ {
+		if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+	if err := svc.MarkRead(ctx, g.URN, owner.URN, 4); err != nil {
+		t.Fatalf("MarkRead 4: %v", err)
+	}
+	// Smaller upToSeq is a no-op.
+	if err := svc.MarkRead(ctx, g.URN, owner.URN, 1); err != nil {
+		t.Fatalf("MarkRead 1: %v", err)
+	}
+	// Cursor should still be 4. Reading from sinceSeq=0 returns only seq=5.
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, owner.URN, 0, "", 100)
+	if err != nil {
+		t.Fatalf("ListGroupMessages: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].GroupSeq != 5 {
+		t.Errorf("after monotonic MarkRead, messages = %v; want one seq=5", msgs)
+	}
+}
+
+func TestService_MarkRead_RejectsNegative(t *testing.T) {
+	svc := newService(t)
+	owner := registerCreator(t, svc, "Owner")
+	g, err := svc.Register(context.Background(), registry.KindGroup, registry.Profile{
+		DisplayName: "G", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	err = svc.MarkRead(context.Background(), g.URN, owner.URN, -1)
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_GetMyMentions_FiltersByGroupKey(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	// Inject two notice envelopes directly via Storage.InsertGroupMessage —
+	// one with payload.group set (a mention notice), one without (plain
+	// notice). GetMyMentions should return only the first.
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{DisplayName: "Notif", LastUpdatedBy: owner.URN})
+	if err != nil {
+		t.Fatalf("register group: %v", err)
+	}
+	if _, err := storage.InsertGroupMessage(ctx, owner.URN, "msg://system/mention",
+		"notice", "", "application/json",
+		json.RawMessage(`{"group":"`+g.URN+`","message_id":"01H","seq":1}`)); err != nil {
+		t.Fatalf("insert mention notice: %v", err)
+	}
+	if _, err := storage.InsertGroupMessage(ctx, owner.URN, "msg://system/mention",
+		"notice", "", "application/json",
+		json.RawMessage(`{"text":"non-mention"}`)); err != nil {
+		t.Fatalf("insert plain notice: %v", err)
+	}
+	got, err := svc.GetMyMentions(ctx, owner.URN, time.Time{}, 50)
+	if err != nil {
+		t.Fatalf("GetMyMentions: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("mentions = %d; want 1", len(got))
+	}
+}
+
+// fakeMentionParser is a recording stub used by the hook-invocation test.
+type fakeMentionParser struct {
+	mu      sync.Mutex
+	calls   []registry.GroupMessage
+	wantErr error
+}
+
+func (f *fakeMentionParser) ParseAndDispatch(_ context.Context, gm registry.GroupMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, gm)
+	return f.wantErr
+}
+
+func TestService_SendToGroup_InvokesMentionParser(t *testing.T) {
+	storage := newStorage(t)
+	parser := &fakeMentionParser{}
+	svc := registry.NewService(storage, registry.WithMentionParser(parser))
+	ctx := context.Background()
+	owner, err := svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Owner"})
+	if err != nil {
+		t.Fatalf("register owner: %v", err)
+	}
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Hook Test", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register group: %v", err)
+	}
+	if _, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{"text":"hi @everyone"}`)); err != nil {
+		t.Fatalf("SendToGroup: %v", err)
+	}
+	parser.mu.Lock()
+	defer parser.mu.Unlock()
+	if len(parser.calls) != 1 {
+		t.Fatalf("parser calls = %d; want 1", len(parser.calls))
+	}
+	if parser.calls[0].GroupURN != g.URN {
+		t.Errorf("parser saw GroupURN %q; want %q", parser.calls[0].GroupURN, g.URN)
 	}
 }
 

@@ -145,6 +145,27 @@ type GroupMember struct {
 	DisplayName string `json:"display_name,omitempty"`
 }
 
+// GroupMessage is a message addressed to a group (v060-05 T-04). One row
+// in the messages table corresponds to one GroupMessage; mailbox-pull
+// (D4) means storage scales with messages, not members × messages. Per-
+// member read cursors live on group_members.last_read_seq, not here.
+//
+// Wire shape mirrors go-messaging.Envelope minus the lifecycle fields
+// (delivered_at / consumed_at / canceled_at) that group messages don't
+// use — group messages are non-destructive reads driven by the
+// last_read_seq cursor.
+type GroupMessage struct {
+	ID          string          `json:"id"` // UUIDv7
+	GroupURN    string          `json:"group_urn"`
+	GroupSeq    int64           `json:"group_seq"`
+	FromURN     string          `json:"from_urn"`
+	Kind        string          `json:"kind"`
+	ThreadID    string          `json:"thread_id,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	ContentType string          `json:"content_type,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
 // ArrayMode controls how an UpdateSelf array patch merges into the
 // existing row (D5).
 type ArrayMode string

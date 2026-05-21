@@ -78,7 +78,7 @@ type storageBackend interface {
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
 
-	// v060-05 group ops (T-02 + T-03).
+	// v060-05 group ops (T-02 + T-03 + T-04).
 	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
 	InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error
 	GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error)
@@ -88,6 +88,12 @@ type storageBackend interface {
 	RemoveGroupMember(ctx context.Context, grpURN, memberURN string) error
 	UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole) error
 	CountModeratorsExcluding(ctx context.Context, grpURN, excludeURN string) (int, error)
+	InsertGroupMessage(ctx context.Context, grpURN, fromURN, kind, threadID, contentType string, payload json.RawMessage) (GroupMessage, error)
+	ListGroupMessages(ctx context.Context, grpURN string, sinceSeq int64, threadID string, limit int, joinedAt time.Time) ([]GroupMessage, error)
+	BumpGroupReadCursor(ctx context.Context, grpURN, memberURN string, upToSeq int64) error
+	GroupMemberJoinedAt(ctx context.Context, grpURN, memberURN string) (time.Time, bool, error)
+	GroupMemberLastReadSeq(ctx context.Context, grpURN, memberURN string) (int64, bool, error)
+	ListMentionsForMember(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error)
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -97,9 +103,26 @@ type storageBackend interface {
 // keyed on the row's callback Scheme. Callers wire resolvers at
 // construction time via WithResolver — see NewService. The map is read-
 // only after construction; v1 has no hot-swap or dynamic registration.
+//
+// Mention parser (T-v060-05-05). If installed via WithMentionParser, the
+// Service invokes ParseAndDispatch after every successful SendToGroup
+// commit. T-04 reserves the seam; T-05 implements the parser.
 type Service struct {
-	storage   storageBackend
-	resolvers map[string]Resolver
+	storage       storageBackend
+	resolvers     map[string]Resolver
+	mentionParser MentionParser
+}
+
+// MentionParser is invoked by SendToGroup after a group message is
+// committed. The implementation scans gm.Payload for `@<urn>` /
+// `@<display_name>` patterns, resolves them via registry Lookup, and
+// emits a `notice` envelope to each mentioned URN's personal inbox.
+//
+// Errors are advisory: SendToGroup logs and continues (D11/D12 — mention
+// emission is fire-and-forget; the group message itself was already
+// delivered).
+type MentionParser interface {
+	ParseAndDispatch(ctx context.Context, gm GroupMessage) error
 }
 
 // ServiceOption configures a Service at construction time. v1 ships
@@ -116,6 +139,16 @@ func WithResolver(r Resolver) ServiceOption {
 			s.resolvers = map[string]Resolver{}
 		}
 		s.resolvers[r.Scheme()] = r
+	}
+}
+
+// WithMentionParser installs the post-SendToGroup mention dispatch hook
+// (v060-05 T-05). If not set, mention parsing is skipped — the Service
+// still accepts group sends, but no notice envelopes are emitted to
+// mentioned members' personal inboxes.
+func WithMentionParser(p MentionParser) ServiceOption {
+	return func(s *Service) {
+		s.mentionParser = p
 	}
 }
 
@@ -528,6 +561,147 @@ func (s *Service) ListMembers(ctx context.Context, grpURN string) ([]GroupMember
 	}
 	if out == nil {
 		out = []GroupMember{}
+	}
+	return out, nil
+}
+
+// ─── group messaging (v060-05 T-04) ──────────────────────────────────────────
+
+// ErrGroupArchived is returned by SendToGroup when the target group's
+// status is StatusArchived. HTTP layer maps to 423 Locked per sprint.
+var ErrGroupArchived = errors.New("registry: group is archived (read-only)")
+
+// SendToGroup writes a message addressed to grpURN. fromURN must be a
+// current member of the group; the group must not be archived. After
+// the row is committed, the optional MentionParser hook scans the
+// payload for `@<urn>` patterns and emits notice envelopes — failures
+// are logged in the parser (fire-and-forget per D11/D12) and never
+// fail SendToGroup.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, not a group URN, missing args.
+//   - ErrNotFound       — group not in registry.
+//   - ErrForbidden      — fromURN not a member.
+//   - ErrGroupArchived  — group status is archived.
+func (s *Service) SendToGroup(ctx context.Context, grpURN, fromURN, kind, threadID, contentType string, payload json.RawMessage) (GroupMessage, error) {
+	if grpURN == "" || fromURN == "" || kind == "" {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: grpURN + fromURN + kind required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	existing, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		return GroupMessage{}, err
+	}
+	if existing.Status == StatusArchived {
+		return GroupMessage{}, fmt.Errorf("registry: send to group %q: %w", grpURN, ErrGroupArchived)
+	}
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, fromURN); err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: member check: %w", err)
+	} else if !present {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: fromURN %q is not a member of %q", ErrForbidden, fromURN, grpURN)
+	}
+	gm, err := s.storage.InsertGroupMessage(ctx, grpURN, fromURN, kind, threadID, contentType, payload)
+	if err != nil {
+		return GroupMessage{}, err
+	}
+	// Mention dispatch — fire-and-forget after commit (D11/D12). Parser
+	// errors are advisory; we don't roll back the group message.
+	if s.mentionParser != nil {
+		_ = s.mentionParser.ParseAndDispatch(ctx, gm)
+	}
+	return gm, nil
+}
+
+// ListGroupMessages returns messages addressed to grpURN with group_seq
+// > sinceSeq. sinceSeq=0 means "from the member's last_read_seq" —
+// callers who explicitly want full visible history pass a negative
+// sentinel? No: 0 is the default, and the member's last_read_seq is
+// substituted if the caller passes 0. To get pre-cursor history pass
+// the explicit lower bound.
+//
+// The result is gated by the member's joined_at (no pre-membership
+// history). This call does NOT bump the read cursor — MarkRead is
+// dedicated to that.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, missing args.
+//   - ErrNotFound       — group not in registry.
+//   - ErrForbidden      — memberURN not a member.
+func (s *Service) ListGroupMessages(ctx context.Context, grpURN, memberURN string, sinceSeq int64, threadID string, limit int) ([]GroupMessage, error) {
+	if grpURN == "" || memberURN == "" {
+		return nil, fmt.Errorf("registry: list group messages: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return nil, fmt.Errorf("registry: list group messages: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return nil, err
+	}
+	joinedAt, present, err := s.storage.GroupMemberJoinedAt(ctx, grpURN, memberURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list group messages: membership check: %w", err)
+	}
+	if !present {
+		return nil, fmt.Errorf("registry: list group messages: %w: memberURN %q not in group", ErrForbidden, memberURN)
+	}
+	if sinceSeq == 0 {
+		cursor, _, err := s.storage.GroupMemberLastReadSeq(ctx, grpURN, memberURN)
+		if err != nil {
+			return nil, fmt.Errorf("registry: list group messages: cursor: %w", err)
+		}
+		sinceSeq = cursor
+	}
+	out, err := s.storage.ListGroupMessages(ctx, grpURN, sinceSeq, threadID, limit, joinedAt)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMessage{}
+	}
+	return out, nil
+}
+
+// MarkRead sets the member's last_read_seq to max(last_read_seq, upToSeq).
+// Idempotent / monotonic — smaller upToSeq is a no-op.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, missing args, negative upToSeq.
+//   - ErrNotFound       — group not in registry; member not in group.
+func (s *Service) MarkRead(ctx context.Context, grpURN, memberURN string, upToSeq int64) error {
+	if grpURN == "" || memberURN == "" {
+		return fmt.Errorf("registry: mark read: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if upToSeq < 0 {
+		return fmt.Errorf("registry: mark read: %w: upToSeq must be ≥ 0", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: mark read: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	return s.storage.BumpGroupReadCursor(ctx, grpURN, memberURN, upToSeq)
+}
+
+// GetMyMentions returns the notice envelopes addressed to memberURN
+// whose payload carries a `group` key (set by T-05's parser). Convenience
+// wrapper over storage.ListMentionsForMember — saves callers from
+// constructing the json_extract filter themselves.
+func (s *Service) GetMyMentions(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error) {
+	if memberURN == "" {
+		return nil, fmt.Errorf("registry: get my mentions: %w: memberURN required", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return nil, fmt.Errorf("registry: get my mentions: %w: invalid URN: %w", ErrInvalidRequest, err)
+	}
+	out, err := s.storage.ListMentionsForMember(ctx, memberURN, sinceTS, limit)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMessage{}
 	}
 	return out, nil
 }
