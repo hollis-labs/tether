@@ -12,17 +12,18 @@
 // note for why r.URL.EscapedPath() is non-optional when URNs contain
 // embedded slashes.
 //
-// Error mapping (closest existing error codes; status-code surface
-// extends ADR-0010's envelope with 403 + 423 — both expressed via the
-// generic invalid_request / not_found / internal_error code vocabulary
-// rather than coining new codes, matching the sprint's "no new envelope
-// codes" guidance):
+// Error mapping. v060-05 extends ADR-0010's envelope-code vocabulary
+// with `forbidden` (403) and `locked` (423) — the existing codes
+// (invalid_request, not_found, internal_error) didn't fit role-gated
+// rejection or read-only-group rejection cleanly. *ErrAmbiguousMention
+// reuses invalid_request with a `candidates` array in the response body
+// (no new code; the candidates list is the differentiator):
 //
 //	registry.ErrInvalidRequest       → 400 invalid_request
 //	*registry.ErrAmbiguousMention    → 400 invalid_request + candidates[]
-//	registry.ErrForbidden            → 403 forbidden
+//	registry.ErrForbidden            → 403 forbidden     (new code)
 //	registry.ErrNotFound             → 404 not_found
-//	registry.ErrGroupArchived        → 423 locked (group is read-only)
+//	registry.ErrGroupArchived        → 423 locked        (new code)
 //	(anything else)                  → 500 internal_error
 //
 // Caller-identity surrogate. v060-05 has no token auth (lands in
@@ -606,27 +607,27 @@ func (s *Server) handleMentions(w http.ResponseWriter, r *http.Request) {
 
 // callerFromBodyOrQuery reads the caller URN from a small request body
 // (`{"by": "<urn>"}` or `{"as": "<urn>"}`) or from the ?as= query.
-// Returns "" if neither is present. The body is consumed eagerly via
-// JSON decoding; failed decodes are treated as "no body" so the caller
-// can still pass identity via query (the failure surfaces as 400
-// downstream when neither yields a URN).
+// **Body wins when present** — handlers explicitly opt into a body-key
+// for the operation's semantic owner (`by` for moderation actions,
+// `member` for self-actions); the query fallback exists for CLI/MCP
+// ergonomics where building a body for an otherwise-bodyless verb (DELETE,
+// GET) is awkward. Returns "" if neither yields a URN; the failure
+// surfaces as 400 downstream.
 func callerFromBodyOrQuery(r *http.Request, bodyKey string) string {
+	if r.Body != nil {
+		defer r.Body.Close() //nolint:errcheck
+		var raw map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&raw); err == nil {
+			if v, ok := raw[bodyKey].(string); ok && v != "" {
+				return v
+			}
+			if v, ok := raw["as"].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
 	if q := r.URL.Query().Get("as"); q != "" {
 		return q
-	}
-	if r.Body == nil {
-		return ""
-	}
-	defer r.Body.Close() //nolint:errcheck
-	var raw map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		return ""
-	}
-	if v, ok := raw[bodyKey].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := raw["as"].(string); ok && v != "" {
-		return v
 	}
 	return ""
 }

@@ -185,25 +185,24 @@ func TestMigration0016_messagesGroupColumns(t *testing.T) {
 	}
 }
 
-// TestMigration0016_preservesExistingRows verifies the table-swap dance
-// in 0016 (rebuild registry_entries to extend the kind CHECK) preserves
-// pre-existing 0015 data.
-func TestMigration0016_preservesExistingRows(t *testing.T) {
+// TestMigration0016_postSwapInsertableForAgent is a smoke check that
+// registry_entries is still write-able after the 0016 table-swap (which
+// rebuilds the table to extend the kind CHECK to include 'group'). It
+// does NOT exercise the "preserve pre-existing rows" property — that
+// would require a fixture path that applies 0001..0015 only, seeds, then
+// applies 0016, which the embed-FS-based migrator doesn't support
+// out-of-the-box. The structural correctness of the table-swap (column
+// list + indexes) is covered by TestMigration0015_tablesAndIndexes and
+// TestMigration0016_groupMembersTable; row preservation is covered
+// implicitly when the same DB carries data forward across migrator runs
+// (see TestMigration0015_idempotent for the no-op-on-replay property).
+func TestMigration0016_postSwapInsertableForAgent(t *testing.T) {
 	db := openInMemory(t)
-	// Apply migrations up through 0015 by running them all then inserting
-	// a v0.6-era agent row; then re-run Migrate (idempotent) — the 0016
-	// table-swap should have already executed during the initial Migrate
-	// call and preserved no rows since the DB was fresh. So we test the
-	// preservation property by inserting a row, dropping + recreating the
-	// table via a fresh migrator on a fresh DB while seeding pre-0016
-	// state would require a different fixture path. Here we test the
-	// observable property: agent rows can be inserted post-migration and
-	// the row survives.
 	if _, err := store.Migrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at)
-		VALUES ('msg://agent/agent-mux/agt_test999999','agent','Pre-0016 row','2026-05-19T00:00:00Z','2026-05-19T00:00:00Z')`); err != nil {
+		VALUES ('msg://agent/agent-mux/agt_test999999','agent','Post-0016 row','2026-05-19T00:00:00Z','2026-05-19T00:00:00Z')`); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	var n int

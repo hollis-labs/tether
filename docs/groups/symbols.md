@@ -42,7 +42,7 @@ The only symbol the daemon scans group message bodies for. On every `SendToGroup
 | `@<full URN>` to the group's own URN | silent no-op (no self-notice for the group) |
 | `@<short-form>` with exactly one matching `display_name` | notice emitted |
 | `@<short-form>` with zero matches | dropped silently (treated as text that happens to start with @) |
-| `@<short-form>` with **>1 matches** | **`SendToGroup` aborts** with HTTP 400 `ambiguous_mention` + the candidate URN list. The group message is NOT written. Use the full URN. |
+| `@<short-form>` with **>1 matches** | **`SendToGroup` aborts** with HTTP 400 (envelope code `invalid_request`, plus a `candidates` array of the URNs that share the short-form). The group message is NOT written. Use the full URN. |
 | `@<self>` (sender mentioning their own URN) | notice emitted — useful for save-for-later patterns |
 | `\@<anything>` | literal text; no resolution attempted |
 

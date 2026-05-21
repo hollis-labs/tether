@@ -223,6 +223,13 @@ func (p *Parser) Parse(ctx context.Context, payload json.RawMessage, groupURN st
 // registry.MentionParser.Dispatch.
 func (p *Parser) Dispatch(ctx context.Context, gm registry.GroupMessage, mentions []registry.Mention) {
 	snippet := bodySnippet(gm.Payload, SnippetMax)
+	// Resolve the group's display_name once per Dispatch for the notice
+	// subject ("Mention in <display_name>" per ADR-0042). Falls back to
+	// the URN if Lookup fails — notices stay informative either way.
+	groupLabel := gm.GroupURN
+	if gp, err := p.lookup.Lookup(ctx, gm.GroupURN); err == nil && gp.DisplayName != "" {
+		groupLabel = gp.DisplayName
+	}
 	for _, m := range mentions {
 		if m.ResolvedURN == "" {
 			p.logger.WarnContext(ctx, "mention skip: unresolved",
@@ -230,7 +237,7 @@ func (p *Parser) Dispatch(ctx context.Context, gm registry.GroupMessage, mention
 			continue
 		}
 		payload, err := json.Marshal(map[string]any{
-			"subject":      "Mention in " + gm.GroupURN,
+			"subject":      "Mention in " + groupLabel,
 			"group":        gm.GroupURN,
 			"message_id":   gm.ID,
 			"group_seq":    gm.GroupSeq,
@@ -304,9 +311,22 @@ func bodySnippet(payload json.RawMessage, maxLen int) string {
 	return truncateRunes(string(payload), maxLen)
 }
 
+// truncateRunes returns s truncated so that the result is at most maxLen
+// bytes of valid UTF-8 plus a trailing "…" ellipsis. Truncation happens
+// on rune boundaries so multi-byte characters aren't split mid-sequence.
+// maxLen is a byte budget, not a rune budget — keeps the caller's size
+// cap stable regardless of input encoding density.
 func truncateRunes(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "…"
+	// Walk forward by rune until adding the next rune would exceed maxLen.
+	end := 0
+	for i := range s {
+		if i > maxLen {
+			break
+		}
+		end = i
+	}
+	return s[:end] + "…"
 }
