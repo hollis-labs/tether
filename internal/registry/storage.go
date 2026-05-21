@@ -1262,6 +1262,40 @@ func (s *Storage) UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN s
 	return nil
 }
 
+// FindByDisplayName returns all profiles with display_name=name,
+// excluding deprecated/archived rows by default. Mention resolution
+// uses this to detect ambiguous @-tokens: len(out)>1 → ambiguous.
+func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile, error) {
+	if name == "" {
+		return nil, errors.New("registry: find by display name: name required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
+		        avatar, project, status, callback_json, cached_at, health_status,
+		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        created_at, updated_at
+		   FROM registry_entries
+		  WHERE display_name = ?
+		    AND status = ?
+		  ORDER BY urn ASC`, name, string(StatusActive))
+	if err != nil {
+		return nil, fmt.Errorf("registry: find by display name: %w", err)
+	}
+	defer rows.Close()
+	var out []Profile
+	for rows.Next() {
+		p, err := scanEntryRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: find by display name rows: %w", err)
+	}
+	return out, nil
+}
+
 // InsertGroupMessage writes a row to the messages table with group_urn +
 // the next group_seq for this group, inside a single transaction. The
 // MaxOpenConns=1 invariant in internal/store/sqlite.go serializes all

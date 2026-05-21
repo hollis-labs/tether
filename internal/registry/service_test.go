@@ -330,6 +330,9 @@ func (s *stubStorage) GroupMemberLastReadSeq(context.Context, string, string) (i
 func (s *stubStorage) ListMentionsForMember(context.Context, string, time.Time, int) ([]registry.GroupMessage, error) {
 	panic("stubStorage.ListMentionsForMember: unexpected call")
 }
+func (s *stubStorage) FindByDisplayName(context.Context, string) ([]registry.Profile, error) {
+	panic("stubStorage.FindByDisplayName: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's
@@ -1876,23 +1879,38 @@ func TestService_GetMyMentions_FiltersByGroupKey(t *testing.T) {
 	}
 }
 
-// fakeMentionParser is a recording stub used by the hook-invocation test.
+// fakeMentionParser is a recording stub used by the hook-invocation tests.
+// Parse runs pre-commit (can fail SendToGroup); Dispatch runs post-commit
+// (fire-and-forget).
 type fakeMentionParser struct {
-	mu      sync.Mutex
-	calls   []registry.GroupMessage
-	wantErr error
+	mu            sync.Mutex
+	parseCalls    int
+	dispatchCalls []registry.GroupMessage
+	parseErr      error
+	parseMentions []registry.Mention
 }
 
-func (f *fakeMentionParser) ParseAndDispatch(_ context.Context, gm registry.GroupMessage) error {
+func (f *fakeMentionParser) Parse(_ context.Context, _ json.RawMessage, _ string) ([]registry.Mention, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, gm)
-	return f.wantErr
+	f.parseCalls++
+	if f.parseErr != nil {
+		return nil, f.parseErr
+	}
+	return f.parseMentions, nil
+}
+
+func (f *fakeMentionParser) Dispatch(_ context.Context, gm registry.GroupMessage, _ []registry.Mention) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dispatchCalls = append(f.dispatchCalls, gm)
 }
 
 func TestService_SendToGroup_InvokesMentionParser(t *testing.T) {
 	storage := newStorage(t)
-	parser := &fakeMentionParser{}
+	parser := &fakeMentionParser{
+		parseMentions: []registry.Mention{{Token: "everyone", ResolvedURN: "msg://agent/agent-mux/agt_xxxxxxxxxx", Source: "display_name"}},
+	}
 	svc := registry.NewService(storage, registry.WithMentionParser(parser))
 	ctx := context.Background()
 	owner, err := svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Owner"})
@@ -1910,11 +1928,49 @@ func TestService_SendToGroup_InvokesMentionParser(t *testing.T) {
 	}
 	parser.mu.Lock()
 	defer parser.mu.Unlock()
-	if len(parser.calls) != 1 {
-		t.Fatalf("parser calls = %d; want 1", len(parser.calls))
+	if parser.parseCalls != 1 {
+		t.Errorf("Parse calls = %d; want 1", parser.parseCalls)
 	}
-	if parser.calls[0].GroupURN != g.URN {
-		t.Errorf("parser saw GroupURN %q; want %q", parser.calls[0].GroupURN, g.URN)
+	if len(parser.dispatchCalls) != 1 {
+		t.Fatalf("Dispatch calls = %d; want 1", len(parser.dispatchCalls))
+	}
+	if parser.dispatchCalls[0].GroupURN != g.URN {
+		t.Errorf("dispatched GroupURN %q; want %q", parser.dispatchCalls[0].GroupURN, g.URN)
+	}
+}
+
+func TestService_SendToGroup_AmbiguousMentionAbortsBeforeCommit(t *testing.T) {
+	storage := newStorage(t)
+	parser := &fakeMentionParser{
+		parseErr: &registry.ErrAmbiguousMention{Token: "alex", Candidates: []string{
+			"msg://agent/agent-mux/agt_a1", "msg://agent/agent-mux/agt_b2",
+		}},
+	}
+	svc := registry.NewService(storage, registry.WithMentionParser(parser))
+	ctx := context.Background()
+	owner, err := svc.Register(ctx, registry.KindAgent, registry.Profile{DisplayName: "Owner"})
+	if err != nil {
+		t.Fatalf("register owner: %v", err)
+	}
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Ambig", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register group: %v", err)
+	}
+	_, err = svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "", json.RawMessage(`{"text":"hi @alex"}`))
+	var ambErr *registry.ErrAmbiguousMention
+	if !errors.As(err, &ambErr) {
+		t.Fatalf("err = %v; want *ErrAmbiguousMention", err)
+	}
+	if ambErr.Token != "alex" {
+		t.Errorf("Token = %q; want %q", ambErr.Token, "alex")
+	}
+	// Dispatch must NOT have fired (Parse failed pre-commit).
+	parser.mu.Lock()
+	defer parser.mu.Unlock()
+	if len(parser.dispatchCalls) != 0 {
+		t.Errorf("Dispatch called %d times; want 0 (Parse failed)", len(parser.dispatchCalls))
 	}
 }
 

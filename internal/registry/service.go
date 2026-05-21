@@ -94,6 +94,7 @@ type storageBackend interface {
 	GroupMemberJoinedAt(ctx context.Context, grpURN, memberURN string) (time.Time, bool, error)
 	GroupMemberLastReadSeq(ctx context.Context, grpURN, memberURN string) (int64, bool, error)
 	ListMentionsForMember(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error)
+	FindByDisplayName(ctx context.Context, name string) ([]Profile, error)
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -113,16 +114,47 @@ type Service struct {
 	mentionParser MentionParser
 }
 
-// MentionParser is invoked by SendToGroup after a group message is
-// committed. The implementation scans gm.Payload for `@<urn>` /
-// `@<display_name>` patterns, resolves them via registry Lookup, and
-// emits a `notice` envelope to each mentioned URN's personal inbox.
+// Mention is a resolved @-token extracted from a group message payload.
+// ResolvedURN is empty when Source=="urn" and the URN doesn't exist in
+// the registry (unknown URN — the parser keeps it as a candidate but
+// dispatch logs and skips).
+type Mention struct {
+	Token       string // the raw @-token as it appeared (without the @)
+	ResolvedURN string // the URN to deliver a notice to
+	Source      string // "urn" (full-form match) or "display_name" (short-form)
+}
+
+// MentionParser is the two-phase hook SendToGroup calls around the
+// message-row commit.
 //
-// Errors are advisory: SendToGroup logs and continues (D11/D12 — mention
-// emission is fire-and-forget; the group message itself was already
-// delivered).
+//   - Parse runs BEFORE commit. It scans payload for @-tokens, resolves
+//     short-forms via registry Lookup, and returns the unique resolved
+//     mentions. Returning ErrAmbiguousMention causes SendToGroup to
+//     abort with the error (HTTP 400 per sprint) — the row is NOT
+//     written. Returning other errors also aborts; nil + empty slice
+//     is the no-mentions case.
+//
+//   - Dispatch runs AFTER commit, with the just-inserted GroupMessage
+//     and the mentions Parse returned. Errors from Dispatch are
+//     fire-and-forget per D11/D12 — the group message itself was
+//     successfully delivered.
 type MentionParser interface {
-	ParseAndDispatch(ctx context.Context, gm GroupMessage) error
+	Parse(ctx context.Context, payload json.RawMessage, groupURN string) ([]Mention, error)
+	Dispatch(ctx context.Context, gm GroupMessage, mentions []Mention)
+}
+
+// ErrAmbiguousMention indicates a short-form @-token resolves to more
+// than one URN. SendToGroup returns this verbatim so the HTTP layer can
+// expose the candidate list in the response body (sprint: "400
+// ambiguous_mention" + helpful payload listing candidate URNs).
+type ErrAmbiguousMention struct {
+	Token      string   // the @-token (without the @)
+	Candidates []string // the URNs that share this display_name
+}
+
+// Error implements error.
+func (e *ErrAmbiguousMention) Error() string {
+	return fmt.Sprintf("registry: ambiguous mention %q resolves to %d URNs: %v", e.Token, len(e.Candidates), e.Candidates)
 }
 
 // ServiceOption configures a Service at construction time. v1 ships
@@ -602,14 +634,25 @@ func (s *Service) SendToGroup(ctx context.Context, grpURN, fromURN, kind, thread
 	} else if !present {
 		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: fromURN %q is not a member of %q", ErrForbidden, fromURN, grpURN)
 	}
+	// Pre-commit mention validation. An ErrAmbiguousMention here aborts
+	// the send (HTTP 400 per sprint). Other parser errors abort too —
+	// callers can errors.Is to distinguish.
+	var mentions []Mention
+	if s.mentionParser != nil {
+		m, err := s.mentionParser.Parse(ctx, payload, grpURN)
+		if err != nil {
+			return GroupMessage{}, fmt.Errorf("registry: send to group: %w", err)
+		}
+		mentions = m
+	}
 	gm, err := s.storage.InsertGroupMessage(ctx, grpURN, fromURN, kind, threadID, contentType, payload)
 	if err != nil {
 		return GroupMessage{}, err
 	}
-	// Mention dispatch — fire-and-forget after commit (D11/D12). Parser
+	// Post-commit mention dispatch — fire-and-forget per D11/D12. Parser
 	// errors are advisory; we don't roll back the group message.
-	if s.mentionParser != nil {
-		_ = s.mentionParser.ParseAndDispatch(ctx, gm)
+	if s.mentionParser != nil && len(mentions) > 0 {
+		s.mentionParser.Dispatch(ctx, gm, mentions)
 	}
 	return gm, nil
 }
