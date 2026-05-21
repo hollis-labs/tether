@@ -220,6 +220,62 @@ func (s *Storage) URNExists(ctx context.Context, urn string) (bool, error) {
 	return true, nil
 }
 
+// FindByCallbackTarget returns the Profile whose callback_json.target
+// equals target exactly, or ErrNotFound when no row matches. Bootstrap's
+// idempotency lookup uses this seam: the canonical "have I imported this
+// source file before?" check matches on the row's callback target rather
+// than threading a separate source_path field through kind_meta (the
+// callback already carries the abs path as file://<path>).
+//
+// SQL relies on SQLite's json1 extension's json_extract() — modernc.org/
+// sqlite ships json1 built in (verified at v060-01 T-08). If the dialect
+// ever changes, fall back to iterating Search(...) with StatusAny and
+// matching in Go; the contract here is just "first row with this exact
+// callback.target". Broader cross-substrate dedup primitives (LookupBy
+// with external_id + substrate attribution) land in v060-02.
+//
+// Match semantics: exact string equality on the JSON-extracted target.
+// Rows with no callback (NULL callback_json) are excluded; soft-deleted
+// rows are returned (callers decide whether to refresh or skip).
+func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Profile, error) {
+	if target == "" {
+		return Profile{}, errors.New("registry: find by callback target: target required")
+	}
+	row := s.db.QueryRowContext(ctx,
+		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
+		        avatar, project, status, callback_json, cached_at, health_status,
+		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        created_at, updated_at
+		   FROM registry_entries
+		  WHERE callback_json IS NOT NULL
+		    AND json_extract(callback_json, '$.target') = ?
+		  LIMIT 1`, target)
+	p, err := scanEntryRow(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Profile{}, fmt.Errorf("registry: find by callback target %q: %w", target, ErrNotFound)
+	}
+	if err != nil {
+		return Profile{}, err
+	}
+	// Hydrate child rows so the returned Profile mirrors GetProfile's shape.
+	caps, err := s.selectCapabilities(ctx, p.URN)
+	if err != nil {
+		return Profile{}, err
+	}
+	skills, err := s.selectSkills(ctx, p.URN)
+	if err != nil {
+		return Profile{}, err
+	}
+	links, err := s.selectLinks(ctx, p.URN)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.Capabilities = caps
+	p.Skills = skills
+	p.Links = links
+	return p, nil
+}
+
 // ─── Update ──────────────────────────────────────────────────────────────────
 
 // UpdateProfileFields performs a partial column-level update on

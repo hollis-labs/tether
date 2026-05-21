@@ -371,6 +371,44 @@ status='deprecated'. Search excludes deprecated rows by default;
 	},
 }
 
+// ─── bootstrap ──────────────────────────────────────────────────────────────
+
+var bootstrapForce bool
+
+var registryBootstrapCmd = &cobra.Command{
+	Use:   "bootstrap",
+	Short: "Re-run the catalog bootstrap importer (use --force after editing catalog YAMLs)",
+	Long: `Re-imports ~/.tether/catalog/{agents,projects}/*.yaml into the
+federation directory.
+
+Idempotent: existing rows (matched by callback.target) are skipped on
+re-run unless --force is passed. With --force, the existing row is
+patched with the YAML's current thin profile and cached_at is bumped.
+
+This command runs through the daemon's existing service (no separate
+process). The daemon's auto-bootstrap on startup is non-forced; use this
+to apply catalog drift after editing a YAML.
+
+Per-file failures (malformed YAML, etc.) are reported as part of the
+output; one bad file does not abort the rest of the bootstrap.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		report, err := rc.Bootstrap(cmdCtx(cmd), bootstrapForce)
+		if err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("imported:  %d\nskipped:   %d\nrefreshed: %d\nerrors:    %d\n",
+			report.Imported, report.Skipped, report.Refreshed, len(report.Errors))
+		for _, e := range report.Errors {
+			fmt.Printf("  error %s: %s\n", e.Path, e.Reason)
+		}
+		return nil
+	},
+}
+
 // ─── sync ───────────────────────────────────────────────────────────────────
 
 var registrySyncCmd = &cobra.Command{
@@ -598,6 +636,7 @@ func resetRegistryFlags() {
 	searchStatus = ""
 	searchJSON = false
 	updateSelfFile = ""
+	bootstrapForce = false
 }
 
 // cmdCtx returns cmd.Context() if non-nil, otherwise
@@ -634,6 +673,8 @@ func init() {
 
 	registryUpdateSelfCmd.Flags().StringVar(&updateSelfFile, "file", "", "path to a YAML or JSON UpdatePatch document")
 
+	registryBootstrapCmd.Flags().BoolVar(&bootstrapForce, "force", false, "patch existing rows with the catalog YAMLs' current thin profile + bump cached_at")
+
 	registryCmd.AddCommand(
 		registryRegisterCmd,
 		registryLookupCmd,
@@ -641,6 +682,7 @@ func init() {
 		registryUpdateSelfCmd,
 		registryDeregisterCmd,
 		registrySyncCmd,
+		registryBootstrapCmd,
 	)
 	rootCmd.AddCommand(registryCmd)
 }

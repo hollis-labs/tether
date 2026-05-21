@@ -38,39 +38,49 @@ type Deps struct {
 	// the daemon falls through to its 404 default — matches the
 	// Catalog/Broker convention.
 	Registry RegistryService
+
+	// RegistryCatalogRoot is the catalog root passed to the bootstrap
+	// importer when handling `POST /registry/bootstrap`. Empty disables
+	// the endpoint (returns 503), matching the rest of the package's
+	// nil-disables-route convention. The daemon wiring fills this in
+	// from the *app.Service's CatalogRoot; in-process tests can set it
+	// to a temp catalog dir.
+	RegistryCatalogRoot string
 }
 
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
-	Service      LaunchService
-	Checkpoints  CheckpointStore
-	Broker       BrokerService
-	Bus          events.Bus
-	EventsStore  EventsStore
-	Catalog      CatalogLoader
-	GroupStore   SessionGroupStore
-	MessageStore MessageStore
-	ProxyEvents  ProxyEventStore
-	Attachments  AttachmentStore
-	Registry     RegistryService
+	Service             LaunchService
+	Checkpoints         CheckpointStore
+	Broker              BrokerService
+	Bus                 events.Bus
+	EventsStore         EventsStore
+	Catalog             CatalogLoader
+	GroupStore          SessionGroupStore
+	MessageStore        MessageStore
+	ProxyEvents         ProxyEventStore
+	Attachments         AttachmentStore
+	Registry            RegistryService
+	RegistryCatalogRoot string
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
-		Service:      deps.Service,
-		Checkpoints:  deps.Checkpoints,
-		Broker:       deps.Broker,
-		Bus:          deps.Bus,
-		EventsStore:  deps.EventsStore,
-		Catalog:      deps.Catalog,
-		GroupStore:   deps.GroupStore,
-		MessageStore: deps.MessageStore,
-		ProxyEvents:  deps.ProxyEvents,
-		Attachments:  deps.Attachments,
-		Registry:     deps.Registry,
+		Service:             deps.Service,
+		Checkpoints:         deps.Checkpoints,
+		Broker:              deps.Broker,
+		Bus:                 deps.Bus,
+		EventsStore:         deps.EventsStore,
+		Catalog:             deps.Catalog,
+		GroupStore:          deps.GroupStore,
+		MessageStore:        deps.MessageStore,
+		ProxyEvents:         deps.ProxyEvents,
+		Attachments:         deps.Attachments,
+		Registry:            deps.Registry,
+		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)

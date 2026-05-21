@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -89,6 +90,26 @@ var daemonRunCmd = &cobra.Command{
 		// spawned by a session) and would clobber actively-tracked rows.
 		svc.ReconcileStaleState()
 
+		// Bootstrap the federation directory from ~/.tether/catalog/. Runs
+		// after migrations (already applied via store.Open in app.New) and
+		// BEFORE the HTTP listener binds (server.Run, below) so the daemon
+		// publishes a fully-populated /registry surface on startup-complete.
+		// Non-force: existing rows (matched by callback.target) are left
+		// alone; only new files import. Operators apply catalog drift via
+		// `mux registry bootstrap --force`.
+		if svc.Registry != nil && svc.CatalogRoot != "" {
+			report, err := svc.Registry.BootstrapFromCatalog(context.Background(), svc.CatalogRoot, false)
+			if err != nil {
+				log.Printf("registry bootstrap: %v", err)
+			} else {
+				log.Printf("registry bootstrap: imported=%d skipped=%d refreshed=%d errors=%d",
+					report.Imported, report.Skipped, report.Refreshed, len(report.Errors))
+				for _, e := range report.Errors {
+					log.Printf("registry bootstrap error: %s: %s", e.Path, e.Reason)
+				}
+			}
+		}
+
 		cfg, err := daemonConfigFromCatalog(svc.Catalog)
 		if err != nil {
 			_ = svc.Store.Close()
@@ -96,20 +117,21 @@ var daemonRunCmd = &cobra.Command{
 		}
 
 		server := &daemon.Server{
-			Config:       cfg,
-			Manager:      svc.Manager,
-			Service:      &serviceAdapter{svc: svc},
-			Checkpoints:  svc.Store,
-			Broker:       &brokerAdapter{write: svc.Broker, read: svc.Store},
-			Bus:          svc.Bus,
-			EventsStore:  svc.Store,
-			Catalog:      &catalogLoader{root: svc.CatalogRoot},
-			GroupStore:   svc.Store,
-			MessageStore: svc.Store.MessagingStore(),
-			Attachments:  svc.Store,
-			ProxyEvents:  svc.Store,
-			Registry:     svc.Registry,
-			Publisher:    svc.Bus,
+			Config:              cfg,
+			Manager:             svc.Manager,
+			Service:             &serviceAdapter{svc: svc},
+			Checkpoints:         svc.Store,
+			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
+			Bus:                 svc.Bus,
+			EventsStore:         svc.Store,
+			Catalog:             &catalogLoader{root: svc.CatalogRoot},
+			GroupStore:          svc.Store,
+			MessageStore:        svc.Store.MessagingStore(),
+			Attachments:         svc.Store,
+			ProxyEvents:         svc.Store,
+			Registry:            svc.Registry,
+			RegistryCatalogRoot: svc.CatalogRoot,
+			Publisher:           svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.

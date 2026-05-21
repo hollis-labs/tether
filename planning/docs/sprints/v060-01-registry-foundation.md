@@ -388,11 +388,11 @@ The 22 projects + 8 agents already living in `~/.tether/catalog/{projects,agents
 
 #### Acceptance criteria
 
-- [ ] Idempotency test: run bootstrap twice; second run reports 0 imported, N skipped-existing.
-- [ ] `--force` test: run with --force after modifying a fixture YAML; row's display_name updates.
-- [ ] Skip-on-error: a malformed YAML produces an error in the report but does NOT abort the bootstrap of other files.
-- [ ] First-daemon-start integration test: fresh DB + populated catalog → expected row count after startup.
-- [ ] Backup files (`*.bak-*`) excluded.
+- [x] Idempotency test: run bootstrap twice; second run reports 0 imported, N skipped-existing.
+- [x] `--force` test: run with --force after modifying a fixture YAML; row's display_name updates.
+- [x] Skip-on-error: a malformed YAML produces an error in the report but does NOT abort the bootstrap of other files.
+- [x] First-daemon-start integration test: fresh DB + populated catalog → expected row count after startup. _(Covered via direct BootstrapFromCatalog invocation in bootstrap_test.go; identical code path the daemon runs at startup.)_
+- [x] Backup files (`*.bak-*`) excluded.
 
 #### Scope fences
 

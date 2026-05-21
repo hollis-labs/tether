@@ -62,6 +62,7 @@ type RegistryService interface {
 	UpdateSelf(ctx context.Context, urn string, patch registry.UpdatePatch) (registry.Profile, error)
 	Deregister(ctx context.Context, urn string) (registry.Profile, error)
 	Sync(ctx context.Context, urn string) (registry.Profile, error)
+	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
 }
 
 // kindFromSegment translates the plural URL segment to the singular
@@ -96,10 +97,16 @@ func pluralForKind(k registry.Kind) string {
 // is only attached when Server.Registry is non-nil; absent the dep, the
 // daemon falls through to its 404 default (matches the Catalog/Broker
 // convention in this package).
+//
+// `/registry/bootstrap` is mounted as a discrete handler (not under the
+// `/registry/{kind}/...` dispatcher) because "bootstrap" isn't a kind —
+// the verb operates on the whole catalog. Stdlib ServeMux longest-prefix
+// match routes the exact path here before the `/registry/` prefix scoop.
 func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 	if s.Registry == nil {
 		return
 	}
+	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
 	mux.HandleFunc("/registry/", s.handleRegistry)
 }
 
@@ -295,6 +302,47 @@ func (s *Server) handleRegistryDeregister(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRegistryBootstrap services POST /registry/bootstrap. Re-runs the
+// catalog importer against the daemon-configured catalog root (set in
+// Server.RegistryCatalogRoot at composition time). On force=true,
+// existing rows are patched + cached_at is bumped; on force=false, the
+// run is no-op-skipping for already-imported rows.
+//
+// Request body is intentionally empty — the only parameter is `force`,
+// passed as a query string (`?force=true`). Future params (per-kind
+// subset, dry-run) can extend the same query-string surface without a
+// body schema migration.
+//
+// Response is the BootstrapReport as JSON. Per-file errors are NOT a
+// 4xx/5xx response — the bootstrap by design treats them as per-row
+// failures and continues. Operators inspect report.Errors in the
+// response body to surface the bad files.
+//
+// When the daemon is configured without a catalog root (impossible in
+// production but a normal in-process-test shape), the endpoint returns
+// 503 with internal_error: the daemon "can run" but has nothing to
+// import. A test wiring an empty catalog should set RegistryCatalogRoot
+// to a temp dir, not leave it blank.
+func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+			"method not allowed on /registry/bootstrap")
+		return
+	}
+	if s.RegistryCatalogRoot == "" {
+		writeError(w, http.StatusServiceUnavailable, CodeInternalError,
+			"registry: bootstrap: no catalog root configured")
+		return
+	}
+	force := r.URL.Query().Get("force") == "true"
+	report, err := s.Registry.BootstrapFromCatalog(r.Context(), s.RegistryCatalogRoot, force)
+	if err != nil {
+		writeRegistryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 // handleRegistrySync services POST /registry/{kind}/{urn}/sync. Two

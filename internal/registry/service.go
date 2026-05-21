@@ -57,6 +57,7 @@ type storageBackend interface {
 	InsertProfile(ctx context.Context, p Profile) error
 	GetProfile(ctx context.Context, urn string) (Profile, error)
 	URNExists(ctx context.Context, urn string) (bool, error)
+	FindByCallbackTarget(ctx context.Context, target string) (Profile, error)
 	UpdateProfileFields(ctx context.Context, urn string, fields map[string]any) error
 	ReplaceCapabilities(ctx context.Context, urn string, caps []string) error
 	ReplaceSkills(ctx context.Context, urn string, skills []Skill) error

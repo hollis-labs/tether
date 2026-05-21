@@ -264,6 +264,38 @@ func (rc *RegistryClient) Sync(ctx context.Context, urn string) (registry.Profil
 	}
 }
 
+// Bootstrap POSTs /registry/bootstrap. Re-runs the daemon's catalog
+// importer against the configured catalog root; force=true patches +
+// stamps existing rows where force=false leaves them alone.
+//
+// Returns the BootstrapReport directly so callers can render counts +
+// inspect per-file errors. Per-file errors live inside report.Errors;
+// HTTP-level failures (5xx, network, etc.) come back as the second
+// return.
+func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool) (registry.BootstrapReport, error) {
+	path := "/registry/bootstrap"
+	if force {
+		path += "?force=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.BootstrapReport{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.BootstrapReport{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.BootstrapReport{}, readRegistryError(resp)
+	}
+	var out registry.BootstrapReport
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.BootstrapReport{}, fmt.Errorf("decode bootstrap response: %w", err)
+	}
+	return out, nil
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 // pluralSegment translates a registry.Kind to its URL segment. Mirrors

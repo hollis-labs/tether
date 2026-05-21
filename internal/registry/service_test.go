@@ -239,6 +239,10 @@ func (s *stubStorage) URNExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
 
+func (s *stubStorage) FindByCallbackTarget(context.Context, string) (registry.Profile, error) {
+	panic("stubStorage.FindByCallbackTarget: unexpected call")
+}
+
 // All other methods of storageBackend are panic-on-call; the URN-retry
 // path doesn't touch them.
 func (s *stubStorage) UpdateProfileFields(context.Context, string, map[string]any) error {

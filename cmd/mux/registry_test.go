@@ -548,6 +548,148 @@ func TestRegistry_UpdateSelfHelpDocsMergeSemantics(t *testing.T) {
 	}
 }
 
+// ─── bootstrap ─────────────────────────────────────────────────────────────
+
+// newBootstrapFixture is a variant of newFixture that also wires
+// api.Deps.RegistryCatalogRoot. The catalog root is populated with a
+// minimal fixture (1 agent, 1 project) so the bootstrap CLI command has
+// something to land. Returns the fixture + the catalog root so tests
+// can mutate YAML files between passes.
+func newBootstrapFixture(t *testing.T) (*fixture, string) {
+	t.Helper()
+	t.Cleanup(resetRegistryFlags)
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o755); err != nil {
+		t.Fatalf("mkdir agents: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o755); err != nil {
+		t.Fatalf("mkdir projects: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "agents", "alpha.yaml"),
+		[]byte("id: alpha\nname: Alpha Original\nroles: [implementer]\nskills: [go]\n"), 0o600); err != nil {
+		t.Fatalf("write alpha.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "projects", "tether.yaml"),
+		[]byte("id: tether\nname: Tether\nrepo_root: /repos/tether\ntracking_root: /tracking/tether\n"), 0o600); err != nil {
+		t.Fatalf("write tether.yaml: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	storage := registry.NewStorage(db)
+	svc := registry.NewService(storage)
+	h := api.NewHandler(api.Deps{
+		Registry:            svc,
+		RegistryCatalogRoot: root,
+	})
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	prevFactory := registryClientFactory
+	registryClientFactory = func() (*client.Client, error) {
+		hostport := strings.TrimPrefix(srv.URL, "http://")
+		return client.New("tcp:" + hostport), nil
+	}
+	t.Cleanup(func() { registryClientFactory = prevFactory })
+
+	return &fixture{t: t, srv: srv, svc: svc}, root
+}
+
+func TestRegistry_Bootstrap_FirstRun_ImportsAndPrintsCounts(t *testing.T) {
+	_, _ = newBootstrapFixture(t)
+
+	out := captureRegistryStdout(t, func() {
+		if err := registryBootstrapCmd.RunE(registryBootstrapCmd, nil); err != nil {
+			t.Fatalf("bootstrap: %v", err)
+		}
+	})
+	if !strings.Contains(out, "imported:  2") {
+		t.Errorf("expected imported=2; got: %s", out)
+	}
+	if !strings.Contains(out, "skipped:   0") {
+		t.Errorf("expected skipped=0; got: %s", out)
+	}
+	if !strings.Contains(out, "errors:    0") {
+		t.Errorf("expected errors=0; got: %s", out)
+	}
+}
+
+func TestRegistry_Bootstrap_SecondRun_NoOpSkips(t *testing.T) {
+	_, _ = newBootstrapFixture(t)
+
+	// First pass — imports.
+	if err := registryBootstrapCmd.RunE(registryBootstrapCmd, nil); err != nil {
+		t.Fatalf("first bootstrap: %v", err)
+	}
+	// Second pass — should report 0 imported, all skipped.
+	out := captureRegistryStdout(t, func() {
+		if err := registryBootstrapCmd.RunE(registryBootstrapCmd, nil); err != nil {
+			t.Fatalf("second bootstrap: %v", err)
+		}
+	})
+	if !strings.Contains(out, "imported:  0") {
+		t.Errorf("expected imported=0 on re-run; got: %s", out)
+	}
+	if !strings.Contains(out, "skipped:   2") {
+		t.Errorf("expected skipped=2 on re-run; got: %s", out)
+	}
+	if !strings.Contains(out, "refreshed: 0") {
+		t.Errorf("expected refreshed=0 without --force; got: %s", out)
+	}
+}
+
+func TestRegistry_Bootstrap_Force_RefreshesEdits(t *testing.T) {
+	_, root := newBootstrapFixture(t)
+
+	// First pass — imports.
+	if err := registryBootstrapCmd.RunE(registryBootstrapCmd, nil); err != nil {
+		t.Fatalf("first bootstrap: %v", err)
+	}
+
+	// Mutate the agent YAML's display_name.
+	if err := os.WriteFile(filepath.Join(root, "agents", "alpha.yaml"),
+		[]byte("id: alpha\nname: Alpha Refreshed\nroles: [implementer]\nskills: [go, sqlite]\n"), 0o600); err != nil {
+		t.Fatalf("rewrite alpha.yaml: %v", err)
+	}
+
+	// Run with --force.
+	bootstrapForce = true
+	out := captureRegistryStdout(t, func() {
+		if err := registryBootstrapCmd.RunE(registryBootstrapCmd, nil); err != nil {
+			t.Fatalf("force bootstrap: %v", err)
+		}
+	})
+	if !strings.Contains(out, "imported:  0") {
+		t.Errorf("expected imported=0 on --force; got: %s", out)
+	}
+	// --force refreshes every existing row (idempotent UpdateSelf is
+	// safe on unchanged rows); 2 rows in the fixture => refreshed=2.
+	if !strings.Contains(out, "refreshed: 2") {
+		t.Errorf("expected refreshed=2 on --force; got: %s", out)
+	}
+
+	// Lookup via the CLI to verify display_name changed.
+	searchKind = "agent"
+	out = captureRegistryStdout(t, func() {
+		if err := registrySearchCmd.RunE(registrySearchCmd, nil); err != nil {
+			t.Fatalf("search: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Alpha Refreshed") {
+		t.Errorf("display_name not refreshed; search output: %s", out)
+	}
+	if strings.Contains(out, "Alpha Original") {
+		t.Errorf("stale display_name still present; search output: %s", out)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 // assertExitCode walks an error chain to find an exitErr and verifies
