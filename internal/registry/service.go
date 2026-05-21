@@ -184,6 +184,20 @@ func WithMentionParser(p MentionParser) ServiceOption {
 	}
 }
 
+// SetMentionParser installs (or replaces) the post-SendToGroup mention
+// dispatch hook after construction. v060-05 T-06 wiring uses this so the
+// composition root (app.Service) can construct the parser AFTER the
+// registry.Service is built — the parser depends on registry.Service for
+// resolution, so the construction order is unavoidable.
+//
+// Passing nil clears the hook (mention parsing reverts to skipped).
+// Concurrent SendToGroup callers may observe either the old or new parser
+// during the swap; v1 has no atomic fence because composition-root
+// wiring runs once at daemon startup.
+func (s *Service) SetMentionParser(p MentionParser) {
+	s.mentionParser = p
+}
+
 // NewService binds a Service to a production *Storage. Tests bypass this
 // constructor via export_test.go to inject a stub storageBackend (used
 // only for URN-collision-retry coverage).
@@ -753,6 +767,25 @@ func (s *Service) GetMyMentions(ctx context.Context, memberURN string, sinceTS t
 // callers can errors.Is it.
 func (s *Service) Lookup(ctx context.Context, urn string) (Profile, error) {
 	return s.storage.GetProfile(ctx, urn)
+}
+
+// FindByDisplayName returns the profiles whose display_name equals name.
+// Exposes the storage lookup so the v060-05 mention parser
+// (messaging.Lookup interface) can resolve short-form `@<display_name>`
+// tokens against the live registry. Returns a non-nil zero-length slice
+// when nothing matches; ErrInvalidRequest when name is empty.
+func (s *Service) FindByDisplayName(ctx context.Context, name string) ([]Profile, error) {
+	if name == "" {
+		return nil, fmt.Errorf("registry: find by display name: %w: name required", ErrInvalidRequest)
+	}
+	out, err := s.storage.FindByDisplayName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []Profile{}
+	}
+	return out, nil
 }
 
 // Search returns profiles of the given kind matching filter, ordered
