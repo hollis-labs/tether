@@ -59,3 +59,36 @@ agents:
       - capture-followup
       - end-of-session
     context: agents/tether-sprint-2-implementer.md
+
+  tether-sprint-3-directives-implementer:
+    name: Tether Sprint v060-06 Implementer (Inline Directives)
+    description: |
+      Strategic-planner + Go-implementer agent that executes Sprint v060-06
+      (Inline Directives) of the v0.6 Federation Directory epic. Implements
+      the `:` lane reserved by v060-05's symbol vocabulary: agent-side
+      line-start parser, directive registry, shorthand-for-existing-tool
+      dispatch (D1 no-parallel-implementation rule is load-bearing), session
+      pipeline interceptor, audit log, and 5-8 starter directives grounded
+      in agridd's `agent_known_tools` activation telemetry. Symmetric pair
+      to FU-30 reflexes (system → agent). Coordination: independent of
+      v060-02/03/04/05; loose dependency on v060-01 for registry context.
+      Heads-down execution against the 8 tasks in
+      planning/docs/sprints/v060-06-inline-directives.md.
+    roles: [strategic-planner, go]
+    skills:
+      - sp-using-superpowers
+      - sp-writing-plans
+      - sp-executing-plans
+      - superpowers:dispatching-parallel-agents
+      - sp-verification-before-completion
+      - sp-systematic-debugging
+      - go-build
+      - go-lint
+      - go-test
+      - adr
+      - doc-note
+      - doc-search
+      - capture-decision
+      - capture-followup
+      - end-of-session
+    context: agents/tether-sprint-3-directives-implementer.md
