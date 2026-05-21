@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/tether/apps/sysop/internal/webui"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -108,6 +110,9 @@ func main() {
 	mux.HandleFunc("/api/messages", server.handleMessages)
 	mux.HandleFunc("/api/messages/archive", server.handleMessageArchive)
 	mux.HandleFunc("/api/messages/read", server.handleMessageMarkRead)
+	mux.HandleFunc("/api/messages/groups", server.handleMessageGroups)
+	mux.HandleFunc("/api/messages/groups/create", server.handleMessageGroupCreate)
+	mux.HandleFunc("/api/messages/agents", server.handleMessageAgents)
 	mux.HandleFunc("/api/activity/events", server.handleActivityEvents)
 	mux.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
 	mux.HandleFunc("/api/mcp/servers", server.handleMCPServers)
@@ -274,6 +279,72 @@ type replyRequest struct {
 	ContentType string `json:"content_type"`
 }
 
+type groupsResponse struct {
+	Groups []groupDTO `json:"groups"`
+	Error  string     `json:"error,omitempty"`
+}
+
+type groupDTO struct {
+	URN         string            `json:"urn"`
+	DisplayName string            `json:"display_name"`
+	Title       string            `json:"title,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Status      string            `json:"status"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
+	Members     []groupMemberDTO  `json:"members"`
+	Messages    []groupMessageDTO `json:"messages"`
+}
+
+type groupMemberDTO struct {
+	MemberURN   string `json:"member_urn"`
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role"`
+	JoinedAt    string `json:"joined_at"`
+	LastReadSeq int64  `json:"last_read_seq"`
+}
+
+type groupMessageDTO struct {
+	ID          string `json:"id"`
+	GroupURN    string `json:"group_urn"`
+	GroupSeq    int64  `json:"group_seq"`
+	FromURN     string `json:"from_urn"`
+	Kind        string `json:"kind"`
+	ThreadID    string `json:"thread_id,omitempty"`
+	Subject     string `json:"subject,omitempty"`
+	Body        string `json:"body"`
+	Payload     string `json:"payload,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type groupReplyRequest struct {
+	GroupURN    string `json:"group_urn"`
+	From        string `json:"from"`
+	Kind        string `json:"kind"`
+	Body        string `json:"body"`
+	ThreadID    string `json:"thread_id,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
+type groupCreateRequest struct {
+	DisplayName string `json:"display_name"`
+	Description string `json:"description,omitempty"`
+	CreatorURN  string `json:"creator_urn"`
+}
+
+type messageAgentsResponse struct {
+	Agents []messageAgentDTO `json:"agents"`
+	Error  string            `json:"error,omitempty"`
+}
+
+type messageAgentDTO struct {
+	URN         string `json:"urn"`
+	DisplayName string `json:"display_name"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"`
+}
+
 // handleMessages serves GET (non-destructive list) and POST (send/reply).
 func (s *appServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -284,6 +355,102 @@ func (s *appServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, messagesResponse{Error: "method not allowed"})
 	}
+}
+
+func (s *appServer) handleMessageGroups(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleMessageGroupsList(w, r)
+	case http.MethodPost:
+		s.handleMessageGroupReply(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, groupsResponse{Error: "method not allowed"})
+	}
+}
+
+func (s *appServer) handleMessageGroupCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, groupsResponse{Error: "method not allowed"})
+		return
+	}
+	var req groupCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, groupsResponse{Error: "invalid body: " + err.Error()})
+		return
+	}
+	if strings.TrimSpace(req.DisplayName) == "" || strings.TrimSpace(req.CreatorURN) == "" {
+		writeJSON(w, http.StatusBadRequest, groupsResponse{Error: "display_name and creator_urn are required"})
+		return
+	}
+
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusServiceUnavailable, groupsResponse{Error: "no state db configured"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+		return
+	}
+	defer db.Close()
+
+	regStore := registry.NewStorage(db.DB())
+	svc := registry.NewService(regStore)
+	group, err := svc.Register(r.Context(), registry.KindGroup, registry.Profile{
+		DisplayName:   strings.TrimSpace(req.DisplayName),
+		Description:   strings.TrimSpace(req.Description),
+		LastUpdatedBy: strings.TrimSpace(req.CreatorURN),
+	})
+	if err != nil {
+		writeRegistryActionError(w, err)
+		return
+	}
+	members, err := regStore.ListMembers(r.Context(), group.URN)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, groupToDTO(group, members, nil))
+}
+
+func (s *appServer) handleMessageAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, messageAgentsResponse{Error: "method not allowed"})
+		return
+	}
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusOK, messageAgentsResponse{Agents: []messageAgentDTO{}})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, messageAgentsResponse{Error: err.Error()})
+		return
+	}
+	defer db.Close()
+
+	regStore := registry.NewStorage(db.DB())
+	agents, err := regStore.Search(r.Context(), registry.KindAgent, registry.Filter{Status: registry.StatusAny})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, messageAgentsResponse{Error: err.Error()})
+		return
+	}
+	out := make([]messageAgentDTO, 0, len(agents))
+	for _, a := range agents {
+		out = append(out, messageAgentDTO{
+			URN:         a.URN,
+			DisplayName: a.DisplayName,
+			Title:       a.Title,
+			Status:      string(a.Status),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DisplayName != out[j].DisplayName {
+			return out[i].DisplayName < out[j].DisplayName
+		}
+		return out[i].URN < out[j].URN
+	})
+	writeJSON(w, http.StatusOK, messageAgentsResponse{Agents: out})
 }
 
 func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
@@ -327,6 +494,105 @@ func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, messagesResponse{Messages: out})
+}
+
+func (s *appServer) handleMessageGroupsList(w http.ResponseWriter, r *http.Request) {
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusOK, groupsResponse{Groups: []groupDTO{}})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+		return
+	}
+	defer db.Close()
+
+	regStore := registry.NewStorage(db.DB())
+	groups, err := regStore.Search(r.Context(), registry.KindGroup, registry.Filter{Status: registry.StatusAny})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+		return
+	}
+
+	out := make([]groupDTO, 0, len(groups))
+	for _, g := range groups {
+		members, err := regStore.ListMembers(r.Context(), g.URN)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+			return
+		}
+		msgs, err := regStore.ListGroupMessages(r.Context(), g.URN, -1, "", 200, time.Time{})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+			return
+		}
+		out = append(out, groupToDTO(g, members, msgs))
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt != out[j].UpdatedAt {
+			return out[i].UpdatedAt > out[j].UpdatedAt
+		}
+		return out[i].DisplayName < out[j].DisplayName
+	})
+	writeJSON(w, http.StatusOK, groupsResponse{Groups: out})
+}
+
+func (s *appServer) handleMessageGroupReply(w http.ResponseWriter, r *http.Request) {
+	var req groupReplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, groupsResponse{Error: "invalid body: " + err.Error()})
+		return
+	}
+	if req.GroupURN == "" || req.From == "" || strings.TrimSpace(req.Body) == "" {
+		writeJSON(w, http.StatusBadRequest, groupsResponse{Error: "group_urn, from, and body are required"})
+		return
+	}
+	kind := req.Kind
+	if kind == "" {
+		kind = "message"
+	}
+	contentType := req.ContentType
+	if contentType == "" {
+		contentType = "text/plain"
+	}
+	payload, _ := json.Marshal(strings.TrimSpace(req.Body))
+
+	db, err := s.openStateDB()
+	if errors.Is(err, errStateDBUnset) {
+		writeJSON(w, http.StatusServiceUnavailable, groupsResponse{Error: "no state db configured"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+		return
+	}
+	defer db.Close()
+
+	regStore := registry.NewStorage(db.DB())
+	svc := registry.NewService(regStore)
+	sent, err := svc.SendToGroup(r.Context(), req.GroupURN, req.From, kind, req.ThreadID, contentType, payload)
+	if err != nil {
+		writeRegistryActionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, groupMessageToDTO(sent))
+}
+
+func writeRegistryActionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, registry.ErrInvalidRequest):
+		writeJSON(w, http.StatusBadRequest, groupsResponse{Error: err.Error()})
+	case errors.Is(err, registry.ErrForbidden):
+		writeJSON(w, http.StatusForbidden, groupsResponse{Error: err.Error()})
+	case errors.Is(err, registry.ErrGroupArchived):
+		writeJSON(w, http.StatusLocked, groupsResponse{Error: err.Error()})
+	case errors.Is(err, registry.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, groupsResponse{Error: err.Error()})
+	default:
+		writeJSON(w, http.StatusInternalServerError, groupsResponse{Error: err.Error()})
+	}
 }
 
 // handleMessageReply sends a new envelope. Reply is non-destructive — it
@@ -1174,6 +1440,109 @@ func payloadBody(payload string) string {
 		return s
 	}
 	return payload
+}
+
+func groupToDTO(g registry.Profile, members []registry.GroupMember, msgs []registry.GroupMessage) groupDTO {
+	memberDTOs := make([]groupMemberDTO, 0, len(members))
+	for _, m := range members {
+		memberDTOs = append(memberDTOs, groupMemberDTO{
+			MemberURN:   m.MemberURN,
+			DisplayName: m.DisplayName,
+			Role:        string(m.Role),
+			JoinedAt:    m.JoinedAt.Format(time.RFC3339Nano),
+			LastReadSeq: m.LastReadSeq,
+		})
+	}
+	sort.Slice(memberDTOs, func(i, j int) bool {
+		rank := map[string]int{"owner": 0, "moderator": 1, "member": 2}
+		ri, iok := rank[memberDTOs[i].Role]
+		rj, jok := rank[memberDTOs[j].Role]
+		if !iok {
+			ri = len(rank)
+		}
+		if !jok {
+			rj = len(rank)
+		}
+		if ri != rj {
+			return ri < rj
+		}
+		if memberDTOs[i].DisplayName != memberDTOs[j].DisplayName {
+			return memberDTOs[i].DisplayName < memberDTOs[j].DisplayName
+		}
+		return memberDTOs[i].MemberURN < memberDTOs[j].MemberURN
+	})
+
+	messageDTOs := make([]groupMessageDTO, 0, len(msgs))
+	for _, msg := range msgs {
+		messageDTOs = append(messageDTOs, groupMessageToDTO(msg))
+	}
+
+	return groupDTO{
+		URN:         g.URN,
+		DisplayName: g.DisplayName,
+		Title:       g.Title,
+		Description: g.Description,
+		Status:      string(g.Status),
+		CreatedAt:   g.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt:   g.UpdatedAt.Format(time.RFC3339Nano),
+		Members:     memberDTOs,
+		Messages:    messageDTOs,
+	}
+}
+
+func groupMessageToDTO(m registry.GroupMessage) groupMessageDTO {
+	subject, body := groupPayloadText(m.Payload)
+	return groupMessageDTO{
+		ID:          m.ID,
+		GroupURN:    m.GroupURN,
+		GroupSeq:    m.GroupSeq,
+		FromURN:     m.FromURN,
+		Kind:        m.Kind,
+		ThreadID:    m.ThreadID,
+		Subject:     subject,
+		Body:        body,
+		Payload:     string(m.Payload),
+		ContentType: m.ContentType,
+		CreatedAt:   m.CreatedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func groupPayloadText(payload json.RawMessage) (subject, body string) {
+	trimmed := strings.TrimSpace(string(payload))
+	if trimmed == "" {
+		return "", ""
+	}
+	switch trimmed[0] {
+	case '{':
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+			return "", trimmed
+		}
+		return firstPayloadString(obj, "subject", "title"),
+			firstPayloadString(obj, "body", "summary", "text", "message")
+	case '"':
+		var s string
+		if err := json.Unmarshal([]byte(trimmed), &s); err == nil {
+			return "", s
+		}
+		return "", trimmed
+	default:
+		return "", trimmed
+	}
+}
+
+func firstPayloadString(obj map[string]json.RawMessage, keys ...string) string {
+	for _, k := range keys {
+		raw, ok := obj[k]
+		if !ok {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func nullableInt(valid bool, value int) *int {

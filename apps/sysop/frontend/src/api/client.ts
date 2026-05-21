@@ -112,6 +112,72 @@ export interface ReplyRequest {
   content_type?: string
 }
 
+export interface MessageAgentInfo {
+  urn: string
+  display_name: string
+  title?: string
+  status: string
+}
+
+export interface MessageAgentsInfo {
+  agents: MessageAgentInfo[]
+  error?: string
+}
+
+export interface GroupMemberInfo {
+  member_urn: string
+  display_name?: string
+  role: string
+  joined_at: string
+  last_read_seq: number
+}
+
+export interface GroupMessageInfo {
+  id: string
+  group_urn: string
+  group_seq: number
+  from_urn: string
+  kind: string
+  thread_id?: string
+  subject?: string
+  body: string
+  payload?: string
+  content_type?: string
+  created_at: string
+}
+
+export interface GroupInfo {
+  urn: string
+  display_name: string
+  title?: string
+  description?: string
+  status: string
+  created_at: string
+  updated_at: string
+  members: GroupMemberInfo[]
+  messages: GroupMessageInfo[]
+}
+
+export interface GroupsInfo {
+  groups: GroupInfo[]
+  error?: string
+}
+
+export interface GroupReplyRequest {
+  group_urn: string
+  from: string
+  kind?: string
+  body: string
+  thread_id?: string
+  content_type?: string
+}
+
+export interface GroupCreateRequest {
+  display_name: string
+  description?: string
+  creator_urn: string
+}
+
 export interface EventInfo {
   seq: number
   at: string
@@ -271,6 +337,12 @@ export const apiClient = {
   getMessages: () => http.get<MessagesInfo>('/api/messages'),
   sendReply: (body: ReplyRequest) =>
     http.post<MessageInfo>('/api/messages', body as unknown as JsonObject),
+  getGroups: () => http.get<GroupsInfo>('/api/messages/groups'),
+  sendGroupReply: (body: GroupReplyRequest) =>
+    http.post<GroupMessageInfo>('/api/messages/groups', body as unknown as JsonObject),
+  createGroup: (body: GroupCreateRequest) =>
+    http.post<GroupInfo>('/api/messages/groups/create', body as unknown as JsonObject),
+  getMessageAgents: () => http.get<MessageAgentsInfo>('/api/messages/agents'),
   // Recipient-scoped, idempotent message actions. `as` is the recipient URN.
   archiveMessage: (id: string, as: string) =>
     http.post<{ status: string }>('/api/messages/archive', { id, as }),
