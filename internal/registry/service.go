@@ -49,6 +49,12 @@ import (
 // malformed skill, etc.). Callers use errors.Is.
 var ErrInvalidRequest = errors.New("registry: invalid request")
 
+// ErrForbidden is returned when a caller lacks the role required for the
+// requested operation (v060-05: archive a group, invite/kick members,
+// post to a group as a non-member). Callers use errors.Is and the HTTP
+// layer maps to 403.
+var ErrForbidden = errors.New("registry: forbidden")
+
 // storageBackend is the unexported storage surface the Service depends on.
 // Mirrors the public methods of *Storage that the Service consumes; lets
 // tests stub URNExists / InsertProfile in isolation for collision-retry
@@ -71,6 +77,13 @@ type storageBackend interface {
 	SoftDelete(ctx context.Context, urn string) error
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
+
+	// v060-05 group ops (T-02).
+	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
+	InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error
+	GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error)
+	ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error)
+	SetProfileStatus(ctx context.Context, urn string, status Status) error
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -125,12 +138,19 @@ func NewService(s *Storage, opts ...ServiceOption) *Service {
 // reloaded row (with all storage-layer defaults applied — status,
 // mux_instance_id, created_at/updated_at, child arrays populated to their
 // inserted state).
+//
+// For kind=group (v060-05 T-02): Profile.LastUpdatedBy carries the
+// creator URN (must be a well-formed registry URN that already exists
+// in registry_entries). On success, the creator is auto-added to
+// group_members with role='owner', inside the same transaction as the
+// profile insert. Token-based auth (v060-03) will replace the explicit
+// caller-supplied creator URN.
 func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, error) {
 	if p.URN != "" {
 		return Profile{}, fmt.Errorf("registry: register: %w: caller-supplied URN not allowed; server mints", ErrInvalidRequest)
 	}
 	switch kind {
-	case KindAgent, KindProject:
+	case KindAgent, KindProject, KindGroup:
 	default:
 		return Profile{}, fmt.Errorf("registry: register: %w: unsupported kind %q", ErrInvalidRequest, string(kind))
 	}
@@ -146,6 +166,10 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 		}
 	}
 
+	if kind == KindGroup {
+		return s.registerGroup(ctx, p)
+	}
+
 	var (
 		minted string
 		err    error
@@ -156,10 +180,9 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 	case KindProject:
 		minted, err = MintProjectURN(ctx, s.storage.URNExists)
 	case KindGroup:
-		// Group Register handler lands in v060-05 T-02 (sprint v060-05).
-		// Until then, surface a clear invalid-request rather than silently
-		// minting nothing.
-		return Profile{}, fmt.Errorf("registry: register: %w: kind=group is not yet supported via Register (v060-05 T-02)", ErrInvalidRequest)
+		// Unreachable — the kind==KindGroup early-return above takes the
+		// group path. Listed here so the exhaustive linter is satisfied.
+		return Profile{}, fmt.Errorf("registry: register: %w: unreachable group path", ErrInvalidRequest)
 	}
 	if err != nil {
 		// ErrMintExhausted (and context errors) propagate verbatim so callers
@@ -180,6 +203,111 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 	out, err := s.storage.GetProfile(ctx, p.URN)
 	if err != nil {
 		return Profile{}, fmt.Errorf("registry: register: reload: %w", err)
+	}
+	return out, nil
+}
+
+// registerGroup is the kind=group path of Register. Validates the creator
+// URN, mints a group URN, and inserts profile+owner-member atomically.
+func (s *Service) registerGroup(ctx context.Context, p Profile) (Profile, error) {
+	creator := p.LastUpdatedBy
+	if creator == "" {
+		return Profile{}, fmt.Errorf("registry: register group: %w: last_updated_by is required and must carry the creator URN (v060-05; v060-03 token auth will replace)", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(creator); err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: %w: invalid creator URN %q: %w", ErrInvalidRequest, creator, err)
+	}
+	// Creator must exist in registry. Reject `kind=group` creators in v1 —
+	// only agents/projects can create groups (a group creating a group is
+	// out-of-band and not supported v1).
+	creatorProfile, err := s.storage.GetProfile(ctx, creator)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Profile{}, fmt.Errorf("registry: register group: %w: creator URN %q not in registry", ErrInvalidRequest, creator)
+		}
+		return Profile{}, fmt.Errorf("registry: register group: creator lookup: %w", err)
+	}
+	if creatorProfile.Kind == KindGroup {
+		return Profile{}, fmt.Errorf("registry: register group: %w: a group cannot create a group", ErrInvalidRequest)
+	}
+
+	minted, err := MintGroupURN(ctx, "", s.storage.URNExists)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	p.URN = minted
+	p.Kind = KindGroup
+
+	if err := s.storage.InsertGroupWithOwner(ctx, p, creator); err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: %w", err)
+	}
+	out, err := s.storage.GetProfile(ctx, p.URN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: reload: %w", err)
+	}
+	return out, nil
+}
+
+// ListGroupsForMember returns the group profiles memberURN belongs to,
+// ordered alphabetically by display_name. Status filter NOT applied —
+// archived groups are still visible to their former members (mailbox
+// continues to function as read-only per D9).
+func (s *Service) ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error) {
+	if memberURN == "" {
+		return nil, fmt.Errorf("registry: list groups for member: %w: memberURN required", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return nil, fmt.Errorf("registry: list groups for member: %w: invalid URN: %w", ErrInvalidRequest, err)
+	}
+	out, err := s.storage.ListGroupsForMember(ctx, memberURN)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []Profile{}
+	}
+	return out, nil
+}
+
+// ArchiveGroup sets the group's status to "archived" (D9 — group becomes
+// read-only). Caller must be the group's owner or a moderator (D8 — only
+// owner/moderator can invite/kick/archive). Returns the reloaded profile.
+//
+// Errors:
+//   - ErrInvalidRequest — URN malformed or not a group URN.
+//   - ErrNotFound       — grpURN not in registry.
+//   - ErrForbidden      — byURN is not owner or moderator of the group.
+func (s *Service) ArchiveGroup(ctx context.Context, grpURN, byURN string) (Profile, error) {
+	if grpURN == "" || byURN == "" {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: grpURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	existing, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Profile{}, err
+		}
+		return Profile{}, fmt.Errorf("registry: archive group: lookup: %w", err)
+	}
+	if existing.Kind != KindGroup {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: row is not a group (kind=%q)", ErrInvalidRequest, existing.Kind)
+	}
+	role, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: role check: %w", err)
+	}
+	if !ok || (role != MemberRoleOwner && role != MemberRoleModerator) {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: byURN must be owner or moderator (got role=%q, member=%v)", ErrForbidden, role, ok)
+	}
+	if err := s.storage.SetProfileStatus(ctx, grpURN, StatusArchived); err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: %w", err)
+	}
+	out, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: reload: %w", err)
 	}
 	return out, nil
 }

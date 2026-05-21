@@ -24,6 +24,10 @@ type Status string
 const (
 	StatusActive     Status = "active"
 	StatusDeprecated Status = "deprecated"
+	// StatusArchived is the group-archive sentinel (v060-05 D9). A group
+	// in status='archived' is read-only — members can still ListGroupMessages
+	// but SendToGroup returns 423 locked.
+	StatusArchived Status = "archived"
 )
 
 // Profile is the public-identity projection of a registry row. Profile is
@@ -113,6 +117,32 @@ type UpdatePatch struct {
 	Capabilities  *ArrayPatch[string] `json:"capabilities,omitempty"`
 	Skills        *ArrayPatch[Skill]  `json:"skills,omitempty"`
 	Links         *ArrayPatch[Link]   `json:"links,omitempty"`
+}
+
+// MemberRole is the role of a member inside a group (v060-05 D8).
+// Owner is the creator (or whoever ownership was transferred to);
+// moderator can invite/kick; member can post and read. Stored in
+// group_members.role with a CHECK constraint matching this enum.
+type MemberRole string
+
+const (
+	MemberRoleMember    MemberRole = "member"
+	MemberRoleModerator MemberRole = "moderator"
+	MemberRoleOwner     MemberRole = "owner"
+)
+
+// GroupMember is a row from the group_members sibling table (v060-05 D5).
+// Membership carries per-member state (role + read cursor) which is why
+// it cannot live as a registry_links row.
+type GroupMember struct {
+	GroupURN    string     `json:"group_urn"`
+	MemberURN   string     `json:"member_urn"`
+	Role        MemberRole `json:"role"`
+	JoinedAt    time.Time  `json:"joined_at"`
+	LastReadSeq int64      `json:"last_read_seq"`
+	// DisplayName is hydrated by ListMembers (T-03) via a JOIN against
+	// registry_entries; not stored in group_members itself.
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 // ArrayMode controls how an UpdateSelf array patch merges into the

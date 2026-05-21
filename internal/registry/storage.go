@@ -967,3 +967,234 @@ func commaQ(n int) string {
 	}
 	return strings.Repeat(", ?", n)
 }
+
+// ─── group ops (v060-05 T-02) ────────────────────────────────────────────────
+
+// InsertGroupWithOwner inserts the group profile + an owner row in
+// group_members atomically. Mirrors InsertProfile's body for the registry
+// rows, then adds the owner-member insert inside the same transaction.
+// Used by Service.Register when kind=group.
+func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error {
+	if p.URN == "" {
+		return errors.New("registry: insert group: urn required")
+	}
+	if ownerURN == "" {
+		return errors.New("registry: insert group: owner urn required")
+	}
+	if p.Kind != KindGroup {
+		return fmt.Errorf("registry: insert group: kind must be %q, got %q", KindGroup, p.Kind)
+	}
+
+	now := p.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if p.UpdatedAt.IsZero() {
+		p.UpdatedAt = now
+	}
+	if p.Status == "" {
+		p.Status = StatusActive
+	}
+	if p.MuxInstanceID == "" {
+		p.MuxInstanceID = "agent-mux"
+	}
+
+	var callbackJSON sql.NullString
+	if p.Callback != nil {
+		b, err := json.Marshal(p.Callback)
+		if err != nil {
+			return fmt.Errorf("registry: marshal callback: %w", err)
+		}
+		callbackJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var kindMetaJSON sql.NullString
+	if len(p.KindMeta) > 0 {
+		kindMetaJSON = sql.NullString{String: string(p.KindMeta), Valid: true}
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("registry: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO registry_entries
+		    (urn, kind, mux_instance_id, display_name, title, role, description,
+		     avatar, project, status, callback_json, cached_at, health_status,
+		     last_seen_at, host_address, kind_meta_json, last_updated_by,
+		     created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.URN, string(p.Kind), p.MuxInstanceID, p.DisplayName,
+		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
+		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
+		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
+		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress),
+		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
+		formatTime(now), formatTime(p.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("registry: insert group entry: %w", err)
+	}
+
+	for _, c := range p.Capabilities {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_capabilities (urn, capability) VALUES (?, ?)`,
+			p.URN, c); err != nil {
+			return fmt.Errorf("registry: insert group capability %q: %w", c, err)
+		}
+	}
+	for _, l := range p.Links {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_links (urn, kind, target) VALUES (?, ?, ?)`,
+			p.URN, l.Kind, l.Target); err != nil {
+			return fmt.Errorf("registry: insert group link (%s,%s): %w", l.Kind, l.Target, err)
+		}
+	}
+	// Skills are technically permitted on group rows by the schema but
+	// don't make semantic sense for groups; we still insert any caller-
+	// supplied skills for shape consistency with InsertProfile.
+	for _, sk := range p.Skills {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_skills (urn, name, learned_at, via, level)
+			 VALUES (?, ?, ?, ?, ?)`,
+			p.URN, sk.Name, formatTime(sk.LearnedAt),
+			nullIfEmpty(sk.Via), nullIfEmpty(sk.Level)); err != nil {
+			return fmt.Errorf("registry: insert group skill %q: %w", sk.Name, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO group_members (grp_urn, member_urn, role, joined_at, last_read_seq)
+		 VALUES (?, ?, ?, ?, 0)`,
+		p.URN, ownerURN, string(MemberRoleOwner), formatTime(now)); err != nil {
+		return fmt.Errorf("registry: insert group owner: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("registry: commit group insert: %w", err)
+	}
+	return nil
+}
+
+// InsertGroupMember adds a row to group_members. Used by T-03's AddMember
+// after the service-layer role-permission check passes. last_read_seq
+// starts at 0 — new members see only messages sent after they joined
+// (joined_at gates history; T-04 enforces this).
+func (s *Storage) InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: insert group member: grpURN + memberURN required")
+	}
+	if role == "" {
+		role = MemberRoleMember
+	}
+	if joinedAt.IsZero() {
+		joinedAt = time.Now().UTC()
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO group_members (grp_urn, member_urn, role, joined_at, last_read_seq)
+		 VALUES (?, ?, ?, ?, 0)`,
+		grpURN, memberURN, string(role), formatTime(joinedAt)); err != nil {
+		return fmt.Errorf("registry: insert group member: %w", err)
+	}
+	return nil
+}
+
+// GroupMemberRole returns the role of memberURN within grpURN. If
+// memberURN is not a member, returns ("", false, nil). Storage errors
+// surface as ("", false, err).
+func (s *Storage) GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT role FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("registry: group member role: %w", err)
+	}
+	return MemberRole(role), true, nil
+}
+
+// ListGroupsForMember returns the group profiles memberURN belongs to,
+// ordered alphabetically by display_name. Mirrors Search's
+// children-hydration pattern.
+func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error) {
+	if memberURN == "" {
+		return nil, errors.New("registry: list groups for member: memberURN required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.urn, e.kind, e.mux_instance_id, e.display_name, e.title, e.role,
+		        e.description, e.avatar, e.project, e.status, e.callback_json,
+		        e.cached_at, e.health_status, e.last_seen_at, e.host_address,
+		        e.kind_meta_json, e.last_updated_by, e.created_at, e.updated_at
+		   FROM registry_entries e
+		   JOIN group_members m ON m.grp_urn = e.urn
+		  WHERE m.member_urn = ?
+		  ORDER BY e.display_name ASC`, memberURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list groups for member: %w", err)
+	}
+	defer rows.Close()
+
+	var (
+		out   []Profile
+		urns  []string
+		byURN = map[string]*Profile{}
+	)
+	for rows.Next() {
+		p, err := scanEntryRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+		urns = append(urns, p.URN)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list groups for member rows: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	for i := range out {
+		byURN[out[i].URN] = &out[i]
+	}
+	if err := s.batchFillCapabilities(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	if err := s.batchFillSkills(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	if err := s.batchFillLinks(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetProfileStatus updates only the status column + updated_at. Used by
+// ArchiveGroup (sets status='deprecated' or status='archived'). v1 group
+// archive uses StatusDeprecated to share the soft-delete pattern from
+// D11; consumers detecting "archived" should check status='deprecated'.
+func (s *Storage) SetProfileStatus(ctx context.Context, urn string, status Status) error {
+	if urn == "" {
+		return errors.New("registry: set status: urn required")
+	}
+	if status == "" {
+		return errors.New("registry: set status: status required")
+	}
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE registry_entries SET status = ?, updated_at = ? WHERE urn = ?`,
+		string(status), formatTime(now), urn)
+	if err != nil {
+		return fmt.Errorf("registry: set status: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: set status rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: set status: %w: urn=%q", ErrNotFound, urn)
+	}
+	return nil
+}

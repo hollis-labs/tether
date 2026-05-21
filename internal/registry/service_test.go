@@ -284,6 +284,21 @@ func (s *stubStorage) BumpCachedAt(context.Context, string, time.Time) error {
 func (s *stubStorage) Search(context.Context, registry.Kind, registry.Filter) ([]registry.Profile, error) {
 	panic("stubStorage.Search: unexpected call")
 }
+func (s *stubStorage) InsertGroupWithOwner(context.Context, registry.Profile, string) error {
+	panic("stubStorage.InsertGroupWithOwner: unexpected call")
+}
+func (s *stubStorage) InsertGroupMember(context.Context, string, string, registry.MemberRole, time.Time) error {
+	panic("stubStorage.InsertGroupMember: unexpected call")
+}
+func (s *stubStorage) GroupMemberRole(context.Context, string, string) (registry.MemberRole, bool, error) {
+	panic("stubStorage.GroupMemberRole: unexpected call")
+}
+func (s *stubStorage) ListGroupsForMember(context.Context, string) ([]registry.Profile, error) {
+	panic("stubStorage.ListGroupsForMember: unexpected call")
+}
+func (s *stubStorage) SetProfileStatus(context.Context, string, registry.Status) error {
+	panic("stubStorage.SetProfileStatus: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's
@@ -966,6 +981,293 @@ func TestService_Sync_UnknownURN(t *testing.T) {
 	_, err := svc.Sync(ctx, "msg://agent/agent-mux/agt_absent00099")
 	if !errors.Is(err, registry.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// ─── v060-05 T-02: group registry service ────────────────────────────────────
+
+// newServiceWithStorage exposes both *Service and the backing *Storage so
+// group tests can pre-seed group_members rows (moderator/member fixtures)
+// before exercising service-level archive/role checks.
+func newServiceWithStorage(t *testing.T) (*registry.Service, *registry.Storage) {
+	t.Helper()
+	s := newStorage(t)
+	return registry.NewService(s), s
+}
+
+// registerCreator is a small fixture helper — Register a no-frills agent
+// to act as the creator/owner URN in group tests.
+func registerCreator(t *testing.T, svc *registry.Service, display string) registry.Profile {
+	t.Helper()
+	got, err := svc.Register(context.Background(), registry.KindAgent, registry.Profile{
+		DisplayName: display,
+	})
+	if err != nil {
+		t.Fatalf("register creator: %v", err)
+	}
+	return got
+}
+
+func TestService_RegisterGroup_HappyPath(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	ctx := context.Background()
+	creator := registerCreator(t, svc, "Creator")
+
+	got, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName:   "Design Room",
+		Description:   "Multi-agent design sync",
+		Role:          "design-room",
+		Capabilities:  []string{"design", "v060"},
+		LastUpdatedBy: creator.URN,
+	})
+	if err != nil {
+		t.Fatalf("Register group: %v", err)
+	}
+	if !registry.IsGroupURN(got.URN) {
+		t.Errorf("URN = %q; want a group URN", got.URN)
+	}
+	if got.Kind != registry.KindGroup {
+		t.Errorf("Kind = %q; want %q", got.Kind, registry.KindGroup)
+	}
+	if got.Status != registry.StatusActive {
+		t.Errorf("Status = %q; want %q", got.Status, registry.StatusActive)
+	}
+	if got.DisplayName != "Design Room" {
+		t.Errorf("DisplayName = %q; want %q", got.DisplayName, "Design Room")
+	}
+	if len(got.Capabilities) != 2 {
+		t.Errorf("Capabilities = %v; want 2", got.Capabilities)
+	}
+
+	role, ok, err := storage.GroupMemberRole(ctx, got.URN, creator.URN)
+	if err != nil {
+		t.Fatalf("GroupMemberRole: %v", err)
+	}
+	if !ok {
+		t.Fatal("creator not present in group_members")
+	}
+	if role != registry.MemberRoleOwner {
+		t.Errorf("creator role = %q; want %q", role, registry.MemberRoleOwner)
+	}
+}
+
+func TestService_RegisterGroup_RequiresCreator(t *testing.T) {
+	svc := newService(t)
+	_, err := svc.Register(context.Background(), registry.KindGroup, registry.Profile{
+		DisplayName: "Anonymous Group",
+		// LastUpdatedBy missing on purpose
+	})
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_RegisterGroup_RejectsMalformedCreatorURN(t *testing.T) {
+	svc := newService(t)
+	_, err := svc.Register(context.Background(), registry.KindGroup, registry.Profile{
+		DisplayName:   "Group",
+		LastUpdatedBy: "not-a-urn",
+	})
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_RegisterGroup_RejectsUnknownCreator(t *testing.T) {
+	svc := newService(t)
+	_, err := svc.Register(context.Background(), registry.KindGroup, registry.Profile{
+		DisplayName:   "Group",
+		LastUpdatedBy: "msg://agent/agent-mux/agt_doesnotexist",
+	})
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_RegisterGroup_RejectsGroupCreator(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	creator := registerCreator(t, svc, "Creator")
+	parent, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName:   "Parent Group",
+		LastUpdatedBy: creator.URN,
+	})
+	if err != nil {
+		t.Fatalf("register parent group: %v", err)
+	}
+	// Now try to register a group with the parent group as creator — rejected.
+	_, err = svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName:   "Child Group",
+		LastUpdatedBy: parent.URN,
+	})
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_ListGroupsForMember_MultipleGroups(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	other := registerCreator(t, svc, "Other Member")
+
+	for _, name := range []string{"Alpha Room", "Beta Room", "Gamma Room"} {
+		g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+			DisplayName:   name,
+			LastUpdatedBy: owner.URN,
+		})
+		if err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
+		// Add `other` as a plain member of Beta Room only.
+		if name == "Beta Room" {
+			if err := storage.InsertGroupMember(ctx, g.URN, other.URN, registry.MemberRoleMember, time.Now()); err != nil {
+				t.Fatalf("seed Beta member: %v", err)
+			}
+		}
+	}
+
+	got, err := svc.ListGroupsForMember(ctx, owner.URN)
+	if err != nil {
+		t.Fatalf("ListGroupsForMember(owner): %v", err)
+	}
+	if len(got) != 3 {
+		t.Errorf("owner groups = %d; want 3", len(got))
+	}
+	// Alphabetical order.
+	wantOrder := []string{"Alpha Room", "Beta Room", "Gamma Room"}
+	for i, p := range got {
+		if p.DisplayName != wantOrder[i] {
+			t.Errorf("groups[%d] = %q; want %q", i, p.DisplayName, wantOrder[i])
+		}
+	}
+
+	gotOther, err := svc.ListGroupsForMember(ctx, other.URN)
+	if err != nil {
+		t.Fatalf("ListGroupsForMember(other): %v", err)
+	}
+	if len(gotOther) != 1 || gotOther[0].DisplayName != "Beta Room" {
+		t.Errorf("other groups = %v; want [Beta Room]", gotOther)
+	}
+}
+
+func TestService_ListGroupsForMember_NonMember(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	stranger := registerCreator(t, svc, "Stranger")
+	if _, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Private", LastUpdatedBy: owner.URN,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	got, err := svc.ListGroupsForMember(ctx, stranger.URN)
+	if err != nil {
+		t.Fatalf("ListGroupsForMember: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("stranger groups = %v; want empty", got)
+	}
+}
+
+func TestService_ListGroupsForMember_RejectsBadURN(t *testing.T) {
+	svc := newService(t)
+	_, err := svc.ListGroupsForMember(context.Background(), "garbage")
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_ArchiveGroup_OwnerSucceeds(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "To Archive", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	got, err := svc.ArchiveGroup(ctx, g.URN, owner.URN)
+	if err != nil {
+		t.Fatalf("ArchiveGroup: %v", err)
+	}
+	if got.Status != registry.StatusArchived {
+		t.Errorf("Status = %q; want %q", got.Status, registry.StatusArchived)
+	}
+}
+
+func TestService_ArchiveGroup_ModeratorSucceeds(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	mod := registerCreator(t, svc, "Moderator")
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Mod Test", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := storage.InsertGroupMember(ctx, g.URN, mod.URN, registry.MemberRoleModerator, time.Now()); err != nil {
+		t.Fatalf("seed moderator: %v", err)
+	}
+	if _, err := svc.ArchiveGroup(ctx, g.URN, mod.URN); err != nil {
+		t.Fatalf("ArchiveGroup by moderator: %v", err)
+	}
+}
+
+func TestService_ArchiveGroup_MemberForbidden(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	member := registerCreator(t, svc, "Plain Member")
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Member Test", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := storage.InsertGroupMember(ctx, g.URN, member.URN, registry.MemberRoleMember, time.Now()); err != nil {
+		t.Fatalf("seed member: %v", err)
+	}
+	_, err = svc.ArchiveGroup(ctx, g.URN, member.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_ArchiveGroup_NonMemberForbidden(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	owner := registerCreator(t, svc, "Owner")
+	stranger := registerCreator(t, svc, "Stranger")
+	g, err := svc.Register(ctx, registry.KindGroup, registry.Profile{
+		DisplayName: "Closed Room", LastUpdatedBy: owner.URN,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	_, err = svc.ArchiveGroup(ctx, g.URN, stranger.URN)
+	if !errors.Is(err, registry.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestService_ArchiveGroup_RejectsAgentURN(t *testing.T) {
+	svc := newService(t)
+	owner := registerCreator(t, svc, "Owner")
+	_, err := svc.ArchiveGroup(context.Background(), owner.URN, owner.URN)
+	if !errors.Is(err, registry.ErrInvalidRequest) {
+		t.Fatalf("err = %v; want ErrInvalidRequest", err)
+	}
+}
+
+func TestService_ArchiveGroup_NotFound(t *testing.T) {
+	svc := newService(t)
+	owner := registerCreator(t, svc, "Owner")
+	_, err := svc.ArchiveGroup(context.Background(), "msg://group/agent-mux/grp_doesnotexist", owner.URN)
+	if !errors.Is(err, registry.ErrNotFound) {
+		t.Fatalf("err = %v; want ErrNotFound", err)
 	}
 }
 
