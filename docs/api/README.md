@@ -632,6 +632,74 @@ YAML's current state). Body is empty; response is a `BootstrapReport`:
 
 ---
 
+## Groups
+
+Group messaging — a `group` registry kind with mailbox-pull delivery
+semantics, per-member read cursor, and server-side `@` mention parsing.
+See `docs/adr/0042-group-messaging.md` for the architectural decision
+and `docs/groups/symbols.md` for the `@` / `!` / `:` vocabulary.
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/groups` | `POST` | Create a group. Body: `{display_name, description?, role?, capabilities?, avatar?, last_updated_by}`. The caller URN goes in `last_updated_by`; it's auto-added to `group_members` with `role='owner'` inside the same transaction as the profile insert. Returns the reloaded `Profile`. |
+| `/groups?member=<urn>` | `GET` | List groups that `<urn>` belongs to, ordered alphabetically by `display_name`. Status is not filtered (archived groups appear). |
+| `/groups/{urn}` | `GET` | Read a group profile by URN. URN is path-escaped (e.g. `msg%3A%2F%2Fgroup%2Fagent-mux%2Fgrp_x9k2p4`). |
+| `/groups/{urn}` | `DELETE` | Archive a group (soft — sets `status='archived'`, read-only). Body: `{by_urn}`. Owner/moderator only. |
+| `/groups/{urn}/members` | `POST` | Add a member. Body: `{member_urn, role?, by_urn}`. Role defaults to `member`. Owner/moderator only. |
+| `/groups/{urn}/members` | `GET` | List members of a group, ordered by `joined_at` ASC, with `display_name` hydrated. |
+| `/groups/{urn}/members/{member_urn}` | `DELETE` | Remove a member. Body: `{by_urn}`. Owner/moderator only; cannot remove the owner. |
+| `/groups/{urn}/members/{member_urn}` | `PATCH` | Change a member's role. Body: `{role, by_urn}`. Promotion to `owner` is owner-only. |
+| `/groups/{urn}/members/{member_urn}` | `POST` (with `?action=leave`) | Self-leave path. Body: nothing. If the leaver is the owner and no other owner/moderator exists, the leave is refused. |
+| `/groups/{urn}/messages` | `POST` | Send a message to the group. Body: `{from_urn, kind, payload, thread_id?, content_type?}`. Returns `{message_id, group_seq}`. Non-member → 403; archived group → 423 Locked. Mention parser runs server-side: ambiguous `@`-short-form → 400 with the candidate URN list. |
+| `/groups/{urn}/messages?since_seq=N&thread_id=...&limit=N&as=<urn>` | `GET` | List messages addressed to the group with `group_seq > since_seq`. `as` is the requesting-member URN; required for membership + joined_at gate. `since_seq=0` defaults to the member's `last_read_seq`. Does NOT bump the cursor. |
+| `/groups/{urn}/read` | `POST` | Mark messages read. Body: `{up_to_seq, as}`. Monotonic — smaller `up_to_seq` is a no-op. |
+| `/mentions?as=<urn>&since=<ts>&limit=N` | `GET` | List the caller's mention notices (notice envelopes with `payload.group` set), newest first. |
+
+### Caller identity (v1)
+
+Until v060-03 token auth lands, the caller URN is supplied per-request:
+- HTTP body fields: `last_updated_by`, `by_urn`, `from_urn`, `as`.
+- The HTTP layer does not authenticate the URN — same-host UDS trust per ADR-0041 §D7.
+
+### Symbol vocabulary
+
+The daemon parses `@` mentions in `POST /groups/{urn}/messages` payloads
+and emits notice envelopes to mentioned URNs' personal inboxes. `!` and
+`:` are reserved-namespace for agent-side handling — the daemon
+transports them verbatim. See `docs/groups/symbols.md` for the full
+reference; `tether_group_post` MCP tool description embeds the same
+distinction inline so agent authors see it at the tool level.
+
+### Error mapping
+
+| Sentinel | HTTP | Envelope code |
+|----------|------|---------------|
+| `registry.ErrInvalidRequest` | 400 | `invalid_request` |
+| `*registry.ErrAmbiguousMention` | 400 | `invalid_request` (with `candidates` array in the response payload) |
+| `registry.ErrForbidden` | 403 | `forbidden` |
+| `registry.ErrNotFound` | 404 | `not_found` |
+| `registry.ErrGroupArchived` | 423 | `locked` |
+| method not allowed | 405 | `method_not_allowed` |
+| other | 500 | `internal_error` |
+
+### Known v1 limitations
+
+- Display-name ambiguity blocks the `@<short-form>` mention path. If
+  two agents share `display_name`, `SendToGroup` aborts with 400 + the
+  candidate URN list; the caller must use the full URN.
+- Group URNs are not yet recognized by go-messaging v0.2.1's
+  `AddressKind` enum, so the existing `/messages/*` routes reject them
+  at `ParseURN`. Group reads go through `/groups/{urn}/messages`.
+  Cross-substrate group routing via the ADR-0040 federation Router
+  works structurally (3-segment URN preserves the authority segment)
+  but waits on a go-messaging bump for end-to-end correctness.
+- v1 has no private-membership model — member lists are visible to all
+  members.
+- No event emission on group writes — consumers re-pull on cache miss
+  (same scope-fence as the registry's other surfaces).
+
+---
+
 ## Versioning & stability
 
 The routes documented here are stable for v0.0.2 — Nanite and Clockwork
