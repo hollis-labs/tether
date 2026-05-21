@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/messaging"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -116,6 +117,24 @@ var daemonRunCmd = &cobra.Command{
 			}
 		}
 
+		// Install the v060-05 mention parser on the registry service.
+		// Parser dispatches notice envelopes to the messaging-store on
+		// every successful SendToGroup. The composition order is:
+		//   1. app.New constructs svc.Registry (no parser yet)
+		//   2. messaging.NewParser binds Registry (for resolution) +
+		//      MessagingStore (for emission)
+		//   3. SetMentionParser installs the hook before HTTP serves
+		// — so the daemon's group-send path always has the parser
+		// attached. Without this wiring, the daemon still accepts group
+		// sends but mentions never produce notices.
+		//
+		// *registry.Service satisfies messaging.Lookup directly
+		// (exposes Lookup + FindByDisplayName); no adapter needed.
+		if svc.Registry != nil {
+			parser := messaging.NewParser(svc.Registry, svc.Store.MessagingStore())
+			svc.Registry.SetMentionParser(parser)
+		}
+
 		cfg, err := daemonConfigFromCatalog(svc.Catalog)
 		if err != nil {
 			_ = svc.Store.Close()
@@ -137,6 +156,7 @@ var daemonRunCmd = &cobra.Command{
 			ProxyEvents:         svc.Store,
 			Registry:            svc.Registry,
 			RegistryCatalogRoot: svc.CatalogRoot,
+			Groups:              svc.Registry,
 			Publisher:           svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just

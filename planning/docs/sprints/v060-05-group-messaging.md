@@ -18,24 +18,24 @@
 
 ## Exit criteria
 
-- [ ] Migration `0017_group_messaging.sql` lands: `group_members` sibling table; `messages.group_urn` column + index; URN-scheme variant config for the `group` kind.
-- [ ] `group` registered as a registry kind. `Register({kind: 'group', ...})` mints `grp_<10alnum>` and returns URN `msg://group/<grp_id>` (note: distinct URN-path from agent's `msg://agent/agent-mux/<id>`).
-- [ ] Six membership ops live: `AddMember(grp_urn, member_urn, role)`, `RemoveMember(grp_urn, member_urn)`, `ListMembers(grp_urn)`, `SetMemberRole(grp_urn, member_urn, role)`, `ArchiveGroup(grp_urn)`, `LeaveGroup(grp_urn, member_urn)`.
-- [ ] Four messaging ops live: `SendToGroup(grp_urn, from_urn, kind, body, thread_id?)`, `ListGroupMessages(grp_urn, since_seq?, limit, thread_id?)`, `MarkRead(grp_urn, member_urn, up_to_seq)`, `GetMyMentions(member_urn, since_ts?)`.
-- [ ] Mention parser runs server-side on `SendToGroup`: extracts `@<urn>` and `@<display_name>` patterns, resolves short-form via registry Lookup, emits a `notice` envelope to each mentioned URN's *personal* inbox with `{group: <grp_urn>, message_id, mentioned_by, snippet}`.
-- [ ] Per-member read cursor (`group_members.last_read_seq`) bumps on `MarkRead` and on destructive group reads. Non-destructive `ListGroupMessages` does NOT bump.
-- [ ] All ops exposed at parity across HTTP (`/groups[/{urn}]`, `/groups/{urn}/messages`, `/groups/{urn}/members`), MCP (`tether_group_*`), CLI (`mux group create|invite|kick|post|read|archive|mentions`).
-- [ ] ADR `0015-group-messaging.md` captures the mailbox-not-CC choice, the symbol vocabulary (especially the directives-package distinction), the moderator model, and the URN-scheme variant.
-- [ ] `make check` green.
-- [ ] Cross-substrate `notice` sent to agridd-keeper + cerberus-registry-design announcing the new kind.
+- [x] Migration `0016_group_messaging.sql` lands: `group_members` sibling table; `messages.group_urn` column + index; URN-scheme variant config for the `group` kind.
+- [x] `group` registered as a registry kind. `Register({kind: 'group', ...})` mints `grp_<10alnum>` and returns URN `msg://group/<authority>/<grp_id>` (e.g. `msg://group/agent-mux/grp_x9k2p4` — distinct kind-path from agent's `msg://agent/agent-mux/<id>`, same 3-segment structure).
+- [x] Six membership ops live: `AddMember(grp_urn, member_urn, role)`, `RemoveMember(grp_urn, member_urn)`, `ListMembers(grp_urn)`, `SetMemberRole(grp_urn, member_urn, role)`, `ArchiveGroup(grp_urn)`, `LeaveGroup(grp_urn, member_urn)`.
+- [x] Four messaging ops live: `SendToGroup(grp_urn, from_urn, kind, body, thread_id?)`, `ListGroupMessages(grp_urn, since_seq?, limit, thread_id?)`, `MarkRead(grp_urn, member_urn, up_to_seq)`, `GetMyMentions(member_urn, since_ts?)`.
+- [x] Mention parser runs server-side on `SendToGroup`: extracts `@<urn>` and `@<display_name>` patterns, resolves short-form via registry Lookup, emits a `notice` envelope to each mentioned URN's *personal* inbox with `{group: <grp_urn>, message_id, mentioned_by, snippet}`.
+- [x] Per-member read cursor (`group_members.last_read_seq`) bumps on `MarkRead` and on destructive group reads. Non-destructive `ListGroupMessages` does NOT bump.
+- [x] All ops exposed at parity across HTTP (`/groups[/{urn}]`, `/groups/{urn}/messages`, `/groups/{urn}/members`), MCP (`tether_group_*`), CLI (`mux group create|invite|kick|post|read|archive|mentions`).
+- [x] ADR `0042-group-messaging.md` captures the mailbox-not-CC choice, the symbol vocabulary (especially the directives-package distinction), the moderator model, and the URN-scheme variant. (Sprint doc originally named ADR 0015, which is taken by `0015-checkpoint-payload-schema.md`; pre-flight v060-05 picked next-free 0042 — 0016 is a pre-existing gap in ADR numbering, convention is sequential.)
+- [x] `make check` green.
+- [x] Cross-substrate `notice` sent to agridd-keeper + cerberus-registry-design announcing the new kind.
 
 ---
 
 ## Decisions locked
 
-- **D1 Flat URN, no hierarchical topics.** Groups are `msg://group/<grp_id>` — flat. Sub-conversations use the existing envelope `thread_id` field. Rationale: hierarchical URNs couple identity to organization (rename → broken refs); threads already exist. If a thread grows into its own thing, promote it to a new group.
+- **D1 Flat URN, no hierarchical topics.** Groups are `msg://group/<authority>/<grp_id>` — flat. Sub-conversations use the existing envelope `thread_id` field. Rationale: hierarchical URNs couple identity to organization (rename → broken refs); threads already exist. If a thread grows into its own thing, promote it to a new group.
 - **D2 Group is a registry kind.** `kind='group'`, ID prefix `grp_<10alnum>`. Inherits URN, display_name, description, role (= group category like "design-room"|"incident-bridge"|"project-coord"), capabilities[] (= topic tags for discovery), status, avatar, links from the registry schema. The only group-specific addition is the membership table.
-- **D3 URN-scheme variant.** Groups address as `msg://group/<grp_id>`, NOT `msg://agent/agent-mux/<grp_id>`. The routing layer dispatches on the second URN segment (`agent` vs `group`). Future kinds may add their own paths (`msg://service/<svc_id>`?), or stay under `msg://agent/agent-mux/` if they're just identities with no special delivery. Decision is per-kind at Register time.
+- **D3 URN-scheme variant.** Groups address as `msg://group/<authority>/<grp_id>` (e.g. `msg://group/agent-mux/grp_x9k2p4`), NOT `msg://agent/agent-mux/<grp_id>`. The routing layer dispatches on the **kind segment** (`agent` vs `group`, segment 1 after `msg://`); the authority segment continues to drive ADR-0040 federation routing for both kinds. Three-segment structure preserves ADR-0023 §1's canonical URN shape and keeps group messages federation-routable cross-substrate. ADR-0023 §1's closed kind enum is extended to include `group` — the extension is captured inside ADR 0042 (the new group ADR) per agridd-keeper response to msg `019e4b9f-7a36-77ac-940d-d413e609a240`. Future kinds may add their own URN paths (`msg://service/<authority>/<svc_id>`?), or stay under `msg://agent/agent-mux/` if they're just identities with no special delivery. Decision is per-kind at Register time; structural shape is fixed at 3 segments.
 - **D4 Mailbox-pull, not fan-out CC.** A group message lands in ONE row, not N rows per member. Reads are non-destructive; each member tracks their own `last_read_seq`. Storage scales with message count, not message-count × member-count.
 - **D5 Membership in sibling table.** `group_members(grp_urn, member_urn, role, joined_at, last_read_seq)`. Not `registry_links` with `kind=member`, because membership carries per-member state (role + read cursor). `registry_links` stays for shape-fluid relationships like `team_lead`.
 - **D6 Symbol vocabulary — `@` is daemon, `!` and `:` are agent-side.** See dedicated section below.
@@ -86,7 +86,7 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 ## Tasks
 
-### T-v060-05-01: Migration 0017 + group registry kind config + URN routing
+### T-v060-05-01: Migration 0016 + group registry kind config + URN routing
 
 **kind:** agent
 **priority:** 1
@@ -96,7 +96,7 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Fix direction
 
-- New migration `internal/store/migrations/0017_group_messaging.sql`:
+- New migration `internal/store/migrations/0016_group_messaging.sql`:
   ```sql
   CREATE TABLE group_members (
     grp_urn       TEXT NOT NULL REFERENCES registry_entries(urn) ON DELETE CASCADE,
@@ -114,16 +114,16 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
   ```
 - Extend the messages-store sequence counter: per-group monotonic `group_seq` assigned at insert time. Use a `groups_next_seq(grp_urn, next_seq)` companion table OR derive on insert via `SELECT COALESCE(MAX(group_seq),0)+1 FROM messages WHERE group_urn=?` (the latter is simpler but needs a write-lock).
 - Register `group` as a valid `kind` value in the `registry_entries.kind` CHECK constraint (currently 'agent'|'project'; extend to 'agent'|'project'|'group').
-- ID minting: `MintGroupURN()` returns `msg://group/grp_<10alnum>`. Note the URN-path variant (`msg://group/...` not `msg://agent/agent-mux/...`).
+- ID minting: `MintGroupURN(authority)` returns `msg://group/<authority>/grp_<10alnum>` (e.g. `msg://group/agent-mux/grp_x9k2p4` for the default `agent-mux` authority). Note the URN-kind variant (`msg://group/<authority>/...` not `msg://agent/<authority>/...`) — same 3-segment shape, dispatch on kind segment.
 - URN parser in the message router: dispatch on `urn[1]` (path segment after `msg://`) — `agent` vs `group` selects delivery semantics. Document the routing rule.
 
 #### Acceptance criteria
 
-- [ ] Migration applies cleanly on a DB with 0015 + 0016 already applied.
-- [ ] `MintGroupURN()` returns well-formed `msg://group/grp_xxxxxxxxxx`.
-- [ ] URN parser correctly distinguishes agent vs group URNs.
-- [ ] FK cascade verified: deleting a group's registry_entries row removes its group_members rows and nulls out group_urn on referenced messages (or cascades the deletes — pick during impl).
-- [ ] `make check` green.
+- [x] Migration applies cleanly on a DB with 0015 already applied (last on `main` at v060-05 start).
+- [x] `MintGroupURN(authority)` returns well-formed `msg://group/<authority>/grp_xxxxxxxxxx` (3-segment, ADR-0023-compliant).
+- [x] URN parser correctly distinguishes agent vs group URNs.
+- [x] FK declarations land as documentation per ADR-0008 (group_members → registry_entries with ON DELETE CASCADE; messages.group_urn → registry_entries with ON DELETE SET NULL). PRAGMA foreign_keys stays off; v060-02 T-08 will audit + flip enforcement globally, at which point these declarations become live.
+- [x] `make check` green.
 
 #### Scope fences
 
@@ -151,10 +151,10 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] Register with `kind='group'` mints a `grp_` URN and creates an owner membership row.
-- [ ] Non-member calling `SendToGroup` rejected (covered in T-04).
-- [ ] Search by `kind=group, capability=<topic>` returns matching groups.
-- [ ] ArchiveGroup gates by role; non-owner/non-moderator → 403.
+- [x] Register with `kind='group'` mints a `grp_` URN and creates an owner membership row.
+- [x] Non-member calling `SendToGroup` rejected (covered in T-04).
+- [x] Search by `kind=group, capability=<topic>` returns matching groups.
+- [x] ArchiveGroup gates by role; non-owner/non-moderator → 403.
 
 ---
 
@@ -176,9 +176,9 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] Role enforcement tested for every op (member, moderator, owner, non-member).
-- [ ] Owner-transfer semantics work end-to-end.
-- [ ] `joined_at` correctly gates new members' visible history (they should NOT see messages from before they joined when reading with `since_seq=0`).
+- [x] Role enforcement tested for every op (member, moderator, owner, non-member).
+- [x] Owner-transfer semantics work end-to-end.
+- [x] `joined_at` correctly gates new members' visible history (they should NOT see messages from before they joined when reading with `since_seq=0`).
 
 ---
 
@@ -214,11 +214,11 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] Race-safe `group_seq` assignment under concurrent SendToGroup (no duplicate or skipped seq).
-- [ ] Non-member SendToGroup → 403; archived group SendToGroup → 423 locked.
-- [ ] `since_seq` pagination correct; `joined_at` gating works.
-- [ ] MarkRead is monotonic (smaller `up_to_seq` doesn't lower the cursor).
-- [ ] `make test-race` green.
+- [x] Race-safe `group_seq` assignment under concurrent SendToGroup (no duplicate or skipped seq).
+- [x] Non-member SendToGroup → 403; archived group SendToGroup → 423 locked.
+- [x] `since_seq` pagination correct; `joined_at` gating works.
+- [x] MarkRead is monotonic (smaller `up_to_seq` doesn't lower the cursor).
+- [x] `make test-race` green.
 
 ---
 
@@ -249,12 +249,12 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] Parser correctly handles: single mention, multiple mentions, duplicate mentions (one notice per unique URN), escaped `\@`, mention inside code block (decide: parse or skip? Default: parse — agents who don't want it escape).
-- [ ] Short-form resolution works via registry Lookup.
-- [ ] Ambiguous short-form is a 400 with helpful payload.
-- [ ] Notice envelopes are well-formed and consumable by `GetMyMentions`.
-- [ ] Self-mention (member @-ing themselves) emits a notice — useful for "save for later" patterns.
-- [ ] Bot-mention (mentioning the group's own URN) is a no-op silently (no notice).
+- [x] Parser correctly handles: single mention, multiple mentions, duplicate mentions (one notice per unique URN), escaped `\@`, mention inside code block (decide: parse or skip? Default: parse — agents who don't want it escape).
+- [x] Short-form resolution works via registry Lookup.
+- [x] Ambiguous short-form is a 400 with helpful payload.
+- [x] Notice envelopes are well-formed and consumable by `GetMyMentions`.
+- [x] Self-mention (member @-ing themselves) emits a notice — useful for "save for later" patterns.
+- [x] Bot-mention (mentioning the group's own URN) is a no-op silently (no notice).
 
 #### Scope fences
 
@@ -301,13 +301,13 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] All ops exposed at all three surfaces.
-- [ ] CLI integration tests against a fixture daemon cover create → invite → post → read → mention-roundtrip.
-- [ ] MCP tool descriptions are explicit about which symbols are daemon-parsed (`@` only) vs reserved (`!`, `:`).
+- [x] All ops exposed at all three surfaces.
+- [x] CLI integration tests against a fixture daemon cover create → invite → post → read → mention-roundtrip.
+- [x] MCP tool descriptions are explicit about which symbols are daemon-parsed (`@` only) vs reserved (`!`, `:`).
 
 ---
 
-### T-v060-05-07: ADR 0015 + symbol vocabulary docs
+### T-v060-05-07: ADR 0042 + symbol vocabulary docs
 
 **kind:** agent
 **priority:** 2
@@ -317,9 +317,9 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Fix direction
 
-- `docs/adr/0015-group-messaging.md`:
+- `docs/adr/0042-group-messaging.md`:
   - Context: multi-agent coordination via bilateral messaging fragments quickly; need a group-mailbox primitive; fan-out CC is the wrong shape.
-  - Decision: groups are a registry kind with `msg://group/<grp_id>` URN path variant; mailbox-pull with per-member read cursor; mentions emit notices to personal inboxes; `@` is daemon-parsed and `!`/`:` are reserved-for-agent.
+  - Decision: groups are a registry kind with `msg://group/<authority>/<grp_id>` URN kind variant (3-segment, ADR-0023-compliant); mailbox-pull with per-member read cursor; mentions emit notices to personal inboxes; `@` is daemon-parsed and `!`/`:` are reserved-for-agent. ADR-0023 §1 kind enum extended here to include `group`.
   - Consequences: storage scales with messages, not messages × members; mentions integrate cleanly with personal mailboxes (familiar Slack-style activity feed); symbol vocabulary creates space for the directives package without entangling daemon and agent concerns.
   - Alternatives considered: (a) fan-out CC (rejected: storage cost + thread fragmentation + mark-read ambiguity); (b) hierarchical URN topics (rejected: rename-breaks-refs + threads already handle sub-conversations); (c) merge `!` and `:` into one symbol (rejected: conflates "do something" with "invoke a directive" — distinct intents).
 - New `docs/groups/symbols.md`: standalone reference for the `@` / `!` / `:` vocabulary. Audience: agent authors. Topics: format, who parses, escape syntax, examples, anti-patterns (don't reuse `!` for non-commands; don't mix `@` and `\@` inconsistently). Cross-link from the directives-package docs (when they exist).
@@ -327,9 +327,9 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] ADR 0015 lands, dated, linked from API + groups docs.
-- [ ] Symbol-vocabulary doc covers all three symbols with format + parsing-side + escape syntax.
-- [ ] At least one example for each symbol.
+- [x] ADR 0042 lands, dated, linked from API + groups docs.
+- [x] Symbol-vocabulary doc covers all three symbols with format + parsing-side + escape syntax.
+- [x] At least one example for each symbol.
 
 ---
 
@@ -351,7 +351,9 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 #### Acceptance criteria
 
-- [ ] Both notices sent; message_ids captured in sprint close notes.
+- [x] Both notices sent; message_ids captured in sprint close notes.
+  - agridd-keeper: `msg://019e4beb-da22-730d-83ce-aa0557d7ba8c`
+  - cerberus-registry-design: `msg://019e4bee-fe75-7b42-9de3-f53a6794d63e`
 
 ---
 
@@ -370,13 +372,13 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 
 ## Done checklist (at sprint close)
 
-- [ ] All eight task acceptance sections ticked.
-- [ ] Exit criteria above all ticked.
-- [ ] `make check` green.
-- [ ] ADR 0015 committed.
-- [ ] Branch FF-merged to `main`, branch deleted.
-- [ ] Ship notices sent to agridd-keeper + cerberus-registry-design; message_ids recorded.
-- [ ] Self-test: create a coordination group with self + a fixture agent + post + @-mention + verify the fixture agent's personal inbox shows the notice + verify `mux group read` shows the message.
+- [x] All eight task acceptance sections ticked.
+- [x] Exit criteria above all ticked.
+- [x] `make check` green.
+- [x] ADR 0042 committed.
+- [ ] Branch FF-merged to `main`, branch deleted. *(pending operator authorization at sprint close.)*
+- [x] Ship notices sent to agridd-keeper + cerberus-registry-design; message_ids recorded above (T-v060-05-08 acceptance).
+- [ ] Self-test: create a coordination group with self + a fixture agent + post + @-mention + verify the fixture agent's personal inbox shows the notice + verify `mux group read` shows the message. *(operator-side smoke; not implementer.)*
 
 ---
 

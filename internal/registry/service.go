@@ -49,6 +49,12 @@ import (
 // malformed skill, etc.). Callers use errors.Is.
 var ErrInvalidRequest = errors.New("registry: invalid request")
 
+// ErrForbidden is returned when a caller lacks the role required for the
+// requested operation (v060-05: archive a group, invite/kick members,
+// post to a group as a non-member). Callers use errors.Is and the HTTP
+// layer maps to 403.
+var ErrForbidden = errors.New("registry: forbidden")
+
 // storageBackend is the unexported storage surface the Service depends on.
 // Mirrors the public methods of *Storage that the Service consumes; lets
 // tests stub URNExists / InsertProfile in isolation for collision-retry
@@ -71,6 +77,24 @@ type storageBackend interface {
 	SoftDelete(ctx context.Context, urn string) error
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
+
+	// v060-05 group ops (T-02 + T-03 + T-04).
+	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
+	InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error
+	GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error)
+	ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error)
+	SetProfileStatus(ctx context.Context, urn string, status Status) error
+	ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error)
+	RemoveGroupMember(ctx context.Context, grpURN, memberURN string) error
+	UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole) error
+	CountModeratorsExcluding(ctx context.Context, grpURN, excludeURN string) (int, error)
+	InsertGroupMessage(ctx context.Context, grpURN, fromURN, kind, threadID, contentType string, payload json.RawMessage) (GroupMessage, error)
+	ListGroupMessages(ctx context.Context, grpURN string, sinceSeq int64, threadID string, limit int, joinedAt time.Time) ([]GroupMessage, error)
+	BumpGroupReadCursor(ctx context.Context, grpURN, memberURN string, upToSeq int64) error
+	GroupMemberJoinedAt(ctx context.Context, grpURN, memberURN string) (time.Time, bool, error)
+	GroupMemberLastReadSeq(ctx context.Context, grpURN, memberURN string) (int64, bool, error)
+	ListMentionsForMember(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error)
+	FindByDisplayName(ctx context.Context, name string) ([]Profile, error)
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -80,9 +104,57 @@ type storageBackend interface {
 // keyed on the row's callback Scheme. Callers wire resolvers at
 // construction time via WithResolver — see NewService. The map is read-
 // only after construction; v1 has no hot-swap or dynamic registration.
+//
+// Mention parser (T-v060-05-05). If installed via WithMentionParser, the
+// Service invokes ParseAndDispatch after every successful SendToGroup
+// commit. T-04 reserves the seam; T-05 implements the parser.
 type Service struct {
-	storage   storageBackend
-	resolvers map[string]Resolver
+	storage       storageBackend
+	resolvers     map[string]Resolver
+	mentionParser MentionParser
+}
+
+// Mention is a resolved @-token extracted from a group message payload.
+// ResolvedURN is empty when Source=="urn" and the URN doesn't exist in
+// the registry (unknown URN — the parser keeps it as a candidate but
+// dispatch logs and skips).
+type Mention struct {
+	Token       string // the raw @-token as it appeared (without the @)
+	ResolvedURN string // the URN to deliver a notice to
+	Source      string // "urn" (full-form match) or "display_name" (short-form)
+}
+
+// MentionParser is the two-phase hook SendToGroup calls around the
+// message-row commit.
+//
+//   - Parse runs BEFORE commit. It scans payload for @-tokens, resolves
+//     short-forms via registry Lookup, and returns the unique resolved
+//     mentions. Returning ErrAmbiguousMention causes SendToGroup to
+//     abort with the error (HTTP 400 per sprint) — the row is NOT
+//     written. Returning other errors also aborts; nil + empty slice
+//     is the no-mentions case.
+//
+//   - Dispatch runs AFTER commit, with the just-inserted GroupMessage
+//     and the mentions Parse returned. Errors from Dispatch are
+//     fire-and-forget per D11/D12 — the group message itself was
+//     successfully delivered.
+type MentionParser interface {
+	Parse(ctx context.Context, payload json.RawMessage, groupURN string) ([]Mention, error)
+	Dispatch(ctx context.Context, gm GroupMessage, mentions []Mention)
+}
+
+// ErrAmbiguousMention indicates a short-form @-token resolves to more
+// than one URN. SendToGroup returns this verbatim so the HTTP layer can
+// expose the candidate list in the response body (sprint: "400
+// ambiguous_mention" + helpful payload listing candidate URNs).
+type ErrAmbiguousMention struct {
+	Token      string   // the @-token (without the @)
+	Candidates []string // the URNs that share this display_name
+}
+
+// Error implements error.
+func (e *ErrAmbiguousMention) Error() string {
+	return fmt.Sprintf("registry: ambiguous mention %q resolves to %d URNs: %v", e.Token, len(e.Candidates), e.Candidates)
 }
 
 // ServiceOption configures a Service at construction time. v1 ships
@@ -100,6 +172,30 @@ func WithResolver(r Resolver) ServiceOption {
 		}
 		s.resolvers[r.Scheme()] = r
 	}
+}
+
+// WithMentionParser installs the post-SendToGroup mention dispatch hook
+// (v060-05 T-05). If not set, mention parsing is skipped — the Service
+// still accepts group sends, but no notice envelopes are emitted to
+// mentioned members' personal inboxes.
+func WithMentionParser(p MentionParser) ServiceOption {
+	return func(s *Service) {
+		s.mentionParser = p
+	}
+}
+
+// SetMentionParser installs (or replaces) the post-SendToGroup mention
+// dispatch hook after construction. v060-05 T-06 wiring uses this so the
+// composition root (app.Service) can construct the parser AFTER the
+// registry.Service is built — the parser depends on registry.Service for
+// resolution, so the construction order is unavoidable.
+//
+// Passing nil clears the hook (mention parsing reverts to skipped).
+// Concurrent SendToGroup callers may observe either the old or new parser
+// during the swap; v1 has no atomic fence because composition-root
+// wiring runs once at daemon startup.
+func (s *Service) SetMentionParser(p MentionParser) {
+	s.mentionParser = p
 }
 
 // NewService binds a Service to a production *Storage. Tests bypass this
@@ -125,12 +221,19 @@ func NewService(s *Storage, opts ...ServiceOption) *Service {
 // reloaded row (with all storage-layer defaults applied — status,
 // mux_instance_id, created_at/updated_at, child arrays populated to their
 // inserted state).
+//
+// For kind=group (v060-05 T-02): Profile.LastUpdatedBy carries the
+// creator URN (must be a well-formed registry URN that already exists
+// in registry_entries). On success, the creator is auto-added to
+// group_members with role='owner', inside the same transaction as the
+// profile insert. Token-based auth (v060-03) will replace the explicit
+// caller-supplied creator URN.
 func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, error) {
 	if p.URN != "" {
 		return Profile{}, fmt.Errorf("registry: register: %w: caller-supplied URN not allowed; server mints", ErrInvalidRequest)
 	}
 	switch kind {
-	case KindAgent, KindProject:
+	case KindAgent, KindProject, KindGroup:
 	default:
 		return Profile{}, fmt.Errorf("registry: register: %w: unsupported kind %q", ErrInvalidRequest, string(kind))
 	}
@@ -146,6 +249,10 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 		}
 	}
 
+	if kind == KindGroup {
+		return s.registerGroup(ctx, p)
+	}
+
 	var (
 		minted string
 		err    error
@@ -155,6 +262,10 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 		minted, err = MintAgentURN(ctx, s.storage.URNExists)
 	case KindProject:
 		minted, err = MintProjectURN(ctx, s.storage.URNExists)
+	case KindGroup:
+		// Unreachable — the kind==KindGroup early-return above takes the
+		// group path. Listed here so the exhaustive linter is satisfied.
+		return Profile{}, fmt.Errorf("registry: register: %w: unreachable group path", ErrInvalidRequest)
 	}
 	if err != nil {
 		// ErrMintExhausted (and context errors) propagate verbatim so callers
@@ -179,10 +290,502 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 	return out, nil
 }
 
+// registerGroup is the kind=group path of Register. Validates the creator
+// URN, mints a group URN, and inserts profile+owner-member atomically.
+func (s *Service) registerGroup(ctx context.Context, p Profile) (Profile, error) {
+	creator := p.LastUpdatedBy
+	if creator == "" {
+		return Profile{}, fmt.Errorf("registry: register group: %w: last_updated_by is required and must carry the creator URN (v060-05; v060-03 token auth will replace)", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(creator); err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: %w: invalid creator URN %q: %w", ErrInvalidRequest, creator, err)
+	}
+	// Creator must exist in registry. Reject `kind=group` creators in v1 —
+	// only agents/projects can create groups (a group creating a group is
+	// out-of-band and not supported v1).
+	creatorProfile, err := s.storage.GetProfile(ctx, creator)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Profile{}, fmt.Errorf("registry: register group: %w: creator URN %q not in registry", ErrInvalidRequest, creator)
+		}
+		return Profile{}, fmt.Errorf("registry: register group: creator lookup: %w", err)
+	}
+	if creatorProfile.Kind == KindGroup {
+		return Profile{}, fmt.Errorf("registry: register group: %w: a group cannot create a group", ErrInvalidRequest)
+	}
+
+	minted, err := MintGroupURN(ctx, "", s.storage.URNExists)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	p.URN = minted
+	p.Kind = KindGroup
+
+	if err := s.storage.InsertGroupWithOwner(ctx, p, creator); err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: %w", err)
+	}
+	out, err := s.storage.GetProfile(ctx, p.URN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: register group: reload: %w", err)
+	}
+	return out, nil
+}
+
+// ListGroupsForMember returns the group profiles memberURN belongs to,
+// ordered alphabetically by display_name. Status filter NOT applied —
+// archived groups are still visible to their former members (mailbox
+// continues to function as read-only per D9).
+func (s *Service) ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error) {
+	if memberURN == "" {
+		return nil, fmt.Errorf("registry: list groups for member: %w: memberURN required", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return nil, fmt.Errorf("registry: list groups for member: %w: invalid URN: %w", ErrInvalidRequest, err)
+	}
+	out, err := s.storage.ListGroupsForMember(ctx, memberURN)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []Profile{}
+	}
+	return out, nil
+}
+
+// ArchiveGroup sets the group's status to "archived" (D9 — group becomes
+// read-only). Caller must be the group's owner or a moderator (D8 — only
+// owner/moderator can invite/kick/archive). Returns the reloaded profile.
+//
+// Errors:
+//   - ErrInvalidRequest — URN malformed or not a group URN.
+//   - ErrNotFound       — grpURN not in registry.
+//   - ErrForbidden      — byURN is not owner or moderator of the group.
+func (s *Service) ArchiveGroup(ctx context.Context, grpURN, byURN string) (Profile, error) {
+	if grpURN == "" || byURN == "" {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: grpURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	existing, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Profile{}, err
+		}
+		return Profile{}, fmt.Errorf("registry: archive group: lookup: %w", err)
+	}
+	if existing.Kind != KindGroup {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: row is not a group (kind=%q)", ErrInvalidRequest, existing.Kind)
+	}
+	role, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: role check: %w", err)
+	}
+	if !ok || (role != MemberRoleOwner && role != MemberRoleModerator) {
+		return Profile{}, fmt.Errorf("registry: archive group: %w: byURN must be owner or moderator (got role=%q, member=%v)", ErrForbidden, role, ok)
+	}
+	if err := s.storage.SetProfileStatus(ctx, grpURN, StatusArchived); err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: %w", err)
+	}
+	out, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		return Profile{}, fmt.Errorf("registry: archive group: reload: %w", err)
+	}
+	return out, nil
+}
+
+// ─── group membership (v060-05 T-03) ─────────────────────────────────────────
+
+// AddMember inserts memberURN as a member of grpURN. byURN must be the
+// group's owner or a moderator (D8). memberURN must be a valid
+// registry URN that exists. role defaults to MemberRoleMember.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, group URN not a group, member already in group.
+//   - ErrNotFound       — grpURN not in registry; memberURN not in registry.
+//   - ErrForbidden      — byURN is not owner or moderator of the group.
+func (s *Service) AddMember(ctx context.Context, grpURN, memberURN, byURN string, role MemberRole) (GroupMember, error) {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: invalid memberURN: %w", ErrInvalidRequest, err)
+	}
+	if role == "" {
+		role = MemberRoleMember
+	}
+	switch role {
+	case MemberRoleMember, MemberRoleModerator, MemberRoleOwner:
+	default:
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: invalid role %q", ErrInvalidRequest, role)
+	}
+	// Group must exist + member must exist.
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return GroupMember{}, err
+		}
+		return GroupMember{}, fmt.Errorf("registry: add member: group lookup: %w", err)
+	}
+	if _, err := s.storage.GetProfile(ctx, memberURN); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return GroupMember{}, fmt.Errorf("registry: add member: %w: memberURN %q not in registry", ErrNotFound, memberURN)
+		}
+		return GroupMember{}, fmt.Errorf("registry: add member: member lookup: %w", err)
+	}
+	// byURN must be owner/moderator of grpURN.
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: byURN must be owner or moderator (role=%q, member=%v)", ErrForbidden, byRole, ok)
+	}
+	// Reject duplicate membership.
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: existing-membership check: %w", err)
+	} else if present {
+		return GroupMember{}, fmt.Errorf("registry: add member: %w: memberURN %q already in group", ErrInvalidRequest, memberURN)
+	}
+	now := time.Now().UTC()
+	if err := s.storage.InsertGroupMember(ctx, grpURN, memberURN, role, now); err != nil {
+		return GroupMember{}, fmt.Errorf("registry: add member: insert: %w", err)
+	}
+	return GroupMember{
+		GroupURN:  grpURN,
+		MemberURN: memberURN,
+		Role:      role,
+		JoinedAt:  now,
+	}, nil
+}
+
+// RemoveMember removes memberURN from grpURN. byURN must be owner or
+// moderator (D8). The group's owner cannot be removed by RemoveMember
+// — the owner must use LeaveGroup after transferring ownership.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, not a group URN.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — byURN not owner/moderator; attempting to remove an owner.
+func (s *Service) RemoveMember(ctx context.Context, grpURN, memberURN, byURN string) error {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return fmt.Errorf("registry: remove member: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: remove member: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove member: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return fmt.Errorf("registry: remove member: %w: byURN must be owner or moderator", ErrForbidden)
+	}
+	targetRole, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove member: target-role check: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("registry: remove member: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	if targetRole == MemberRoleOwner {
+		return fmt.Errorf("registry: remove member: %w: cannot remove owner — owner must LeaveGroup after transferring ownership", ErrForbidden)
+	}
+	return s.storage.RemoveGroupMember(ctx, grpURN, memberURN)
+}
+
+// LeaveGroup is the self-remove path. If the leaver is the owner and no
+// other owner/moderator exists, the leave is refused — the caller must
+// SetMemberRole(other, 'owner') first or ArchiveGroup. byURN is the
+// leaver (must equal memberURN in v1 — this is a self-action).
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, byURN ≠ memberURN (not self), not a group URN.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — owner leaving without a moderator successor.
+func (s *Service) LeaveGroup(ctx context.Context, grpURN, memberURN string) error {
+	if grpURN == "" || memberURN == "" {
+		return fmt.Errorf("registry: leave group: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: leave group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	role, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: leave group: role check: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("registry: leave group: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	if role == MemberRoleOwner {
+		others, err := s.storage.CountModeratorsExcluding(ctx, grpURN, memberURN)
+		if err != nil {
+			return fmt.Errorf("registry: leave group: moderator count: %w", err)
+		}
+		if others == 0 {
+			return fmt.Errorf("registry: leave group: %w: cannot_leave_without_owner_transfer — promote another member to owner/moderator first or ArchiveGroup", ErrForbidden)
+		}
+	}
+	return s.storage.RemoveGroupMember(ctx, grpURN, memberURN)
+}
+
+// SetMemberRole changes memberURN's role within grpURN. Promotion to
+// owner is restricted to owner-only-by (transfers ownership). Promotion
+// to moderator may be done by owner or moderator. byURN itself must be
+// owner or moderator.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, invalid role, missing args.
+//   - ErrNotFound       — group not in registry; member not in group.
+//   - ErrForbidden      — byURN not authorized for this transition.
+func (s *Service) SetMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole, byURN string) error {
+	if grpURN == "" || memberURN == "" || byURN == "" {
+		return fmt.Errorf("registry: set member role: %w: grpURN + memberURN + byURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: set member role: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	switch role {
+	case MemberRoleMember, MemberRoleModerator, MemberRoleOwner:
+	default:
+		return fmt.Errorf("registry: set member role: %w: invalid role %q", ErrInvalidRequest, role)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	byRole, ok, err := s.storage.GroupMemberRole(ctx, grpURN, byURN)
+	if err != nil {
+		return fmt.Errorf("registry: set member role: by-role check: %w", err)
+	}
+	if !ok || (byRole != MemberRoleOwner && byRole != MemberRoleModerator) {
+		return fmt.Errorf("registry: set member role: %w: byURN must be owner or moderator", ErrForbidden)
+	}
+	// Promotion to owner is owner-only. Moderators can promote to moderator
+	// but NOT to owner.
+	if role == MemberRoleOwner && byRole != MemberRoleOwner {
+		return fmt.Errorf("registry: set member role: %w: only an owner can promote to owner (transfers ownership)", ErrForbidden)
+	}
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, memberURN); err != nil {
+		return fmt.Errorf("registry: set member role: target-role check: %w", err)
+	} else if !present {
+		return fmt.Errorf("registry: set member role: %w: memberURN %q not in group", ErrNotFound, memberURN)
+	}
+	return s.storage.UpdateGroupMemberRole(ctx, grpURN, memberURN, role)
+}
+
+// ListMembers returns the members of grpURN, ordered by joined_at ASC,
+// with display_name hydrated from registry_entries. v1 has no access
+// control on this call — member lists are visible to all members per
+// the sprint's review notes. If/when private membership lands, this is
+// where the access check goes.
+//
+// Errors:
+//   - ErrInvalidRequest — empty/malformed grpURN, not a group URN.
+//   - ErrNotFound       — grpURN not in registry.
+func (s *Service) ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error) {
+	if grpURN == "" {
+		return nil, fmt.Errorf("registry: list members: %w: grpURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return nil, fmt.Errorf("registry: list members: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return nil, err
+	}
+	out, err := s.storage.ListMembers(ctx, grpURN)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMember{}
+	}
+	return out, nil
+}
+
+// ─── group messaging (v060-05 T-04) ──────────────────────────────────────────
+
+// ErrGroupArchived is returned by SendToGroup when the target group's
+// status is StatusArchived. HTTP layer maps to 423 Locked per sprint.
+var ErrGroupArchived = errors.New("registry: group is archived (read-only)")
+
+// SendToGroup writes a message addressed to grpURN. fromURN must be a
+// current member of the group; the group must not be archived. After
+// the row is committed, the optional MentionParser hook scans the
+// payload for `@<urn>` patterns and emits notice envelopes — failures
+// are logged in the parser (fire-and-forget per D11/D12) and never
+// fail SendToGroup.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, not a group URN, missing args.
+//   - ErrNotFound       — group not in registry.
+//   - ErrForbidden      — fromURN not a member.
+//   - ErrGroupArchived  — group status is archived.
+func (s *Service) SendToGroup(ctx context.Context, grpURN, fromURN, kind, threadID, contentType string, payload json.RawMessage) (GroupMessage, error) {
+	if grpURN == "" || fromURN == "" || kind == "" {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: grpURN + fromURN + kind required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	existing, err := s.storage.GetProfile(ctx, grpURN)
+	if err != nil {
+		return GroupMessage{}, err
+	}
+	if existing.Status == StatusArchived {
+		return GroupMessage{}, fmt.Errorf("registry: send to group %q: %w", grpURN, ErrGroupArchived)
+	}
+	if _, present, err := s.storage.GroupMemberRole(ctx, grpURN, fromURN); err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: member check: %w", err)
+	} else if !present {
+		return GroupMessage{}, fmt.Errorf("registry: send to group: %w: fromURN %q is not a member of %q", ErrForbidden, fromURN, grpURN)
+	}
+	// Pre-commit mention validation. An ErrAmbiguousMention here aborts
+	// the send (HTTP 400 per sprint). Other parser errors abort too —
+	// callers can errors.Is to distinguish.
+	var mentions []Mention
+	if s.mentionParser != nil {
+		m, err := s.mentionParser.Parse(ctx, payload, grpURN)
+		if err != nil {
+			return GroupMessage{}, fmt.Errorf("registry: send to group: %w", err)
+		}
+		mentions = m
+	}
+	gm, err := s.storage.InsertGroupMessage(ctx, grpURN, fromURN, kind, threadID, contentType, payload)
+	if err != nil {
+		return GroupMessage{}, err
+	}
+	// Post-commit mention dispatch — fire-and-forget per D11/D12. Parser
+	// errors are advisory; we don't roll back the group message.
+	if s.mentionParser != nil && len(mentions) > 0 {
+		s.mentionParser.Dispatch(ctx, gm, mentions)
+	}
+	return gm, nil
+}
+
+// ListGroupMessages returns messages addressed to grpURN with group_seq
+// > sinceSeq. sinceSeq=0 means "from the member's last_read_seq" —
+// callers who explicitly want full visible history pass a negative
+// sentinel? No: 0 is the default, and the member's last_read_seq is
+// substituted if the caller passes 0. To get pre-cursor history pass
+// the explicit lower bound.
+//
+// The result is gated by the member's joined_at (no pre-membership
+// history). This call does NOT bump the read cursor — MarkRead is
+// dedicated to that.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, missing args.
+//   - ErrNotFound       — group not in registry.
+//   - ErrForbidden      — memberURN not a member.
+func (s *Service) ListGroupMessages(ctx context.Context, grpURN, memberURN string, sinceSeq int64, threadID string, limit int) ([]GroupMessage, error) {
+	if grpURN == "" || memberURN == "" {
+		return nil, fmt.Errorf("registry: list group messages: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return nil, fmt.Errorf("registry: list group messages: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return nil, err
+	}
+	joinedAt, present, err := s.storage.GroupMemberJoinedAt(ctx, grpURN, memberURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list group messages: membership check: %w", err)
+	}
+	if !present {
+		return nil, fmt.Errorf("registry: list group messages: %w: memberURN %q not in group", ErrForbidden, memberURN)
+	}
+	if sinceSeq == 0 {
+		cursor, _, err := s.storage.GroupMemberLastReadSeq(ctx, grpURN, memberURN)
+		if err != nil {
+			return nil, fmt.Errorf("registry: list group messages: cursor: %w", err)
+		}
+		sinceSeq = cursor
+	}
+	out, err := s.storage.ListGroupMessages(ctx, grpURN, sinceSeq, threadID, limit, joinedAt)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMessage{}
+	}
+	return out, nil
+}
+
+// MarkRead sets the member's last_read_seq to max(last_read_seq, upToSeq).
+// Idempotent / monotonic — smaller upToSeq is a no-op.
+//
+// Errors:
+//   - ErrInvalidRequest — bad URN, missing args, negative upToSeq.
+//   - ErrNotFound       — group not in registry; member not in group.
+func (s *Service) MarkRead(ctx context.Context, grpURN, memberURN string, upToSeq int64) error {
+	if grpURN == "" || memberURN == "" {
+		return fmt.Errorf("registry: mark read: %w: grpURN + memberURN required", ErrInvalidRequest)
+	}
+	if upToSeq < 0 {
+		return fmt.Errorf("registry: mark read: %w: upToSeq must be ≥ 0", ErrInvalidRequest)
+	}
+	if !IsGroupURN(grpURN) {
+		return fmt.Errorf("registry: mark read: %w: not a group URN: %q", ErrInvalidRequest, grpURN)
+	}
+	if _, err := s.storage.GetProfile(ctx, grpURN); err != nil {
+		return err
+	}
+	return s.storage.BumpGroupReadCursor(ctx, grpURN, memberURN, upToSeq)
+}
+
+// GetMyMentions returns the notice envelopes addressed to memberURN
+// whose payload carries a `group` key (set by T-05's parser). Convenience
+// wrapper over storage.ListMentionsForMember — saves callers from
+// constructing the json_extract filter themselves.
+func (s *Service) GetMyMentions(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error) {
+	if memberURN == "" {
+		return nil, fmt.Errorf("registry: get my mentions: %w: memberURN required", ErrInvalidRequest)
+	}
+	if _, err := ParseRegistryURN(memberURN); err != nil {
+		return nil, fmt.Errorf("registry: get my mentions: %w: invalid URN: %w", ErrInvalidRequest, err)
+	}
+	out, err := s.storage.ListMentionsForMember(ctx, memberURN, sinceTS, limit)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []GroupMessage{}
+	}
+	return out, nil
+}
+
 // Lookup returns the Profile for urn. ErrNotFound propagates verbatim so
 // callers can errors.Is it.
 func (s *Service) Lookup(ctx context.Context, urn string) (Profile, error) {
 	return s.storage.GetProfile(ctx, urn)
+}
+
+// FindByDisplayName returns the profiles whose display_name equals name.
+// Exposes the storage lookup so the v060-05 mention parser
+// (messaging.Lookup interface) can resolve short-form `@<display_name>`
+// tokens against the live registry. Returns a non-nil zero-length slice
+// when nothing matches; ErrInvalidRequest when name is empty.
+func (s *Service) FindByDisplayName(ctx context.Context, name string) ([]Profile, error) {
+	if name == "" {
+		return nil, fmt.Errorf("registry: find by display name: %w: name required", ErrInvalidRequest)
+	}
+	out, err := s.storage.FindByDisplayName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []Profile{}
+	}
+	return out, nil
 }
 
 // Search returns profiles of the given kind matching filter, ordered

@@ -28,6 +28,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ErrNotFound is returned by GetProfile when no row matches the given URN.
@@ -966,4 +968,633 @@ func commaQ(n int) string {
 		return ""
 	}
 	return strings.Repeat(", ?", n)
+}
+
+// ─── group ops (v060-05 T-02) ────────────────────────────────────────────────
+
+// InsertGroupWithOwner inserts the group profile + an owner row in
+// group_members atomically. Mirrors InsertProfile's body for the registry
+// rows, then adds the owner-member insert inside the same transaction.
+// Used by Service.Register when kind=group.
+func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error {
+	if p.URN == "" {
+		return errors.New("registry: insert group: urn required")
+	}
+	if ownerURN == "" {
+		return errors.New("registry: insert group: owner urn required")
+	}
+	if p.Kind != KindGroup {
+		return fmt.Errorf("registry: insert group: kind must be %q, got %q", KindGroup, p.Kind)
+	}
+
+	now := p.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if p.UpdatedAt.IsZero() {
+		p.UpdatedAt = now
+	}
+	if p.Status == "" {
+		p.Status = StatusActive
+	}
+	if p.MuxInstanceID == "" {
+		p.MuxInstanceID = "agent-mux"
+	}
+
+	var callbackJSON sql.NullString
+	if p.Callback != nil {
+		b, err := json.Marshal(p.Callback)
+		if err != nil {
+			return fmt.Errorf("registry: marshal callback: %w", err)
+		}
+		callbackJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var kindMetaJSON sql.NullString
+	if len(p.KindMeta) > 0 {
+		kindMetaJSON = sql.NullString{String: string(p.KindMeta), Valid: true}
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("registry: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO registry_entries
+		    (urn, kind, mux_instance_id, display_name, title, role, description,
+		     avatar, project, status, callback_json, cached_at, health_status,
+		     last_seen_at, host_address, kind_meta_json, last_updated_by,
+		     created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.URN, string(p.Kind), p.MuxInstanceID, p.DisplayName,
+		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
+		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
+		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
+		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress),
+		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
+		formatTime(now), formatTime(p.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("registry: insert group entry: %w", err)
+	}
+
+	for _, c := range p.Capabilities {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_capabilities (urn, capability) VALUES (?, ?)`,
+			p.URN, c); err != nil {
+			return fmt.Errorf("registry: insert group capability %q: %w", c, err)
+		}
+	}
+	for _, l := range p.Links {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_links (urn, kind, target) VALUES (?, ?, ?)`,
+			p.URN, l.Kind, l.Target); err != nil {
+			return fmt.Errorf("registry: insert group link (%s,%s): %w", l.Kind, l.Target, err)
+		}
+	}
+	// Skills are technically permitted on group rows by the schema but
+	// don't make semantic sense for groups; we still insert any caller-
+	// supplied skills for shape consistency with InsertProfile.
+	for _, sk := range p.Skills {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_skills (urn, name, learned_at, via, level)
+			 VALUES (?, ?, ?, ?, ?)`,
+			p.URN, sk.Name, formatTime(sk.LearnedAt),
+			nullIfEmpty(sk.Via), nullIfEmpty(sk.Level)); err != nil {
+			return fmt.Errorf("registry: insert group skill %q: %w", sk.Name, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO group_members (grp_urn, member_urn, role, joined_at, last_read_seq)
+		 VALUES (?, ?, ?, ?, 0)`,
+		p.URN, ownerURN, string(MemberRoleOwner), formatTime(now)); err != nil {
+		return fmt.Errorf("registry: insert group owner: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("registry: commit group insert: %w", err)
+	}
+	return nil
+}
+
+// InsertGroupMember adds a row to group_members. Used by T-03's AddMember
+// after the service-layer role-permission check passes. last_read_seq
+// starts at 0 — new members see only messages sent after they joined
+// (joined_at gates history; T-04 enforces this).
+func (s *Storage) InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: insert group member: grpURN + memberURN required")
+	}
+	if role == "" {
+		role = MemberRoleMember
+	}
+	if joinedAt.IsZero() {
+		joinedAt = time.Now().UTC()
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO group_members (grp_urn, member_urn, role, joined_at, last_read_seq)
+		 VALUES (?, ?, ?, ?, 0)`,
+		grpURN, memberURN, string(role), formatTime(joinedAt)); err != nil {
+		return fmt.Errorf("registry: insert group member: %w", err)
+	}
+	return nil
+}
+
+// GroupMemberRole returns the role of memberURN within grpURN. If
+// memberURN is not a member, returns ("", false, nil). Storage errors
+// surface as ("", false, err).
+func (s *Storage) GroupMemberRole(ctx context.Context, grpURN, memberURN string) (MemberRole, bool, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT role FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("registry: group member role: %w", err)
+	}
+	return MemberRole(role), true, nil
+}
+
+// ListGroupsForMember returns the group profiles memberURN belongs to,
+// ordered alphabetically by display_name. Mirrors Search's
+// children-hydration pattern.
+func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]Profile, error) {
+	if memberURN == "" {
+		return nil, errors.New("registry: list groups for member: memberURN required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.urn, e.kind, e.mux_instance_id, e.display_name, e.title, e.role,
+		        e.description, e.avatar, e.project, e.status, e.callback_json,
+		        e.cached_at, e.health_status, e.last_seen_at, e.host_address,
+		        e.kind_meta_json, e.last_updated_by, e.created_at, e.updated_at
+		   FROM registry_entries e
+		   JOIN group_members m ON m.grp_urn = e.urn
+		  WHERE m.member_urn = ?
+		  ORDER BY e.display_name ASC`, memberURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list groups for member: %w", err)
+	}
+	defer rows.Close()
+
+	var (
+		out   []Profile
+		urns  []string
+		byURN = map[string]*Profile{}
+	)
+	for rows.Next() {
+		p, err := scanEntryRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+		urns = append(urns, p.URN)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list groups for member rows: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	for i := range out {
+		byURN[out[i].URN] = &out[i]
+	}
+	if err := s.batchFillCapabilities(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	if err := s.batchFillSkills(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	if err := s.batchFillLinks(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListMembers returns the group_members rows for grpURN with display_name
+// hydrated from registry_entries via JOIN. Ordered by joined_at ASC so
+// older members surface first. Used by T-03's Service.ListMembers.
+func (s *Storage) ListMembers(ctx context.Context, grpURN string) ([]GroupMember, error) {
+	if grpURN == "" {
+		return nil, errors.New("registry: list members: grpURN required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.grp_urn, m.member_urn, m.role, m.joined_at, m.last_read_seq,
+		        e.display_name
+		   FROM group_members m
+		   LEFT JOIN registry_entries e ON e.urn = m.member_urn
+		  WHERE m.grp_urn = ?
+		  ORDER BY m.joined_at ASC`, grpURN)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list members: %w", err)
+	}
+	defer rows.Close()
+	var out []GroupMember
+	for rows.Next() {
+		var (
+			gm          GroupMember
+			role        string
+			joinedAt    string
+			displayName sql.NullString
+		)
+		if err := rows.Scan(&gm.GroupURN, &gm.MemberURN, &role, &joinedAt, &gm.LastReadSeq, &displayName); err != nil {
+			return nil, fmt.Errorf("registry: list members scan: %w", err)
+		}
+		gm.Role = MemberRole(role)
+		gm.JoinedAt = parseTime(joinedAt)
+		if displayName.Valid {
+			gm.DisplayName = displayName.String
+		}
+		out = append(out, gm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list members rows: %w", err)
+	}
+	return out, nil
+}
+
+// RemoveGroupMember deletes a row from group_members. Returns ErrNotFound
+// if no row was deleted. Used by T-03's RemoveMember / LeaveGroup.
+func (s *Storage) RemoveGroupMember(ctx context.Context, grpURN, memberURN string) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: remove group member: grpURN + memberURN required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: remove group member: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: remove group member rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: remove group member: %w: (%q,%q)", ErrNotFound, grpURN, memberURN)
+	}
+	return nil
+}
+
+// UpdateGroupMemberRole sets the role of memberURN in grpURN. Returns
+// ErrNotFound if no row matched. Used by T-03's SetMemberRole.
+func (s *Storage) UpdateGroupMemberRole(ctx context.Context, grpURN, memberURN string, role MemberRole) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: update group member role: grpURN + memberURN required")
+	}
+	if role == "" {
+		return errors.New("registry: update group member role: role required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE group_members SET role = ? WHERE grp_urn = ? AND member_urn = ?`,
+		string(role), grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: update group member role: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: update group member role rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: update group member role: %w: (%q,%q)", ErrNotFound, grpURN, memberURN)
+	}
+	return nil
+}
+
+// FindByDisplayName returns all profiles with display_name=name,
+// excluding deprecated/archived rows by default. Mention resolution
+// uses this to detect ambiguous @-tokens: len(out)>1 → ambiguous.
+func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile, error) {
+	if name == "" {
+		return nil, errors.New("registry: find by display name: name required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
+		        avatar, project, status, callback_json, cached_at, health_status,
+		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        created_at, updated_at
+		   FROM registry_entries
+		  WHERE display_name = ?
+		    AND status = ?
+		  ORDER BY urn ASC`, name, string(StatusActive))
+	if err != nil {
+		return nil, fmt.Errorf("registry: find by display name: %w", err)
+	}
+	defer rows.Close()
+	var out []Profile
+	for rows.Next() {
+		p, err := scanEntryRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: find by display name rows: %w", err)
+	}
+	return out, nil
+}
+
+// InsertGroupMessage writes a row to the messages table with group_urn +
+// the next group_seq for this group, inside a single transaction. The
+// MaxOpenConns=1 invariant in internal/store/sqlite.go serializes all
+// writes, so MAX+1 within a tx is race-safe without IMMEDIATE locks.
+// Returns the inserted GroupMessage with ID + GroupSeq + CreatedAt filled.
+//
+// to_urn is set to grpURN for column-NOT-NULL compliance with the
+// shared messages table; the existing /messages/* HTTP path rejects
+// group URNs at the go-messaging.ParseURN boundary (closed AddressKind
+// enum), so personal-inbox queries cannot accidentally surface group
+// rows. Group reads go through ListGroupMessages (which queries by
+// group_urn, not to_urn).
+func (s *Storage) InsertGroupMessage(ctx context.Context, grpURN, fromURN, kind, threadID, contentType string, payload json.RawMessage) (GroupMessage, error) {
+	if grpURN == "" || fromURN == "" || kind == "" {
+		return GroupMessage{}, errors.New("registry: insert group message: grpURN + fromURN + kind required")
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: insert group message: uuid: %w", err)
+	}
+	now := time.Now().UTC()
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: begin group-message tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var maxSeq sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MAX(group_seq) FROM messages WHERE group_urn = ?`, grpURN).Scan(&maxSeq); err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: insert group message: seq max: %w", err)
+	}
+	nextSeq := int64(1)
+	if maxSeq.Valid {
+		nextSeq = maxSeq.Int64 + 1
+	}
+
+	payloadStr := ""
+	if len(payload) > 0 {
+		payloadStr = string(payload)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO messages
+		 (id, kind, from_urn, to_urn, thread_id, payload, content_type,
+		  created_at, group_urn, group_seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id.String(), kind, fromURN, grpURN,
+		nullIfEmpty(threadID), nullIfEmpty(payloadStr), nullIfEmpty(contentType),
+		now.Format(time.RFC3339Nano), grpURN, nextSeq); err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: insert group message: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return GroupMessage{}, fmt.Errorf("registry: commit group message: %w", err)
+	}
+	return GroupMessage{
+		ID:          id.String(),
+		GroupURN:    grpURN,
+		GroupSeq:    nextSeq,
+		FromURN:     fromURN,
+		Kind:        kind,
+		ThreadID:    threadID,
+		Payload:     payload,
+		ContentType: contentType,
+		CreatedAt:   now,
+	}, nil
+}
+
+// ListGroupMessages returns messages addressed to grpURN with group_seq
+// > sinceSeq, optionally filtered by threadID, with a hard limit. Rows
+// created before joinedAt are excluded (new members can't read history
+// that predates their membership; D5 semantics). Ordered by group_seq
+// ASC for deterministic pagination.
+func (s *Storage) ListGroupMessages(ctx context.Context, grpURN string, sinceSeq int64, threadID string, limit int, joinedAt time.Time) ([]GroupMessage, error) {
+	if grpURN == "" {
+		return nil, errors.New("registry: list group messages: grpURN required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	where := "group_urn = ? AND group_seq > ?"
+	args := []any{grpURN, sinceSeq}
+	if !joinedAt.IsZero() {
+		where += " AND created_at >= ?"
+		args = append(args, joinedAt.Format(time.RFC3339Nano))
+	}
+	if threadID != "" {
+		where += " AND thread_id = ?"
+		args = append(args, threadID)
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, kind, from_urn, thread_id, payload, content_type,
+		        created_at, group_seq
+		   FROM messages
+		  WHERE `+where+`
+		  ORDER BY group_seq ASC
+		  LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list group messages: %w", err)
+	}
+	defer rows.Close()
+	var out []GroupMessage
+	for rows.Next() {
+		var (
+			gm           GroupMessage
+			threadIDN    sql.NullString
+			payload      sql.NullString
+			contentTypeN sql.NullString
+			createdAt    string
+		)
+		if err := rows.Scan(&gm.ID, &gm.Kind, &gm.FromURN, &threadIDN, &payload,
+			&contentTypeN, &createdAt, &gm.GroupSeq); err != nil {
+			return nil, fmt.Errorf("registry: list group messages scan: %w", err)
+		}
+		gm.GroupURN = grpURN
+		if threadIDN.Valid {
+			gm.ThreadID = threadIDN.String
+		}
+		if payload.Valid {
+			gm.Payload = json.RawMessage(payload.String)
+		}
+		if contentTypeN.Valid {
+			gm.ContentType = contentTypeN.String
+		}
+		gm.CreatedAt = parseTime(createdAt)
+		out = append(out, gm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list group messages rows: %w", err)
+	}
+	return out, nil
+}
+
+// BumpGroupReadCursor sets last_read_seq = max(last_read_seq, upToSeq)
+// for (grpURN, memberURN). Monotonic by construction; smaller upToSeq
+// values are no-ops. Returns ErrNotFound if no membership row matched.
+func (s *Storage) BumpGroupReadCursor(ctx context.Context, grpURN, memberURN string, upToSeq int64) error {
+	if grpURN == "" || memberURN == "" {
+		return errors.New("registry: bump read cursor: grpURN + memberURN required")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE group_members
+		    SET last_read_seq = max(last_read_seq, ?)
+		  WHERE grp_urn = ? AND member_urn = ?`,
+		upToSeq, grpURN, memberURN)
+	if err != nil {
+		return fmt.Errorf("registry: bump read cursor: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: bump read cursor rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: bump read cursor: %w: (%q,%q)", ErrNotFound, grpURN, memberURN)
+	}
+	return nil
+}
+
+// GroupMemberJoinedAt returns the joined_at timestamp for memberURN in
+// grpURN. Used by ListGroupMessages to gate pre-join history. Returns
+// (zero time, false, nil) when not a member.
+func (s *Storage) GroupMemberJoinedAt(ctx context.Context, grpURN, memberURN string) (time.Time, bool, error) {
+	var joinedAt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT joined_at FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN).Scan(&joinedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("registry: joined-at: %w", err)
+	}
+	return parseTime(joinedAt), true, nil
+}
+
+// GroupMemberLastReadSeq returns the read cursor for memberURN in grpURN.
+// Returns (0, false, nil) when not a member.
+func (s *Storage) GroupMemberLastReadSeq(ctx context.Context, grpURN, memberURN string) (int64, bool, error) {
+	var seq int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT last_read_seq FROM group_members WHERE grp_urn = ? AND member_urn = ?`,
+		grpURN, memberURN).Scan(&seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("registry: last-read-seq: %w", err)
+	}
+	return seq, true, nil
+}
+
+// ListMentionsForMember returns notice envelopes addressed to memberURN
+// whose payload carries a `group` key (set by T-05's mention parser).
+// Optional sinceTS filters to created_at >= sinceTS. Ordered created_at
+// DESC (newest first) for activity-feed display.
+func (s *Storage) ListMentionsForMember(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]GroupMessage, error) {
+	if memberURN == "" {
+		return nil, errors.New("registry: list mentions: memberURN required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	where := "to_urn = ? AND kind = 'notice' AND json_extract(payload, '$.group') IS NOT NULL"
+	args := []any{memberURN}
+	if !sinceTS.IsZero() {
+		where += " AND created_at >= ?"
+		args = append(args, sinceTS.Format(time.RFC3339Nano))
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, kind, from_urn, thread_id, payload, content_type,
+		        created_at, group_urn
+		   FROM messages
+		  WHERE `+where+`
+		  ORDER BY created_at DESC
+		  LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("registry: list mentions: %w", err)
+	}
+	defer rows.Close()
+	var out []GroupMessage
+	for rows.Next() {
+		var (
+			gm           GroupMessage
+			threadIDN    sql.NullString
+			payload      sql.NullString
+			contentTypeN sql.NullString
+			createdAt    string
+			groupURN     sql.NullString
+		)
+		if err := rows.Scan(&gm.ID, &gm.Kind, &gm.FromURN, &threadIDN, &payload,
+			&contentTypeN, &createdAt, &groupURN); err != nil {
+			return nil, fmt.Errorf("registry: list mentions scan: %w", err)
+		}
+		if threadIDN.Valid {
+			gm.ThreadID = threadIDN.String
+		}
+		if payload.Valid {
+			gm.Payload = json.RawMessage(payload.String)
+		}
+		if contentTypeN.Valid {
+			gm.ContentType = contentTypeN.String
+		}
+		gm.CreatedAt = parseTime(createdAt)
+		if groupURN.Valid {
+			gm.GroupURN = groupURN.String
+		}
+		out = append(out, gm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: list mentions rows: %w", err)
+	}
+	return out, nil
+}
+
+// CountModeratorsExcluding counts members of grpURN with role='moderator'
+// or role='owner', excluding excludeURN. Used by T-03's LeaveGroup to
+// guard the "owner cannot leave without a moderator successor" semantic.
+// Counting owner-role rows defensively in case multiple owners ever exist.
+func (s *Storage) CountModeratorsExcluding(ctx context.Context, grpURN, excludeURN string) (int, error) {
+	if grpURN == "" {
+		return 0, errors.New("registry: count moderators: grpURN required")
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM group_members
+		  WHERE grp_urn = ? AND member_urn <> ?
+		    AND role IN ('moderator','owner')`,
+		grpURN, excludeURN).Scan(&n); err != nil {
+		return 0, fmt.Errorf("registry: count moderators: %w", err)
+	}
+	return n, nil
+}
+
+// SetProfileStatus updates only the status column + updated_at. Used by
+// ArchiveGroup (sets status='archived' per D9). Returns ErrNotFound if
+// no row matched.
+func (s *Storage) SetProfileStatus(ctx context.Context, urn string, status Status) error {
+	if urn == "" {
+		return errors.New("registry: set status: urn required")
+	}
+	if status == "" {
+		return errors.New("registry: set status: status required")
+	}
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE registry_entries SET status = ?, updated_at = ? WHERE urn = ?`,
+		string(status), formatTime(now), urn)
+	if err != nil {
+		return fmt.Errorf("registry: set status: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("registry: set status rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("registry: set status: %w: urn=%q", ErrNotFound, urn)
+	}
+	return nil
 }

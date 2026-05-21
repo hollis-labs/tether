@@ -60,7 +60,10 @@ func TestMigration0015_idempotent(t *testing.T) {
 }
 
 // TestMigration0015_kindCheckConstraint verifies the kind CHECK rejects
-// values outside the {'agent','project'} set.
+// values outside the legal kind set. v060-01 introduced ('agent','project');
+// v060-05 (migration 0016) extends it to add 'group' — the
+// kind-check-extended test below covers that addition. This test continues
+// to assert that *unknown* values are still rejected after both migrations.
 func TestMigration0015_kindCheckConstraint(t *testing.T) {
 	db := openInMemory(t)
 	if _, err := store.Migrate(db); err != nil {
@@ -73,6 +76,142 @@ func TestMigration0015_kindCheckConstraint(t *testing.T) {
 		"2026-05-20T00:00:00Z", "2026-05-20T00:00:00Z")
 	if err == nil {
 		t.Fatal("insert with kind='unknown' succeeded; want CHECK violation")
+	}
+}
+
+// TestMigration0016_groupKindAccepted verifies the kind CHECK constraint
+// was extended by migration 0016 to accept 'group' alongside the original
+// 'agent'/'project' set (v060-05 D2).
+func TestMigration0016_groupKindAccepted(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO registry_entries
+		(urn, kind, display_name, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		"msg://group/agent-mux/grp_test123456", "group", "Test Group",
+		"2026-05-21T00:00:00Z", "2026-05-21T00:00:00Z"); err != nil {
+		t.Fatalf("insert with kind='group' failed: %v", err)
+	}
+	var got string
+	if err := db.QueryRow(`SELECT kind FROM registry_entries WHERE urn=?`,
+		"msg://group/agent-mux/grp_test123456").Scan(&got); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if got != "group" {
+		t.Fatalf("kind = %q; want %q", got, "group")
+	}
+}
+
+// TestMigration0016_groupMembersTable verifies the sibling membership
+// table and its index land. group_members carries per-member state
+// (role + last_read_seq) which is why it cannot live in registry_links.
+func TestMigration0016_groupMembersTable(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tables := loadObjects(t, db, "table", "group_%")
+	wantTables := []string{"group_members"}
+	if !sliceEqual(tables, wantTables) {
+		t.Fatalf("tables = %v; want %v", tables, wantTables)
+	}
+	indexes := loadObjects(t, db, "index", "idx_group_%")
+	wantIndexes := []string{"idx_group_members_by_member"}
+	if !sliceEqual(indexes, wantIndexes) {
+		t.Fatalf("indexes = %v; want %v", indexes, wantIndexes)
+	}
+}
+
+// TestMigration0016_groupMembersRoleCheck verifies the role CHECK on
+// group_members accepts only {'member','moderator','owner'}.
+func TestMigration0016_groupMembersRoleCheck(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Seed the group + member rows so the FK declarations (documentation
+	// per ADR-0008) match real-shape data.
+	for _, q := range []string{
+		`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at)
+			VALUES ('msg://group/agent-mux/grp_test111111','group','G','2026-05-21T00:00:00Z','2026-05-21T00:00:00Z')`,
+		`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at)
+			VALUES ('msg://agent/agent-mux/agt_test111111','agent','A','2026-05-21T00:00:00Z','2026-05-21T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	good := `INSERT INTO group_members (grp_urn, member_urn, role, joined_at)
+		VALUES ('msg://group/agent-mux/grp_test111111','msg://agent/agent-mux/agt_test111111','moderator','2026-05-21T00:00:00Z')`
+	if _, err := db.Exec(good); err != nil {
+		t.Fatalf("insert moderator role: %v", err)
+	}
+	bad := `INSERT INTO group_members (grp_urn, member_urn, role, joined_at)
+		VALUES ('msg://group/agent-mux/grp_test111111','msg://agent/agent-mux/agt_test111111','admin','2026-05-21T00:00:00Z')`
+	if _, err := db.Exec(bad); err == nil {
+		t.Fatal("insert with role='admin' succeeded; want CHECK violation")
+	}
+}
+
+// TestMigration0016_messagesGroupColumns verifies the group_urn + group_seq
+// columns + the (group_urn, group_seq) index land on the messages table.
+func TestMigration0016_messagesGroupColumns(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('messages') WHERE name IN ('group_urn','group_seq') ORDER BY name`)
+	if err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, n)
+	}
+	want := []string{"group_seq", "group_urn"}
+	if !sliceEqual(got, want) {
+		t.Fatalf("messages columns = %v; want %v", got, want)
+	}
+	indexes := loadObjects(t, db, "index", "idx_messages_group_%")
+	if !sliceEqual(indexes, []string{"idx_messages_group_seq"}) {
+		t.Fatalf("messages group indexes = %v; want [idx_messages_group_seq]", indexes)
+	}
+}
+
+// TestMigration0016_postSwapInsertableForAgent is a smoke check that
+// registry_entries is still write-able after the 0016 table-swap (which
+// rebuilds the table to extend the kind CHECK to include 'group'). It
+// does NOT exercise the "preserve pre-existing rows" property — that
+// would require a fixture path that applies 0001..0015 only, seeds, then
+// applies 0016, which the embed-FS-based migrator doesn't support
+// out-of-the-box. The structural correctness of the table-swap (column
+// list + indexes) is covered by TestMigration0015_tablesAndIndexes and
+// TestMigration0016_groupMembersTable; row preservation is covered
+// implicitly when the same DB carries data forward across migrator runs
+// (see TestMigration0015_idempotent for the no-op-on-replay property).
+func TestMigration0016_postSwapInsertableForAgent(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO registry_entries (urn, kind, display_name, created_at, updated_at)
+		VALUES ('msg://agent/agent-mux/agt_test999999','agent','Post-0016 row','2026-05-19T00:00:00Z','2026-05-19T00:00:00Z')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM registry_entries WHERE urn=?`,
+		"msg://agent/agent-mux/agt_test999999").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("row count = %d; want 1", n)
 	}
 }
 

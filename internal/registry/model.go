@@ -14,6 +14,7 @@ type Kind string
 const (
 	KindAgent   Kind = "agent"
 	KindProject Kind = "project"
+	KindGroup   Kind = "group"
 )
 
 // Status is the lifecycle state. Soft-deleted rows carry StatusDeprecated
@@ -23,6 +24,10 @@ type Status string
 const (
 	StatusActive     Status = "active"
 	StatusDeprecated Status = "deprecated"
+	// StatusArchived is the group-archive sentinel (v060-05 D9). A group
+	// in status='archived' is read-only — members can still ListGroupMessages
+	// but SendToGroup returns 423 locked.
+	StatusArchived Status = "archived"
 )
 
 // Profile is the public-identity projection of a registry row. Profile is
@@ -112,6 +117,53 @@ type UpdatePatch struct {
 	Capabilities  *ArrayPatch[string] `json:"capabilities,omitempty"`
 	Skills        *ArrayPatch[Skill]  `json:"skills,omitempty"`
 	Links         *ArrayPatch[Link]   `json:"links,omitempty"`
+}
+
+// MemberRole is the role of a member inside a group (v060-05 D8).
+// Owner is the creator (or whoever ownership was transferred to);
+// moderator can invite/kick; member can post and read. Stored in
+// group_members.role with a CHECK constraint matching this enum.
+type MemberRole string
+
+const (
+	MemberRoleMember    MemberRole = "member"
+	MemberRoleModerator MemberRole = "moderator"
+	MemberRoleOwner     MemberRole = "owner"
+)
+
+// GroupMember is a row from the group_members sibling table (v060-05 D5).
+// Membership carries per-member state (role + read cursor) which is why
+// it cannot live as a registry_links row.
+type GroupMember struct {
+	GroupURN    string     `json:"group_urn"`
+	MemberURN   string     `json:"member_urn"`
+	Role        MemberRole `json:"role"`
+	JoinedAt    time.Time  `json:"joined_at"`
+	LastReadSeq int64      `json:"last_read_seq"`
+	// DisplayName is hydrated by ListMembers (T-03) via a JOIN against
+	// registry_entries; not stored in group_members itself.
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+// GroupMessage is a message addressed to a group (v060-05 T-04). One row
+// in the messages table corresponds to one GroupMessage; mailbox-pull
+// (D4) means storage scales with messages, not members × messages. Per-
+// member read cursors live on group_members.last_read_seq, not here.
+//
+// Wire shape mirrors go-messaging.Envelope minus the lifecycle fields
+// (delivered_at / consumed_at / canceled_at) that group messages don't
+// use — group messages are non-destructive reads driven by the
+// last_read_seq cursor.
+type GroupMessage struct {
+	ID          string          `json:"id"` // UUIDv7
+	GroupURN    string          `json:"group_urn"`
+	GroupSeq    int64           `json:"group_seq"`
+	FromURN     string          `json:"from_urn"`
+	Kind        string          `json:"kind"`
+	ThreadID    string          `json:"thread_id,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	ContentType string          `json:"content_type,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // ArrayMode controls how an UpdateSelf array patch merges into the

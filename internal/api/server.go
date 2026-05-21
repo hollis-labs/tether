@@ -46,6 +46,15 @@ type Deps struct {
 	// from the *app.Service's CatalogRoot; in-process tests can set it
 	// to a temp catalog dir.
 	RegistryCatalogRoot string
+
+	// Groups, when non-nil, enables the /groups/... + /mentions
+	// v060-05 group-messaging routes (registerGroupRoutes). In
+	// production this is the same *registry.Service instance used by
+	// Registry — the GroupsService interface is a narrow seam over the
+	// group-specific methods. Splitting the field lets tests wire a
+	// focused stub for group surfaces without faking the full Registry
+	// CRUD vocabulary.
+	Groups GroupsService
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -63,6 +72,7 @@ type Server struct {
 	Attachments         AttachmentStore
 	Registry            RegistryService
 	RegistryCatalogRoot string
+	Groups              GroupsService
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -81,6 +91,7 @@ func NewHandler(deps Deps) http.Handler {
 		Attachments:         deps.Attachments,
 		Registry:            deps.Registry,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
+		Groups:              deps.Groups,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -92,5 +103,6 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerMessageRoutes(mux)
 	s.registerProxyEventRoutes(mux)
 	s.registerRegistryRoutes(mux)
+	s.registerGroupRoutes(mux)
 	return mux
 }
