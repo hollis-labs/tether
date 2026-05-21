@@ -88,11 +88,11 @@ No tables exist for the federation directory. No Go types. Existing `internal/re
 
 #### Acceptance criteria
 
-- [ ] Migration applies cleanly on a fresh `~/.tether/state.db` and on an existing one with prior migrations.
-- [ ] Tables exist with the indexes listed above. FK declarations present in `0015_registry.sql` as schema documentation per ADR 0008. Enforcement deferred; `PRAGMA foreign_keys` NOT flipped on. Go-layer validation at the storage boundary rejects obvious orphans (no `urn` insert into `registry_capabilities` without matching `registry_entries` row). _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`; full follow-up routed to v060-02.)_
-- [ ] `MintAgentURN()` / `MintProjectURN()` return `msg://agent/agent-mux/agt_xxxxxxxxxx` / `prj_xxxxxxxxxx`; collision-retry tested (mock the PRNG, force one collision, verify success).
-- [ ] `make check` green.
-- [ ] Package-layout decision recorded in `doc.go` with one-paragraph rationale.
+- [x] Migration applies cleanly on a fresh `~/.tether/state.db` and on an existing one with prior migrations.
+- [x] Tables exist with the indexes listed above. FK declarations present in `0015_registry.sql` as schema documentation per ADR 0008. Enforcement deferred; `PRAGMA foreign_keys` NOT flipped on. Go-layer validation at the storage boundary rejects obvious orphans (no `urn` insert into `registry_capabilities` without matching `registry_entries` row). _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`; full follow-up routed to v060-02.)_
+- [x] `MintAgentURN()` / `MintProjectURN()` return `msg://agent/agent-mux/agt_xxxxxxxxxx` / `prj_xxxxxxxxxx`; collision-retry tested (mock the PRNG, force one collision, verify success).
+- [x] `make check` green.
+- [x] Package-layout decision recorded in `doc.go` with one-paragraph rationale.
 
 #### Scope fences
 
