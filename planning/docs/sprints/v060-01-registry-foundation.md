@@ -89,7 +89,7 @@ No tables exist for the federation directory. No Go types. Existing `internal/re
 #### Acceptance criteria
 
 - [ ] Migration applies cleanly on a fresh `~/.tether/state.db` and on an existing one with prior migrations.
-- [ ] Tables exist with the indexes listed above. `PRAGMA foreign_keys=ON` honored.
+- [ ] Tables exist with the indexes listed above. FK declarations present in `0015_registry.sql` as schema documentation per ADR 0008. Enforcement deferred; `PRAGMA foreign_keys` NOT flipped on. Go-layer validation at the storage boundary rejects obvious orphans (no `urn` insert into `registry_capabilities` without matching `registry_entries` row). _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`; full follow-up routed to v060-02.)_
 - [ ] `MintAgentURN()` / `MintProjectURN()` return `msg://agent/agent-mux/agt_xxxxxxxxxx` / `prj_xxxxxxxxxx`; collision-retry tested (mock the PRNG, force one collision, verify success).
 - [ ] `make check` green.
 - [ ] Package-layout decision recorded in `doc.go` with one-paragraph rationale.
@@ -131,7 +131,7 @@ Service layer needs typed storage methods. SQLite quirks (transactions, NULL han
 - [ ] All methods covered by unit tests against an in-memory SQLite.
 - [ ] Transaction boundaries validated (insert profile + capabilities + skills + links is atomic).
 - [ ] Search filter combinations tested (each filter alone + all combined).
-- [ ] FK cascade verified (deleting a registry_entries row removes all caps/skills/links).
+- [ ] FK cascade NOT exercised in v1 (D11 soft-delete only — no hard `DELETE FROM registry_entries`). Storage-layer test confirms `SoftDelete` sets `status='deprecated'` without touching child tables. Cascade-equivalent cleanup (if/when hard-delete lands) is a Go-layer concern handled in a follow-up sprint. _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`.)_
 - [ ] `make test-race` green.
 
 #### Scope fences

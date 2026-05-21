@@ -296,13 +296,51 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 
 ---
 
-### T-v060-02-08: Ship notice to cerberus + cross-substrate audit
+### T-v060-02-08: ADR 0008 reopen — audit existing FK declarations + flip `PRAGMA foreign_keys=ON` at `store.Open`
+
+**kind:** agent
+**priority:** 2
+**manual:** true
+**tags:** [registry, adr, fk-enforcement, hardening]
+**depends_on:** T-v060-02-04
+**filed-from:** v060-01 agridd-keeper coordination msg `019e482c-47cb-7213-910e-5485df488032` (2026-05-20)
+
+#### Problem
+
+ADR 0008 (`docs/adr/0008-fk-enforcement-deferral.md`) deferred `PRAGMA foreign_keys` enforcement during v0.0.2 because the schema was churning. Final line: *Do not silently flip `PRAGMA foreign_keys` on as a side-quest.* Tether is now on v0.6; the schema is stable; cerberus bootstrap (T-v060-02-04) is the first workload that meaningfully stress-tests cross-substrate FK paths. ADR 0008's reopen trigger has fired — couple the audit + flip with the cerberus-bootstrap pressure rather than retrofitting it later.
+
+#### Fix direction
+
+1. **Audit script.** A one-shot Go test or `mux registry audit-fk` subcommand that opens a copy of a real user DB (or a populated test fixture) and queries every table with FK declarations (`sessions.logical_agent_id`, `checkpoints.logical_agent_id`, `checkpoints.source_session_id`, `client_attachments.session_id`, all registry_* tables) for orphans. Emits a report: `(table, fk_column, target_table, target_column, orphan_count)`.
+2. **Orphan-delete migration.** If the audit reports orphans on real-user DBs (chrispian's local first; cerberus + agridd test machines next), write `internal/store/migrations/0017_orphan_cleanup.sql` (or next-free number) that deletes the surfaced orphans. Migration is idempotent on re-run.
+3. **`store.Open` flip.** Add `&_pragma=foreign_keys(ON)` to the DSN in `internal/store/sqlite.go`. Update the comment at lines 46-48 to reference the new ADR + supersession of ADR 0008.
+4. **Cerberus-bootstrap regression.** Re-run T-v060-02-04's cerberus bootstrap against the now-enforced DB. Row counts must match the pre-flip bootstrap run on the same fixture (no inserts blocked by FK violations; no orphan-induced failures during reads).
+5. **New ADR (next free, likely 0042 if v060-01 lands 0041).** Title: *FK Enforcement Reopen — supersedes ADR 0008*. Context: post-v0.0.2 stability + cerberus-bootstrap workload + audit results. Decision: enforcement ON. Consequences: orphan inserts now fail at the SQLite layer in addition to Go-layer validation; future migrations must reason about cascade semantics on row deletion.
+
+#### Acceptance criteria
+
+- [ ] Audit script lands; runs against `~/.tether/state.db` and the test fixture corpus.
+- [ ] Audit report on chrispian's local DB shows 0 orphans across all tables (or any found are surfaced + handled in step 2).
+- [ ] Orphan-cleanup migration (if needed) committed with an idempotent re-run test.
+- [ ] `store.Open` DSN flipped + comment updated.
+- [ ] Cerberus-bootstrap row-count regression test: bootstrap pre-flip + post-flip on the same fixture → identical counts.
+- [ ] New ADR committed; supersedes ADR 0008; ADR 0008 status updated to `Superseded`.
+- [ ] `make check` green with FK enforcement ON.
+
+#### Scope fences
+
+- Do NOT widen the audit beyond existing FK declarations. New invariants belong in their own ADR.
+- Do NOT change registry FK declarations themselves — they were already correct as documentation; this task just turns enforcement on.
+
+---
+
+### T-v060-02-09: Ship notice to cerberus + cross-substrate audit
 
 **kind:** agent
 **priority:** 3
 **manual:** true
 **tags:** [registry, ship-notice]
-**depends_on:** T-v060-02-04, T-v060-02-07
+**depends_on:** T-v060-02-04, T-v060-02-07, T-v060-02-08
 
 #### Fix direction
 
@@ -329,7 +367,7 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 
 ## Done checklist (at sprint close)
 
-- [ ] All eight task acceptance sections ticked.
+- [ ] All nine task acceptance sections ticked.
 - [ ] Exit criteria above all ticked.
 - [ ] `make check` green.
 - [ ] ADR 0014 committed.
