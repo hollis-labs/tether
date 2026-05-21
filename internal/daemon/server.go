@@ -58,6 +58,14 @@ type Server struct {
 	MessageStore api.MessageStore
 	// Attachments is optional; when set, GET /sessions/{id}/attachments works.
 	Attachments api.AttachmentStore
+	// Registry is optional; when set, /registry/* federation directory
+	// endpoints are mounted. Populated by app.Service.Registry at daemon
+	// startup.
+	Registry api.RegistryService
+	// RegistryCatalogRoot is the catalog root the registry bootstrap
+	// importer scans for `POST /registry/bootstrap`. Forwarded into
+	// api.Deps; empty disables the endpoint.
+	RegistryCatalogRoot string
 	// ProxyEvents is optional; when set, GET/POST /proxy/events endpoints are
 	// mounted. Populated by the daemon when MCP proxy forwarding is active,
 	// so the TUI can poll tool call events without sharing in-process memory
@@ -189,16 +197,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	if s.Service != nil || s.Catalog != nil {
 		apiHandler := api.NewHandler(api.Deps{
-			Service:      s.Service,
-			Checkpoints:  s.Checkpoints,
-			Broker:       s.Broker,
-			Bus:          s.Bus,
-			EventsStore:  s.EventsStore,
-			Catalog:      s.Catalog,
-			GroupStore:   s.GroupStore,
-			MessageStore: s.MessageStore,
-			Attachments:  s.Attachments,
-			ProxyEvents:  s.ProxyEvents,
+			Service:             s.Service,
+			Checkpoints:         s.Checkpoints,
+			Broker:              s.Broker,
+			Bus:                 s.Bus,
+			EventsStore:         s.EventsStore,
+			Catalog:             s.Catalog,
+			GroupStore:          s.GroupStore,
+			MessageStore:        s.MessageStore,
+			Attachments:         s.Attachments,
+			ProxyEvents:         s.ProxyEvents,
+			Registry:            s.Registry,
+			RegistryCatalogRoot: s.RegistryCatalogRoot,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -236,6 +246,9 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/catalog/agents", apiHandler)
 			mux.Handle("/catalog/providers", apiHandler)
 			mux.Handle("/catalog/launches", apiHandler)
+		}
+		if s.Registry != nil {
+			mux.Handle("/registry/", apiHandler)
 		}
 	}
 	return mux

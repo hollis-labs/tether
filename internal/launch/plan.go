@@ -6,12 +6,12 @@ package launch
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
-	LaunchID        string   `json:"launch_id"`
-	ProjectID       string   `json:"project_id"`
-	LogicalAgentID  string   `json:"logical_agent_id"`
-	ProviderID      string   `json:"provider_id"`
-	ProviderBrand   string   `json:"provider_brand,omitempty"`
-	RuntimeKind     string   `json:"runtime_kind,omitempty"`
+	LaunchID       string `json:"launch_id"`
+	ProjectID      string `json:"project_id"`
+	LogicalAgentID string `json:"logical_agent_id"`
+	ProviderID     string `json:"provider_id"`
+	ProviderBrand  string `json:"provider_brand,omitempty"`
+	RuntimeKind    string `json:"runtime_kind,omitempty"`
 	// PermissionMode is the resolved Claude Code permission posture for the
 	// launched agent ("bypass" or "default"), computed by the launch
 	// resolver from the agent's permissions.permission_mode falling back to

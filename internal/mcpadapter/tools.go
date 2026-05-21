@@ -14,4 +14,5 @@ func (a *Adapter) registerTools(s *server.MCPServer) {
 	a.registerMessageTools(s)
 	a.registerBootTools(s)
 	a.registerObservationTools(s)
+	a.registerRegistryTools(s)
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/parity"
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
 
-	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"
 )
 
@@ -49,9 +49,9 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 		t.Skipf("deployed LaunchSpec corpus absent at %s: %v", corpus, err)
 	}
 
-	reg, err := registry.OpenAt(registry.Options{CatalogRoot: catalogRoot})
+	reg, err := launchresolve.OpenAt(launchresolve.Options{CatalogRoot: catalogRoot})
 	if err != nil {
-		t.Fatalf("registry.OpenAt: %v", err)
+		t.Fatalf("launchresolve.OpenAt: %v", err)
 	}
 	res, err := specresolve.NewResolver(reg, specresolve.WithSpecsRoot(corpus))
 	if err != nil {
@@ -59,10 +59,10 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		launchID  string
-		wantFile  string   // planted file, relative to the boot dir
-		wantAny   []string // the planted file must contain at least one
+		name     string
+		launchID string
+		wantFile string   // planted file, relative to the boot dir
+		wantAny  []string // the planted file must contain at least one
 	}{
 		{
 			name:     "claude carries permissions.defaultMode",

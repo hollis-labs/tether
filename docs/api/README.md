@@ -523,6 +523,115 @@ Additional kinds will land as v0.0.3 extends runtime and broker semantics.
 
 ---
 
+## Registry
+
+The federation directory service. Mux owns public-identity rows for
+agents + projects (v060-01); substrates retain operational config behind
+each row's `callback` URI. See [ADR 0041](adr/0041-registry-directory-service.md)
+for the full rationale and [docs/registry/overview.md](../registry/overview.md)
+for the integration guide.
+
+The `{kind}` URL segment is **plural** (`agents`, `projects`); the
+internal `Kind` value is singular (`agent`, `project`).
+
+### `POST /registry/{kind}` — Register
+
+Body: a Profile JSON. The caller supplies `display_name` and any optional
+identity fields. The server assigns `urn`, `kind`, `created_at`,
+`updated_at`, `mux_instance_id` and ignores any caller-supplied versions
+of those.
+
+Response: `201 Created` + the canonical Profile JSON (with the minted
+URN).
+
+```bash
+curl -X POST http://unix/registry/agents -d @profile.json
+```
+
+### `GET /registry/{kind}` — Search
+
+Query parameters (all optional, combine with AND):
+- `role` — exact match on the `role` column
+- `title` — exact match on `title`
+- `project` — exact match on `project`
+- `capability` — row has the capability in its `registry_capabilities`
+- `skill_name` — row has a skill with this name
+- `status` — `active` (default) | `deprecated` | `*` (all)
+
+Response: `{"<kind-plural>": [Profile, ...]}` — alphabetical by
+`display_name`. Empty result is `{"agents": []}`, never null.
+
+```bash
+curl 'http://unix/registry/agents?role=reviewer&status=active'
+```
+
+### `GET /registry/{kind}/{urn}` — Lookup
+
+`{urn}` is URL-encoded (`msg%3A%2F%2Fagent%2Fagent-mux%2Fagt_xxx`).
+
+Response: `200 OK` + Profile, or `404 not_found`. Soft-deleted rows are
+still returned here with `status: "deprecated"`.
+
+### `PATCH /registry/{kind}/{urn}` — UpdateSelf
+
+Body: `UpdatePatch` JSON. Partial-merge semantics:
+- Scalar fields use pointer-nil semantics (`null` or omitted = no change).
+- Array fields (`capabilities`, `skills`, `links`) accept two shapes:
+  - Shorthand: `"capabilities": ["a", "b"]` — equivalent to a REPLACE.
+  - Explicit: `"capabilities": {"mode": "append"|"replace"|"remove", "value": [...]}`.
+- Empty `value` is a no-op on every mode.
+- `last_updated_by` is required.
+
+```json
+{
+  "title": "Tether Sprint Implementer",
+  "skills": {"mode": "append", "value": [{"name": "go-generics", "learned_at": "2026-05-20T00:00:00Z"}]},
+  "last_updated_by": "chrispian@local"
+}
+```
+
+### `DELETE /registry/{kind}/{urn}` — Deregister
+
+Soft-delete; row's `status` flips to `deprecated`. Child rows
+(capabilities/skills/links) are NOT touched. Response: `200 OK` + the
+now-deprecated Profile.
+
+### `POST /registry/{kind}/{urn}/sync` — Sync
+
+Refreshes thin-profile columns from the row's `callback`. Raw payload is
+never stored (D18). `file://` and `cli://` schemes ship in v1; `http://`
+and `mcp://` land in v060-02.
+
+- `204 No Content` if the row has no `callback`
+- `200 OK` + refreshed Profile otherwise
+
+### `POST /registry/bootstrap?force=true` — Re-run the catalog importer
+
+Daemon already runs `BootstrapFromCatalog(force=false)` once at startup.
+This endpoint lets operators apply catalog drift after editing a YAML by
+re-running with `force=true` (refreshes existing rows from the source
+YAML's current state). Body is empty; response is a `BootstrapReport`:
+
+```json
+{"imported": 0, "skipped": 30, "refreshed": 2, "errors": []}
+```
+
+### Error mapping
+
+| Error | HTTP | Code |
+|---|---|---|
+| `registry.ErrInvalidRequest` | 400 | `invalid_request` |
+| `registry.ErrNotFound` | 404 | `not_found` |
+| `registry.ErrNoCallback` | 204 | (no body) |
+| `registry.ErrNoResolver` | 400 | `invalid_request` |
+| `registry.ErrPayloadInvalid` / `ErrPayloadTooLarge` / `ErrPathOutsideRoot` | 502 | `internal_error` |
+| `registry.ErrMintExhausted` | 503 | `internal_error` |
+| unsupported kind segment | 404 | `not_found` |
+| method not allowed | 405 | `method_not_allowed` |
+| other | 500 | `internal_error` |
+
+---
+
 ## Versioning & stability
 
 The routes documented here are stable for v0.0.2 — Nanite and Clockwork

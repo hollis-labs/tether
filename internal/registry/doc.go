@@ -1,33 +1,31 @@
-// Package registry is Tether's registry-resolution layer for the S5
-// platform-reshape cutover. It resolves launch inputs (runtime bindings,
-// agents, MCP servers, execution templates / boot specs) through the
-// go-agent-launch directory registry instead of a bespoke catalog walk.
+// Package registry is Tether's federation directory service. It owns
+// public-identity rows for agents and projects (v060-01); the owning
+// substrate retains all operational configuration behind a callback URI.
+// The two-store model — Mux for discovery, substrate for ops — is the
+// load-bearing design choice of the v0.6 epic. See ADR 0041 for the
+// full rationale.
 //
-// This package builds ONLY the resolution layer. It deliberately does not
-// wire itself into any launch front-end, the daemon, or internal/launch —
-// that is a later, gated step. The future launch resolver is the intended
-// caller of the query helpers here.
+// Package layout. The pre-v060-01 internal/registry/ package held a
+// different concern (launch resolution over ~/.tether/catalog/*). That
+// package was renamed to internal/launchresolve/ in T-v060-01-01 to free
+// the registry name for this service. D14 mandates "registry" as the
+// user-facing term (HTTP path /registry/*, MCP tool prefix
+// tether_registry_*, CLI subcommand mux registry); aligning the internal
+// package name removes a cognitive-drift risk for readers comparing API
+// surface to source. The launchresolve package is otherwise untouched —
+// different concern, no shared types.
 //
-// Locked design constraints honored by this package:
+// What's here.
 //
-//   - D1 — local-first. Resolution works fully offline with zero network.
-//     The registrar is a go-agent-launch FileBackedRegistrar over the
-//     local catalog root (default ~/.tether/catalog/), wrapped in a
-//     DegradingRegistrar so a registry-down condition degrades to a
-//     last-known-good cache rather than hard-failing a launch.
+//   - model.go — public-identity types: Profile, Skill, Link, Callback,
+//     Filter, ArrayPatch + ArrayMode. These are BOTH storage-row mirrors
+//     and HTTP/MCP API envelopes; the two stores share the same shape.
+//   - id.go — URN minter. Stripe-style opaque IDs (D2): agt_<10alnum>,
+//     prj_<10alnum>. crypto/rand source, rejection-sampled across a
+//     36-character alphabet to keep the distribution unbiased.
 //
-//   - D2 — handles, not content. The registry stores resolver handles /
-//     file pointers (RegistrationRecord = meta + RegistrationSource), not
-//     inlined content bodies. The query helpers resolve a handle, then
-//     read the catalog file the handle points at to materialize a typed
-//     value for the caller.
-//
-// Catalog-shape note. Tether's live ~/.tether/catalog/ files are
-// Tether-native YAML (config.Provider, config.Agent, config.MCPServerEntry,
-// config.Launch shapes), NOT go-agent-launch RegistryContract documents.
-// go-agent-launch's DecodeContract expects full contract documents with a
-// meta: block and therefore cannot decode the live catalog files. The
-// query helpers in this package consequently hand-map Tether-native YAML
-// into the go-agent-launch return types. See resolve.go for detail; this
-// is the principal go-agent-launch API friction recorded for S5.
+// Subsequent v060-01 tasks land service.go (T-v060-01-03), storage.go
+// (T-v060-01-02), callback.go (T-v060-01-04), and bootstrap.go
+// (T-v060-01-08). The v060-02 sprint adds the cerberus importer and
+// cross-substrate dedup primitive.
 package registry

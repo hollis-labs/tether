@@ -18,6 +18,7 @@ This roadmap covers the evolution from the v0.0.1 launcher foundation into a dur
 | v0.1 | next | Session Routing + Provider Surface | Shared session/message substrate: Clockwork, Nanite, and other systems can opt into Mux-managed sessions when they want routing, messaging, attach/resume, and provider abstraction, while retaining their own execution policy. |
 | v0.2 | later | Agent Definition + Asset Resolution | Asset/catalog references, Agent Ops lookup, skills/agents handoff, local/global/project scope, cross-ecosystem import/export. |
 | v0.3+ | deferred | Rich UX | Richer TUI, Nanite GUI control plane, workflow visualization, multiplexor flows, observability dashboards, Cerberus service-manager glue. |
+| v0.6 | next | Federation Directory | First-class directory service in Mux for federating entities (agents + projects in v0.6; later skills, MCP servers, mux instances, cerberus kinds). Two-store model: Mux holds public identity, owning substrate holds ops config, join on `urn`. Driven by cross-substrate need (agridd FU-31 / CW-20260520-0046). |
 
 ### Parked
 
@@ -39,6 +40,7 @@ This roadmap covers the evolution from the v0.0.1 launcher foundation into a dur
 | v0.1 — Session Routing + Provider Surface | next | [epics/v0.1-operational-agents.md](epics/v0.1-operational-agents.md) |
 | v0.2 — Agent Definition + Asset Resolution | later | [epics/v0.2-agent-ops-integration.md](epics/v0.2-agent-ops-integration.md) |
 | v0.3+ — Rich UX & Advanced Orchestration | deferred | [epics/v0.3-rich-ux.md](epics/v0.3-rich-ux.md) |
+| v0.6 — Federation Directory | next | [epics/v0.6-federation-directory.md](epics/v0.6-federation-directory.md) |
 | [Parked] — Integration Foundation | parked | [parked/v0.0.3-integration-foundation.md](parked/v0.0.3-integration-foundation.md) |
 
 ## Current planning read — 2026-04-22
