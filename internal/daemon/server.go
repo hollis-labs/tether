@@ -66,6 +66,12 @@ type Server struct {
 	// importer scans for `POST /registry/bootstrap`. Forwarded into
 	// api.Deps; empty disables the endpoint.
 	RegistryCatalogRoot string
+	// Groups is optional; when set, /groups/* + /mentions v060-05
+	// group-messaging endpoints are mounted. In production this is the
+	// same *registry.Service instance used by Registry — the
+	// GroupsService interface is the narrow seam over the group-specific
+	// methods.
+	Groups api.GroupsService
 	// ProxyEvents is optional; when set, GET/POST /proxy/events endpoints are
 	// mounted. Populated by the daemon when MCP proxy forwarding is active,
 	// so the TUI can poll tool call events without sharing in-process memory
@@ -209,6 +215,7 @@ func (s *Server) Handler() http.Handler {
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
+			Groups:              s.Groups,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -249,6 +256,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.Registry != nil {
 			mux.Handle("/registry/", apiHandler)
+		}
+		if s.Groups != nil {
+			mux.Handle("/groups", apiHandler)
+			mux.Handle("/groups/", apiHandler)
+			mux.Handle("/mentions", apiHandler)
 		}
 	}
 	return mux
