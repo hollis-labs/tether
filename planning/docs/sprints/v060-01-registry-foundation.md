@@ -173,11 +173,11 @@ The storage layer is dumb; the service is where validation, ID minting, the part
 
 #### Acceptance criteria
 
-- [ ] Table-driven tests cover Register validation (missing fields, caller-supplied URN, malformed skills).
-- [ ] Tests cover all UpdateSelf modes for each array field: shorthand REPLACE, explicit REPLACE / APPEND / REMOVE, empty value, conflicting modes.
-- [ ] URN collision-retry tested (mocked).
-- [ ] Concurrent UpdateSelf on the same URN serializes correctly (no lost updates — last writer wins on each field).
-- [ ] `make test-race` green.
+- [x] Table-driven tests cover Register validation (missing fields, caller-supplied URN, malformed skills).
+- [x] Tests cover all UpdateSelf modes for each array field: shorthand REPLACE, explicit REPLACE / APPEND / REMOVE, empty value, conflicting modes.
+- [x] URN collision-retry tested (mocked).
+- [x] Concurrent UpdateSelf on the same URN serializes correctly (no lost updates — last writer wins on each field).
+- [x] `make test-race` green.
 
 #### Scope fences
 

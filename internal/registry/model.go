@@ -90,6 +90,29 @@ type Filter struct {
 	Status     string
 }
 
+// UpdatePatch is the input shape for Service.UpdateSelf. Scalar pointer
+// fields are nil = no change, non-nil = set (including pointer-to-empty-
+// string = explicit clear). Array patches are nil = no change; the inner
+// ArrayPatch carries the merge mode. KindMeta is replace-on-present (no
+// shallow merge in v1). LastUpdatedBy is required.
+type UpdatePatch struct {
+	DisplayName   *string             `json:"display_name,omitempty"`
+	Title         *string             `json:"title,omitempty"`
+	Role          *string             `json:"role,omitempty"`
+	Description   *string             `json:"description,omitempty"`
+	Avatar        *string             `json:"avatar,omitempty"`
+	Project       *string             `json:"project,omitempty"`
+	Status        *Status             `json:"status,omitempty"`
+	HealthStatus  *string             `json:"health_status,omitempty"` // D15
+	LastSeenAt    *time.Time          `json:"last_seen_at,omitempty"`  // D15
+	HostAddress   *string             `json:"host_address,omitempty"`  // D15
+	KindMeta      json.RawMessage     `json:"kind_meta,omitempty"`
+	LastUpdatedBy string              `json:"last_updated_by"` // required
+	Capabilities  *ArrayPatch[string] `json:"capabilities,omitempty"`
+	Skills        *ArrayPatch[Skill]  `json:"skills,omitempty"`
+	Links         *ArrayPatch[Link]   `json:"links,omitempty"`
+}
+
 // ArrayMode controls how an UpdateSelf array patch merges into the
 // existing row (D5).
 type ArrayMode string
