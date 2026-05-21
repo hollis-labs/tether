@@ -155,6 +155,11 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 		minted, err = MintAgentURN(ctx, s.storage.URNExists)
 	case KindProject:
 		minted, err = MintProjectURN(ctx, s.storage.URNExists)
+	case KindGroup:
+		// Group Register handler lands in v060-05 T-02 (sprint v060-05).
+		// Until then, surface a clear invalid-request rather than silently
+		// minting nothing.
+		return Profile{}, fmt.Errorf("registry: register: %w: kind=group is not yet supported via Register (v060-05 T-02)", ErrInvalidRequest)
 	}
 	if err != nil {
 		// ErrMintExhausted (and context errors) propagate verbatim so callers

@@ -122,7 +122,7 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 - [ ] Migration applies cleanly on a DB with 0015 already applied (last on `main` at v060-05 start).
 - [ ] `MintGroupURN(authority)` returns well-formed `msg://group/<authority>/grp_xxxxxxxxxx` (3-segment, ADR-0023-compliant).
 - [ ] URN parser correctly distinguishes agent vs group URNs.
-- [ ] FK cascade verified: deleting a group's registry_entries row removes its group_members rows and nulls out group_urn on referenced messages (or cascades the deletes — pick during impl).
+- [ ] FK declarations land as documentation per ADR-0008 (group_members → registry_entries with ON DELETE CASCADE; messages.group_urn → registry_entries with ON DELETE SET NULL). PRAGMA foreign_keys stays off; v060-02 T-08 will audit + flip enforcement globally, at which point these declarations become live.
 - [ ] `make check` green.
 
 #### Scope fences

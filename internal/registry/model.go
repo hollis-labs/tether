@@ -14,6 +14,7 @@ type Kind string
 const (
 	KindAgent   Kind = "agent"
 	KindProject Kind = "project"
+	KindGroup   Kind = "group"
 )
 
 // Status is the lifecycle state. Soft-deleted rows carry StatusDeprecated
