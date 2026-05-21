@@ -108,6 +108,7 @@ var daemonRunCmd = &cobra.Command{
 			MessageStore: svc.Store.MessagingStore(),
 			Attachments:  svc.Store,
 			ProxyEvents:  svc.Store,
+			Registry:     svc.Registry,
 			Publisher:    svc.Bus,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just

@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -51,6 +52,13 @@ type Service struct {
 	// decorates the local messaging store so envelopes addressed to a
 	// configured peer authority route cross-host. See internal/federation.
 	Federation *federation.Router
+
+	// Registry is the v0.6 federation directory service (registry +
+	// search + sync). Populated by daemon startup wiring; nil in lighter
+	// composition contexts (e.g. read-only `mux mcp` connecting to a
+	// remote daemon for session ops). MCP / HTTP / CLI surfaces that
+	// depend on it must nil-guard before dispatching.
+	Registry *registry.Service
 
 	factories map[string]RuntimeFactory
 
@@ -122,6 +130,20 @@ func New(catalogRoot string) (*Service, error) {
 
 	brk := broker.NewService(db, bus)
 
+	// Compose the v0.6 federation directory service. Storage attaches to
+	// the same *sql.DB so registry rows live in state.db alongside
+	// sessions/messages. file:// + cli:// resolvers are wired here so
+	// Sync works without per-call resolver assembly; the file resolver
+	// is anchored at the catalog root (D9 + symlink-escape defense).
+	regStorage := registry.NewStorage(db.DB())
+	regOpts := []registry.ServiceOption{registry.WithResolver(registry.NewCLIResolver())}
+	if fr, ferr := registry.NewFileResolver(catalogRoot); ferr == nil {
+		regOpts = append(regOpts, registry.WithResolver(fr))
+	} else {
+		log.Printf("registry: file resolver disabled — %v (sync over file:// will return ErrNoResolver)", ferr)
+	}
+	regSvc := registry.NewService(regStorage, regOpts...)
+
 	// Compose the authority-routing federation Router over the local
 	// messaging store. Returns nil when federation is disabled (the
 	// standalone default) — the daemon then behaves exactly as before.
@@ -147,6 +169,7 @@ func New(catalogRoot string) (*Service, error) {
 		Bus:         bus,
 		Broker:      brk,
 		Federation:  fedRouter,
+		Registry:    regSvc,
 		factories:   factories,
 	}, nil
 }

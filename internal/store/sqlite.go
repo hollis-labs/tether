@@ -72,6 +72,12 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// DB returns the underlying *sql.DB handle. Exposed for subsystems that
+// need to attach their own typed storage layer over the same database
+// (e.g. the registry service in internal/registry). Callers MUST NOT
+// Close the returned handle — Store.Close owns the lifecycle.
+func (s *Store) DB() *sql.DB { return s.db }
+
 type SessionRow struct {
 	ID             string
 	LaunchID       string

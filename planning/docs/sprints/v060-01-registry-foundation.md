@@ -310,9 +310,9 @@ Agents inside Mux sessions need to register / lookup / search via MCP. Surface p
 
 #### Acceptance criteria
 
-- [ ] Each tool callable via the MCP adapter against a fixture service.
-- [ ] Tool schemas validate (no loose `additionalProperties` on patches).
-- [ ] `update_self` tool description explains shorthand vs explicit array mode (so the calling agent understands the merge model).
+- [x] Each tool callable via the MCP adapter against a fixture service.
+- [x] Tool schemas validate (no loose `additionalProperties` on patches).
+- [x] `update_self` tool description explains shorthand vs explicit array mode (so the calling agent understands the merge model).
 
 #### Scope fences
 
