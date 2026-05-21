@@ -53,23 +53,53 @@ type MessageEnvelopeDTO struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	DeliveredAt *time.Time      `json:"delivered_at"`
 	ConsumedAt  *time.Time      `json:"consumed_at"`
+	ReadAt      *time.Time      `json:"read_at,omitempty"`
+	ArchivedAt  *time.Time      `json:"archived_at,omitempty"`
+	CanceledAt  *time.Time      `json:"canceled_at,omitempty"`
+	Subject     string          `json:"subject,omitempty"`
+	Body        string          `json:"body,omitempty"`
 }
 
-type messageListResponse struct {
+type messageListResponse = MessageListResult
+
+// MessageListResult is the daemon's paginated message-list response.
+type MessageListResult struct {
 	Messages []MessageEnvelopeDTO `json:"messages"`
+	Total    int                  `json:"total,omitempty"`
+	Limit    int                  `json:"limit,omitempty"`
+	Offset   int                  `json:"offset,omitempty"`
 }
 
 // MessageSendRequest is the JSON body accepted by POST /messages.
 type MessageSendRequest struct {
-	Kind        string         `json:"kind"`
-	Channel     string         `json:"channel,omitempty"`
-	From        string         `json:"from"`
-	To          string         `json:"to"`
-	ThreadID    string         `json:"thread_id,omitempty"`
-	InReplyTo   string         `json:"in_reply_to,omitempty"`
-	Payload     map[string]any `json:"payload,omitempty"`
-	ContentType string         `json:"content_type,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Kind        string            `json:"kind"`
+	Channel     string            `json:"channel,omitempty"`
+	From        string            `json:"from"`
+	To          string            `json:"to"`
+	ThreadID    string            `json:"thread_id,omitempty"`
+	InReplyTo   string            `json:"in_reply_to,omitempty"`
+	Payload     json.RawMessage   `json:"payload,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// MessageNotifyRequest is the JSON body accepted by POST /messages/notify.
+type MessageNotifyRequest struct {
+	MessageSendRequest
+	Urgency   string `json:"urgency,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Wake      *bool  `json:"wake,omitempty"`
+	WakeText  string `json:"wake_text,omitempty"`
+}
+
+// MessageNotifyResult is the daemon's /messages/notify response.
+type MessageNotifyResult struct {
+	Message       MessageEnvelopeDTO `json:"message"`
+	UnreadCount   int                `json:"unread_count"`
+	WakeAttempted bool               `json:"wake_attempted"`
+	WakeDelivered bool               `json:"wake_delivered"`
+	SessionID     string             `json:"session_id,omitempty"`
+	WakeError     string             `json:"wake_error,omitempty"`
 }
 
 // New constructs a Client for the given listen_addr. The transport handles
@@ -555,6 +585,44 @@ func (c *Client) MessageInbox(ctx context.Context, to, kind, threadID string) ([
 	return res.Messages, nil
 }
 
+// MessageList fetches messages for a recipient without marking them delivered.
+func (c *Client) MessageList(ctx context.Context, to, kind, threadID string, includeArchived, unreadOnly bool, limit, offset int) (MessageListResult, error) {
+	params := url.Values{}
+	params.Set("to", to)
+	if kind != "" {
+		params.Set("kind", kind)
+	}
+	if threadID != "" {
+		params.Set("thread_id", threadID)
+	}
+	if includeArchived {
+		params.Set("include_archived", "true")
+	}
+	if unreadOnly {
+		params.Set("unread_only", "true")
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		params.Set("offset", strconv.Itoa(offset))
+	}
+	var res messageListResponse
+	if err := c.getJSON(ctx, "/messages/list?"+params.Encode(), &res); err != nil {
+		return MessageListResult{}, err
+	}
+	return res, nil
+}
+
+// MessageGet fetches one message envelope.
+func (c *Client) MessageGet(ctx context.Context, id string) (MessageEnvelopeDTO, error) {
+	var env MessageEnvelopeDTO
+	if err := c.getJSON(ctx, "/messages/"+url.PathEscape(id), &env); err != nil {
+		return MessageEnvelopeDTO{}, err
+	}
+	return env, nil
+}
+
 // MessageThread loads all messages in a Mux message thread.
 func (c *Client) MessageThread(ctx context.Context, threadID string) ([]MessageEnvelopeDTO, error) {
 	var res messageListResponse
@@ -587,10 +655,84 @@ func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (Messa
 	return sent, nil
 }
 
+// MessageNotify sends an envelope and asks the daemon to wake-inject a live
+// recipient session when one can be resolved.
+func (c *Client) MessageNotify(ctx context.Context, msg MessageNotifyRequest) (MessageNotifyResult, error) {
+	body, _ := json.Marshal(msg)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages/notify", bytes.NewReader(body))
+	if err != nil {
+		return MessageNotifyResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MessageNotifyResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return MessageNotifyResult{}, readError(resp)
+	}
+	var out MessageNotifyResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return MessageNotifyResult{}, fmt.Errorf("decode notify response: %w", err)
+	}
+	return out, nil
+}
+
 // MessageConsume marks a message consumed by the named recipient.
 func (c *Client) MessageConsume(ctx context.Context, id, as string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/messages/"+url.PathEscape(id)+"/consume?as="+url.QueryEscape(as), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
+// MessageCancel cancels a pending message.
+func (c *Client) MessageCancel(ctx context.Context, id string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/cancel", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return readError(resp)
+}
+
+// MessageMarkRead marks a message read by the named recipient.
+func (c *Client) MessageMarkRead(ctx context.Context, id, as string) error {
+	return c.messageRecipientAction(ctx, id, "read", as)
+}
+
+// MessageArchive archives a message for the named recipient.
+func (c *Client) MessageArchive(ctx context.Context, id, as string) error {
+	return c.messageRecipientAction(ctx, id, "archive", as)
+}
+
+// MessageUnarchive restores an archived message for the named recipient.
+func (c *Client) MessageUnarchive(ctx context.Context, id, as string) error {
+	return c.messageRecipientAction(ctx, id, "unarchive", as)
+}
+
+func (c *Client) messageRecipientAction(ctx context.Context, id, action, as string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/"+action+"?as="+url.QueryEscape(as), nil)
 	if err != nil {
 		return err
 	}

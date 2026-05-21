@@ -49,6 +49,10 @@ mux sessions attach <session-id>
 # List sessions
 mux sessions list
 
+# Send durable mail, or notify + wake a live recipient session
+mux messages send --from msg://user/local/me --to msg://agent/local/worker "hello"
+mux messages notify --from msg://user/local/me --to msg://agent/local/worker --urgency high "check inbox"
+
 # Stop a session
 mux sessions stop <session-id>
 
@@ -88,6 +92,7 @@ See [`docs/mcp.md`](docs/mcp.md) for the full tool reference and setup guide.
 | Doc | Contents |
 |---|---|
 | [`docs/dev-setup.md`](docs/dev-setup.md) | Full dev setup, catalog schema, common tasks |
+| [`docs/messaging.md`](docs/messaging.md) | Direct mail, notify+wake, inbox/list semantics |
 | [`docs/mcp.md`](docs/mcp.md) | MCP adapter setup, auth, tool reference |
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |
 | [`docs/sandboxing.md`](docs/sandboxing.md) | Sandbox profiles (macOS + Linux) |

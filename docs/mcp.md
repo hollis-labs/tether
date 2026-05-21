@@ -406,14 +406,17 @@ Resume a logical agent from its most recent checkpoint.
 ### Messaging
 
 The messaging tools wrap the `go-messaging` store (migration 0010). Messages
-are addressed using URNs in the form `urn:<namespace>:<id>`.
+are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 
 **URN examples:**
-- `urn:agent:nanite:session-abc` — a Nanite session
-- `urn:agent:mux:logical-agent-xyz` — an agent-mux logical agent
-- `urn:user:me` — the user / human inbox
+- `msg://session/local/session-abc` — a live session mailbox
+- `msg://agent/agent-mux/logical-agent-xyz` — a logical agent mailbox
+- `msg://user/local/me` — the user / human inbox
 
-**Kind values:** `request`, `reply`, `notification`, `handoff`, `status_update`, `escalation`
+**Kind values:** `request`, `response`, `notice`, `handoff`,
+`status_update`, `escalation`. Use `metadata.urgency` or
+`mux_message_notify.urgency` for delivery urgency: `very-low`, `low`,
+`normal`, or `high`.
 
 #### `mux_message_send` _(message.write)_
 
@@ -425,6 +428,24 @@ are addressed using URNs in the form `urn:<namespace>:<id>`.
 | `payload_json` | string | — | JSON payload body |
 | `thread_id` | string | — | Thread ID for grouping |
 | `in_reply_to` | string | — | Message ID this replies to |
+
+#### `mux_message_notify` _(message.write)_
+Send a message and best-effort wake a live recipient session with a
+daemon-injected mailbox reminder turn. The message is stored even when no live
+session can be resolved.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `from` | string | ✓ | Sender URN |
+| `to` | string | ✓ | Recipient URN |
+| `kind` | string | — | Message kind; defaults to `notice` |
+| `payload_json` | string | — | JSON payload body |
+| `thread_id` | string | — | Thread ID for grouping |
+| `in_reply_to` | string | — | Message ID this replies to |
+| `urgency` | string | — | `very-low`, `low`, `normal`, or `high`; defaults to `normal` |
+| `session_id` | string | — | Explicit live session to wake |
+| `wake_text` | string | — | Override the generated mailbox wake text |
+| `no_wake` | boolean | — | Store only; skip wake injection |
 
 #### `mux_message_get`
 Get a message by ID.

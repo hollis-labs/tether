@@ -10,6 +10,7 @@ import (
 
 	messaging "github.com/hollis-labs/go-messaging"
 
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -35,6 +36,20 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("thread_id", mcp.Description("Thread ID for grouping related messages (optional)")),
 		mcp.WithString("in_reply_to", mcp.Description("Message ID this message is in reply to (optional)")),
 	), a.handleMessageSend)
+
+	a.addTool(s, mcp.NewTool("mux_message_notify",
+		mcp.WithDescription("Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope."),
+		mcp.WithString("from", mcp.Required(), mcp.Description("Sender URN (e.g. msg://agent/agent-mux/orchestrator)")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN; msg://session/<authority>/<session_id> wakes that session, msg://agent/<authority>/<logical_agent_id> wakes the latest running session for that logical agent when found")),
+		mcp.WithString("kind", mcp.Description("Message kind: request, response, notice, status_update, handoff, escalation (default notice)")),
+		mcp.WithString("payload_json", mcp.Description("JSON payload body (optional)")),
+		mcp.WithString("thread_id", mcp.Description("Thread ID for grouping related messages (optional)")),
+		mcp.WithString("in_reply_to", mcp.Description("Message ID this message is in reply to (optional)")),
+		mcp.WithString("urgency", mcp.Description("Urgency: very-low, low, normal, high (default normal)")),
+		mcp.WithString("session_id", mcp.Description("Explicit live session ID to wake (optional override)")),
+		mcp.WithString("wake_text", mcp.Description("Override daemon-generated mailbox wake text (optional)")),
+		mcp.WithBoolean("no_wake", mcp.Description("Store the message but skip wake injection")),
+	), a.handleMessageNotify)
 
 	a.addTool(s, mcp.NewTool("mux_message_get",
 		mcp.WithDescription("Get a message envelope by ID."),
@@ -136,6 +151,61 @@ func (a *Adapter) handleMessageSend(ctx context.Context, req mcp.CallToolRequest
 		return toolError("internal_error", err.Error()), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message": sent}), nil
+}
+
+func (a *Adapter) handleMessageNotify(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
+		return denied, nil
+	}
+	fromURN := str(req, "from")
+	toURN := str(req, "to")
+	if fromURN == "" || toURN == "" {
+		return toolError("invalid_request", "from and to are required"), nil
+	}
+	kind := str(req, "kind")
+	if kind == "" {
+		kind = string(messaging.MsgKindNotice)
+	}
+	msgKind := messaging.Kind(kind)
+	if _, ok := validMsgKinds[msgKind]; !ok {
+		return toolError("invalid_request",
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)), nil
+	}
+	if _, parseErr := messaging.ParseURN(fromURN); parseErr != nil {
+		return toolError("invalid_request", "invalid from URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
+		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_notify requires daemon routing; start MCP with mux mcp"), nil
+	}
+	wake := !boolArg(req, "no_wake")
+	notifyReq := client.MessageNotifyRequest{
+		MessageSendRequest: client.MessageSendRequest{
+			From:      fromURN,
+			To:        toURN,
+			Kind:      kind,
+			ThreadID:  str(req, "thread_id"),
+			InReplyTo: str(req, "in_reply_to"),
+		},
+		Urgency:   str(req, "urgency"),
+		SessionID: str(req, "session_id"),
+		Wake:      &wake,
+		WakeText:  str(req, "wake_text"),
+	}
+	if p := str(req, "payload_json"); p != "" {
+		notifyReq.Payload = []byte(p)
+		notifyReq.ContentType = "application/json"
+	}
+	out, err := a.client.MessageNotify(ctx, notifyReq)
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return toolError("internal_error", err.Error()), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "result": out}), nil
 }
 
 func (a *Adapter) handleMessageGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

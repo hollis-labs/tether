@@ -63,6 +63,27 @@ The router dispatches on the **recipient** authority:
 Cross-authority `Get`/`Cancel` is intentionally out of scope: it needs the
 cross-host transport from program task M2.
 
+## Notify and wake
+
+`POST /messages/notify` is a local daemon convenience wrapper around the same
+message envelope model. It first stores the message, then best-effort injects a
+mailbox wake turn into a live session when the recipient resolves locally:
+
+- `msg://session/<authority>/<session_id>` wakes that live session.
+- `msg://agent/<authority>/<logical_agent_id>` wakes the newest running local
+  session for that logical agent.
+- An explicit `session_id` in the notify body overrides recipient resolution.
+
+Unknown or offline recipients still receive durable mail when the send routes
+locally; the response reports `wake_attempted`, `wake_delivered`, and
+`wake_error`.
+
+Current federation caveat: notify wake injection is local-session behavior.
+Cross-host wake requires the recipient authority's daemon to receive a notify
+request and resolve its own live sessions. Plain `Send`/`Inbox`/`Subscribe`
+federation is the base layer; cross-host notify orchestration belongs with the
+M2 hardened transport work.
+
 ## Strict mode
 
 With `strict: false` (default) a message to an unknown authority falls

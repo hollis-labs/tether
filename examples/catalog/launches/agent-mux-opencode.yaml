@@ -1,0 +1,9 @@
+id: agent-mux-opencode
+project: agent-mux
+agent: agent-mux-engineer
+provider: opencode
+workspace:
+  mode: hybrid
+prompt:
+  include_project_boot: true
+  include_agent_boot: true

@@ -523,6 +523,47 @@ Additional kinds will land as v0.0.3 extends runtime and broker semantics.
 
 ---
 
+## Messages
+
+`/messages/*` is the durable go-messaging mailbox surface. `POST /messages`
+stores an envelope only. `POST /messages/notify` stores the same envelope and
+then best-effort wake-injects a live session with a mailbox reminder turn.
+
+Message kinds remain semantic: `request`, `response`, `notice`,
+`status_update`, `handoff`, `escalation`. Delivery urgency is separate and is
+stored in message metadata as `urgency=very-low|low|normal|high`, following the
+RFC 8030 Web Push vocabulary.
+
+| Route | Method | Behavior |
+|---|---|---|
+| `/messages` | `POST` | Store an envelope. Body: `{"from":"msg://...","to":"msg://...","kind":"notice","payload":{...}}`. |
+| `/messages/notify` | `POST` | Store an envelope, count unread messages for `to`, and wake a live recipient session when resolvable. |
+| `/messages/{id}` | `GET` | Fetch one message. |
+| `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive: returned messages are marked delivered. |
+| `/messages/list?to=<urn>` | `GET` | Operator/UI model. Non-destructive; supports `unread_only`, `include_archived`, `limit`, `offset`. |
+| `/messages/{id}/read?as=<urn>` | `POST` | Mark read. |
+| `/messages/{id}/archive?as=<urn>` | `POST` | Archive for recipient. |
+| `/messages/{id}/consume?as=<urn>` | `POST` | Mark consumed. |
+
+Notify body extends the normal message envelope with:
+
+```json
+{
+  "urgency": "normal",
+  "session_id": "optional-explicit-live-session",
+  "wake": true,
+  "wake_text": "optional override"
+}
+```
+
+If `session_id` is omitted, the daemon resolves `msg://session/<auth>/<id>` to
+that live session, or `msg://agent/<auth>/<logical_agent_id>` to the newest
+running session for that logical agent. Offline recipients still receive the
+durable message; the response includes `wake_attempted`, `wake_delivered`, and
+`wake_error`.
+
+---
+
 ## Registry
 
 The federation directory service. Mux owns public-identity rows for

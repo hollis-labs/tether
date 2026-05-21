@@ -1,0 +1,23 @@
+id: opencode
+type: cli
+provider: opencode
+runtime_kind: subprocess
+# Leave command empty to resolve opencode from PATH, or set an absolute path in
+# a local catalog when PATH is not stable for daemon launches.
+command: opencode
+args:
+  - run
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  mode: merge
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+  redact:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY

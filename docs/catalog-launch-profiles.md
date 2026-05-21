@@ -4,6 +4,9 @@ This is the operator reference for catalog-backed launches. Launch profiles
 choose the project, agent, provider, and workspace strategy. Boot profiles add a
 dynamic boot prompt on top of a launch.
 
+For provider-specific setup examples, current smoke results, and boot prompt
+generation workflow, see [`docs/launches/`](launches/README.md).
+
 ## File Layout
 
 ```text
