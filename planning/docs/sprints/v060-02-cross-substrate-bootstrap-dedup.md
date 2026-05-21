@@ -18,13 +18,13 @@
 
 ## Exit criteria
 
-- [ ] Migration `0016_registry_external_ids.sql` lands. `registry_external_ids` table exists with `(urn, substrate)` as PK and `(substrate, external_id)` lookup index.
+- [ ] Migration `0017_registry_external_ids.sql` lands. `registry_external_ids` table exists with `(urn, substrate)` as PK and `(substrate, external_id)` lookup index.
 - [ ] Tether bootstrap (already shipped) is back-filled to record `(substrate='tether', external_id=<project.id>)` for every imported row.
 - [ ] Cerberus bootstrap runs on first daemon start AFTER Tether bootstrap; reads `~/.cerberus/registry.yaml` as the index; for each entry, uses `LookupBy(kind=project, external_id=<owner>, substrate='cerberus')` to dedup against existing rows; on miss with same external_id under a different substrate (i.e. Tether already registered the same logical project), the cerberus side ATTACHES its external_id to the existing URN rather than registering a new row.
 - [ ] `LookupBy(kind, external_id, substrate?)` exposed at parity across HTTP (`GET /registry/{kind}?external_id=<id>&substrate=<sub>`), MCP (`tether_registry_lookup_by`), CLI (`mux registry lookup-by`).
 - [ ] URN write-back utility adds `registry_urn: <urn>` field idempotently to source YAMLs (both Tether's `~/.tether/catalog/{agents,projects}/*.yaml` and cerberus's `*.cerberus.yaml`). Opt-out flag at the bootstrap call site.
 - [ ] Merge admin command `mux registry merge <urn-src> <urn-dst>` consolidates two URNs that turn out to represent the same entity (one-time cleanup for rows created before this sprint shipped).
-- [ ] ADR `0014-cross-substrate-dedup.md` captures the dedup model, why external_ids live in a sibling table, and the URN write-back rationale.
+- [ ] ADR `0043-cross-substrate-dedup.md` captures the dedup model, why external_ids live in a sibling table, and the URN write-back rationale.
 - [ ] `make check` green.
 - [ ] After ship: post-bootstrap row count audit shows ~26 unique projects (down from 37 if both substrates had bootstrapped independently into separate URNs).
 
@@ -45,7 +45,7 @@
 
 ## Tasks
 
-### T-v060-02-01: Migration 0016 + `external_id` types
+### T-v060-02-01: Migration 0017 + `external_id` types
 
 **kind:** agent
 **priority:** 1
@@ -58,7 +58,7 @@ No place to store substrate ↔ external_id mappings. Dedup primitive can't be b
 
 #### Fix direction
 
-- New migration `internal/store/migrations/0016_registry_external_ids.sql`:
+- New migration `internal/store/migrations/0017_registry_external_ids.sql`:
   ```sql
   CREATE TABLE registry_external_ids (
     urn         TEXT NOT NULL REFERENCES registry_entries(urn) ON DELETE CASCADE,
@@ -104,7 +104,7 @@ No place to store substrate ↔ external_id mappings. Dedup primitive can't be b
   - `Service.LookupBy(ctx, kind, external_id, substrate string) (Profile, error)` — wraps storage `LookupURNByExternalID` then `GetProfile`.
 - New service method:
   - `Service.AttachExternalID(ctx, urn, substrate, external_id string) error` — validates `(substrate, external_id)` doesn't already map to a DIFFERENT urn of the same kind (would be a registration mistake).
-- One-shot back-fill helper `BackfillTetherExternalIDs(ctx, service, catalogRoot string) (int, error)` — walks Tether's bootstrap-imported rows (identified by `kind_meta.source_path` starting with `<catalogRoot>/{agents,projects}/`), reads each source YAML to get the project's slug/id, calls `AttachExternalID(urn, 'tether', <slug>)`. Run once during daemon startup AFTER 0016 migration applies, BEFORE cerberus bootstrap runs.
+- One-shot back-fill helper `BackfillTetherExternalIDs(ctx, service, catalogRoot string) (int, error)` — walks Tether's bootstrap-imported rows (identified by `kind_meta.source_path` starting with `<catalogRoot>/{agents,projects}/`), reads each source YAML to get the project's slug/id, calls `AttachExternalID(urn, 'tether', <slug>)`. Run once during daemon startup AFTER 0017 migration applies, BEFORE cerberus bootstrap runs.
 
 #### Acceptance criteria
 
@@ -175,7 +175,7 @@ Cerberus's 15 catalog entries (per `~/.cerberus/registry.yaml` as of 2026-05-19)
   3. Look up by `(kind=project, external_id=<owner>, substrate='cerberus')`. If found, skip (or re-Sync if `--force`).
   4. Look up by `(kind=project, external_id=<owner>, substrate='')`. If found via a DIFFERENT substrate (e.g. Tether), call `AttachExternalID(<urn>, 'cerberus', <owner>)` to add the cerberus alias to the existing row. Optionally `UpdateSelf` with cerberus-specific kind_meta fields under `kind_meta.cerberus`.
   5. Otherwise: `Register({kind: 'project', display_name: <project.name>, kind_meta: {cerberus: {namespace, source_path, resources_count: len(resources)}}, callback: {scheme: 'file', target: 'file://<abs-path>'}})`. Then `AttachExternalID(<minted-urn>, 'cerberus', <owner>)`.
-- Daemon startup ordering: 0016 migration → Tether external_id backfill → Tether bootstrap (no-op for already-imported rows) → cerberus bootstrap.
+- Daemon startup ordering: 0017 migration → Tether external_id backfill → Tether bootstrap (no-op for already-imported rows) → cerberus bootstrap.
 - `mux registry bootstrap --substrate cerberus [--force]` re-runs cerberus side manually.
 
 #### Acceptance criteria
@@ -271,7 +271,7 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 
 ---
 
-### T-v060-02-07: ADR 0014 + docs
+### T-v060-02-07: ADR 0043 + docs
 
 **kind:** agent
 **priority:** 2
@@ -281,7 +281,7 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 
 #### Fix direction
 
-- `docs/adr/0014-cross-substrate-dedup.md`:
+- `docs/adr/0043-cross-substrate-dedup.md`:
   - Context: every substrate maintains its own catalog of projects; Tether (22 projects) + cerberus (15 projects) overlap on 11; future substrates will overlap further; without a dedup primitive the registry becomes useless as a discovery surface.
   - Decision: substrates supply opaque external_ids per kind; Mux stores them in a sibling table; `LookupBy(kind, external_id, substrate?)` is the dedup primitive; bootstrap importers use it before Register; URN write-back makes the source YAML self-identifying.
   - Consequences: substrates can rename their internal slugs without breaking registry identity (URN is stable, external_id changes); future substrates federate by adding their external_id to existing URNs; cross-substrate consumers can search by either URN or `(substrate, external_id)`.
@@ -291,7 +291,7 @@ If both substrates bootstrap independently before this sprint lands (or if a rac
 
 #### Acceptance criteria
 
-- [ ] ADR 0014 lands, dated, sequential, linked from API + registry docs.
+- [ ] ADR 0043 lands, dated, sequential, linked from API + registry docs.
 - [ ] Vocabulary aligned between ADR 0041 + the v060-02 dedup ADR (consistent terminology for `external_id`, `substrate`, `URN`).
 
 ---
@@ -312,10 +312,10 @@ ADR 0008 (`docs/adr/0008-fk-enforcement-deferral.md`) deferred `PRAGMA foreign_k
 #### Fix direction
 
 1. **Audit script.** A one-shot Go test or `mux registry audit-fk` subcommand that opens a copy of a real user DB (or a populated test fixture) and queries every table with FK declarations (`sessions.logical_agent_id`, `checkpoints.logical_agent_id`, `checkpoints.source_session_id`, `client_attachments.session_id`, all registry_* tables) for orphans. Emits a report: `(table, fk_column, target_table, target_column, orphan_count)`.
-2. **Orphan-delete migration.** If the audit reports orphans on real-user DBs (chrispian's local first; cerberus + agridd test machines next), write `internal/store/migrations/0017_orphan_cleanup.sql` (or next-free number) that deletes the surfaced orphans. Migration is idempotent on re-run.
+2. **Orphan-delete migration.** If the audit reports orphans on real-user DBs (chrispian's local first; cerberus + agridd test machines next), write `internal/store/migrations/0018_orphan_cleanup.sql` (or next-free number after `0017_registry_external_ids.sql`) that deletes the surfaced orphans. Migration is idempotent on re-run.
 3. **`store.Open` flip.** Add `&_pragma=foreign_keys(ON)` to the DSN in `internal/store/sqlite.go`. Update the comment at lines 46-48 to reference the new ADR + supersession of ADR 0008.
 4. **Cerberus-bootstrap regression.** Re-run T-v060-02-04's cerberus bootstrap against the now-enforced DB. Row counts must match the pre-flip bootstrap run on the same fixture (no inserts blocked by FK violations; no orphan-induced failures during reads).
-5. **New ADR (next free, likely 0042 if v060-01 lands 0041).** Title: *FK Enforcement Reopen — supersedes ADR 0008*. Context: post-v0.0.2 stability + cerberus-bootstrap workload + audit results. Decision: enforcement ON. Consequences: orphan inserts now fail at the SQLite layer in addition to Go-layer validation; future migrations must reason about cascade semantics on row deletion.
+5. **New ADR (next free after the dedup ADR, likely 0044 if v060-02 uses 0043 for dedup).** Title: *FK Enforcement Reopen — supersedes ADR 0008*. Context: post-v0.0.2 stability + cerberus-bootstrap workload + audit results. Decision: enforcement ON. Consequences: orphan inserts now fail at the SQLite layer in addition to Go-layer validation; future migrations must reason about cascade semantics on row deletion.
 
 #### Acceptance criteria
 
@@ -370,7 +370,7 @@ ADR 0008 (`docs/adr/0008-fk-enforcement-deferral.md`) deferred `PRAGMA foreign_k
 - [ ] All nine task acceptance sections ticked.
 - [ ] Exit criteria above all ticked.
 - [ ] `make check` green.
-- [ ] ADR 0014 committed.
+- [ ] ADR 0043 committed.
 - [ ] Branch FF-merged to `main`, branch deleted.
 - [ ] Ship notices sent to cerberus + agridd; message_ids recorded.
 - [ ] Cross-substrate audit run: unique-project count, federation metric (# of rows with >1 external_id).

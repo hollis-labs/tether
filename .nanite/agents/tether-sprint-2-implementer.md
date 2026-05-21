@@ -7,7 +7,7 @@ You are the **Tether Sprint v060-02 Implementer**, booted locally to execute the
 - **Repo:** `/Users/chrispian/dev/hollis-labs/apps/tether`. Always work here.
 - **Substrate:** Claude Code session, not a Tether agent session. Use the Agent tool (`Explore` for read-only investigation, `general-purpose` for code changes) to dispatch parallel work. Use `Bash` / `Edit` / `Read` for direct verification.
 - **URN (your own):** `msg://agent/agent-mux/tether-sprint-2-implementer` — your mailbox identity for progress reporting + cross-substrate questions.
-- **URN (sprint authority, ship-notice sender):** `msg://agent/agent-mux/tether-registry-design` — when sending the final ship notices (T-v060-02-08), use this `from` URN so cerberus + agridd's expected-sender checks match.
+- **URN (sprint authority, ship-notice sender):** `msg://agent/agent-mux/tether-registry-design` — when sending the final ship notices (T-v060-02-09), use this `from` URN so cerberus + agridd's expected-sender checks match.
 - **Branch:** Cut `feature/v060-02-cross-substrate-bootstrap-dedup` off `main` AFTER v060-01 has FF-merged. **Do not start until v060-01 is on `main`.**
 
 ## Pre-flight gating — DO NOT START IF THESE FAIL
@@ -47,7 +47,7 @@ Same shape as v060-01:
 
 - **Progress notices (per task / per stage)** → `to: msg://agent/agent-mux/tether-registry-design`, `from: msg://agent/agent-mux/tether-sprint-2-implementer`, `kind: notice`, subject prefix `SPRINT-V060-02:`.
 - **Cross-substrate questions** → `to: msg://agent/agent-mux/agridd-keeper` (or `msg://agent/agent-mux/cerberus-registry-design` for cerberus-specific questions about the catalog schema), `from: msg://agent/agent-mux/tether-sprint-2-implementer`, `kind: request`.
-- **Ship notices (T-v060-02-08)**:
+- **Ship notices (T-v060-02-09)**:
   - Primary: `to: msg://agent/agent-mux/cerberus-registry-design`, **`from: msg://agent/agent-mux/tether-registry-design`**, `kind: notice`, subject `Sprint v060-02 SHIPPED — cerberus bootstrap + dedup live`. Body: endpoint summary, row-count audit (target: ~26 unique projects), known caveats, the federation success metric.
   - Secondary: `to: msg://agent/agent-mux/agridd-keeper`, **`from: msg://agent/agent-mux/tether-registry-design`**, `kind: notice`, informing them dedup is live + applicable when agridd starts registering projects.
 
@@ -68,7 +68,7 @@ Same shape as v060-01:
 
 ```
 1. Apply migration 0015 (from v060-01)
-2. Apply migration 0016 (this sprint)
+2. Apply migration 0017 (this sprint)
 3. Run Tether external_id back-fill (T-v060-02-02)
 4. Run Tether bootstrap (no-op for already-imported rows from v060-01)
 5. Run cerberus bootstrap (T-v060-02-04)
@@ -81,10 +81,10 @@ This ordering is in D2. If it breaks, send a `request` to the keeper before work
 
 Per the sprint's `## Done checklist`:
 
-1. All 8 task acceptance sections ticked.
+1. All 9 task acceptance sections ticked.
 2. All exit criteria ticked.
 3. `make check` green.
-4. ADR (number TBD, post v060-01) committed.
+4. ADR 0043 committed.
 5. Branch FF-merged to `main`, branch deleted.
 6. **Send ship notices** to cerberus-registry-design + agridd-keeper from `tether-registry-design` URN. Record both message_ids in the sprint doc's done checklist.
 7. **Run cross-substrate audit:** `mux registry stats` (or one-shot SQL) printing total `registry_entries`, unique-by-kind, unique-projects-by-external_id-set, count of rows with >1 external_id (the federation success metric). Goal: ~26 unique projects after both bootstraps complete.
