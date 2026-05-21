@@ -2,6 +2,10 @@
 
 Mux separates catalog launch IDs from boot profile IDs.
 
+For setup instructions and current live smoke status across Claude, Codex, and
+Opencode, see [`launches/setup-guide.md`](launches/setup-guide.md) and
+[`launches/smoke-results.md`](launches/smoke-results.md).
+
 - `torque-claude` is a launch profile. It starts the existing managed Claude
   session through `claude-code` (`provider: claude`, `runtime_kind:
   streaming-stdio`).

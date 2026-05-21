@@ -66,6 +66,11 @@ The notice is a **pointer**, not a copy. To read full context, the mentioned age
 
 `GetMyMentions(member_urn, since_ts?, limit=50)` is a convenience wrapper that returns the notice envelopes filtered to those with `payload.group` set.
 
+Mention notices are durable mailbox messages. They do not, by themselves,
+inject a turn into a live session. Use the notify surface (`/messages/notify`,
+`mux_message_notify`, or `mux messages notify`) when a sender also needs a
+best-effort mailbox wake for a currently running session.
+
 ### Caps
 
 The parser caps at 32 mentions per `SendToGroup` body (`messaging.MaxMentions`). Additional matches are silently dropped — guards against malicious-blowup payloads. If you legitimately need to mention >32 distinct agents in one message, split the post.
@@ -127,5 +132,6 @@ This sprint reserves the namespace and documents the convention. Agents opt in b
 ## Related docs
 
 - `docs/adr/0042-group-messaging.md` — the architectural decision (D6 + the daemon/agent-side line).
+- `docs/messaging.md` — direct mail, notify+wake, inbox/list semantics.
 - `docs/api/README.md` § Groups — HTTP routes that surface the symbol behavior.
 - `internal/messaging/mentions.go` — the parser implementation (Go); see comments at top of file for the discipline.

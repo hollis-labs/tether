@@ -60,6 +60,8 @@ type fakeLaunchService struct {
 
 	resumeRes LaunchResult
 	resumeErr error
+
+	runtimeHealthOK map[string]bool
 }
 
 func (f *fakeLaunchService) CreateSession(id string) (LaunchResult, error) {
@@ -156,8 +158,11 @@ func (f *fakeLaunchService) ResumeLogicalAgent(_ string) (LaunchResult, error) {
 	return f.resumeRes, f.resumeErr
 }
 
-func (f *fakeLaunchService) RuntimeHealth(_ string) (RuntimeHealthResult, bool) {
-	return RuntimeHealthResult{}, false
+func (f *fakeLaunchService) RuntimeHealth(id string) (RuntimeHealthResult, bool) {
+	if f.runtimeHealthOK == nil || !f.runtimeHealthOK[id] {
+		return RuntimeHealthResult{}, false
+	}
+	return RuntimeHealthResult{SessionID: id}, true
 }
 
 func newTestHandler(svc LaunchService) http.Handler {

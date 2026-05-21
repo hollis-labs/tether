@@ -1,6 +1,8 @@
 # Provider Launch Smoke Matrix
 
-Status: **live smoke executed 2026-05-15** (see [Execution status](#execution-status)).
+Status: **live smoke executed 2026-05-21**. The current operator-facing run log
+lives in [`launches/smoke-results.md`](launches/smoke-results.md); this file
+keeps the broader scenario matrix and recording procedure.
 
 This document is the live smoke matrix for the Tether reference launch system.
 Unit tests (`go test ./...`) cover the launch plan / injection / worktree logic
@@ -209,6 +211,7 @@ starting so results are attributable.
 
 | Run date | mux SHA | Executed by | Outcome |
 |----------|---------|-------------|---------|
+| 2026-05-21 | local `main` after merge `97723e5` | Codex | PASS for Claude streaming, Claude PTY, and Codex JSON-RPC; PARTIAL for subprocess Claude/Codex/Opencode because turns returned success but no session log was available to verify model output. See `docs/launches/smoke-results.md`. |
 | 2026-05-15 | `afa7706` plus local `SendTurn` timeout fix | Codex | PASS after fixing subprocess turn timeout; no remaining launch/boot blocker found. |
 
 ## Known limitations

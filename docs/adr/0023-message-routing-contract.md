@@ -7,6 +7,15 @@
 
 ---
 
+> **2026-05-21 implementation update:** The current wire kind names are
+> `request`, `response`, `notice`, `handoff`, `status_update`, and
+> `escalation`. Earlier prose in this ADR uses the human terms `reply` and
+> `notification`; read those as `response` and `notice` on the `/messages/*`
+> wire. The current operator guide is
+> [`docs/messaging.md`](../messaging.md), including `POST /messages/notify`,
+> urgency metadata (`very-low|low|normal|high`), non-destructive
+> `/messages/list`, and mailbox wake behavior.
+
 ## Context
 
 Mux's high-leverage role is **message routing** — a reliable, provider-neutral,

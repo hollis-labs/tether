@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,12 +31,185 @@ func (s *Server) registerMessageRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/messages", s.handleMessagesCollection)
+	mux.HandleFunc("/messages/notify", s.handleMessageNotify)
 	mux.HandleFunc("/messages/request", s.handleMessageRequest)
 	mux.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
 	mux.HandleFunc("/messages/inbox", s.handleMessagesInbox)
 	mux.HandleFunc("/messages/list", s.handleMessagesList)
 	mux.HandleFunc("/messages/thread/", s.handleMessagesThread)
 	mux.HandleFunc("/messages/", s.handleMessagesItem)
+}
+
+type messageNotifyRequest struct {
+	Kind        messaging.Kind    `json:"kind"`
+	Channel     messaging.Channel `json:"channel,omitempty"`
+	From        messaging.Address `json:"from"`
+	To          messaging.Address `json:"to"`
+	ThreadID    string            `json:"thread_id,omitempty"`
+	InReplyTo   string            `json:"in_reply_to,omitempty"`
+	Payload     json.RawMessage   `json:"payload,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Urgency     string            `json:"urgency,omitempty"`
+	SessionID   string            `json:"session_id,omitempty"`
+	Wake        *bool             `json:"wake,omitempty"`
+	WakeText    string            `json:"wake_text,omitempty"`
+}
+
+type messageNotifyResponse struct {
+	Message       messaging.Envelope `json:"message"`
+	UnreadCount   int                `json:"unread_count"`
+	WakeAttempted bool               `json:"wake_attempted"`
+	WakeDelivered bool               `json:"wake_delivered"`
+	SessionID     string             `json:"session_id,omitempty"`
+	WakeError     string             `json:"wake_error,omitempty"`
+}
+
+var validUrgencies = map[string]struct{}{
+	"very-low": {},
+	"low":      {},
+	"normal":   {},
+	"high":     {},
+}
+
+// POST /messages/notify
+//
+// Notify is the convenience bridge for "mailbox wake" delivery. It persists a
+// normal message envelope, then injects a standardized wake turn into a live
+// session when the recipient resolves to one. Delivery is best-effort: storing
+// the message is authoritative; wake errors are returned in-band.
+func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.Service == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "session service not configured")
+		return
+	}
+	var req messageNotifyRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxInputBytes+1)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.Kind == "" {
+		req.Kind = messaging.MsgKindNotice
+	}
+	if _, ok := validMessageKinds[req.Kind]; !ok {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", req.Kind))
+		return
+	}
+	if req.From.IsZero() || req.To.IsZero() {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "from and to are required")
+		return
+	}
+	if req.Urgency == "" {
+		req.Urgency = "normal"
+	}
+	if _, ok := validUrgencies[req.Urgency]; !ok {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid urgency; valid: very-low, low, normal, high")
+		return
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]string{}
+	}
+	req.Metadata["urgency"] = req.Urgency
+	env := messaging.Envelope{
+		Kind:        req.Kind,
+		Channel:     req.Channel,
+		From:        req.From,
+		To:          req.To,
+		ThreadID:    req.ThreadID,
+		InReplyTo:   req.InReplyTo,
+		Payload:     req.Payload,
+		ContentType: req.ContentType,
+		Metadata:    req.Metadata,
+	}
+	sent, err := s.MessageStore.Send(r.Context(), env)
+	if err != nil {
+		if errors.Is(err, messaging.ErrPresetLifecycle) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+
+	unread, _ := s.unreadCount(r.Context(), sent.To)
+	res := messageNotifyResponse{Message: sent, UnreadCount: unread}
+	wake := true
+	if req.Wake != nil {
+		wake = *req.Wake
+	}
+	if wake {
+		sessionID, resolveErr := s.resolveNotifySession(req.SessionID, sent.To)
+		if resolveErr != nil {
+			res.WakeError = resolveErr.Error()
+		} else if sessionID != "" {
+			res.WakeAttempted = true
+			res.SessionID = sessionID
+			text := req.WakeText
+			if text == "" {
+				text = mailboxWakeText(sent, unread, req.Urgency)
+			}
+			if err := s.Service.SendTurn(r.Context(), sessionID, text); err != nil {
+				res.WakeError = err.Error()
+			} else {
+				res.WakeDelivered = true
+			}
+		}
+	}
+	writeJSON(w, http.StatusCreated, res)
+}
+
+func (s *Server) unreadCount(ctx context.Context, to messaging.Address) (int, error) {
+	page, err := s.MessageStore.List(ctx, to, store.ListFilter{UnreadOnly: true, IncludeArchived: false, Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	return page.Total, nil
+}
+
+func (s *Server) resolveNotifySession(explicit string, to messaging.Address) (string, error) {
+	if explicit != "" {
+		if _, err := s.Service.GetSession(explicit); err != nil {
+			return "", err
+		}
+		if _, ok := s.Service.RuntimeHealth(explicit); !ok {
+			return "", fmt.Errorf("session %s is not running", explicit)
+		}
+		return explicit, nil
+	}
+	if to.Kind == messaging.KindSession {
+		if _, ok := s.Service.RuntimeHealth(to.ID); ok {
+			return to.ID, nil
+		}
+		return "", fmt.Errorf("session %s is not running", to.ID)
+	}
+	if to.Kind != messaging.KindAgent {
+		return "", nil
+	}
+	rows, err := s.Service.ListSessions(store.ListSessionsOptions{State: "running", Limit: 1000})
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if row.LogicalAgentID == to.ID {
+			if _, ok := s.Service.RuntimeHealth(row.ID); ok {
+				return row.ID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func mailboxWakeText(env messaging.Envelope, unread int, urgency string) string {
+	if unread < 1 {
+		unread = 1
+	}
+	return fmt.Sprintf("**Mailbox wake (daemon-injected)** — you have %d unread message(s) waiting. Latest message: `%s` from `%s` to `%s`, kind `%s`, urgency `%s`.\n\nPlease run your inbox-check procedure, process messages normally, and mark handled messages read or consumed according to your checklist. This is a delivery notification, not an instruction to abandon the current task unless your own procedure says the message is urgent.",
+		unread, env.ID, env.From.URN(), env.To.URN(), env.Kind, urgency)
 }
 
 func (s *Server) handleMessagesCollection(w http.ResponseWriter, r *http.Request) {
