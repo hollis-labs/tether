@@ -128,11 +128,11 @@ Service layer needs typed storage methods. SQLite quirks (transactions, NULL han
 
 #### Acceptance criteria
 
-- [ ] All methods covered by unit tests against an in-memory SQLite.
-- [ ] Transaction boundaries validated (insert profile + capabilities + skills + links is atomic).
-- [ ] Search filter combinations tested (each filter alone + all combined).
-- [ ] FK cascade NOT exercised in v1 (D11 soft-delete only — no hard `DELETE FROM registry_entries`). Storage-layer test confirms `SoftDelete` sets `status='deprecated'` without touching child tables. Cascade-equivalent cleanup (if/when hard-delete lands) is a Go-layer concern handled in a follow-up sprint. _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`.)_
-- [ ] `make test-race` green.
+- [x] All methods covered by unit tests against an in-memory SQLite.
+- [x] Transaction boundaries validated (insert profile + capabilities + skills + links is atomic).
+- [x] Search filter combinations tested (each filter alone + all combined).
+- [x] FK cascade NOT exercised in v1 (D11 soft-delete only — no hard `DELETE FROM registry_entries`). Storage-layer test confirms `SoftDelete` sets `status='deprecated'` without touching child tables. Cascade-equivalent cleanup (if/when hard-delete lands) is a Go-layer concern handled in a follow-up sprint. _(Amended 2026-05-20 per agridd-keeper response msg `019e482c-47cb-7213-910e-5485df488032`.)_
+- [x] `make test-race` green.
 
 #### Scope fences
 
