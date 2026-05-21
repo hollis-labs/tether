@@ -277,6 +277,9 @@ func (s *stubStorage) SoftDelete(context.Context, string) error {
 func (s *stubStorage) BumpCachedAt(context.Context, string, time.Time) error {
 	panic("stubStorage.BumpCachedAt: unexpected call")
 }
+func (s *stubStorage) Search(context.Context, registry.Kind, registry.Filter) ([]registry.Profile, error) {
+	panic("stubStorage.Search: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's

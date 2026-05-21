@@ -33,6 +33,11 @@ type Deps struct {
 	ProxyEvents ProxyEventStore
 	// Attachments, when non-nil, enables GET /sessions/{id}/attachments.
 	Attachments AttachmentStore
+	// Registry, when non-nil, enables the /registry/... federation
+	// directory routes wired in registerRegistryRoutes. Absent the dep,
+	// the daemon falls through to its 404 default — matches the
+	// Catalog/Broker convention.
+	Registry RegistryService
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -48,6 +53,7 @@ type Server struct {
 	MessageStore MessageStore
 	ProxyEvents  ProxyEventStore
 	Attachments  AttachmentStore
+	Registry     RegistryService
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -64,6 +70,7 @@ func NewHandler(deps Deps) http.Handler {
 		MessageStore: deps.MessageStore,
 		ProxyEvents:  deps.ProxyEvents,
 		Attachments:  deps.Attachments,
+		Registry:     deps.Registry,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -74,5 +81,6 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerSessionGroupRoutes(mux)
 	s.registerMessageRoutes(mux)
 	s.registerProxyEventRoutes(mux)
+	s.registerRegistryRoutes(mux)
 	return mux
 }

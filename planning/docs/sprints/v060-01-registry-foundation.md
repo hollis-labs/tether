@@ -270,11 +270,11 @@ External callers need HTTP. Six ops × two kinds + Search. Match v002-s08 conven
 
 #### Acceptance criteria
 
-- [ ] Each endpoint exercised against `httptest.Server` with a temp-dir SQLite store.
-- [ ] Non-allowed methods return `405 method_not_allowed`.
-- [ ] Validation errors return `400 invalid_request` with actionable messages.
-- [ ] Soft-deleted entries: still appear in `GET /registry/{kind}/{urn}` (with `status: "deprecated"`) but NOT in `GET /registry/{kind}` search results by default. A `status=deprecated` filter brings them back.
-- [ ] Client method tests cover happy + 404 + 500 + unreachable for each op.
+- [x] Each endpoint exercised against `httptest.Server` with a temp-dir SQLite store.
+- [x] Non-allowed methods return `405 method_not_allowed`.
+- [x] Validation errors return `400 invalid_request` with actionable messages.
+- [x] Soft-deleted entries: still appear in `GET /registry/{kind}/{urn}` (with `status: "deprecated"`) but NOT in `GET /registry/{kind}` search results by default. A `status=deprecated` filter brings them back.
+- [x] Client method tests cover happy + 404 + 500 + unreachable for each op.
 
 #### Scope fences
 

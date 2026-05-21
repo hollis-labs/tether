@@ -69,6 +69,7 @@ type storageBackend interface {
 	RemoveLinks(ctx context.Context, urn string, links []Link) error
 	SoftDelete(ctx context.Context, urn string) error
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
+	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
 }
 
 // Service is the registry service core: validation, URN minting, and the
@@ -181,6 +182,29 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 // callers can errors.Is it.
 func (s *Service) Lookup(ctx context.Context, urn string) (Profile, error) {
 	return s.storage.GetProfile(ctx, urn)
+}
+
+// Search returns profiles of the given kind matching filter, ordered
+// alphabetically by display_name. Thin wrapper over storage.Search; the
+// API layer depends on this rather than *Storage directly so the handler
+// surface stays decoupled from the data layer.
+//
+// Empty result returns a non-nil zero-length slice so callers/HTTP
+// marshaling produce a stable `[]` instead of `null`.
+func (s *Service) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error) {
+	switch kind {
+	case KindAgent, KindProject:
+	default:
+		return nil, fmt.Errorf("registry: search: %w: unsupported kind %q", ErrInvalidRequest, string(kind))
+	}
+	out, err := s.storage.Search(ctx, kind, f)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return []Profile{}, nil
+	}
+	return out, nil
 }
 
 // UpdateSelf applies a D5 partial-merge patch to the row at urn and
