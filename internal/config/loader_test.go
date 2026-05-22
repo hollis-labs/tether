@@ -58,6 +58,10 @@ func TestProviderRuntimeDefaults_BackCompat(t *testing.T) {
 	}{
 		{name: "streaming bootstrap", in: Provider{Bootstrap: BootstrapSpec{Mode: RuntimeKindStreamingStdio}}, want: RuntimeKindStreamingStdio},
 		{name: "jsonrpc bootstrap", in: Provider{Bootstrap: BootstrapSpec{Mode: RuntimeKindJSONRPCStdio}}, want: RuntimeKindJSONRPCStdio},
+		{name: "api bootstrap", in: Provider{Bootstrap: BootstrapSpec{Mode: RuntimeKindAPI}}, want: RuntimeKindAPI},
+		{name: "unknown bootstrap mode is not silently subprocess", in: Provider{Bootstrap: BootstrapSpec{Mode: "stdin"}}, want: "stdin"},
+		{name: "agents md bootstrap remains subprocess", in: Provider{Type: "cli-goprovider", Bootstrap: BootstrapSpec{Mode: "agents_md"}}, want: RuntimeKindSubprocess},
+		{name: "prepend bootstrap remains subprocess", in: Provider{Type: "cli", Bootstrap: BootstrapSpec{Mode: "prepend"}}, want: RuntimeKindSubprocess},
 		{name: "api type", in: Provider{Type: "api"}, want: RuntimeKindAPI},
 		{name: "default subprocess", in: Provider{Type: "cli"}, want: RuntimeKindSubprocess},
 	}
@@ -79,6 +83,18 @@ func TestValidate_UnsupportedRuntimeKind(t *testing.T) {
 	}
 	if err := cat.Validate(); err == nil {
 		t.Fatal("expected unsupported runtime_kind error, got nil")
+	}
+}
+
+func TestValidate_UnsupportedBootstrapModeWithoutRuntimeKind(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{},
+		Agents:    map[string]Agent{},
+		Providers: map[string]Provider{"p": {ID: "p", Type: "cli", Command: "echo", Bootstrap: BootstrapSpec{Mode: "stdin"}}},
+		Launches:  map[string]Launch{},
+	}
+	if err := cat.Validate(); err == nil {
+		t.Fatal("expected unsupported bootstrap mode error, got nil")
 	}
 }
 

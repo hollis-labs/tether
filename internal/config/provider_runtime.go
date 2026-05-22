@@ -41,7 +41,12 @@ func (p Provider) EffectiveRuntimeKind() string {
 		return p.RuntimeKind
 	}
 	switch p.Bootstrap.Mode {
-	case RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio:
+	case RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio, RuntimeKindAPI:
+		return p.Bootstrap.Mode
+	case "", "agents_md", "prepend":
+		// These bootstrap modes describe boot-prompt placement for legacy
+		// subprocess providers, not the provider runtime transport.
+	default:
 		return p.Bootstrap.Mode
 	}
 	if p.Type == "api" {

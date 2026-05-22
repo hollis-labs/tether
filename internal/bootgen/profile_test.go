@@ -37,6 +37,41 @@ slots:
 	}
 }
 
+func TestLoadProfile_TesseractPrimary(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `id: nanite.backend.main
+display_name: "Nanite Backend"
+identity:
+  lineage_alias: nanite.backend.main
+  tesseract_primary: "2026-04-19"
+slots:
+  agent:
+    type: static
+    path: agent.md
+`
+	if err := os.WriteFile(filepath.Join(dir, "agent.md"), []byte("# Agent"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "nanite.backend.main.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := bootgen.LoadProfile(path)
+	if err != nil {
+		t.Fatalf("LoadProfile: %v", err)
+	}
+	if p.Identity.TesseractPrimary != "2026-04-19" {
+		t.Fatalf("TesseractPrimary = %q, want 2026-04-19", p.Identity.TesseractPrimary)
+	}
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, dir, &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(buf.String(), `tesseract_primary: 2026-04-19`) {
+		t.Fatalf("generated prompt missing tesseract primary:\n%s", buf.String())
+	}
+}
+
 func TestLoadProfiles_MissingDir(t *testing.T) {
 	profiles, err := bootgen.LoadProfiles("/nonexistent/boot-profiles")
 	if err != nil {

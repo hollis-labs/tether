@@ -160,14 +160,19 @@ func isDaemonUnreachable(err error) bool {
 }
 
 // classifyClientErr maps a daemon HTTP error string into the same MCP
-// error codes the in-process path produces (not_found / conflict /
-// internal_error). The daemon already classifies via ADR 0010 typed
+// error codes the in-process path produces (invalid_request / not_found /
+// conflict / internal_error). The daemon already classifies via ADR 0010 typed
 // envelopes; we string-sniff the wrapped form ("daemon NNN (code): msg")
 // to recover the code without reaching into internal/api here.
 func classifyClientErr(err error, id string) *mcp.CallToolResult {
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "(invalid_request)"), strings.Contains(msg, " 400 "):
+		return toolError("invalid_request", err.Error())
 	case strings.Contains(msg, "(not_found)"), strings.Contains(msg, " 404 "):
+		if id == "" {
+			return toolError("not_found", err.Error())
+		}
 		return toolError("not_found", "session not found: "+id)
 	case strings.Contains(msg, "(conflict)"), strings.Contains(msg, " 409 "):
 		return toolError("conflict", err.Error())

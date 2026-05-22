@@ -203,7 +203,7 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, req mcp.CallToolReque
 		if isDaemonUnreachable(err) {
 			return daemonUnreachableError(err), nil
 		}
-		return toolError("internal_error", err.Error()), nil
+		return classifyClientErr(err, ""), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "result": out}), nil
 }

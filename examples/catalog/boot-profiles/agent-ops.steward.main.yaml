@@ -10,7 +10,7 @@ identity:
   project:         agent-ops
   work_root:       ~/Projects-apps/agent-workspaces
   tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-ops/
-  vanta_primary:   "2026-04-19"
+  tesseract_primary:   "2026-04-19"
 
 slots:
   agent:
