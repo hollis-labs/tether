@@ -78,6 +78,11 @@ type CreateSessionInput struct {
 	// route secrets through this field — use provider env passthrough/
 	// whitelist mode instead. See config.LaunchInjection.
 	Injection string
+
+	// BootPromptAppend appends caller-provided instructions to the composed
+	// boot prompt. Unlike BootPromptOverride, it does not replace catalog,
+	// agent, or boot-profile content.
+	BootPromptAppend string
 }
 
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
@@ -121,12 +126,36 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 
-	// BootPromptOverride wins last — explicit "give me exactly this prompt."
+	// BootPromptOverride replaces composed content, then BootPromptAppend can
+	// still add a narrow caller-provided handoff on top.
 	if in.BootPromptOverride != "" {
 		composedPrompt = in.BootPromptOverride
 	}
+	plan.BootPromptAppend = in.BootPromptAppend
+	if in.BootPromptAppend != "" {
+		composedPrompt = appendPrompt(composedPrompt, in.BootPromptAppend)
+	}
 	plan.BootPrompt = composedPrompt
 	return nil
+}
+
+func appendPrompt(base, extra string) string {
+	if strings.TrimSpace(extra) == "" {
+		return base
+	}
+	var sb strings.Builder
+	if base != "" {
+		sb.WriteString(base)
+		if !strings.HasSuffix(base, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString(extra)
+	if !strings.HasSuffix(extra, "\n") {
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // RefreshBootProfilePrompt regenerates a boot-profile prompt after launch
@@ -147,7 +176,7 @@ func (s *Service) RefreshBootProfilePrompt(ctx context.Context, plan *launch.Pla
 	if err := bootgen.Generate(ctx, p, s.CatalogRoot, &buf); err != nil {
 		return fmt.Errorf("generate boot profile: %w", err)
 	}
-	plan.BootPrompt = buf.String()
+	plan.BootPrompt = appendPrompt(buf.String(), plan.BootPromptAppend)
 	return nil
 }
 

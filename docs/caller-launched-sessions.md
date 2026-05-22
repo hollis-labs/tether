@@ -11,7 +11,7 @@ Tier-2 doesn't replace the launch profile entirely — the catalog still supplie
 
 ## Payload fields
 
-All five are optional; any one set routes through the Tier-2 path.
+All fields below are optional; any one set routes through the Tier-2 path.
 
 | Field | Shape | Effect |
 |---|---|---|
@@ -19,6 +19,7 @@ All five are optional; any one set routes through the Tier-2 path.
 | `agent_inline` | JSON string | Same shape as `agent_file` but inline. Highest precedence in the agent resolve order (inline > file > catalog). |
 | `boot_profile` | filesystem path | Loads a `bootgen.Profile` YAML. Currently consumed for `mcp_servers` (the MCP allowlist for this launch). |
 | `override` | JSON string | Per-launch override applied last over the resolved plan. Shape: `{"system_prompt": "...", "env": {"KEY": "VAL"}}`. |
+| `prompt_append` | string | Appends launch-time instructions after catalog/agent/override prompt composition without replacing the base prompt. Preserved across late boot-profile regeneration. |
 | `injection` | JSON string | Caller-provided native files + boot-dir overlay, supplied outside catalog YAML. JSON-encoded `config.LaunchInjection` — the same shape as the catalog `injection` block. See [Caller injection](#caller-injection) below. |
 
 Plus `boot_prompt` (string) — the pre-v005-08 raw boot-prompt override, preserved for back-compat. Wins over all v005-08 composition layers when set.
@@ -80,6 +81,7 @@ catalog fragments
 + native skill files (per-provider, planted in the bootdir)
 + override.system_prompt           # if set, replaces verbatim
 + boot_prompt                      # if set, replaces verbatim (last word)
++ prompt_append                    # appended after the selected base prompt
 ```
 
 For env: provider-overrides + override.env merge into `plan.Env`; the existing per-provider env mode (`merge` / `whitelist`) takes care of the rest.
@@ -93,8 +95,31 @@ mux launch --launch my-launch-id \
   --agent-file ./my-agent.yaml \
   --boot-profile ./research-mode.yaml \
   --override '{"system_prompt":"You are now a code reviewer."}' \
+  --prompt-append 'Read NOTES.md before starting.' \
   --injection '{"native_files":[{"rel_path":"NOTES.md","content":"task handoff"}]}'
 ```
+
+Torque task bundles can be fetched from Torque's HTTP API and planted as
+ordinary caller injection:
+
+```bash
+mux launch --launch my-codex-worker \
+  --torque-task CW-20260417-0011 \
+  --torque-url http://127.0.0.1:8990
+```
+
+This plants `tasks/README.md` plus one folder per task containing `task.md`,
+`task.json`, and `process.md`. The process file contains exact Torque HTTP
+commands for that task ID, including the ready-for-review transition. Use
+`--torque-task` more than once for multi-task launches and `--torque-task-dir`
+to choose a different safe bootdir-relative folder.
+
+Provider boot files are separate from the session's execution root. For Codex
+`jsonrpc-stdio` app-server launches, Tether starts the Codex thread with
+`thread/start.cwd` set to the launch `work_root`, so shell/tool commands run in
+the repo or worktree. Read planted task files through `$CODEX_HOME`, for
+example `$CODEX_HOME/tasks/README.md`. Providers that read directly from the
+boot directory can use the bootdir-relative path, for example `tasks/README.md`.
 
 ### MCP (`mux_session_create`)
 
@@ -104,6 +129,7 @@ mux launch --launch my-launch-id \
   "agent_inline": "{\"id\":\"reviewer\",\"system_prompt\":\"You are a code reviewer.\"}",
   "boot_profile": "/path/to/research-mode.yaml",
   "override": "{\"env\":{\"REVIEW_MODE\":\"strict\"}}",
+  "prompt_append": "Read NOTES.md before starting.",
   "injection": "{\"native_files\":[{\"rel_path\":\"NOTES.md\",\"content\":\"task handoff\"}]}"
 }
 ```
@@ -119,6 +145,7 @@ Follow with `mux_session_launch` to start the session.
   "boot_profile": "/path/to/profile.yaml",
   "agent_inline": "",
   "override": "{\"system_prompt\":\"...\"}",
+  "prompt_append": "Read NOTES.md before starting.",
   "injection": "{\"native_files\":[{\"rel_path\":\"NOTES.md\",\"content\":\"...\"}]}",
   "boot_prompt": ""
 }
@@ -138,6 +165,7 @@ res, err := c.LaunchWithInput(ctx, api.LaunchRequest{
     AgentFile:    "/path/to/agent.yaml",
     BootProfileFile: "/path/to/profile.yaml",
     Override:     `{"system_prompt":"..."}`,
+    PromptAppend: "Read NOTES.md before starting.",
 })
 ```
 

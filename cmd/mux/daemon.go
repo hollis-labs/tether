@@ -214,6 +214,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		AgentInline:        in.AgentInline,
 		BootProfileFile:    in.BootProfileFile,
 		Override:           in.Override,
+		BootPromptAppend:   in.PromptAppend,
 		Injection:          in.Injection,
 	})
 	if err != nil {

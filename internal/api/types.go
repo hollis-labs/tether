@@ -98,6 +98,7 @@ type LaunchRequest struct {
 	AgentInline     string `json:"agent_inline,omitempty"`
 	BootProfileFile string `json:"boot_profile,omitempty"`
 	Override        string `json:"override,omitempty"`
+	PromptAppend    string `json:"prompt_append,omitempty"`
 
 	// Injection is a JSON-encoded config.LaunchInjection: caller-provided
 	// native files + boot-dir overlay supplied outside catalog YAML. Caller
@@ -120,6 +121,7 @@ type CreateSessionInput struct {
 	AgentInline        string
 	BootProfileFile    string
 	Override           string
+	PromptAppend       string
 	// Injection is a JSON-encoded config.LaunchInjection. See LaunchRequest.
 	Injection string
 }

@@ -209,3 +209,29 @@ mux boot tether-launcher.frontend.tui
 mux boot-exec tether-launcher.frontend.tui
 mux resolve --launch tether-launcher-claude-tui
 ```
+
+### Launch-time Torque task bundles
+
+`mux launch` can fetch one or more Torque tasks from the Torque HTTP API and
+plant them into the provider boot directory as ordinary caller injection:
+
+```bash
+mux launch --launch my-codex-worker \
+  --torque-task CW-20260417-0011 \
+  --torque-url http://127.0.0.1:8990
+```
+
+The default bundle root is `tasks/`. Each task gets `task.md`, `task.json`, and
+`process.md`; `tasks/README.md` tells the worker to use the planted files
+instead of discovering task context through Torque MCP tools. `process.md`
+includes exact `curl` commands for that task ID, including the transition to
+review. `--torque-task` is repeatable and also accepts comma-separated values.
+`--torque-task-dir` can change the bundle root, but it must be a safe
+bootdir-relative path.
+
+Codex `jsonrpc-stdio` sessions are rooted in the launch `work_root` via
+`thread/start.cwd`. That means shell/tool commands run from the repo or
+materialized worktree, while Torque task bundles remain in the planted boot
+directory. Use `$CODEX_HOME/tasks/README.md` from Codex app-server commands, or
+the bootdir-relative `tasks/README.md` when reading files from the boot
+directory itself.

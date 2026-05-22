@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -115,6 +116,64 @@ func TestApplyAgentOps_BootPromptOverrideWinsLast(t *testing.T) {
 	}
 	if plan.BootPrompt != "raw boot prompt" {
 		t.Errorf("BootPrompt = %q; want raw boot prompt (BootPromptOverride wins last)", plan.BootPrompt)
+	}
+}
+
+func TestApplyAgentOps_BootPromptAppend(t *testing.T) {
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent"},
+	}, t.TempDir())
+	plan := basePlan()
+	in := CreateSessionInput{
+		LaunchID:         "test-launch",
+		BootPromptAppend: "read tasks/README.md",
+	}
+	if err := svc.applyAgentOps(plan, in); err != nil {
+		t.Fatalf("applyAgentOps: %v", err)
+	}
+	if !strings.Contains(plan.BootPrompt, "base boot fragments") {
+		t.Fatalf("base prompt lost: %q", plan.BootPrompt)
+	}
+	if !strings.Contains(plan.BootPrompt, "read tasks/README.md") {
+		t.Fatalf("append missing: %q", plan.BootPrompt)
+	}
+	if plan.BootPromptAppend != "read tasks/README.md" {
+		t.Fatalf("BootPromptAppend = %q", plan.BootPromptAppend)
+	}
+}
+
+func TestRefreshBootProfilePrompt_PreservesAppend(t *testing.T) {
+	tmp := t.TempDir()
+	profileFile := filepath.Join(tmp, "boot.yaml")
+	body := `id: torque-worker
+identity:
+  lineage_alias: torque.worker
+  profile_id: torque-worker
+  role: worker
+  project: tether
+  work_root: /before
+slots: {}
+`
+	if err := os.WriteFile(profileFile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := buildTestService(t, map[string]config.Agent{
+		"test-agent": {ID: "test-agent"},
+	}, tmp)
+	plan := basePlan()
+	plan.BootProfileFile = profileFile
+	plan.WorkRoot = "/materialized/worktree"
+	plan.BootPromptAppend = "read tasks/README.md"
+	plan.BootPrompt = "stale prompt\n\nread tasks/README.md\n"
+
+	if err := svc.RefreshBootProfilePrompt(context.Background(), plan); err != nil {
+		t.Fatalf("RefreshBootProfilePrompt: %v", err)
+	}
+	if !strings.Contains(plan.BootPrompt, "work_root:       /materialized/worktree") {
+		t.Fatalf("refreshed prompt did not use materialized work root: %q", plan.BootPrompt)
+	}
+	if strings.Count(plan.BootPrompt, "read tasks/README.md") != 1 {
+		t.Fatalf("append should be preserved once, got prompt: %q", plan.BootPrompt)
 	}
 }
 

@@ -101,6 +101,11 @@ The preferred default is isolated worktrees:
 Tether materializes `work_root` before preparing the shared launch plan, so the
 provider receives the isolated worktree as its execution root.
 
+For Codex `jsonrpc-stdio`, Tether passes the materialized `work_root` as
+`thread/start.cwd`. Provider boot files remain in the planted boot directory;
+Codex shell/tool commands should read those through `$CODEX_HOME`, for example
+`$CODEX_HOME/tasks/README.md`.
+
 ## Adoption Checklist For Torque And Nanite
 
 1. Use `go-agent-launch` for compile/prepare/plant.
@@ -112,4 +117,3 @@ provider receives the isolated worktree as its execution root.
 6. Add live smoke tests for Claude, Codex, and Opencode paths the app exposes.
 7. Keep app-specific orchestration outside the shared package; only common launch
    mechanics should move into shared libs.
-

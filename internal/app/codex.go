@@ -30,7 +30,7 @@ func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 		if _, err := s.Manager.JsonRpcCall(ctx, id, "initialize", initParams); err != nil {
 			return fmt.Errorf("jsonrpc initialize: %w", err)
 		}
-		startRes, err := s.Manager.JsonRpcCall(ctx, id, "thread/start", map[string]any{})
+		startRes, err := s.Manager.JsonRpcCall(ctx, id, "thread/start", s.codexThreadStartParams(id))
 		if err != nil {
 			return fmt.Errorf("jsonrpc thread/start: %w", err)
 		}
@@ -57,4 +57,19 @@ func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 		return fmt.Errorf("jsonrpc turn/start: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) codexThreadStartParams(sessionID string) map[string]any {
+	params := map[string]any{}
+	if s == nil || s.Store == nil {
+		return params
+	}
+	plan, err := s.Store.GetLaunchPlan(sessionID)
+	if err != nil || plan == nil {
+		return params
+	}
+	if cwd := plan.EffectiveWorkRoot(); cwd != "" {
+		params["cwd"] = cwd
+	}
+	return params
 }

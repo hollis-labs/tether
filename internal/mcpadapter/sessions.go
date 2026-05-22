@@ -30,13 +30,14 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 	), a.handleSessionGet)
 
 	a.addTool(s, mcp.NewTool("mux_session_create",
-		mcp.WithDescription("Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override) — when any are set, they merge over the catalog-resolved agent + boot profile."),
+		mcp.WithDescription("Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile."),
 		mcp.WithString("launch_id", mcp.Required(), mcp.Description("Launch profile ID from the catalog (see mux_catalog_list_launches)")),
 		mcp.WithString("boot_prompt", mcp.Description("Optional boot prompt override; replaces catalog static boot fragments verbatim")),
 		mcp.WithString("agent_file", mcp.Description("v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent.")),
 		mcp.WithString("agent_inline", mcp.Description("v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order.")),
 		mcp.WithString("boot_profile", mcp.Description("v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers).")),
 		mcp.WithString("override", mcp.Description("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).")),
+		mcp.WithString("prompt_append", mcp.Description("Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.")),
 		mcp.WithString("injection", mcp.Description("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.")),
 	), a.handleSessionCreate)
 
@@ -143,6 +144,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	agentInline := str(req, "agent_inline")
 	bootProfile := str(req, "boot_profile")
 	override := str(req, "override")
+	promptAppend := str(req, "prompt_append")
 	injection := str(req, "injection")
 
 	if a.client != nil {
@@ -156,11 +158,12 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 			AgentInline:     agentInline,
 			BootProfileFile: bootProfile,
 			Override:        override,
+			PromptAppend:    promptAppend,
 			Injection:       injection,
 		}
 		var res api.LaunchResponse
 		var err error
-		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" {
+		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" {
 			res, err = a.client.CreateSessionWithInput(ctx, creq)
 		} else if bootPrompt != "" {
 			res, err = a.client.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
@@ -187,7 +190,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	// In-process path (tests, dev with no daemon).
 	var res *app.Launched
 	var err error
-	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" {
+	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" {
 		res, err = a.svc.CreateSessionWithInput(app.CreateSessionInput{
 			LaunchID:           launchID,
 			BootPromptOverride: bootPrompt,
@@ -195,6 +198,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 			AgentInline:        agentInline,
 			BootProfileFile:    bootProfile,
 			Override:           override,
+			BootPromptAppend:   promptAppend,
 			Injection:          injection,
 		})
 	} else if bootPrompt != "" {
