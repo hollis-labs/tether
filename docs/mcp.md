@@ -106,6 +106,48 @@ tools.
 
 ---
 
+## Proxy Mode
+
+`mux mcp --proxy` turns Tether into an MCP gateway for upstream servers from
+`<catalog>/mcp-servers/`.
+
+| Command | Tool surface |
+|---|---|
+| `mux mcp` | Tether native `mux_*` tools only |
+| `mux mcp --proxy` | Tether native tools, all upstream tools, `mux_discover_tools`, `mux_discover`, and `mux_call` |
+| `mux mcp --proxy --servers vanta,clockwork` | Tether native tools, selected upstream tools, and discovery/call tools for hidden upstreams |
+| `mux mcp --proxy --only vanta,clockwork` | Only tools from the selected upstream servers |
+
+Use `--servers` for Tether-launched agents that may still need the control-plane
+tools or the `mux_call` fallback. Use `--only` for external MCP clients where
+the operator expects the named servers to be the complete native tool list.
+`--only` requires `--proxy` and a non-empty server list; it suppresses native
+Tether `mux_*` tools, `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`,
+`mux_discover_tools`, `mux_discover`, and `mux_call`.
+
+`MUX_MCP_SERVERS` remains the environment fallback for `--servers` mode. The
+explicit `--only` flag uses its own comma-separated value and does not widen
+from the environment.
+
+### Semantic Discovery
+
+In normal proxy and `--servers` mode, `mux_discover_tools` provides a concise
+tool-selection flow:
+
+```json
+{
+  "intent": "create a task",
+  "limit": "8"
+}
+```
+
+It returns JSON grouped by upstream server/domain. Each recommendation includes
+`call_name`, `server`, `summary`, up to three `tags`, `safety`, `native`, `why`,
+`score`, and refs such as `tools/list:<tool>` for schemas. Use
+`mux_discover` or MCP `tools/list` when you need the full input schema.
+
+---
+
 ## Catalog setup
 
 The adapter reads the same catalog as the rest of `mux`. Default catalog root:

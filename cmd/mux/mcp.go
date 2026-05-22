@@ -62,6 +62,7 @@ var (
 	mcpProxy   bool
 	mcpBroker  bool
 	mcpServers string
+	mcpOnly    string
 )
 
 func init() {
@@ -70,6 +71,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().BoolVar(&mcpBroker, "broker", false, "enable broker mode (requires --proxy): register mux_discover+mux_call instead of all upstream tools; reduces per-request context size")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: MUX_MCP_SERVERS); empty = all servers when --proxy is set")
+	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "curated proxy mode: expose only these comma-separated upstream server IDs as native tools; suppress Tether mux_* and discovery/call tools")
 	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
@@ -84,6 +86,12 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		scopeStr = os.Getenv("AGENT_MUX_MCP_SCOPES")
 	}
 	scopes := splitScopes(scopeStr)
+
+	onlySet := cmd.Flags().Changed("only")
+	serverFilter, curatedOnly, err := resolveMCPProxyConfig(mcpProxy, mcpBroker, mcpServers, mcpOnly, os.Getenv("MUX_MCP_SERVERS"), onlySet)
+	if err != nil {
+		return err
+	}
 
 	svc, err := app.New(expandCatalogPath())
 	if err != nil {
@@ -110,23 +118,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// Route the go-mcp-sanitize middleware's warn telemetry to stderr so the
 	// stdio MCP protocol stream on stdout stays clean.
 	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if mcpBroker && !mcpProxy {
-		return fmt.Errorf("--broker requires --proxy")
-	}
 	if mcpProxy {
-		// resolve servers filter: flag > env
-		serversStr := mcpServers
-		if serversStr == "" {
-			serversStr = os.Getenv("MUX_MCP_SERVERS")
-		}
-		var serverFilter []string
-		for _, s := range strings.Split(serversStr, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				serverFilter = append(serverFilter, s)
-			}
-		}
-
 		// Wire observability — LoggingMiddleware + in-memory ToolCallEventStore
 		// (consumed by anyone subscribing to the event bus) + durable proxy_events
 		// table (queryable via the mux_events_tool_calls MCP tool).
@@ -137,6 +129,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			ProxyStore:   svc.Store, // durable SQLite store for mux_events_tool_calls
 			BrokerMode:   mcpBroker, // deprecated path, still works
 			ServerFilter: serverFilter,
+			Only:         curatedOnly,
 		}
 
 		// Forward tool_call_end events to the running muxd daemon's event bus so
@@ -178,6 +171,48 @@ func resolveDaemonAddr() (listenAddr, baseURL string) {
 	// which corrupts "unix:/path" into "<cwd>/unix:/path".
 	addr := cfg.ListenAddr
 	return addr, daemon.BaseURL(addr)
+}
+
+func resolveMCPProxyConfig(proxy, broker bool, serversFlag, onlyFlag, serversEnv string, onlySet bool) ([]string, bool, error) {
+	if broker && !proxy {
+		return nil, false, fmt.Errorf("--broker requires --proxy")
+	}
+	if onlySet && !proxy {
+		return nil, false, fmt.Errorf("--only requires --proxy")
+	}
+	if onlySet && broker {
+		return nil, false, fmt.Errorf("--only cannot be combined with --broker")
+	}
+	if onlySet && strings.TrimSpace(serversFlag) != "" {
+		return nil, false, fmt.Errorf("--only cannot be combined with --servers")
+	}
+	if !proxy {
+		return nil, false, nil
+	}
+
+	serversStr := serversFlag
+	if onlySet {
+		serversStr = onlyFlag
+	}
+	if !onlySet && serversStr == "" {
+		serversStr = serversEnv
+	}
+	serverFilter := splitCommaList(serversStr)
+	if onlySet && len(serverFilter) == 0 {
+		return nil, false, fmt.Errorf("--only requires a non-empty comma-separated server list")
+	}
+	return serverFilter, onlySet, nil
+}
+
+func splitCommaList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // proxyEventForwardBody is the POST /proxy/events request shape.

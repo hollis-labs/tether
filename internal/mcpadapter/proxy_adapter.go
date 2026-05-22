@@ -126,6 +126,11 @@ type ProxyOptions struct {
 	// mux_discover + mux_call. Empty means all servers (firehose). Only
 	// consulted when BrokerMode is false.
 	ServerFilter []string
+
+	// Only enables curated external-client mode. Only upstream tools from
+	// ServerFilter are registered. Native Tether mux_* tools, mux_discover,
+	// mux_discover_tools, mux_call, and proxy catalog tools are suppressed.
+	Only bool
 }
 
 // RunWithProxyOpts is identical to Run but additionally:
@@ -180,11 +185,22 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// Plain router — no middleware; observation is handled server-side above.
 	plainRouter := NewProxyRouter(registry)
 
-	// Register native mux tools first (always present regardless of mode).
-	a.registerTools(s)
+	if opts.Only && len(opts.ServerFilter) == 0 {
+		return fmt.Errorf("curated proxy --only requires a non-empty server filter")
+	}
+	if opts.Only && opts.BrokerMode {
+		return fmt.Errorf("curated proxy --only cannot be combined with broker mode")
+	}
 
-	// Build discovery index — used in all proxy modes (always register mux_discover + mux_call
-	// so undeclared servers remain reachable as a safety hatch).
+	// Register native mux tools unless curated mode asks for only the selected
+	// upstream surface.
+	if !opts.Only {
+		a.registerTools(s)
+	}
+
+	// Build discovery index for proxy modes. Normal and broker modes expose it
+	// through mux_discover/mux_discover_tools; curated --only mode keeps the
+	// index internal so the selected upstream tools are the entire surface.
 	serverTags := make(map[string][]string, len(entries))
 	for _, e := range entries {
 		serverTags[e.ID] = e.Tags
@@ -230,6 +246,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		// In broker mode no upstream tool is registered natively: pass an empty
 		// allowed set with firehose=false so every tool reports native=false.
 		a.registerDiscoverTool(s, idx, map[string]struct{}{}, false)
+		a.registerSemanticDiscoverTool(s, idx, map[string]struct{}{}, false)
 		a.registerCallTool(s, plainRouter)
 	} else {
 		// ── Selective flat mode ───────────────────────────────────────────────
@@ -258,20 +275,28 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		}
 		liveCatalog.addProxyTools(proxied...)
 
-		// Always register mux_discover + mux_call as a safety hatch so agents
-		// can reach undeclared servers without needing a restart.
-		a.registerDiscoverTool(s, idx, allowed, firehose)
-		a.registerCallTool(s, plainRouter)
+		if !opts.Only {
+			// Always register mux_discover + mux_call as a safety hatch so agents
+			// can reach undeclared servers without needing a restart.
+			a.registerDiscoverTool(s, idx, allowed, firehose)
+			a.registerSemanticDiscoverTool(s, idx, allowed, firehose)
+			a.registerCallTool(s, plainRouter)
+		}
 	}
 
-	// Introspection tool — always registered in proxy mode.
-	a.registerMCPServersTool(s, pool, entries, allowed, firehose)
-	a.registerCatalogRefreshTool(s, pool)
+	if !opts.Only {
+		// Introspection tools are registered in normal proxy modes. Curated
+		// --only mode suppresses them so tools/list contains only selected
+		// upstream tools.
+		a.registerMCPServersTool(s, pool, entries, allowed, firehose)
+		a.registerCatalogRefreshTool(s, pool)
+	}
 
 	// Register mux_events_tool_calls when a durable proxy store is wired.
 	// Falls back to EventStore for backwards compatibility when ProxyStore
 	// is not set (e.g. tests that only wire the in-memory store).
 	switch {
+	case opts.Only:
 	case opts.ProxyStore != nil:
 		a.registerToolCallEventsTool(s, opts.ProxyStore)
 	case opts.EventStore != nil:
@@ -378,6 +403,176 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 			return toolJSON(payload), nil
 		},
 	)
+}
+
+// registerSemanticDiscoverTool registers mux_discover_tools. It is the
+// low-token, task-shaped companion to mux_discover: ranked recommendations are
+// grouped by server and point callers to schema/detail refs instead of inlining
+// full input schemas.
+func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
+	isNative := func(serverID string) bool {
+		if firehose {
+			return true
+		}
+		_, ok := nativeServers[serverID]
+		return ok
+	}
+
+	a.addTool(s,
+		mcp.NewTool("mux_discover_tools",
+			mcp.WithDescription(
+				"Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. "+
+					"Use this before mux_discover when you need tool selection help without full schemas.",
+			),
+			mcp.WithString("intent",
+				mcp.Required(),
+				mcp.Description("Free-text description of the task you want to accomplish"),
+			),
+			mcp.WithString("category",
+				mcp.Description("Optional exact category/tag filter such as tasks, automation, memory, or services"),
+			),
+			mcp.WithString("tags",
+				mcp.Description("Comma-separated additional tag filters (AND semantics)"),
+			),
+			mcp.WithString("limit",
+				mcp.Description("Max recommendations to return (default 8, max 20)"),
+			),
+		),
+		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			intent := str(req, "intent")
+			category := str(req, "category")
+			tagsRaw := str(req, "tags")
+			limit := intArg(req, "limit", 8)
+			if limit <= 0 {
+				limit = 8
+			}
+			if limit > 20 {
+				limit = 20
+			}
+
+			var extraTags []string
+			for _, t := range strings.Split(tagsRaw, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					extraTags = append(extraTags, t)
+				}
+			}
+
+			results, totalMatches := idx.Search(intent, category, extraTags, limit)
+			return toolJSON(semanticDiscoveryPayload(intent, results, totalMatches, isNative)), nil
+		},
+	)
+}
+
+func semanticDiscoveryPayload(intent string, results []SearchResult, totalMatches int, isNative func(string) bool) map[string]any {
+	type recommendation struct {
+		CallName string         `json:"call_name"`
+		Server   string         `json:"server"`
+		Summary  string         `json:"summary"`
+		Tags     []string       `json:"tags,omitempty"`
+		Safety   string         `json:"safety"`
+		Native   bool           `json:"native"`
+		Why      string         `json:"why"`
+		Score    int            `json:"score"`
+		Refs     map[string]any `json:"refs"`
+	}
+	type group struct {
+		Server          string           `json:"server"`
+		Domain          string           `json:"domain"`
+		Recommendations []recommendation `json:"recommendations"`
+	}
+
+	groupsByServer := make(map[string]*group)
+	order := make([]string, 0)
+	for _, r := range results {
+		g, ok := groupsByServer[r.ServerID]
+		if !ok {
+			g = &group{
+				Server: r.ServerID,
+				Domain: semanticDomain(r),
+			}
+			groupsByServer[r.ServerID] = g
+			order = append(order, r.ServerID)
+		}
+		g.Recommendations = append(g.Recommendations, recommendation{
+			CallName: r.ToolName,
+			Server:   r.ServerID,
+			Summary:  conciseSummary(r.Description),
+			Tags:     firstStrings(r.Tags, 3),
+			Safety:   inferToolSafety(r),
+			Native:   isNative(r.ServerID),
+			Why:      recommendationWhy(intent, r),
+			Score:    r.Score,
+			Refs: map[string]any{
+				"schema":   "tools/list:" + r.ToolName,
+				"detail":   "mux_discover?intent=" + r.ToolName,
+				"catalog":  "mcp-servers/" + r.ServerID,
+				"examples": "tool-docs:" + r.ToolName + "#examples",
+			},
+		})
+	}
+
+	groups := make([]group, 0, len(order))
+	for _, serverID := range order {
+		groups = append(groups, *groupsByServer[serverID])
+	}
+	return map[string]any{
+		"ok":                true,
+		"query":             intent,
+		"count":             len(results),
+		"total_match_count": totalMatches,
+		"truncated":         totalMatches > len(results),
+		"groups":            groups,
+		"hint":              "Call native recommendations directly. For native=false, use mux_call, or use mux_discover for full schemas.",
+	}
+}
+
+func semanticDomain(r SearchResult) string {
+	if len(r.Tags) > 0 && strings.TrimSpace(r.Tags[0]) != "" {
+		return r.Tags[0]
+	}
+	return r.ServerID
+}
+
+func conciseSummary(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= 140 {
+		return s
+	}
+	return strings.TrimSpace(s[:137]) + "..."
+}
+
+func firstStrings(in []string, n int) []string {
+	if len(in) == 0 || n <= 0 {
+		return nil
+	}
+	if len(in) > n {
+		in = in[:n]
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func inferToolSafety(r SearchResult) string {
+	text := strings.ToLower(r.ToolName + " " + r.Description)
+	for _, word := range []string{"create", "update", "edit", "delete", "remove", "write", "send", "post", "start", "stop", "run", "enqueue"} {
+		if strings.Contains(text, word) {
+			return "mutating"
+		}
+	}
+	return "read_only"
+}
+
+func recommendationWhy(intent string, r SearchResult) string {
+	switch {
+	case strings.TrimSpace(intent) == "":
+		return "Available upstream tool in the matching category."
+	case r.Score > 0:
+		return fmt.Sprintf("Matched %d intent term(s) against the tool name, description, or tags.", r.Score)
+	default:
+		return "Matched the requested category or tags."
+	}
 }
 
 // registerCallTool registers mux_call on s. It accepts a tool name and
