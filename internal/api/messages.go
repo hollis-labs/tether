@@ -136,7 +136,10 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unread, _ := s.unreadCount(r.Context(), sent.To)
+	unread, countErr := s.unreadCount(r.Context(), sent.To)
+	if countErr != nil {
+		unread = 1
+	}
 	res := messageNotifyResponse{Message: sent, UnreadCount: unread}
 	wake := true
 	if req.Wake != nil {

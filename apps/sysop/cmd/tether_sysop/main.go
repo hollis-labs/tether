@@ -294,6 +294,7 @@ type groupDTO struct {
 	UpdatedAt   string            `json:"updated_at"`
 	Members     []groupMemberDTO  `json:"members"`
 	Messages    []groupMessageDTO `json:"messages"`
+	updatedAt   time.Time
 }
 
 type groupMemberDTO struct {
@@ -531,8 +532,10 @@ func (s *appServer) handleMessageGroupsList(w http.ResponseWriter, r *http.Reque
 	}
 
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].UpdatedAt != out[j].UpdatedAt {
-			return out[i].UpdatedAt > out[j].UpdatedAt
+		left := out[i].updatedAt
+		right := out[j].updatedAt
+		if !left.Equal(right) {
+			return left.After(right)
 		}
 		return out[i].DisplayName < out[j].DisplayName
 	})
@@ -1454,15 +1457,8 @@ func groupToDTO(g registry.Profile, members []registry.GroupMember, msgs []regis
 		})
 	}
 	sort.Slice(memberDTOs, func(i, j int) bool {
-		rank := map[string]int{"owner": 0, "moderator": 1, "member": 2}
-		ri, iok := rank[memberDTOs[i].Role]
-		rj, jok := rank[memberDTOs[j].Role]
-		if !iok {
-			ri = len(rank)
-		}
-		if !jok {
-			rj = len(rank)
-		}
+		ri := groupMemberRoleRank(memberDTOs[i].Role)
+		rj := groupMemberRoleRank(memberDTOs[j].Role)
 		if ri != rj {
 			return ri < rj
 		}
@@ -1487,6 +1483,20 @@ func groupToDTO(g registry.Profile, members []registry.GroupMember, msgs []regis
 		UpdatedAt:   g.UpdatedAt.Format(time.RFC3339Nano),
 		Members:     memberDTOs,
 		Messages:    messageDTOs,
+		updatedAt:   g.UpdatedAt,
+	}
+}
+
+func groupMemberRoleRank(role string) int {
+	switch role {
+	case "owner":
+		return 0
+	case "moderator":
+		return 1
+	case "member":
+		return 2
+	default:
+		return 3
 	}
 }
 

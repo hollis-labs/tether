@@ -634,7 +634,10 @@ func (c *Client) MessageThread(ctx context.Context, threadID string) ([]MessageE
 
 // MessageSend posts a new envelope through POST /messages.
 func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (MessageEnvelopeDTO, error) {
-	body, _ := json.Marshal(msg)
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return MessageEnvelopeDTO{}, fmt.Errorf("marshal message request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages", bytes.NewReader(body))
 	if err != nil {
 		return MessageEnvelopeDTO{}, err
@@ -658,7 +661,10 @@ func (c *Client) MessageSend(ctx context.Context, msg MessageSendRequest) (Messa
 // MessageNotify sends an envelope and asks the daemon to wake-inject a live
 // recipient session when one can be resolved.
 func (c *Client) MessageNotify(ctx context.Context, msg MessageNotifyRequest) (MessageNotifyResult, error) {
-	body, _ := json.Marshal(msg)
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return MessageNotifyResult{}, fmt.Errorf("marshal notify request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages/notify", bytes.NewReader(body))
 	if err != nil {
 		return MessageNotifyResult{}, err
