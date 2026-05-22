@@ -10,7 +10,7 @@ identity:
   project:         nanite
   work_root:       ~/Projects-apps/nanite
   tracking_root:   ~/Projects-apps/agent-workspaces/execution/nanite/nanite-backend/
-  vanta_primary:   "2026-04-19"
+  tesseract_primary:   "2026-04-19"
 
 slots:
   # §1 — role definition

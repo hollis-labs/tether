@@ -12,7 +12,7 @@ identity:
   project:         torque
   work_root:       ~/Projects-apps/agent-mux
   tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
-  vanta_primary:   "2026-05-14"
+  tesseract_primary:   "2026-05-14"
 
 slots:
   agent:

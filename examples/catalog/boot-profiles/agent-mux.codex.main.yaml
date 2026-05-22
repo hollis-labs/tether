@@ -14,7 +14,7 @@ identity:
   project:         agent-mux
   work_root:       ~/Projects-apps/agent-mux
   tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
-  vanta_primary:   "2026-04-19"
+  tesseract_primary:   "2026-04-19"
 
 slots:
   # §1 — role definition (graceful fallback if nanite roles not present)

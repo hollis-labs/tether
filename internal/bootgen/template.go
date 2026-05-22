@@ -22,7 +22,7 @@ role:            {{ .Profile.Identity.Role }}
 project:         {{ .Profile.Identity.Project }}
 work_root:       {{ .Profile.Identity.WorkRoot }}
 tracking_root:   {{ .Profile.Identity.TrackingRoot }}
-tesseract_primary: {{ .Profile.Identity.VantaPrimary }}
+tesseract_primary: {{ .Profile.Identity.TesseractPrimary }}
 ` + "```" + `
 {{- if hasSlot "agent" }}
 

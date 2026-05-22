@@ -79,15 +79,15 @@ type Profile struct {
 //   - profile_version = integer revision counter for this profile config
 //   - role / project / work_root / tracking_root — contextual metadata
 type Identity struct {
-	LineageAlias   string `yaml:"lineage_alias"`
-	LineageID      string `yaml:"lineage_id,omitempty"`
-	ProfileID      string `yaml:"profile_id,omitempty"`
-	ProfileVersion int    `yaml:"profile_version,omitempty"`
-	Role           string `yaml:"role,omitempty"`
-	Project        string `yaml:"project,omitempty"`
-	WorkRoot       string `yaml:"work_root,omitempty"`
-	TrackingRoot   string `yaml:"tracking_root,omitempty"`
-	VantaPrimary   string `yaml:"vanta_primary,omitempty"`
+	LineageAlias     string `yaml:"lineage_alias"`
+	LineageID        string `yaml:"lineage_id,omitempty"`
+	ProfileID        string `yaml:"profile_id,omitempty"`
+	ProfileVersion   int    `yaml:"profile_version,omitempty"`
+	Role             string `yaml:"role,omitempty"`
+	Project          string `yaml:"project,omitempty"`
+	WorkRoot         string `yaml:"work_root,omitempty"`
+	TrackingRoot     string `yaml:"tracking_root,omitempty"`
+	TesseractPrimary string `yaml:"tesseract_primary,omitempty"`
 }
 
 // SlotSource describes how to populate a single named slot.
