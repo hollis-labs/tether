@@ -197,3 +197,75 @@ func TestDiscoveryIndex_NoNativeTools(t *testing.T) {
 		}
 	}
 }
+
+func TestSemanticDiscoveryPayloadGroupsConciseRecommendations(t *testing.T) {
+	results := []SearchResult{
+		{
+			ToolName:    "clockwork_task_create",
+			ServerID:    "clockwork",
+			Description: "Create a new task in the task tracker with a long schema that should not be included in the semantic discovery result",
+			Tags:        []string{"tasks", "planning", "project", "extra"},
+			Score:       2,
+		},
+		{
+			ToolName:    "hadron_blueprints_list",
+			ServerID:    "hadron",
+			Description: "List available automation blueprints",
+			Tags:        []string{"automation", "ci"},
+			Score:       1,
+		},
+	}
+
+	payload := semanticDiscoveryPayload("create task", results, 3, func(server string) bool {
+		return server == "clockwork"
+	})
+
+	if payload["truncated"] != true {
+		t.Fatalf("expected truncated payload, got %#v", payload["truncated"])
+	}
+	raw, err := json.Marshal(payload["groups"])
+	if err != nil {
+		t.Fatalf("marshal groups: %v", err)
+	}
+	var groups []struct {
+		Server          string `json:"server"`
+		Domain          string `json:"domain"`
+		Recommendations []struct {
+			CallName string         `json:"call_name"`
+			Server   string         `json:"server"`
+			Summary  string         `json:"summary"`
+			Tags     []string       `json:"tags,omitempty"`
+			Safety   string         `json:"safety"`
+			Native   bool           `json:"native"`
+			Why      string         `json:"why"`
+			Score    int            `json:"score"`
+			Refs     map[string]any `json:"refs"`
+		} `json:"recommendations"`
+	}
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		t.Fatalf("unmarshal groups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 server groups, got %d", len(groups))
+	}
+	clockworkIndex := -1
+	for i := range groups {
+		if groups[i].Server == "clockwork" {
+			clockworkIndex = i
+			break
+		}
+	}
+	if clockworkIndex == -1 {
+		t.Fatal("clockwork group not found")
+	}
+	rec := groups[clockworkIndex].Recommendations[0]
+	if rec.CallName != "clockwork_task_create" || !rec.Native || rec.Safety != "mutating" {
+		t.Fatalf("unexpected recommendation: %#v", rec)
+	}
+	if len(rec.Tags) != 3 {
+		t.Fatalf("expected tags capped at 3, got %v", rec.Tags)
+	}
+	if _, ok := rec.Refs["schema"]; !ok {
+		t.Fatalf("expected schema ref, got %v", rec.Refs)
+	}
+}

@@ -71,6 +71,33 @@ mcp:
 - Absent at both levels → no `MUX_MCP_SERVERS` set → agent inherits whatever the
   operator's shell environment provides (firehose or none).
 
+### Phase 3 — Curated proxy surface (`--only`)
+
+Add `--only <id,...>` for external MCP clients that expect the named upstream
+servers to be the entire native tool surface:
+
+- `mux mcp --proxy --only hadron,vanta` registers only tools from `hadron` and
+  `vanta`.
+- Native Tether `mux_*` tools are suppressed, including
+  `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`, `mux_discover`,
+  `mux_discover_tools`, and `mux_call`.
+- `--only` requires `--proxy` and a non-empty comma-separated server list. It
+  cannot be combined with `--servers` or deprecated `--broker`.
+- `--servers` keeps its existing meaning: selected upstream tools are native,
+  while Tether native tools and the discovery/call hatch remain visible.
+
+The previous follow-up name `--strict` was not adopted because it did not say
+what was strict. `--only` names the operator contract directly: only the selected
+upstream servers appear in `tools/list`.
+
+| Command | Native tool surface |
+|---|---|
+| `mux mcp` | Tether native `mux_*` tools only |
+| `mux mcp --proxy` | Tether native tools, all upstream tools, discovery/call hatch |
+| `mux mcp --proxy --servers a,b` | Tether native tools, upstream tools from `a,b`, discovery/call hatch for hidden upstreams |
+| `mux mcp --proxy --only a,b` | Upstream tools from `a,b` only |
+| `mux mcp --proxy --only` | Usage error |
+
 ### Decisions locked
 
 | Decision | Choice | Rationale |
@@ -80,6 +107,7 @@ mcp:
 | Injection point | `launch.Resolve()` overrides map | Keeps env composition logic co-located; adapter applies it at start time along with all other overrides |
 | Project wins over launch | Yes | Project is the broader trust boundary; launch must not widen project restrictions |
 | Empty list = no injection | Yes | Allows the operator's ambient env to take effect (firehose or absent) without forcing catalog authors to always specify |
+| Curated flag name | `--only` | Clearer than the ambiguous `--strict`; selected servers are the only native surface |
 
 ---
 
@@ -91,7 +119,7 @@ mcp:
 - `internal/launch/resolver.go` — resolve servers list, inject `MUX_MCP_SERVERS` into overrides
 - `internal/launch/resolver_test.go` — `TestResolve_MCPServerChain` (4 sub-tests)
 - `cmd/mux/mcp.go` — `--servers` flag, `MUX_MCP_SERVERS` env fallback, `--broker` deprecated (PR #5)
-- `internal/mcpadapter/proxy_adapter.go` — `ServerFilter []string` in `ProxyOptions` (PR #5)
+- `internal/mcpadapter/proxy_adapter.go` — `ServerFilter []string` in `ProxyOptions` (PR #5); `Only` curated surface option
 
 ---
 
@@ -103,6 +131,8 @@ mcp:
 - Project catalog is the authoritative source for which servers an agent may use — auditable in git.
 - Backward compatible: existing configs without `mcp.servers` are unaffected.
 - `--broker` still works for consumers that depend on it; they have a migration path.
+- External Claude/Codex/OpenCode clients can use `--only` for a small,
+  expectation-matched tool list without Tether control-plane tools.
 
 ### Negative / Trade-offs
 
