@@ -110,6 +110,9 @@ Limitation: subprocess launches currently have weaker output observability than
 
 Use this for daemon-owned Codex sessions. Tether starts `codex app-server` and
 sends JSON-RPC `initialize`, `thread/start`, and `turn/start` calls over stdio.
+The `thread/start` params include the launch `work_root` as `cwd`, so Codex
+shell/tool commands run in the repo or materialized worktree instead of the
+provider boot directory.
 
 Provider example:
 [`examples/catalog/providers/codex-app-server.yaml`](../../examples/catalog/providers/codex-app-server.yaml)
@@ -119,7 +122,9 @@ Launch example:
 
 Smoke status: PASS on 2026-05-21. The same session accepted two turns and
 returned `TETHER_CODEX_JSONRPC_OK` and `TETHER_CODEX_SECOND_OK` on one Codex
-thread.
+thread. A later launch-time Torque task bundle smoke also confirmed the Codex
+thread cwd is the worktree `work_root` and planted task files are available
+through `$CODEX_HOME/tasks/README.md`.
 
 Limitation: this depends on a Codex CLI with `app-server` support and local
 authentication.

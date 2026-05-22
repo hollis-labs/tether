@@ -21,7 +21,11 @@ var (
 	launchBootProfile  string
 	launchOverride     string
 	launchInjection    string
+	launchPromptAppend string
 	launchBootPromptOR string
+	launchTorqueTasks  []string
+	launchTorqueURL    string
+	launchTorqueDir    string
 )
 
 var launchCmd = &cobra.Command{
@@ -38,8 +42,22 @@ var launchCmd = &cobra.Command{
 			ctx = context.Background()
 		}
 
+		injection := launchInjection
+		promptAppend := launchPromptAppend
+		if len(launchTorqueTasks) > 0 {
+			torqueInjection, torquePrompt, err := buildTorqueTaskLaunchAugment(ctx, launchTorqueURL, launchTorqueTasks, launchTorqueDir)
+			if err != nil {
+				return err
+			}
+			injection, err = mergeLaunchInjectionJSON(injection, torqueInjection)
+			if err != nil {
+				return err
+			}
+			promptAppend = appendPromptText(promptAppend, torquePrompt)
+		}
+
 		var res api.LaunchResponse
-		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || launchInjection != "" || launchBootPromptOR != "" {
+		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Launch:          launchID,
 				BootPrompt:      launchBootPromptOR,
@@ -47,7 +65,8 @@ var launchCmd = &cobra.Command{
 				AgentInline:     launchAgentInline,
 				BootProfileFile: launchBootProfile,
 				Override:        launchOverride,
-				Injection:       launchInjection,
+				PromptAppend:    promptAppend,
+				Injection:       injection,
 			})
 		} else {
 			res, err = c.Launch(ctx, launchID)
@@ -87,6 +106,10 @@ func init() {
 	launchCmd.Flags().StringVar(&launchBootProfile, "boot-profile", "", "v005-08: path to bootgen boot-profile YAML (carries MCP allowlist)")
 	launchCmd.Flags().StringVar(&launchOverride, "override", "", `v005-08: per-launch JSON override, e.g. '{"system_prompt":"...","env":{"K":"V"}}'`)
 	launchCmd.Flags().StringVar(&launchInjection, "injection", "", `caller-provided JSON config.LaunchInjection, e.g. '{"native_files":[{"rel_path":"NOTES.md","content":"..."}]}' (non-secret only — persisted at rest)`)
+	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
+	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
+	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990)")
+	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
 	_ = launchCmd.MarkFlagRequired("launch")
 }

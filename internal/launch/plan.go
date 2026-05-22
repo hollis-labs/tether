@@ -44,7 +44,10 @@ type Plan struct {
 	EnvRedact []string `json:"env_redact,omitempty"`
 
 	BootPrompt string `json:"boot_prompt"`
-	BootMode   string `json:"boot_mode"`
+	// BootPromptAppend preserves caller-supplied prompt addenda across late
+	// boot-profile regeneration after workspace materialization.
+	BootPromptAppend string `json:"boot_prompt_append,omitempty"`
+	BootMode         string `json:"boot_mode"`
 
 	// NativeFiles and BootDirOverlay carry injected file content (from catalog
 	// injection and caller-provided injection alike).
