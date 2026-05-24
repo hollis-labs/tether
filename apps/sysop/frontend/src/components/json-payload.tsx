@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Check, Copy, Eye } from 'lucide-react'
-import { Button, DetailDialog, JsonViewer } from '@hollis-labs/sysop-ui'
+import { Button, DetailDialog, JsonViewer } from '@hollis-labs/sysop-ui/ui'
 
 /** Parse `raw` as a JSON object, or null when it is not one. */
 export function safeParseObject(raw: string): Record<string, unknown> | null {

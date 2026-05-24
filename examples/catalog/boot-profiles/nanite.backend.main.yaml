@@ -3,7 +3,7 @@ display_name: "Nanite — Backend"
 
 identity:
   lineage_alias:   nanite.backend.main
-  lineage_id:      ""          # pending — Agent Mux will issue agtln_<ulid>
+  lineage_id:      ""          # pending — Tether will issue agtln_<ulid>
   profile_id:      nanite-backend
   profile_version: 1
   role:            backend

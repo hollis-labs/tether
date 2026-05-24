@@ -57,7 +57,7 @@ For Codex and Opencode, use `mux boot <profile>` or `mux launch --launch
 
 ```yaml
 id: agent-mux.codex.app-server
-display_name: "Agent Mux - Codex App Server"
+display_name: "Tether - Codex App Server"
 launch: agent-mux-codex-app-server
 mcp_servers: []
 identity:

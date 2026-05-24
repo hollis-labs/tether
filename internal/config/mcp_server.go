@@ -45,6 +45,23 @@ func expandEnvRefs(s string) string {
 // parses them as MCPServerEntry, expands ${VAR} references, and returns
 // the enabled entries. A missing directory is silently treated as empty.
 func LoadMCPServers(catalogDir string) ([]MCPServerEntry, error) {
+	entries, err := LoadMCPServerCatalog(catalogDir)
+	if err != nil {
+		return nil, err
+	}
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.IsEnabled() {
+			out = append(out, entry)
+		}
+	}
+	return out, nil
+}
+
+// LoadMCPServerCatalog reads all upstream MCP server catalog entries,
+// including disabled entries. GUI/config surfaces use this so disabled
+// servers remain visible and can be re-enabled.
+func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 	dir := filepath.Join(catalogDir, "mcp-servers")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -74,10 +91,6 @@ func LoadMCPServers(catalogDir string) ([]MCPServerEntry, error) {
 		var entry MCPServerEntry
 		if err := yaml.Unmarshal(b, &entry); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
-		}
-
-		if !entry.IsEnabled() {
-			continue
 		}
 
 		// Expand ${VAR} references at load time.

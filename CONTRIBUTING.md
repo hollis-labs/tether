@@ -1,6 +1,6 @@
-# Contributing to agent-mux
+# Contributing to Tether
 
-agent-mux is pre-release software. Contributions are welcome; the bar is
+Tether is pre-release software. Contributions are welcome; the bar is
 correct, minimal, well-tested Go that passes the full quality gate.
 
 ## Before you start
@@ -9,8 +9,9 @@ correct, minimal, well-tested Go that passes the full quality gate.
 - Skim [`docs/api/README.md`](docs/api/README.md) for the public HTTP/UDS
   surface area and [`docs/adr/`](docs/adr/) for the architectural decisions
   that shape this codebase.
-- License: see [`LICENSE`](LICENSE). This is a placeholder — contributions
-  will be covered by the permanent license when one is chosen.
+- License: see [`LICENSE`](LICENSE) and [`TRADEMARK.md`](TRADEMARK.md).
+  Code contributions are accepted under the repository's MIT licensing posture;
+  the Tether and Hollis Labs names remain protected marks.
 
 ## Workflow
 

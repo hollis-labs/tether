@@ -14,6 +14,7 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -36,6 +37,8 @@ type mockDaemon struct {
 	attach        func(context.Context, string, io.Writer) error
 	resize        func(string, uint16, uint16) error
 	catalog       func() (*config.Catalog, error)
+	getPolicy     func(string) (agent.LogicalAgentPolicy, error)
+	updatePolicy  func(agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error)
 }
 
 func (m *mockDaemon) addr() string {
@@ -101,6 +104,18 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 			}
 			return errors.New("resize not configured")
 		},
+		getPolicyFn: func(id string) (agent.LogicalAgentPolicy, error) {
+			if m.getPolicy != nil {
+				return m.getPolicy(id)
+			}
+			return agent.LogicalAgentPolicy{}, errors.New("get policy not configured")
+		},
+		updatePolicyFn: func(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error) {
+			if m.updatePolicy != nil {
+				return m.updatePolicy(policy)
+			}
+			return agent.LogicalAgentPolicy{}, errors.New("update policy not configured")
+		},
 	}
 
 	catalogLoader := mockCatalogLoader{fn: func() (*config.Catalog, error) {
@@ -127,16 +142,18 @@ func (m mockCatalogLoader) Load() (*config.Catalog, error) { return m.fn() }
 // funcService is a func-table LaunchService — lighter than a struct-full-of-
 // fields fake for the case-by-case per-test overrides that client tests need.
 type funcService struct {
-	createFn   func(string) (api.LaunchResult, error)
-	launchFn   func(string) (api.LaunchResult, error)
-	listFn     func() ([]store.SessionRow, error)
-	getFn      func(string) (*store.SessionRow, error)
-	stopFn     func(string) error
-	waitFn     func(context.Context, string) (int, error)
-	inputFn    func(string, []byte) error
-	attachFn   func(context.Context, string, io.Writer) error
-	attachedFn func(string) int
-	resizeFn   func(string, uint16, uint16) error
+	createFn       func(string) (api.LaunchResult, error)
+	launchFn       func(string) (api.LaunchResult, error)
+	listFn         func() ([]store.SessionRow, error)
+	getFn          func(string) (*store.SessionRow, error)
+	stopFn         func(string) error
+	waitFn         func(context.Context, string) (int, error)
+	inputFn        func(string, []byte) error
+	attachFn       func(context.Context, string, io.Writer) error
+	attachedFn     func(string) int
+	resizeFn       func(string, uint16, uint16) error
+	getPolicyFn    func(string) (agent.LogicalAgentPolicy, error)
+	updatePolicyFn func(agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error)
 }
 
 func (s *funcService) CreateSession(id string) (api.LaunchResult, error) {
@@ -183,6 +200,14 @@ func (s *funcService) ResizeSession(id string, rows, cols uint16) error {
 
 func (s *funcService) ResumeLogicalAgent(_ string) (api.LaunchResult, error) {
 	return api.LaunchResult{}, nil
+}
+
+func (s *funcService) GetLogicalAgentPolicy(id string) (agent.LogicalAgentPolicy, error) {
+	return s.getPolicyFn(id)
+}
+
+func (s *funcService) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error) {
+	return s.updatePolicyFn(policy)
 }
 
 func (s *funcService) RuntimeHealth(_ string) (api.RuntimeHealthResult, bool) {
@@ -276,6 +301,52 @@ func TestClient_Launch_CreateAndLaunch(t *testing.T) {
 	}
 	if launchedID != "sess-1" {
 		t.Errorf("launch session id = %q, want sess-1", launchedID)
+	}
+}
+
+func TestClient_LogicalAgentPolicyRoundTrip(t *testing.T) {
+	m := newMockDaemon(t)
+	m.getPolicy = func(id string) (agent.LogicalAgentPolicy, error) {
+		if id != "agent-1" {
+			t.Fatalf("GetLogicalAgentPolicy id = %q", id)
+		}
+		return agent.LogicalAgentPolicy{
+			LogicalAgentID:   id,
+			Name:             "Agent One",
+			LaunchID:         "launch-a",
+			CheckpointPolicy: agent.CheckpointPolicyManual,
+		}, nil
+	}
+	m.updatePolicy = func(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error) {
+		if policy.LogicalAgentID != "agent-1" {
+			t.Fatalf("UpdateLogicalAgentPolicy id = %q", policy.LogicalAgentID)
+		}
+		if policy.CheckpointPolicy != agent.CheckpointPolicyOnStop {
+			t.Fatalf("UpdateLogicalAgentPolicy checkpoint_policy = %q", policy.CheckpointPolicy)
+		}
+		if policy.CheckpointStatus != "auto-stop" {
+			t.Fatalf("UpdateLogicalAgentPolicy checkpoint_status = %q", policy.CheckpointStatus)
+		}
+		return policy, nil
+	}
+	c := New(m.addr())
+	got, err := c.GetLogicalAgentPolicy(context.Background(), "agent-1")
+	if err != nil {
+		t.Fatalf("GetLogicalAgentPolicy: %v", err)
+	}
+	if got.CheckpointPolicy != string(agent.CheckpointPolicyManual) {
+		t.Fatalf("CheckpointPolicy = %q", got.CheckpointPolicy)
+	}
+	updated, err := c.UpdateLogicalAgentPolicy(context.Background(), agent.LogicalAgentPolicy{
+		LogicalAgentID:   "agent-1",
+		CheckpointPolicy: agent.CheckpointPolicyOnStop,
+		CheckpointStatus: "auto-stop",
+	})
+	if err != nil {
+		t.Fatalf("UpdateLogicalAgentPolicy: %v", err)
+	}
+	if updated.CheckpointPolicy != string(agent.CheckpointPolicyOnStop) {
+		t.Fatalf("updated CheckpointPolicy = %q", updated.CheckpointPolicy)
 	}
 }
 

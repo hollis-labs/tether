@@ -76,6 +76,8 @@ import (
 type BootstrapReport struct {
 	// Imported is the count of fresh rows registered this pass.
 	Imported int
+	// Attached is the count of external-id attachments added to existing rows.
+	Attached int
 	// Skipped is the count of existing rows left unchanged (force=false).
 	Skipped int
 	// Refreshed is the count of existing rows patched + sync-stamped

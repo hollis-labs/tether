@@ -1,6 +1,6 @@
 # Agent Config Reference (v005-08)
 
-Mux's two-tier agent configuration model. See ADR 0033 for the design rationale.
+Tether's two-tier agent configuration model. See ADR 0033 for the design rationale.
 For launch profile, boot profile, workspace, and slot fields, see
 `docs/catalog-launch-profiles.md`.
 
@@ -10,9 +10,9 @@ Three layers, searched in order. Later layers override earlier ones on ID collis
 
 | Layer | Root | Use |
 |---|---|---|
-| `system` | `<catalogPath>` (default `~/.agent-mux/catalog/`) | Mux bundled defaults; managed via `mux agents create --scope system`. |
-| `user` | `~/.agent-mux/` | Personal customization. Default write target for `mux agents create`. |
-| `project` | `./.agent-mux/` (CWD-relative) | Repo-local overrides. Highest precedence. |
+| `system` | `<catalogPath>` (default `~/.tether/catalog/`) | Tether bundled defaults; managed via `mux agents create --scope system`. |
+| `user` | `~/.tether/` | Personal customization. Default write target for `mux agents create`. |
+| `project` | `./.tether/` (CWD-relative) | Repo-local overrides. Highest precedence. |
 
 Each layer can contain three subdirectories:
 

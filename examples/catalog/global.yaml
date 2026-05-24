@@ -7,14 +7,14 @@ catalog:
     launches: launches
     boot: boot
   defaults:
-    workspace_root: ~/agent-mux/workspaces
-    state_db: ~/agent-mux/state/agent-mux.db
-    temp_root: ~/agent-mux/tmp
+    workspace_root: ~/.tether/workspaces
+    state_db: ~/.tether/state/tether.db
+    temp_root: ~/.tether/tmp
 # daemon controls the muxd long-lived process (see ADR 0002). Omitting the
 # block takes the documented defaults: unix socket + pid file under
-# ~/.agent-mux/run/, 10-second shutdown timeout. Uncomment + override to
+# ~/.tether/run/, 10-second shutdown timeout. Uncomment + override to
 # point at a different transport (e.g., tcp:127.0.0.1:7180 for debugging).
 # daemon:
-#   listen_addr: unix:~/.agent-mux/run/muxd.sock
-#   pid_file: ~/.agent-mux/run/muxd.pid
+#   listen_addr: unix:~/.tether/run/muxd.sock
+#   pid_file: ~/.tether/run/muxd.pid
 #   shutdown_timeout: 10s

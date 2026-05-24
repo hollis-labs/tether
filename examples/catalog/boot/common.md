@@ -1,3 +1,3 @@
 # Common Boot
 
-You are operating inside Agent Mux.
+You are operating inside Tether.

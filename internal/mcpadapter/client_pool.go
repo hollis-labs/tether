@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"sort"
+	"strings"
 	"sync"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -27,6 +29,24 @@ type ToolRefreshResult struct {
 	ServerID  string
 	ToolCount int
 	Delta     ToolDelta
+}
+
+// RefreshAllError reports per-server failures during a multi-server refresh
+// while still allowing successful servers to complete.
+type RefreshAllError struct {
+	Failures map[string]error
+}
+
+func (e *RefreshAllError) Error() string {
+	if e == nil || len(e.Failures) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(e.Failures))
+	for serverID, err := range e.Failures {
+		parts = append(parts, fmt.Sprintf("%s: %v", serverID, err))
+	}
+	sort.Strings(parts)
+	return "refresh failures: " + strings.Join(parts, "; ")
 }
 
 // ClientPool manages upstream MCP server connections. It spawns stdio
@@ -217,12 +237,17 @@ func (p *ClientPool) RefreshAll(ctx context.Context) ([]ToolRefreshResult, error
 	p.mu.Unlock()
 
 	out := make([]ToolRefreshResult, 0, len(ids))
+	failures := make(map[string]error)
 	for _, id := range ids {
 		res, err := p.RefreshServer(ctx, id)
 		if err != nil {
-			return out, err
+			failures[id] = err
+			continue
 		}
 		out = append(out, res)
+	}
+	if len(failures) > 0 {
+		return out, &RefreshAllError{Failures: failures}
 	}
 	return out, nil
 }

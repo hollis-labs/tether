@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/broker"
@@ -24,6 +25,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/messaging"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -97,20 +99,31 @@ var daemonRunCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		// Bootstrap the federation directory from ~/.tether/catalog/. Runs
-		// after migrations (already applied via store.Open in app.New) and
-		// BEFORE the HTTP listener binds (server.Run, below) so the daemon
-		// publishes a fully-populated /registry surface on startup-complete.
-		// Non-force: existing rows (matched by callback.target) are left
-		// alone; only new files import. Operators apply catalog drift via
-		// `mux registry bootstrap --force`.
+		// Bootstrap the federation directory before the listener binds so the
+		// daemon publishes a deduped, substrate-attributed /registry surface at
+		// startup-complete.
 		if svc.Registry != nil && svc.CatalogRoot != "" {
 			report, err := svc.Registry.BootstrapFromCatalog(ctx, svc.CatalogRoot, false)
 			if err != nil {
-				log.Printf("registry bootstrap: %v", err)
+				log.Printf("registry bootstrap (tether catalog): %v", err)
 			} else {
-				log.Printf("registry bootstrap: imported=%d skipped=%d refreshed=%d errors=%d",
-					report.Imported, report.Skipped, report.Refreshed, len(report.Errors))
+				log.Printf("registry bootstrap (tether catalog): imported=%d attached=%d skipped=%d refreshed=%d errors=%d",
+					report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
+				for _, e := range report.Errors {
+					log.Printf("registry bootstrap error: %s: %s", e.Path, e.Reason)
+				}
+			}
+			if attached, err := registry.BackfillTetherExternalIDs(ctx, svc.Registry, svc.CatalogRoot); err != nil {
+				log.Printf("registry bootstrap (tether external-id backfill): %v", err)
+			} else {
+				log.Printf("registry bootstrap (tether external-id backfill): attached=%d", attached)
+			}
+			report, err = registry.BootstrapFromCerberus(ctx, svc.Registry, "", false, true)
+			if err != nil {
+				log.Printf("registry bootstrap (cerberus): %v", err)
+			} else {
+				log.Printf("registry bootstrap (cerberus): imported=%d attached=%d skipped=%d refreshed=%d errors=%d",
+					report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
 				for _, e := range report.Errors {
 					log.Printf("registry bootstrap error: %s: %s", e.Path, e.Reason)
 				}
@@ -283,6 +296,14 @@ func (a *serviceAdapter) AttachedClients(id string) int {
 
 func (a *serviceAdapter) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, error) {
 	return a.svc.ResumeLogicalAgent(logicalAgentID)
+}
+
+func (a *serviceAdapter) GetLogicalAgentPolicy(logicalAgentID string) (agent.LogicalAgentPolicy, error) {
+	return a.svc.GetLogicalAgentPolicy(logicalAgentID)
+}
+
+func (a *serviceAdapter) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error) {
+	return a.svc.UpdateLogicalAgentPolicy(policy)
 }
 
 func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {

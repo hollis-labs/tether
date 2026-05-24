@@ -1,4 +1,4 @@
-import { cn } from '@hollis-labs/sysop-ui'
+import { cn } from '@hollis-labs/sysop-ui/ui'
 import type { NameCount } from '../api/client'
 
 /**

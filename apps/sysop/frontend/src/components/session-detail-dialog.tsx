@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Hourglass, Keyboard, Maximize2, Radio, RotateCw, Save, Send, Square, Terminal } from 'lucide-react'
 import {
+  Button,
   CopyableId,
   DetailDialog,
   DetailSection,
@@ -8,9 +9,38 @@ import {
   StatusBadge,
   cn,
   formatRelativeTime,
-} from '@hollis-labs/sysop-ui'
+} from '@hollis-labs/sysop-ui/ui'
 import type { SessionDetailInfo } from '../api/client'
 import { useCopy } from './json-payload'
+
+export type SessionActionKind = 'turn' | 'input' | 'checkpoint' | 'resume' | 'resize' | 'wait'
+
+export function isLiveSessionState(state: string): boolean {
+  return state === 'ready' || state === 'launching' || state === 'running'
+}
+
+export function isTerminalSessionState(state: string): boolean {
+  return state === 'completed' || state === 'failed' || state === 'killed'
+}
+
+export function sessionLifecycleLabel(state: string): string {
+  if (state === 'created') return 'Created only'
+  if (state === 'ready' || state === 'launching') return 'Launching'
+  if (state === 'running') return 'Live runtime'
+  if (isTerminalSessionState(state)) return 'Ended'
+  return 'Unknown'
+}
+
+export function sessionLifecycleHint(state: string): string {
+  if (state === 'created') return 'Row exists, but no live runtime is attached yet.'
+  if (state === 'ready') return 'Runtime is allocated and preparing to hand off to normal interaction.'
+  if (state === 'launching') return 'Daemon is still bringing the runtime up.'
+  if (state === 'running') return 'Session is live; stream, input, wait, and stop apply here.'
+  if (state === 'completed') return 'Session exited normally. Resume starts a new session from checkpoint.'
+  if (state === 'failed') return 'Session exited with failure. Resume starts a new session from checkpoint.'
+  if (state === 'killed') return 'Session was stopped or killed. Resume starts a new session from checkpoint.'
+  return 'Lifecycle state is not recognized by this client.'
+}
 
 /** Parse a stored JSON string to a value; fall back to the raw string. */
 function parseJson(raw: string): unknown {
@@ -74,6 +104,20 @@ function CopyIconButton({ text, label }: { text: string; label: string }) {
   )
 }
 
+function CopyCommandButton({ text, label }: { text: string; label: string }) {
+  const { copied, copy } = useCopy()
+  return (
+    <Button variant="outline" size="sm" onClick={() => copy(text)} title={text}>
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-status-indexed" />
+      ) : (
+        <Terminal className="h-3.5 w-3.5" />
+      )}
+      {copied ? 'Copied' : label}
+    </Button>
+  )
+}
+
 /**
  * Detail view for one session — meta, lifecycle events, client attachments,
  * the launch plan, and the logical agent's checkpoints. Fed by the sysop
@@ -84,17 +128,26 @@ export function SessionDetailDialog({
   loading,
   error,
   onClose,
+  onAction,
+  onStop,
+  onStream,
+  onPolicy,
 }: {
   detail: SessionDetailInfo | null
   loading: boolean
   error: string | null
   onClose: () => void
+  onAction?: (kind: SessionActionKind, detail: SessionDetailInfo) => void
+  onStop?: (detail: SessionDetailInfo) => void
+  onStream?: (detail: SessionDetailInfo) => void
+  onPolicy?: (detail: SessionDetailInfo) => void
 }) {
   const open = loading || error !== null || detail !== null
   const s = detail?.session
   const launchPlan = detail?.launch_plan ? parseJson(detail.launch_plan) : null
   const launchProfile = planField(launchPlan, 'launch_id') || s?.launch_id || ''
   const bootProfilePath = planField(launchPlan, 'boot_profile_file')
+  const liveState = s ? isLiveSessionState(s.state) : false
 
   return (
     <DetailDialog
@@ -108,6 +161,116 @@ export function SessionDetailDialog({
             <CopyableId id={s.id} label={s.id.slice(0, 16)} />
             <span>created {formatRelativeTime(s.created_at)}</span>
             <span>updated {formatRelativeTime(s.updated_at)}</span>
+          </div>
+        ) : null
+      }
+      footer={
+        detail && s ? (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStream?.(detail)}
+                disabled={!liveState}
+                title={liveState ? 'Open live output stream' : 'Live attach only applies to launched runtime-backed sessions.'}
+              >
+                <Radio className="h-3.5 w-3.5" />
+                Live
+              </Button>
+              <CopyCommandButton text={`mux sessions attach ${s.id}`} label="Attach" />
+              <CopyCommandButton text={`mux sessions tail --follow ${s.id}`} label="Tail" />
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStop?.(detail)}
+                disabled={!liveState}
+                title={liveState ? 'Stop live runtime' : 'Stop only applies while the runtime is live.'}
+              >
+                <Square className="h-3.5 w-3.5" />
+                Stop Live
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onPolicy?.(detail)}
+                disabled={!s.logical_agent_id}
+                title={
+                  s.logical_agent_id
+                    ? 'Edit daemon-honored logical agent policy.'
+                    : 'No logical agent is associated.'
+                }
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Policy
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAction?.('resume', detail)}
+                disabled={!s.logical_agent_id}
+                title={
+                  s.logical_agent_id
+                    ? 'Start a new session from the latest checkpoint for this logical agent.'
+                    : 'No logical agent is associated.'
+                }
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                New From Checkpoint
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAction?.('wait', detail)}
+                disabled={!liveState}
+                title={liveState ? 'Wait for session exit' : 'Wait only applies while the runtime is live.'}
+              >
+                <Hourglass className="h-3.5 w-3.5" />
+                Wait
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAction?.('resize', detail)}
+                disabled={!liveState}
+                title={liveState ? 'Resize session PTY' : 'Resize only applies while the runtime is live.'}
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                Resize
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAction?.('checkpoint', detail)}
+                disabled={!s.logical_agent_id}
+                title={s.logical_agent_id ? 'Create checkpoint' : 'No logical agent is associated.'}
+              >
+                <Save className="h-3.5 w-3.5" />
+                Checkpoint
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAction?.('input', detail)}
+                disabled={!liveState}
+                title={liveState ? 'Send raw PTY input' : 'Raw input only applies while the runtime is live.'}
+              >
+                <Keyboard className="h-3.5 w-3.5" />
+                Input
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => onAction?.('turn', detail)}
+                disabled={!liveState}
+                title={liveState ? 'Send agent turn' : 'Turns only apply while the runtime is live.'}
+              >
+                <Send className="h-3.5 w-3.5" />
+                Turn
+              </Button>
+            </div>
           </div>
         ) : null
       }
@@ -134,8 +297,20 @@ export function SessionDetailDialog({
               <Field label="PID">{s.pid ?? '—'}</Field>
               <Field label="Exit code">{s.exit_code ?? '—'}</Field>
               <Field label="Ended">{s.ended_at ? formatRelativeTime(s.ended_at) : '—'}</Field>
+              <Field label="Lifecycle">{sessionLifecycleLabel(s.state)}</Field>
               {detail.group_id && <Field label="Group">{detail.group_id}</Field>}
             </dl>
+            <p className="mt-3 text-[12px] text-text-soft">{sessionLifecycleHint(s.state)}</p>
+            {s.logical_agent_id && (
+              <p className="mt-2 text-[12px] text-text-subtle">
+                Checkpoint resume does not reopen this row. It creates a new session for the same
+                logical agent from its latest checkpoint and stored launch profile.
+              </p>
+            )}
+            <p className="mt-2 text-[12px] text-text-subtle">
+              Attach, retention, and checkpoint cleanup policies are still backend-defined. Sysop
+              does not expose overrides until the daemon has a real policy surface.
+            </p>
           </DetailSection>
 
           <DetailSection title={`Events (${detail.events.length})`}>

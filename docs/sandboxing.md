@@ -1,13 +1,15 @@
 # Sandboxing
 
-Agent Mux can constrain what a session is allowed to do by running it under a **sandbox profile**. Profiles restrict filesystem writes to sensitive paths, outbound network access, and subprocess spawning.
+Tether can constrain what a session is allowed to do by running it under a
+**sandbox profile**. Profiles restrict filesystem writes to sensitive paths,
+outbound network access, and subprocess spawning.
 
 ## How it works
 
 Every agent in your catalog can reference a named profile:
 
 ```yaml
-# ~/.agent-mux/catalog/agents/my-agent.yaml
+# ~/.tether/catalog/agents/my-agent.yaml
 id: my-agent
 name: My Agent
 permissions:
@@ -93,7 +95,7 @@ To run an agent without a sandbox, omit `default_sandbox` from the agent's YAML 
 
 ## Adding a custom profile
 
-Create `~/.agent-mux/catalog/sandbox-profiles/my-profile.yaml`:
+Create `~/.tether/catalog/sandbox-profiles/my-profile.yaml`:
 
 ```yaml
 id: my-profile

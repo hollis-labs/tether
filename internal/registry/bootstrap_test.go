@@ -233,6 +233,76 @@ func TestBootstrap_FirstStart_ImportsAllValidFiles(t *testing.T) {
 	}
 }
 
+func TestBootstrapFromCerberus_DedupsAgainstTetherAndWritesURN(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+
+	tetherRoot := t.TempDir()
+	writeBootstrapFile(t, filepath.Join(tetherRoot, "projects"), "clockwork.yaml", `id: clockwork
+name: Clockwork
+repo_root: /repos/clockwork
+tracking_root: /tracking/clockwork
+`)
+
+	if _, err := registry.BootstrapFromCatalog(ctx, svc, tetherRoot, false); err != nil {
+		t.Fatalf("BootstrapFromCatalog: %v", err)
+	}
+	if _, err := registry.BackfillTetherExternalIDs(ctx, svc, tetherRoot); err != nil {
+		t.Fatalf("BackfillTetherExternalIDs: %v", err)
+	}
+
+	cerberusHome := t.TempDir()
+	projectPath := writeBootstrapFile(t, cerberusHome, "clockwork.cerberus.yaml", `kind: cerberus-project/v1
+owner: clockwork
+namespace: local
+project:
+  id: clockwork
+  name: Clockwork
+resources:
+  - id: api
+    type: service
+    connector: noop
+`)
+	writeBootstrapFile(t, cerberusHome, "registry.yaml", `version: 1
+entries:
+  - owner: clockwork
+    namespace: local
+    path: `+projectPath+`
+    kind: cerberus-project/v1
+    registered_at: 2026-05-24T12:00:00Z
+`)
+
+	report, err := registry.BootstrapFromCerberus(ctx, svc, cerberusHome, false, true)
+	if err != nil {
+		t.Fatalf("BootstrapFromCerberus: %v", err)
+	}
+	if report.Attached != 1 || report.Imported != 0 {
+		t.Fatalf("report = %+v; want attached=1 imported=0", report)
+	}
+
+	projects, err := svc.Search(ctx, registry.KindProject, registry.Filter{Status: registry.StatusAny})
+	if err != nil {
+		t.Fatalf("Search projects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("projects len = %d, want 1", len(projects))
+	}
+	if ext, ok := projects[0].ExternalIDFor("tether"); !ok || ext.ExternalID != "clockwork" {
+		t.Fatalf("missing tether external id: %+v", projects[0].ExternalIDs)
+	}
+	if ext, ok := projects[0].ExternalIDFor("cerberus"); !ok || ext.ExternalID != "clockwork" {
+		t.Fatalf("missing cerberus external id: %+v", projects[0].ExternalIDs)
+	}
+
+	b, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read cerberus project: %v", err)
+	}
+	if !strings.Contains(string(b), "registry_urn: "+projects[0].URN) {
+		t.Fatalf("registry_urn write-back missing from %s:\n%s", projectPath, string(b))
+	}
+}
+
 func TestBootstrap_Idempotent_SecondRunSkipsAll(t *testing.T) {
 	svc := newService(t)
 	root := newCatalogRoot(t)

@@ -11,7 +11,7 @@ var catalogPath string
 
 var rootCmd = &cobra.Command{
 	Use:   "mux",
-	Short: "Agent Mux — local agent session control plane",
+	Short: "Tether — local agent session control plane",
 }
 
 func init() {

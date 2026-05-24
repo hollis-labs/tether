@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	agentmodel "github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -28,14 +30,30 @@ type CheckpointStore interface {
 // LogicalAgentSummary is the minimal projection the TUI needs to display
 // logical agents and decide whether resume is available.
 type LogicalAgentSummary struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	LaunchID string `json:"launch_id,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	LaunchID         string `json:"launch_id,omitempty"`
+	CheckpointPolicy string `json:"checkpoint_policy,omitempty"`
+	CheckpointStatus string `json:"checkpoint_status,omitempty"`
 }
 
 // LogicalAgentListResponse is the collection response for GET /logical-agents.
 type LogicalAgentListResponse struct {
 	Agents []LogicalAgentSummary `json:"agents"`
+}
+
+type LogicalAgentPolicyResponse struct {
+	LogicalAgentID   string `json:"logical_agent_id"`
+	Name             string `json:"name,omitempty"`
+	LaunchID         string `json:"launch_id,omitempty"`
+	CheckpointPolicy string `json:"checkpoint_policy"`
+	CheckpointStatus string `json:"checkpoint_status,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
+}
+
+type LogicalAgentPolicyUpdateRequest struct {
+	CheckpointPolicy string `json:"checkpoint_policy,omitempty"`
+	CheckpointStatus string `json:"checkpoint_status,omitempty"`
 }
 
 // CheckpointCreateRequest mirrors the free-form shape accepted by
@@ -98,10 +116,10 @@ func checkpointToDTO(c checkpoint.Checkpoint) CheckpointDTO {
 }
 
 // registerCheckpointRoutes wires the checkpoint and logical-agent
-// checkpoint routes onto mux. No-op when either dependency is nil —
+// checkpoint routes onto mux. No-op when Service is nil —
 // lets tests build partial servers.
 func (s *Server) registerCheckpointRoutes(mux *http.ServeMux) {
-	if s.Service == nil || s.Checkpoints == nil {
+	if s.Service == nil {
 		return
 	}
 	// POST /sessions/{id}/checkpoint is parameterised but shares the
@@ -117,6 +135,10 @@ func (s *Server) handleLogicalAgentsCollection(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 		return
 	}
+	if s.Checkpoints == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "checkpoints not configured")
+		return
+	}
 	rows, err := s.Checkpoints.ListLogicalAgents()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -124,10 +146,14 @@ func (s *Server) handleLogicalAgentsCollection(w http.ResponseWriter, r *http.Re
 	}
 	out := make([]LogicalAgentSummary, 0, len(rows))
 	for _, r := range rows {
+		mode, _ := agentmodel.NormalizeCheckpointPolicy(r.CheckpointPolicy)
+		status, _ := agentmodel.DecodeCheckpointStatus(r.PoliciesJSON)
 		out = append(out, LogicalAgentSummary{
-			ID:       r.ID,
-			Name:     r.Name,
-			LaunchID: r.LaunchID,
+			ID:               r.ID,
+			Name:             r.Name,
+			LaunchID:         r.LaunchID,
+			CheckpointPolicy: string(mode),
+			CheckpointStatus: status,
 		})
 	}
 	writeJSON(w, http.StatusOK, LogicalAgentListResponse{Agents: out})
@@ -154,6 +180,10 @@ func (s *Server) handleLogicalAgentsItem(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 			return
 		}
+		if s.Checkpoints == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "checkpoints not configured")
+			return
+		}
 		s.handleListCheckpoints(w, r, id)
 	case "resume":
 		if r.Method != http.MethodPost {
@@ -161,6 +191,15 @@ func (s *Server) handleLogicalAgentsItem(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		s.handleResumeLogicalAgent(w, r, id)
+	case "policy":
+		switch r.Method {
+		case http.MethodGet:
+			s.handleGetLogicalAgentPolicy(w, r, id)
+		case http.MethodPatch:
+			s.handleUpdateLogicalAgentPolicy(w, r, id)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		}
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}
@@ -267,4 +306,59 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request
 		ProviderKind:   res.ProviderKind,
 		LogicalAgentID: res.LogicalAgentID,
 	})
+}
+
+func logicalAgentPolicyResponse(policy agentmodel.LogicalAgentPolicy) LogicalAgentPolicyResponse {
+	return LogicalAgentPolicyResponse{
+		LogicalAgentID:   policy.LogicalAgentID,
+		Name:             policy.Name,
+		LaunchID:         policy.LaunchID,
+		CheckpointPolicy: string(policy.CheckpointPolicy),
+		CheckpointStatus: policy.CheckpointStatus,
+		UpdatedAt:        policy.UpdatedAt,
+	}
+}
+
+func (s *Server) handleGetLogicalAgentPolicy(w http.ResponseWriter, _ *http.Request, agentID string) {
+	policy, err := s.Service.GetLogicalAgentPolicy(agentID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "logical agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, logicalAgentPolicyResponse(policy))
+}
+
+func (s *Server) handleUpdateLogicalAgentPolicy(w http.ResponseWriter, r *http.Request, agentID string) {
+	var req LogicalAgentPolicyUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	mode, err := agentmodel.NormalizeCheckpointPolicy(req.CheckpointPolicy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+	policy, err := s.Service.UpdateLogicalAgentPolicy(agentmodel.LogicalAgentPolicy{
+		LogicalAgentID:   agentID,
+		CheckpointPolicy: mode,
+		CheckpointStatus: req.CheckpointStatus,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no logical_agents row") {
+			writeError(w, http.StatusNotFound, CodeNotFound, "logical agent not found")
+			return
+		}
+		if strings.Contains(err.Error(), "unsupported checkpoint_policy") || strings.Contains(err.Error(), "logical_agent_id required") {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, logicalAgentPolicyResponse(policy))
 }

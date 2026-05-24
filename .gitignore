@@ -4,6 +4,7 @@
 /hadrond
 /.claude/
 /coverage.out
+**/.DS_Store
 
 # Per-machine session handoff (compaction breadcrumb). Source-of-truth lives
 # in sprint files + ADRs + .nanite/agents/*.md boot contexts.

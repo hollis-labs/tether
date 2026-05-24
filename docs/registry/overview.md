@@ -2,7 +2,7 @@
 
 The Mux registry is Tether's federation directory service: cross-substrate identity discovery for agents and projects (v060-01 scope). Substrates retain operational ownership of their files; Mux owns the public-identity surface used to find them.
 
-This doc is the integration guide for substrate authors. The full architecture rationale lives in [ADR 0041](../adr/0041-registry-directory-service.md); the API reference is in [docs/api/README.md §Registry](../api/README.md#registry).
+This doc is the integration guide for substrate authors. The full architecture rationale lives in [ADR 0041](../adr/0041-registry-directory-service.md) and [ADR 0043](../adr/0043-cross-substrate-dedup.md); the API reference is in [docs/api/README.md §Registry](../api/README.md#registry).
 
 ## Mental model
 
@@ -106,6 +106,41 @@ POST `/registry/{kind}/{urn}/sync` — refreshes thin-profile columns from the c
 
 All filters AND together. Results are alphabetical by `display_name`. No pagination v1 (the registry is expected to hold low thousands of rows).
 
+## Cross-substrate dedup
+
+v060-02 adds substrate-local identifier attachments:
+
+```json
+{
+  "external_ids": [
+    {"substrate": "tether", "external_id": "clockwork"},
+    {"substrate": "cerberus", "external_id": "clockwork"}
+  ]
+}
+```
+
+These attachments are the dedup primitive. Callers resolve them with:
+
+- `GET /registry/{kind}?external_id=<id>&substrate=<sub>`
+- `tether_registry_lookup_by`
+- `mux registry lookup-by --kind <k> --external-id <id> [--substrate <sub>]`
+
+Bootstrap ordering is deterministic:
+
+1. Tether catalog bootstrap
+2. Tether external-id backfill
+3. Cerberus index bootstrap
+
+That ordering ensures Cerberus can attach its external ID onto an existing
+Tether-imported project row instead of minting a duplicate URN.
+
+### URN write-back
+
+Supported local-file bootstraps write `registry_urn: <urn>` back into the
+source YAML so the file carries its shared-directory identity directly. The
+write-back is idempotent and conservative: if the file already has a different
+`registry_urn`, Tether warns and leaves it unchanged.
+
 ## Link-kind vocabulary
 
 The `links.kind` column is free-form text (D16) — substrates can invent kinds without a schema change. The v1 blessed vocabulary that consumers SHOULD target for cross-substrate discovery:
@@ -158,7 +193,7 @@ Six operations × three transports = the full v060-01 surface.
 | Deregister | `DELETE /registry/{kind}/{urn}` | `tether_registry_deregister` | `mux registry deregister <urn>` |
 | Sync | `POST /registry/{kind}/{urn}/sync` | `tether_registry_sync` | `mux registry sync <urn>` |
 
-Plus the bootstrap operation: `POST /registry/bootstrap?force=true` (HTTP) / `mux registry bootstrap [--force]` (CLI). No MCP tool for bootstrap — it's an operator concern, not an agent-loop concern.
+Plus the bootstrap operation: `POST /registry/bootstrap?force=true&substrate=tether|cerberus` (HTTP) / `mux registry bootstrap [--force] [--substrate tether|cerberus]` (CLI). No MCP tool for bootstrap — it's an operator concern, not an agent-loop concern.
 
 ## What's next (v060-02 + v060-03)
 

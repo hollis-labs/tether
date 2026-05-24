@@ -16,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -60,6 +61,9 @@ type fakeLaunchService struct {
 
 	resumeRes LaunchResult
 	resumeErr error
+
+	policyRes agent.LogicalAgentPolicy
+	policyErr error
 
 	runtimeHealthOK map[string]bool
 }
@@ -156,6 +160,24 @@ func (f *fakeLaunchService) ResizeSession(id string, rows, cols uint16) error {
 
 func (f *fakeLaunchService) ResumeLogicalAgent(_ string) (LaunchResult, error) {
 	return f.resumeRes, f.resumeErr
+}
+
+func (f *fakeLaunchService) GetLogicalAgentPolicy(_ string) (agent.LogicalAgentPolicy, error) {
+	return f.policyRes, f.policyErr
+}
+
+func (f *fakeLaunchService) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error) {
+	if f.policyErr != nil {
+		return agent.LogicalAgentPolicy{}, f.policyErr
+	}
+	if policy.LogicalAgentID != "" {
+		f.policyRes.LogicalAgentID = policy.LogicalAgentID
+	}
+	if policy.CheckpointPolicy != "" {
+		f.policyRes.CheckpointPolicy = policy.CheckpointPolicy
+	}
+	f.policyRes.CheckpointStatus = policy.CheckpointStatus
+	return f.policyRes, nil
 }
 
 func (f *fakeLaunchService) RuntimeHealth(id string) (RuntimeHealthResult, bool) {

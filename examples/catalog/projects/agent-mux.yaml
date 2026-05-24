@@ -1,10 +1,10 @@
 id: agent-mux
-name: Agent Mux
-repo_root: ~/Projects-apps/agent-mux
-tracking_root: ~/Projects-apps/agent-workspaces/execution/agent-mux/
+name: Tether
+repo_root: ~/dev/hollis-labs/apps/tether
+tracking_root: ~/dev/hollis-labs/agent-workspaces/execution/tether/
 boot_fragments:
   - boot/common.md
   - boot/agent-mux.md
 workspace:
   default_mode: hybrid
-  session_root: ~/.agent-mux/workspaces/agent-mux
+  session_root: ~/.tether/workspaces/tether

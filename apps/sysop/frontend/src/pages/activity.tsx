@@ -3,20 +3,17 @@ import { Activity, RefreshCw, Tags, Wrench } from 'lucide-react'
 import {
   Button,
   CopyableId,
-  DataTable,
   DetailDialog,
   DetailSection,
   EmptyState,
-  JsonViewer,
-  ListPageLayout,
   Pill,
   SummaryCards,
-  TabStrip,
   cn,
   formatRelativeTime,
-  type ColumnDef,
-  type TabStripItem,
-} from '@hollis-labs/sysop-ui'
+  JsonViewer,
+} from '@hollis-labs/sysop-ui/ui'
+import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
+import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
 import { useApi } from '../api/context'
 import type { EventInfo, ToolCallInfo } from '../api/client'
 import { JsonModal, PayloadActions, PayloadSummary } from '../components/json-payload'

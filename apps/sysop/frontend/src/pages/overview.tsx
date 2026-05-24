@@ -7,7 +7,7 @@ import {
   EmptyState,
   StatusBadge,
   cn,
-} from '@hollis-labs/sysop-ui'
+} from '@hollis-labs/sysop-ui/ui'
 import { useApi } from '../api/context'
 import type { NameCount, OverviewInfo } from '../api/client'
 import { BarList, CompositionBars, SignalBars, Sparkbars } from '../components/charts'

@@ -102,6 +102,22 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		),
 	), a.handleRegistryLookup)
 
+	a.addTool(s, mcp.NewTool("tether_registry_lookup_by",
+		mcp.WithDescription(
+			"Resolve a substrate-local external ID to one registry profile. Returns 0 or 1 row; "+
+				"use this when you know a local ID like a Tether catalog slug or Cerberus owner and "+
+				"want the canonical registry URN. Read-only; no scope required.",
+		),
+		mcp.WithString("kind", mcp.Required(),
+			mcp.Description("Entity kind to resolve: 'agent', 'project', or 'group'."),
+			mcp.Enum("agent", "project", "group"),
+		),
+		mcp.WithString("external_id", mcp.Required(),
+			mcp.Description("Substrate-local identifier to resolve."),
+		),
+		mcp.WithString("substrate", mcp.Description("Optional substrate scope such as 'tether' or 'cerberus'.")),
+	), a.handleRegistryLookupBy)
+
 	a.addTool(s, mcp.NewTool("tether_registry_search",
 		mcp.WithDescription(
 			"Search the registry by filter. All filters combine with AND. Result ordering is "+
@@ -212,6 +228,25 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequ
 		return toolError("invalid_request", "urn is required"), nil
 	}
 	out, err := a.svc.Registry.Lookup(ctx, urn)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
+}
+
+func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	kind, errRes := requireKind(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+	externalID := str(req, "external_id")
+	if externalID == "" {
+		return toolError("invalid_request", "external_id is required"), nil
+	}
+	out, err := a.svc.Registry.LookupBy(ctx, kind, externalID, str(req, "substrate"))
 	if err != nil {
 		return mapRegistryErr(err), nil
 	}
@@ -337,10 +372,12 @@ func requireKind(req mcp.CallToolRequest) (registry.Kind, *mcp.CallToolResult) {
 		return registry.KindAgent, nil
 	case "project":
 		return registry.KindProject, nil
+	case "group":
+		return registry.KindGroup, nil
 	case "":
 		return "", toolError("invalid_request", "kind is required")
 	default:
-		return "", toolError("invalid_request", fmt.Sprintf("unsupported kind %q (expected 'agent' or 'project')", raw))
+		return "", toolError("invalid_request", fmt.Sprintf("unsupported kind %q (expected 'agent', 'project', or 'group')", raw))
 	}
 }
 

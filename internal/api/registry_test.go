@@ -246,6 +246,28 @@ func TestRegistry_Lookup_NotFound(t *testing.T) {
 	}
 }
 
+func TestRegistry_LookupBy_ExternalID(t *testing.T) {
+	r := newRegServer(t)
+	created := registerOne(t, r, "projects", "Clockwork", "")
+	if err := r.svc.AttachExternalID(context.Background(), created.URN, "cerberus", "clockwork"); err != nil {
+		t.Fatalf("AttachExternalID: %v", err)
+	}
+
+	resp, body := r.do(http.MethodGet, "/registry/projects?external_id=clockwork&substrate=cerberus", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var env struct {
+		Project registry.Profile `json:"project"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Project.URN != created.URN {
+		t.Fatalf("lookup-by urn = %q, want %q", env.Project.URN, created.URN)
+	}
+}
+
 func TestRegistry_Search_EmptyReturnsEmptyArray(t *testing.T) {
 	r := newRegServer(t)
 	resp, body := r.do(http.MethodGet, "/registry/agents", nil)
@@ -463,6 +485,38 @@ func TestRegistry_Deregister_NotFound(t *testing.T) {
 		itemURL("agents", "msg://agent/agent-mux/agt_ghost00000"), nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestRegistry_Merge_Happy(t *testing.T) {
+	r := newRegServer(t)
+	src := registerWithCapabilities(t, r, "projects", "Clockwork Draft", "", "tether", []string{"go"})
+	dst := registerWithCapabilities(t, r, "projects", "Clockwork", "", "tether", []string{"sqlite"})
+	if err := r.svc.AttachExternalID(context.Background(), src.URN, "cerberus", "clockwork"); err != nil {
+		t.Fatalf("AttachExternalID: %v", err)
+	}
+
+	resp, body := r.do(http.MethodPost, itemURL("projects", src.URN)+"/merge", map[string]string{"into": dst.URN})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var merged registry.Profile
+	if err := json.Unmarshal(body, &merged); err != nil {
+		t.Fatalf("decode merged: %v", err)
+	}
+	if merged.URN != dst.URN {
+		t.Fatalf("merged urn = %q, want %q", merged.URN, dst.URN)
+	}
+	if len(merged.ExternalIDs) == 0 {
+		t.Fatalf("merged external_ids empty")
+	}
+
+	srcAfter, err := r.svc.Lookup(context.Background(), src.URN)
+	if err != nil {
+		t.Fatalf("lookup src after merge: %v", err)
+	}
+	if srcAfter.Status != registry.StatusMerged || srcAfter.MergedInto != dst.URN {
+		t.Fatalf("src after merge = %+v", srcAfter)
 	}
 }
 

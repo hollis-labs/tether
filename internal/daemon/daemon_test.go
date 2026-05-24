@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -242,6 +243,58 @@ func TestServer_RunServesHealthAndShutsDown(t *testing.T) {
 	if !closed {
 		t.Error("Close callback was not invoked")
 	}
+	if _, err := os.Stat(pidfile); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("pidfile still exists after shutdown: %v", err)
+	}
+	if _, err := os.Stat(sock); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("socket still exists after shutdown: %v", err)
+	}
+}
+
+func TestServer_RunCloseErrorStillCleansArtifacts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket test requires unix")
+	}
+	dir := shortTempDir(t)
+	sock := filepath.Join(dir, "s.sock")
+	pidfile := filepath.Join(dir, "d.pid")
+	cfg := Config{
+		ListenAddr:      "unix:" + sock,
+		PIDFile:         pidfile,
+		ShutdownTimeout: 2 * time.Second,
+	}
+
+	srv := &Server{
+		Config: cfg,
+		Close: func() error {
+			return errors.New("close failed")
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sock); err == nil {
+			if _, err := os.Stat(pidfile); err == nil {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "close failed") {
+			t.Fatalf("Run error = %v, want close failure", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+
 	if _, err := os.Stat(pidfile); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("pidfile still exists after shutdown: %v", err)
 	}

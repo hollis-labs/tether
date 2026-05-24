@@ -333,6 +333,18 @@ func (s *stubStorage) ListMentionsForMember(context.Context, string, time.Time, 
 func (s *stubStorage) FindByDisplayName(context.Context, string) ([]registry.Profile, error) {
 	panic("stubStorage.FindByDisplayName: unexpected call")
 }
+func (s *stubStorage) LookupExternalIDsForURN(context.Context, string) ([]registry.ExternalID, error) {
+	panic("stubStorage.LookupExternalIDsForURN: unexpected call")
+}
+func (s *stubStorage) LookupURNByExternalID(context.Context, registry.Kind, string, string) (string, bool, error) {
+	panic("stubStorage.LookupURNByExternalID: unexpected call")
+}
+func (s *stubStorage) AttachExternalID(context.Context, string, string, string) error {
+	panic("stubStorage.AttachExternalID: unexpected call")
+}
+func (s *stubStorage) DetachExternalID(context.Context, string, string) error {
+	panic("stubStorage.DetachExternalID: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's
@@ -398,6 +410,74 @@ func TestService_Lookup_HappyAndNotFound(t *testing.T) {
 
 	if _, err := svc.Lookup(ctx, "msg://agent/agent-mux/agt_absent00001"); !errors.Is(err, registry.ErrNotFound) {
 		t.Errorf("absent err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestService_Merge_MovesExternalIDsAndMarksSource(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+
+	src, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName:   "Clockwork",
+		Capabilities:  []string{"go"},
+		LastUpdatedBy: "tester",
+		KindMeta:      json.RawMessage(`{"src":{"owner":"clockwork"}}`),
+	})
+	if err != nil {
+		t.Fatalf("register src: %v", err)
+	}
+	dst, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName:   "Clockwork Canonical",
+		Capabilities:  []string{"sqlite"},
+		LastUpdatedBy: "tester",
+		KindMeta:      json.RawMessage(`{"dst":{"owner":"clockwork"}}`),
+	})
+	if err != nil {
+		t.Fatalf("register dst: %v", err)
+	}
+	if err := svc.AttachExternalID(ctx, src.URN, "cerberus", "clockwork"); err != nil {
+		t.Fatalf("attach src extid: %v", err)
+	}
+	if err := svc.AttachExternalID(ctx, dst.URN, "tether", "clockwork"); err != nil {
+		t.Fatalf("attach dst extid: %v", err)
+	}
+
+	merged, err := svc.Merge(ctx, src.URN, dst.URN)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if !stringSetEqual(merged.Capabilities, []string{"go", "sqlite"}) {
+		t.Fatalf("merged capabilities = %v", merged.Capabilities)
+	}
+	if _, ok := merged.ExternalIDFor("tether"); !ok {
+		t.Fatalf("merged dst missing tether external id: %+v", merged.ExternalIDs)
+	}
+	if ext, ok := merged.ExternalIDFor("cerberus"); !ok || ext.ExternalID != "clockwork" {
+		t.Fatalf("merged dst missing cerberus external id: %+v", merged.ExternalIDs)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(merged.KindMeta, &meta); err != nil {
+		t.Fatalf("unmarshal kind_meta: %v", err)
+	}
+	if _, ok := meta["src"]; !ok {
+		t.Fatalf("merged kind_meta missing src payload: %v", meta)
+	}
+	if _, ok := meta["dst"]; !ok {
+		t.Fatalf("merged kind_meta missing dst payload: %v", meta)
+	}
+
+	srcAfter, err := svc.Lookup(ctx, src.URN)
+	if err != nil {
+		t.Fatalf("lookup src after merge: %v", err)
+	}
+	if srcAfter.Status != registry.StatusMerged {
+		t.Fatalf("src status = %q, want %q", srcAfter.Status, registry.StatusMerged)
+	}
+	if srcAfter.MergedInto != dst.URN {
+		t.Fatalf("src merged_into = %q, want %q", srcAfter.MergedInto, dst.URN)
+	}
+	if len(srcAfter.ExternalIDs) != 0 {
+		t.Fatalf("src external_ids after merge = %+v, want empty", srcAfter.ExternalIDs)
 	}
 }
 

@@ -22,6 +22,7 @@ func TestMigration0015_tablesAndIndexes(t *testing.T) {
 	wantTables := []string{
 		"registry_capabilities",
 		"registry_entries",
+		"registry_external_ids",
 		"registry_links",
 		"registry_skills",
 	}
@@ -36,6 +37,7 @@ func TestMigration0015_tablesAndIndexes(t *testing.T) {
 		"idx_registry_entries_kind_project",
 		"idx_registry_entries_kind_role",
 		"idx_registry_entries_kind_status",
+		"idx_registry_external_ids_lookup",
 		"idx_registry_skills_name",
 	}
 	if !sliceEqual(gotIndexes, wantIndexes) {

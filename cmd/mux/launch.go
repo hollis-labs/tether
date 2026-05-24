@@ -73,7 +73,7 @@ var launchCmd = &cobra.Command{
 		}
 		if err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
-				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
 			}
 			return err
 		}

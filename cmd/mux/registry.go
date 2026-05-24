@@ -8,8 +8,10 @@ package main
 //
 //	mux registry register   --kind {agent|project} --file <path> [--print-urn-only]
 //	mux registry lookup     <urn> [--json]
+//	mux registry lookup-by  --kind <kind> --external-id <id> [--substrate <sub>] [--json]
 //	mux registry search     --kind {agent|project} [filters...] [--json]
 //	mux registry update-self <urn> --file <patch-file>
+//	mux registry merge      <urn-src> <urn-dst> [--dry-run] [--yes]
 //	mux registry deregister <urn>
 //	mux registry sync       <urn>
 //
@@ -198,6 +200,11 @@ Output:
 // ─── lookup ─────────────────────────────────────────────────────────────────
 
 var lookupJSON bool
+var (
+	lookupByKind       string
+	lookupByExternalID string
+	lookupBySubstrate  string
+)
 
 var registryLookupCmd = &cobra.Command{
 	Use:   "lookup <urn>",
@@ -215,6 +222,33 @@ var registryLookupCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "registry: not found: %s\n", urn)
 				return &exitErr{code: 1, err: err}
 			}
+			return classifyErr(err)
+		}
+		if lookupJSON {
+			return printJSON(out)
+		}
+		printProfile(out)
+		return nil
+	},
+}
+
+var registryLookupByCmd = &cobra.Command{
+	Use:   "lookup-by",
+	Short: "Look up a Profile by substrate-local external ID",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if lookupByKind == "" {
+			return validationErr("registry lookup-by: --kind is required")
+		}
+		if lookupByExternalID == "" {
+			return validationErr("registry lookup-by: --external-id is required")
+		}
+		kind := registry.Kind(lookupByKind)
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := rc.LookupBy(cmdCtx(cmd), kind, lookupByExternalID, lookupBySubstrate)
+		if err != nil {
 			return classifyErr(err)
 		}
 		if lookupJSON {
@@ -291,6 +325,10 @@ Output:
 // ─── update-self ────────────────────────────────────────────────────────────
 
 var updateSelfFile string
+var (
+	mergeDryRun bool
+	mergeYes    bool
+)
 
 var registryUpdateSelfCmd = &cobra.Command{
 	Use:   "update-self <urn>",
@@ -346,6 +384,42 @@ Partial-merge semantics (D5):
 	},
 }
 
+var registryMergeCmd = &cobra.Command{
+	Use:   "merge <urn-src> <urn-dst>",
+	Short: "Merge one registry row into another",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		urnSrc, urnDst := args[0], args[1]
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		if mergeDryRun {
+			src, err := rc.Lookup(cmdCtx(cmd), urnSrc)
+			if err != nil {
+				return classifyErr(err)
+			}
+			dst, err := rc.Lookup(cmdCtx(cmd), urnDst)
+			if err != nil {
+				return classifyErr(err)
+			}
+			fmt.Printf("dry-run merge:\n  src: %s (%s)\n  dst: %s (%s)\n", src.URN, src.DisplayName, dst.URN, dst.DisplayName)
+			fmt.Printf("  move external_ids: %d\n  append capabilities: %d\n  append skills: %d\n  append links: %d\n",
+				len(src.ExternalIDs), len(src.Capabilities), len(src.Skills), len(src.Links))
+			return nil
+		}
+		if !mergeYes {
+			return validationErr("registry merge: pass --yes to execute or --dry-run to inspect")
+		}
+		out, err := rc.Merge(cmdCtx(cmd), urnSrc, urnDst)
+		if err != nil {
+			return classifyErr(err)
+		}
+		printProfile(out)
+		return nil
+	},
+}
+
 // ─── deregister ─────────────────────────────────────────────────────────────
 
 var registryDeregisterCmd = &cobra.Command{
@@ -373,7 +447,11 @@ status='deprecated'. Search excludes deprecated rows by default;
 
 // ─── bootstrap ──────────────────────────────────────────────────────────────
 
-var bootstrapForce bool
+var (
+	bootstrapForce     bool
+	bootstrapSubstrate string
+	bootstrapWriteBack bool
+)
 
 var registryBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
@@ -396,12 +474,12 @@ output; one bad file does not abort the rest of the bootstrap.`,
 		if err != nil {
 			return classifyErr(err)
 		}
-		report, err := rc.Bootstrap(cmdCtx(cmd), bootstrapForce)
+		report, err := rc.Bootstrap(cmdCtx(cmd), bootstrapForce, bootstrapSubstrate, bootstrapWriteBack)
 		if err != nil {
 			return classifyErr(err)
 		}
-		fmt.Printf("imported:  %d\nskipped:   %d\nrefreshed: %d\nerrors:    %d\n",
-			report.Imported, report.Skipped, report.Refreshed, len(report.Errors))
+		fmt.Printf("imported:  %d\nattached:  %d\nskipped:   %d\nrefreshed: %d\nerrors:    %d\n",
+			report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
 		for _, e := range report.Errors {
 			fmt.Printf("  error %s: %s\n", e.Path, e.Reason)
 		}
@@ -481,6 +559,16 @@ func printProfile(p registry.Profile) {
 	fmt.Printf("updated_at:      %s\n", p.UpdatedAt.UTC().Format(time.RFC3339))
 	if p.Callback != nil {
 		fmt.Printf("callback:        %s://%s\n", p.Callback.Scheme, trimSchemePrefix(p.Callback.Target))
+	}
+	if p.MergedInto != "" {
+		fmt.Printf("merged_into:     %s\n", p.MergedInto)
+	}
+	if len(p.ExternalIDs) > 0 {
+		fmt.Println("external_ids:")
+		for _, ext := range p.ExternalIDs {
+			fmt.Printf("  - substrate:   %s\n", ext.Substrate)
+			fmt.Printf("    external_id: %s\n", ext.ExternalID)
+		}
 	}
 	if len(p.Capabilities) > 0 {
 		fmt.Printf("capabilities:    [%s]\n", strings.Join(p.Capabilities, ", "))
@@ -627,6 +715,9 @@ func resetRegistryFlags() {
 	registerFile = ""
 	registerPrintURN = false
 	lookupJSON = false
+	lookupByKind = ""
+	lookupByExternalID = ""
+	lookupBySubstrate = ""
 	searchKind = ""
 	searchRole = ""
 	searchTitle = ""
@@ -636,7 +727,11 @@ func resetRegistryFlags() {
 	searchStatus = ""
 	searchJSON = false
 	updateSelfFile = ""
+	mergeDryRun = false
+	mergeYes = false
 	bootstrapForce = false
+	bootstrapSubstrate = ""
+	bootstrapWriteBack = true
 }
 
 // cmdCtx returns cmd.Context() if non-nil, otherwise
@@ -661,6 +756,10 @@ func init() {
 	registryRegisterCmd.Flags().BoolVar(&registerPrintURN, "print-urn-only", false, "emit only the minted URN on stdout (pipeable)")
 
 	registryLookupCmd.Flags().BoolVar(&lookupJSON, "json", false, "emit raw JSON instead of the pretty rendering")
+	registryLookupByCmd.Flags().StringVar(&lookupByKind, "kind", "", "registry kind ('agent', 'project', or 'group')")
+	registryLookupByCmd.Flags().StringVar(&lookupByExternalID, "external-id", "", "substrate-local identifier to resolve")
+	registryLookupByCmd.Flags().StringVar(&lookupBySubstrate, "substrate", "", "optional substrate scope ('tether', 'cerberus', etc.)")
+	registryLookupByCmd.Flags().BoolVar(&lookupJSON, "json", false, "emit raw JSON instead of the pretty rendering")
 
 	registrySearchCmd.Flags().StringVar(&searchKind, "kind", "", "registry kind ('agent' or 'project')")
 	registrySearchCmd.Flags().StringVar(&searchRole, "role", "", "filter by role")
@@ -672,14 +771,20 @@ func init() {
 	registrySearchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit raw JSON array instead of the line-per-row rendering")
 
 	registryUpdateSelfCmd.Flags().StringVar(&updateSelfFile, "file", "", "path to a YAML or JSON UpdatePatch document")
+	registryMergeCmd.Flags().BoolVar(&mergeDryRun, "dry-run", false, "show the merge plan without mutating either row")
+	registryMergeCmd.Flags().BoolVar(&mergeYes, "yes", false, "execute the merge without prompting")
 
 	registryBootstrapCmd.Flags().BoolVar(&bootstrapForce, "force", false, "patch existing rows with the catalog YAMLs' current thin profile + bump cached_at")
+	registryBootstrapCmd.Flags().StringVar(&bootstrapSubstrate, "substrate", "", "bootstrap only one substrate ('tether' default, or 'cerberus')")
+	registryBootstrapCmd.Flags().BoolVar(&bootstrapWriteBack, "write-back", true, "write registry_urn back into imported source YAMLs")
 
 	registryCmd.AddCommand(
 		registryRegisterCmd,
 		registryLookupCmd,
+		registryLookupByCmd,
 		registrySearchCmd,
 		registryUpdateSelfCmd,
+		registryMergeCmd,
 		registryDeregisterCmd,
 		registrySyncCmd,
 		registryBootstrapCmd,

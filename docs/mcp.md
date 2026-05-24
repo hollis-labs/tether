@@ -1,6 +1,6 @@
-# Agent Mux — MCP Adapter
+# Tether — MCP Adapter
 
-`mux mcp` starts an MCP stdio server that exposes the agent-mux runtime as
+`mux mcp` starts an MCP stdio server that exposes the Tether runtime as
 tools. Any MCP-capable client — Claude Desktop, Claude Code, Cursor, a custom
 agent, a Hadron blueprint — can call session lifecycle, catalog reads,
 messaging, and boot prompt generation directly from tool calls.
@@ -15,7 +15,7 @@ subprocess; no daemon needs to be running first.
 ### 1. Build the binary
 
 ```bash
-cd ~/Projects-apps/agent-mux
+cd ~/dev/hollis-labs/apps/tether
 make build          # produces bin/mux
 # or install globally:
 go install ./cmd/mux
@@ -28,7 +28,7 @@ go install ./cmd/mux
 ```json
 {
   "mcpServers": {
-    "agent-mux": {
+    "tether": {
       "command": "/path/to/bin/mux",
       "args": ["mcp"],
       "env": {
@@ -45,7 +45,7 @@ go install ./cmd/mux
 ```json
 {
   "mcpServers": {
-    "agent-mux": {
+    "tether": {
       "command": "mux",
       "args": ["--catalog", "/path/to/catalog", "mcp", "--token", "your-token", "--scopes", "session.write,message.write"]
     }
@@ -99,7 +99,7 @@ export AGENT_MUX_MCP_SCOPES=session.write,message.write
 mux mcp
 ```
 
-The token value is opaque — agent-mux does not validate it against any external
+The token value is opaque — Tether does not validate it against any external
 service; it simply confirms one is present. Pick any string. If you're running
 in a trusted local-only context, you can omit auth and only call read-only
 tools.
@@ -151,12 +151,12 @@ It returns JSON grouped by upstream server/domain. Each recommendation includes
 ## Catalog setup
 
 The adapter reads the same catalog as the rest of `mux`. Default catalog root:
-`~/.agent-mux/catalog/`. Override with `--catalog /path/to/catalog`.
+`~/.tether/catalog/`. Override with `--catalog /path/to/catalog`.
 
 Minimum catalog structure for useful MCP sessions:
 
 ```
-~/.agent-mux/catalog/
+~/.tether/catalog/
   global.yaml            — global settings (state_db path, socket path)
   projects/
     myproject.yaml       — project definition
@@ -238,8 +238,8 @@ Read-only; no auth required.
 Resolution order follows Tether's layered skill discovery and then legacy
 skill locations:
 
-1. `<catalog>/skills/<id>.md`, `~/.agent-mux/skills/<id>.md`, and project
-   `.agent-mux/skills/<id>.md`
+1. `<catalog>/skills/<id>.md`, `~/.tether/skills/<id>.md`, and project
+   `.tether/skills/<id>.md`
 2. `~/.tether/skills/<id>.md`
 3. `~/.nanite/skills/<id>.md`
 

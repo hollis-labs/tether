@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -42,6 +43,8 @@ type LaunchService interface {
 	// result. Errors: not_found if no checkpoint exists; conflict if the
 	// agent has never had a session launched (no launch_id).
 	ResumeLogicalAgent(logicalAgentID string) (LaunchResult, error)
+	GetLogicalAgentPolicy(logicalAgentID string) (agent.LogicalAgentPolicy, error)
+	UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error)
 	// RuntimeHealth returns the live health snapshot for a running session.
 	// Returns (zero, false) when the session is not currently registered
 	// in the runtime manager (never launched, already terminal, or unknown).
