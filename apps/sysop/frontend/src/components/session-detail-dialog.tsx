@@ -9,9 +9,9 @@ import {
   StatusBadge,
   cn,
   formatRelativeTime,
+  useCopy,
 } from '@hollis-labs/sysop-ui/ui'
 import type { SessionDetailInfo } from '../api/client'
-import { useCopy } from './json-payload'
 
 export type SessionActionKind = 'turn' | 'input' | 'checkpoint' | 'resume' | 'resize' | 'wait'
 

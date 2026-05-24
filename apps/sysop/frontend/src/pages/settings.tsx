@@ -20,6 +20,11 @@ import {
   DetailSection,
   EmptyState,
   Pill,
+  SettingsField as Field,
+  SettingsGrid as ValueGrid,
+  SettingsNotice,
+  SettingsPanel as ConfigPanel,
+  SettingsStatusPill as RestartPill,
   SummaryCards,
   cn,
 } from '@hollis-labs/sysop-ui/ui'
@@ -107,48 +112,6 @@ function splitLines(raw: string): string[] {
     .filter(Boolean)
 }
 
-function ValueGrid({ children }: { children: ReactNode }) {
-  return (
-    <dl className="grid grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3 text-[12px]">
-      {children}
-    </dl>
-  )
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="contents">
-      <dt className="truncate text-text-subtle">{label}</dt>
-      <dd className="min-w-0 break-words text-text-soft">{children}</dd>
-    </div>
-  )
-}
-
-function RestartPill({ required }: { required: boolean }) {
-  return (
-    <Pill tone={required ? 'warning' : 'success'}>
-      {required ? 'reload required' : 'current'}
-    </Pill>
-  )
-}
-
-function WarningPanel({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
-  return (
-    <div className="rounded border border-status-blocked/30 bg-status-blocked/10 px-3 py-2">
-      <div className="text-[11px] font-semibold uppercase tracking-[.14em] text-status-blocked">
-        {title}
-      </div>
-      <div className="mt-1 text-[12px] text-text-soft">{description}</div>
-    </div>
-  )
-}
-
 function formatUptime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0s'
   const d = Math.floor(seconds / 86400)
@@ -173,27 +136,6 @@ function settingsToForm(settings: SettingsInfo): GlobalSettingsForm {
   }
 }
 
-function ConfigPanel({
-  title,
-  icon,
-  children,
-}: {
-  title: string
-  icon: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <section className="min-w-0 border-b border-border-strong bg-panel last:border-b-0">
-      <div className="flex h-9 items-center gap-2 border-b border-border px-4 text-text-subtle">
-        {icon}
-        <h2 className="text-[11px] font-semibold uppercase tracking-[.18em] text-text-muted">
-          {title}
-        </h2>
-      </div>
-      {children}
-    </section>
-  )
-}
 
 function ResourceActionRow({
   label,
@@ -632,14 +574,16 @@ export function SettingsPage() {
         <ConfigPanel title="MCP Setup" icon={<Plug className="h-3.5 w-3.5" />}>
           <div className="px-4 py-3">
             {settings.mcp.restart_required ? (
-              <WarningPanel
+              <SettingsNotice
                 title="Runtime Drift"
                 description="The MCP catalog changed after the daemon started. Reload tether-daemon-service before assuming runtime tool availability matches the catalog shown here."
+                tone="danger"
               />
             ) : (
-              <WarningPanel
+              <SettingsNotice
                 title="Runtime Current"
                 description="The MCP catalog on disk is not newer than the daemon runtime reference."
+                tone="info"
               />
             )}
           </div>
@@ -653,7 +597,7 @@ export function SettingsPage() {
                 {settings.mcp.root_exists ? 'present' : 'missing'}
               </Pill>
             </Field>
-            <Field label="Runtime config"><RestartPill required={settings.mcp.restart_required} /></Field>
+            <Field label="Runtime config"><RestartPill pending={settings.mcp.restart_required} /></Field>
             {settings.mcp.config_modified_at && (
               <Field label="Config modified">
                 <CopyableId id={settings.mcp.config_modified_at} label={settings.mcp.config_modified_at} />
@@ -687,14 +631,16 @@ export function SettingsPage() {
           <ConfigPanel title="Tether Daemon" icon={<Database className="h-3.5 w-3.5" />}>
             <div className="px-4 py-3">
               {settings.daemon.restart_required ? (
-                <WarningPanel
+                <SettingsNotice
                   title="Daemon Config Drift"
                   description="Catalog-backed daemon settings changed after the daemon reference timestamp. Reload or restart tether-daemon-service before assuming runtime behavior matches these values."
+                  tone="danger"
                 />
               ) : (
-                <WarningPanel
+                <SettingsNotice
                   title="Daemon Config Current"
                   description="The daemon config on disk is not newer than the running daemon reference."
+                  tone="info"
                 />
               )}
             </div>
@@ -730,7 +676,7 @@ export function SettingsPage() {
                   {settings.daemon.pid_running ? 'running' : 'not confirmed'}
                 </Pill>
               </Field>
-              <Field label="Runtime config"><RestartPill required={settings.daemon.restart_required} /></Field>
+              <Field label="Runtime config"><RestartPill pending={settings.daemon.restart_required} /></Field>
               {settings.daemon.config_modified_at && (
                 <Field label="Config modified">
                   <CopyableId id={settings.daemon.config_modified_at} label={settings.daemon.config_modified_at} />

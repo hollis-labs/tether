@@ -6,17 +6,19 @@ import {
   DetailDialog,
   DetailSection,
   EmptyState,
+  JsonModal,
+  JsonViewer,
+  PayloadActions,
+  PayloadSummary,
   Pill,
   SummaryCards,
   cn,
   formatRelativeTime,
-  JsonViewer,
 } from '@hollis-labs/sysop-ui/ui'
 import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
 import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
 import { useApi } from '../api/context'
 import type { EventInfo, ToolCallInfo } from '../api/client'
-import { JsonModal, PayloadActions, PayloadSummary } from '../components/json-payload'
 
 type TabKey = 'events' | 'tool-calls' | 'scopes'
 

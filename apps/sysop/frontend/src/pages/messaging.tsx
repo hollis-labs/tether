@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Bot, MessageSquarePlus, Plus, RefreshCw, Send, User, Users } from 'lucide-react'
 import {
   Button,
+  CopyButton,
   CopyableId,
   DetailDialog,
   DetailSection,
@@ -11,6 +12,8 @@ import {
   Textarea,
   cn,
   formatRelativeTime,
+  safeParseObject,
+  scalarStr,
 } from '@hollis-labs/sysop-ui/ui'
 import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
 import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
@@ -24,7 +27,6 @@ import type {
   MessageInfo,
   MessageTotals,
 } from '../api/client'
-import { CopyButton, safeParseObject, scalarStr } from '../components/json-payload'
 
 type ScopeKey = 'user' | 'agent' | 'groups' | 'broker'
 

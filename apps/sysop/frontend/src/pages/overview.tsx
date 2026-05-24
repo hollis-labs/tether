@@ -8,9 +8,9 @@ import {
   StatusBadge,
   cn,
 } from '@hollis-labs/sysop-ui/ui'
+import { BarList, CompositionBars, SignalBars, Sparkbars } from '@hollis-labs/sysop-ui/widgets'
 import { useApi } from '../api/context'
 import type { NameCount, OverviewInfo } from '../api/client'
-import { BarList, CompositionBars, SignalBars, Sparkbars } from '../components/charts'
 
 function formatDuration(s: number): string {
   if (s <= 0) return '0s'
@@ -42,6 +42,10 @@ function mergeSeries(...series: number[][]): number[] {
 
 function topLabel(items?: NameCount[]): string {
   return items && items.length > 0 ? items[0].name : 'none'
+}
+
+function toBarItems(items?: NameCount[]) {
+  return (items ?? []).map((item) => ({ label: item.name, value: item.count }))
 }
 
 function SectionTitle({
@@ -162,7 +166,7 @@ function DataList({ title, items }: { title: string; items: NameCount[] }) {
   return (
     <div className="min-h-0 p-3">
       <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">{title}</div>
-      <BarList items={items} />
+      <BarList items={toBarItems(items)} />
     </div>
   )
 }
@@ -318,7 +322,7 @@ export function OverviewPage() {
             <div className="grid md:grid-cols-2 xl:grid-cols-1">
               <div className="border-b border-border p-3">
                 <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">State mix</div>
-                <CompositionBars items={s?.by_state ?? []} />
+                <CompositionBars items={toBarItems(s?.by_state)} />
               </div>
               <DataList title="Providers" items={s?.by_provider ?? []} />
             </div>
@@ -338,7 +342,7 @@ export function OverviewPage() {
             <DataList title="Top tools" items={t?.top_tools ?? []} />
             <div className="border-t border-border p-3">
               <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">Latency bands</div>
-              <CompositionBars items={t?.latency ?? []} />
+              <CompositionBars items={toBarItems(t?.latency)} />
             </div>
           </Panel>
 
@@ -351,7 +355,7 @@ export function OverviewPage() {
             </KpiGrid>
             <div className="border-b border-border p-3">
               <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">Scope mix</div>
-              <CompositionBars items={m?.by_scope ?? []} />
+              <CompositionBars items={toBarItems(m?.by_scope)} />
             </div>
             <DataList title="Message kinds" items={m?.by_kind ?? []} />
           </Panel>
@@ -369,7 +373,7 @@ export function OverviewPage() {
             </KpiGrid>
             <div className="border-b border-border p-3">
               <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">Scope mix</div>
-              <CompositionBars items={e?.by_scope ?? []} />
+              <CompositionBars items={toBarItems(e?.by_scope)} />
             </div>
             <DataList title="Event kinds" items={e?.by_kind ?? []} />
           </Panel>

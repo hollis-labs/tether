@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { Activity, Boxes, Hourglass, Keyboard, Maximize2, Play, RefreshCw, RotateCw, Save, Send, Square } from 'lucide-react'
 import {
   Button,
+  CopyButton,
   CopyableId,
   DetailDialog,
   DetailSection,
@@ -27,7 +28,6 @@ import type {
   SessionInfo,
   SessionsInfo,
 } from '../api/client'
-import { CopyButton } from '../components/json-payload'
 import {
   SessionDetailDialog,
   isLiveSessionState,
