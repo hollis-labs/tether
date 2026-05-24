@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Check, Copy } from 'lucide-react'
 import {
   CopyableId,
   DetailDialog,
@@ -9,6 +10,7 @@ import {
   formatRelativeTime,
 } from '@hollis-labs/sysop-ui'
 import type { SessionDetailInfo } from '../api/client'
+import { useCopy } from './json-payload'
 
 /** Parse a stored JSON string to a value; fall back to the raw string. */
 function parseJson(raw: string): unknown {
@@ -25,6 +27,50 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <dt className="truncate text-text-subtle">{label}</dt>
       <dd className="break-words text-text-soft">{children}</dd>
     </div>
+  )
+}
+
+function planField(plan: unknown, key: string): string {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return ''
+  const value = (plan as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function CopyText({ text, label = text }: { text: string; label?: string }) {
+  const { copied, copy } = useCopy()
+  return (
+    <button
+      type="button"
+      onClick={() => copy(text)}
+      title={`Copy ${text}`}
+      className="inline-flex min-w-0 items-center gap-1 font-mono text-[10px] text-text-subtle transition-colors hover:text-text-muted"
+    >
+      <span className="truncate">{label}</span>
+      {copied ? (
+        <Check className="h-2.5 w-2.5 shrink-0 text-status-indexed" />
+      ) : (
+        <Copy className="h-2.5 w-2.5 shrink-0" />
+      )}
+    </button>
+  )
+}
+
+function CopyIconButton({ text, label }: { text: string; label: string }) {
+  const { copied, copy } = useCopy()
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={copied ? 'Copied' : label}
+      onClick={() => copy(text)}
+      className="rounded p-1 text-text-subtle transition-colors hover:bg-panel-hover hover:text-text"
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-status-indexed" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </button>
   )
 }
 
@@ -46,12 +92,14 @@ export function SessionDetailDialog({
 }) {
   const open = loading || error !== null || detail !== null
   const s = detail?.session
+  const launchPlan = detail?.launch_plan ? parseJson(detail.launch_plan) : null
+  const launchProfile = planField(launchPlan, 'launch_id') || s?.launch_id || ''
+  const bootProfilePath = planField(launchPlan, 'boot_profile_file')
 
   return (
     <DetailDialog
       open={open}
       onClose={onClose}
-      widthClassName="max-w-4xl"
       title={s ? `Session ${s.id.slice(0, 16)}` : loading ? 'Loading session…' : 'Session'}
       badge={s ? <StatusBadge status={s.state} /> : null}
       meta={
@@ -71,14 +119,18 @@ export function SessionDetailDialog({
         <>
           <DetailSection title="Session">
             <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-              <Field label="Launch">{s.launch_id || '—'}</Field>
+              <Field label="Launch">
+                {s.launch_id ? <CopyText text={s.launch_id} /> : '—'}
+              </Field>
               <Field label="Project">{s.project_id || '—'}</Field>
               <Field label="Logical agent">{s.logical_agent_id || '—'}</Field>
               <Field label="Provider">
                 {s.provider_id || '—'}
                 {s.provider_kind ? ` (${s.provider_kind})` : ''}
               </Field>
-              <Field label="Workspace">{s.workspace || '—'}</Field>
+              <Field label="Workspace">
+                {s.workspace ? <CopyText text={s.workspace} /> : '—'}
+              </Field>
               <Field label="PID">{s.pid ?? '—'}</Field>
               <Field label="Exit code">{s.exit_code ?? '—'}</Field>
               <Field label="Ended">{s.ended_at ? formatRelativeTime(s.ended_at) : '—'}</Field>
@@ -136,13 +188,44 @@ export function SessionDetailDialog({
             )}
           </DetailSection>
 
-          <DetailSection title="Launch Plan">
+          <section className="border-t border-border-strong">
+            <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border-strong bg-panel px-4 py-2">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-[.18em] text-text-subtle">
+                  Launch Plan
+                </span>
+                {launchProfile && (
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="text-[10px] uppercase tracking-[.12em] text-text-subtle/70">
+                      profile
+                    </span>
+                    <CopyText text={launchProfile} />
+                  </span>
+                )}
+                {bootProfilePath && (
+                  <span className="flex min-w-0 flex-1 items-center gap-1">
+                    <span className="shrink-0 text-[10px] uppercase tracking-[.12em] text-text-subtle/70">
+                      path
+                    </span>
+                    <CopyText text={bootProfilePath} />
+                  </span>
+                )}
+              </div>
+              {detail.launch_plan && (
+                <CopyIconButton text={detail.launch_plan} label="Copy launch plan" />
+              )}
+            </div>
             {detail.launch_plan ? (
-              <JsonViewer value={parseJson(detail.launch_plan)} />
+              <JsonViewer
+                value={launchPlan}
+                className="rounded-none border-0 bg-transparent px-3 py-2"
+              />
             ) : (
-              <p className="text-[12px] text-text-subtle">No launch plan stored for this session.</p>
+              <p className="px-4 py-3 text-[12px] text-text-subtle">
+                No launch plan stored for this session.
+              </p>
             )}
-          </DetailSection>
+          </section>
 
           <DetailSection title={`Checkpoints (${detail.checkpoints.length})`}>
             {detail.checkpoints.length === 0 ? (

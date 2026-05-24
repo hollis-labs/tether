@@ -18,7 +18,13 @@ import {
   type TabStripItem,
 } from '@hollis-labs/sysop-ui'
 import { useApi } from '../api/context'
-import type { GroupInfo, GroupMessageInfo, MessageAgentInfo, MessageInfo } from '../api/client'
+import type {
+  GroupInfo,
+  GroupMessageInfo,
+  MessageAgentInfo,
+  MessageInfo,
+  MessageTotals,
+} from '../api/client'
 import { CopyButton, safeParseObject, scalarStr } from '../components/json-payload'
 
 type ScopeKey = 'user' | 'agent' | 'groups'
@@ -67,8 +73,6 @@ function agentLabel(agent: MessageAgentInfo): string {
 }
 
 const DEFAULT_SENDER = 'msg://user/agent-mux/operator'
-const COMPOSE_DIALOG_SIZE =
-  'h-[42rem] max-h-[calc(100vh-2rem)] w-[56rem] max-w-[calc(100vw-2rem)]'
 
 const columns: ColumnDef<MessageInfo>[] = [
   {
@@ -287,9 +291,8 @@ function GroupsBoard({
                   value={replyText}
                   onChange={(e) => onReplyText(e.target.value)}
                   placeholder={archived ? 'Archived groups are read-only.' : 'Write a group reply...'}
-                  rows={3}
                   disabled={archived || members.length === 0}
-                  className="min-h-[5.5rem] flex-1"
+                  className="h-22 min-h-0 flex-1 resize-none border-0 bg-input/30 focus-visible:border-transparent focus-visible:ring-0"
                 />
                 <Button
                   variant="default"
@@ -314,6 +317,7 @@ export function MessagingPage() {
   const api = useApi()
   const [scope, setScope] = useState<ScopeKey>('user')
   const [messages, setMessages] = useState<MessageInfo[] | null>(null)
+  const [messageTotals, setMessageTotals] = useState<MessageTotals | null>(null)
   const [groups, setGroups] = useState<GroupInfo[] | null>(null)
   const [agents, setAgents] = useState<MessageAgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -356,6 +360,7 @@ export function MessagingPage() {
           return
         }
         setMessages(messageResult.value.messages ?? [])
+        setMessageTotals(messageResult.value.totals ?? null)
         setError(messageResult.value.error ?? null)
         if (groupResult.status === 'fulfilled') {
           setGroups(groupResult.value.groups ?? [])
@@ -393,20 +398,22 @@ export function MessagingPage() {
   const all = messages ?? []
   const groupList = groups ?? []
   const scoped = useMemo(() => all.filter((m) => m.scope === scope), [all, scope])
-  const userCount = useMemo(() => all.filter((m) => m.scope === 'user').length, [all])
-  const agentCount = useMemo(() => all.filter((m) => m.scope === 'agent').length, [all])
+  const userCount = messageTotals?.user.total ?? all.filter((m) => m.scope === 'user').length
+  const agentCount = messageTotals?.agent.total ?? all.filter((m) => m.scope === 'agent').length
   const groupPostCount = useMemo(
     () => groupList.reduce((n, g) => n + g.messages.length, 0),
     [groupList],
   )
+  const totalGroupPosts = messageTotals?.groups.total ?? groupPostCount
 
   const selected = selectedId ? all.find((m) => m.id === selectedId) ?? null : null
   const selectedGroup =
     (selectedGroupUrn ? groupList.find((g) => g.urn === selectedGroupUrn) : null) ?? groupList[0] ?? null
   const details = useMemo(() => (selected ? extraFields(selected.payload) : []), [selected])
 
-  const unread = scoped.filter((m) => messageStatus(m) === 'unread').length
-  const archived = scoped.filter((m) => m.archived_at).length
+  const scopeTotals = scope === 'user' ? messageTotals?.user : scope === 'agent' ? messageTotals?.agent : null
+  const unread = scopeTotals?.unread ?? scoped.filter((m) => messageStatus(m) === 'unread').length
+  const archived = scopeTotals?.archived ?? scoped.filter((m) => m.archived_at).length
   const groupMembers = selectedGroup?.members ?? []
   const selectedGroupFrom = groupFrom || groupMembers[0]?.member_urn || ''
 
@@ -615,7 +622,7 @@ export function MessagingPage() {
               scope === 'groups'
                 ? [
                     { label: 'Groups', value: groupList.length },
-                    { label: 'Posts', value: groupPostCount },
+                    { label: 'Posts', value: totalGroupPosts },
                     {
                       label: 'Members',
                       value: selectedGroup ? selectedGroup.members.length : 0,
@@ -625,7 +632,7 @@ export function MessagingPage() {
                 : [
                     {
                       label: scope === 'user' ? 'User Messages' : 'Agent Messages',
-                      value: scoped.length,
+                      value: scopeTotals?.total ?? scoped.length,
                     },
                     { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
                     { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
@@ -688,7 +695,6 @@ export function MessagingPage() {
       <DetailDialog
         open={newMessageOpen}
         onClose={closeNewMessage}
-        widthClassName={COMPOSE_DIALOG_SIZE}
         title="New Message"
         footer={
           <div className="flex items-center justify-between gap-3">
@@ -747,7 +753,6 @@ export function MessagingPage() {
       <DetailDialog
         open={newGroupOpen}
         onClose={closeNewGroup}
-        widthClassName={COMPOSE_DIALOG_SIZE}
         title="Add Group"
         footer={
           <div className="flex items-center justify-between gap-3">
@@ -804,7 +809,6 @@ export function MessagingPage() {
       <DetailDialog
         open={selected !== null}
         onClose={closeDialog}
-        widthClassName="max-w-4xl"
         title={selected ? messageHeadline(selected) || `${selected.kind} message` : ''}
         badge={selected ? <StatusBadge status={messageStatus(selected)} /> : null}
         meta={
@@ -854,38 +858,42 @@ export function MessagingPage() {
         }
       >
         {selected && (
-          <>
-            <DetailSection title="Message">
-              <div className="whitespace-pre-wrap break-words rounded-md border border-border bg-panel px-4 py-3 text-[13px] leading-6 text-text">
-                {selected.body || '(no message text)'}
-              </div>
-            </DetailSection>
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <section className="border-t border-border-strong">
+                <div className="border-b border-border-strong bg-panel px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-text-subtle">
+                  Message:
+                </div>
+                <div className="whitespace-pre-wrap break-words px-3 py-2 text-[13px] leading-6 text-text">
+                  {selected.body || '(no message text)'}
+                </div>
+              </section>
 
-            {details.length > 0 && (
-              <DetailSection title="Details">
-                <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-                  {details.map(([k, v]) => (
-                    <div key={k} className="contents">
-                      <dt className="truncate text-text-subtle">{k}</dt>
-                      <dd className="break-words font-mono text-text-soft">
-                        {typeof v === 'string' ? v : scalarStr(v)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </DetailSection>
-            )}
+              {details.length > 0 && (
+                <DetailSection title="Details">
+                  <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+                    {details.map(([k, v]) => (
+                      <div key={k} className="contents">
+                        <dt className="truncate text-text-subtle">{k}</dt>
+                        <dd className="break-words font-mono text-text-soft">
+                          {typeof v === 'string' ? v : scalarStr(v)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </DetailSection>
+              )}
+            </div>
 
-            <DetailSection title={`Reply to ${shortUrn(selected.from)}`}>
+            <div className="h-28 shrink-0 border-t border-border-strong bg-bg p-3">
               <Textarea
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 placeholder="Write a reply..."
-                rows={5}
-                className="w-full"
+                className="h-full min-h-0 resize-none border-0 bg-input/30 focus-visible:border-transparent focus-visible:ring-0"
               />
-            </DetailSection>
-          </>
+            </div>
+          </div>
         )}
       </DetailDialog>
     </>

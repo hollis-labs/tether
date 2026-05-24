@@ -150,7 +150,6 @@ export function JsonModal({
       open={open}
       onClose={onClose}
       title={title}
-      widthClassName="max-w-3xl"
       footer={
         <div className="flex justify-end">
           <CopyButton text={raw} label="Copy payload" />

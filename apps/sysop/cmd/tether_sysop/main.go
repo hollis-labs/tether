@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,8 @@ import (
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/tether/apps/sysop/internal/webui"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
+	launchplan "github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -71,10 +74,16 @@ type launchDTO struct {
 	WorkspaceMode string `json:"workspace_mode"`
 	NativeFiles   int    `json:"native_files"`
 	BootOverlay   int    `json:"boot_overlay"`
+	Profile       string `json:"profile,omitempty"`
+	LaunchPlan    string `json:"launch_plan,omitempty"`
+	PlanError     string `json:"plan_error,omitempty"`
 }
 
 type sessionsResponse struct {
 	Sessions []sessionDTO `json:"sessions"`
+	Total    int          `json:"total"`
+	Running  int          `json:"running"`
+	Ended    int          `json:"ended"`
 	Error    string       `json:"error,omitempty"`
 }
 
@@ -175,6 +184,17 @@ func (s *appServer) handleCatalog(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	for _, l := range cat.Launches {
+		profileJSON := prettyJSON(l)
+		planJSON := ""
+		planError := ""
+		if plan, err := launchplan.Resolve(cat, launchplan.Input{
+			LaunchID:    l.ID,
+			CatalogRoot: s.catalogRoot,
+		}); err != nil {
+			planError = err.Error()
+		} else {
+			planJSON = prettyJSON(plan)
+		}
 		resp.Launches = append(resp.Launches, launchDTO{
 			ID:            l.ID,
 			Project:       l.Project,
@@ -183,6 +203,9 @@ func (s *appServer) handleCatalog(w http.ResponseWriter, _ *http.Request) {
 			WorkspaceMode: l.Workspace.Mode,
 			NativeFiles:   len(l.Injection.NativeFiles),
 			BootOverlay:   len(l.Injection.BootDirOverlay),
+			Profile:       profileJSON,
+			LaunchPlan:    planJSON,
+			PlanError:     planError,
 		})
 	}
 
@@ -212,6 +235,11 @@ func (s *appServer) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	}
 	defer db.Close()
 
+	totals, err := sessionTotals(db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, sessionsResponse{Error: err.Error()})
+		return
+	}
 	rows, err := db.ListSessions(store.ListSessionsOptions{Limit: 50})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, sessionsResponse{Error: err.Error()})
@@ -235,14 +263,64 @@ func (s *appServer) handleSessions(w http.ResponseWriter, _ *http.Request) {
 			EndedAt:        nullableString(row.EndedAt.Valid, row.EndedAt.String),
 		})
 	}
-	writeJSON(w, http.StatusOK, sessionsResponse{Sessions: out})
+	writeJSON(w, http.StatusOK, sessionsResponse{
+		Sessions: out,
+		Total:    totals.Total,
+		Running:  totals.Running,
+		Ended:    totals.Ended,
+	})
+}
+
+type sessionStats struct {
+	Total   int
+	Running int
+	Ended   int
+}
+
+func sessionTotals(db *store.Store) (sessionStats, error) {
+	rows, err := db.DB().Query(`SELECT state, COALESCE(ended_at, '') FROM sessions`)
+	if err != nil {
+		return sessionStats{}, err
+	}
+	defer rows.Close()
+
+	var stats sessionStats
+	for rows.Next() {
+		var state, endedAt string
+		if err := rows.Scan(&state, &endedAt); err != nil {
+			return sessionStats{}, err
+		}
+		stats.Total++
+		if state == "running" {
+			stats.Running++
+		}
+		if endedAt != "" {
+			stats.Ended++
+		}
+	}
+	return stats, rows.Err()
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 type messagesResponse struct {
-	Messages []messageDTO `json:"messages"`
-	Error    string       `json:"error,omitempty"`
+	Messages []messageDTO  `json:"messages"`
+	Totals   messageTotals `json:"totals"`
+	Error    string        `json:"error,omitempty"`
+}
+
+type messageTotals struct {
+	Total  int               `json:"total"`
+	User   messageScopeStats `json:"user"`
+	Agent  messageScopeStats `json:"agent"`
+	Other  messageScopeStats `json:"other"`
+	Groups messageScopeStats `json:"groups"`
+}
+
+type messageScopeStats struct {
+	Total    int `json:"total"`
+	Unread   int `json:"unread"`
+	Archived int `json:"archived"`
 }
 
 type messageDTO struct {
@@ -466,6 +544,11 @@ func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
 	}
 	defer db.Close()
 
+	totals, err := countMessages(db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, messagesResponse{Error: err.Error()})
+		return
+	}
 	rows, err := db.ListMessages(500)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, messagesResponse{Error: err.Error()})
@@ -494,7 +577,48 @@ func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
 			ArchivedAt:  m.ArchivedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, messagesResponse{Messages: out})
+	writeJSON(w, http.StatusOK, messagesResponse{Messages: out, Totals: totals})
+}
+
+func countMessages(db *store.Store) (messageTotals, error) {
+	rows, err := db.DB().Query(
+		`SELECT to_urn, COALESCE(read_at, ''), COALESCE(archived_at, ''),
+		        COALESCE(canceled_at, ''), COALESCE(group_urn, '')
+		   FROM messages`)
+	if err != nil {
+		return messageTotals{}, err
+	}
+	defer rows.Close()
+
+	var totals messageTotals
+	for rows.Next() {
+		var toURN, readAt, archivedAt, canceledAt, groupURN string
+		if err := rows.Scan(&toURN, &readAt, &archivedAt, &canceledAt, &groupURN); err != nil {
+			return messageTotals{}, err
+		}
+		totals.Total++
+		var bucket *messageScopeStats
+		if groupURN != "" {
+			bucket = &totals.Groups
+		} else {
+			switch scopeOf(toURN) {
+			case "user":
+				bucket = &totals.User
+			case "agent":
+				bucket = &totals.Agent
+			default:
+				bucket = &totals.Other
+			}
+		}
+		bucket.Total++
+		if readAt == "" && canceledAt == "" {
+			bucket.Unread++
+		}
+		if archivedAt != "" {
+			bucket.Archived++
+		}
+	}
+	return totals, rows.Err()
 }
 
 func (s *appServer) handleMessageGroupsList(w http.ResponseWriter, r *http.Request) {
@@ -738,6 +862,7 @@ func (s *appServer) messageRecipientAction(w http.ResponseWriter, r *http.Reques
 
 type eventsResponse struct {
 	Events []eventDTO `json:"events"`
+	Total  int        `json:"total"`
 	Error  string     `json:"error,omitempty"`
 }
 
@@ -752,18 +877,21 @@ type eventDTO struct {
 
 type toolCallsResponse struct {
 	ToolCalls []toolCallDTO `json:"tool_calls"`
+	Total     int           `json:"total"`
 	Error     string        `json:"error,omitempty"`
 }
 
 type toolCallDTO struct {
-	ID         int64  `json:"id"`
-	SessionID  string `json:"session_id,omitempty"`
-	Server     string `json:"server,omitempty"`
-	ToolName   string `json:"tool_name"`
-	DurationMs int64  `json:"duration_ms"`
-	OK         bool   `json:"ok"`
-	Error      string `json:"error,omitempty"`
-	Timestamp  string `json:"timestamp"`
+	ID           int64  `json:"id"`
+	SessionID    string `json:"session_id,omitempty"`
+	Server       string `json:"server,omitempty"`
+	ToolName     string `json:"tool_name"`
+	ArgsSchemaFP string `json:"args_schema_fp,omitempty"`
+	DurationMs   int64  `json:"duration_ms"`
+	OK           bool   `json:"ok"`
+	Error        string `json:"error,omitempty"`
+	Timestamp    string `json:"timestamp"`
+	Payload      string `json:"payload,omitempty"`
 }
 
 func (s *appServer) handleActivityEvents(w http.ResponseWriter, _ *http.Request) {
@@ -778,6 +906,11 @@ func (s *appServer) handleActivityEvents(w http.ResponseWriter, _ *http.Request)
 	}
 	defer db.Close()
 
+	total, err := db.CountEvents()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, eventsResponse{Error: err.Error()})
+		return
+	}
 	rows, err := db.ListRecentEvents(500)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, eventsResponse{Error: err.Error()})
@@ -794,7 +927,7 @@ func (s *appServer) handleActivityEvents(w http.ResponseWriter, _ *http.Request)
 			Payload:   e.PayloadJSON,
 		})
 	}
-	writeJSON(w, http.StatusOK, eventsResponse{Events: out})
+	writeJSON(w, http.StatusOK, eventsResponse{Events: out, Total: total})
 }
 
 func (s *appServer) handleActivityToolCalls(w http.ResponseWriter, _ *http.Request) {
@@ -809,6 +942,11 @@ func (s *appServer) handleActivityToolCalls(w http.ResponseWriter, _ *http.Reque
 	}
 	defer db.Close()
 
+	total, err := db.CountProxyEvents(store.ProxyEventFilter{})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, toolCallsResponse{Error: err.Error()})
+		return
+	}
 	rows, err := db.QueryProxyEvents(store.ProxyEventFilter{Limit: 500})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, toolCallsResponse{Error: err.Error()})
@@ -818,18 +956,38 @@ func (s *appServer) handleActivityToolCalls(w http.ResponseWriter, _ *http.Reque
 	out := make([]toolCallDTO, 0, len(rows))
 	for i := len(rows) - 1; i >= 0; i-- {
 		ev := rows[i]
+		payload := toolCallPayload(ev)
 		out = append(out, toolCallDTO{
-			ID:         ev.ID,
-			SessionID:  ev.SessionID,
-			Server:     ev.Server,
-			ToolName:   ev.ToolName,
-			DurationMs: ev.DurationMs,
-			OK:         ev.OK,
-			Error:      ev.Error,
-			Timestamp:  ev.Timestamp.Format(time.RFC3339Nano),
+			ID:           ev.ID,
+			SessionID:    ev.SessionID,
+			Server:       ev.Server,
+			ToolName:     ev.ToolName,
+			ArgsSchemaFP: ev.ArgsSchemaFP,
+			DurationMs:   ev.DurationMs,
+			OK:           ev.OK,
+			Error:        ev.Error,
+			Timestamp:    ev.Timestamp.Format(time.RFC3339Nano),
+			Payload:      payload,
 		})
 	}
-	writeJSON(w, http.StatusOK, toolCallsResponse{ToolCalls: out})
+	writeJSON(w, http.StatusOK, toolCallsResponse{ToolCalls: out, Total: total})
+}
+
+func toolCallPayload(ev store.ProxyEvent) string {
+	raw, err := json.Marshal(events.ToolCallEvent{
+		SessionID:    ev.SessionID,
+		ToolName:     ev.ToolName,
+		Server:       ev.Server,
+		ArgsSchemaFP: ev.ArgsSchemaFP,
+		DurationMs:   ev.DurationMs,
+		OK:           ev.OK,
+		Error:        ev.Error,
+		Timestamp:    ev.Timestamp,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // ─── Overview ────────────────────────────────────────────────────────────────
@@ -850,12 +1008,17 @@ type overviewResponse struct {
 }
 
 type overviewSessions struct {
-	Total      int   `json:"total"`
-	Running    int   `json:"running"`
-	Ended      int   `json:"ended"`
-	SuccessPct int   `json:"success_pct"`
-	AvgSeconds int   `json:"avg_seconds"`
-	Trend      []int `json:"trend"`
+	Total      int         `json:"total"`
+	Running    int         `json:"running"`
+	Ended      int         `json:"ended"`
+	SuccessPct int         `json:"success_pct"`
+	FailurePct int         `json:"failure_pct"`
+	AvgSeconds int         `json:"avg_seconds"`
+	Recent24h  int         `json:"recent_24h"`
+	Trend      []int       `json:"trend"`
+	ByState    []nameCount `json:"by_state"`
+	ByProvider []nameCount `json:"by_provider"`
+	ByProject  []nameCount `json:"by_project"`
 }
 
 type overviewToolCalls struct {
@@ -865,23 +1028,34 @@ type overviewToolCalls struct {
 	SuccessPct int         `json:"success_pct"`
 	P50ms      int64       `json:"p50_ms"`
 	P95ms      int64       `json:"p95_ms"`
+	AvgMs      int64       `json:"avg_ms"`
+	Recent1h   int         `json:"recent_1h"`
+	SlowCalls  int         `json:"slow_calls"`
+	Sessions   int         `json:"sessions"`
 	TopTools   []nameCount `json:"top_tools"`
 	TopErrors  []nameCount `json:"top_errors"`
+	ByServer   []nameCount `json:"by_server"`
+	Latency    []nameCount `json:"latency"`
 	Trend      []int       `json:"trend"`
 }
 
 type overviewMessages struct {
-	Total    int         `json:"total"`
-	Unread   int         `json:"unread"`
-	Archived int         `json:"archived"`
-	ByKind   []nameCount `json:"by_kind"`
-	Trend    []int       `json:"trend"`
+	Total     int         `json:"total"`
+	Unread    int         `json:"unread"`
+	Archived  int         `json:"archived"`
+	Recent24h int         `json:"recent_24h"`
+	ByKind    []nameCount `json:"by_kind"`
+	ByScope   []nameCount `json:"by_scope"`
+	Trend     []int       `json:"trend"`
 }
 
 type overviewEvents struct {
-	Total   int         `json:"total"`
-	ByScope []nameCount `json:"by_scope"`
-	Trend   []int       `json:"trend"`
+	Total     int         `json:"total"`
+	Recent1h  int         `json:"recent_1h"`
+	LatestSeq int64       `json:"latest_seq"`
+	ByScope   []nameCount `json:"by_scope"`
+	ByKind    []nameCount `json:"by_kind"`
+	Trend     []int       `json:"trend"`
 }
 
 type overviewCatalog struct {
@@ -923,103 +1097,208 @@ func (s *appServer) handleOverview(w http.ResponseWriter, _ *http.Request) {
 	}
 	defer db.Close()
 
-	if sessions, serr := db.ListSessions(store.ListSessionsOptions{Limit: 1000}); serr == nil {
-		var starts []time.Time
-		var durations []float64
-		for _, row := range sessions {
-			if t, ok := parseTime(row.CreatedAt); ok {
-				starts = append(starts, t)
-			}
-			if row.State == "running" {
-				resp.Sessions.Running++
-			}
-			if row.EndedAt.Valid && row.EndedAt.String != "" {
-				resp.Sessions.Ended++
-				if row.ExitCode.Valid && row.ExitCode.Int64 == 0 {
-					resp.Sessions.SuccessPct++ // tallied, converted to pct below
-				}
-				if c, ok1 := parseTime(row.CreatedAt); ok1 {
-					if e, ok2 := parseTime(row.EndedAt.String); ok2 {
-						durations = append(durations, e.Sub(c).Seconds())
-					}
-				}
-			}
-		}
-		resp.Sessions.Total = len(sessions)
-		if resp.Sessions.Ended > 0 {
-			resp.Sessions.SuccessPct = resp.Sessions.SuccessPct * 100 / resp.Sessions.Ended
-		}
-		if len(durations) > 0 {
-			var sum float64
-			for _, d := range durations {
-				sum += d
-			}
-			resp.Sessions.AvgSeconds = int(sum / float64(len(durations)))
-		}
-		resp.Sessions.Trend = bucketCounts(starts, overviewTrendBuckets)
-	}
+	populateOverviewSessions(db, &resp)
 
-	if proxy, perr := db.QueryProxyEvents(store.ProxyEventFilter{Limit: 500}); perr == nil {
-		toolCounts := map[string]int{}
-		errCounts := map[string]int{}
-		var durs []int64
-		var times []time.Time
-		for _, ev := range proxy {
-			toolCounts[ev.ToolName]++
-			durs = append(durs, ev.DurationMs)
-			times = append(times, ev.Timestamp)
-			if ev.OK {
-				resp.ToolCalls.OK++
-			} else {
-				resp.ToolCalls.Errors++
-				errCounts[ev.ToolName]++
-			}
-		}
-		resp.ToolCalls.Total = len(proxy)
+	if total, terr := db.CountProxyEvents(store.ProxyEventFilter{}); terr == nil {
+		resp.ToolCalls.Total = total
+	}
+	if errors, eerr := db.CountProxyEvents(store.ProxyEventFilter{ErrorsOnly: true}); eerr == nil {
+		resp.ToolCalls.Errors = errors
+		resp.ToolCalls.OK = resp.ToolCalls.Total - errors
 		if resp.ToolCalls.Total > 0 {
 			resp.ToolCalls.SuccessPct = resp.ToolCalls.OK * 100 / resp.ToolCalls.Total
+		}
+	}
+	if proxy, perr := db.QueryProxyEvents(store.ProxyEventFilter{Limit: -1}); perr == nil {
+		toolCounts := map[string]int{}
+		errCounts := map[string]int{}
+		serverCounts := map[string]int{}
+		sessionSet := map[string]struct{}{}
+		latencyCounts := map[string]int{}
+		var durs []int64
+		var times []time.Time
+		var sum int64
+		cutoff := time.Now().UTC().Add(-time.Hour)
+		for _, ev := range proxy {
+			toolCounts[ev.ToolName]++
+			server := ev.Server
+			if server == "" {
+				server = "native"
+			}
+			serverCounts[server]++
+			if ev.SessionID != "" {
+				sessionSet[ev.SessionID] = struct{}{}
+			}
+			durs = append(durs, ev.DurationMs)
+			sum += ev.DurationMs
+			times = append(times, ev.Timestamp)
+			if ev.Timestamp.After(cutoff) {
+				resp.ToolCalls.Recent1h++
+			}
+			if ev.DurationMs >= 1000 {
+				resp.ToolCalls.SlowCalls++
+			}
+			latencyCounts[latencyBand(ev.DurationMs)]++
+			if !ev.OK {
+				errCounts[ev.ToolName]++
+			}
 		}
 		sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
 		resp.ToolCalls.P50ms = pctile(durs, 0.50)
 		resp.ToolCalls.P95ms = pctile(durs, 0.95)
+		if len(durs) > 0 {
+			resp.ToolCalls.AvgMs = sum / int64(len(durs))
+		}
+		resp.ToolCalls.Sessions = len(sessionSet)
 		resp.ToolCalls.TopTools = topN(toolCounts, 5)
 		resp.ToolCalls.TopErrors = topN(errCounts, 5)
+		resp.ToolCalls.ByServer = topN(serverCounts, 6)
+		resp.ToolCalls.Latency = orderedLatencyCounts(latencyCounts)
 		resp.ToolCalls.Trend = bucketCounts(times, overviewTrendBuckets)
 	}
 
-	if msgs, merr := db.ListMessages(1000); merr == nil {
-		kindCounts := map[string]int{}
-		var times []time.Time
-		for _, m := range msgs {
-			kindCounts[m.Kind]++
-			if m.ReadAt == "" && m.CanceledAt == "" {
-				resp.Messages.Unread++
-			}
-			if m.ArchivedAt != "" {
-				resp.Messages.Archived++
-			}
-			if t, ok := parseTime(m.CreatedAt); ok {
-				times = append(times, t)
-			}
-		}
-		resp.Messages.Total = len(msgs)
-		resp.Messages.ByKind = topN(kindCounts, 6)
-		resp.Messages.Trend = bucketCounts(times, overviewTrendBuckets)
-	}
+	populateOverviewMessages(db, &resp)
 
+	if total, terr := db.CountEvents(); terr == nil {
+		resp.Events.Total = total
+	}
 	if evs, eerr := db.ListRecentEvents(1000); eerr == nil {
 		scopeCounts := map[string]int{}
+		kindCounts := map[string]int{}
 		var times []time.Time
+		cutoff := time.Now().UTC().Add(-time.Hour)
 		for _, e := range evs {
 			scopeCounts[e.Scope]++
+			kindCounts[e.Kind]++
 			times = append(times, e.At)
+			if e.At.After(cutoff) {
+				resp.Events.Recent1h++
+			}
+			if e.Seq > resp.Events.LatestSeq {
+				resp.Events.LatestSeq = e.Seq
+			}
 		}
-		resp.Events.Total = len(evs)
 		resp.Events.ByScope = topN(scopeCounts, 6)
+		resp.Events.ByKind = topN(kindCounts, 8)
 		resp.Events.Trend = bucketCounts(times, overviewTrendBuckets)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func populateOverviewSessions(db *store.Store, resp *overviewResponse) {
+	rows, err := db.DB().Query(
+		`SELECT state, provider_id, project_id, created_at,
+		        COALESCE(ended_at, ''), exit_code
+		   FROM sessions`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	stateCounts := map[string]int{}
+	providerCounts := map[string]int{}
+	projectCounts := map[string]int{}
+	var starts []time.Time
+	var durations []float64
+	successes := 0
+	failures := 0
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+
+	for rows.Next() {
+		var state, providerID, projectID, createdAt, endedAt string
+		var exitCode sql.NullInt64
+		if err := rows.Scan(&state, &providerID, &projectID, &createdAt, &endedAt, &exitCode); err != nil {
+			return
+		}
+		resp.Sessions.Total++
+		stateCounts[state]++
+		providerCounts[valueOr(providerID, "unknown")]++
+		projectCounts[valueOr(projectID, "unknown")]++
+		if state == "running" {
+			resp.Sessions.Running++
+		}
+		if c, ok := parseTime(createdAt); ok {
+			starts = append(starts, c)
+			if c.After(cutoff) {
+				resp.Sessions.Recent24h++
+			}
+			if endedAt != "" {
+				if e, ok := parseTime(endedAt); ok {
+					durations = append(durations, e.Sub(c).Seconds())
+				}
+			}
+		}
+		if endedAt != "" {
+			resp.Sessions.Ended++
+			if exitCode.Valid && exitCode.Int64 == 0 {
+				successes++
+			} else {
+				failures++
+			}
+		}
+	}
+	if resp.Sessions.Ended > 0 {
+		resp.Sessions.SuccessPct = successes * 100 / resp.Sessions.Ended
+		resp.Sessions.FailurePct = failures * 100 / resp.Sessions.Ended
+	}
+	if len(durations) > 0 {
+		var sum float64
+		for _, d := range durations {
+			sum += d
+		}
+		resp.Sessions.AvgSeconds = int(sum / float64(len(durations)))
+	}
+	resp.Sessions.ByState = topN(stateCounts, 6)
+	resp.Sessions.ByProvider = topN(providerCounts, 6)
+	resp.Sessions.ByProject = topN(projectCounts, 6)
+	resp.Sessions.Trend = bucketCounts(starts, overviewTrendBuckets)
+}
+
+func populateOverviewMessages(db *store.Store, resp *overviewResponse) {
+	rows, err := db.DB().Query(
+		`SELECT kind, to_urn, created_at, COALESCE(read_at, ''),
+		        COALESCE(archived_at, ''), COALESCE(canceled_at, ''),
+		        COALESCE(group_urn, '')
+		   FROM messages`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	kindCounts := map[string]int{}
+	scopeCounts := map[string]int{}
+	var times []time.Time
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+
+	for rows.Next() {
+		var kind, toURN, createdAt, readAt, archivedAt, canceledAt, groupURN string
+		if err := rows.Scan(&kind, &toURN, &createdAt, &readAt, &archivedAt, &canceledAt, &groupURN); err != nil {
+			return
+		}
+		resp.Messages.Total++
+		kindCounts[kind]++
+		scope := scopeOf(toURN)
+		if groupURN != "" {
+			scope = "group"
+		}
+		scopeCounts[scope]++
+		if readAt == "" && canceledAt == "" {
+			resp.Messages.Unread++
+		}
+		if archivedAt != "" {
+			resp.Messages.Archived++
+		}
+		if t, ok := parseTime(createdAt); ok {
+			times = append(times, t)
+			if t.After(cutoff) {
+				resp.Messages.Recent24h++
+			}
+		}
+	}
+	resp.Messages.ByKind = topN(kindCounts, 6)
+	resp.Messages.ByScope = topN(scopeCounts, 6)
+	resp.Messages.Trend = bucketCounts(times, overviewTrendBuckets)
 }
 
 // ─── Session detail ──────────────────────────────────────────────────────────
@@ -1211,6 +1490,39 @@ func topN(counts map[string]int, n int) []nameCount {
 	return out
 }
 
+func valueOr(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+func latencyBand(ms int64) string {
+	switch {
+	case ms < 10:
+		return "<10ms"
+	case ms < 100:
+		return "10-99ms"
+	case ms < 500:
+		return "100-499ms"
+	case ms < 1000:
+		return "500-999ms"
+	default:
+		return ">=1s"
+	}
+}
+
+func orderedLatencyCounts(counts map[string]int) []nameCount {
+	order := []string{"<10ms", "10-99ms", "100-499ms", "500-999ms", ">=1s"}
+	out := make([]nameCount, 0, len(order))
+	for _, name := range order {
+		if counts[name] > 0 {
+			out = append(out, nameCount{Name: name, Count: counts[name]})
+		}
+	}
+	return out
+}
+
 // bucketCounts distributes timestamps into n equal-width buckets spanning
 // [min,max], returned oldest→newest — a sparkline-ready series.
 func bucketCounts(times []time.Time, n int) []int {
@@ -1310,8 +1622,9 @@ type mcpToolDTO struct {
 }
 
 type mcpToolsResponse struct {
-	Tools []mcpToolDTO `json:"tools"`
-	Error string       `json:"error,omitempty"`
+	Tools      []mcpToolDTO `json:"tools"`
+	TotalCalls int          `json:"total_calls"`
+	Error      string       `json:"error,omitempty"`
 }
 
 // handleMCPTools returns a usage-centric tool list aggregated from the
@@ -1330,7 +1643,12 @@ func (s *appServer) handleMCPTools(w http.ResponseWriter, _ *http.Request) {
 	}
 	defer db.Close()
 
-	events, err := db.QueryProxyEvents(store.ProxyEventFilter{Limit: 500})
+	totalCalls, err := db.CountProxyEvents(store.ProxyEventFilter{})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, mcpToolsResponse{Error: err.Error()})
+		return
+	}
+	events, err := db.QueryProxyEvents(store.ProxyEventFilter{Limit: -1})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, mcpToolsResponse{Error: err.Error()})
 		return
@@ -1399,7 +1717,7 @@ func (s *appServer) handleMCPTools(w http.ResponseWriter, _ *http.Request) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	writeJSON(w, http.StatusOK, mcpToolsResponse{Tools: out})
+	writeJSON(w, http.StatusOK, mcpToolsResponse{Tools: out, TotalCalls: totalCalls})
 }
 
 // openStateDB loads the catalog and opens the Tether state DB. Returns
@@ -1567,6 +1885,14 @@ func nullableString(valid bool, value string) string {
 		return ""
 	}
 	return value
+}
+
+func prettyJSON(v any) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

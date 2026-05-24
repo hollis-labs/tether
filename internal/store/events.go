@@ -81,6 +81,13 @@ func (s *Store) MaxEventSeq() (int64, error) {
 	return seq, err
 }
 
+// CountEvents returns the total number of persisted events.
+func (s *Store) CountEvents() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	return n, err
+}
+
 // EventsSince returns all events with id > sinceSeq in ascending id
 // order. Used by the bus to replay history before live delivery.
 // sinceSeq = 0 returns the entire events table.

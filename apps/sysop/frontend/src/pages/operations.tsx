@@ -4,7 +4,10 @@ import {
   Button,
   CopyableId,
   DataTable,
+  DetailDialog,
+  DetailSection,
   EmptyState,
+  JsonViewer,
   ListPageLayout,
   StatusBadge,
   SummaryCards,
@@ -23,9 +26,19 @@ import type {
   SessionInfo,
   SessionsInfo,
 } from '../api/client'
+import { CopyButton } from '../components/json-payload'
 import { SessionDetailDialog } from '../components/session-detail-dialog'
 
 type TabKey = 'launches' | 'sessions'
+
+function parseJson(raw?: string): unknown {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
 
 const launchColumns: ColumnDef<LaunchInfo>[] = [
   {
@@ -111,6 +124,7 @@ export function OperationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<SessionDetailInfo | null>(null)
+  const [launchDetail, setLaunchDetail] = useState<LaunchInfo | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -163,7 +177,9 @@ export function OperationsPage() {
 
   const launches = catalog?.launches ?? []
   const sessionList = sessions?.sessions ?? []
-  const runningSessions = sessionList.filter((s) => s.state === 'running').length
+  const sessionTotal = sessions?.total ?? sessionList.length
+  const runningSessions = sessions?.running ?? sessionList.filter((s) => s.state === 'running').length
+  const endedSessions = sessions?.ended ?? Math.max(0, sessionList.length - runningSessions)
 
   const tabs: TabStripItem<TabKey>[] = [
     {
@@ -176,7 +192,7 @@ export function OperationsPage() {
       key: 'sessions',
       label: 'Sessions',
       icon: <Activity className="h-3.5 w-3.5" />,
-      count: sessionList.length,
+      count: sessionTotal,
     },
   ]
 
@@ -189,7 +205,7 @@ export function OperationsPage() {
           { label: 'Providers', value: catalog?.providers.length ?? '...' },
         ]
       : [
-          { label: 'Sessions', value: sessions ? sessionList.length : '...' },
+          { label: 'Sessions', value: sessions ? sessionTotal : '...' },
           {
             label: 'Running',
             value: sessions ? runningSessions : '...',
@@ -197,7 +213,7 @@ export function OperationsPage() {
           },
           {
             label: 'Ended',
-            value: sessions ? sessionList.length - runningSessions : '...',
+            value: sessions ? endedSessions : '...',
             accentColor: 'var(--color-status-done)',
           },
         ]
@@ -244,6 +260,8 @@ export function OperationsPage() {
             getRowId={(launch) => launch.id}
             initialSort={{ key: 'id', dir: 'asc' }}
             scrollRootRef={scrollRef}
+            onRowOpen={(_, launch) => setLaunchDetail(launch)}
+            rowAriaLabel={(launch) => `Open launch profile ${launch.id}`}
             emptyState={
               <EmptyState
                 variant="empty"
@@ -291,6 +309,87 @@ export function OperationsPage() {
         error={detailError}
         onClose={closeSession}
       />
+      <LaunchDetailDialog launch={launchDetail} onClose={() => setLaunchDetail(null)} />
     </>
+  )
+}
+
+function LaunchDetailDialog({
+  launch,
+  onClose,
+}: {
+  launch: LaunchInfo | null
+  onClose: () => void
+}) {
+  const plan = parseJson(launch?.launch_plan)
+  const profile = parseJson(launch?.profile)
+  return (
+    <DetailDialog
+      open={launch !== null}
+      onClose={onClose}
+      title={launch ? `Launch ${launch.id}` : 'Launch'}
+      meta={
+        launch ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-subtle">
+            <CopyableId id={launch.id} label={launch.id} />
+            <span>{launch.project}</span>
+            <span>{launch.agent}</span>
+          </div>
+        ) : null
+      }
+      footer={
+        launch ? (
+          <div className="flex justify-end gap-2">
+            {launch.profile && <CopyButton text={launch.profile} label="Copy profile" />}
+            {launch.launch_plan && <CopyButton text={launch.launch_plan} label="Copy plan" />}
+          </div>
+        ) : null
+      }
+    >
+      {launch && (
+        <>
+          <DetailSection title="Launch Profile">
+            <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-[12px]">
+              <dt className="text-text-subtle">Project</dt>
+              <dd className="break-words text-text-soft">{launch.project}</dd>
+              <dt className="text-text-subtle">Agent</dt>
+              <dd className="break-words text-text-soft">{launch.agent}</dd>
+              <dt className="text-text-subtle">Provider</dt>
+              <dd className="break-words text-text-soft">{launch.provider}</dd>
+              <dt className="text-text-subtle">Workspace</dt>
+              <dd className="break-words text-text-soft">{launch.workspace_mode || 'default'}</dd>
+              <dt className="text-text-subtle">Files</dt>
+              <dd className="break-words text-text-soft">
+                {launch.native_files} native, {launch.boot_overlay} boot overlay
+              </dd>
+            </dl>
+          </DetailSection>
+
+          {launch.plan_error && (
+            <DetailSection title="Plan Error">
+              <p className="text-[12px] text-status-blocked">{launch.plan_error}</p>
+            </DetailSection>
+          )}
+
+          {launch.launch_plan && (
+            <DetailSection title="Actual Launch Plan">
+              <div className="mb-2 flex justify-end">
+                <CopyButton text={launch.launch_plan} label="Copy plan" />
+              </div>
+              <JsonViewer value={plan} className="rounded-none border-0 bg-transparent px-0 py-0" />
+            </DetailSection>
+          )}
+
+          {launch.profile && (
+            <DetailSection title="Catalog Profile">
+              <div className="mb-2 flex justify-end">
+                <CopyButton text={launch.profile} label="Copy profile" />
+              </div>
+              <JsonViewer value={profile} className="rounded-none border-0 bg-transparent px-0 py-0" />
+            </DetailSection>
+          )}
+        </>
+      )}
+    </DetailDialog>
   )
 }

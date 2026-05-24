@@ -47,10 +47,16 @@ export interface LaunchInfo {
   workspace_mode: string
   native_files: number
   boot_overlay: number
+  profile?: string
+  launch_plan?: string
+  plan_error?: string
 }
 
 export interface SessionsInfo {
   sessions: SessionInfo[]
+  total: number
+  running: number
+  ended: number
   error?: string
 }
 
@@ -97,7 +103,22 @@ export interface MessageInfo {
 
 export interface MessagesInfo {
   messages: MessageInfo[]
+  totals: MessageTotals
   error?: string
+}
+
+export interface MessageTotals {
+  total: number
+  user: MessageScopeTotals
+  agent: MessageScopeTotals
+  other: MessageScopeTotals
+  groups: MessageScopeTotals
+}
+
+export interface MessageScopeTotals {
+  total: number
+  unread: number
+  archived: number
 }
 
 // ReplyRequest is the POST /api/messages body. `from`/`to` are messaging
@@ -189,6 +210,7 @@ export interface EventInfo {
 
 export interface EventsInfo {
   events: EventInfo[]
+  total: number
   error?: string
 }
 
@@ -197,14 +219,17 @@ export interface ToolCallInfo {
   session_id?: string
   server?: string
   tool_name: string
+  args_schema_fp?: string
   duration_ms: number
   ok: boolean
   error?: string
   timestamp: string
+  payload?: string
 }
 
 export interface ToolCallsInfo {
   tool_calls: ToolCallInfo[]
+  total: number
   error?: string
 }
 
@@ -221,8 +246,13 @@ export interface OverviewInfo {
     running: number
     ended: number
     success_pct: number
+    failure_pct: number
     avg_seconds: number
+    recent_24h: number
     trend: number[]
+    by_state: NameCount[]
+    by_provider: NameCount[]
+    by_project: NameCount[]
   }
   tool_calls: {
     total: number
@@ -231,20 +261,31 @@ export interface OverviewInfo {
     success_pct: number
     p50_ms: number
     p95_ms: number
+    avg_ms: number
+    recent_1h: number
+    slow_calls: number
+    sessions: number
     top_tools: NameCount[]
     top_errors: NameCount[]
+    by_server: NameCount[]
+    latency: NameCount[]
     trend: number[]
   }
   messages: {
     total: number
     unread: number
     archived: number
+    recent_24h: number
     by_kind: NameCount[]
+    by_scope: NameCount[]
     trend: number[]
   }
   events: {
     total: number
+    recent_1h: number
+    latest_seq: number
     by_scope: NameCount[]
+    by_kind: NameCount[]
     trend: number[]
   }
   catalog: {
@@ -322,6 +363,7 @@ export interface MCPToolInfo {
 
 export interface MCPToolsInfo {
   tools: MCPToolInfo[]
+  total_calls: number
   error?: string
 }
 
