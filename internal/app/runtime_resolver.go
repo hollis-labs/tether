@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 
+	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/go-agent-runtime/runtimebind"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
 
@@ -16,26 +18,35 @@ import (
 func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 	brand := p.ProviderBrand()
 	runtimeKind := p.EffectiveRuntimeKind()
+	if brand == "api-stub" && runtimeKind == config.RuntimeKindAPI {
+		return stub.New, nil
+	}
+	binding, err := runtimebind.Resolve(runtimebind.Request{
+		Provider:         brand,
+		RequestedRuntime: agentlaunch.RuntimeKind(runtimeKind),
+		AllowPTY:         true,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	switch {
-	case brand == "api-stub" && runtimeKind == config.RuntimeKindAPI:
-		return stub.New, nil
-	case brand == "claude" && runtimeKind == config.RuntimeKindStreamingStdio:
+	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeStreamingStdio:
 		return newClaudeStreamingStdioRuntime(p.ID), nil
-	case brand == "claude" && runtimeKind == config.RuntimeKindPTY:
+	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimePTY:
 		return newClaudePTYRuntime(p.ID), nil
-	case brand == "claude" && runtimeKind == config.RuntimeKindSubprocess:
+	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeSubprocess:
 		return newGoproviderRuntime(p.ID, gop.NewClaudeAdapter(), agentsessions.Capabilities{
 			ProviderSessionID: true,
 			BinaryRequired:    true,
 		}), nil
-	case brand == "codex" && runtimeKind == config.RuntimeKindJSONRPCStdio:
+	case binding.Provider == "codex" && binding.Runtime == agentlaunch.RuntimeJsonRpcStdio:
 		return newCodexJSONRPCStdioRuntime(p.ID), nil
-	case brand == "codex" && runtimeKind == config.RuntimeKindSubprocess:
+	case binding.Provider == "codex" && binding.Runtime == agentlaunch.RuntimeSubprocess:
 		return newGoproviderRuntime(p.ID, gop.NewCodexAdapter(), agentsessions.Capabilities{
 			BinaryRequired: true,
 		}), nil
-	case brand == "opencode" && runtimeKind == config.RuntimeKindSubprocess:
+	case binding.Provider == "opencode" && binding.Runtime == agentlaunch.RuntimeSubprocess:
 		return opencode.New, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider/runtime_kind combination: provider=%q runtime_kind=%q", brand, runtimeKind)

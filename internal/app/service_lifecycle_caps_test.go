@@ -168,7 +168,7 @@ func TestDeferPTYStdinBootPrompt_NonPTYUnchanged(t *testing.T) {
 	}
 }
 
-// TestFrameUserMessage_StreamingStdio pins the NDJSON envelope shape
+// TestFrameUserMessage_StreamingStdio pins the JSON user-message frame
 // for Claude's streaming-input mode. Independent of any session state
 // so it exercises the pure framing logic directly.
 func TestFrameUserMessage_StreamingStdio(t *testing.T) {
@@ -176,11 +176,8 @@ func TestFrameUserMessage_StreamingStdio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("frameUserMessage: %v", err)
 	}
-	if len(out) == 0 || out[len(out)-1] != '\n' {
-		t.Fatalf("expected trailing newline, got %q", out)
-	}
 	var parsed map[string]any
-	if err := json.Unmarshal(out[:len(out)-1], &parsed); err != nil {
+	if err := json.Unmarshal(out, &parsed); err != nil {
 		t.Fatalf("payload is not valid JSON: %v (raw=%q)", err, out)
 	}
 	if parsed["type"] != "user" {

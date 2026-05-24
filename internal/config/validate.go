@@ -2,8 +2,9 @@ package config
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
+
+	"github.com/hollis-labs/go-agent-runtime/bootdir"
 )
 
 func (c *Catalog) Validate() error {
@@ -110,17 +111,8 @@ func validateLaunchInjection(launchID string, in LaunchInjection) error {
 }
 
 func isSafeInjectedRelPath(rel string) bool {
-	if strings.HasPrefix(rel, "~") || filepath.IsAbs(rel) {
+	if strings.HasPrefix(rel, "~") {
 		return false
 	}
-	clean := filepath.Clean(rel)
-	if clean == "." || clean == ".." || strings.HasPrefix(filepath.ToSlash(clean), "../") {
-		return false
-	}
-	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
-		if part == ".." {
-			return false
-		}
-	}
-	return true
+	return bootdir.ValidateRelPath(rel) == nil
 }

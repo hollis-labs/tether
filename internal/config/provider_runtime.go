@@ -1,6 +1,10 @@
 package config
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/hollis-labs/go-agent-runtime/runtimekind"
+)
 
 const (
 	RuntimeKindPTY            = "pty"
@@ -38,16 +42,25 @@ func (p Provider) ProviderBrand() string {
 // Bootstrap.Mode remains the compatibility source for older catalog records.
 func (p Provider) EffectiveRuntimeKind() string {
 	if p.RuntimeKind != "" {
+		if k := runtimekind.Parse(p.RuntimeKind); k != runtimekind.Unknown {
+			return string(k)
+		}
 		return p.RuntimeKind
 	}
-	switch p.Bootstrap.Mode {
-	case RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio, RuntimeKindAPI:
-		return p.Bootstrap.Mode
+	mode := p.Bootstrap.Mode
+	switch mode {
 	case "", "agents_md", "prepend":
 		// These bootstrap modes describe boot-prompt placement for legacy
 		// subprocess providers, not the provider runtime transport.
 	default:
-		return p.Bootstrap.Mode
+		switch k := runtimekind.Parse(mode); k {
+		case runtimekind.StreamingStdio, runtimekind.JSONRPCStdio, runtimekind.API:
+			return string(k)
+		case runtimekind.Unknown:
+			return mode
+		default:
+			return string(k)
+		}
 	}
 	if p.Type == "api" {
 		return RuntimeKindAPI

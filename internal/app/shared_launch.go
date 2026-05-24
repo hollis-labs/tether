@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
@@ -120,102 +119,7 @@ func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, wor
 }
 
 func (s *Service) agentLaunchPlan(plan *launch.Plan, workspaceDir string) agentlaunch.LaunchPlan {
-	return agentlaunch.LaunchPlan{
-		Project: agentlaunch.ProjectSpec{
-			ID:   plan.ProjectID,
-			Root: plan.RepoRoot,
-		},
-		Agent: agentlaunch.AgentSpec{
-			ID: plan.LogicalAgentID,
-		},
-		Provider: agentlaunch.ProviderSpec{
-			ID:     plan.ProviderBrand,
-			Binary: plan.Command,
-			Flags:  append([]string(nil), plan.Args...),
-			Env:    copyMap(plan.Env),
-		},
-		Runtime:   mapSharedRuntime(plan.RuntimeKind),
-		Workspace: mapSharedWorkspace(plan, workspaceDir),
-		BootProfile: agentlaunch.BootProfileRef{
-			Inline: &agentlaunch.BootProfileInline{
-				BootPrompt: plan.BootPrompt,
-				BootMode:   mapSharedBootMode(plan.BootMode),
-			},
-		},
-		MCP: agentlaunch.MCPSpec{
-			Allowlist: splitCSV(plan.Env["MUX_MCP_SERVERS"]),
-		},
-		Injection: agentlaunch.InjectionSpec{
-			NativeFiles:    nativeFilesForAgentLaunch(plan.NativeFiles),
-			BootDirOverlay: copyMap(plan.BootDirOverlay),
-		},
-		Mode: agentlaunch.LaunchInteractive,
-		Metadata: agentlaunch.Metadata{
-			Annotations: map[string]string{
-				"tether.launch_id":      plan.LaunchID,
-				"tether.provider_id":    plan.ProviderID,
-				"tether.workspace_mode": plan.WorkspaceMode,
-			},
-		},
-	}
-}
-
-func mapSharedRuntime(runtime string) agentlaunch.RuntimeKind {
-	switch runtime {
-	case config.RuntimeKindPTY:
-		return agentlaunch.RuntimePTY
-	case config.RuntimeKindStreamingStdio:
-		return agentlaunch.RuntimeStreamingStdio
-	case config.RuntimeKindJSONRPCStdio:
-		return agentlaunch.RuntimeJsonRpcStdio
-	default:
-		return agentlaunch.RuntimeSubprocess
-	}
-}
-
-func mapSharedWorkspace(plan *launch.Plan, workspaceDir string) agentlaunch.WorkspaceSpec {
-	mode := agentlaunch.WorkspacePersistent
-	switch plan.WorkspaceMode {
-	case "shared", "hybrid", "":
-		mode = agentlaunch.WorkspacePersistent
-	case "worktree", "isolated":
-		mode = agentlaunch.WorkspacePersistent
-	case "temp":
-		mode = agentlaunch.WorkspaceTemp
-	case "fresh":
-		mode = agentlaunch.WorkspaceFresh
-	}
-	return agentlaunch.WorkspaceSpec{
-		Mode:         mode,
-		Workdir:      plan.EffectiveWorkRoot(),
-		WorkspaceDir: workspaceDir,
-	}
-}
-
-func mapSharedBootMode(mode string) string {
-	switch mode {
-	case agentlaunch.BootModeNone, agentlaunch.BootModeStdin, agentlaunch.BootModePlanted:
-		return mode
-	default:
-		return agentlaunch.BootModePlanted
-	}
-}
-
-func nativeFilesForAgentLaunch(in []launch.NativeFile) []agentlaunch.NativeFile {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]agentlaunch.NativeFile, 0, len(in))
-	for _, f := range in {
-		out = append(out, agentlaunch.NativeFile{
-			Kind:    agentlaunch.NativeFileKind(f.Kind),
-			ID:      f.ID,
-			RelPath: filepath.ToSlash(f.RelPath),
-			Content: f.Content,
-			Mode:    os.FileMode(f.Mode),
-		})
-	}
-	return out
+	return launch.AgentLaunchPlan(plan, workspaceDir)
 }
 
 func copyMap(in map[string]string) map[string]string {
@@ -225,17 +129,6 @@ func copyMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		out[k] = v
-	}
-	return out
-}
-
-func splitCSV(in string) []string {
-	var out []string
-	for _, part := range strings.Split(in, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
 	}
 	return out
 }

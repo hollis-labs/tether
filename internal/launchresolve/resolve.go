@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/go-agent-runtime/runtimekind"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -236,15 +237,9 @@ func (r *Registry) ResolveLaunch(launchID string) (LaunchResolution, error) {
 // runtime has no agentlaunch equivalent and maps to the invalid zero
 // value, which ResolveRuntimeBinding rejects as unmappable.
 func mapRuntimeKind(kind string) agentlaunch.RuntimeKind {
-	switch kind {
-	case config.RuntimeKindPTY:
-		return agentlaunch.RuntimePTY
-	case config.RuntimeKindStreamingStdio:
-		return agentlaunch.RuntimeStreamingStdio
-	case config.RuntimeKindJSONRPCStdio:
-		return agentlaunch.RuntimeJsonRpcStdio
-	case config.RuntimeKindSubprocess:
-		return agentlaunch.RuntimeSubprocess
+	switch k := runtimekind.Parse(kind); k {
+	case runtimekind.PTY, runtimekind.StreamingStdio, runtimekind.JSONRPCStdio, runtimekind.Subprocess:
+		return k
 	default:
 		return agentlaunch.RuntimeKind("")
 	}

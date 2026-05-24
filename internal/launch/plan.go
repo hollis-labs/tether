@@ -12,6 +12,10 @@ type Plan struct {
 	ProviderID     string `json:"provider_id"`
 	ProviderBrand  string `json:"provider_brand,omitempty"`
 	RuntimeKind    string `json:"runtime_kind,omitempty"`
+	// ResumeProviderSessionID is set only by checkpoint resume. LaunchSession
+	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
+	// launches never become implicit provider-native resumes.
+	ResumeProviderSessionID string `json:"resume_provider_session_id,omitempty"`
 	// PermissionMode is the resolved Claude Code permission posture for the
 	// launched agent ("bypass" or "default"), computed by the launch
 	// resolver from the agent's permissions.permission_mode falling back to
