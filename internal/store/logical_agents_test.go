@@ -218,3 +218,71 @@ func TestClaudeSessionID_EmptyAgentIDRejected(t *testing.T) {
 		t.Fatal("expected error for empty logical agent id")
 	}
 }
+
+func TestLogicalAgentPolicy_DefaultsToManual(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "policy-agent")
+	got, err := db.GetLogicalAgentPolicy("policy-agent")
+	if err != nil {
+		t.Fatalf("GetLogicalAgentPolicy: %v", err)
+	}
+	if got.CheckpointPolicy != agent.CheckpointPolicyManual {
+		t.Fatalf("CheckpointPolicy = %q, want %q", got.CheckpointPolicy, agent.CheckpointPolicyManual)
+	}
+	if got.CheckpointStatus != "" {
+		t.Fatalf("CheckpointStatus = %q, want empty", got.CheckpointStatus)
+	}
+}
+
+func TestLogicalAgentPolicy_UpdateRoundTrip(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "policy-agent")
+	now := "2026-04-19T10:10:00Z"
+	err := db.UpdateLogicalAgentPolicy(agent.LogicalAgentPolicy{
+		LogicalAgentID:   "policy-agent",
+		CheckpointPolicy: agent.CheckpointPolicyOnStop,
+		CheckpointStatus: "auto-stop",
+	}, now)
+	if err != nil {
+		t.Fatalf("UpdateLogicalAgentPolicy: %v", err)
+	}
+	got, err := db.GetLogicalAgentPolicy("policy-agent")
+	if err != nil {
+		t.Fatalf("GetLogicalAgentPolicy: %v", err)
+	}
+	if got.CheckpointPolicy != agent.CheckpointPolicyOnStop {
+		t.Fatalf("CheckpointPolicy = %q, want %q", got.CheckpointPolicy, agent.CheckpointPolicyOnStop)
+	}
+	if got.CheckpointStatus != "auto-stop" {
+		t.Fatalf("CheckpointStatus = %q, want auto-stop", got.CheckpointStatus)
+	}
+	if got.UpdatedAt != now {
+		t.Fatalf("UpdatedAt = %q, want %q", got.UpdatedAt, now)
+	}
+}
+
+func TestLogicalAgentPolicy_UpdateClearsStatusForManual(t *testing.T) {
+	db := openClaudeSessionTestStore(t, "policy-agent")
+	if err := db.UpdateLogicalAgentPolicy(agent.LogicalAgentPolicy{
+		LogicalAgentID:   "policy-agent",
+		CheckpointPolicy: agent.CheckpointPolicyOnStop,
+		CheckpointStatus: "auto-stop",
+	}, "2026-04-19T10:10:00Z"); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	if err := db.UpdateLogicalAgentPolicy(agent.LogicalAgentPolicy{
+		LogicalAgentID:   "policy-agent",
+		CheckpointPolicy: agent.CheckpointPolicyManual,
+		CheckpointStatus: "should-clear",
+	}, "2026-04-19T10:11:00Z"); err != nil {
+		t.Fatalf("clear policy: %v", err)
+	}
+	got, err := db.GetLogicalAgentPolicy("policy-agent")
+	if err != nil {
+		t.Fatalf("GetLogicalAgentPolicy: %v", err)
+	}
+	if got.CheckpointPolicy != agent.CheckpointPolicyManual {
+		t.Fatalf("CheckpointPolicy = %q, want manual", got.CheckpointPolicy)
+	}
+	if got.CheckpointStatus != "" {
+		t.Fatalf("CheckpointStatus = %q, want empty", got.CheckpointStatus)
+	}
+}

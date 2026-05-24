@@ -111,6 +111,45 @@ func (rc *RegistryClient) Lookup(ctx context.Context, urn string) (registry.Prof
 	return out, nil
 }
 
+// LookupBy resolves a substrate-local identifier to one registry profile.
+func (rc *RegistryClient) LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error) {
+	seg, err := pluralSegment(kind)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	q := url.Values{}
+	q.Set("external_id", externalID)
+	if substrate != "" {
+		q.Set("substrate", substrate)
+	}
+	path := "/registry/" + seg + "?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.Profile{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.Profile{}, readRegistryError(resp)
+	}
+	var env map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return registry.Profile{}, fmt.Errorf("decode lookup-by envelope: %w", err)
+	}
+	raw, ok := env[string(kind)]
+	if !ok {
+		return registry.Profile{}, fmt.Errorf("decode lookup-by envelope: missing key %q", kind)
+	}
+	var out registry.Profile
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return registry.Profile{}, fmt.Errorf("decode lookup-by profile: %w", err)
+	}
+	return out, nil
+}
+
 // Search GETs /registry/{kind} with the Filter encoded as query params.
 // Empty Filter returns all active rows of that kind. Returns a
 // non-nil zero-length slice when no rows match.
@@ -237,6 +276,38 @@ func (rc *RegistryClient) Deregister(ctx context.Context, urn string) (registry.
 	return out, nil
 }
 
+// Merge POSTs /registry/{kind}/{urn-src}/merge with the destination URN and
+// returns the canonical destination profile.
+func (rc *RegistryClient) Merge(ctx context.Context, urnSrc, urnDst string) (registry.Profile, error) {
+	seg, err := kindSegmentFromURN(urnSrc)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	body, err := json.Marshal(map[string]string{"into": urnDst})
+	if err != nil {
+		return registry.Profile{}, fmt.Errorf("marshal merge request: %w", err)
+	}
+	path := "/registry/" + seg + "/" + url.PathEscape(urnSrc) + "/merge"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.Profile{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.Profile{}, readRegistryError(resp)
+	}
+	var out registry.Profile
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.Profile{}, fmt.Errorf("decode merge response: %w", err)
+	}
+	return out, nil
+}
+
 // Sync POSTs /registry/{kind}/{urn}/sync. Returns (Profile{}, false,
 // nil) on 204 No Content (row has no callback configured) so callers
 // can distinguish "no-op" from "refreshed". On 200, returns the
@@ -278,10 +349,20 @@ func (rc *RegistryClient) Sync(ctx context.Context, urn string) (registry.Profil
 // inspect per-file errors. Per-file errors live inside report.Errors;
 // HTTP-level failures (5xx, network, etc.) come back as the second
 // return.
-func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool) (registry.BootstrapReport, error) {
+func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool, substrate string, writeBack bool) (registry.BootstrapReport, error) {
 	path := "/registry/bootstrap"
+	q := url.Values{}
 	if force {
-		path += "?force=true"
+		q.Set("force", "true")
+	}
+	if substrate != "" {
+		q.Set("substrate", substrate)
+	}
+	if !writeBack {
+		q.Set("write_back", "false")
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, nil)
 	if err != nil {
@@ -314,6 +395,8 @@ func pluralSegment(k registry.Kind) (string, error) {
 		return "agents", nil
 	case registry.KindProject:
 		return "projects", nil
+	case registry.KindGroup:
+		return "groups", nil
 	default:
 		return "", fmt.Errorf("registry client: unsupported kind %q", string(k))
 	}

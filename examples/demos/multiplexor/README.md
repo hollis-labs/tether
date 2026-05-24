@@ -1,6 +1,6 @@
 # Multiplexor Demo
 
-Demonstrates the **Agent Mux multiplexor pattern**: a primary agent session
+Demonstrates the **Tether multiplexor pattern**: a primary agent session
 delegates work to sibling sessions through the broker's structured
 request/reply envelopes. All sessions share a session group so the workflow
 is auditable as a unit.
@@ -37,13 +37,13 @@ mux daemon start
 ```bash
 bash examples/demos/multiplexor/run.sh
 # or with a custom catalog:
-bash examples/demos/multiplexor/run.sh --catalog ~/.agent-mux/catalog
+bash examples/demos/multiplexor/run.sh --catalog ~/.tether/catalog
 ```
 
 ## Expected output
 
 ```
-=== Agent Mux Multiplexor Demo ===
+=== Tether Multiplexor Demo ===
 Catalog: /path/to/examples/catalog
 
 1. Creating session group...
@@ -97,7 +97,7 @@ continuing — use:
 ```bash
 # POST /broker/requests?wait=true&timeout=30s
 # Returns 200 with the response envelope, or 504 on timeout.
-curl -sf --unix-socket ~/.agent-mux/run/muxd.sock \
+curl -sf --unix-socket ~/.tether/run/muxd.sock \
   -X POST "http://unix/broker/requests?wait=true&timeout=30s" \
   -H "Content-Type: application/json" \
   -d '{"sender":"primary-id","recipient":"sibling-id","payload":"..."}'

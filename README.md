@@ -1,15 +1,16 @@
-# Agent Mux
+# Tether
 
-Local-first agent session control plane. Owns session lifecycle, process/PTY
-management, sandboxed execution, checkpoint/resume, brokered messaging, and
-event streams for any CLI-backed agent (Claude Code, Codex, Kiro, etc.).
+Local-first agent session control plane. Tether owns session lifecycle,
+process/PTY management, sandboxed execution, checkpoint/resume, brokered
+messaging, and event streams for CLI-backed agents such as Claude Code,
+Codex, Kiro, and Opencode.
 
-## What it is
+## What It Is
 
-Agent Mux runs as a per-user daemon (`muxd`) on your machine. Every agent
-session — launch, attach, stop, checkpoint — goes through the daemon. Clients
-access it over a Unix-domain socket via the `mux` CLI, the HTTP API, the MCP
-adapter, or the `go-agentmux-client` Go library.
+Tether runs as a per-user daemon (`muxd`) on your machine. Every agent
+session, launch, attach, stop, and checkpoint goes through the daemon.
+Clients access it over a Unix-domain socket via the `mux` CLI, the HTTP API,
+the MCP adapter, the ACP surface, or the Go client library.
 
 ```
 mux (CLI) / MCP client / HTTP / go-agentmux-client
@@ -23,6 +24,19 @@ mux (CLI) / MCP client / HTTP / go-agentmux-client
    ├─ /catalog/*       read-only catalog projection
    └─ /events/*        SSE event bus
 ```
+
+## License & Branding
+
+Tether is open source under the MIT License.
+
+You are free to use, modify, and build on Tether for personal or commercial
+use.
+
+The Tether name and Hollis Labs branding are protected trademarks. If you
+build on Tether, describe that relationship in a way that does not imply your
+fork or service is the official Tether distribution.
+
+See [TRADEMARK.md](TRADEMARK.md) for details.
 
 ## Build
 
@@ -65,6 +79,20 @@ AGENT_MUX_MCP_SCOPES=session.write,message.write \
 mux mcp
 ```
 
+## Sysop GUI
+
+Tether ships with Sysop, the GUI for operating the runtime.
+
+```bash
+cd apps/sysop
+make all
+./tether_sysop
+```
+
+Sysop serves the UI and API at `http://localhost:8947/operations/`. See
+[`apps/sysop/README.md`](apps/sysop/README.md) for development and packaging
+details.
+
 ## MCP adapter
 
 `mux mcp` exposes the runtime as 23 MCP tools over stdio, usable from Claude
@@ -73,7 +101,7 @@ Desktop, Claude Code, Cursor, or any MCP-capable agent:
 ```json
 {
   "mcpServers": {
-    "agent-mux": {
+    "tether": {
       "command": "mux",
       "args": ["mcp"],
       "env": {
@@ -101,11 +129,7 @@ See [`docs/mcp.md`](docs/mcp.md) for the full tool reference and setup guide.
 
 ## Catalog
 
-Agent Mux is driven by a YAML catalog at `~/.agent-mux/catalog/`. The catalog
+Tether is driven by a YAML catalog at `~/.tether/catalog/`. The catalog
 defines projects, agent profiles, providers, and launch configurations. See
 `examples/catalog/` for working examples and `docs/dev-setup.md` for the full
 schema.
-
-## License
-
-All Rights Reserved — placeholder until v1.0. See `LICENSE`.

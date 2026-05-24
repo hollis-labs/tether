@@ -35,7 +35,7 @@ versions.
 | Claude CLI | installed, authenticated, on `PATH` | `2.1.142 (Claude Code)` |
 | Codex CLI / app-server | installed, authenticated, on `PATH` | `codex-cli 0.130.0` |
 | Opencode CLI | installed, authenticated, on `PATH` | `1.14.48` |
-| Catalog | a catalog with Claude/Codex/Opencode launch profiles at `--catalog` | copied from `~/.agent-mux/catalog` to isolated `/tmp/tether-smoke.*` catalog |
+| Catalog | a catalog with Claude/Codex/Opencode launch profiles at `--catalog` | copied from `~/.tether/catalog` to isolated `/tmp/tether-smoke.*` catalog |
 
 Provider CLIs are **not** vendored. A scenario whose provider CLI is missing or
 unauthenticated is recorded as `SKIPPED (provider unavailable)`, not `FAIL`.

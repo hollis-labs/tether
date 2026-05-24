@@ -1,4 +1,4 @@
-# Agent Mux — ACP Adapter
+# Tether — ACP Adapter
 
 `mux acp` starts an Agent Client Protocol (ACP) server that exposes a mux
 session to ACP-aware editors. Editors (Zed natively, JetBrains via `acp.json`,
@@ -17,7 +17,7 @@ owned by the daemon, and ACP routes through it over UDS.
 ### 1. Install the binary
 
 ```bash
-cd ~/Projects-apps/agent-mux
+cd ~/dev/hollis-labs/apps/tether
 make install        # → /Users/<you>/go/bin/mux
 ```
 
@@ -35,7 +35,7 @@ See per-editor sections below. The minimal command is:
 mux acp --agent <launch_id>
 ```
 
-`<launch_id>` is the name of an entry in `~/.agent-mux/catalog/launches/`
+`<launch_id>` is the name of an entry in `~/.tether/catalog/launches/`
 (see `mux launch list`). The launch profile picks the agent + provider that
 this ACP connection drives.
 

@@ -88,6 +88,64 @@ func (s *Store) GetLogicalAgent(id string) (*LogicalAgentRow, error) {
 	return &r, nil
 }
 
+func (s *Store) GetLogicalAgentPolicy(id string) (agent.LogicalAgentPolicy, error) {
+	row, err := s.GetLogicalAgent(id)
+	if err != nil {
+		return agent.LogicalAgentPolicy{}, err
+	}
+	mode, err := agent.NormalizeCheckpointPolicy(row.CheckpointPolicy)
+	if err != nil {
+		return agent.LogicalAgentPolicy{}, err
+	}
+	status, err := agent.DecodeCheckpointStatus(row.PoliciesJSON)
+	if err != nil {
+		return agent.LogicalAgentPolicy{}, err
+	}
+	policy := agent.LogicalAgentPolicy{
+		LogicalAgentID:   row.ID,
+		Name:             row.Name,
+		LaunchID:         row.LaunchID,
+		CheckpointPolicy: mode,
+		CheckpointStatus: status,
+		UpdatedAt:        row.UpdatedAt,
+	}
+	if err := policy.Normalize(); err != nil {
+		return agent.LogicalAgentPolicy{}, err
+	}
+	return policy, nil
+}
+
+func (s *Store) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy, now string) error {
+	if err := policy.Normalize(); err != nil {
+		return err
+	}
+	row, err := s.GetLogicalAgent(policy.LogicalAgentID)
+	if err != nil {
+		return err
+	}
+	policiesJSON, err := agent.MergeCheckpointStatus(row.PoliciesJSON, policy.CheckpointStatus)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(
+		`UPDATE logical_agents
+		    SET checkpoint_policy = ?, policies_json = ?, updated_at = ?
+		  WHERE id = ?`,
+		nullIfEmpty(string(policy.CheckpointPolicy)),
+		nullIfEmpty(policiesJSON),
+		now,
+		policy.LogicalAgentID,
+	)
+	if err != nil {
+		return fmt.Errorf("update logical_agent policy %q: %w", policy.LogicalAgentID, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("update logical_agent policy: no logical_agents row with id %q", policy.LogicalAgentID)
+	}
+	return nil
+}
+
 // SetLogicalAgentLaunchID stores the launch profile ID most recently used
 // to start a session for this agent. Used by the resume endpoint to start
 // a new session with the same catalog config. Safe to call on every launch —

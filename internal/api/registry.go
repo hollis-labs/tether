@@ -58,11 +58,15 @@ import (
 type RegistryService interface {
 	Register(ctx context.Context, kind registry.Kind, p registry.Profile) (registry.Profile, error)
 	Lookup(ctx context.Context, urn string) (registry.Profile, error)
+	LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error)
+	Merge(ctx context.Context, urnSrc, urnDst string) (registry.Profile, error)
 	Search(ctx context.Context, kind registry.Kind, f registry.Filter) ([]registry.Profile, error)
 	UpdateSelf(ctx context.Context, urn string, patch registry.UpdatePatch) (registry.Profile, error)
 	Deregister(ctx context.Context, urn string) (registry.Profile, error)
 	Sync(ctx context.Context, urn string) (registry.Profile, error)
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
+	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
+	BootstrapFromCerberus(ctx context.Context, cerberusHome string, force bool, writeBack bool) (registry.BootstrapReport, error)
 }
 
 // kindFromSegment translates the plural URL segment to the singular
@@ -74,6 +78,8 @@ func kindFromSegment(seg string) (registry.Kind, bool) {
 		return registry.KindAgent, true
 	case "projects":
 		return registry.KindProject, true
+	case "groups":
+		return registry.KindGroup, true
 	default:
 		return "", false
 	}
@@ -91,6 +97,10 @@ func pluralForKind(k registry.Kind) string {
 	default:
 		return string(k) + "s"
 	}
+}
+
+func singularForKind(k registry.Kind) string {
+	return string(k)
 }
 
 // registerRegistryRoutes mounts the /registry/ tree onto mux. The route
@@ -193,11 +203,22 @@ func (s *Server) handleRegistry(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.handleRegistrySync(w, r, urn)
+		case "merge":
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+					"method not allowed on /registry/.../merge")
+				return
+			}
+			s.handleRegistryMerge(w, r, urn)
 		default:
 			writeError(w, http.StatusNotFound, CodeNotFound,
 				"unknown registry action "+parts[2])
 		}
 	}
+}
+
+type registryMergeRequest struct {
+	Into string `json:"into"`
 }
 
 // handleRegistryRegister services POST /registry/{kind}. Body is a
@@ -235,6 +256,17 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 // convention in catalog.go).
 func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, kind registry.Kind) {
 	q := r.URL.Query()
+	if externalID := q.Get("external_id"); externalID != "" {
+		out, err := s.Registry.LookupBy(r.Context(), kind, externalID, q.Get("substrate"))
+		if err != nil {
+			writeRegistryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			singularForKind(kind): out,
+		})
+		return
+	}
 	f := registry.Filter{
 		Role:       q.Get("role"),
 		Title:      q.Get("title"),
@@ -338,7 +370,26 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
-	report, err := s.Registry.BootstrapFromCatalog(r.Context(), s.RegistryCatalogRoot, force)
+	substrate := r.URL.Query().Get("substrate")
+	writeBack := r.URL.Query().Get("write_back") != "false"
+	var (
+		report registry.BootstrapReport
+		err    error
+	)
+	switch substrate {
+	case "", "tether":
+		report, err = s.Registry.BootstrapFromCatalog(r.Context(), s.RegistryCatalogRoot, force)
+		if err == nil {
+			var attached int
+			attached, err = s.Registry.BackfillTetherExternalIDs(r.Context(), s.RegistryCatalogRoot)
+			report.Attached += attached
+		}
+	case "cerberus":
+		report, err = s.Registry.BootstrapFromCerberus(r.Context(), "", force, writeBack)
+	default:
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "unsupported bootstrap substrate "+substrate)
+		return
+	}
 	if err != nil {
 		writeRegistryError(w, err)
 		return
@@ -365,6 +416,20 @@ func (s *Server) handleRegistrySync(w http.ResponseWriter, r *http.Request, urn 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		writeRegistryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleRegistryMerge(w http.ResponseWriter, r *http.Request, urn string) {
+	var req registryMergeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	out, err := s.Registry.Merge(r.Context(), urn, req.Into)
+	if err != nil {
 		writeRegistryError(w, err)
 		return
 	}

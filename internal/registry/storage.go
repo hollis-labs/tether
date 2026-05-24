@@ -65,6 +65,7 @@ var updateProfileFieldAllowlist = map[string]struct{}{
 	"health_status":   {},
 	"last_seen_at":    {},
 	"host_address":    {},
+	"merged_into":     {},
 	"kind_meta_json":  {},
 	"last_updated_by": {},
 }
@@ -132,14 +133,14 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 		`INSERT INTO registry_entries
 		    (urn, kind, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
-		     last_seen_at, host_address, kind_meta_json, last_updated_by,
+		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
-		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress),
+		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
 		formatTime(p.CreatedAt), formatTime(p.UpdatedAt),
 	); err != nil {
@@ -167,6 +168,14 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 			`INSERT INTO registry_links (urn, kind, target) VALUES (?, ?, ?)`,
 			p.URN, l.Kind, l.Target); err != nil {
 			return fmt.Errorf("registry: insert link (%s,%s): %w", l.Kind, l.Target, err)
+		}
+	}
+	for _, ext := range p.ExternalIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO registry_external_ids (urn, substrate, external_id, attached_at)
+			 VALUES (?, ?, ?, ?)`,
+			p.URN, ext.Substrate, ext.ExternalID, formatTime(ext.AttachedAt)); err != nil {
+			return fmt.Errorf("registry: insert external_id (%s,%s): %w", ext.Substrate, ext.ExternalID, err)
 		}
 	}
 
@@ -200,9 +209,14 @@ func (s *Storage) GetProfile(ctx context.Context, urn string) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
+	externalIDs, err := s.selectExternalIDs(ctx, urn)
+	if err != nil {
+		return Profile{}, err
+	}
 	p.Capabilities = caps
 	p.Skills = skills
 	p.Links = links
+	p.ExternalIDs = externalIDs
 	return p, nil
 }
 
@@ -246,7 +260,7 @@ func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Prof
 	row := s.db.QueryRowContext(ctx,
 		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
-		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE callback_json IS NOT NULL
@@ -272,10 +286,96 @@ func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Prof
 	if err != nil {
 		return Profile{}, err
 	}
+	externalIDs, err := s.selectExternalIDs(ctx, p.URN)
+	if err != nil {
+		return Profile{}, err
+	}
 	p.Capabilities = caps
 	p.Skills = skills
 	p.Links = links
+	p.ExternalIDs = externalIDs
 	return p, nil
+}
+
+// LookupExternalIDsForURN returns every external-id attachment recorded for
+// urn, ordered by attached_at then substrate for stable caller output.
+func (s *Storage) LookupExternalIDsForURN(ctx context.Context, urn string) ([]ExternalID, error) {
+	if urn == "" {
+		return nil, errors.New("registry: lookup external ids: urn required")
+	}
+	return s.selectExternalIDs(ctx, urn)
+}
+
+// LookupURNByExternalID finds the first URN of kind attached to externalID. If
+// substrate is non-empty, the lookup is constrained to that substrate;
+// otherwise it matches across every substrate in attached_at order.
+func (s *Storage) LookupURNByExternalID(ctx context.Context, kind Kind, externalID, substrate string) (string, bool, error) {
+	if kind == "" {
+		return "", false, errors.New("registry: lookup by external id: kind required")
+	}
+	if externalID == "" {
+		return "", false, errors.New("registry: lookup by external id: external_id required")
+	}
+
+	query := `SELECT e.urn
+		FROM registry_external_ids x
+		JOIN registry_entries e ON e.urn = x.urn
+	   WHERE e.kind = ?
+	     AND x.external_id = ?`
+	args := []any{string(kind), externalID}
+	if substrate != "" {
+		query += ` AND x.substrate = ?`
+		args = append(args, substrate)
+	}
+	query += ` ORDER BY x.attached_at ASC, x.substrate ASC LIMIT 1`
+
+	var urn string
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&urn)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("registry: lookup by external id: %w", err)
+	}
+	return urn, true, nil
+}
+
+// AttachExternalID records one substrate-local identifier for urn.
+func (s *Storage) AttachExternalID(ctx context.Context, urn, substrate, externalID string) error {
+	if urn == "" {
+		return errors.New("registry: attach external id: urn required")
+	}
+	if substrate == "" {
+		return errors.New("registry: attach external id: substrate required")
+	}
+	if externalID == "" {
+		return errors.New("registry: attach external id: external_id required")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO registry_external_ids (urn, substrate, external_id, attached_at)
+		 VALUES (?, ?, ?, ?)`,
+		urn, substrate, externalID, formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("registry: attach external id: %w", err)
+	}
+	return nil
+}
+
+// DetachExternalID removes the substrate attachment for urn. Missing rows are a
+// no-op so merge/cleanup callers can treat detach as idempotent.
+func (s *Storage) DetachExternalID(ctx context.Context, urn, substrate string) error {
+	if urn == "" {
+		return errors.New("registry: detach external id: urn required")
+	}
+	if substrate == "" {
+		return errors.New("registry: detach external id: substrate required")
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM registry_external_ids WHERE urn = ? AND substrate = ?`,
+		urn, substrate); err != nil {
+		return fmt.Errorf("registry: detach external id: %w", err)
+	}
+	return nil
 }
 
 // ─── Update ──────────────────────────────────────────────────────────────────
@@ -596,7 +696,7 @@ func (s *Storage) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, e
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
-		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE `+where+`
@@ -637,6 +737,9 @@ func (s *Storage) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, e
 		return nil, err
 	}
 	if err := s.batchFillLinks(ctx, urns, byURN); err != nil {
+		return nil, err
+	}
+	if err := s.batchFillExternalIDs(ctx, urns, byURN); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -692,7 +795,7 @@ func (s *Storage) selectEntry(ctx context.Context, urn string) (Profile, error) 
 	row := s.db.QueryRowContext(ctx,
 		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
-		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        created_at, updated_at
 		   FROM registry_entries WHERE urn = ?`, urn)
 	p, err := scanEntryRow(row.Scan)
@@ -756,6 +859,31 @@ func (s *Storage) selectLinks(ctx context.Context, urn string) ([]Link, error) {
 			return nil, fmt.Errorf("registry: scan link: %w", err)
 		}
 		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func (s *Storage) selectExternalIDs(ctx context.Context, urn string) ([]ExternalID, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT substrate, external_id, attached_at
+		   FROM registry_external_ids
+		  WHERE urn = ?
+		  ORDER BY attached_at ASC, substrate ASC`, urn)
+	if err != nil {
+		return nil, fmt.Errorf("registry: select external ids: %w", err)
+	}
+	defer rows.Close()
+	var out []ExternalID
+	for rows.Next() {
+		var substrate, externalID, attachedAt string
+		if err := rows.Scan(&substrate, &externalID, &attachedAt); err != nil {
+			return nil, fmt.Errorf("registry: scan external id: %w", err)
+		}
+		out = append(out, ExternalID{
+			Substrate:  substrate,
+			ExternalID: externalID,
+			AttachedAt: parseTime(attachedAt),
+		})
 	}
 	return out, rows.Err()
 }
@@ -843,23 +971,51 @@ func (s *Storage) batchFillLinks(ctx context.Context, urns []string, byURN map[s
 	return rows.Err()
 }
 
+func (s *Storage) batchFillExternalIDs(ctx context.Context, urns []string, byURN map[string]*Profile) error {
+	args := toAnySlice(urns)
+	in := "?"
+	in += commaQ(len(urns) - 1)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT urn, substrate, external_id, attached_at FROM registry_external_ids
+		  WHERE urn IN (`+in+`)
+		  ORDER BY urn, attached_at, substrate`, args...)
+	if err != nil {
+		return fmt.Errorf("registry: batch external ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var urn, substrate, externalID, attachedAt string
+		if err := rows.Scan(&urn, &substrate, &externalID, &attachedAt); err != nil {
+			return fmt.Errorf("registry: scan batch external id: %w", err)
+		}
+		if p, ok := byURN[urn]; ok {
+			p.ExternalIDs = append(p.ExternalIDs, ExternalID{
+				Substrate:  substrate,
+				ExternalID: externalID,
+				AttachedAt: parseTime(attachedAt),
+			})
+		}
+	}
+	return rows.Err()
+}
+
 // scanFn captures the signature shared by *sql.Row.Scan and *sql.Rows.Scan
 // so a single scan helper handles both query shapes.
 type scanFn func(dest ...any) error
 
 func scanEntryRow(scan scanFn) (Profile, error) {
 	var (
-		p                                                                                   Profile
-		kindStr, status                                                                     string
-		title, role, description, avatar, project, hostAddress, healthStatus, lastUpdatedBy sql.NullString
-		callbackJSON, kindMetaJSON                                                          sql.NullString
-		cachedAt, lastSeenAt                                                                sql.NullString
-		createdAt, updatedAt                                                                string
+		p                                                                                               Profile
+		kindStr, status                                                                                 string
+		title, role, description, avatar, project, hostAddress, healthStatus, mergedInto, lastUpdatedBy sql.NullString
+		callbackJSON, kindMetaJSON                                                                      sql.NullString
+		cachedAt, lastSeenAt                                                                            sql.NullString
+		createdAt, updatedAt                                                                            string
 	)
 	if err := scan(
 		&p.URN, &kindStr, &p.MuxInstanceID, &p.DisplayName,
 		&title, &role, &description, &avatar, &project, &status,
-		&callbackJSON, &cachedAt, &healthStatus, &lastSeenAt, &hostAddress,
+		&callbackJSON, &cachedAt, &healthStatus, &lastSeenAt, &hostAddress, &mergedInto,
 		&kindMetaJSON, &lastUpdatedBy, &createdAt, &updatedAt,
 	); err != nil {
 		return Profile{}, err
@@ -873,6 +1029,7 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 	p.Project = project.String
 	p.HealthStatus = healthStatus.String
 	p.HostAddress = hostAddress.String
+	p.MergedInto = mergedInto.String
 	p.LastUpdatedBy = lastUpdatedBy.String
 
 	if callbackJSON.Valid && callbackJSON.String != "" {
@@ -1024,14 +1181,14 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 		`INSERT INTO registry_entries
 		    (urn, kind, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
-		     last_seen_at, host_address, kind_meta_json, last_updated_by,
+		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
-		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress),
+		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
 		formatTime(now), formatTime(p.UpdatedAt),
 	); err != nil {
@@ -1128,7 +1285,7 @@ func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.urn, e.kind, e.mux_instance_id, e.display_name, e.title, e.role,
 		        e.description, e.avatar, e.project, e.status, e.callback_json,
-		        e.cached_at, e.health_status, e.last_seen_at, e.host_address,
+		        e.cached_at, e.health_status, e.last_seen_at, e.host_address, e.merged_into,
 		        e.kind_meta_json, e.last_updated_by, e.created_at, e.updated_at
 		   FROM registry_entries e
 		   JOIN group_members m ON m.grp_urn = e.urn
@@ -1272,7 +1429,7 @@ func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT urn, kind, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
-		        last_seen_at, host_address, kind_meta_json, last_updated_by,
+		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE display_name = ?

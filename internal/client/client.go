@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -564,6 +565,40 @@ func (c *Client) ListLogicalAgents(ctx context.Context) ([]api.LogicalAgentSumma
 		return nil, err
 	}
 	return res.Agents, nil
+}
+
+func (c *Client) GetLogicalAgentPolicy(ctx context.Context, agentID string) (api.LogicalAgentPolicyResponse, error) {
+	var res api.LogicalAgentPolicyResponse
+	if err := c.getJSON(ctx, "/logical-agents/"+url.PathEscape(agentID)+"/policy", &res); err != nil {
+		return api.LogicalAgentPolicyResponse{}, err
+	}
+	return res, nil
+}
+
+func (c *Client) UpdateLogicalAgentPolicy(ctx context.Context, policy agent.LogicalAgentPolicy) (api.LogicalAgentPolicyResponse, error) {
+	body, _ := json.Marshal(api.LogicalAgentPolicyUpdateRequest{
+		CheckpointPolicy: string(policy.CheckpointPolicy),
+		CheckpointStatus: policy.CheckpointStatus,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		c.baseURL+"/logical-agents/"+url.PathEscape(policy.LogicalAgentID)+"/policy", bytes.NewReader(body))
+	if err != nil {
+		return api.LogicalAgentPolicyResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return api.LogicalAgentPolicyResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.LogicalAgentPolicyResponse{}, readError(resp)
+	}
+	var res api.LogicalAgentPolicyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return api.LogicalAgentPolicyResponse{}, fmt.Errorf("decode logical agent policy response: %w", err)
+	}
+	return res, nil
 }
 
 // MessageInbox fetches pending messages for a recipient from GET /messages/inbox.

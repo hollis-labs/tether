@@ -1,4 +1,4 @@
-# Agent Mux Local API (v0.0.2)
+# Tether Local API (v0.0.2)
 
 The `muxd` daemon exposes an HTTP API for session lifecycle, attach streaming,
 checkpoints, broker envelopes, and event observation. Clients are assumed to
@@ -7,7 +7,7 @@ UDS filesystem permissions (or loopback interface for TCP transports).
 
 ## Transport
 
-- Default: Unix domain socket at `~/.agent-mux/run/muxd.sock`.
+- Default: Unix domain socket at `~/.tether/run/muxd.sock`.
 - Alternate: TCP on loopback when `daemon.listen_addr` is `tcp:127.0.0.1:PORT`.
 
 Over UDS, clients address the daemon with the `http://unix/<path>` convention;
@@ -62,7 +62,7 @@ Response:
   "status": "ok",
   "pid": 12345,
   "uptime_sec": 42,
-  "listener": "unix:/Users/me/.agent-mux/run/muxd.sock",
+  "listener": "unix:/Users/me/.tether/run/muxd.sock",
   "sessions": 2
 }
 ```
@@ -272,10 +272,81 @@ Response (200):
 }
 ```
 
+### `GET /logical-agents`
+
+List logical agents with compact continuity metadata.
+
+Response (200):
+
+```json
+{
+  "agents": [
+    {
+      "id": "demo-agent",
+      "name": "Demo Agent",
+      "launch_id": "demo-launch",
+      "checkpoint_policy": "on_stop",
+      "checkpoint_status": "auto-stop"
+    }
+  ]
+}
+```
+
 ### `POST /logical-agents/{id}/resume`
 
-Placeholder: always returns 501 in v0.0.2 with the error envelope
-`{"error":{"code":"not_implemented","message":"resume lands in v0.0.3"}}`.
+Start a new session for the logical agent using its most recent checkpoint as
+boot context and the agent's stored `launch_id`.
+
+Response (201):
+
+```json
+{
+  "id": "8e2b9f6b-...",
+  "workspace": "/tmp/tether/demo-agent/...",
+  "log": "/tmp/tether/demo-agent/.../session.log",
+  "provider_id": "codex",
+  "provider_kind": "cli",
+  "logical_agent_id": "demo-agent"
+}
+```
+
+### `GET /logical-agents/{id}/policy`
+
+Read the daemon-honored policy for one logical agent.
+
+Response (200):
+
+```json
+{
+  "logical_agent_id": "demo-agent",
+  "name": "Demo Agent",
+  "launch_id": "demo-launch",
+  "checkpoint_policy": "manual",
+  "checkpoint_status": "",
+  "updated_at": "2026-05-24T19:12:00Z"
+}
+```
+
+### `PATCH /logical-agents/{id}/policy`
+
+Update the daemon-honored policy for one logical agent.
+
+Request body:
+
+```json
+{
+  "checkpoint_policy": "on_stop",
+  "checkpoint_status": "auto-stop"
+}
+```
+
+Supported `checkpoint_policy` values today:
+
+- `manual` — stopping a session does not create a checkpoint automatically.
+- `on_stop` — `StopSession` creates a checkpoint before stopping the live runtime.
+
+When `checkpoint_policy=on_stop`, a checkpoint write failure blocks the stop so
+operators do not lose resumable continuity silently.
 
 ---
 
@@ -433,12 +504,12 @@ Response (200):
     {
       "id": "demo",
       "name": "Demo Project",
-      "repo_root": "~/Projects-apps/agent-mux-v0-pack",
-      "tracking_root": "~/agent-mux/tracking/demo",
+      "repo_root": "~/dev/hollis-labs/apps/tether",
+      "tracking_root": "~/.tether/tracking/demo",
       "boot_fragments": ["boot/common.md"],
       "workspace": {
         "default_mode": "hybrid",
-        "session_root": "~/agent-mux/workspaces/demo"
+        "session_root": "~/.tether/workspaces/demo"
       }
     }
   ]
@@ -567,10 +638,12 @@ durable message; the response includes `wake_attempted`, `wake_delivered`, and
 ## Registry
 
 The federation directory service. Mux owns public-identity rows for
-agents + projects (v060-01); substrates retain operational config behind
-each row's `callback` URI. See [ADR 0041](adr/0041-registry-directory-service.md)
-for the full rationale and [docs/registry/overview.md](../registry/overview.md)
-for the integration guide.
+agents + projects; substrates retain operational config behind each row's
+`callback` URI. Cross-substrate dedup is driven by substrate-local
+`external_id` attachments and `LookupBy(kind, external_id, substrate?)`.
+See [ADR 0041](adr/0041-registry-directory-service.md),
+[ADR 0043](adr/0043-cross-substrate-dedup.md), and
+[docs/registry/overview.md](../registry/overview.md).
 
 The `{kind}` URL segment is **plural** (`agents`, `projects`); the
 internal `Kind` value is singular (`agent`, `project`).
@@ -598,9 +671,15 @@ Query parameters (all optional, combine with AND):
 - `capability` — row has the capability in its `registry_capabilities`
 - `skill_name` — row has a skill with this name
 - `status` — `active` (default) | `deprecated` | `*` (all)
+- `external_id` — resolve one substrate-local identifier instead of list-search
+- `substrate` — optional scope for `external_id` lookup
 
 Response: `{"<kind-plural>": [Profile, ...]}` — alphabetical by
 `display_name`. Empty result is `{"agents": []}`, never null.
+
+When `external_id` is present, the route changes semantics from list-search to
+dedup lookup. Response shape becomes `{"<kind-singular>": Profile}` and a
+miss returns `404 not_found`.
 
 ```bash
 curl 'http://unix/registry/agents?role=reviewer&status=active'
@@ -646,12 +725,27 @@ and `mcp://` land in v060-02.
 - `204 No Content` if the row has no `callback`
 - `200 OK` + refreshed Profile otherwise
 
-### `POST /registry/bootstrap?force=true` — Re-run the catalog importer
+### `POST /registry/{kind}/{urn}/merge` — Merge
+
+Admin cleanup path for residual duplicates. Body:
+
+```json
+{"into": "msg://agent/agent-mux/prj_xxxxxxxxxx"}
+```
+
+Moves external IDs and union-shaped metadata from `{urn}` into the destination
+URN, marks the source row `status: "merged"`, and sets `merged_into` on the
+source tombstone. Response: `200 OK` + the canonical destination Profile.
+
+### `POST /registry/bootstrap?force=true&substrate=...` — Re-run a bootstrap importer
 
 Daemon already runs `BootstrapFromCatalog(force=false)` once at startup.
 This endpoint lets operators apply catalog drift after editing a YAML by
 re-running with `force=true` (refreshes existing rows from the source
-YAML's current state). Body is empty; response is a `BootstrapReport`:
+YAML's current state). `substrate=tether` (default) re-runs the Tether catalog
+importer; `substrate=cerberus` re-runs the Cerberus index importer.
+`write_back=false` disables `registry_urn` write-back for the current run.
+Body is empty; response is a `BootstrapReport`:
 
 ```json
 {"imported": 0, "skipped": 30, "refreshed": 2, "errors": []}

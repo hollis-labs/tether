@@ -1,5 +1,5 @@
 id: agent-mux.codex.main
-display_name: "Agent Mux — Codex Engineer"
+display_name: "Tether — Codex Engineer"
 
 # Wire directly to the Codex launch so `mux boot agent-mux.codex.main`
 # generates the boot prompt AND creates the session in one step.
@@ -12,8 +12,8 @@ identity:
   profile_version: 1
   role:            backend
   project:         agent-mux
-  work_root:       ~/Projects-apps/agent-mux
-  tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
+  work_root:       ~/dev/hollis-labs/apps/tether
+  tracking_root:   ~/dev/hollis-labs/agent-workspaces/execution/tether/
   tesseract_primary:   "2026-04-19"
 
 slots:
@@ -33,8 +33,8 @@ slots:
     type: cmd
     timeout: 5s
     run: |
-      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md" ]; then
-        head -80 "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md"
+      if [ -f "$HOME/dev/hollis-labs/agent-workspaces/boot/tether/boot-prompt.md" ]; then
+        head -80 "$HOME/dev/hollis-labs/agent-workspaces/boot/tether/boot-prompt.md"
       else
         echo "(no recap available)"
       fi
@@ -43,12 +43,12 @@ slots:
   history:
     type: cmd
     timeout: 5s
-    run: git -C ~/Projects-apps/agent-mux log --oneline -20 2>/dev/null || echo "(git unavailable)"
+    run: git -C ~/dev/hollis-labs/apps/tether log --oneline -20 2>/dev/null || echo "(git unavailable)"
 
   status:
     type: cmd
     timeout: 5s
-    run: git -C ~/Projects-apps/agent-mux status --short -b 2>/dev/null || echo "(git status unavailable)"
+    run: git -C ~/dev/hollis-labs/apps/tether status --short -b 2>/dev/null || echo "(git status unavailable)"
 
   # §5 — durable context
   memory:

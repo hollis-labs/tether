@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -14,9 +15,10 @@ import (
 // fakeCheckpoints records calls for assertion and lets tests override
 // both create and list paths.
 type fakeCheckpoints struct {
-	created []checkpoint.Checkpoint
-	listRes map[string][]checkpoint.Checkpoint
-	listErr error
+	created              []checkpoint.Checkpoint
+	listLogicalAgentsRes []store.LogicalAgentRow
+	listRes              map[string][]checkpoint.Checkpoint
+	listErr              error
 }
 
 func (f *fakeCheckpoints) CreateCheckpoint(c checkpoint.Checkpoint) error {
@@ -29,7 +31,7 @@ func (f *fakeCheckpoints) GetLatestCheckpointForAgent(_ string) (*checkpoint.Che
 }
 
 func (f *fakeCheckpoints) ListLogicalAgents() ([]store.LogicalAgentRow, error) {
-	return nil, nil
+	return f.listLogicalAgentsRes, nil
 }
 
 func (f *fakeCheckpoints) ListCheckpointsByLogicalAgent(agentID string) ([]checkpoint.Checkpoint, error) {
@@ -136,6 +138,15 @@ func TestHandleCreateCheckpoint_SessionNotFound(t *testing.T) {
 func TestHandleListCheckpoints(t *testing.T) {
 	svc := &fakeLaunchService{}
 	cp := &fakeCheckpoints{
+		listLogicalAgentsRes: []store.LogicalAgentRow{
+			{
+				ID:               "agent-1",
+				Name:             "Agent One",
+				LaunchID:         "launch-a",
+				CheckpointPolicy: "on_stop",
+				PoliciesJSON:     `{"checkpoint_status":"auto-stop"}`,
+			},
+		},
 		listRes: map[string][]checkpoint.Checkpoint{
 			"agent-1": {
 				{ID: "cp-2", LogicalAgentID: "agent-1", Summary: "newer", CreatedAt: "2026-04-19T10:05:00Z"},
@@ -157,6 +168,26 @@ func TestHandleListCheckpoints(t *testing.T) {
 	if len(res.Checkpoints) != 2 || res.Checkpoints[0].ID != "cp-2" {
 		t.Errorf("unexpected list: %+v", res.Checkpoints)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/logical-agents", nil)
+	rr = httptest.NewRecorder()
+	newCheckpointTestHandler(svc, cp).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("logical agents status = %d", rr.Code)
+	}
+	var agents LogicalAgentListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&agents); err != nil {
+		t.Fatal(err)
+	}
+	if len(agents.Agents) != 1 {
+		t.Fatalf("logical agent count = %d", len(agents.Agents))
+	}
+	if agents.Agents[0].CheckpointPolicy != "on_stop" {
+		t.Fatalf("checkpoint_policy = %q", agents.Agents[0].CheckpointPolicy)
+	}
+	if agents.Agents[0].CheckpointStatus != "auto-stop" {
+		t.Fatalf("checkpoint_status = %q", agents.Agents[0].CheckpointStatus)
+	}
 }
 
 func TestHandleResumeLogicalAgent_Success(t *testing.T) {
@@ -174,6 +205,66 @@ func TestHandleResumeLogicalAgent_Success(t *testing.T) {
 	}
 	if res.ID != "resumed-sess" {
 		t.Errorf("id = %q, want %q", res.ID, "resumed-sess")
+	}
+}
+
+func TestHandleLogicalAgentPolicy_GetAndPatch(t *testing.T) {
+	svc := &fakeLaunchService{
+		policyRes: agent.LogicalAgentPolicy{
+			LogicalAgentID:   "agent-1",
+			Name:             "Agent One",
+			LaunchID:         "launch-a",
+			CheckpointPolicy: agent.CheckpointPolicyManual,
+		},
+	}
+	cp := &fakeCheckpoints{}
+
+	req := httptest.NewRequest(http.MethodGet, "/logical-agents/agent-1/policy", nil)
+	rr := httptest.NewRecorder()
+	newCheckpointTestHandler(svc, cp).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var got LogicalAgentPolicyResponse
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CheckpointPolicy != string(agent.CheckpointPolicyManual) {
+		t.Fatalf("GET checkpoint_policy = %q", got.CheckpointPolicy)
+	}
+
+	body, _ := json.Marshal(LogicalAgentPolicyUpdateRequest{
+		CheckpointPolicy: string(agent.CheckpointPolicyOnStop),
+		CheckpointStatus: "auto-stop",
+	})
+	req = httptest.NewRequest(http.MethodPatch, "/logical-agents/agent-1/policy", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	newCheckpointTestHandler(svc, cp).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CheckpointPolicy != string(agent.CheckpointPolicyOnStop) {
+		t.Fatalf("PATCH checkpoint_policy = %q", got.CheckpointPolicy)
+	}
+	if got.CheckpointStatus != "auto-stop" {
+		t.Fatalf("PATCH checkpoint_status = %q", got.CheckpointStatus)
+	}
+}
+
+func TestHandleLogicalAgentPolicy_InvalidPolicy(t *testing.T) {
+	svc := &fakeLaunchService{}
+	cp := &fakeCheckpoints{}
+	body := bytes.NewReader([]byte(`{"checkpoint_policy":"invalid"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/logical-agents/agent-1/policy", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	newCheckpointTestHandler(svc, cp).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -74,7 +74,7 @@ var sessionsStopCmd = &cobra.Command{
 		}
 		if err := c.StopSession(cmd.Context(), args[0]); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
-				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
 			}
 			return err
 		}
@@ -128,7 +128,7 @@ var sessionsInputCmd = &cobra.Command{
 		}
 		if err := c.SendInput(cmd.Context(), id, data); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
-				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
 			}
 			return err
 		}
@@ -147,7 +147,7 @@ var sessionsTurnCmd = &cobra.Command{
 		}
 		if err := c.SendTurn(cmd.Context(), args[0], args[1]); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
-				return fmt.Errorf("agent-mux daemon is not running; run `mux daemon start` first")
+				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
 			}
 			return err
 		}

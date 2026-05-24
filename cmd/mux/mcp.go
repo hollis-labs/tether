@@ -23,7 +23,7 @@ import (
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Start the MCP stdio adapter",
-	Long: `Start an MCP stdio adapter that exposes the agent-mux runtime as tools.
+	Long: `Start an MCP stdio adapter that exposes the Tether runtime as tools.
 
 The adapter communicates over stdin/stdout using the MCP protocol. Configure
 your MCP client (Claude Desktop, Cursor, etc.) to run this command.
@@ -43,7 +43,7 @@ Available scopes:
 Example MCP client config (mcp.json):
   {
     "mcpServers": {
-      "agent-mux": {
+      "tether": {
         "command": "mux",
         "args": ["mcp"],
         "env": {

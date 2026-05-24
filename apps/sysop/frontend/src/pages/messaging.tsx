@@ -3,25 +3,30 @@ import { Archive, Bot, MessageSquarePlus, Plus, RefreshCw, Send, User, Users } f
 import {
   Button,
   CopyableId,
-  DataTable,
   DetailDialog,
   DetailSection,
   EmptyState,
-  ListPageLayout,
   StatusBadge,
   SummaryCards,
-  TabStrip,
   Textarea,
   cn,
   formatRelativeTime,
-  type ColumnDef,
-  type TabStripItem,
-} from '@hollis-labs/sysop-ui'
+} from '@hollis-labs/sysop-ui/ui'
+import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
+import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
 import { useApi } from '../api/context'
-import type { GroupInfo, GroupMessageInfo, MessageAgentInfo, MessageInfo } from '../api/client'
+import type {
+  BrokerEnvelopeInfo,
+  BrokerEnvelopeQuery,
+  GroupInfo,
+  GroupMessageInfo,
+  MessageAgentInfo,
+  MessageInfo,
+  MessageTotals,
+} from '../api/client'
 import { CopyButton, safeParseObject, scalarStr } from '../components/json-payload'
 
-type ScopeKey = 'user' | 'agent' | 'groups'
+type ScopeKey = 'user' | 'agent' | 'groups' | 'broker'
 
 // Payload keys the backend's projectPayload already folds into subject/body —
 // excluded from the modal's "Details" decomposition.
@@ -67,8 +72,6 @@ function agentLabel(agent: MessageAgentInfo): string {
 }
 
 const DEFAULT_SENDER = 'msg://user/agent-mux/operator'
-const COMPOSE_DIALOG_SIZE =
-  'h-[42rem] max-h-[calc(100vh-2rem)] w-[56rem] max-w-[calc(100vw-2rem)]'
 
 const columns: ColumnDef<MessageInfo>[] = [
   {
@@ -120,6 +123,94 @@ const columns: ColumnDef<MessageInfo>[] = [
     align: 'right',
     cell: (m) => <span className="text-[11px] text-text-soft">{formatRelativeTime(m.created_at)}</span>,
     sortValue: (m) => m.created_at,
+  },
+]
+
+function brokerStatus(env: BrokerEnvelopeInfo): string {
+  if (env.consumed_at) return 'consumed'
+  if (env.delivered_at) return 'delivered'
+  return 'pending'
+}
+
+function brokerTraceKey(env: BrokerEnvelopeInfo): string {
+  if (env.workflow_id || env.correlation_id) {
+    return `${env.workflow_id || '-'}::${env.correlation_id || env.id}`
+  }
+  return env.id
+}
+
+function brokerTraceQuery(env: BrokerEnvelopeInfo): BrokerEnvelopeQuery | null {
+  if (env.workflow_id && env.correlation_id) {
+    return { workflow_id: env.workflow_id, correlation_id: env.correlation_id, order: 'asc', limit: 200 }
+  }
+  if (env.correlation_id) {
+    return { correlation_id: env.correlation_id, order: 'asc', limit: 200 }
+  }
+  if (env.workflow_id) {
+    return { workflow_id: env.workflow_id, order: 'asc', limit: 200 }
+  }
+  return null
+}
+
+function brokerConversationState(env: BrokerEnvelopeInfo, trace: BrokerEnvelopeInfo[]): string {
+  if (env.message_type === 'response') return 'reply'
+  if (env.message_type === 'request') {
+    const hasResponse = trace.some((row) => row.message_type === 'response')
+    return hasResponse ? 'resolved' : 'awaiting response'
+  }
+  if (trace.length > 1) return 'workflow trace'
+  return 'one-way'
+}
+
+const brokerColumns: ColumnDef<BrokerEnvelopeInfo>[] = [
+  {
+    key: 'id',
+    header: 'Envelope',
+    width: 'fill',
+    cell: (env) => <CopyableId id={env.id} label={env.id.slice(0, 12)} />,
+    sortValue: (env) => env.id,
+  },
+  {
+    key: 'type',
+    header: 'Type',
+    cell: (env) => (
+      <span className="text-[11px] uppercase tracking-[.12em] text-text-soft">
+        {env.message_type || '—'}
+      </span>
+    ),
+    sortValue: (env) => env.message_type ?? '',
+  },
+  {
+    key: 'workflow',
+    header: 'Workflow',
+    cell: (env) => <span className="text-[12px] text-text-soft">{env.workflow_id || '—'}</span>,
+    sortValue: (env) => env.workflow_id ?? '',
+  },
+  {
+    key: 'correlation',
+    header: 'Correlation',
+    cell: (env) => <span className="text-[12px] text-text-soft">{env.correlation_id || '—'}</span>,
+    sortValue: (env) => env.correlation_id ?? '',
+  },
+  {
+    key: 'priority',
+    header: 'Priority',
+    align: 'right',
+    cell: (env) => <span className="font-mono text-[11px] tabular-nums text-text">{env.priority}</span>,
+    sortValue: (env) => env.priority,
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    cell: (env) => <StatusBadge status={brokerStatus(env)} />,
+    sortValue: (env) => brokerStatus(env),
+  },
+  {
+    key: 'created',
+    header: 'Created',
+    align: 'right',
+    cell: (env) => <span className="text-[11px] text-text-soft">{formatRelativeTime(env.created_at)}</span>,
+    sortValue: (env) => env.created_at,
   },
 ]
 
@@ -287,9 +378,8 @@ function GroupsBoard({
                   value={replyText}
                   onChange={(e) => onReplyText(e.target.value)}
                   placeholder={archived ? 'Archived groups are read-only.' : 'Write a group reply...'}
-                  rows={3}
                   disabled={archived || members.length === 0}
-                  className="min-h-[5.5rem] flex-1"
+                  className="h-22 min-h-0 flex-1 resize-none border-0 bg-input/30 focus-visible:border-transparent focus-visible:ring-0"
                 />
                 <Button
                   variant="default"
@@ -314,11 +404,17 @@ export function MessagingPage() {
   const api = useApi()
   const [scope, setScope] = useState<ScopeKey>('user')
   const [messages, setMessages] = useState<MessageInfo[] | null>(null)
+  const [messageTotals, setMessageTotals] = useState<MessageTotals | null>(null)
   const [groups, setGroups] = useState<GroupInfo[] | null>(null)
+  const [brokerEnvelopes, setBrokerEnvelopes] = useState<BrokerEnvelopeInfo[] | null>(null)
   const [agents, setAgents] = useState<MessageAgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedBrokerID, setSelectedBrokerID] = useState<string | null>(null)
+  const [selectedBrokerTrace, setSelectedBrokerTrace] = useState<BrokerEnvelopeInfo[]>([])
+  const [selectedBrokerTraceError, setSelectedBrokerTraceError] = useState<string | null>(null)
+  const [loadingBrokerTrace, setLoadingBrokerTrace] = useState(false)
   const [selectedGroupUrn, setSelectedGroupUrn] = useState<string | null>(null)
   const [replyText, setReplyText] = useState('')
   const [groupReplyText, setGroupReplyText] = useState('')
@@ -343,8 +439,8 @@ export function MessagingPage() {
   const load = useCallback(() => {
     let cancelled = false
     setLoading(true)
-    Promise.allSettled([api.getMessages(), api.getGroups(), api.getMessageAgents()])
-      .then(([messageResult, groupResult, agentResult]) => {
+    Promise.allSettled([api.getMessages(), api.getGroups(), api.getMessageAgents(), api.getBrokerEnvelopes()])
+      .then(([messageResult, groupResult, agentResult, brokerResult]) => {
         if (cancelled) return
         if (messageResult.status === 'rejected') {
           setError(
@@ -356,6 +452,7 @@ export function MessagingPage() {
           return
         }
         setMessages(messageResult.value.messages ?? [])
+        setMessageTotals(messageResult.value.totals ?? null)
         setError(messageResult.value.error ?? null)
         if (groupResult.status === 'fulfilled') {
           setGroups(groupResult.value.groups ?? [])
@@ -376,6 +473,11 @@ export function MessagingPage() {
         } else {
           setAgents([])
         }
+        if (brokerResult.status === 'fulfilled') {
+          setBrokerEnvelopes(brokerResult.value.envelopes ?? [])
+        } else {
+          setBrokerEnvelopes([])
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -392,21 +494,25 @@ export function MessagingPage() {
 
   const all = messages ?? []
   const groupList = groups ?? []
+  const brokerList = brokerEnvelopes ?? []
   const scoped = useMemo(() => all.filter((m) => m.scope === scope), [all, scope])
-  const userCount = useMemo(() => all.filter((m) => m.scope === 'user').length, [all])
-  const agentCount = useMemo(() => all.filter((m) => m.scope === 'agent').length, [all])
+  const userCount = messageTotals?.user.total ?? all.filter((m) => m.scope === 'user').length
+  const agentCount = messageTotals?.agent.total ?? all.filter((m) => m.scope === 'agent').length
   const groupPostCount = useMemo(
     () => groupList.reduce((n, g) => n + g.messages.length, 0),
     [groupList],
   )
+  const totalGroupPosts = messageTotals?.groups.total ?? groupPostCount
 
   const selected = selectedId ? all.find((m) => m.id === selectedId) ?? null : null
+  const selectedBroker = selectedBrokerID ? brokerList.find((env) => env.id === selectedBrokerID) ?? null : null
   const selectedGroup =
     (selectedGroupUrn ? groupList.find((g) => g.urn === selectedGroupUrn) : null) ?? groupList[0] ?? null
   const details = useMemo(() => (selected ? extraFields(selected.payload) : []), [selected])
 
-  const unread = scoped.filter((m) => messageStatus(m) === 'unread').length
-  const archived = scoped.filter((m) => m.archived_at).length
+  const scopeTotals = scope === 'user' ? messageTotals?.user : scope === 'agent' ? messageTotals?.agent : null
+  const unread = scopeTotals?.unread ?? scoped.filter((m) => messageStatus(m) === 'unread').length
+  const archived = scopeTotals?.archived ?? scoped.filter((m) => m.archived_at).length
   const groupMembers = selectedGroup?.members ?? []
   const selectedGroupFrom = groupFrom || groupMembers[0]?.member_urn || ''
 
@@ -420,14 +526,72 @@ export function MessagingPage() {
     }
   }, [groupFrom, groupMembers, selectedGroup, selectedGroupUrn])
 
+  useEffect(() => {
+    if (!selectedBroker) {
+      setSelectedBrokerTrace([])
+      setSelectedBrokerTraceError(null)
+      setLoadingBrokerTrace(false)
+      return
+    }
+    const query = brokerTraceQuery(selectedBroker)
+    if (!query) {
+      setSelectedBrokerTrace([selectedBroker])
+      setSelectedBrokerTraceError(null)
+      setLoadingBrokerTrace(false)
+      return
+    }
+    let cancelled = false
+    setLoadingBrokerTrace(true)
+    setSelectedBrokerTraceError(null)
+    api
+      .getBrokerEnvelopes(query)
+      .then((info) => {
+        if (cancelled) return
+        const trace = info.envelopes ?? []
+        setSelectedBrokerTrace(trace.length ? trace : [selectedBroker])
+        setSelectedBrokerTraceError(info.error ?? null)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setSelectedBrokerTrace([selectedBroker])
+        setSelectedBrokerTraceError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingBrokerTrace(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, selectedBroker])
+
+  const brokerTraceCount = useMemo(
+    () => new Set(brokerList.map((env) => brokerTraceKey(env))).size,
+    [brokerList],
+  )
+  const brokerAwaitingCount = useMemo(() => {
+    const grouped = new Map<string, BrokerEnvelopeInfo[]>()
+    for (const env of brokerList) {
+      const key = brokerTraceKey(env)
+      grouped.set(key, [...(grouped.get(key) ?? []), env])
+    }
+    let awaiting = 0
+    for (const trace of grouped.values()) {
+      const hasResponse = trace.some((env) => env.message_type === 'response')
+      awaiting += trace.filter((env) => env.message_type === 'request' && !hasResponse).length
+    }
+    return awaiting
+  }, [brokerList])
+
   const tabs: TabStripItem<ScopeKey>[] = [
     { key: 'user', label: 'User', icon: <User className="h-3.5 w-3.5" />, count: userCount },
     { key: 'agent', label: 'Agents', icon: <Bot className="h-3.5 w-3.5" />, count: agentCount },
     { key: 'groups', label: 'Groups', icon: <Users className="h-3.5 w-3.5" />, count: groupList.length },
+    { key: 'broker', label: 'Broker', icon: <MessageSquarePlus className="h-3.5 w-3.5" />, count: brokerList.length },
   ]
 
   function closeDialog() {
     setSelectedId(null)
+    setSelectedBrokerID(null)
     setReplyText('')
     setDialogError(null)
   }
@@ -615,17 +779,36 @@ export function MessagingPage() {
               scope === 'groups'
                 ? [
                     { label: 'Groups', value: groupList.length },
-                    { label: 'Posts', value: groupPostCount },
+                    { label: 'Posts', value: totalGroupPosts },
                     {
                       label: 'Members',
                       value: selectedGroup ? selectedGroup.members.length : 0,
                       accentColor: 'var(--color-status-inbox)',
                     },
                   ]
+                : scope === 'broker'
+                  ? [
+                      { label: 'Envelopes', value: brokerList.length },
+                      {
+                        label: 'Traces',
+                        value: brokerTraceCount,
+                        accentColor: 'var(--color-status-inbox)',
+                      },
+                      {
+                        label: 'Awaiting',
+                        value: brokerAwaitingCount,
+                        accentColor: 'var(--color-status-blocked)',
+                      },
+                      {
+                        label: 'Replies',
+                        value: brokerList.filter((env) => env.message_type === 'response').length,
+                        accentColor: 'var(--color-status-doing)',
+                      },
+                    ]
                 : [
                     {
                       label: scope === 'user' ? 'User Messages' : 'Agent Messages',
-                      value: scoped.length,
+                      value: scopeTotals?.total ?? scoped.length,
                     },
                     { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
                     { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
@@ -637,6 +820,8 @@ export function MessagingPage() {
           <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
             {scope === 'groups'
               ? 'Group message boards with inline replies.'
+              : scope === 'broker'
+                ? 'Broker envelopes from the state DB. Open one to inspect its chronological workflow/correlation trace and request-reply state.'
               : scope === 'user'
                 ? 'Messages addressed to users. Opening a message marks it read; Archive soft-deletes it.'
                 : 'Messages addressed to agents. Opening a message marks it read; Archive soft-deletes it.'}
@@ -660,6 +845,27 @@ export function MessagingPage() {
             onSelectFrom={setGroupFrom}
             onReplyText={setGroupReplyText}
             onSendReply={sendGroupReply}
+          />
+        ) : scope === 'broker' ? (
+          <DataTable
+            items={brokerList}
+            columns={brokerColumns}
+            getRowId={(env) => env.id}
+            initialSort={{ key: 'created', dir: 'desc' }}
+            scrollRootRef={scrollRef}
+            onRowOpen={(id) => setSelectedBrokerID(id)}
+            rowAriaLabel={(env) => `Open broker envelope ${env.id.slice(0, 12)}`}
+            emptyState={
+              <EmptyState
+                variant="empty"
+                title={loading ? 'Loading broker envelopes...' : 'No broker envelopes'}
+                description={
+                  loading
+                    ? 'Reading broker_envelopes from the configured Tether state DB.'
+                    : 'No broker envelopes are stored in the state DB.'
+                }
+              />
+            }
           />
         ) : (
           <DataTable
@@ -688,7 +894,6 @@ export function MessagingPage() {
       <DetailDialog
         open={newMessageOpen}
         onClose={closeNewMessage}
-        widthClassName={COMPOSE_DIALOG_SIZE}
         title="New Message"
         footer={
           <div className="flex items-center justify-between gap-3">
@@ -747,7 +952,6 @@ export function MessagingPage() {
       <DetailDialog
         open={newGroupOpen}
         onClose={closeNewGroup}
-        widthClassName={COMPOSE_DIALOG_SIZE}
         title="Add Group"
         footer={
           <div className="flex items-center justify-between gap-3">
@@ -802,9 +1006,103 @@ export function MessagingPage() {
       </DetailDialog>
 
       <DetailDialog
+        open={selectedBroker !== null}
+        onClose={closeDialog}
+        title={selectedBroker ? `Broker ${selectedBroker.id.slice(0, 12)}` : ''}
+        badge={selectedBroker ? <StatusBadge status={brokerStatus(selectedBroker)} /> : null}
+        meta={
+          selectedBroker ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-subtle">
+              <span className="uppercase tracking-[.12em]">{selectedBroker.message_type || 'message'}</span>
+              <span>{formatRelativeTime(selectedBroker.created_at)}</span>
+              <CopyableId id={selectedBroker.id} label={selectedBroker.id.slice(0, 12)} />
+            </div>
+          ) : null
+        }
+        footer={
+          selectedBroker ? (
+              <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] text-text-subtle">
+                Broker inspection is read-only in Sysop today.
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedBroker.payload && <CopyButton text={selectedBroker.payload} label="Copy payload" />}
+                {selectedBroker.audit_json && <CopyButton text={selectedBroker.audit_json} label="Copy audit" />}
+              </div>
+            </div>
+          ) : null
+        }
+      >
+        {selectedBroker && (
+          <div className="flex h-full min-h-0 flex-col">
+            <DetailSection title="Envelope">
+              <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+                <div className="contents"><dt className="truncate text-text-subtle">Sender</dt><dd className="break-words text-text-soft">{selectedBroker.sender || '—'}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Recipient</dt><dd className="break-words text-text-soft">{selectedBroker.recipient || '—'}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Workflow</dt><dd className="break-words text-text-soft">{selectedBroker.workflow_id || '—'}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Correlation</dt><dd className="break-words text-text-soft">{selectedBroker.correlation_id || '—'}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Trace State</dt><dd className="break-words text-text-soft">{brokerConversationState(selectedBroker, selectedBrokerTrace)}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Priority</dt><dd className="break-words text-text-soft">{selectedBroker.priority}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Delivered</dt><dd className="break-words text-text-soft">{selectedBroker.delivered_at ? formatRelativeTime(selectedBroker.delivered_at) : '—'}</dd></div>
+                <div className="contents"><dt className="truncate text-text-subtle">Consumed</dt><dd className="break-words text-text-soft">{selectedBroker.consumed_at ? formatRelativeTime(selectedBroker.consumed_at) : '—'}</dd></div>
+              </dl>
+            </DetailSection>
+            <DetailSection title="Trace">
+              {loadingBrokerTrace ? (
+                <p className="text-[12px] text-text-subtle">Loading chronological trace...</p>
+              ) : selectedBrokerTrace.length > 0 ? (
+                <div className="space-y-2">
+                  {selectedBrokerTrace.map((env) => (
+                    <div key={env.id} className="rounded border border-border bg-panel/30 px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <StatusBadge status={brokerStatus(env)} />
+                          <span className="text-[11px] uppercase tracking-[.12em] text-text-subtle">
+                            {env.message_type || 'message'}
+                          </span>
+                          <CopyableId id={env.id} label={env.id.slice(0, 12)} />
+                          {env.id === selectedBroker.id && (
+                            <span className="text-[11px] text-status-doing">selected</span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-text-subtle">
+                          {formatRelativeTime(env.created_at)}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[12px] text-text-soft">
+                        {(env.sender || '—') + ' -> ' + (env.recipient || '—')}
+                      </div>
+                    </div>
+                  ))}
+                  {selectedBrokerTraceError && (
+                    <p className="text-[12px] text-status-blocked">{selectedBrokerTraceError}</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[12px] text-text-subtle">No related workflow/correlation trace.</p>
+              )}
+            </DetailSection>
+            <DetailSection title="Payload">
+              {selectedBroker.payload ? (
+                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">{selectedBroker.payload}</pre>
+              ) : (
+                <p className="text-[12px] text-text-subtle">No payload stored.</p>
+              )}
+            </DetailSection>
+            <DetailSection title="Audit">
+              {selectedBroker.audit_json ? (
+                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">{selectedBroker.audit_json}</pre>
+              ) : (
+                <p className="text-[12px] text-text-subtle">No audit JSON stored.</p>
+              )}
+            </DetailSection>
+          </div>
+        )}
+      </DetailDialog>
+
+      <DetailDialog
         open={selected !== null}
         onClose={closeDialog}
-        widthClassName="max-w-4xl"
         title={selected ? messageHeadline(selected) || `${selected.kind} message` : ''}
         badge={selected ? <StatusBadge status={messageStatus(selected)} /> : null}
         meta={
@@ -854,38 +1152,42 @@ export function MessagingPage() {
         }
       >
         {selected && (
-          <>
-            <DetailSection title="Message">
-              <div className="whitespace-pre-wrap break-words rounded-md border border-border bg-panel px-4 py-3 text-[13px] leading-6 text-text">
-                {selected.body || '(no message text)'}
-              </div>
-            </DetailSection>
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <section className="border-t border-border-strong">
+                <div className="border-b border-border-strong bg-panel px-4 py-2 text-[10px] font-semibold uppercase tracking-[.18em] text-text-subtle">
+                  Message:
+                </div>
+                <div className="whitespace-pre-wrap break-words px-3 py-2 text-[13px] leading-6 text-text">
+                  {selected.body || '(no message text)'}
+                </div>
+              </section>
 
-            {details.length > 0 && (
-              <DetailSection title="Details">
-                <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-                  {details.map(([k, v]) => (
-                    <div key={k} className="contents">
-                      <dt className="truncate text-text-subtle">{k}</dt>
-                      <dd className="break-words font-mono text-text-soft">
-                        {typeof v === 'string' ? v : scalarStr(v)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </DetailSection>
-            )}
+              {details.length > 0 && (
+                <DetailSection title="Details">
+                  <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+                    {details.map(([k, v]) => (
+                      <div key={k} className="contents">
+                        <dt className="truncate text-text-subtle">{k}</dt>
+                        <dd className="break-words font-mono text-text-soft">
+                          {typeof v === 'string' ? v : scalarStr(v)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </DetailSection>
+              )}
+            </div>
 
-            <DetailSection title={`Reply to ${shortUrn(selected.from)}`}>
+            <div className="h-28 shrink-0 border-t border-border-strong bg-bg p-3">
               <Textarea
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 placeholder="Write a reply..."
-                rows={5}
-                className="w-full"
+                className="h-full min-h-0 resize-none border-0 bg-input/30 focus-visible:border-transparent focus-visible:ring-0"
               />
-            </DetailSection>
-          </>
+            </div>
+          </div>
         )}
       </DetailDialog>
     </>

@@ -78,7 +78,7 @@ Write deferral:
 - **TUI reads the catalog filesystem directly.** Rejected: produces
   two catalog-reading implementations (CLI and TUI), which will drift.
   Also violates epic D7 (daemon-only); the TUI would need to know the
-  same `~/.agent-mux/catalog/` conventions as the daemon.
+  same `~/.tether/catalog/` conventions as the daemon.
 - **Combined read + write API in a single sprint.** Rejected: write
   design is a separate discussion (validation, concurrent writers,
   hot-reload, optimistic locking) whose scope and pace shouldn't be

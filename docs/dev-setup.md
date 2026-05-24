@@ -1,6 +1,6 @@
-# agent-mux Developer Setup
+# Tether Developer Setup
 
-Guide to getting a working development environment for agent-mux.
+Guide to getting a working development environment for Tether.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ Guide to getting a working development environment for agent-mux.
 
 ```bash
 git clone <repo-url>
-cd agent-mux
+cd tether
 
 # Install lint / vuln / test tooling into $GOBIN (usually ~/go/bin).
 # Add ~/go/bin to PATH if it isn't already.
@@ -66,7 +66,7 @@ examples/catalog/ Minimal catalog used by tests + demos
 
 ## The daemon at a glance
 
-agent-mux splits into two parts:
+Tether splits into two parts:
 
 1. **`mux daemon`** — a long-lived process that owns running sessions,
    exposes a local HTTP API over a Unix domain socket, and publishes
@@ -75,8 +75,8 @@ agent-mux splits into two parts:
    over the socket, with read-only SQLite fallbacks when the daemon is
    down.
 
-Default transport: `unix:~/.agent-mux/run/muxd.sock`. Override via the
-`daemon.listen_addr` field in `~/.agent-mux/catalog/global.yaml`.
+Default transport: `unix:~/.tether/run/muxd.sock`. Override via the
+`daemon.listen_addr` field in `~/.tether/catalog/global.yaml`.
 
 ## Running a demo launch
 
@@ -128,7 +128,7 @@ The PID file is stale. If `mux daemon status` reports "stale PID",
 pidfile manually:
 
 ```bash
-rm ~/.agent-mux/run/muxd.pid
+rm ~/.tether/run/muxd.pid
 ```
 
 ### SQLite "no such column" after editing migrations
@@ -166,7 +166,7 @@ manager is the usual suspect.
 
 ## MCP adapter
 
-`mux mcp` starts an MCP stdio server so LLM-based tools can call agent-mux
+`mux mcp` starts an MCP stdio server so LLM-based tools can call Tether
 capabilities as tool calls. It connects directly to the catalog (no daemon
 required) and gates mutating operations behind a token + scope.
 
@@ -185,7 +185,7 @@ Add to Claude Desktop / Claude Code:
 ```json
 {
   "mcpServers": {
-    "agent-mux": {
+    "tether": {
       "command": "/path/to/bin/mux",
       "args": ["mcp"],
       "env": {

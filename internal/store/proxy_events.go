@@ -36,6 +36,32 @@ type ProxyEventFilter struct {
 	ErrorsOnly bool
 }
 
+func proxyEventWhereClause(f ProxyEventFilter) (string, []any) {
+	q := ` WHERE 1=1`
+	var args []any
+
+	if f.ErrorsOnly {
+		q += " AND ok = 0"
+	}
+	if f.ServerID != "" {
+		q += " AND server = ?"
+		args = append(args, f.ServerID)
+	}
+	if f.ToolName != "" {
+		q += " AND tool_name LIKE ?"
+		args = append(args, f.ToolName+"%")
+	}
+	if f.SessionID != "" {
+		q += " AND session_id = ?"
+		args = append(args, f.SessionID)
+	}
+	if !f.Since.IsZero() {
+		q += " AND timestamp > ?"
+		args = append(args, f.Since.UTC().Format(time.RFC3339Nano))
+	}
+	return q, args
+}
+
 // AppendProxyEvent inserts ev into the proxy_events table and trims old rows
 // when the table exceeds proxyEventsMaxRows. The ID field of ev is ignored.
 func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
@@ -83,39 +109,20 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 // Limit defaults to 100 when f.Limit == 0; capped at 500.
 func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 	limit := f.Limit
-	if limit <= 0 {
+	if limit == 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	if limit < 0 || limit > proxyEventsMaxRows {
+		limit = proxyEventsMaxRows
 	}
 
-	// Build query dynamically based on active filters.
 	q := `SELECT id, session_id, server, tool_name, args_schema_fp,
 	             duration_ms, ok, error, timestamp
-	      FROM proxy_events
-	      WHERE 1=1`
-	var args []any
-
-	if f.ErrorsOnly {
-		q += " AND ok = 0"
-	}
-	if f.ServerID != "" {
-		q += " AND server = ?"
-		args = append(args, f.ServerID)
-	}
-	if f.ToolName != "" {
-		q += " AND tool_name LIKE ?"
-		args = append(args, f.ToolName+"%")
-	}
-	if f.SessionID != "" {
-		q += " AND session_id = ?"
-		args = append(args, f.SessionID)
-	}
-	if !f.Since.IsZero() {
-		q += " AND timestamp > ?"
-		args = append(args, f.Since.UTC().Format(time.RFC3339Nano))
-	}
+	      FROM proxy_events`
+	where, args := proxyEventWhereClause(f)
+	// Query fragments come only from proxyEventWhereClause's fixed clauses.
+	//nolint:gosec // controlled SQL assembly; user input remains parameterized
+	q += where
 
 	q += " ORDER BY id ASC LIMIT ?"
 	args = append(args, limit)
@@ -167,4 +174,19 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 		return nil, fmt.Errorf("proxy events rows: %w", err)
 	}
 	return out, nil
+}
+
+// CountProxyEvents returns the number of proxy events matching f before any
+// QueryProxyEvents limit is applied.
+func (s *Store) CountProxyEvents(f ProxyEventFilter) (int, error) {
+	q := `SELECT COUNT(*) FROM proxy_events`
+	where, args := proxyEventWhereClause(f)
+	// Query fragments come only from proxyEventWhereClause's fixed clauses.
+	//nolint:gosec // controlled SQL assembly; user input remains parameterized
+	q += where
+	var n int
+	if err := s.db.QueryRow(q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count proxy events: %w", err)
+	}
+	return n, nil
 }

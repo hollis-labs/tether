@@ -1,5 +1,5 @@
 id: agent-mux.engineer.main
-display_name: "Agent Mux — Engineer"
+display_name: "Tether — Engineer"
 # v005-08: per-profile MCP allowlist. Empty/omitted = proxy default (all).
 mcp_servers: []
 
@@ -10,8 +10,8 @@ identity:
   profile_version: 1
   role:            backend
   project:         agent-mux
-  work_root:       ~/Projects-apps/agent-mux
-  tracking_root:   ~/Projects-apps/agent-workspaces/execution/agent-mux/
+  work_root:       ~/dev/hollis-labs/apps/tether
+  tracking_root:   ~/dev/hollis-labs/agent-workspaces/execution/tether/
   tesseract_primary:   "2026-04-19"
 
 slots:
@@ -22,8 +22,8 @@ slots:
   recap:
     type: cmd
     run: |
-      if [ -f "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md" ]; then
-        head -80 "$HOME/Projects-apps/agent-workspaces/boot/agent-mux/boot-prompt.md"
+      if [ -f "$HOME/dev/hollis-labs/agent-workspaces/boot/tether/boot-prompt.md" ]; then
+        head -80 "$HOME/dev/hollis-labs/agent-workspaces/boot/tether/boot-prompt.md"
       else
         echo "(no recap available)"
       fi
@@ -31,12 +31,12 @@ slots:
 
   history:
     type: cmd
-    run: "git -C ~/Projects-apps/agent-mux log --oneline -20 2>/dev/null || echo '(git unavailable)'"
+    run: "git -C ~/dev/hollis-labs/apps/tether log --oneline -20 2>/dev/null || echo '(git unavailable)'"
     timeout: 5s
 
   status:
     type: cmd
-    run: "cd ~/Projects-apps/agent-mux 2>/dev/null && git status --short -b 2>/dev/null"
+    run: "cd ~/dev/hollis-labs/apps/tether 2>/dev/null && git status --short -b 2>/dev/null"
     timeout: 5s
 
   # memory_recall namespace=user/$USER/memory tags=["scope:agent-mux.engineer.main"] limit=20

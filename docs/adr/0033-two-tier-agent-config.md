@@ -9,7 +9,7 @@
 
 Through v005-07, Mux's agent catalog was a single bundle: one directory of `agents/*.yaml` per Mux installation. That was sufficient when Mux only ran sessions for its own AI features. As external consumers (Nanite, Clockwork, Hadron blueprints) start launching Mux sessions, two needs surface that the single-bundle model can't satisfy cleanly:
 
-1. **External consumers bring their own personas.** Nanite has its agent definitions; Clockwork orchestration steps reference agent profiles that live in the Clockwork catalog. They want Mux to launch sessions from those definitions without first registering them in Mux's catalog. Forcing every consumer to copy YAML into `~/.agent-mux/catalog/agents/` couples consumer release cycles to the operator's catalog hygiene — wrong directionally.
+1. **External consumers bring their own personas.** Nanite has its agent definitions; Clockwork orchestration steps reference agent profiles that live in the Clockwork catalog. They want Mux to launch sessions from those definitions without first registering them in Mux's catalog. Forcing every consumer to copy YAML into `~/.tether/catalog/agents/` couples consumer release cycles to the operator's catalog hygiene — wrong directionally.
 2. **Tool surface varies by use mode, not by agent identity.** A single agent persona ("refactoring engineer") might run in a research mode with `vanta` + `hadron` MCP servers, or in a coding mode with `git` + filesystem MCP. The agent definition shouldn't carry MCP server config — that's launch shape, not persona.
 
 A third concern is that operators want per-machine and per-repo overrides without forking the bundled catalog. Today that requires editing the catalog directory directly.
@@ -34,9 +34,9 @@ Discovery order at launch:
 
 | Order | Layer | Root | Purpose |
 |---|---|---|---|
-| 1 | system | `<catalogPath>` (default `~/.agent-mux/catalog/`) | Mux bundled defaults |
-| 2 | user | `~/.agent-mux/` | Personal customization |
-| 3 | project | `./.agent-mux/` (CWD-relative) | Repo-local overrides |
+| 1 | system | `<catalogPath>` (default `~/.tether/catalog/`) | Mux bundled defaults |
+| 2 | user | `~/.tether/` | Personal customization |
+| 3 | project | `./.tether/` (CWD-relative) | Repo-local overrides |
 
 Each layer can carry `agents/`, `boot-profiles/`, and `skills/` subdirectories. Later layers override earlier ones on ID collision. Missing layers are skipped silently; the bundled catalog remains the floor.
 

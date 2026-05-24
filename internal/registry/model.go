@@ -24,6 +24,7 @@ type Status string
 const (
 	StatusActive     Status = "active"
 	StatusDeprecated Status = "deprecated"
+	StatusMerged     Status = "merged"
 	// StatusArchived is the group-archive sentinel (v060-05 D9). A group
 	// in status='archived' is read-only — members can still ListGroupMessages
 	// but SendToGroup returns 423 locked.
@@ -50,13 +51,54 @@ type Profile struct {
 	HealthStatus  string          `json:"health_status,omitempty"`
 	LastSeenAt    *time.Time      `json:"last_seen_at,omitempty"`
 	HostAddress   string          `json:"host_address,omitempty"`
+	MergedInto    string          `json:"merged_into,omitempty"`
 	KindMeta      json.RawMessage `json:"kind_meta,omitempty"`
 	LastUpdatedBy string          `json:"last_updated_by,omitempty"`
+	ExternalIDs   []ExternalID    `json:"external_ids,omitempty"`
 	Capabilities  []string        `json:"capabilities,omitempty"`
 	Skills        []Skill         `json:"skills,omitempty"`
 	Links         []Link          `json:"links,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// ExternalID ties one substrate-local identifier to a registry URN. A single
+// URN may carry multiple substrate IDs (for example, `tether` and `cerberus`)
+// so cross-substrate bootstrap can deduplicate onto one logical row.
+type ExternalID struct {
+	Substrate  string    `json:"substrate"`
+	ExternalID string    `json:"external_id"`
+	AttachedAt time.Time `json:"attached_at"`
+}
+
+// WithExternalID returns a copy of p with ext appended or replacing the entry
+// for the same substrate. Used by bootstrap/service call sites to keep the
+// in-memory profile shape aligned with storage.
+func (p Profile) WithExternalID(ext ExternalID) Profile {
+	if ext.Substrate == "" || ext.ExternalID == "" {
+		return p
+	}
+	out := p
+	out.ExternalIDs = append([]ExternalID(nil), p.ExternalIDs...)
+	for i := range out.ExternalIDs {
+		if out.ExternalIDs[i].Substrate == ext.Substrate {
+			out.ExternalIDs[i] = ext
+			return out
+		}
+	}
+	out.ExternalIDs = append(out.ExternalIDs, ext)
+	return out
+}
+
+// ExternalIDFor returns the substrate-local identifier recorded for substrate,
+// if present.
+func (p Profile) ExternalIDFor(substrate string) (ExternalID, bool) {
+	for _, ext := range p.ExternalIDs {
+		if ext.Substrate == substrate {
+			return ext, true
+		}
+	}
+	return ExternalID{}, false
 }
 
 // Skill carries the D13 shape: name + learned_at are required; via + level

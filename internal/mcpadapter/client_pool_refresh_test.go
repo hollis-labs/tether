@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -62,5 +63,48 @@ func TestClientPool_NotificationRefreshUpdatesRegistry(t *testing.T) {
 
 	if _, ok := registry.Lookup("clockwork_beta"); !ok {
 		t.Fatal("clockwork_beta not registered after list_changed refresh")
+	}
+}
+
+func TestClientPool_RefreshAllReturnsPartialResults(t *testing.T) {
+	ctx := context.Background()
+
+	healthy := &mockClient{}
+	healthy.listToolsFunc = func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+		return &mcp.ListToolsResult{Tools: []mcp.Tool{makeTool("healthy_alpha")}}, nil
+	}
+
+	broken := &mockClient{}
+	broken.listToolsFunc = func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+		return nil, errors.New("upstream unavailable")
+	}
+
+	registry := NewToolRegistry()
+	pool := NewClientPool([]config.MCPServerEntry{
+		{ID: "healthy", Transport: "stdio", Command: "ignored"},
+		{ID: "broken", Transport: "stdio", Command: "ignored"},
+	}, registry)
+	pool.SetConnectFunc(func(_ context.Context, entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
+		if entry.ID == "healthy" {
+			return healthy, nil
+		}
+		return broken, nil
+	})
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool.Start: %v", err)
+	}
+	defer pool.Shutdown()
+
+	results, err := pool.RefreshAll(ctx)
+	if len(results) != 1 || results[0].ServerID != "healthy" {
+		t.Fatalf("results = %#v, want only healthy refresh result", results)
+	}
+	var refreshErr *RefreshAllError
+	if !errors.As(err, &refreshErr) {
+		t.Fatalf("err = %v, want RefreshAllError", err)
+	}
+	if _, ok := refreshErr.Failures["broken"]; !ok {
+		t.Fatalf("failures = %#v, want broken server entry", refreshErr.Failures)
 	}
 }

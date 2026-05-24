@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # examples/demos/multiplexor/run.sh
 #
-# Demonstrates the Agent Mux multiplexor pattern:
+# Demonstrates the Tether multiplexor pattern:
 #   1 primary session + 2 sibling sessions in a session group,
 #   communicating via broker request/reply envelopes.
 #
@@ -53,7 +53,7 @@ daemon_curl() {
     fi
 }
 
-echo "=== Agent Mux Multiplexor Demo ==="
+echo "=== Tether Multiplexor Demo ==="
 echo "Catalog: $CATALOG"
 echo ""
 

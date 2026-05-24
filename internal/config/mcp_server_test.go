@@ -91,8 +91,6 @@ token: "${TEST_MUX_TOKEN}"
 
 	t.Run("disabled entry excluded", func(t *testing.T) {
 		dir := t.TempDir()
-		enabled := false
-		_ = enabled
 		write(t, filepath.Join(dir, "mcp-servers", "off.yaml"), `
 id: off-server
 transport: stdio
@@ -105,6 +103,26 @@ enabled: false
 		}
 		if len(entries) != 0 {
 			t.Errorf("expected 0 entries (disabled), got %d", len(entries))
+		}
+	})
+
+	t.Run("catalog loader includes disabled entries", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "mcp-servers", "off.yaml"), `
+id: off-server
+transport: stdio
+command: /bin/off
+enabled: false
+`)
+		entries, err := LoadMCPServerCatalog(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 entry, got %d", len(entries))
+		}
+		if entries[0].IsEnabled() {
+			t.Error("expected disabled entry")
 		}
 	})
 

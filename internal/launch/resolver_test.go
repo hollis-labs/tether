@@ -33,7 +33,7 @@ func TestResolveDemoLaunch(t *testing.T) {
 	if plan.RuntimeKind != config.RuntimeKindStreamingStdio {
 		t.Fatalf("want RuntimeKind=%q, got %q", config.RuntimeKindStreamingStdio, plan.RuntimeKind)
 	}
-	if !strings.Contains(plan.BootPrompt, "Agent Mux") {
+	if !strings.Contains(plan.BootPrompt, "Tether") {
 		t.Fatalf("boot prompt missing common fragment: %q", plan.BootPrompt)
 	}
 }

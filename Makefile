@@ -1,4 +1,4 @@
-.PHONY: build install run test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean-coverage
+.PHONY: build install run sysop-build sysop-install release-build release-install test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean-coverage
 
 # ---------------------------------------------------------------------------
 # Build / run
@@ -12,11 +12,20 @@ GOBIN ?= $(shell go env GOPATH)/bin
 build:
 	go build -o bin/mux ./cmd/mux
 
-# install puts mux in the user's PATH ($GOBIN). Use this — not `go build` — so
-# `mux tui` always runs the latest version, not a stale local binary.
+# install puts mux in the user's PATH ($GOBIN).
 install:
 	GOBIN=$(GOBIN) go install ./cmd/mux/...
 	@echo "installed → $(GOBIN)/mux"
+
+sysop-build:
+	$(MAKE) -C apps/sysop all
+
+sysop-install:
+	$(MAKE) -C apps/sysop install
+
+release-build: build sysop-build
+
+release-install: install sysop-install
 
 run: install
 	$(GOBIN)/mux

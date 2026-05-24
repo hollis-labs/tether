@@ -31,7 +31,7 @@ Phase 1 delivers aggregation: mux proxies upstream servers and presents their to
 | Decision | Choice | Rationale |
 |---|---|---|
 | Activation | `--proxy` flag (opt-in) | Proxy startup spawns subprocesses and waits for `ListTools` RTT. Always-on would slow down every `mux mcp` invocation even when upstreams are unused. |
-| Catalog location | `~/.agent-mux/catalog/mcp-servers/*.yaml` | Consistent with existing `providers/`, `agents/`, `launches/` sibling directories. One file per server, owned by the user. |
+| Catalog location | `~/.tether/catalog/mcp-servers/*.yaml` | Consistent with existing `providers/`, `agents/`, `launches/` sibling directories. One file per server, owned by the user. |
 | Transport support | `stdio` (primary) + `sse` (secondary) | stdio works everywhere a subprocess can be launched. SSE supports remote/multi-client scenarios (Vanta, hosted services). |
 | Tool name policy | Unchanged upstream names | Portfolio prefix convention (`hadron_*`, `vanta_*`, `mux_*`) is already in place and prevents collisions in practice. |
 | Collision handling | Warn + `<serverID>__<toolName>` disambiguation | Keeps both tools accessible. Warns at startup so operators can fix the root cause. |
@@ -53,7 +53,7 @@ The `ToolCallMiddleware` interface is defined in `proxy.go` but has no implement
 ### Catalog entry format
 
 ```yaml
-# ~/.agent-mux/catalog/mcp-servers/hadron.yaml
+# ~/.tether/catalog/mcp-servers/hadron.yaml
 id: hadron
 transport: stdio
 command: /usr/local/bin/hadrond
@@ -64,7 +64,7 @@ scopes: [run.write, schedule.write]
 tags: [automation, ci, blueprints]
 enabled: true                        # default: true
 
-# ~/.agent-mux/catalog/mcp-servers/vanta.yaml
+# ~/.tether/catalog/mcp-servers/vanta.yaml
 id: vanta
 transport: sse
 url: "http://localhost:8090/mcp/sse"
@@ -81,7 +81,7 @@ mux mcp --proxy
 ```json
 {
   "mcpServers": {
-    "agent-mux": {
+    "tether": {
       "command": "mux",
       "args": ["mcp", "--proxy"],
       "env": {

@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"unicode"
 
@@ -77,6 +78,10 @@ type storageBackend interface {
 	SoftDelete(ctx context.Context, urn string) error
 	BumpCachedAt(ctx context.Context, urn string, at time.Time) error
 	Search(ctx context.Context, kind Kind, f Filter) ([]Profile, error)
+	LookupExternalIDsForURN(ctx context.Context, urn string) ([]ExternalID, error)
+	LookupURNByExternalID(ctx context.Context, kind Kind, externalID, substrate string) (string, bool, error)
+	AttachExternalID(ctx context.Context, urn, substrate, externalID string) error
+	DetachExternalID(ctx context.Context, urn, substrate string) error
 
 	// v060-05 group ops (T-02 + T-03 + T-04).
 	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
@@ -767,6 +772,178 @@ func (s *Service) GetMyMentions(ctx context.Context, memberURN string, sinceTS t
 // callers can errors.Is it.
 func (s *Service) Lookup(ctx context.Context, urn string) (Profile, error) {
 	return s.storage.GetProfile(ctx, urn)
+}
+
+// LookupBy resolves one substrate-local identifier to its registry profile.
+// When substrate is empty, the earliest-attached match across every substrate
+// wins.
+func (s *Service) LookupBy(ctx context.Context, kind Kind, externalID, substrate string) (Profile, error) {
+	switch kind {
+	case KindAgent, KindProject, KindGroup:
+	default:
+		return Profile{}, fmt.Errorf("registry: lookup by: %w: unsupported kind %q", ErrInvalidRequest, string(kind))
+	}
+	if externalID == "" {
+		return Profile{}, fmt.Errorf("registry: lookup by: %w: external_id required", ErrInvalidRequest)
+	}
+	urn, ok, err := s.storage.LookupURNByExternalID(ctx, kind, externalID, substrate)
+	if err != nil {
+		return Profile{}, err
+	}
+	if !ok {
+		return Profile{}, ErrNotFound
+	}
+	return s.storage.GetProfile(ctx, urn)
+}
+
+// AttachExternalID validates and records one substrate-local identifier for an
+// existing URN.
+func (s *Service) AttachExternalID(ctx context.Context, urn, substrate, externalID string) error {
+	if urn == "" || substrate == "" || externalID == "" {
+		return fmt.Errorf("registry: attach external id: %w: urn + substrate + external_id required", ErrInvalidRequest)
+	}
+	profile, err := s.storage.GetProfile(ctx, urn)
+	if err != nil {
+		return err
+	}
+	if existing, ok, err := s.storage.LookupURNByExternalID(ctx, profile.Kind, externalID, substrate); err != nil {
+		return err
+	} else if ok {
+		if existing == urn {
+			return nil
+		}
+		return fmt.Errorf("registry: attach external id: %w: substrate %q external_id %q already attached to %s", ErrInvalidRequest, substrate, externalID, existing)
+	}
+	return s.storage.AttachExternalID(ctx, urn, substrate, externalID)
+}
+
+// Merge consolidates urnSrc into urnDst. Destination wins scalar conflicts;
+// array-shaped fields and external IDs are unioned onto the destination.
+func (s *Service) Merge(ctx context.Context, urnSrc, urnDst string) (Profile, error) {
+	if urnSrc == "" || urnDst == "" {
+		return Profile{}, fmt.Errorf("registry: merge: %w: urn-src + urn-dst required", ErrInvalidRequest)
+	}
+	if urnSrc == urnDst {
+		return Profile{}, fmt.Errorf("registry: merge: %w: urn-src and urn-dst must differ", ErrInvalidRequest)
+	}
+	src, err := s.storage.GetProfile(ctx, urnSrc)
+	if err != nil {
+		return Profile{}, err
+	}
+	dst, err := s.storage.GetProfile(ctx, urnDst)
+	if err != nil {
+		return Profile{}, err
+	}
+	if src.Kind != dst.Kind {
+		return Profile{}, fmt.Errorf("registry: merge: %w: kind mismatch %q != %q", ErrInvalidRequest, src.Kind, dst.Kind)
+	}
+
+	for _, ext := range src.ExternalIDs {
+		if _, ok := dst.ExternalIDFor(ext.Substrate); ok {
+			continue
+		}
+		if err := s.storage.DetachExternalID(ctx, urnSrc, ext.Substrate); err != nil {
+			return Profile{}, err
+		}
+		if err := s.storage.AttachExternalID(ctx, urnDst, ext.Substrate, ext.ExternalID); err != nil {
+			return Profile{}, err
+		}
+	}
+
+	patch := UpdatePatch{
+		LastUpdatedBy: "system:merge",
+		Capabilities: &ArrayPatch[string]{
+			Mode:  ArrayModeAppend,
+			Value: src.Capabilities,
+		},
+		Skills: &ArrayPatch[Skill]{
+			Mode:  ArrayModeAppend,
+			Value: src.Skills,
+		},
+		Links: &ArrayPatch[Link]{
+			Mode:  ArrayModeAppend,
+			Value: src.Links,
+		},
+	}
+	if mergedMeta, ok := mergeKindMeta(dst.KindMeta, src.KindMeta); ok {
+		patch.KindMeta = mergedMeta
+	}
+	if _, err := s.UpdateSelf(ctx, urnDst, patch); err != nil {
+		return Profile{}, err
+	}
+	if err := s.storage.UpdateProfileFields(ctx, urnSrc, map[string]any{
+		"status":          string(StatusMerged),
+		"merged_into":     urnDst,
+		"last_updated_by": "system:merge",
+	}); err != nil {
+		return Profile{}, err
+	}
+	out, err := s.storage.GetProfile(ctx, urnDst)
+	if err != nil {
+		return Profile{}, err
+	}
+	out.ExternalIDs = dedupExternalIDs(out.ExternalIDs)
+	return out, nil
+}
+
+func mergeKindMeta(dstRaw, srcRaw json.RawMessage) (json.RawMessage, bool) {
+	if len(dstRaw) == 0 && len(srcRaw) == 0 {
+		return nil, false
+	}
+	if len(srcRaw) == 0 {
+		return dstRaw, len(dstRaw) > 0
+	}
+	if len(dstRaw) == 0 {
+		return srcRaw, true
+	}
+	var dst map[string]any
+	if err := json.Unmarshal(dstRaw, &dst); err != nil {
+		return dstRaw, true
+	}
+	var src map[string]any
+	if err := json.Unmarshal(srcRaw, &src); err != nil {
+		return dstRaw, true
+	}
+	for k, v := range src {
+		if _, exists := dst[k]; exists {
+			continue
+		}
+		dst[k] = v
+	}
+	merged, err := json.Marshal(dst)
+	if err != nil {
+		return dstRaw, true
+	}
+	return json.RawMessage(merged), true
+}
+
+func dedupExternalIDs(in []ExternalID) []ExternalID {
+	seen := map[string]struct{}{}
+	out := make([]ExternalID, 0, len(in))
+	for _, ext := range in {
+		key := ext.Substrate + "\x00" + ext.ExternalID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ext)
+	}
+	slices.SortFunc(out, func(a, b ExternalID) int {
+		if a.Substrate < b.Substrate {
+			return -1
+		}
+		if a.Substrate > b.Substrate {
+			return 1
+		}
+		if a.ExternalID < b.ExternalID {
+			return -1
+		}
+		if a.ExternalID > b.ExternalID {
+			return 1
+		}
+		return 0
+	})
+	return out
 }
 
 // FindByDisplayName returns the profiles whose display_name equals name.

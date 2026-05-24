@@ -223,7 +223,7 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/sessions", apiHandler)
 			mux.Handle("/sessions/", apiHandler)
 		}
-		if s.Checkpoints != nil {
+		if s.Service != nil {
 			mux.Handle("/logical-agents/", apiHandler)
 		}
 		if s.Broker != nil {

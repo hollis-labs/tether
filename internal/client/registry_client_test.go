@@ -132,6 +132,34 @@ func TestRegistryClient_Lookup_NotFound(t *testing.T) {
 	}
 }
 
+func TestRegistryClient_LookupBy_Happy(t *testing.T) {
+	want := registry.Profile{
+		URN:         "msg://agent/agent-mux/prj_clockwork",
+		Kind:        registry.KindProject,
+		DisplayName: "Clockwork",
+	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry/projects" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("external_id") != "clockwork" {
+			t.Errorf("external_id = %q", r.URL.Query().Get("external_id"))
+		}
+		if r.URL.Query().Get("substrate") != "cerberus" {
+			t.Errorf("substrate = %q", r.URL.Query().Get("substrate"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"project": want})
+	})
+	c := newRegistryClient(t, h)
+	got, err := c.Registry().LookupBy(context.Background(), registry.KindProject, "clockwork", "cerberus")
+	if err != nil {
+		t.Fatalf("LookupBy: %v", err)
+	}
+	if got.URN != want.URN {
+		t.Errorf("URN = %q, want %q", got.URN, want.URN)
+	}
+}
+
 func TestRegistryClient_Lookup_UnknownURNPrefix(t *testing.T) {
 	// Without a URN prefix the client can't infer the kind segment, so
 	// it surfaces a local error before issuing the HTTP request.
@@ -258,6 +286,27 @@ func TestRegistryClient_Deregister_NotFound(t *testing.T) {
 	_, err := c.Registry().Deregister(context.Background(), "msg://agent/agent-mux/agt_x")
 	if !errors.Is(err, registry.ErrNotFound) {
 		t.Errorf("not ErrNotFound: %v", err)
+	}
+}
+
+func TestRegistryClient_Merge_Happy(t *testing.T) {
+	dst := registry.Profile{URN: "msg://agent/agent-mux/prj_dst", Kind: registry.KindProject, DisplayName: "Canonical"}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/merge") {
+			t.Errorf("path = %q, want suffix /merge", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(dst)
+	})
+	c := newRegistryClient(t, h)
+	got, err := c.Registry().Merge(context.Background(), "msg://agent/agent-mux/prj_src", dst.URN)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if got.URN != dst.URN {
+		t.Errorf("URN = %q, want %q", got.URN, dst.URN)
 	}
 }
 

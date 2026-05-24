@@ -35,7 +35,7 @@ the scheme and returns `net.Listener`. The same HTTP router
 adding a second listener later is trivial (just call `Listener` twice and
 spawn two `http.Serve` goroutines).
 
-**Default:** `unix:~/.agent-mux/run/muxd.sock`
+**Default:** `unix:~/.tether/run/muxd.sock`
 
 Rationale for the default:
 

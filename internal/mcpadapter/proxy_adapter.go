@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -748,7 +749,8 @@ func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPo
 				single, err = pool.RefreshServer(ctx, serverID)
 				results = []ToolRefreshResult{single}
 			}
-			if err != nil {
+			var partialErr *RefreshAllError
+			if err != nil && !errors.As(err, &partialErr) {
 				return toolError("refresh_failed", err.Error()), nil
 			}
 
@@ -762,11 +764,20 @@ func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPo
 					"removed":    res.Delta.Removed,
 				})
 			}
-			return toolJSON(map[string]any{
+			body := map[string]any{
 				"ok":        true,
 				"count":     len(items),
 				"refreshed": items,
-			}), nil
+			}
+			if partialErr != nil {
+				errorsByServer := make(map[string]string, len(partialErr.Failures))
+				for serverID, refreshErr := range partialErr.Failures {
+					errorsByServer[serverID] = refreshErr.Error()
+				}
+				body["partial"] = true
+				body["errors"] = errorsByServer
+			}
+			return toolJSON(body), nil
 		},
 	)
 }

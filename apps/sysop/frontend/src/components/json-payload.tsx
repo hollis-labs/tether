@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Check, Copy, Eye } from 'lucide-react'
-import { Button, DetailDialog, JsonViewer } from '@hollis-labs/sysop-ui'
+import { Button, DetailDialog, JsonViewer } from '@hollis-labs/sysop-ui/ui'
 
 /** Parse `raw` as a JSON object, or null when it is not one. */
 export function safeParseObject(raw: string): Record<string, unknown> | null {
@@ -150,7 +150,6 @@ export function JsonModal({
       open={open}
       onClose={onClose}
       title={title}
-      widthClassName="max-w-3xl"
       footer={
         <div className="flex justify-end">
           <CopyButton text={raw} label="Copy payload" />

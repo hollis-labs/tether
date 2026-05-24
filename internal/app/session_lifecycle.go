@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
@@ -16,6 +17,7 @@ import (
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
+	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -341,6 +343,24 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 
 // StopSession routes through agentsessions.Manager.Stop.
 func (s *Service) StopSession(id string) error {
+	if _, ok := s.Manager.Get(id); !ok {
+		return agentsessions.ErrSessionNotRunning
+	}
+	row, err := s.Store.GetSession(id)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(row.LogicalAgentID) != "" {
+		policy, err := s.Store.GetLogicalAgentPolicy(row.LogicalAgentID)
+		if err != nil {
+			return err
+		}
+		if policy.CheckpointPolicy == agent.CheckpointPolicyOnStop {
+			if err := s.CreatePolicyCheckpoint(row, policy); err != nil {
+				return err
+			}
+		}
+	}
 	return s.Manager.Stop(context.Background(), id)
 }
 

@@ -55,7 +55,7 @@ The first error returned `Invalid request: missing field 'clientInfo'`; the seco
 
 ### 5. Catalog fix: codex provider double-stack
 
-`~/.agent-mux/catalog/providers/codex-app-server.yaml` had `args: [app-server]` while `provider.NewCodexAdapterAppServer().BuildArgs(...)` already emits `["app-server"]`; resulting argv was `codex app-server app-server`, which codex rejected. Fixed to `args: []` (mirroring the `claude-code` / `claude-stream` shapes). Catalog change only; no code impact.
+`~/.tether/catalog/providers/codex-app-server.yaml` had `args: [app-server]` while `provider.NewCodexAdapterAppServer().BuildArgs(...)` already emits `["app-server"]`; resulting argv was `codex app-server app-server`, which codex rejected. Fixed to `args: []` (mirroring the `claude-code` / `claude-stream` shapes). Catalog change only; no code impact.
 
 ### 6. Upstream fix consumed: `go-providers v0.17.1`
 

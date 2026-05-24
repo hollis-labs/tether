@@ -7,7 +7,8 @@
 
 ## Context
 
-Agent Mux launches untrusted (or semi-trusted) autonomous agents. Without a sandbox, every session has:
+Tether launches untrusted (or semi-trusted) autonomous agents. Without a
+sandbox, every session has:
 
 - Full filesystem read/write access to everything the daemon user owns.
 - Unrestricted outbound network access.
@@ -45,7 +46,7 @@ Profiles do not compose or inherit — one flat profile per agent. Composition i
 Profiles are YAML files under `<catalog-root>/sandbox-profiles/`:
 
 ```
-~/.agent-mux/catalog/
+~/.tether/catalog/
   sandbox-profiles/
     workspace-only.yaml
     workspace-plus-net.yaml

@@ -1,6 +1,6 @@
-# Agent Mux — Project Context
+# Tether — Project Context
 
-Agent Mux (`mux`) is a Go CLI + daemon that manages AI agent sessions. It provides a
+Tether (`mux`) is a Go CLI + daemon that manages AI agent sessions. It provides a
 unified provider interface so sessions backed by Claude Code, Claude Stream, OpenAI
 Codex, Gemini, Aider, and others can be launched, attached to, and controlled
 uniformly — including via an MCP stdio server (`mux mcp`).

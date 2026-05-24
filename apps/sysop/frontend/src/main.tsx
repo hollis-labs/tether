@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { applyTheme, getInitialTheme } from '@hollis-labs/sysop-ui'
+import { applyTheme, getInitialTheme } from '@hollis-labs/sysop-ui/ui'
 import { ApiProvider } from './api/context'
 import { App } from './App'
 import './index.css'
