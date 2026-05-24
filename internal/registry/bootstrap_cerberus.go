@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const cerberusProjectKind = "cerberus-project/v1"
@@ -81,7 +82,7 @@ func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome strin
 				}
 			}
 			if writeBack {
-				if err := writeURNBackSafe(entry.Path, existing.URN); err != nil {
+				if err := writeURNBackSafe(cerberusHome, entry.Path, existing.URN); err != nil {
 					report.Errors = append(report.Errors, BootstrapError{Path: entry.Path, Reason: err.Error()})
 					continue
 				}
@@ -104,7 +105,7 @@ func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome strin
 				continue
 			}
 			if writeBack {
-				if err := writeURNBackSafe(entry.Path, target.URN); err != nil {
+				if err := writeURNBackSafe(cerberusHome, entry.Path, target.URN); err != nil {
 					report.Errors = append(report.Errors, BootstrapError{Path: entry.Path, Reason: err.Error()})
 					continue
 				}
@@ -138,7 +139,7 @@ func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome strin
 			continue
 		}
 		if writeBack {
-			if err := writeURNBackSafe(entry.Path, created.URN); err != nil {
+			if err := writeURNBackSafe(cerberusHome, entry.Path, created.URN); err != nil {
 				report.Errors = append(report.Errors, BootstrapError{Path: entry.Path, Reason: err.Error()})
 				continue
 			}
@@ -183,10 +184,36 @@ func cerberusKindMeta(entry cerberusIndexEntry, resourcesCount int) (json.RawMes
 	return json.RawMessage(b), nil
 }
 
-func writeURNBackSafe(path, urn string) error {
-	err := WriteURNBack(path, urn)
+func writeURNBackSafe(cerberusHome, path, urn string) error {
+	safePath, err := cerberusWriteBackPath(cerberusHome, path)
+	if err != nil {
+		return err
+	}
+	err = WriteURNBack(safePath, urn)
 	if errors.Is(err, errURNMismatch) {
 		return nil
 	}
 	return err
+}
+
+func cerberusWriteBackPath(cerberusHome, path string) (string, error) {
+	if cerberusHome == "" || path == "" {
+		return "", fmt.Errorf("registry: cerberus write-back: path required")
+	}
+	root, err := filepath.Abs(cerberusHome)
+	if err != nil {
+		return "", fmt.Errorf("registry: cerberus write-back: resolve home: %w", err)
+	}
+	target, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("registry: cerberus write-back: resolve path: %w", err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", fmt.Errorf("registry: cerberus write-back: relate path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("registry: cerberus write-back: path escapes cerberus home")
+	}
+	return target, nil
 }

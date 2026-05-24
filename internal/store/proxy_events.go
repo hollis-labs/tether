@@ -120,6 +120,8 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 	             duration_ms, ok, error, timestamp
 	      FROM proxy_events`
 	where, args := proxyEventWhereClause(f)
+	// Query fragments come only from proxyEventWhereClause's fixed clauses.
+	//nolint:gosec // controlled SQL assembly; user input remains parameterized
 	q += where
 
 	q += " ORDER BY id ASC LIMIT ?"
@@ -179,6 +181,8 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 func (s *Store) CountProxyEvents(f ProxyEventFilter) (int, error) {
 	q := `SELECT COUNT(*) FROM proxy_events`
 	where, args := proxyEventWhereClause(f)
+	// Query fragments come only from proxyEventWhereClause's fixed clauses.
+	//nolint:gosec // controlled SQL assembly; user input remains parameterized
 	q += where
 	var n int
 	if err := s.db.QueryRow(q, args...).Scan(&n); err != nil {

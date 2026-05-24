@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,7 @@ func WriteURNBack(path string, urn string) error {
 	if path == "" || urn == "" {
 		return fmt.Errorf("registry: write-back: path + urn required")
 	}
+	cleanPath := filepath.Clean(path)
 	b, err := os.ReadFile(path) //nolint:gosec // operator-owned local config file
 	if err != nil {
 		return fmt.Errorf("registry: write-back read %s: %w", path, err)
@@ -57,7 +59,7 @@ func WriteURNBack(path string, urn string) error {
 	if err := enc.Close(); err != nil {
 		return appendURNLine(path, b, urn)
 	}
-	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(cleanPath, out.Bytes(), 0o600); err != nil { //nolint:gosec // caller constrains target to operator-owned config file
 		return fmt.Errorf("registry: write-back write %s: %w", path, err)
 	}
 	return nil
@@ -71,7 +73,7 @@ func appendURNLine(path string, src []byte, urn string) error {
 		src = append(src, '\n')
 	}
 	src = append(src, []byte("# registry_urn added by mux registry bootstrap\nregistry_urn: "+urn+"\n")...)
-	if err := os.WriteFile(path, src, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Clean(path), src, 0o600); err != nil { //nolint:gosec // caller constrains target to operator-owned config file
 		return fmt.Errorf("registry: write-back append %s: %w", path, err)
 	}
 	return nil

@@ -118,7 +118,7 @@ var daemonRunCmd = &cobra.Command{
 			} else {
 				log.Printf("registry bootstrap (tether external-id backfill): attached=%d", attached)
 			}
-			report, err = registry.BootstrapFromCerberus(ctx, svc.Registry, "", false, true)
+			report, err = registry.BootstrapFromCerberus(ctx, svc.Registry, "", false, false)
 			if err != nil {
 				log.Printf("registry bootstrap (cerberus): %v", err)
 			} else {

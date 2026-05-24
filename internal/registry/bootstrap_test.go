@@ -303,6 +303,41 @@ entries:
 	}
 }
 
+func TestBootstrapFromCerberus_WriteBackRejectsPathsOutsideHome(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+
+	cerberusHome := t.TempDir()
+	externalDir := t.TempDir()
+	projectPath := writeBootstrapFile(t, externalDir, "clockwork.cerberus.yaml", `kind: cerberus-project/v1
+owner: clockwork
+namespace: local
+project:
+  id: clockwork
+  name: Clockwork
+resources: []
+`)
+	writeBootstrapFile(t, cerberusHome, "registry.yaml", `version: 1
+entries:
+  - owner: clockwork
+    namespace: local
+    path: `+projectPath+`
+    kind: cerberus-project/v1
+    registered_at: 2026-05-24T12:00:00Z
+`)
+
+	report, err := registry.BootstrapFromCerberus(ctx, svc, cerberusHome, false, true)
+	if err != nil {
+		t.Fatalf("BootstrapFromCerberus: %v", err)
+	}
+	if len(report.Errors) != 1 {
+		t.Fatalf("report.Errors = %d; want 1", len(report.Errors))
+	}
+	if !strings.Contains(report.Errors[0].Reason, "path escapes cerberus home") {
+		t.Fatalf("error reason = %q; want path escape guard", report.Errors[0].Reason)
+	}
+}
+
 func TestBootstrap_Idempotent_SecondRunSkipsAll(t *testing.T) {
 	svc := newService(t)
 	root := newCatalogRoot(t)
