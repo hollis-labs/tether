@@ -21,10 +21,12 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/go-agent-context v0.1.0 h1:P1iobN0NSzZrARqD6Ui7290Vc14HyLk74JavLFzXnok=
 github.com/hollis-labs/go-agent-context v0.1.0/go.mod h1:P2HWny4uyq96KAMS7eWMhs24sGooAuVJNvXN+3FrvKU=
-github.com/hollis-labs/go-agent-launch v0.3.5 h1:YNffpuMtA/n0l1gaBSQxgtoyIFlBRTE8kgAqBgKxUYg=
-github.com/hollis-labs/go-agent-launch v0.3.5/go.mod h1:LKS9xKT+zyckf42FMbUqfcLl7OwqEBEz/MgOXDc2aVs=
-github.com/hollis-labs/go-agent-sessions v0.9.5 h1:fGNtF4Ewtu20Wq1YUwwMu32ZjrTg3yBl9Cm02PnF+AE=
-github.com/hollis-labs/go-agent-sessions v0.9.5/go.mod h1:43q5MrOpmLhPviKG9/s4VX0hq4+XPv+dOqiBtI++6Po=
+github.com/hollis-labs/go-agent-launch v0.4.0 h1:D7w0gZmqNDK2e5lUSPNzBUqc2zz/oklX1ZzLMLYrrTQ=
+github.com/hollis-labs/go-agent-launch v0.4.0/go.mod h1:9StiZRxBlpB7qemEf6jdD9rg5qmNrpYIvSC99iWUpwo=
+github.com/hollis-labs/go-agent-runtime v0.4.0 h1:zSymqcGW5ir/RxPLUjCIEhfddNSQp4QeZb+Ue3lUEpY=
+github.com/hollis-labs/go-agent-runtime v0.4.0/go.mod h1:a+M2U6LUokHRAhQx+eJJhksQZy3iku1eeYG0n82K0Ik=
+github.com/hollis-labs/go-agent-sessions v0.10.0 h1:8Mtywo+miEIiINxttljJqffOsHI3j46KLbnFkbqaQj0=
+github.com/hollis-labs/go-agent-sessions v0.10.0/go.mod h1:43q5MrOpmLhPviKG9/s4VX0hq4+XPv+dOqiBtI++6Po=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
 github.com/hollis-labs/go-llm-contracts v0.2.0 h1:ypBqpsU2PkndUYaiw5+NLz86sZpD/bdo26JTXePfE2c=
@@ -35,8 +37,8 @@ github.com/hollis-labs/go-mcp-sanitize v0.1.1 h1:mx/2I2pmWLHdHbc2QECQ3hrBRc49h1y
 github.com/hollis-labs/go-mcp-sanitize v0.1.1/go.mod h1:WBnfVYgUsf2ejTGklWCAF6NZt8Na4+fVEnXtydlcDZM=
 github.com/hollis-labs/go-messaging v0.2.1 h1:n/6dz7UekLmYutdPpf7Pf9Fnyt7AHoGQ8M+b49zF5F4=
 github.com/hollis-labs/go-messaging v0.2.1/go.mod h1:S2AmpqvwDbVqCsOSBJ+u3HKDchnya2KTcBTAhoUp2Ro=
-github.com/hollis-labs/go-providers v0.21.0 h1:HmM5jz5JbdVJSbiyEkIf7wWJ6OlvGWvp03uDKowKUAw=
-github.com/hollis-labs/go-providers v0.21.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
+github.com/hollis-labs/go-providers v0.23.0 h1:Ujd+jwhQ7JvpYoH0miZnRnwHxSFpX7j3BhUCbQz2xLM=
+github.com/hollis-labs/go-providers v0.23.0/go.mod h1:Y0WQHyW7gIj0ooxyvq2uDqnEHAyOOqVhB2miNiajZ2Q=
 github.com/hollis-labs/go-runner v0.5.0 h1:YpfBOmf+dcSFcrsteINh/VNCuGaHqodjPYWxm4FES9o=
 github.com/hollis-labs/go-runner v0.5.0/go.mod h1:FNh0ZK9n70m5k5kz6nCDRKLP/ukY0JK/weDt6c4NloI=
 github.com/hollis-labs/go-sandbox v0.2.1 h1:0/JTCIl6S/XhRXPBRRlPR/zqQ2bNBlbR3Q2gHpJofUw=

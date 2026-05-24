@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/go-agent-runtime/turn"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/agent"
@@ -62,10 +63,9 @@ type Service struct {
 
 	factories map[string]RuntimeFactory
 
-	// codexThreads caches the JSON-RPC thread id per session id for
-	// JsonRpcStdio runtimes. Populated lazily on the first SendTurn call
-	// for a session (after initialize + thread/start succeed).
-	codexThreads sync.Map // map[string]string
+	// codexThreads caches Codex app-server JSON-RPC thread state per
+	// Tether session id. Populated lazily on the first SendTurn call.
+	codexThreads turn.CodexAppServerCache
 
 	// specResolver is the S5 Spec-path launch resolver. It is constructed
 	// lazily on first use (only when the launch engine is "spec") via

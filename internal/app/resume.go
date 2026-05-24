@@ -1,15 +1,18 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
+	runtimecheckpoint "github.com/hollis-labs/go-agent-runtime/checkpoint"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -42,6 +45,9 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 	}
 
 	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
+	if hint := resumeHintForCheckpoint(ck, plan); hint.CanResumeNatively() {
+		plan.ResumeProviderSessionID = hint.ProviderSessionID
+	}
 
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
@@ -90,6 +96,34 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		ProviderKind:   l.ProviderKind,
 		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
+}
+
+func resumeHintForCheckpoint(ck *checkpoint.Checkpoint, plan *launch.Plan) runtimecheckpoint.ResumeHint {
+	hint := runtimecheckpoint.ResumeHint{
+		Support:           runtimecheckpoint.ResumeFreshBoot,
+		FallbackFreshBoot: true,
+	}
+	if plan != nil {
+		hint.Provider = plan.ProviderBrand
+		hint.Runtime = plan.RuntimeKind
+	}
+	if ck == nil || ck.ProviderHintsJSON == "" {
+		return hint
+	}
+	var payload struct {
+		ProviderSessionID string `json:"provider_session_id"`
+		SessionID         string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(ck.ProviderHintsJSON), &payload); err == nil {
+		hint.ProviderSessionID = payload.ProviderSessionID
+		if hint.ProviderSessionID == "" {
+			hint.ProviderSessionID = payload.SessionID
+		}
+	}
+	if hint.ProviderSessionID != "" {
+		hint.Support = runtimecheckpoint.ResumeNative
+	}
+	return hint
 }
 
 // buildResumePrompt prepends a checkpoint context block to the boot prompt.

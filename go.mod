@@ -6,12 +6,13 @@ toolchain go1.26.3
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/go-agent-sessions v0.9.5
+	github.com/hollis-labs/go-agent-runtime v0.4.0
+	github.com/hollis-labs/go-agent-sessions v0.10.0
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.2.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.1
 	github.com/hollis-labs/go-messaging v0.2.1
-	github.com/hollis-labs/go-providers v0.21.0
+	github.com/hollis-labs/go-providers v0.23.0
 	github.com/hollis-labs/go-sandbox v0.2.1
 	github.com/mark3labs/mcp-go v0.47.0
 	github.com/spf13/cobra v1.10.2
@@ -26,7 +27,7 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/hollis-labs/go-agent-launch v0.3.5
+	github.com/hollis-labs/go-agent-launch v0.4.0
 	github.com/hollis-labs/go-llm-contracts v0.2.0 // indirect
 	github.com/hollis-labs/go-runner v0.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

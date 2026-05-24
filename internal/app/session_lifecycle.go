@@ -10,6 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
+	"github.com/hollis-labs/go-agent-runtime/runtimekind"
+	"github.com/hollis-labs/go-agent-runtime/sessionkit"
+	"github.com/hollis-labs/go-agent-runtime/turn"
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
@@ -268,6 +271,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
+	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
 
@@ -305,18 +309,24 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	}, nil
 }
 
-// deferPTYStdinBootPrompt avoids a PTY launch deadlock in go-agent-sessions
-// v0.9.x: that runtime writes BootPrompt to the PTY before its reader starts,
-// so large generated boot prompts can fill the PTY input buffer and block
-// Runtime.Start forever. AutoFireFirstTurn runs after the reader is active.
+// deferPTYStdinBootPrompt avoids writing large generated boot prompts to PTY
+// stdin before the reader is active. AutoFireFirstTurn runs after startup has
+// established the read side, so large prompts cannot block Runtime.Start on a
+// full PTY input buffer.
 func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsessions.StartOptions) {
 	if opts == nil || !caps.PTY || opts.BootMode != "stdin" || opts.BootPrompt == "" {
 		return
 	}
-	opts.AutoFireFirstTurn = true
-	opts.FirstTurnPayload = []byte(opts.BootPrompt)
+	bootPrompt := opts.BootPrompt
 	opts.BootPrompt = ""
 	opts.BootMode = ""
+	_ = sessionkit.ApplyFirstTurnPolicy(opts, sessionkit.FirstTurnPolicy{
+		Mode:   sessionkit.AutoFireFirstTurn,
+		Prompt: bootPrompt,
+		Turn: turn.Options{
+			Runtime: runtimekind.PTY,
+		},
+	})
 }
 
 // ListSessions delegates to the store with the given list filter.
