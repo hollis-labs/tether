@@ -228,3 +228,74 @@ func TestListEventsBySession_NewestFirstWithPagination(t *testing.T) {
 		t.Errorf("s2 rows = %+v", rowsS2)
 	}
 }
+
+func TestQueryEvents_FiltersNewestFirst(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "query.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if _, _, err := db.InsertEvent(events.ScopeDaemon, "", "daemon.started", `{"pid":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.InsertEvent(events.ScopeSession, "s1", "session.state_changed", `{"to":"running"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.InsertEvent(events.ScopeBroker, "s1", "broker.envelope_sent", `{"id":"m1"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.InsertEvent(events.ScopeSession, "s2", "session.state_changed", `{"to":"stopped"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.QueryEvents(EventFilter{
+		Scopes:    []events.Scope{events.ScopeSession, events.ScopeBroker},
+		Kinds:     []string{"session.state_changed", "broker.envelope_sent"},
+		SessionID: "s1",
+		SinceSeq:  1,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Kind != "broker.envelope_sent" || got[1].Kind != "session.state_changed" {
+		t.Fatalf("order/filter wrong: %+v", got)
+	}
+	if got[0].SessionID != "s1" || got[1].SessionID != "s1" {
+		t.Fatalf("session filter wrong: %+v", got)
+	}
+}
+
+func TestQueryEvents_CursorPagination(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "query-cursor.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	for _, kind := range []string{"a", "b", "c", "d"} {
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", kind, ``); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := db.QueryEvents(EventFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("QueryEvents first: %v", err)
+	}
+	if len(first) != 2 || first[0].Kind != "d" || first[1].Kind != "c" {
+		t.Fatalf("first page = %+v", first)
+	}
+
+	second, err := db.QueryEvents(EventFilter{Limit: 2, Cursor: first[1].Seq})
+	if err != nil {
+		t.Fatalf("QueryEvents second: %v", err)
+	}
+	if len(second) != 2 || second[0].Kind != "b" || second[1].Kind != "a" {
+		t.Fatalf("second page = %+v", second)
+	}
+}

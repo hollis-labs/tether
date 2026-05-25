@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // fakeBus is a minimal events.Bus that lets tests drive the
@@ -45,6 +46,7 @@ func (f *fakeBus) Subscribe(_ context.Context, filter events.Filter) (<-chan eve
 // fakeEventsStore returns preconfigured rows from ListEventsBySession.
 type fakeEventsStore struct {
 	byID  map[string][]events.Event
+	all   []events.Event
 	err   error
 	calls []string
 }
@@ -55,6 +57,53 @@ func (f *fakeEventsStore) ListEventsBySession(id string, _ int, _ int64) ([]even
 		return nil, f.err
 	}
 	return f.byID[id], nil
+}
+
+func (f *fakeEventsStore) QueryEvents(filter store.EventFilter) ([]events.Event, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []events.Event
+	for _, ev := range f.all {
+		if filter.Cursor > 0 && ev.Seq >= filter.Cursor {
+			continue
+		}
+		if filter.SessionID != "" && ev.SessionID != filter.SessionID {
+			continue
+		}
+		if filter.SinceSeq > 0 && ev.Seq <= filter.SinceSeq {
+			continue
+		}
+		if len(filter.Scopes) > 0 {
+			matched := false
+			for _, scope := range filter.Scopes {
+				if ev.Scope == string(scope) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if len(filter.Kinds) > 0 {
+			matched := false
+			for _, kind := range filter.Kinds {
+				if ev.Kind == kind {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		out = append(out, ev)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func newEventsTestHandler(bus events.Bus, store EventsStore, svc LaunchService) http.Handler {
@@ -144,6 +193,16 @@ func TestHandleEventsStream_BadScope(t *testing.T) {
 	}
 }
 
+func TestHandleEventsStream_EmptyKindRejected(t *testing.T) {
+	bus := &fakeBus{}
+	req := httptest.NewRequest(http.MethodGet, "/events/stream?kind=", nil)
+	rr := httptest.NewRecorder()
+	newEventsTestHandler(bus, nil, nil).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
 func TestHandleEventsStream_FiltersForwarded(t *testing.T) {
 	bus := &fakeBus{}
 	srv := httptest.NewServer(newEventsTestHandler(bus, nil, nil))
@@ -152,7 +211,7 @@ func TestHandleEventsStream_FiltersForwarded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-		srv.URL+"/events/stream?since_seq=10&scope=session&scope=daemon&session_id=s1", nil)
+		srv.URL+"/events/stream?since_seq=10&scope=session&scope=daemon&kind=session.state_changed&kind=ai.budget_rejected&session_id=s1", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +241,9 @@ func TestHandleEventsStream_FiltersForwarded(t *testing.T) {
 	}
 	if len(f.Scopes) != 2 {
 		t.Errorf("scopes = %v", f.Scopes)
+	}
+	if len(f.Kinds) != 2 || f.Kinds[0] != "session.state_changed" || f.Kinds[1] != "ai.budget_rejected" {
+		t.Errorf("kinds = %v", f.Kinds)
 	}
 	cancel()
 }
@@ -217,12 +279,60 @@ func TestHandleSessionEventsList(t *testing.T) {
 	}
 }
 
+func TestHandleEventsList(t *testing.T) {
+	store := &fakeEventsStore{
+		all: []events.Event{
+			{Seq: 4, At: time.Unix(1700000004, 0).UTC(), Scope: events.ScopeBroker, SessionID: "s1", Kind: "broker.envelope_sent"},
+			{Seq: 3, At: time.Unix(1700000003, 0).UTC(), Scope: events.ScopeSession, SessionID: "s1", Kind: "session.state_changed"},
+			{Seq: 2, At: time.Unix(1700000002, 0).UTC(), Scope: events.ScopeDaemon, Kind: "daemon.started"},
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/events?scope=session&scope=broker&kind=session.state_changed&kind=broker.envelope_sent&session_id=s1&since_seq=2&limit=2", nil)
+	rr := httptest.NewRecorder()
+	newEventsTestHandler(nil, store, &fakeLaunchService{}).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var res EventListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("len = %d body=%+v", len(res.Events), res)
+	}
+	if res.Events[0].Kind != "broker.envelope_sent" || res.Events[1].Kind != "session.state_changed" {
+		t.Fatalf("events = %+v", res.Events)
+	}
+	if res.NextCursor != 3 {
+		t.Fatalf("next_cursor = %d body=%+v", res.NextCursor, res)
+	}
+}
+
 func TestHandleSessionEventsList_BadLimit(t *testing.T) {
 	store := &fakeEventsStore{}
 	svc := &fakeLaunchService{}
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1/events?limit=bad", nil)
 	rr := httptest.NewRecorder()
 	newEventsTestHandler(nil, store, svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestHandleEventsList_BadScope(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/events?scope=nope", nil)
+	rr := httptest.NewRecorder()
+	newEventsTestHandler(nil, &fakeEventsStore{}, &fakeLaunchService{}).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestHandleEventsList_BadCursor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/events?cursor=bad", nil)
+	rr := httptest.NewRecorder()
+	newEventsTestHandler(nil, &fakeEventsStore{}, &fakeLaunchService{}).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}

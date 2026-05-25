@@ -58,6 +58,49 @@ func (f *obsEventsStore) ListEventsBySession(id string, limit int, cursor int64)
 	return out, nil
 }
 
+func (f *obsEventsStore) QueryEvents(filter store.EventFilter) ([]events.Event, error) {
+	var out []events.Event
+	for _, eventsForID := range f.byID {
+		for _, e := range eventsForID {
+			if filter.SessionID != "" && e.SessionID != filter.SessionID {
+				continue
+			}
+			if filter.SinceSeq > 0 && e.Seq <= filter.SinceSeq {
+				continue
+			}
+			if len(filter.Scopes) > 0 {
+				matched := false
+				for _, scope := range filter.Scopes {
+					if e.Scope == string(scope) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if len(filter.Kinds) > 0 {
+				matched := false
+				for _, kind := range filter.Kinds {
+					if e.Kind == kind {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			out = append(out, e)
+			if filter.Limit > 0 && len(out) >= filter.Limit {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
+
 // obsCheckpointStore is a minimal CheckpointStore for observation tests.
 type obsCheckpointStore struct {
 	byAgent map[string][]checkpoint.Checkpoint

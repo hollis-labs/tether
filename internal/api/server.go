@@ -1,9 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/llm"
+	"github.com/hollis-labs/tether/internal/llm/router"
+	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -19,6 +24,9 @@ type AttachmentStore interface {
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
 	Service      LaunchService
+	AI           AIService
+	AIAudit      AIAuditStore
+	AIUsage      AIUsageStore
 	Checkpoints  CheckpointStore
 	Broker       BrokerService
 	Bus          events.Bus
@@ -61,6 +69,9 @@ type Deps struct {
 // it directly; production code goes through NewHandler.
 type Server struct {
 	Service             LaunchService
+	AI                  AIService
+	AIAudit             AIAuditStore
+	AIUsage             AIUsageStore
 	Checkpoints         CheckpointStore
 	Broker              BrokerService
 	Bus                 events.Bus
@@ -80,6 +91,9 @@ type Server struct {
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
 		Service:             deps.Service,
+		AI:                  deps.AI,
+		AIAudit:             deps.AIAudit,
+		AIUsage:             deps.AIUsage,
 		Checkpoints:         deps.Checkpoints,
 		Broker:              deps.Broker,
 		Bus:                 deps.Bus,
@@ -95,6 +109,7 @@ func NewHandler(deps Deps) http.Handler {
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
+	s.registerAIRoutes(mux)
 	s.registerCheckpointRoutes(mux)
 	s.registerBrokerRoutes(mux)
 	s.registerEventRoutes(mux)
@@ -105,4 +120,15 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerRegistryRoutes(mux)
 	s.registerGroupRoutes(mux)
 	return mux
+}
+
+// AIService is the narrow AI gateway seam exposed over /ai/*.
+type AIService interface {
+	Chat(ctx context.Context, req llm.Request) (llm.Response, error)
+	StreamChat(ctx context.Context, req llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error)
+	PreviewRoute(req llm.Request) (router.Plan, error)
+	ExplainRoute(req llm.Request) (router.Explanation, error)
+	ListProviders() []llmservice.ProviderInfo
+	ListModels(providerID string) []modelsdev.ModelRef
+	ListRoutes() []router.Route
 }

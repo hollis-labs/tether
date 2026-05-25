@@ -2,15 +2,19 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// registerObservationTools wires the four durable observation surface tools
+// registerObservationTools wires the observation surface tools
 // onto s. These tools expose per-session history that is persisted in SQLite:
 //
 //   - mux_session_events       — lifecycle events from the events table
@@ -18,8 +22,9 @@ import (
 //   - mux_session_attachments  — client attach/detach history
 //   - mux_proxy_events         — proxied tool call events (same as mux_events_tool_calls
 //     but with richer filtering and a stable name)
+//   - mux_events_history       — broader durable event history across daemon/session/broker scopes
 //
-// All four tools are read-only and require no auth scope. They are always
+// All tools are read-only and require no auth scope. They are always
 // registered (not proxy-mode-only) because the underlying tables are populated
 // in both modes.
 func (a *Adapter) registerObservationTools(s *server.MCPServer) {
@@ -27,6 +32,8 @@ func (a *Adapter) registerObservationTools(s *server.MCPServer) {
 	a.registerSessionCheckpointsTool(s)
 	a.registerSessionAttachmentsTool(s)
 	a.registerProxyEventsTool(s)
+	a.registerEventsHistoryTool(s)
+	a.registerEventsWaitTool(s)
 }
 
 // ─── mux_session_events ───────────────────────────────────────────────────────
@@ -280,4 +287,286 @@ func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
 			}), nil
 		},
 	)
+}
+
+// ─── mux_events_history ──────────────────────────────────────────────────────
+
+func (a *Adapter) registerEventsHistoryTool(s *server.MCPServer) {
+	a.addTool(s,
+		mcp.NewTool("mux_events_history",
+			mcp.WithDescription(
+				"Query durable daemon/session/broker event history from the shared events table. "+
+					"Returns newest first.",
+			),
+			mcp.WithString("scope",
+				mcp.Description("Optional scope allow-list as comma-separated daemon, session, broker."),
+			),
+			mcp.WithString("kind",
+				mcp.Description("Optional comma-separated event kind allow-list."),
+			),
+			mcp.WithString("session_id",
+				mcp.Description("Optional exact session id filter."),
+			),
+			mcp.WithNumber("since_seq",
+				mcp.Description("Only return events with seq greater than this value."),
+			),
+			mcp.WithNumber("cursor",
+				mcp.Description("Pagination cursor; return events with seq less than this value."),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Max events to return (default 100, max 1000)."),
+			),
+		),
+		a.handleEventsHistory,
+	)
+}
+
+func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	scopes, errRes := decodeEventScopesAllowEmpty(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+	type eventDTO struct {
+		Seq         int64  `json:"seq"`
+		At          string `json:"at"`
+		Scope       string `json:"scope"`
+		SessionID   string `json:"session_id,omitempty"`
+		Kind        string `json:"kind"`
+		PayloadJSON string `json:"payload_json,omitempty"`
+	}
+	kinds := splitCSVArg(req, "kind")
+	sessionID := str(req, "session_id")
+	sinceSeq := int64(intArg(req, "since_seq", 0))
+	cursor := int64(intArg(req, "cursor", 0))
+	limit := intArg(req, "limit", 100)
+
+	out := make([]eventDTO, 0)
+	var nextCursor int64
+	if a.client != nil {
+		rows, err := a.client.EventsHistory(ctx, client.EventsHistoryQuery{
+			Scopes:    stringScopes(scopes),
+			Kinds:     kinds,
+			SessionID: sessionID,
+			SinceSeq:  sinceSeq,
+			Cursor:    cursor,
+			Limit:     limit,
+		})
+		if err != nil {
+			return classifyClientErr(err, ""), nil
+		}
+		nextCursor = rows.NextCursor
+		out = make([]eventDTO, 0, len(rows.Events))
+		for _, ev := range rows.Events {
+			out = append(out, eventDTO{
+				Seq:         ev.Seq,
+				At:          ev.At,
+				Scope:       ev.Scope,
+				SessionID:   ev.SessionID,
+				Kind:        ev.Kind,
+				PayloadJSON: ev.PayloadJSON,
+			})
+		}
+	} else {
+		rows, err := a.svc.Store.QueryEvents(store.EventFilter{
+			Scopes:    scopes,
+			Kinds:     kinds,
+			SessionID: sessionID,
+			SinceSeq:  sinceSeq,
+			Cursor:    cursor,
+			Limit:     limit,
+		})
+		if err != nil {
+			return toolError("internal_error", "query events: "+err.Error()), nil
+		}
+		out = make([]eventDTO, 0, len(rows))
+		for _, ev := range rows {
+			out = append(out, eventDTO{
+				Seq:         ev.Seq,
+				At:          ev.At.UTC().Format(time.RFC3339Nano),
+				Scope:       ev.Scope,
+				SessionID:   ev.SessionID,
+				Kind:        ev.Kind,
+				PayloadJSON: ev.PayloadJSON,
+			})
+		}
+		if len(rows) == limit && len(rows) > 0 {
+			nextCursor = rows[len(rows)-1].Seq
+		}
+	}
+	return toolJSON(map[string]any{
+		"ok":          true,
+		"events":      out,
+		"count":       len(out),
+		"next_cursor": nextCursor,
+	}), nil
+}
+
+// ─── mux_events_wait ─────────────────────────────────────────────────────────
+
+func (a *Adapter) registerEventsWaitTool(s *server.MCPServer) {
+	a.addTool(s,
+		mcp.NewTool("mux_events_wait",
+			mcp.WithDescription(
+				"Wait briefly for live daemon or session events from the muxd event stream. "+
+					"Useful for bounded polling-style MCP flows without maintaining a long-lived SSE connection.",
+			),
+			mcp.WithString("scope",
+				mcp.Description("Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon."),
+			),
+			mcp.WithString("kind",
+				mcp.Description("Optional event kind allow-list. Repeatable via comma-separated values."),
+			),
+			mcp.WithString("session_id",
+				mcp.Description("Optional exact session id filter."),
+			),
+			mcp.WithNumber("since_seq",
+				mcp.Description("Only return events with seq greater than this value."),
+			),
+			mcp.WithNumber("wait_ms",
+				mcp.Description("Maximum time to wait for events in milliseconds (default 5000)."),
+			),
+			mcp.WithNumber("max_events",
+				mcp.Description("Maximum matching events to return before stopping (default 1, max 100)."),
+			),
+		),
+		a.handleEventsWait,
+	)
+}
+
+func (a *Adapter) handleEventsWait(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if a.client == nil {
+		return toolError("daemon_unavailable", "mux_events_wait requires muxd daemon routing; start muxd and run mux mcp against that catalog"), nil
+	}
+
+	scopes, errRes := decodeEventScopes(req)
+	if errRes != nil {
+		return errRes, nil
+	}
+	kinds := splitCSVArg(req, "kind")
+
+	waitMS := intArg(req, "wait_ms", 5000)
+	if waitMS <= 0 {
+		waitMS = 5000
+	}
+	maxEvents := intArg(req, "max_events", 1)
+	if maxEvents <= 0 {
+		maxEvents = 1
+	}
+	if maxEvents > 100 {
+		maxEvents = 100
+	}
+
+	streamCtx, cancel := context.WithTimeout(ctx, time.Duration(waitMS)*time.Millisecond)
+	defer cancel()
+
+	stream, errCh, err := a.client.StreamEvents(streamCtx, client.EventsStreamQuery{
+		SinceSeq:  int64(intArg(req, "since_seq", 0)),
+		Scopes:    scopes,
+		Kinds:     kinds,
+		SessionID: str(req, "session_id"),
+	})
+	if err != nil {
+		return classifyClientErr(err, ""), nil
+	}
+
+	out := make([]map[string]any, 0, maxEvents)
+	var lastSeq int64
+	for len(out) < maxEvents {
+		select {
+		case ev, ok := <-stream:
+			if !ok {
+				stream = nil
+				if len(out) >= maxEvents {
+					break
+				}
+				goto done
+			}
+			if ev.Seq > lastSeq {
+				lastSeq = ev.Seq
+			}
+			out = append(out, map[string]any{
+				"seq":          ev.Seq,
+				"kind":         ev.Kind,
+				"scope":        ev.Scope,
+				"session_id":   ev.SessionID,
+				"payload_json": ev.PayloadJSON,
+			})
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				return toolError("internal_error", err.Error()), nil
+			}
+			goto done
+		case <-streamCtx.Done():
+			goto done
+		}
+	}
+
+done:
+	return toolJSON(map[string]any{
+		"ok":             true,
+		"events":         out,
+		"count":          len(out),
+		"timed_out":      errors.Is(streamCtx.Err(), context.DeadlineExceeded),
+		"next_since_seq": lastSeq,
+	}), nil
+}
+
+func decodeEventScopesAllowEmpty(req mcp.CallToolRequest) ([]events.Scope, *mcp.CallToolResult) {
+	raw := splitCSVArg(req, "scope")
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	scopes := make([]events.Scope, 0, len(raw))
+	for _, rawScope := range raw {
+		scope := events.Scope(rawScope)
+		switch scope {
+		case events.ScopeDaemon, events.ScopeSession, events.ScopeBroker:
+			scopes = append(scopes, scope)
+		default:
+			return nil, toolError("invalid_request", "scope must be daemon, session, or broker")
+		}
+	}
+	return scopes, nil
+}
+
+func decodeEventScopes(req mcp.CallToolRequest) ([]string, *mcp.CallToolResult) {
+	typed, errRes := decodeEventScopesAllowEmpty(req)
+	if errRes != nil {
+		return nil, errRes
+	}
+	if len(typed) == 0 {
+		return []string{events.ScopeDaemon}, nil
+	}
+	scopes := make([]string, 0, len(typed))
+	for _, scope := range typed {
+		scopes = append(scopes, string(scope))
+	}
+	return scopes, nil
+}
+
+func splitCSVArg(req mcp.CallToolRequest, key string) []string {
+	raw := str(req, key)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func stringScopes(scopes []events.Scope) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		out = append(out, string(scope))
+	}
+	return out
 }

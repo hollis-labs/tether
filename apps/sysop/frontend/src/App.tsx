@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
-import { Activity, Boxes, Gauge, LayoutDashboard, Mail, Network, Plug, Settings } from 'lucide-react'
+import { Activity, Boxes, BrainCircuit, Gauge, LayoutDashboard, Mail, Network, Plug, Settings } from 'lucide-react'
 import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-labs/sysop-ui/ui'
 
 /**
@@ -7,7 +7,7 @@ import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-la
  * active page. Add pages by extending `Route`, `routeComponents`, `nav`,
  * and `TITLES`.
  */
-type Route = 'overview' | 'operations' | 'messaging' | 'mcp' | 'activity' | 'registry' | 'settings'
+type Route = 'overview' | 'operations' | 'messaging' | 'mcp' | 'ai' | 'activity' | 'registry' | 'settings'
 
 const routeComponents = {
   overview: lazy(() => import('./pages/overview').then((module) => ({ default: module.OverviewPage }))),
@@ -18,6 +18,7 @@ const routeComponents = {
     import('./pages/messaging').then((module) => ({ default: module.MessagingPage })),
   ),
   mcp: lazy(() => import('./pages/mcp').then((module) => ({ default: module.MCPPage }))),
+  ai: lazy(() => import('./pages/ai').then((module) => ({ default: module.AIPage }))),
   activity: lazy(() => import('./pages/activity').then((module) => ({ default: module.ActivityPage }))),
   registry: lazy(() => import('./pages/registry').then((module) => ({ default: module.RegistryPage }))),
   settings: lazy(() => import('./pages/settings').then((module) => ({ default: module.SettingsPage }))),
@@ -29,6 +30,7 @@ const ROUTE_PATHS: Record<Route, string> = {
   operations: 'operations',
   messaging: 'messaging',
   mcp: 'mcp',
+  ai: 'ai',
   activity: 'activity',
   registry: 'registry',
   settings: 'settings',
@@ -39,6 +41,7 @@ const TITLES: Record<Route, string> = {
   operations: 'Operations',
   messaging: 'Messaging',
   mcp: 'MCP',
+  ai: 'AI Gateway',
   activity: 'Activity Monitor',
   registry: 'Registry',
   settings: 'Settings',
@@ -102,6 +105,13 @@ export function App() {
       icon: <Plug className="h-4 w-4" />,
       active: route === 'mcp',
       onSelect: () => navigate('mcp'),
+    },
+    {
+      key: 'ai',
+      label: 'AI',
+      icon: <BrainCircuit className="h-4 w-4" />,
+      active: route === 'ai',
+      onSelect: () => navigate('ai'),
     },
     {
       key: 'activity',

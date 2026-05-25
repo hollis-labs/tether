@@ -78,7 +78,8 @@ Once your client is connected, call `mux_health`:
 ## Authentication and scopes
 
 Read-only tools (catalog reads, session reads, message reads, health, boot
-prompt generation) require no authentication.
+prompt generation, AI provider/model inspection, route previews, and durable
+AI usage/audit queries) require no authentication.
 
 Mutating tools require a **token** and the corresponding **scope**:
 
@@ -86,16 +87,17 @@ Mutating tools require a **token** and the corresponding **scope**:
 |---|---|
 | `session.write` | `mux_session_create`, `mux_session_launch`, `mux_session_stop`, `mux_session_send_input`, `mux_session_resize`, `mux_logical_agent_resume` |
 | `message.write` | `mux_message_send`, `mux_message_consume`, `mux_message_cancel` |
+| `ai.invoke` | `mux_ai_chat` |
 
 Pass both via flags or environment variables:
 
 ```bash
 # Flags:
-mux mcp --token my-secret --scopes session.write,message.write
+mux mcp --token my-secret --scopes session.write,message.write,ai.invoke
 
 # Environment variables:
 export AGENT_MUX_MCP_TOKEN=my-secret
-export AGENT_MUX_MCP_SCOPES=session.write,message.write
+export AGENT_MUX_MCP_SCOPES=session.write,message.write,ai.invoke
 mux mcp
 ```
 
@@ -569,8 +571,9 @@ mux_session_launch (session_id)  → start
 
 ### Observation (durable history)
 
-These tools expose durable history stored in the agent-mux SQLite database.
-All four are read-only and require no auth scope. They are available in both
+These tools expose durable history stored in the agent-mux SQLite database plus
+a bounded live event wait surface over the daemon SSE stream. All are read-only
+and require no auth scope. They are available in both
 normal and `--proxy` mode.
 
 > **Note:** `mux_events_tool_calls` (proxy mode only) is now backed by the
@@ -638,6 +641,71 @@ Query durable proxy/tool call events from the SQLite store.
 { "ok": true, "events": [...], "count": 5 }
 ```
 
+#### `mux_events_history`
+Query durable event-bus history across daemon, session, and broker scopes from
+the shared `events` table. Returns newest first.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `scope` | string | — | Optional comma-separated scope allow-list: `daemon`, `session`, `broker` |
+| `kind` | string | — | Optional comma-separated event kind allow-list |
+| `session_id` | string | — | Exact session id filter |
+| `since_seq` | number | — | Only return events with seq greater than this value |
+| `cursor` | number | — | Pagination cursor; only return events with seq less than this value |
+| `limit` | number | — | Max events (default 100, max 1000) |
+
+```json
+// Response
+{
+  "ok": true,
+  "events": [
+    {
+      "seq": 12,
+      "at": "...",
+      "scope": "broker",
+      "session_id": "sess-1",
+      "kind": "broker.envelope_sent",
+      "payload_json": "{\"id\":\"m1\"}"
+    }
+  ],
+  "count": 1,
+  "next_cursor": 12
+}
+```
+
+#### `mux_events_wait`
+Wait briefly for live daemon or session events from the running `muxd` event
+stream. This is a bounded read surface for agents that need near-real-time
+event reaction without keeping a long-lived stream open.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `scope` | string | — | Scope allow-list as comma-separated `daemon`, `session`, `broker`. Defaults to `daemon`. |
+| `kind` | string | — | Optional comma-separated event kind allow-list. |
+| `session_id` | string | — | Exact session id filter. |
+| `since_seq` | number | — | Only return events with seq greater than this value. |
+| `wait_ms` | number | — | Maximum wait in milliseconds (default 5000). |
+| `max_events` | number | — | Maximum matching events to return (default 1, max 100). |
+
+```json
+// Response
+{
+  "ok": true,
+  "events": [
+    {
+      "seq": 12,
+      "kind": "session.state_changed",
+      "scope": "session",
+      "session_id": "sess-1",
+      "payload_json": "{\"state\":\"running\"}"
+    }
+  ],
+  "count": 1,
+  "timed_out": false,
+  "next_since_seq": 12
+}
+```
+
 ---
 
 ## Common workflows
@@ -674,6 +742,77 @@ Query durable proxy/tool call events from the SQLite store.
 2. mux_message_inbox (to)            → recipient polls inbox
 3. mux_message_consume (message_id, as)              → mark consumed
 ```
+
+### Inspect or invoke the AI gateway
+
+```
+1. mux_ai_list_providers             → discover configured provider ids
+2. mux_ai_list_models                → inspect visible models
+3. mux_ai_list_routes                → inspect live planner route order
+4. mux_ai_route_preview              → preview route/cost without model invocation
+5. mux_ai_route_explain              → explain why each route matched or failed
+6. mux_ai_chat                       → invoke the gateway (requires ai.invoke)
+7. mux_ai_usage / mux_ai_budgets     → inspect durable usage and live budget headroom
+8. mux_ai_budget_alerts              → inspect durable budget_rejection alerts directly
+9. mux_ai_wait_budget_alerts         → wait briefly for live ai.budget_rejected events
+10. mux_events_history               → inspect broader durable daemon/session/broker history
+11. mux_events_wait                  → reuse the bounded-live pattern for live daemon/session events
+12. mux_ai_audit                     → inspect broader durable audit history
+```
+
+### AI tool request forms
+
+`mux_ai_route_preview` and `mux_ai_chat` support two request styles:
+
+1. Shorthand text form: `text` plus optional `system_prompt`, `provider`,
+   `model`, and budget/correlation hints.
+2. Full normalized request form: `request` (object) or `request_json`
+   (JSON string). These are mutually exclusive with `text`.
+
+The scalar hint fields still act as explicit overrides on top of a supplied
+`request` object, so a caller can keep a reusable request body and pin a
+different provider/model at call time.
+
+Example shorthand call:
+
+```json
+{
+  "text": "Summarize this change.",
+  "system_prompt": "Be concise.",
+  "provider": "anthropic-work",
+  "max_output_tokens": 256
+}
+```
+
+Example full request call:
+
+```json
+{
+  "request": {
+    "operation": "chat",
+    "provider_hint": "anthropic-work",
+    "input": [
+      {
+        "role": "system",
+        "parts": [{"type": "text", "text": "Be concise."}]
+      },
+      {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Summarize this change."}]
+      }
+    ],
+    "tools": [],
+    "metadata": {"surface": "mcp"}
+  }
+}
+```
+
+`mux_ai_chat` requires the `ai.invoke` scope. `mux_ai_list_providers`,
+`mux_ai_list_models`, `mux_ai_list_routes`, `mux_ai_route_preview`,
+`mux_ai_route_explain`, `mux_ai_usage`, `mux_ai_budgets`,
+`mux_ai_budget_alerts`, `mux_ai_wait_budget_alerts`, `mux_ai_audit`, and
+`mux_events_history` and `mux_events_wait` are
+read-only.
 
 ---
 

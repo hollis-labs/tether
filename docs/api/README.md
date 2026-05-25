@@ -49,6 +49,349 @@ Defined codes:
 
 ---
 
+## AI Gateway
+
+The AI gateway is optional. `muxd` only mounts `/ai/*` when `global.yaml`
+contains at least one enabled AI provider that can be built successfully at
+startup.
+
+All write-side AI endpoints accept a typed JSON envelope:
+
+```json
+{
+  "request": {
+    "operation": "chat",
+    "provider_hint": "anthropic-work",
+    "model_hint": "claude-sonnet-4-5",
+    "mode": "summarize",
+    "intent": "release-notes",
+    "request_id": "req-123",
+    "session_id": "sess-123",
+    "caller_id": "cli:mux",
+    "max_output_tokens": 512,
+    "token_budget": 4000,
+    "cost_budget_usd": 0.10,
+    "latency_target_ms": 1500,
+    "input": [
+      {
+        "role": "system",
+        "parts": [{"type": "text", "text": "Be concise."}]
+      },
+      {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Summarize this PR."}]
+      }
+    ],
+    "tools": [],
+    "attachments": [],
+    "metadata": {"surface": "api"}
+  }
+}
+```
+
+`request.operation` defaults to `"chat"` when omitted. `POST /ai/chat` and
+`POST /ai/chat/stream` reject any other operation; `POST /ai/routes/preview`
+accepts the full normalized request so the planner can inspect capabilities,
+budgets, tools, and attachments before choosing a route.
+
+### `GET /ai/providers`
+
+List the configured AI providers that are active in the daemon.
+
+Response (200):
+
+```json
+{
+  "providers": [
+    {
+      "id": "anthropic-work",
+      "type": "anthropic",
+      "default_model": "claude-sonnet-4-5",
+      "base_url": ""
+    }
+  ]
+}
+```
+
+### `GET /ai/models`
+
+List the configured models visible through the mounted providers.
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `provider_id` | string | optional configured provider id filter |
+
+Response (200):
+
+```json
+{
+  "models": [
+    {
+      "configured_provider_id": "anthropic-work",
+      "vendor_provider_id": "anthropic",
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "family": "claude-sonnet-4",
+      "context_window": 200000,
+      "max_output_tokens": 16000,
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    }
+  ]
+}
+```
+
+### `GET /ai/routes`
+
+List the live planner routes mounted into the daemon in evaluation order.
+The returned allow/deny fields are the effective resolved policy values after
+global defaults, provider policy, and route overrides are merged. The same is
+true for `max_output_tokens`, `max_cost_usd`, and `usage_budget` when present.
+
+Response (200):
+
+```json
+{
+  "routes": [
+    {
+      "provider": "anthropic-work",
+      "model": "claude-sonnet-4-5",
+      "requires_reasoning": true,
+      "allow_tools": false,
+      "usage_budget": {
+        "level": "route",
+        "max_cost_usd": 1.0,
+        "window": "day",
+        "scope": "caller"
+      }
+    },
+    {
+      "provider": "openai-work",
+      "model": "gpt-5",
+      "mode": "summarize"
+    }
+  ]
+}
+```
+
+### `POST /ai/routes/preview`
+
+Preview which provider/model the planner would choose without invoking a
+model.
+
+Response (200):
+
+```json
+{
+  "route": {
+    "provider": "anthropic-work",
+    "model": "claude-sonnet-4-5",
+    "estimated_cost_usd": 0.0031,
+    "reasons": ["matched provider hint"],
+    "policy_version": "catalog-ai-v1"
+  }
+}
+```
+
+Errors: `invalid_request` for malformed payloads or unsupported inputs;
+`internal_error` for planning failures.
+
+### `POST /ai/routes/explain`
+
+Return a structured planner trace for one normalized request. Unlike
+`/ai/routes/preview`, this surface includes every configured route plus the
+winner, exclusion reasons, and per-candidate evaluation failures, including
+historical usage-budget rejections.
+
+Response (200):
+
+```json
+{
+  "policy_version": "catalog-ai-v1",
+  "winner": {
+    "provider": "anthropic-work",
+    "model": "claude-sonnet-4-5",
+    "policy_version": "catalog-ai-v1",
+    "reasons": ["matched route reasoning requirement"]
+  },
+  "candidates": [
+    {
+      "provider": "openai-work",
+      "model": "gpt-5",
+      "matched": true,
+      "error": "route policy disallows tools",
+      "reasons": ["matched route reasoning requirement"]
+    },
+    {
+      "provider": "anthropic-work",
+      "model": "claude-sonnet-4-5",
+      "matched": true,
+      "selected": true,
+      "reasons": [
+        "matched route reasoning requirement",
+        "supports reasoning",
+        "selected after ordered fallback"
+      ]
+    }
+  ]
+}
+```
+
+### `GET /ai/budgets`
+
+List the live durable `usage_budget` entries mounted into the daemon, along
+with current spend and remaining headroom from `ai_events`.
+
+Query params:
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `provider` | string | optional configured provider id filter |
+| `model` | string | optional model id filter |
+| `caller_id` | string | caller correlation id used for caller-scoped budgets |
+| `session_id` | string | session correlation id used for session-scoped budgets |
+
+Response (200):
+
+```json
+{
+  "budgets": [
+    {
+      "provider": "anthropic-work",
+      "model": "claude-sonnet-4-5",
+      "usage_budget": {
+        "level": "route",
+        "max_cost_usd": 1.0,
+        "window": "day",
+        "scope": "caller"
+      },
+      "window_start": "2026-05-25T00:00:00Z",
+      "spent_cost_usd": 0.6,
+      "remaining_cost_usd": 0.4,
+      "filter": {
+        "provider": "anthropic-work",
+        "model": "claude-sonnet-4-5",
+        "caller_id": "agent-1",
+        "operation": "chat"
+      }
+    }
+  ],
+  "count": 1
+}
+```
+
+When a caller- or session-scoped budget cannot be evaluated because the
+required correlation id is missing, the entry is still returned with an
+`error` field instead of failing the whole response.
+
+When no route wins, the endpoint still returns `200` with `error` populated and
+the per-route failure/exclusion details in `candidates`. Input validation and
+unsupported operations still return `invalid_request`.
+
+### `POST /ai/chat`
+
+Execute one normalized chat request through the gateway.
+
+Response (200):
+
+```json
+{
+  "response": {
+    "provider": "anthropic-work",
+    "model": "claude-sonnet-4-5",
+    "output": [
+      {
+        "role": "assistant",
+        "parts": [{"type": "text", "text": "Here is the summary."}]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 120,
+      "output_tokens": 42,
+      "estimated_cost_usd": 0.0031
+    },
+    "route": {
+      "provider": "anthropic-work",
+      "model": "claude-sonnet-4-5",
+      "reasons": ["matched provider hint"],
+      "policy_version": "catalog-ai-v1"
+    }
+  }
+}
+```
+
+Errors: `invalid_request` when the body is malformed or `operation` is not
+`chat`; `not_found` when no route/provider can satisfy the request;
+`internal_error` for upstream provider failures.
+
+### `POST /ai/chat/stream`
+
+Execute one normalized chat request through the gateway and stream
+incremental SSE events.
+
+Response content type: `text/event-stream`
+
+Current normalized event kinds:
+
+- `response.start`
+- `response.output_text.delta`
+- `response.refusal.delta`
+- `response.tool_use`
+- `response.error`
+- `response.completed`
+
+Example:
+
+```text
+event: response.output_text.delta
+data: {"kind":"response.output_text.delta","provider":"anthropic-work","model":"claude-sonnet-4-5","delta":"Hello"}
+
+event: response.completed
+data: {"kind":"response.completed","provider":"anthropic-work","model":"claude-sonnet-4-5","stop_reason":"end_turn","response":{"provider":"anthropic-work","model":"claude-sonnet-4-5","output":[{"role":"assistant","parts":[{"type":"text","text":"Hello"}]}]}}
+```
+
+`response.completed` carries the final normalized `llm.Response`, including
+usage and route information. `response.error` is emitted when the upstream
+stream fails after the SSE response has already started.
+
+### `GET /ai/usage`
+
+Return durable aggregate usage derived from `ai_events` rows of
+`event_type=chat`.
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `provider` | string | optional configured provider id filter |
+| `model` | string | optional model id filter |
+| `session_id` | string | optional session correlation filter |
+| `caller_id` | string | optional caller correlation filter |
+| `operation` | string | optional operation filter; typical value `chat` |
+| `since` | RFC3339 | optional lower-bound timestamp |
+
+### `GET /ai/audit`
+
+Return durable sanitized AI audit events.
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `event_type` | string | optional event kind such as `chat`, `route_preview`, or `budget_rejection` |
+| `provider` | string | optional configured provider id filter |
+| `model` | string | optional model id filter |
+| `session_id` | string | optional session correlation filter |
+| `caller_id` | string | optional caller correlation filter |
+| `since` | RFC3339 | optional lower-bound timestamp |
+| `limit` | int | optional max rows, capped by the server |
+| `errors_only` | bool | optional failed-events-only filter |
+
+`budget_rejection` rows are emitted in addition to the parent `chat`,
+`route_preview`, or `route_explain` row when durable `usage_budget` policy
+blocks a candidate route. These rows pin the rejected provider/model directly
+so operators can alert on spend governance failures without parsing the
+aggregated planner error text.
+
+---
+
 ## Health
 
 ### `GET /health`
@@ -414,6 +757,38 @@ Response (201): full reply `EnvelopeDTO`.
 v0.0.2 has an in-memory pub/sub bus (Sprint v002-06) over session, daemon,
 and broker scopes. Every event also persists to the `events` table.
 
+### `GET /events`
+
+Durable cross-scope event history from the shared `events` table. Results are
+newest first.
+
+| Query param  | Type  | Description |
+|--------------|-------|-------------|
+| `scope`      | string (repeatable) | optional allow-list of `session` / `daemon` / `broker` |
+| `kind`       | string (repeatable) | optional exact event kind allow-list |
+| `session_id` | string | optional exact session id filter |
+| `since_seq`  | int64 | optional lower bound; only events with seq > N are returned |
+| `cursor`     | int64 | optional pagination cursor; only events with seq < N are returned |
+| `limit`      | int 0–1000 | optional row limit; default 100 |
+
+Response (200):
+
+```json
+{
+  "events": [
+    {
+      "seq": 42,
+      "at": "2026-05-25T18:42:00.123456Z",
+      "scope": "broker",
+      "session_id": "abc",
+      "kind": "broker.envelope_sent",
+      "payload_json": "{\"id\":\"m1\"}"
+    }
+  ],
+  "next_cursor": 12
+}
+```
+
 ### `GET /events/stream`
 
 SSE stream of bus events. Replays history (via `since_seq`) then switches
@@ -439,6 +814,11 @@ every 15s to keep proxies from closing idle connections.
 
 Clients track `since_seq` themselves (typically the last seen `id:` field);
 server does not persist subscription offsets.
+
+CLI parity:
+
+- `mux events history` → durable `GET /events`
+- `mux events watch` → live `GET /events/stream`
 
 ### `GET /sessions/{id}/events`
 
@@ -586,11 +966,15 @@ Current (v0.0.2):
 | daemon   | `daemon.started`              | muxd at listener-up                    | `{version, pid, listener}`                                   |
 | daemon   | `daemon.shutdown_started`     | muxd on ctx cancel                     | empty                                                        |
 | daemon   | `daemon.shutdown_completed`   | muxd after runtime drain, before Close | empty                                                        |
+| daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}`                            |
 | broker   | `broker.envelope_created`     | broker.Service on successful persist   | `{id, sender, recipient, workflow_id, correlation_id, message_type}` — metadata only, never payload |
 | broker   | `broker.envelope_replied`     | broker.Service on successful reply     | same shape as created                                        |
 
 Additional kinds will land as v0.0.3 extends runtime and broker semantics.
+
+To watch live budget alerts, subscribe to
+`GET /events/stream?scope=daemon&kind=ai.budget_rejected`.
 
 ---
 

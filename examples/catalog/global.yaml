@@ -18,3 +18,39 @@ catalog:
 #   listen_addr: unix:~/.tether/run/muxd.sock
 #   pid_file: ~/.tether/run/muxd.pid
 #   shutdown_timeout: 10s
+ai:
+  policy:
+    allow_attachments: false
+    max_cost_usd: 0.50
+    usage_budget:
+      max_cost_usd: 25.00
+      window: month
+  providers:
+    - id: anthropic-work
+      type: anthropic
+      model: claude-sonnet-4-5
+      secret_ref: keychain://anthropic/work
+      enabled: true
+      policy:
+        allow_reasoning: true
+        max_output_tokens: 1024
+        usage_budget:
+          max_cost_usd: 10.00
+          scope: caller
+    - id: llama-local
+      type: openai-compatible
+      model: llama3.1
+      base_url: http://127.0.0.1:11434/v1
+      enabled: false
+  routing:
+    default_provider_order:
+      - anthropic-work
+    routes:
+      - provider: anthropic-work
+        model: claude-sonnet-4-5
+        requires_reasoning: true
+        allow_tools: false
+        max_cost_usd: 0.10
+        usage_budget:
+          max_cost_usd: 1.00
+          window: day

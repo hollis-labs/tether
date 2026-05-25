@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // EventsStore is the narrow read contract the /sessions/{id}/events
@@ -16,6 +17,7 @@ import (
 // separately via events.Bus.
 type EventsStore interface {
 	ListEventsBySession(sessionID string, limit int, cursor int64) ([]events.Event, error)
+	QueryEvents(f store.EventFilter) ([]events.Event, error)
 }
 
 // EventDTO is the on-the-wire shape for a historical event row.
@@ -48,6 +50,9 @@ func (s *Server) registerEventRoutes(mux *http.ServeMux) {
 	if s.Bus != nil {
 		mux.HandleFunc("/events/stream", s.handleEventsStream)
 	}
+	if s.EventsStore != nil {
+		mux.HandleFunc("/events", s.handleEventsList)
+	}
 	// Per-session history mounts under the sessions dispatcher's
 	// "events" action case; see handleSessionsItem.
 }
@@ -56,6 +61,7 @@ func (s *Server) registerEventRoutes(mux *http.ServeMux) {
 // Query params:
 //   - ?since_seq=N : replay bus events with seq > N before live
 //   - ?scope=X     : repeatable; one of session|daemon|broker
+//   - ?kind=Y      : repeatable; exact event kind filter
 //   - ?session_id= : filter to a single session's events
 //
 // SSE framing:
@@ -164,7 +170,92 @@ func parseEventsFilter(r *http.Request) (events.Filter, error) {
 			return f, fmt.Errorf("scope must be one of session/daemon/broker")
 		}
 	}
+	for _, kind := range q["kind"] {
+		kind = strings.TrimSpace(kind)
+		if kind == "" {
+			return f, fmt.Errorf("kind must not be empty")
+		}
+		f.Kinds = append(f.Kinds, kind)
+	}
 	return f, nil
+}
+
+// handleEventsList services GET /events. Returns durable cross-scope history
+// from the shared events table, newest first, with optional scope/kind/session
+// filtering and cursor-based pagination.
+func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter, err := parseEventsHistoryFilter(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+	rows, err := s.EventsStore.QueryEvents(filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "query events: "+err.Error())
+		return
+	}
+	out := make([]EventDTO, 0, len(rows))
+	for _, e := range rows {
+		out = append(out, eventToDTO(e))
+	}
+	resp := EventListResponse{Events: out}
+	effective := filter.Limit
+	if effective <= 0 {
+		effective = 100
+	}
+	if len(rows) == effective && len(rows) > 0 {
+		resp.NextCursor = rows[len(rows)-1].Seq
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func parseEventsHistoryFilter(q map[string][]string) (store.EventFilter, error) {
+	f := store.EventFilter{SessionID: strings.TrimSpace(firstQuery(q, "session_id"))}
+	if raw := firstQuery(q, "since_seq"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			return f, fmt.Errorf("since_seq must be a non-negative integer")
+		}
+		f.SinceSeq = n
+	}
+	if raw := firstQuery(q, "cursor"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			return f, fmt.Errorf("cursor must be a non-negative integer")
+		}
+		f.Cursor = n
+	}
+	if raw := firstQuery(q, "limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return f, fmt.Errorf("limit must be a non-negative integer")
+		}
+		f.Limit = n
+	}
+	for _, s := range q["scope"] {
+		switch s {
+		case events.ScopeSession, events.ScopeDaemon, events.ScopeBroker:
+			f.Scopes = append(f.Scopes, events.Scope(s))
+		default:
+			return f, fmt.Errorf("scope must be one of session/daemon/broker")
+		}
+	}
+	for _, kind := range q["kind"] {
+		kind = strings.TrimSpace(kind)
+		if kind == "" {
+			return f, fmt.Errorf("kind must not be empty")
+		}
+		f.Kinds = append(f.Kinds, kind)
+	}
+	return f, nil
+}
+
+func firstQuery(q map[string][]string, key string) string {
+	if len(q[key]) == 0 {
+		return ""
+	}
+	return q[key][0]
 }
 
 // handleSessionEventsList services GET /sessions/{id}/events. Returns

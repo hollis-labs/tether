@@ -6,6 +6,8 @@ package events
 // Scopes is an allow-list: if non-empty, only events whose Scope is
 // in the list match. SessionID, when non-empty, requires an exact
 // match (useful for tailing a single session's lifecycle events).
+// Kinds is an allow-list: if non-empty, only events whose Kind is in
+// the list match.
 // SinceSeq is a lower bound on historical replay: the bus replays
 // events with Seq > SinceSeq before switching to live delivery.
 // Zero replays the full history. Subscribers that want live-only
@@ -17,6 +19,7 @@ package events
 // the id in PayloadJSON today and post-filter client-side.
 type Filter struct {
 	Scopes    []Scope
+	Kinds     []string
 	SessionID string
 	SinceSeq  int64
 }
@@ -36,6 +39,18 @@ func (f Filter) matches(e Event) bool {
 	}
 	if f.SessionID != "" && f.SessionID != e.SessionID {
 		return false
+	}
+	if len(f.Kinds) > 0 {
+		found := false
+		for _, k := range f.Kinds {
+			if k == e.Kind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 	return true
 }

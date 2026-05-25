@@ -22,7 +22,7 @@ func init() {
 	home, _ := os.UserHomeDir()
 	defaultCatalog := filepath.Join(home, ".tether", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
-	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd, messagesCmd)
+	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd, messagesCmd, aiCmd, eventsCmd)
 	// Top-level aliases for discoverability.
 	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd, bootExecCmd)
 	rootCmd.AddCommand(pathCmd())

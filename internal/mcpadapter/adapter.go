@@ -42,6 +42,10 @@ const version = "0.2.0"
 const (
 	ScopeSessionWrite = "session.write"
 	ScopeMessageWrite = "message.write"
+	// ScopeAIInvoke gates model-invocation tools on the AI gateway surface.
+	// Read-side AI introspection and durable audit/usage queries remain
+	// scope-free.
+	ScopeAIInvoke = "ai.invoke"
 	// ScopeCatalogWrite gates tools that write catalog files (agent
 	// create/edit). It is deliberately separate from session/message
 	// scopes so an operator can grant runtime control without granting
@@ -220,6 +224,33 @@ func intArg(req mcp.CallToolRequest, key string, def int) int {
 		}
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+		return def
+	default:
+		return def
+	}
+}
+
+// floatArg extracts a floating-point argument. Accepts JSON numbers,
+// json.Number, and numeric strings; anything else falls back to def.
+func floatArg(req mcp.CallToolRequest, key string, def float64) float64 {
+	switch v := req.GetArguments()[key].(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case json.Number:
+		if n, err := v.Float64(); err == nil {
+			return n
+		}
+		return def
+	case string:
+		if v == "" {
+			return def
+		}
+		var n float64
+		if _, err := fmt.Sscanf(v, "%f", &n); err == nil {
 			return n
 		}
 		return def

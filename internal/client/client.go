@@ -103,6 +103,42 @@ type MessageNotifyResult struct {
 	WakeError     string             `json:"wake_error,omitempty"`
 }
 
+type AIAuditQuery struct {
+	EventType  string
+	Provider   string
+	Model      string
+	SessionID  string
+	CallerID   string
+	Limit      int
+	Since      string
+	ErrorsOnly bool
+}
+
+type AIUsageQuery struct {
+	Provider  string
+	Model     string
+	SessionID string
+	CallerID  string
+	Operation string
+	Since     string
+}
+
+type AIBudgetsQuery struct {
+	Provider  string
+	Model     string
+	SessionID string
+	CallerID  string
+}
+
+type EventsHistoryQuery struct {
+	Scopes    []string
+	Kinds     []string
+	SessionID string
+	SinceSeq  int64
+	Cursor    int64
+	Limit     int
+}
+
 // New constructs a Client for the given listen_addr. The transport handles
 // unix: and tcp: schemes the same way daemon.Server accepts them.
 func New(listenAddr string) *Client {
@@ -142,6 +178,202 @@ func (c *Client) Health(ctx context.Context) (daemon.Health, error) {
 		return daemon.Health{}, err
 	}
 	return h, nil
+}
+
+func (c *Client) AIChat(ctx context.Context, req api.ChatRequest) (api.ChatResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return api.ChatResponse{}, fmt.Errorf("marshal ai chat request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/ai/chat", bytes.NewReader(body))
+	if err != nil {
+		return api.ChatResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return api.ChatResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.ChatResponse{}, readError(resp)
+	}
+	var out api.ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return api.ChatResponse{}, fmt.Errorf("decode ai chat response: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) AIPreviewRoute(ctx context.Context, req api.ChatRequest) (api.RoutePreviewResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return api.RoutePreviewResponse{}, fmt.Errorf("marshal ai route preview request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/ai/routes/preview", bytes.NewReader(body))
+	if err != nil {
+		return api.RoutePreviewResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return api.RoutePreviewResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.RoutePreviewResponse{}, readError(resp)
+	}
+	var out api.RoutePreviewResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return api.RoutePreviewResponse{}, fmt.Errorf("decode ai route preview response: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) AIExplainRoute(ctx context.Context, req api.ChatRequest) (api.RouteExplainResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return api.RouteExplainResponse{}, fmt.Errorf("marshal ai route explain request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/ai/routes/explain", bytes.NewReader(body))
+	if err != nil {
+		return api.RouteExplainResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return api.RouteExplainResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.RouteExplainResponse{}, readError(resp)
+	}
+	var out api.RouteExplainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return api.RouteExplainResponse{}, fmt.Errorf("decode ai route explain response: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) AIProviders(ctx context.Context) (api.ListAIProvidersResponse, error) {
+	var out api.ListAIProvidersResponse
+	if err := c.getJSON(ctx, "/ai/providers", &out); err != nil {
+		return api.ListAIProvidersResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AIModels(ctx context.Context, providerID string) (api.ListAIModelsResponse, error) {
+	path := "/ai/models"
+	if providerID != "" {
+		path += "?provider_id=" + url.QueryEscape(providerID)
+	}
+	var out api.ListAIModelsResponse
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.ListAIModelsResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AIRoutes(ctx context.Context) (api.ListAIRoutesResponse, error) {
+	var out api.ListAIRoutesResponse
+	if err := c.getJSON(ctx, "/ai/routes", &out); err != nil {
+		return api.ListAIRoutesResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AIAudit(ctx context.Context, q AIAuditQuery) (api.AIAuditListResponse, error) {
+	path := "/ai/audit"
+	params := url.Values{}
+	if q.EventType != "" {
+		params.Set("event_type", q.EventType)
+	}
+	if q.Provider != "" {
+		params.Set("provider", q.Provider)
+	}
+	if q.Model != "" {
+		params.Set("model", q.Model)
+	}
+	if q.SessionID != "" {
+		params.Set("session_id", q.SessionID)
+	}
+	if q.CallerID != "" {
+		params.Set("caller_id", q.CallerID)
+	}
+	if q.Limit > 0 {
+		params.Set("limit", strconv.Itoa(q.Limit))
+	}
+	if q.Since != "" {
+		params.Set("since", q.Since)
+	}
+	if q.ErrorsOnly {
+		params.Set("errors_only", "true")
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var out api.AIAuditListResponse
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.AIAuditListResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AIUsage(ctx context.Context, q AIUsageQuery) (api.AIUsageResponse, error) {
+	path := "/ai/usage"
+	params := url.Values{}
+	if q.Provider != "" {
+		params.Set("provider", q.Provider)
+	}
+	if q.Model != "" {
+		params.Set("model", q.Model)
+	}
+	if q.SessionID != "" {
+		params.Set("session_id", q.SessionID)
+	}
+	if q.CallerID != "" {
+		params.Set("caller_id", q.CallerID)
+	}
+	if q.Operation != "" {
+		params.Set("operation", q.Operation)
+	}
+	if q.Since != "" {
+		params.Set("since", q.Since)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var out api.AIUsageResponse
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.AIUsageResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AIBudgets(ctx context.Context, q AIBudgetsQuery) (api.AIUsageBudgetsResponse, error) {
+	path := "/ai/budgets"
+	params := url.Values{}
+	if q.Provider != "" {
+		params.Set("provider", q.Provider)
+	}
+	if q.Model != "" {
+		params.Set("model", q.Model)
+	}
+	if q.SessionID != "" {
+		params.Set("session_id", q.SessionID)
+	}
+	if q.CallerID != "" {
+		params.Set("caller_id", q.CallerID)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var out api.AIUsageBudgetsResponse
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.AIUsageBudgetsResponse{}, err
+	}
+	return out, nil
 }
 
 // CreateSessionWithBootPrompt POSTs /sessions with a boot_prompt override,
@@ -841,6 +1073,43 @@ func (c *Client) QueryProxyEvents(ctx context.Context, serverID, toolName string
 		return nil, wrapIfUnreachable(err)
 	}
 	return res.Events, nil
+}
+
+// EventsHistory fetches durable daemon/session/broker event history from
+// GET /events with optional filters. Results are newest first.
+func (c *Client) EventsHistory(ctx context.Context, q EventsHistoryQuery) (api.EventListResponse, error) {
+	path := "/events"
+	params := url.Values{}
+	for _, scope := range q.Scopes {
+		if strings.TrimSpace(scope) != "" {
+			params.Add("scope", scope)
+		}
+	}
+	for _, kind := range q.Kinds {
+		if strings.TrimSpace(kind) != "" {
+			params.Add("kind", kind)
+		}
+	}
+	if q.SessionID != "" {
+		params.Set("session_id", q.SessionID)
+	}
+	if q.SinceSeq > 0 {
+		params.Set("since_seq", strconv.FormatInt(q.SinceSeq, 10))
+	}
+	if q.Cursor > 0 {
+		params.Set("cursor", strconv.FormatInt(q.Cursor, 10))
+	}
+	if q.Limit > 0 {
+		params.Set("limit", strconv.Itoa(q.Limit))
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var res api.EventListResponse
+	if err := c.getJSON(ctx, path, &res); err != nil {
+		return api.EventListResponse{}, wrapIfUnreachable(err)
+	}
+	return res, nil
 }
 
 // wrapIfUnreachable annotates connection-refused / socket-missing errors

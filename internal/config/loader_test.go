@@ -48,6 +48,18 @@ func TestLoadExampleCatalog(t *testing.T) {
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
 		t.Errorf("daemon.shutdown_timeout = %q, want default %q", got, want)
 	}
+	if len(cat.Global.AI.Providers) != 2 {
+		t.Fatalf("ai.providers len = %d, want 2", len(cat.Global.AI.Providers))
+	}
+	if got := cat.Global.AI.Providers[0].ID; got != "anthropic-work" {
+		t.Fatalf("ai.providers[0].id = %q", got)
+	}
+	if got := cat.Global.AI.Providers[1].ID; got != "llama-local" {
+		t.Fatalf("ai.providers[1].id = %q", got)
+	}
+	if got := cat.Global.AI.Providers[0].EffectiveDefaultModel(); got != "claude-sonnet-4-5" {
+		t.Fatalf("ai.providers[0].default model = %q", got)
+	}
 }
 
 func TestProviderRuntimeDefaults_BackCompat(t *testing.T) {
@@ -194,6 +206,258 @@ func TestValidate_AcceptedPermissionModes(t *testing.T) {
 			t.Errorf("permission_mode %q should be accepted, got: %v", m, err)
 		}
 	}
+}
+
+func TestValidate_AIProviderRules(t *testing.T) {
+	tests := []struct {
+		name string
+		ai   AIConfig
+		ok   bool
+	}{
+		{
+			name: "valid anthropic config",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:           "anthropic-work",
+					Type:         "anthropic",
+					Models:       []string{"claude-sonnet-4-5", "claude-opus-4-1"},
+					DefaultModel: "claude-sonnet-4-5",
+					SecretRef:    "keychain://anthropic/work",
+					Enabled:      true,
+				}},
+				Routing: AIRoutingConfig{DefaultProviderOrder: []string{"anthropic-work"}},
+			},
+			ok: true,
+		},
+		{
+			name: "enabled provider missing secret_ref",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:      "anthropic-work",
+					Type:    "anthropic",
+					Model:   "claude-sonnet-4-5",
+					Enabled: true,
+				}},
+			},
+		},
+		{
+			name: "valid openai config",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "openai-personal",
+					Type:      "openai",
+					Model:     "gpt-4o-mini",
+					SecretRef: "keychain://openai/personal",
+					Enabled:   true,
+				}},
+				Routing: AIRoutingConfig{DefaultProviderOrder: []string{"openai-personal"}},
+			},
+			ok: true,
+		},
+		{
+			name: "routing order references disabled provider",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:      "anthropic-work",
+					Type:    "anthropic",
+					Model:   "claude-sonnet-4-5",
+					Enabled: false,
+				}},
+				Routing: AIRoutingConfig{DefaultProviderOrder: []string{"anthropic-work"}},
+			},
+		},
+		{
+			name: "valid openai compatible config without secret",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:      "llama-local",
+					Type:    "openai-compatible",
+					Models:  []string{"llama3.1", "llama3.2"},
+					BaseURL: "http://127.0.0.1:11434/v1",
+					Enabled: true,
+				}},
+				Routing: AIRoutingConfig{DefaultProviderOrder: []string{"llama-local"}},
+			},
+			ok: true,
+		},
+		{
+			name: "default_model must be in models",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:           "anthropic-work",
+					Type:         "anthropic",
+					Models:       []string{"claude-sonnet-4-5"},
+					DefaultModel: "claude-opus-4-1",
+					SecretRef:    "keychain://anthropic/work",
+					Enabled:      true,
+				}},
+			},
+		},
+		{
+			name: "valid explicit route policy",
+			ai: AIConfig{
+				Policy: AIPolicyConfig{
+					AllowReasoning: boolPtr(false),
+					MaxCostUSD:     floatPtr(0.50),
+					UsageBudget: AIUsageBudgetPolicyConfig{
+						MaxCostUSD: floatPtr(5.00),
+						Window:     "month",
+					},
+				},
+				Providers: []AIProviderConfig{
+					{
+						ID:           "anthropic-work",
+						Type:         "anthropic",
+						Models:       []string{"claude-sonnet-4-5", "claude-opus-4-1"},
+						DefaultModel: "claude-sonnet-4-5",
+						SecretRef:    "keychain://anthropic/work",
+						Enabled:      true,
+						Policy: AIPolicyConfig{
+							AllowReasoning:  boolPtr(true),
+							MaxOutputTokens: intPtr(1024),
+							UsageBudget: AIUsageBudgetPolicyConfig{
+								MaxCostUSD: floatPtr(2.00),
+								Scope:      "caller",
+							},
+						},
+					},
+					{
+						ID:        "openai-work",
+						Type:      "openai",
+						Models:    []string{"gpt-4o-mini"},
+						SecretRef: "keychain://openai/work",
+						Enabled:   true,
+					},
+				},
+				Routing: AIRoutingConfig{
+					Routes: []AIRouteConfig{
+						{Provider: "openai-work", Model: "gpt-4o-mini", Mode: "summarize"},
+						{Provider: "anthropic-work", Model: "claude-opus-4-1", RequiresReasoning: true, AllowTools: boolPtr(false), MaxCostUSD: floatPtr(0.10), UsageBudget: AIUsageBudgetPolicyConfig{MaxCostUSD: floatPtr(1.00), Window: "day"}},
+					},
+				},
+			},
+			ok: true,
+		},
+		{
+			name: "explicit route references unconfigured model",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Models:    []string{"claude-sonnet-4-5"},
+					SecretRef: "keychain://anthropic/work",
+					Enabled:   true,
+				}},
+				Routing: AIRoutingConfig{
+					Routes: []AIRouteConfig{
+						{Provider: "anthropic-work", Model: "claude-opus-4-1"},
+					},
+				},
+			},
+		},
+		{
+			name: "invalid global budget policy",
+			ai: AIConfig{
+				Policy: AIPolicyConfig{
+					MaxCostUSD: floatPtr(0),
+				},
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Model:     "claude-sonnet-4-5",
+					SecretRef: "keychain://anthropic/work",
+					Enabled:   true,
+				}},
+			},
+		},
+		{
+			name: "invalid route max output policy",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Model:     "claude-sonnet-4-5",
+					SecretRef: "keychain://anthropic/work",
+					Enabled:   true,
+				}},
+				Routing: AIRoutingConfig{
+					Routes: []AIRouteConfig{
+						{Provider: "anthropic-work", Model: "claude-sonnet-4-5", MaxOutputTokens: intPtr(0)},
+					},
+				},
+			},
+		},
+		{
+			name: "invalid usage budget window",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Model:     "claude-sonnet-4-5",
+					SecretRef: "keychain://anthropic/work",
+					Enabled:   true,
+					Policy: AIPolicyConfig{
+						UsageBudget: AIUsageBudgetPolicyConfig{
+							MaxCostUSD: floatPtr(1.00),
+							Window:     "year",
+						},
+					},
+				}},
+			},
+		},
+		{
+			name: "usage budget requires max cost",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Model:     "claude-sonnet-4-5",
+					SecretRef: "keychain://anthropic/work",
+					Enabled:   true,
+				}},
+				Routing: AIRoutingConfig{
+					Routes: []AIRouteConfig{{
+						Provider: "anthropic-work",
+						Model:    "claude-sonnet-4-5",
+						UsageBudget: AIUsageBudgetPolicyConfig{
+							Scope: "caller",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := &Catalog{
+				Projects:  map[string]Project{},
+				Agents:    map[string]Agent{},
+				Providers: map[string]Provider{},
+				Launches:  map[string]Launch{},
+			}
+			cat.Global.AI = tc.ai
+			err := cat.Validate()
+			if tc.ok && err != nil {
+				t.Fatalf("Validate() err = %v, want nil", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("Validate() err = nil, want non-nil")
+			}
+		})
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
 }
 
 func TestValidate_LaunchInjectionRejectsUnsafeRelPaths(t *testing.T) {

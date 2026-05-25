@@ -22,7 +22,7 @@ mux (CLI) / MCP client / HTTP / go-agentmux-client
    ├─ /messages/*      cross-agent messaging (go-messaging)
    ├─ /broker/*        typed envelope delivery
    ├─ /catalog/*       read-only catalog projection
-   └─ /events/*        SSE event bus
+   └─ /events*         durable history + SSE event bus
 ```
 
 ## License & Branding
@@ -77,6 +77,20 @@ mux generate-boot nanite.backend.main | pbcopy
 AGENT_MUX_MCP_TOKEN=your-token \
 AGENT_MUX_MCP_SCOPES=session.write,message.write \
 mux mcp
+
+# Inspect configured AI providers
+mux ai providers
+
+# Inspect durable event history
+mux events history --scope daemon --limit 20
+
+# Stream live events
+mux events watch --scope daemon --kind daemon.started
+
+# Preview or invoke the AI gateway
+mux ai route-preview "Summarize this diff"
+mux ai chat "Summarize this diff"
+mux ai chat --stream "Summarize this diff"
 ```
 
 ## Sysop GUI
@@ -114,6 +128,33 @@ Desktop, Claude Code, Cursor, or any MCP-capable agent:
 ```
 
 See [`docs/mcp.md`](docs/mcp.md) for the full tool reference and setup guide.
+
+## AI gateway
+
+Tether also exposes a typed local AI gateway when `global.yaml` configures
+at least one enabled AI provider. The current surfaces are:
+
+- HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
+  `/ai/chat/stream`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|usage|budgets|audit|watch-budgets`
+- MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
+  `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
+  `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
+
+`mux ai chat` and `mux ai route-preview` accept either simple text input or a
+full normalized request via `--request-file` or `--request-json`. `mux ai chat
+--stream` uses the daemon SSE surface and renders incremental text deltas plus
+the final normalized response summary.
+Operators can also define ordered `ai.routing.routes` entries in
+`global.yaml` to steer provider/model selection by mode, intent, reasoning,
+or tool requirements, plus optional `allow_*` policy gates that reject
+disallowed request shapes with explicit route-explain diagnostics. Those
+policy gates, request-local budget ceilings, and durable `usage_budget`
+controls can be set globally, per provider, or per route. Durable usage
+budgets are enforced from the `ai_events` history with daily or monthly
+windows and total, caller, or session scope. `mux ai watch-budgets` tails
+live `ai.budget_rejected` daemon events over
+`/events/stream?scope=daemon&kind=ai.budget_rejected`.
 
 ## Documentation
 

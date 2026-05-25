@@ -378,6 +378,22 @@ export interface OverviewInfo {
     by_kind: NameCount[]
     trend: number[]
   }
+  ai: {
+    configured_providers: number
+    enabled_providers: number
+    routes: number
+    requests: number
+    successes: number
+    errors: number
+    budget_rejections: number
+    input_tokens: number
+    output_tokens: number
+    estimated_cost_usd: number
+    by_provider: NameCount[]
+    by_model: NameCount[]
+    by_event_type: NameCount[]
+    trend: number[]
+  }
   catalog: {
     projects: number
     agents: number
@@ -678,6 +694,229 @@ export interface SettingsRoadmapInfo {
   next: string
 }
 
+export interface AIUsageBudgetPolicyInfo {
+  max_cost_usd?: number
+  window?: string
+  scope?: string
+}
+
+export interface AIPolicyInfo {
+  allow_reasoning?: boolean
+  allow_tools?: boolean
+  allow_attachments?: boolean
+  max_output_tokens?: number
+  max_cost_usd?: number
+  usage_budget?: AIUsageBudgetPolicyInfo
+}
+
+export interface AIProviderSettingsInfo {
+  id: string
+  type: string
+  model?: string
+  models?: string[]
+  default_model?: string
+  secret_ref?: string
+  base_url?: string
+  enabled: boolean
+  policy?: AIPolicyInfo
+}
+
+export interface AIRouteSettingsInfo {
+  provider: string
+  model: string
+  mode?: string
+  intent?: string
+  requires_reasoning?: boolean
+  requires_tools?: boolean
+  policy?: AIPolicyInfo
+}
+
+export interface AIConfigInfo {
+  policy?: AIPolicyInfo
+  default_provider_order?: string[]
+  providers: AIProviderSettingsInfo[]
+  routes: AIRouteSettingsInfo[]
+}
+
+export interface AISettingsInfo {
+  config: AIConfigInfo
+  runtime: {
+    daemon_reachable: boolean
+    providers: number
+    models: number
+    routes: number
+    last_error?: string
+  }
+  error?: string
+}
+
+export interface AIRuntimeProviderInfo {
+  id: string
+  type: string
+  default_model?: string
+  models?: string[]
+  base_url?: string
+}
+
+export interface AIRuntimeModelInfo {
+  configured_provider_id: string
+  vendor_provider_id: string
+  id: string
+  name?: string
+  family?: string
+  context_window?: number
+  max_output_tokens?: number
+  input_modalities?: string[]
+  output_modalities?: string[]
+}
+
+export interface AIRuntimeRouteInfo {
+  provider: string
+  model: string
+  mode?: string
+  intent?: string
+  requires_reasoning?: boolean
+  requires_tools?: boolean
+  allow_reasoning?: boolean
+  allow_tools?: boolean
+  allow_attachments?: boolean
+  max_output_tokens?: number
+  max_cost_usd?: number
+  usage_budget?: {
+    level?: string
+    max_cost_usd?: number
+    window?: string
+    scope?: string
+  }
+}
+
+export interface AIRuntimeInfo {
+  providers: AIRuntimeProviderInfo[]
+  models: AIRuntimeModelInfo[]
+  routes: AIRuntimeRouteInfo[]
+  error?: string
+}
+
+export interface AIUsageBreakdownInfo {
+  key: string
+  requests: number
+  successes: number
+  errors: number
+  latency_ms: number
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
+  reasoning_tokens?: number
+  estimated_cost_usd?: number
+}
+
+export interface AIUsageInfo {
+  summary: {
+    requests: number
+    successes: number
+    errors: number
+    latency_ms: number
+    input_tokens?: number
+    output_tokens?: number
+    cache_read_tokens?: number
+    cache_write_tokens?: number
+    reasoning_tokens?: number
+    estimated_cost_usd?: number
+    by_provider?: AIUsageBreakdownInfo[]
+    by_model?: AIUsageBreakdownInfo[]
+    by_operation?: AIUsageBreakdownInfo[]
+  }
+  error?: string
+}
+
+export interface AIAuditEventInfo {
+  id: number
+  event_type: string
+  request_id?: string
+  session_id?: string
+  caller_id?: string
+  operation: string
+  provider?: string
+  model?: string
+  policy_version?: string
+  latency_ms: number
+  success: boolean
+  refusal?: string
+  error?: string
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
+  reasoning_tokens?: number
+  estimated_cost_usd?: number
+  request_summary?: string
+  response_summary?: string
+  timestamp: string
+}
+
+export interface AIAuditInfo {
+  events: AIAuditEventInfo[]
+  count: number
+  error?: string
+}
+
+export interface AIBudgetInfo {
+  provider: string
+  model: string
+  mode?: string
+  intent?: string
+  usage_budget: {
+    level?: string
+    max_cost_usd?: number
+    window?: string
+    scope?: string
+  }
+  window_start: string
+  spent_cost_usd?: number
+  remaining_cost_usd?: number
+  exhausted: boolean
+  filter: {
+    provider?: string
+    model?: string
+    session_id?: string
+    caller_id?: string
+    operation?: string
+  }
+  error?: string
+}
+
+export interface AIBudgetsInfo {
+  budgets: AIBudgetInfo[]
+  count: number
+  error?: string
+}
+
+export interface AIProviderCatalogModelInfo {
+  id: string
+  name?: string
+  family?: string
+  context_window?: number
+  max_output_tokens?: number
+  input_modalities?: string[]
+  output_modalities?: string[]
+  supports_tools?: boolean
+  supports_reasoning?: boolean
+  supports_attachments?: boolean
+  input_cost_usd_per_mtok?: number
+  output_cost_usd_per_mtok?: number
+}
+
+export interface AIProviderCatalogInfo {
+  provider_type: string
+  vendor_provider_id?: string
+  vendor_provider_name?: string
+  models: AIProviderCatalogModelInfo[]
+  last_fetched_at?: string
+  from_cache_only?: boolean
+  error?: string
+}
+
 export interface GlobalSettingsSaveRequest {
   shutdown_timeout: string
   permission_mode: string
@@ -712,6 +951,15 @@ export const apiClient = {
     http.post<ActionInfo>('/api/settings/providers/save', body as unknown as JsonObject),
   deleteProvider: (id: string) =>
     http.post<ActionInfo>('/api/settings/providers/delete', { id }),
+  getAISettings: () => http.get<AISettingsInfo>('/api/ai/settings'),
+  saveAISettings: (body: { config: AIConfigInfo }) =>
+    http.post<ActionInfo>('/api/ai/settings/save', body as unknown as JsonObject),
+  getAIProviderCatalog: (providerType: string) =>
+    http.get<AIProviderCatalogInfo>('/api/ai/catalog/models', { query: { provider_type: providerType } }),
+  getAIRuntime: () => http.get<AIRuntimeInfo>('/api/ai/runtime'),
+  getAIUsage: () => http.get<AIUsageInfo>('/api/ai/usage'),
+  getAIAudit: () => http.get<AIAuditInfo>('/api/ai/audit'),
+  getAIBudgets: () => http.get<AIBudgetsInfo>('/api/ai/budgets'),
   runSystemResourceAction: (resource: string, action: string) =>
     http.post<ActionInfo>('/api/system/resource/action', { resource, action }),
   getOverview: () => http.get<OverviewInfo>('/api/overview'),

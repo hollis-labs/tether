@@ -3,10 +3,22 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
 )
+
+// EventFilter narrows durable queries over the shared events table.
+// Results are returned newest first.
+type EventFilter struct {
+	Scopes    []events.Scope
+	Kinds     []string
+	SessionID string
+	SinceSeq  int64
+	Cursor    int64
+	Limit     int
+}
 
 // InsertEvent persists an event row and returns its assigned id
 // (used as the bus Event.Seq) and the server-stamped timestamp.
@@ -118,6 +130,64 @@ func (s *Store) ListRecentEvents(limit int) ([]events.Event, error) {
 		`SELECT id, scope, session_id, at, kind, payload_json FROM events ORDER BY id DESC LIMIT ?`,
 		limit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// QueryEvents returns persisted bus events newest first, filtered by scope,
+// kind, session id, lower-bound sequence, and pagination cursor when provided.
+func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	query := `SELECT id, scope, session_id, at, kind, payload_json FROM events`
+	var (
+		where []string
+		args  []any
+	)
+	if f.SessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, f.SessionID)
+	}
+	if f.SinceSeq > 0 {
+		where = append(where, "id > ?")
+		args = append(args, f.SinceSeq)
+	}
+	if f.Cursor > 0 {
+		where = append(where, "id < ?")
+		args = append(args, f.Cursor)
+	}
+	if len(f.Scopes) > 0 {
+		placeholders := make([]string, 0, len(f.Scopes))
+		for _, scope := range f.Scopes {
+			placeholders = append(placeholders, "?")
+			args = append(args, scope)
+		}
+		where = append(where, "scope IN ("+strings.Join(placeholders, ", ")+")")
+	}
+	if len(f.Kinds) > 0 {
+		placeholders := make([]string, 0, len(f.Kinds))
+		for _, kind := range f.Kinds {
+			placeholders = append(placeholders, "?")
+			args = append(args, kind)
+		}
+		where = append(where, "kind IN ("+strings.Join(placeholders, ", ")+")")
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

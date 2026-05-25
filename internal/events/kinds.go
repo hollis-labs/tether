@@ -28,6 +28,11 @@ const (
 	KindDaemonShutdownStarted   = "daemon.shutdown_started"
 	KindDaemonShutdownCompleted = "daemon.shutdown_completed"
 
+	// KindAIBudgetRejected is emitted when durable AI usage_budget policy
+	// rejects one route candidate. Payload schema:
+	//   {"request_id":"...","caller_id":"...","session_id":"...","provider":"...","model":"...","policy_version":"...","error":"..."}
+	KindAIBudgetRejected = "ai.budget_rejected"
+
 	// KindSessionBootDirPlanted fires once per session start when
 	// go-agent-sessions v0.9.x materializes the adapter's BootDirSpec
 	// into a per-session tempdir. Carries {"path":"<absolute>"} so

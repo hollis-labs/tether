@@ -11,11 +11,90 @@ type Global struct {
 	Version string       `yaml:"version"`
 	Catalog CatalogRoots `yaml:"catalog"`
 	Daemon  DaemonConfig `yaml:"daemon"`
+	AI      AIConfig     `yaml:"ai"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+}
+
+// AIConfig controls the in-process AI gateway surface. The first schema slice
+// is intentionally narrow: provider entries plus a default ordered route list.
+type AIConfig struct {
+	Providers []AIProviderConfig `yaml:"providers"`
+	Policy    AIPolicyConfig     `yaml:"policy"`
+	Routing   AIRoutingConfig    `yaml:"routing"`
+}
+
+type AIUsageBudgetPolicyConfig struct {
+	MaxCostUSD *float64 `yaml:"max_cost_usd"`
+	Window     string   `yaml:"window"`
+	Scope      string   `yaml:"scope"`
+}
+
+type AIPolicyConfig struct {
+	AllowReasoning   *bool                     `yaml:"allow_reasoning"`
+	AllowTools       *bool                     `yaml:"allow_tools"`
+	AllowAttachments *bool                     `yaml:"allow_attachments"`
+	MaxOutputTokens  *int                      `yaml:"max_output_tokens"`
+	MaxCostUSD       *float64                  `yaml:"max_cost_usd"`
+	UsageBudget      AIUsageBudgetPolicyConfig `yaml:"usage_budget"`
+}
+
+type AIProviderConfig struct {
+	ID           string         `yaml:"id"`
+	Type         string         `yaml:"type"`
+	Model        string         `yaml:"model"`
+	Models       []string       `yaml:"models"`
+	DefaultModel string         `yaml:"default_model"`
+	SecretRef    string         `yaml:"secret_ref"`
+	BaseURL      string         `yaml:"base_url"`
+	Enabled      bool           `yaml:"enabled"`
+	Policy       AIPolicyConfig `yaml:"policy"`
+}
+
+type AIRoutingConfig struct {
+	DefaultProviderOrder []string        `yaml:"default_provider_order"`
+	Routes               []AIRouteConfig `yaml:"routes"`
+}
+
+type AIRouteConfig struct {
+	Provider          string                    `yaml:"provider"`
+	Model             string                    `yaml:"model"`
+	Mode              string                    `yaml:"mode"`
+	Intent            string                    `yaml:"intent"`
+	RequiresReasoning bool                      `yaml:"requires_reasoning"`
+	RequiresTools     bool                      `yaml:"requires_tools"`
+	AllowReasoning    *bool                     `yaml:"allow_reasoning"`
+	AllowTools        *bool                     `yaml:"allow_tools"`
+	AllowAttachments  *bool                     `yaml:"allow_attachments"`
+	MaxOutputTokens   *int                      `yaml:"max_output_tokens"`
+	MaxCostUSD        *float64                  `yaml:"max_cost_usd"`
+	UsageBudget       AIUsageBudgetPolicyConfig `yaml:"usage_budget"`
+}
+
+func (p AIProviderConfig) EffectiveModels() []string {
+	if len(p.Models) > 0 {
+		return append([]string(nil), p.Models...)
+	}
+	if p.Model == "" {
+		return nil
+	}
+	return []string{p.Model}
+}
+
+func (p AIProviderConfig) EffectiveDefaultModel() string {
+	if p.DefaultModel != "" {
+		return p.DefaultModel
+	}
+	if p.Model != "" {
+		return p.Model
+	}
+	if len(p.Models) > 0 {
+		return p.Models[0]
+	}
+	return ""
 }
 
 // DaemonConfig controls the long-lived muxd process. See ADR 0002 for the

@@ -39,6 +39,12 @@ type Server struct {
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
 	Service api.LaunchService
+	// AI is optional; when set, /ai/chat is mounted.
+	AI api.AIService
+	// AIAudit is optional; when set, /ai/audit is mounted.
+	AIAudit api.AIAuditStore
+	// AIUsage is optional; when set, /ai/usage is mounted.
+	AIUsage api.AIUsageStore
 	// Checkpoints is optional; when set, the checkpoint endpoints are
 	// mounted. Tests can pass nil to skip them.
 	Checkpoints api.CheckpointStore
@@ -201,9 +207,12 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	if s.Service != nil || s.Catalog != nil {
+	if s.Service != nil || s.Catalog != nil || s.AI != nil {
 		apiHandler := api.NewHandler(api.Deps{
 			Service:             s.Service,
+			AI:                  s.AI,
+			AIAudit:             s.AIAudit,
+			AIUsage:             s.AIUsage,
 			Checkpoints:         s.Checkpoints,
 			Broker:              s.Broker,
 			Bus:                 s.Bus,
@@ -223,6 +232,21 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/sessions", apiHandler)
 			mux.Handle("/sessions/", apiHandler)
 		}
+		if s.AI != nil {
+			mux.Handle("/ai/chat", apiHandler)
+			mux.Handle("/ai/providers", apiHandler)
+			mux.Handle("/ai/models", apiHandler)
+			mux.Handle("/ai/routes", apiHandler)
+			mux.Handle("/ai/routes/explain", apiHandler)
+			mux.Handle("/ai/routes/preview", apiHandler)
+			if s.AIUsage != nil {
+				mux.Handle("/ai/usage", apiHandler)
+				mux.Handle("/ai/budgets", apiHandler)
+			}
+			if s.AIAudit != nil {
+				mux.Handle("/ai/audit", apiHandler)
+			}
+		}
 		if s.Service != nil {
 			mux.Handle("/logical-agents/", apiHandler)
 		}
@@ -241,6 +265,9 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/messages/subscribe", apiHandler)
 			mux.Handle("/messages/inbox", apiHandler)
 			mux.Handle("/messages/request", apiHandler)
+		}
+		if s.EventsStore != nil {
+			mux.Handle("/events", apiHandler)
 		}
 		if s.Bus != nil {
 			mux.Handle("/events/stream", apiHandler)

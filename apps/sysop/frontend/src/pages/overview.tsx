@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Database, Gauge, Mail, Plug, RefreshCw, TerminalSquare } from 'lucide-react'
+import { Activity, BrainCircuit, Database, Gauge, Mail, Plug, RefreshCw, TerminalSquare } from 'lucide-react'
 import {
   Button,
   EmptyState,
@@ -98,6 +98,7 @@ export function OverviewPage() {
   const t = data?.tool_calls
   const m = data?.messages
   const e = data?.events
+  const a = data?.ai
   const c = data?.catalog
   const h = data?.health
 
@@ -116,6 +117,7 @@ export function OverviewPage() {
   const activityTotal = sumSeries(activitySeries)
   const unreadRate = m ? rate(m.unread, m.total) : '0%'
   const errorRate = t ? rate(t.errors, t.total) : '0%'
+  const aiSuccessRate = a ? rate(a.successes, a.requests) : '0%'
 
   if (error && !data) {
     return (
@@ -201,7 +203,7 @@ export function OverviewPage() {
           </Panel>
         </div>
 
-        <div className="mt-3 grid gap-3 xl:grid-cols-4">
+        <div className="mt-3 grid gap-3 xl:grid-cols-5">
           <Panel
             title="Sessions"
             icon={<TerminalSquare className="h-3.5 w-3.5" />}
@@ -255,6 +257,35 @@ export function OverviewPage() {
           </Panel>
 
           <Panel
+            title="AI Gateway"
+            icon={<BrainCircuit className="h-3.5 w-3.5" />}
+            meta={`${a?.enabled_providers ?? 0} providers live`}
+          >
+            <KpiGrid>
+              <Kpi label="Requests" value={compact(a?.requests ?? 0)} />
+              <Kpi label="Success" value={aiSuccessRate} />
+              <Kpi
+                label="Budget rejects"
+                value={a?.budget_rejections ?? 0}
+                accent={a && a.budget_rejections > 0 ? 'var(--color-status-blocked)' : undefined}
+              />
+              <Kpi label="Spend" value={a ? `$${a.estimated_cost_usd.toFixed(2)}` : '...'} />
+            </KpiGrid>
+            <div className="border-b border-border p-3">
+              <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">AI activity</div>
+              <SignalBars
+                data={a?.trend ?? []}
+                heightClassName="h-28"
+                primaryLabel="AI events"
+              />
+            </div>
+            <div className="grid md:grid-cols-2 xl:grid-cols-1">
+              <DataList title="By provider" items={a?.by_provider ?? []} />
+              <DataList title="Event types" items={a?.by_event_type ?? []} />
+            </div>
+          </Panel>
+
+          <Panel
             title="Event Bus"
             icon={<Database className="h-3.5 w-3.5" />}
             meta={e ? `seq ${e.latest_seq}` : undefined}
@@ -292,6 +323,58 @@ export function OverviewPage() {
               <Kpi label="Slow" value={t?.slow_calls ?? 0} />
             </KpiGrid>
             <DataList title="Server volume" items={t?.by_server ?? []} />
+          </Panel>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <Panel title="AI Cost Report" icon={<BrainCircuit className="h-3.5 w-3.5" />}>
+            <KpiGrid cols="grid-cols-2 md:grid-cols-4">
+              <Kpi label="Configured" value={a?.configured_providers ?? 0} />
+              <Kpi label="Routes" value={a?.routes ?? 0} />
+              <Kpi label="Input" value={compact(a?.input_tokens ?? 0)} />
+              <Kpi label="Output" value={compact(a?.output_tokens ?? 0)} />
+            </KpiGrid>
+            <div className="border-b border-border p-3">
+              <div className="mb-2 text-[10px] uppercase tracking-[.16em] text-text-subtle">Model volume</div>
+              <CompositionBars items={toBarItems(a?.by_model)} />
+            </div>
+            <div className="grid md:grid-cols-2">
+              <MiniTrend label="AI requests" value={sumSeries(a?.trend ?? [])} data={a?.trend ?? []} />
+              <MiniTrend label="Budget rejects" value={a?.budget_rejections ?? 0} data={a?.trend ?? []} />
+            </div>
+          </Panel>
+
+          <Panel title="AI Operators" icon={<Gauge className="h-3.5 w-3.5" />}>
+            <IntelligenceRow
+              label="Provider coverage"
+              value={`${a?.enabled_providers ?? 0}/${a?.configured_providers ?? 0}`}
+              status={a && a.enabled_providers < a.configured_providers ? 'doing' : 'done'}
+            />
+            <IntelligenceRow
+              label="Route coverage"
+              value={a?.routes ?? 0}
+              status={a && a.routes === 0 ? 'doing' : 'done'}
+            />
+            <IntelligenceRow
+              label="Top provider"
+              value={topLabel(a?.by_provider)}
+              status="indexed"
+            />
+            <IntelligenceRow
+              label="Top model"
+              value={topLabel(a?.by_model)}
+              status="indexed"
+            />
+            <IntelligenceRow
+              label="Budget pressure"
+              value={a?.budget_rejections ?? 0}
+              status={a && a.budget_rejections > 0 ? 'blocked' : 'done'}
+            />
+            <IntelligenceRow
+              label="Spend"
+              value={a ? `$${a.estimated_cost_usd.toFixed(2)}` : '...'}
+              status="indexed"
+            />
           </Panel>
         </div>
 

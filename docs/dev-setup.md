@@ -106,6 +106,137 @@ cp -R examples/catalog/* "$AGENT_MUX_CATALOG/"
 All artifacts (SQLite state DB, session workspaces, logs, PID file,
 socket) land under `$AGENT_MUX_CATALOG` so cleanup is `rm -rf`.
 
+## AI gateway setup
+
+The in-process AI gateway is configured in `global.yaml`. The current schema
+is intentionally narrow: enabled providers plus an ordered default route list.
+
+Example:
+
+```yaml
+ai:
+  policy:
+    allow_attachments: false
+    max_cost_usd: 0.50
+    usage_budget:
+      max_cost_usd: 25.00
+      window: month
+  providers:
+    - id: anthropic-work
+      type: anthropic
+      model: claude-sonnet-4-5
+      secret_ref: keychain://anthropic/work
+      enabled: true
+      policy:
+        allow_reasoning: true
+        max_output_tokens: 1024
+        usage_budget:
+          max_cost_usd: 10.00
+          scope: caller
+    - id: openai-work
+      type: openai
+      model: gpt-5
+      secret_ref: keychain://openai/work
+      enabled: false
+    - id: llama-local
+      type: openai-compatible
+      model: llama3.1
+      base_url: http://127.0.0.1:11434/v1
+      enabled: false
+  routing:
+    default_provider_order:
+      - anthropic-work
+    routes:
+      - provider: anthropic-work
+        model: claude-sonnet-4-5
+        requires_reasoning: true
+        allow_tools: false
+        max_cost_usd: 0.10
+        usage_budget:
+          max_cost_usd: 1.00
+          window: day
+      - provider: openai-work
+        model: gpt-5
+        mode: summarize
+```
+
+Provider notes:
+
+- `anthropic` and `openai` require `secret_ref` and `model`.
+- `openai-compatible` requires `base_url` and `model`; `secret_ref` is
+  optional so local unauthenticated servers can work.
+- `enabled: true` controls whether the provider is mounted into the daemon.
+- `ai.policy` sets global request-shape defaults.
+- `providers[].policy` overrides those defaults for one provider.
+- Those same policy blocks can also set `max_output_tokens` and `max_cost_usd`
+  as inherited planning ceilings.
+- `usage_budget` is a separate inherited policy block for durable spend
+  governance. It supports `max_cost_usd`, `window` (`day` or `month`), and
+  `scope` (`total`, `caller`, or `session`).
+
+Routing notes:
+
+- `routing.routes` is optional. When present, it becomes the planner's ordered
+  candidate list.
+- Each route names a configured `provider` plus one of that provider's
+  configured models.
+- `mode`, `intent`, `requires_reasoning`, and `requires_tools` act as match
+  constraints for that route.
+- `allow_reasoning`, `allow_tools`, and `allow_attachments` are optional
+  policy gates. They resolve in this order: route override, then provider
+  policy, then global `ai.policy`.
+- `max_output_tokens` and `max_cost_usd` resolve in that same order and act as
+  hard route policy ceilings before model capability/price evaluation.
+- `usage_budget` resolves in that same order, but it is enforced against
+  durable `ai_events` chat usage history instead of the current request alone.
+  Global budgets aggregate all chat usage, provider budgets aggregate one
+  provider across its configured models, and explicit route budgets aggregate
+  that exact provider/model pair.
+- When one of those resolved values is `false`, the route is considered but
+  rejected with an explicit policy error if the request needs that feature.
+- `scope: caller` requires `caller_id`; `scope: session` requires
+  `session_id`. The planner surfaces those as explicit route-policy failures in
+  route explain.
+- More specific matching routes are preferred ahead of generic routes, while
+  preserving the declared order among equally specific entries.
+- If `routing.routes` is omitted, the daemon falls back to
+  `default_provider_order` plus each provider's configured model order.
+
+Secrets are resolved at runtime through `mux-apikey-helper`, not stored in
+the SQLite state DB. Supported refs include `keychain://...` and
+`helper://...`.
+
+Once configured and the daemon is running, the typed AI surfaces are
+available through:
+
+- HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
+  `/ai/chat/stream`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|usage|budgets|audit|watch-budgets`
+- MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
+  `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
+  `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
+
+For live alerting instead of polling, `mux ai watch-budgets` subscribes to the
+daemon event bus and prints `ai.budget_rejected` events as they arrive. The
+underlying stream is `GET /events/stream?scope=daemon&kind=ai.budget_rejected`.
+
+For incremental model output, `mux ai chat --stream "..."` uses
+`POST /ai/chat/stream` and prints normalized text deltas as they arrive, then
+the final provider/model/usage summary once `response.completed` lands.
+
+More generally, the daemon exposes:
+
+- durable event history via `GET /events`
+- live SSE via `GET /events/stream`
+
+The CLI mirrors the durable path as `mux events history`, which supports
+repeatable `--scope` and `--kind` filters plus `--session-id`, `--since-seq`,
+`--cursor`, and `--limit`.
+
+For live operator tailing, use `mux events watch` with the same `--scope`,
+`--kind`, `--session-id`, and `--since-seq` filters. That command streams the
+daemon SSE surface directly instead of querying durable history.
+
 ## Iterating during development
 
 - `make test` — fast compile + test cycle, no race detector, with

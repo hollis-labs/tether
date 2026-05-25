@@ -19,12 +19,24 @@ import (
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/apikeyhelper"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
+	llm "github.com/hollis-labs/tether/internal/llm"
+	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
+	"github.com/hollis-labs/tether/internal/llm/observability"
+	llmopenai "github.com/hollis-labs/tether/internal/llm/openai"
+	llmopenaicompat "github.com/hollis-labs/tether/internal/llm/openaicompat"
+	"github.com/hollis-labs/tether/internal/llm/router"
+	"github.com/hollis-labs/tether/internal/llm/secrets"
+	llmservice "github.com/hollis-labs/tether/internal/llm/service"
+	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
+	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -153,11 +165,19 @@ var daemonRunCmd = &cobra.Command{
 			_ = svc.Store.Close()
 			return err
 		}
+		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
+			Recorder:  svc.Store,
+			Usage:     svc.Store,
+			Publisher: svc.Bus,
+		})
 
 		server := &daemon.Server{
 			Config:              cfg,
 			Manager:             svc.Manager,
 			Service:             &serviceAdapter{svc: svc},
+			AI:                  aiSvc,
+			AIAudit:             svc.Store,
+			AIUsage:             svc.Store,
 			Checkpoints:         svc.Store,
 			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
 			Bus:                 svc.Bus,
@@ -180,6 +200,268 @@ var daemonRunCmd = &cobra.Command{
 
 		return server.Run(ctx)
 	},
+}
+
+func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiServiceDeps) api.AIService {
+	if cat == nil {
+		return nil
+	}
+	helperPath := apikeyhelper.ResolvePath()
+	if helperPath == "" {
+		log.Printf("ai gateway disabled: mux-apikey-helper not found")
+		return nil
+	}
+
+	catalog := modelcatalog.New()
+	if err := catalog.Refresh(ctx); err != nil {
+		log.Printf("ai gateway disabled: refresh model catalog: %v", err)
+		return nil
+	}
+
+	ai := cat.Global.AI
+	if len(ai.Providers) == 0 {
+		return nil
+	}
+
+	secretResolver := secrets.NewResolver(
+		secrets.WithDefaultHelperPath(helperPath),
+		secrets.WithNamedHelperResolver(apikeyhelper.ResolveNamedPath),
+	)
+
+	providers := map[string]llm.ChatProvider{}
+	providerInfos := map[string]llmservice.ProviderInfo{}
+	providerConfigs := map[string]config.AIProviderConfig{}
+	var routes []router.Route
+	for _, p := range ai.Providers {
+		if !p.Enabled {
+			continue
+		}
+		providerConfigs[p.ID] = p
+		switch p.Type {
+		case "anthropic":
+			secretRef := p.SecretRef
+			providers[p.ID] = llmanthropic.New(llmanthropic.Config{
+				BaseURL: p.BaseURL,
+				ResolveAPIKey: func(ctx context.Context) (string, error) {
+					return secretResolver.Resolve(ctx, secretRef)
+				},
+			})
+			providerInfos[p.ID] = llmservice.ProviderInfo{
+				ID:           p.ID,
+				Type:         p.Type,
+				DefaultModel: p.EffectiveDefaultModel(),
+				Models:       p.EffectiveModels(),
+				BaseURL:      p.BaseURL,
+			}
+		case "openai":
+			secretRef := p.SecretRef
+			providers[p.ID] = llmopenai.New(llmopenai.Config{
+				BaseURL: p.BaseURL,
+				ResolveAPIKey: func(ctx context.Context) (string, error) {
+					return secretResolver.Resolve(ctx, secretRef)
+				},
+			})
+			providerInfos[p.ID] = llmservice.ProviderInfo{
+				ID:           p.ID,
+				Type:         p.Type,
+				DefaultModel: p.EffectiveDefaultModel(),
+				Models:       p.EffectiveModels(),
+				BaseURL:      p.BaseURL,
+			}
+		case "openai-compatible":
+			var resolve func(context.Context) (string, error)
+			if p.SecretRef != "" {
+				secretRef := p.SecretRef
+				resolve = func(ctx context.Context) (string, error) {
+					return secretResolver.Resolve(ctx, secretRef)
+				}
+			}
+			providers[p.ID] = llmopenaicompat.New(llmopenaicompat.Config{
+				BaseURL:       p.BaseURL,
+				ResolveAPIKey: resolve,
+			})
+			providerInfos[p.ID] = llmservice.ProviderInfo{
+				ID:           p.ID,
+				Type:         p.Type,
+				DefaultModel: p.EffectiveDefaultModel(),
+				Models:       p.EffectiveModels(),
+				BaseURL:      p.BaseURL,
+			}
+		default:
+			log.Printf("ai gateway: skipping unsupported provider type %q for %s", p.Type, p.ID)
+		}
+	}
+	if len(providers) == 0 {
+		return nil
+	}
+
+	order := ai.Routing.DefaultProviderOrder
+	if len(order) == 0 {
+		for _, p := range ai.Providers {
+			if p.Enabled {
+				order = append(order, p.ID)
+			}
+		}
+	}
+	if len(ai.Routing.Routes) > 0 {
+		for _, routeCfg := range ai.Routing.Routes {
+			providerCfg, ok := providerConfigs[routeCfg.Provider]
+			if !ok {
+				continue
+			}
+			allowReasoning, allowTools, allowAttachments := effectiveAIRoutePolicy(ai.Policy, providerCfg.Policy, routeCfg)
+			usageBudget := effectiveAIUsageBudget(ai.Policy.UsageBudget, providerCfg.Policy.UsageBudget, routeCfg.UsageBudget)
+			routes = append(routes, router.Route{
+				Provider:          routeCfg.Provider,
+				Model:             routeCfg.Model,
+				Mode:              routeCfg.Mode,
+				Intent:            routeCfg.Intent,
+				RequiresReasoning: routeCfg.RequiresReasoning,
+				RequiresTools:     routeCfg.RequiresTools,
+				AllowReasoning:    allowReasoning,
+				AllowTools:        allowTools,
+				AllowAttachments:  allowAttachments,
+				MaxOutputTokens:   coalesceInt(routeCfg.MaxOutputTokens, coalesceInt(providerCfg.Policy.MaxOutputTokens, ai.Policy.MaxOutputTokens)),
+				MaxCostUSD:        coalesceFloat64(routeCfg.MaxCostUSD, coalesceFloat64(providerCfg.Policy.MaxCostUSD, ai.Policy.MaxCostUSD)),
+				UsageBudget:       usageBudget,
+			})
+		}
+	} else {
+		for _, id := range order {
+			p, ok := providerConfigs[id]
+			if !ok {
+				continue
+			}
+			if _, ok := providers[id]; !ok {
+				continue
+			}
+			usageBudget := effectiveAIDefaultUsageBudget(ai.Policy.UsageBudget, p.Policy.UsageBudget)
+			for _, model := range p.EffectiveModels() {
+				allowReasoning, allowTools, allowAttachments := effectiveAIDefaultPolicy(ai.Policy, p.Policy)
+				routes = append(routes, router.Route{
+					Provider:         id,
+					Model:            model,
+					AllowReasoning:   allowReasoning,
+					AllowTools:       allowTools,
+					AllowAttachments: allowAttachments,
+					MaxOutputTokens:  coalesceInt(p.Policy.MaxOutputTokens, ai.Policy.MaxOutputTokens),
+					MaxCostUSD:       coalesceFloat64(p.Policy.MaxCostUSD, ai.Policy.MaxCostUSD),
+					UsageBudget:      usageBudget,
+				})
+			}
+		}
+	}
+	if len(routes) == 0 {
+		return nil
+	}
+
+	var evaluators []router.PolicyEvaluator
+	if deps.Usage != nil {
+		evaluators = append(evaluators, usagebudget.Evaluator{Store: deps.Usage})
+	}
+	planner := router.NewWithEvaluators(catalog, router.Policy{
+		Version: "catalog-ai-v1",
+		Routes:  routes,
+	}, evaluators...)
+	return &llmservice.Service{
+		Planner:      planner,
+		Catalog:      catalog,
+		Providers:    providers,
+		ProviderInfo: providerInfos,
+		Routes:       append([]router.Route(nil), routes...),
+		RouteOrder:   append([]string(nil), order...),
+		Recorder:     deps.Recorder,
+		Publisher:    deps.Publisher,
+	}
+}
+
+func effectiveAIDefaultPolicy(global, provider config.AIPolicyConfig) (*bool, *bool, *bool) {
+	return coalesceBool(provider.AllowReasoning, global.AllowReasoning),
+		coalesceBool(provider.AllowTools, global.AllowTools),
+		coalesceBool(provider.AllowAttachments, global.AllowAttachments)
+}
+
+func effectiveAIRoutePolicy(global, provider config.AIPolicyConfig, route config.AIRouteConfig) (*bool, *bool, *bool) {
+	allowReasoning, allowTools, allowAttachments := effectiveAIDefaultPolicy(global, provider)
+	return coalesceBool(route.AllowReasoning, allowReasoning),
+		coalesceBool(route.AllowTools, allowTools),
+		coalesceBool(route.AllowAttachments, allowAttachments)
+}
+
+func effectiveAIDefaultUsageBudget(global, provider config.AIUsageBudgetPolicyConfig) router.UsageBudgetPolicy {
+	level := ""
+	switch {
+	case hasUsageBudget(provider):
+		level = "provider"
+	case hasUsageBudget(global):
+		level = "global"
+	}
+	return router.UsageBudgetPolicy{
+		Level:      level,
+		MaxCostUSD: coalesceFloat64(provider.MaxCostUSD, global.MaxCostUSD),
+		Window:     coalesceString(provider.Window, global.Window),
+		Scope:      coalesceString(provider.Scope, global.Scope),
+	}
+}
+
+func effectiveAIUsageBudget(global, provider, route config.AIUsageBudgetPolicyConfig) router.UsageBudgetPolicy {
+	level := ""
+	switch {
+	case hasUsageBudget(route):
+		level = "route"
+	case hasUsageBudget(provider):
+		level = "provider"
+	case hasUsageBudget(global):
+		level = "global"
+	}
+	return router.UsageBudgetPolicy{
+		Level:      level,
+		MaxCostUSD: coalesceFloat64(route.MaxCostUSD, coalesceFloat64(provider.MaxCostUSD, global.MaxCostUSD)),
+		Window:     coalesceString(route.Window, coalesceString(provider.Window, global.Window)),
+		Scope:      coalesceString(route.Scope, coalesceString(provider.Scope, global.Scope)),
+	}
+}
+
+func coalesceBool(primary, fallback *bool) *bool {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func coalesceInt(primary, fallback *int) *int {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func coalesceFloat64(primary, fallback *float64) *float64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func coalesceString(primary, fallback string) string {
+	if primary != "" {
+		return primary
+	}
+	return fallback
+}
+
+func hasUsageBudget(cfg config.AIUsageBudgetPolicyConfig) bool {
+	return cfg.MaxCostUSD != nil || cfg.Window != "" || cfg.Scope != ""
+}
+
+type llmobsDeps interface {
+	RecordAIAuditEvent(ev observability.AuditEvent) error
+}
+
+type aiServiceDeps struct {
+	Recorder  llmobsDeps
+	Usage     usagebudget.UsageStore
+	Publisher events.Publisher
 }
 
 // serviceAdapter bridges *app.Service to api.LaunchService. Flattens

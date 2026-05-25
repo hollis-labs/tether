@@ -38,6 +38,7 @@ variables:
 Available scopes:
   session.write  — create, launch, stop, wait, input, resize, resume sessions
   message.write  — send, consume, cancel messages
+  ai.invoke      — invoke mux_ai_chat over the local AI gateway
   catalog.write  — create and edit catalog agents (mux_agent_create / _edit)
 
 Example MCP client config (mcp.json):
@@ -48,7 +49,7 @@ Example MCP client config (mcp.json):
         "args": ["mcp"],
         "env": {
           "AGENT_MUX_MCP_TOKEN": "your-token",
-          "AGENT_MUX_MCP_SCOPES": "session.write,message.write,catalog.write"
+          "AGENT_MUX_MCP_SCOPES": "session.write,message.write,ai.invoke,catalog.write"
         }
       }
     }
@@ -67,7 +68,7 @@ var (
 
 func init() {
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: AGENT_MUX_MCP_TOKEN)")
-	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,catalog.write (env: AGENT_MUX_MCP_SCOPES)")
+	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: AGENT_MUX_MCP_SCOPES)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().BoolVar(&mcpBroker, "broker", false, "enable broker mode (requires --proxy): register mux_discover+mux_call instead of all upstream tools; reduces per-request context size")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: MUX_MCP_SERVERS); empty = all servers when --proxy is set")

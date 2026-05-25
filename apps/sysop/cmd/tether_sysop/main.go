@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,13 +25,16 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/hollis-labs/tether/apps/sysop/internal/webui"
 	"github.com/hollis-labs/tether/internal/agent"
+	tetherapi "github.com/hollis-labs/tether/internal/api"
 	muxclient "github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	launchplan "github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 	"gopkg.in/yaml.v3"
@@ -72,6 +78,113 @@ type settingsResponse struct {
 	Sessions  settingsSessionsDTO   `json:"sessions"`
 	Roadmap   []settingsRoadmapDTO  `json:"roadmap"`
 	Error     string                `json:"error,omitempty"`
+}
+
+type aiSettingsResponse struct {
+	Config  aiConfigDTO        `json:"config"`
+	Runtime aiRuntimeStatusDTO `json:"runtime"`
+	Error   string             `json:"error,omitempty"`
+}
+
+type aiRuntimeStatusDTO struct {
+	DaemonReachable bool   `json:"daemon_reachable"`
+	Providers       int    `json:"providers"`
+	Models          int    `json:"models"`
+	Routes          int    `json:"routes"`
+	LastError       string `json:"last_error,omitempty"`
+}
+
+type aiRuntimeResponse struct {
+	Providers []tetherapi.AIProviderDTO `json:"providers"`
+	Models    []tetherapi.AIModelDTO    `json:"models"`
+	Routes    []tetherapi.AIRouteDTO    `json:"routes"`
+	Error     string                    `json:"error,omitempty"`
+}
+
+type aiUsageResponse struct {
+	Summary tetherapi.AIUsageResponse `json:"summary"`
+	Error   string                    `json:"error,omitempty"`
+}
+
+type aiAuditResponse struct {
+	Events []tetherapi.AIAuditEventDTO `json:"events"`
+	Count  int                         `json:"count"`
+	Error  string                      `json:"error,omitempty"`
+}
+
+type aiBudgetsResponse struct {
+	Budgets []tetherapi.AIUsageBudgetEntryDTO `json:"budgets"`
+	Count   int                               `json:"count"`
+	Error   string                            `json:"error,omitempty"`
+}
+
+type aiCatalogModelsResponse struct {
+	ProviderType     string              `json:"provider_type"`
+	VendorProviderID string              `json:"vendor_provider_id,omitempty"`
+	VendorProvider   string              `json:"vendor_provider_name,omitempty"`
+	Models           []aiCatalogModelDTO `json:"models"`
+	LastFetchedAt    string              `json:"last_fetched_at,omitempty"`
+	FromCacheOnly    bool                `json:"from_cache_only,omitempty"`
+	Error            string              `json:"error,omitempty"`
+}
+
+type aiCatalogModelDTO struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name,omitempty"`
+	Family              string   `json:"family,omitempty"`
+	ContextWindow       int      `json:"context_window,omitempty"`
+	MaxOutputTokens     int      `json:"max_output_tokens,omitempty"`
+	InputModalities     []string `json:"input_modalities,omitempty"`
+	OutputModalities    []string `json:"output_modalities,omitempty"`
+	SupportsTools       bool     `json:"supports_tools,omitempty"`
+	SupportsReasoning   bool     `json:"supports_reasoning,omitempty"`
+	SupportsAttachments bool     `json:"supports_attachments,omitempty"`
+	InputCostUSD        float64  `json:"input_cost_usd_per_mtok,omitempty"`
+	OutputCostUSD       float64  `json:"output_cost_usd_per_mtok,omitempty"`
+}
+
+type aiConfigDTO struct {
+	Policy               aiPolicyDTO     `json:"policy"`
+	DefaultProviderOrder []string        `json:"default_provider_order,omitempty"`
+	Providers            []aiProviderDTO `json:"providers"`
+	Routes               []aiRouteDTO    `json:"routes"`
+}
+
+type aiUsageBudgetDTO struct {
+	MaxCostUSD *float64 `json:"max_cost_usd,omitempty"`
+	Window     string   `json:"window,omitempty"`
+	Scope      string   `json:"scope,omitempty"`
+}
+
+type aiPolicyDTO struct {
+	AllowReasoning   *bool            `json:"allow_reasoning,omitempty"`
+	AllowTools       *bool            `json:"allow_tools,omitempty"`
+	AllowAttachments *bool            `json:"allow_attachments,omitempty"`
+	MaxOutputTokens  *int             `json:"max_output_tokens,omitempty"`
+	MaxCostUSD       *float64         `json:"max_cost_usd,omitempty"`
+	UsageBudget      aiUsageBudgetDTO `json:"usage_budget,omitempty"`
+}
+
+type aiProviderDTO struct {
+	ID           string      `json:"id"`
+	Type         string      `json:"type"`
+	Model        string      `json:"model,omitempty"`
+	Models       []string    `json:"models,omitempty"`
+	DefaultModel string      `json:"default_model,omitempty"`
+	SecretRef    string      `json:"secret_ref,omitempty"`
+	BaseURL      string      `json:"base_url,omitempty"`
+	Enabled      bool        `json:"enabled"`
+	Policy       aiPolicyDTO `json:"policy"`
+}
+
+type aiRouteDTO struct {
+	Provider          string      `json:"provider"`
+	Model             string      `json:"model"`
+	Mode              string      `json:"mode,omitempty"`
+	Intent            string      `json:"intent,omitempty"`
+	RequiresReasoning bool        `json:"requires_reasoning,omitempty"`
+	RequiresTools     bool        `json:"requires_tools,omitempty"`
+	Policy            aiPolicyDTO `json:"policy"`
 }
 
 type settingsServerDTO struct {
@@ -333,6 +446,10 @@ type globalSettingsSaveRequest struct {
 	TempRoot        string `json:"temp_root"`
 }
 
+type aiSettingsSaveRequest struct {
+	Config aiConfigDTO `json:"config"`
+}
+
 type systemResourceActionRequest struct {
 	Resource string `json:"resource"`
 	Action   string `json:"action"`
@@ -473,6 +590,13 @@ func main() {
 	mux.HandleFunc("/api/settings/global/save", server.handleGlobalSettingsSave)
 	mux.HandleFunc("/api/settings/providers/save", server.handleProviderSave)
 	mux.HandleFunc("/api/settings/providers/delete", server.handleProviderDelete)
+	mux.HandleFunc("/api/ai/settings", server.handleAISettings)
+	mux.HandleFunc("/api/ai/settings/save", server.handleAISettingsSave)
+	mux.HandleFunc("/api/ai/catalog/models", server.handleAICatalogModels)
+	mux.HandleFunc("/api/ai/runtime", server.handleAIRuntime)
+	mux.HandleFunc("/api/ai/usage", server.handleAIUsage)
+	mux.HandleFunc("/api/ai/audit", server.handleAIAudit)
+	mux.HandleFunc("/api/ai/budgets", server.handleAIBudgets)
 	mux.HandleFunc("/api/system/resource/action", server.handleSystemResourceAction)
 	mux.HandleFunc("/api/overview", server.handleOverview)
 	mux.HandleFunc("/api/catalog", server.handleCatalog)
@@ -792,6 +916,262 @@ func (s *appServer) handleProviderDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, actionResponse{Status: "deleted", BackupPath: backupPath})
+}
+
+func (s *appServer) handleAISettings(w http.ResponseWriter, _ *http.Request) {
+	cat, err := config.Load(s.catalogRoot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, aiSettingsResponse{Error: err.Error()})
+		return
+	}
+	resp := aiSettingsResponse{Config: aiConfigFromConfig(cat.Global.AI)}
+	if client, err := s.daemonClient(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := client.Ping(ctx); err == nil {
+			resp.Runtime.DaemonReachable = true
+			if out, err := client.AIProviders(ctx); err == nil {
+				resp.Runtime.Providers = len(out.Providers)
+			} else if !isDaemonRouteMissing(err) {
+				resp.Runtime.LastError = err.Error()
+			}
+			if out, err := client.AIModels(ctx, ""); err == nil {
+				resp.Runtime.Models = len(out.Models)
+			} else if !isDaemonRouteMissing(err) && resp.Runtime.LastError == "" {
+				resp.Runtime.LastError = err.Error()
+			}
+			if out, err := client.AIRoutes(ctx); err == nil {
+				resp.Runtime.Routes = len(out.Routes)
+			} else if !isDaemonRouteMissing(err) && resp.Runtime.LastError == "" {
+				resp.Runtime.LastError = err.Error()
+			}
+		} else {
+			resp.Runtime.LastError = err.Error()
+		}
+	} else {
+		resp.Runtime.LastError = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *appServer) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, actionResponse{Error: "method not allowed"})
+		return
+	}
+	var req aiSettingsSaveRequest
+	if err := decodeJSONBody(r, &req, false); err != nil {
+		writeJSON(w, http.StatusBadRequest, actionResponse{Error: "invalid request body: " + err.Error()})
+		return
+	}
+	cat, err := config.Load(s.catalogRoot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
+		return
+	}
+	nextAI, err := configAIFromDTO(req.Config)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, actionResponse{Error: err.Error()})
+		return
+	}
+	check := *cat
+	check.Global = cat.Global
+	check.Global.AI = nextAI
+	if err := check.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, actionResponse{Error: err.Error()})
+		return
+	}
+	globalPath := filepath.Join(s.catalogRoot, "global.yaml")
+	global := cat.Global
+	global.AI = nextAI
+	backupPath, err := writeCatalogYAMLFile(globalPath, global, 0o600)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, actionResponse{Status: "saved", BackupPath: backupPath})
+}
+
+func (s *appServer) handleAICatalogModels(w http.ResponseWriter, r *http.Request) {
+	providerType := strings.TrimSpace(r.URL.Query().Get("provider_type"))
+	vendorProviderID, ok := aiCatalogVendorProviderID(providerType)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, aiCatalogModelsResponse{Error: "unsupported provider_type"})
+		return
+	}
+
+	catalog := modelcatalog.New()
+	refs := catalog.List()
+	fromCacheOnly := true
+	if len(refs) == 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := catalog.Refresh(ctx); err != nil {
+			writeJSON(w, http.StatusBadGateway, aiCatalogModelsResponse{Error: err.Error()})
+			return
+		}
+		refs = catalog.List()
+		fromCacheOnly = false
+	}
+
+	resp := aiCatalogModelsResponse{
+		ProviderType:     providerType,
+		VendorProviderID: vendorProviderID,
+		FromCacheOnly:    fromCacheOnly,
+		Models:           make([]aiCatalogModelDTO, 0),
+	}
+	if ts := catalog.LastFetchedAt(); !ts.IsZero() {
+		resp.LastFetchedAt = ts.UTC().Format(time.RFC3339)
+	}
+	for _, provider := range catalog.ListProviders() {
+		if provider.ID == vendorProviderID {
+			resp.VendorProvider = provider.Name
+			break
+		}
+	}
+	for _, ref := range refs {
+		if ref.ProviderID != vendorProviderID {
+			continue
+		}
+		resp.Models = append(resp.Models, aiCatalogModelFromRef(ref))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *appServer) handleAIRuntime(w http.ResponseWriter, _ *http.Request) {
+	resp := aiRuntimeResponse{}
+	client, err := s.daemonClient()
+	if err != nil {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if out, err := client.AIProviders(ctx); err == nil {
+		resp.Providers = out.Providers
+	} else if isDaemonRouteMissing(err) {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	} else {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if out, err := client.AIModels(ctx, ""); err == nil {
+		resp.Models = out.Models
+	} else if !isDaemonRouteMissing(err) && resp.Error == "" {
+		resp.Error = err.Error()
+	}
+	if out, err := client.AIRoutes(ctx); err == nil {
+		resp.Routes = out.Routes
+	} else if !isDaemonRouteMissing(err) && resp.Error == "" {
+		resp.Error = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *appServer) handleAIUsage(w http.ResponseWriter, r *http.Request) {
+	resp := aiUsageResponse{}
+	client, err := s.daemonClient()
+	if err != nil {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	out, err := client.AIUsage(ctx, muxclient.AIUsageQuery{
+		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
+		Model:     strings.TrimSpace(r.URL.Query().Get("model")),
+		SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
+		CallerID:  strings.TrimSpace(r.URL.Query().Get("caller_id")),
+		Operation: strings.TrimSpace(r.URL.Query().Get("operation")),
+		Since:     strings.TrimSpace(r.URL.Query().Get("since")),
+	})
+	if err != nil {
+		if isDaemonRouteMissing(err) {
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.Summary = out
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *appServer) handleAIAudit(w http.ResponseWriter, r *http.Request) {
+	resp := aiAuditResponse{}
+	client, err := s.daemonClient()
+	if err != nil {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+	out, err := client.AIAudit(ctx, muxclient.AIAuditQuery{
+		EventType:  strings.TrimSpace(r.URL.Query().Get("event_type")),
+		Provider:   strings.TrimSpace(r.URL.Query().Get("provider")),
+		Model:      strings.TrimSpace(r.URL.Query().Get("model")),
+		SessionID:  strings.TrimSpace(r.URL.Query().Get("session_id")),
+		CallerID:   strings.TrimSpace(r.URL.Query().Get("caller_id")),
+		Limit:      limit,
+		Since:      strings.TrimSpace(r.URL.Query().Get("since")),
+		ErrorsOnly: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("errors_only")), "true"),
+	})
+	if err != nil {
+		if isDaemonRouteMissing(err) {
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.Events = out.Events
+	resp.Count = out.Count
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *appServer) handleAIBudgets(w http.ResponseWriter, r *http.Request) {
+	resp := aiBudgetsResponse{}
+	client, err := s.daemonClient()
+	if err != nil {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	out, err := client.AIBudgets(ctx, muxclient.AIBudgetsQuery{
+		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
+		Model:     strings.TrimSpace(r.URL.Query().Get("model")),
+		SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
+		CallerID:  strings.TrimSpace(r.URL.Query().Get("caller_id")),
+	})
+	if err != nil {
+		if isDaemonRouteMissing(err) {
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.Budgets = out.Budgets
+	resp.Count = out.Count
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func isDaemonRouteMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "daemon 404")
 }
 
 func (s *appServer) handleSystemResourceAction(w http.ResponseWriter, r *http.Request) {
@@ -2306,6 +2686,7 @@ type overviewResponse struct {
 	ToolCalls overviewToolCalls `json:"tool_calls"`
 	Messages  overviewMessages  `json:"messages"`
 	Events    overviewEvents    `json:"events"`
+	AI        overviewAI        `json:"ai"`
 	Catalog   overviewCatalog   `json:"catalog"`
 	Health    healthResponse    `json:"health"`
 	Error     string            `json:"error,omitempty"`
@@ -2362,6 +2743,23 @@ type overviewEvents struct {
 	Trend     []int       `json:"trend"`
 }
 
+type overviewAI struct {
+	ConfiguredProviders int         `json:"configured_providers"`
+	EnabledProviders    int         `json:"enabled_providers"`
+	Routes              int         `json:"routes"`
+	Requests            int         `json:"requests"`
+	Successes           int         `json:"successes"`
+	Errors              int         `json:"errors"`
+	BudgetRejections    int         `json:"budget_rejections"`
+	InputTokens         int         `json:"input_tokens"`
+	OutputTokens        int         `json:"output_tokens"`
+	EstimatedCostUSD    float64     `json:"estimated_cost_usd"`
+	ByProvider          []nameCount `json:"by_provider"`
+	ByModel             []nameCount `json:"by_model"`
+	ByEventType         []nameCount `json:"by_event_type"`
+	Trend               []int       `json:"trend"`
+}
+
 type overviewCatalog struct {
 	Projects  int `json:"projects"`
 	Agents    int `json:"agents"`
@@ -2386,6 +2784,13 @@ func (s *appServer) handleOverview(w http.ResponseWriter, _ *http.Request) {
 			Agents:    len(cat.Agents),
 			Providers: len(cat.Providers),
 			Launches:  len(cat.Launches),
+		}
+		resp.AI.ConfiguredProviders = len(cat.Global.AI.Providers)
+		resp.AI.Routes = len(cat.Global.AI.Routing.Routes)
+		for _, provider := range cat.Global.AI.Providers {
+			if provider.Enabled {
+				resp.AI.EnabledProviders++
+			}
 		}
 	}
 
@@ -2486,6 +2891,8 @@ func (s *appServer) handleOverview(w http.ResponseWriter, _ *http.Request) {
 		resp.Events.ByKind = topN(kindCounts, 8)
 		resp.Events.Trend = bucketCounts(times, overviewTrendBuckets)
 	}
+
+	populateOverviewAI(db, &resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2603,6 +3010,41 @@ func populateOverviewMessages(db *store.Store, resp *overviewResponse) {
 	resp.Messages.ByKind = topN(kindCounts, 6)
 	resp.Messages.ByScope = topN(scopeCounts, 6)
 	resp.Messages.Trend = bucketCounts(times, overviewTrendBuckets)
+}
+
+func populateOverviewAI(db *store.Store, resp *overviewResponse) {
+	summary, err := db.QueryAIUsageSummary(store.AIUsageFilter{})
+	if err == nil {
+		resp.AI.Requests = summary.Requests
+		resp.AI.Successes = summary.Successes
+		resp.AI.Errors = summary.Errors
+		resp.AI.InputTokens = summary.InputTokens
+		resp.AI.OutputTokens = summary.OutputTokens
+		resp.AI.EstimatedCostUSD = summary.EstimatedCostUSD
+		resp.AI.ByProvider = topN(aiBreakdownCounts(summary.ByProvider), 6)
+		resp.AI.ByModel = topN(aiBreakdownCounts(summary.ByModel), 6)
+	}
+	if events, err := db.QueryAIEvents(store.AIEventFilter{Limit: -1}); err == nil {
+		eventTypeCounts := map[string]int{}
+		var times []time.Time
+		for _, ev := range events {
+			eventTypeCounts[valueOr(ev.EventType, "unknown")]++
+			times = append(times, ev.Timestamp)
+			if ev.EventType == "budget_rejection" {
+				resp.AI.BudgetRejections++
+			}
+		}
+		resp.AI.ByEventType = topN(eventTypeCounts, 8)
+		resp.AI.Trend = bucketCounts(times, overviewTrendBuckets)
+	}
+}
+
+func aiBreakdownCounts(rows []store.AIUsageBreakdown) map[string]int {
+	out := make(map[string]int, len(rows))
+	for _, row := range rows {
+		out[row.Key] = row.Requests
+	}
+	return out
 }
 
 // ─── Session detail ──────────────────────────────────────────────────────────
@@ -3791,6 +4233,165 @@ func (s *appServer) settingsServer() settingsServerDTO {
 	}
 }
 
+func aiUsageBudgetFromConfig(in config.AIUsageBudgetPolicyConfig) aiUsageBudgetDTO {
+	return aiUsageBudgetDTO{
+		MaxCostUSD: in.MaxCostUSD,
+		Window:     in.Window,
+		Scope:      in.Scope,
+	}
+}
+
+func aiCatalogVendorProviderID(providerType string) (string, bool) {
+	switch strings.TrimSpace(providerType) {
+	case "anthropic":
+		return "anthropic", true
+	case "openai", "openai-compatible":
+		return "openai", true
+	default:
+		return "", false
+	}
+}
+
+func aiCatalogModelFromRef(ref modelsdev.ModelRef) aiCatalogModelDTO {
+	return aiCatalogModelDTO{
+		ID:                  ref.ID,
+		Name:                ref.Name,
+		Family:              ref.Family,
+		ContextWindow:       ref.Limit.ContextWindow,
+		MaxOutputTokens:     ref.Limit.MaxOutputTokens,
+		InputModalities:     append([]string(nil), ref.Modality.Input...),
+		OutputModalities:    append([]string(nil), ref.Modality.Output...),
+		SupportsTools:       ref.Capabilities.ToolCall,
+		SupportsReasoning:   ref.Capabilities.Reasoning,
+		SupportsAttachments: ref.Capabilities.Attachment,
+		InputCostUSD:        ref.Cost.Input,
+		OutputCostUSD:       ref.Cost.Output,
+	}
+}
+
+func aiPolicyFromConfig(in config.AIPolicyConfig) aiPolicyDTO {
+	return aiPolicyDTO{
+		AllowReasoning:   in.AllowReasoning,
+		AllowTools:       in.AllowTools,
+		AllowAttachments: in.AllowAttachments,
+		MaxOutputTokens:  in.MaxOutputTokens,
+		MaxCostUSD:       in.MaxCostUSD,
+		UsageBudget:      aiUsageBudgetFromConfig(in.UsageBudget),
+	}
+}
+
+func aiConfigFromConfig(in config.AIConfig) aiConfigDTO {
+	out := aiConfigDTO{
+		Policy:               aiPolicyFromConfig(in.Policy),
+		DefaultProviderOrder: append([]string(nil), in.Routing.DefaultProviderOrder...),
+		Providers:            make([]aiProviderDTO, 0, len(in.Providers)),
+		Routes:               make([]aiRouteDTO, 0, len(in.Routing.Routes)),
+	}
+	for _, provider := range in.Providers {
+		out.Providers = append(out.Providers, aiProviderDTO{
+			ID:           provider.ID,
+			Type:         provider.Type,
+			Model:        provider.Model,
+			Models:       append([]string(nil), provider.Models...),
+			DefaultModel: provider.DefaultModel,
+			SecretRef:    provider.SecretRef,
+			BaseURL:      provider.BaseURL,
+			Enabled:      provider.Enabled,
+			Policy:       aiPolicyFromConfig(provider.Policy),
+		})
+	}
+	for _, route := range in.Routing.Routes {
+		out.Routes = append(out.Routes, aiRouteDTO{
+			Provider:          route.Provider,
+			Model:             route.Model,
+			Mode:              route.Mode,
+			Intent:            route.Intent,
+			RequiresReasoning: route.RequiresReasoning,
+			RequiresTools:     route.RequiresTools,
+			Policy: aiPolicyDTO{
+				AllowReasoning:   route.AllowReasoning,
+				AllowTools:       route.AllowTools,
+				AllowAttachments: route.AllowAttachments,
+				MaxOutputTokens:  route.MaxOutputTokens,
+				MaxCostUSD:       route.MaxCostUSD,
+				UsageBudget:      aiUsageBudgetFromConfig(route.UsageBudget),
+			},
+		})
+	}
+	return out
+}
+
+func configUsageBudgetFromDTO(in aiUsageBudgetDTO) config.AIUsageBudgetPolicyConfig {
+	return config.AIUsageBudgetPolicyConfig{
+		MaxCostUSD: in.MaxCostUSD,
+		Window:     strings.TrimSpace(in.Window),
+		Scope:      strings.TrimSpace(in.Scope),
+	}
+}
+
+func configPolicyFromDTO(in aiPolicyDTO) config.AIPolicyConfig {
+	return config.AIPolicyConfig{
+		AllowReasoning:   in.AllowReasoning,
+		AllowTools:       in.AllowTools,
+		AllowAttachments: in.AllowAttachments,
+		MaxOutputTokens:  in.MaxOutputTokens,
+		MaxCostUSD:       in.MaxCostUSD,
+		UsageBudget:      configUsageBudgetFromDTO(in.UsageBudget),
+	}
+}
+
+func configAIFromDTO(in aiConfigDTO) (config.AIConfig, error) {
+	out := config.AIConfig{
+		Policy: configPolicyFromDTO(in.Policy),
+		Routing: config.AIRoutingConfig{
+			DefaultProviderOrder: cleanStringList(in.DefaultProviderOrder),
+			Routes:               make([]config.AIRouteConfig, 0, len(in.Routes)),
+		},
+		Providers: make([]config.AIProviderConfig, 0, len(in.Providers)),
+	}
+	for _, provider := range in.Providers {
+		provider.ID = strings.TrimSpace(provider.ID)
+		provider.Type = strings.TrimSpace(provider.Type)
+		provider.Model = strings.TrimSpace(provider.Model)
+		provider.DefaultModel = strings.TrimSpace(provider.DefaultModel)
+		provider.SecretRef = strings.TrimSpace(provider.SecretRef)
+		provider.BaseURL = strings.TrimSpace(provider.BaseURL)
+		if provider.ID == "" {
+			return config.AIConfig{}, fmt.Errorf("provider id is required")
+		}
+		out.Providers = append(out.Providers, config.AIProviderConfig{
+			ID:           provider.ID,
+			Type:         provider.Type,
+			Model:        provider.Model,
+			Models:       cleanStringList(provider.Models),
+			DefaultModel: provider.DefaultModel,
+			SecretRef:    provider.SecretRef,
+			BaseURL:      provider.BaseURL,
+			Enabled:      provider.Enabled,
+			Policy:       configPolicyFromDTO(provider.Policy),
+		})
+	}
+	for _, route := range in.Routes {
+		route.Provider = strings.TrimSpace(route.Provider)
+		route.Model = strings.TrimSpace(route.Model)
+		out.Routing.Routes = append(out.Routing.Routes, config.AIRouteConfig{
+			Provider:          route.Provider,
+			Model:             route.Model,
+			Mode:              strings.TrimSpace(route.Mode),
+			Intent:            strings.TrimSpace(route.Intent),
+			RequiresReasoning: route.RequiresReasoning,
+			RequiresTools:     route.RequiresTools,
+			AllowReasoning:    route.Policy.AllowReasoning,
+			AllowTools:        route.Policy.AllowTools,
+			AllowAttachments:  route.Policy.AllowAttachments,
+			MaxOutputTokens:   route.Policy.MaxOutputTokens,
+			MaxCostUSD:        route.Policy.MaxCostUSD,
+			UsageBudget:       configUsageBudgetFromDTO(route.Policy.UsageBudget),
+		})
+	}
+	return out, nil
+}
+
 func (s *appServer) daemonClient() (*muxclient.Client, error) {
 	cat, err := config.Load(s.catalogRoot)
 	if err != nil {
@@ -4641,6 +5242,15 @@ func allowedSystemResourceAction(action string) bool {
 }
 
 func runCerberusResourceAction(ctx context.Context, resource, action string) (string, error) {
+	if output, err := runCerberusSocketResourceAction(ctx, resource, action); err == nil {
+		return output, nil
+	} else if shouldRetryCerberusTetherRegister(resource, err) {
+		if healErr := ensureCerberusTetherRegistrationCompat(ctx); healErr == nil {
+			if retryOutput, retryErr := runCerberusSocketResourceAction(ctx, resource, action); retryErr == nil {
+				return retryOutput, nil
+			}
+		}
+	}
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "cerberus", "resource", action, resource)
@@ -4653,6 +5263,146 @@ func runCerberusResourceAction(ctx context.Context, resource, action string) (st
 		return output, fmt.Errorf("cerberus resource %s %s: %w", action, resource, err)
 	}
 	return output, nil
+}
+
+type cerberusErrorResponse struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error"`
+}
+
+type cerberusRegistryFile struct {
+	Entries []struct {
+		Owner string `yaml:"owner"`
+		Path  string `yaml:"path"`
+	} `yaml:"entries"`
+}
+
+func runCerberusSocketResourceAction(ctx context.Context, resource, action string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve cerberus socket: %w", err)
+	}
+	socketPath := filepath.Join(home, ".cerberus", "cerberus.sock")
+	if !pathExists(socketPath) {
+		return "", fmt.Errorf("cerberus socket not found at %s", socketPath)
+	}
+	method := http.MethodPost
+	path := "/resources/" + url.PathEscape(resource) + "/" + action
+	if action == "status" {
+		method = http.MethodGet
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	req, err := http.NewRequestWithContext(runCtx, method, "http://cerberus-daemon"+path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	output := strings.TrimSpace(string(body))
+	if method == http.MethodPost {
+		var apiErr cerberusErrorResponse
+		if err := json.Unmarshal(body, &apiErr); err == nil && !apiErr.Success && strings.TrimSpace(apiErr.Error) != "" {
+			return output, errors.New(strings.TrimSpace(apiErr.Error))
+		}
+	}
+	if resp.StatusCode >= 400 {
+		var apiErr cerberusErrorResponse
+		if err := json.Unmarshal(body, &apiErr); err == nil && strings.TrimSpace(apiErr.Error) != "" {
+			return output, errors.New(strings.TrimSpace(apiErr.Error))
+		}
+		return output, fmt.Errorf("cerberus socket %s %s: http %d", method, path, resp.StatusCode)
+	}
+	return output, nil
+}
+
+func shouldRetryCerberusTetherRegister(resource string, err error) bool {
+	if err == nil || !strings.HasPrefix(resource, "tether-") {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+func ensureCerberusTetherRegistrationCompat(ctx context.Context) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	registryPath := filepath.Join(home, ".cerberus", "registry.yaml")
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return err
+	}
+	var reg cerberusRegistryFile
+	if err := yaml.Unmarshal(data, &reg); err != nil {
+		return err
+	}
+	projectPath := ""
+	for _, entry := range reg.Entries {
+		if entry.Owner == "tether" && strings.TrimSpace(entry.Path) != "" {
+			projectPath = strings.TrimSpace(entry.Path)
+			break
+		}
+	}
+	if projectPath == "" {
+		return fmt.Errorf("tether project not found in cerberus registry")
+	}
+	src, err := os.ReadFile(projectPath)
+	if err != nil {
+		return err
+	}
+	sanitized := stripRegistryURN(src)
+	tmpFile, err := os.CreateTemp("", "tether-cerberus-compat-*.yaml")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.Write(sanitized); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, "cerberus", "register", tmpPath)
+	out, err := cmd.CombinedOutput()
+	if runCtx.Err() != nil {
+		return runCtx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("cerberus register sanitized tether config: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func stripRegistryURN(src []byte) []byte {
+	lines := bytes.Split(src, []byte{'\n'})
+	out := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		if bytes.HasPrefix(trimmed, []byte("registry_urn:")) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return bytes.Join(out, []byte{'\n'})
 }
 
 type flushResponseWriter struct {
