@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hollis-labs/sysop-ui": "0.7.2",
+    "@hollis-labs/sysop-ui": "file:../../../../../libs/sysop-ui",
     "lucide-react": "^1.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

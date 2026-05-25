@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, Database, Gauge, Mail, Plug, RefreshCw, TerminalSquare } from 'lucide-react'
 import {
   Button,
-  Card,
-  CardContent,
   EmptyState,
   StatusBadge,
   cn,
 } from '@hollis-labs/sysop-ui/ui'
-import { BarList, CompositionBars, SignalBars, Sparkbars } from '@hollis-labs/sysop-ui/widgets'
+import {
+  BarList,
+  CompositionBars,
+  SignalBars,
+  IntelligenceRow,
+  Kpi,
+  KpiGrid,
+  MiniTrend,
+  Panel,
+} from '@hollis-labs/sysop-ui/widgets'
 import { useApi } from '../api/context'
 import type { NameCount, OverviewInfo } from '../api/client'
 
@@ -48,119 +55,6 @@ function toBarItems(items?: NameCount[]) {
   return (items ?? []).map((item) => ({ label: item.name, value: item.count }))
 }
 
-function SectionTitle({
-  icon,
-  title,
-  meta,
-}: {
-  icon: ReactNode
-  title: string
-  meta?: ReactNode
-}) {
-  return (
-    <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border-strong bg-panel px-3">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="text-text-subtle">{icon}</span>
-        <h2 className="truncate text-[11px] font-semibold uppercase tracking-[.18em] text-text-muted">
-          {title}
-        </h2>
-      </div>
-      {meta && <div className="shrink-0 text-[11px] text-text-subtle">{meta}</div>}
-    </div>
-  )
-}
-
-function Panel({
-  title,
-  icon,
-  meta,
-  children,
-  className,
-}: {
-  title: string
-  icon: ReactNode
-  meta?: ReactNode
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <Card className={cn('min-h-0 overflow-hidden rounded-none', className)}>
-      <SectionTitle title={title} icon={icon} meta={meta} />
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
-  )
-}
-
-function Kpi({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string
-  value: ReactNode
-  sub?: ReactNode
-  accent?: string
-}) {
-  return (
-    <div className="min-w-0 border-r border-border px-3 py-2 last:border-r-0">
-      <div className="text-[10px] uppercase tracking-[.16em] text-text-subtle">{label}</div>
-      <div
-        className="mt-1 truncate font-mono text-[20px] leading-none text-text"
-        style={accent ? { color: accent } : undefined}
-      >
-        {value}
-      </div>
-      {sub && <div className="mt-1 truncate text-[11px] text-text-subtle">{sub}</div>}
-    </div>
-  )
-}
-
-function KpiGrid({ children, cols = 'grid-cols-2 md:grid-cols-4' }: { children: ReactNode; cols?: string }) {
-  return <div className={cn('grid border-b border-border-strong', cols)}>{children}</div>
-}
-
-function MiniTrend({
-  label,
-  value,
-  data,
-}: {
-  label: string
-  value: ReactNode
-  data: number[]
-}) {
-  return (
-    <div className="px-3 py-2">
-      <div className="mb-1.5 flex h-4 items-center justify-between gap-3 px-1">
-        <span className="text-[10px] uppercase tracking-[.16em] text-text-subtle">{label}</span>
-        <span className="font-mono text-[12px] tabular-nums text-text">{value}</span>
-      </div>
-      <div className="border-y border-border-strong bg-bg px-1 py-1">
-        <Sparkbars className="h-8" data={data} />
-      </div>
-    </div>
-  )
-}
-
-function IntelligenceRow({
-  label,
-  value,
-  status = 'done',
-}: {
-  label: string
-  value: ReactNode
-  status?: string
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 last:border-b-0">
-      <span className="min-w-0 truncate text-[12px] text-text-soft">{label}</span>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="font-mono text-[12px] tabular-nums text-text">{value}</span>
-        <StatusBadge status={status} />
-      </div>
-    </div>
-  )
-}
 
 function DataList({ title, items }: { title: string; items: NameCount[] }) {
   return (
