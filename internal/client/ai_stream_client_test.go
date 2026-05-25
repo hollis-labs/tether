@@ -111,3 +111,38 @@ func TestClientAIChatStreamPropagatesHTTPError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestClientAIChatStreamUsesCallerContextNotTransportTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ai/chat/stream" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		time.Sleep(20 * time.Millisecond)
+		_, _ = w.Write([]byte("event: response.start\n"))
+		_, _ = w.Write([]byte("data: {\"kind\":\"response.start\",\"provider\":\"openai-work\",\"model\":\"gpt-5-mini\",\"usage\":{}}\n\n"))
+	}))
+	defer srv.Close()
+
+	c := New("tcp:" + srv.URL[len("http://"):])
+	c.http.Timeout = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	ch, errCh, err := c.AIChatStream(ctx, api.ChatRequest{Request: llm.Request{Operation: llm.OperationChat}})
+	if err != nil {
+		t.Fatalf("AIChatStream: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Kind != llm.StreamEventStart {
+			t.Fatalf("event kind = %q", ev.Kind)
+		}
+	case err := <-errCh:
+		t.Fatalf("stream err = %v", err)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for stream event")
+	}
+}

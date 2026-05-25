@@ -23,7 +23,9 @@ func (c *Client) AIChatStream(ctx context.Context, req api.ChatRequest) (<-chan 
 		return nil, nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(httpReq)
+	longClient := *c.http
+	longClient.Timeout = 0
+	resp, err := longClient.Do(httpReq)
 	if err != nil {
 		return nil, nil, wrapIfUnreachable(err)
 	}

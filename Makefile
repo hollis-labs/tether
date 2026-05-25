@@ -11,11 +11,13 @@ GOBIN ?= $(shell go env GOPATH)/bin
 
 build:
 	go build -o bin/mux ./cmd/mux
+	go build -o bin/mux-apikey-helper ./cmd/mux-apikey-helper
 
 # install puts mux in the user's PATH ($GOBIN).
 install:
-	GOBIN=$(GOBIN) go install ./cmd/mux/...
+	GOBIN=$(GOBIN) go install ./cmd/mux ./cmd/mux-apikey-helper
 	@echo "installed → $(GOBIN)/mux"
+	@echo "installed → $(GOBIN)/mux-apikey-helper"
 
 sysop-build:
 	$(MAKE) -C apps/sysop all

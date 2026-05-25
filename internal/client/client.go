@@ -185,12 +185,14 @@ func (c *Client) AIChat(ctx context.Context, req api.ChatRequest) (api.ChatRespo
 	if err != nil {
 		return api.ChatResponse{}, fmt.Errorf("marshal ai chat request: %w", err)
 	}
+	longClient := *c.http
+	longClient.Timeout = 0
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/ai/chat", bytes.NewReader(body))
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(httpReq)
+	resp, err := longClient.Do(httpReq)
 	if err != nil {
 		return api.ChatResponse{}, wrapIfUnreachable(err)
 	}

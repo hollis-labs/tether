@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -479,6 +481,31 @@ func TestClient_SendTurn_UsesCallerContextNotTransportTimeout(t *testing.T) {
 	defer cancel()
 	if err := c.SendTurn(ctx, "s1", "hello"); err != nil {
 		t.Fatalf("SendTurn: %v", err)
+	}
+}
+
+func TestClient_AIChat_UsesCallerContextNotTransportTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ai/chat" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(api.ChatResponse{}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	c := New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+	c.http.Timeout = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.AIChat(ctx, api.ChatRequest{}); err != nil {
+		t.Fatalf("AIChat: %v", err)
 	}
 }
 

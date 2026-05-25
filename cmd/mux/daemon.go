@@ -243,7 +243,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			providers[p.ID] = llmanthropic.New(llmanthropic.Config{
 				BaseURL: p.BaseURL,
 				ResolveAPIKey: func(ctx context.Context) (string, error) {
-					return secretResolver.Resolve(ctx, secretRef)
+					return resolveAISecret(ctx, secretResolver, secretRef)
 				},
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
@@ -258,7 +258,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			providers[p.ID] = llmopenai.New(llmopenai.Config{
 				BaseURL: p.BaseURL,
 				ResolveAPIKey: func(ctx context.Context) (string, error) {
-					return secretResolver.Resolve(ctx, secretRef)
+					return resolveAISecret(ctx, secretResolver, secretRef)
 				},
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
@@ -273,7 +273,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			if p.SecretRef != "" {
 				secretRef := p.SecretRef
 				resolve = func(ctx context.Context) (string, error) {
-					return secretResolver.Resolve(ctx, secretRef)
+					return resolveAISecret(ctx, secretResolver, secretRef)
 				}
 			}
 			providers[p.ID] = llmopenaicompat.New(llmopenaicompat.Config{
@@ -313,6 +313,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			usageBudget := effectiveAIUsageBudget(ai.Policy.UsageBudget, providerCfg.Policy.UsageBudget, routeCfg.UsageBudget)
 			routes = append(routes, router.Route{
 				Provider:          routeCfg.Provider,
+				CatalogProvider:   modelCatalogProviderID(providerCfg.Type),
 				Model:             routeCfg.Model,
 				Mode:              routeCfg.Mode,
 				Intent:            routeCfg.Intent,
@@ -340,6 +341,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				allowReasoning, allowTools, allowAttachments := effectiveAIDefaultPolicy(ai.Policy, p.Policy)
 				routes = append(routes, router.Route{
 					Provider:         id,
+					CatalogProvider:  modelCatalogProviderID(p.Type),
 					Model:            model,
 					AllowReasoning:   allowReasoning,
 					AllowTools:       allowTools,
@@ -373,6 +375,21 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		Recorder:     deps.Recorder,
 		Publisher:    deps.Publisher,
 	}
+}
+
+func modelCatalogProviderID(providerType string) string {
+	switch providerType {
+	case "openai", "openai-compatible":
+		return "openai"
+	default:
+		return providerType
+	}
+}
+
+func resolveAISecret(ctx context.Context, resolver *secrets.Resolver, ref string) (string, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return resolver.Resolve(resolveCtx, ref)
 }
 
 func effectiveAIDefaultPolicy(global, provider config.AIPolicyConfig) (*bool, *bool, *bool) {

@@ -42,6 +42,32 @@ func TestPlannerSelectsPinnedProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestPlannerUsesCatalogProviderForConfiguredProviderID(t *testing.T) {
+	t.Parallel()
+
+	catalog := stubCatalog{
+		refs: []modelsdev.ModelRef{
+			modelRef("openai", "gpt-5-mini", 400000, 128000, 0.25, 2, modelsdev.Capabilities{}, []string{"text"}, []string{"text"}),
+		},
+	}
+	planner := New(catalog, Policy{
+		Version: "v1",
+		Routes: []Route{{
+			Provider:        "openai-work",
+			CatalogProvider: "openai",
+			Model:           "gpt-5-mini",
+		}},
+	})
+
+	plan, err := planner.Plan(llm.Request{Operation: llm.OperationChat})
+	if err != nil {
+		t.Fatalf("Plan returned err: %v", err)
+	}
+	if plan.Provider != "openai-work" || plan.Model != "gpt-5-mini" {
+		t.Fatalf("plan = %+v", plan)
+	}
+}
+
 func TestPlannerFallsBackWhenFirstRouteLacksCapabilities(t *testing.T) {
 	t.Parallel()
 

@@ -30,6 +30,7 @@ type Catalog interface {
 // Route is one explicit provider/model target the planner may consider.
 type Route struct {
 	Provider          string
+	CatalogProvider   string
 	Model             string
 	Mode              string
 	Intent            string
@@ -283,6 +284,10 @@ func (p *Planner) candidates(req llm.Request) []Route {
 
 func (p *Planner) evaluateCandidate(req llm.Request, candidate Route) (Plan, error) {
 	provider := candidate.Provider
+	catalogProvider := candidate.CatalogProvider
+	if catalogProvider == "" {
+		catalogProvider = provider
+	}
 	model := candidate.Model
 	if provider == "" || model == "" {
 		return Plan{}, fmt.Errorf("route missing provider or model")
@@ -292,14 +297,14 @@ func (p *Planner) evaluateCandidate(req llm.Request, candidate Route) (Plan, err
 		return Plan{}, err
 	}
 
-	if _, ok := p.catalog.Get(provider, model); !ok {
+	if _, ok := p.catalog.Get(catalogProvider, model); !ok {
 		return Plan{}, fmt.Errorf("model not found in catalog")
 	}
 
-	if err := validateCapabilities(req, p.catalog, provider, model); err != nil {
+	if err := validateCapabilities(req, p.catalog, catalogProvider, model); err != nil {
 		return Plan{}, err
 	}
-	if err := validateLimits(req, p.catalog, provider, model); err != nil {
+	if err := validateLimits(req, p.catalog, catalogProvider, model); err != nil {
 		return Plan{}, err
 	}
 
@@ -310,7 +315,7 @@ func (p *Planner) evaluateCandidate(req llm.Request, candidate Route) (Plan, err
 	}
 	plan.Reasons = append(plan.Reasons, selectionReasons(req, candidate)...)
 
-	if cost, ok, err := validateBudget(req, p.catalog, provider, model); err != nil {
+	if cost, ok, err := validateBudget(req, p.catalog, catalogProvider, model); err != nil {
 		return Plan{}, err
 	} else if ok {
 		plan.EstimatedCostUSD = cost
