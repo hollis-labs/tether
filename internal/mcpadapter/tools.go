@@ -5,6 +5,7 @@ import "github.com/mark3labs/mcp-go/server"
 // registerTools wires every MCP tool onto s. Tools are grouped by domain;
 // each group is registered in its own file.
 func (a *Adapter) registerTools(s *server.MCPServer) {
+	a.mcp = s
 	a.registerHealthTools(s)
 	a.registerCatalogTools(s)
 	a.registerAgentOpsTools(s)

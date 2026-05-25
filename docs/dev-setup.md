@@ -214,6 +214,7 @@ available through:
 - CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|usage|budgets|audit|watch-budgets`
 - MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
   `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
+  `mux_ai_chat_stream`,
   `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
 
 For live alerting instead of polling, `mux ai watch-budgets` subscribes to the

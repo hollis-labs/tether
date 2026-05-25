@@ -87,7 +87,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 |---|---|
 | `session.write` | `mux_session_create`, `mux_session_launch`, `mux_session_stop`, `mux_session_send_input`, `mux_session_resize`, `mux_logical_agent_resume` |
 | `message.write` | `mux_message_send`, `mux_message_consume`, `mux_message_cancel` |
-| `ai.invoke` | `mux_ai_chat` |
+| `ai.invoke` | `mux_ai_chat`, `mux_ai_chat_stream` |
 
 Pass both via flags or environment variables:
 
@@ -751,18 +751,19 @@ event reaction without keeping a long-lived stream open.
 3. mux_ai_list_routes                → inspect live planner route order
 4. mux_ai_route_preview              → preview route/cost without model invocation
 5. mux_ai_route_explain              → explain why each route matched or failed
-6. mux_ai_chat                       → invoke the gateway (requires ai.invoke)
-7. mux_ai_usage / mux_ai_budgets     → inspect durable usage and live budget headroom
-8. mux_ai_budget_alerts              → inspect durable budget_rejection alerts directly
-9. mux_ai_wait_budget_alerts         → wait briefly for live ai.budget_rejected events
-10. mux_events_history               → inspect broader durable daemon/session/broker history
-11. mux_events_wait                  → reuse the bounded-live pattern for live daemon/session events
-12. mux_ai_audit                     → inspect broader durable audit history
+6. mux_ai_chat                       → invoke the gateway and return one final response (requires ai.invoke)
+7. mux_ai_chat_stream                → invoke the gateway as a live MCP stream (requires ai.invoke)
+8. mux_ai_usage / mux_ai_budgets     → inspect durable usage and live budget headroom
+9. mux_ai_budget_alerts              → inspect durable budget_rejection alerts directly
+10. mux_ai_wait_budget_alerts        → wait briefly for live ai.budget_rejected events
+11. mux_events_history               → inspect broader durable daemon/session/broker history
+12. mux_events_wait                  → reuse the bounded-live pattern for live daemon/session events
+13. mux_ai_audit                     → inspect broader durable audit history
 ```
 
 ### AI tool request forms
 
-`mux_ai_route_preview` and `mux_ai_chat` support two request styles:
+`mux_ai_route_preview`, `mux_ai_chat`, and `mux_ai_chat_stream` support two request styles:
 
 1. Shorthand text form: `text` plus optional `system_prompt`, `provider`,
    `model`, and budget/correlation hints.
@@ -807,12 +808,33 @@ Example full request call:
 }
 ```
 
-`mux_ai_chat` requires the `ai.invoke` scope. `mux_ai_list_providers`,
+`mux_ai_chat` and `mux_ai_chat_stream` require the `ai.invoke` scope. `mux_ai_list_providers`,
 `mux_ai_list_models`, `mux_ai_list_routes`, `mux_ai_route_preview`,
 `mux_ai_route_explain`, `mux_ai_usage`, `mux_ai_budgets`,
 `mux_ai_budget_alerts`, `mux_ai_wait_budget_alerts`, `mux_ai_audit`, and
 `mux_events_history` and `mux_events_wait` are
 read-only.
+
+### AI live streaming
+
+`mux_ai_chat_stream` bridges the daemon `/ai/chat/stream` SSE path into MCP
+client notifications while the tool call is still running.
+
+During one streaming invocation, clients can receive:
+
+- `notifications/ai/chat_stream`
+  - structured payload with `source: "mux_ai_chat_stream"` and the normalized
+    `event`
+- `notifications/message`
+  - info-level logging notification carrying the same structured event payload
+- `notifications/progress`
+  - emitted when the tool call includes `_meta.progressToken`; `progress` is
+    the monotonically increasing stream event count and `message` is the event
+    kind
+
+The tool result still returns the final normalized `response` plus
+`event_count`, so clients that ignore live notifications still get the final
+answer.
 
 ---
 

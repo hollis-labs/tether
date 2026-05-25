@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,104 @@ func TestAITools_ChatRequiresScope(t *testing.T) {
 		t.Fatalf("code = %v, want insufficient_scope", got)
 	}
 }
+
+func TestAITools_ChatStreamSendsNotificationsAndReturnsFinalResponse(t *testing.T) {
+	h := api.NewHandler(api.Deps{
+		AI: aiStubService{
+			stream: []llm.StreamEvent{
+				{Kind: llm.StreamEventStart, Provider: "anthropic-work", Model: "claude-sonnet-4-5"},
+				{Kind: llm.StreamEventTextDelta, Provider: "anthropic-work", Model: "claude-sonnet-4-5", Delta: "hello"},
+			},
+			streamResp: llm.Response{
+				Provider:   "anthropic-work",
+				Model:      "claude-sonnet-4-5",
+				StopReason: "end_turn",
+				Output: []llm.Message{{
+					Role:  "assistant",
+					Parts: []llm.ContentPart{{Type: "text", Text: "hello"}},
+				}},
+			},
+		},
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	hostport := srv.URL[len("http://"):]
+	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", []string{ScopeAIInvoke})
+	s := mcpserver.NewMCPServer("test", version, mcpserver.WithToolCapabilities(true))
+	a.registerAITools(s)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "mux_ai_chat_stream"
+	req.Params.Arguments = map[string]any{"text": "hello"}
+	req.Params.Meta = &mcp.Meta{ProgressToken: "tok-1"}
+	session := &fakeLoggingSession{
+		id:            "stdio",
+		initialized:   true,
+		notifications: make(chan mcp.JSONRPCNotification, 16),
+		level:         mcp.LoggingLevelInfo,
+	}
+	ctx := s.WithContext(context.Background(), session)
+
+	res, err := a.handleAIChatStream(ctx, req)
+	if err != nil {
+		t.Fatalf("handleAIChatStream: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("stream tool error: %s", textOf(res))
+	}
+	body := parseToolJSON(t, res)
+	if got, _ := body["streamed"].(bool); !got {
+		t.Fatalf("stream body = %v", body)
+	}
+	if got, _ := body["event_count"].(float64); int(got) != 3 {
+		t.Fatalf("event_count = %v body=%v", got, body)
+	}
+
+	var methods []string
+	var payloads []string
+	for {
+		select {
+		case notification := <-session.notifications:
+			methods = append(methods, notification.Method)
+			data, _ := json.Marshal(notification.Params)
+			payloads = append(payloads, string(data))
+		default:
+			goto done
+		}
+	}
+done:
+	joinedMethods := strings.Join(methods, ",")
+	joinedPayloads := strings.Join(payloads, "\n")
+	if !strings.Contains(joinedMethods, "notifications/ai/chat_stream") {
+		t.Fatalf("methods = %v payloads=%s", methods, joinedPayloads)
+	}
+	if !strings.Contains(joinedMethods, "notifications/message") {
+		t.Fatalf("methods = %v payloads=%s", methods, joinedPayloads)
+	}
+	if !strings.Contains(joinedMethods, "notifications/progress") {
+		t.Fatalf("methods = %v payloads=%s", methods, joinedPayloads)
+	}
+	if !strings.Contains(joinedPayloads, "response.output_text.delta") || !strings.Contains(joinedPayloads, "tok-1") {
+		t.Fatalf("payloads = %s", joinedPayloads)
+	}
+}
+
+type fakeLoggingSession struct {
+	id            string
+	initialized   bool
+	notifications chan mcp.JSONRPCNotification
+	level         mcp.LoggingLevel
+}
+
+func (s *fakeLoggingSession) Initialize()       { s.initialized = true }
+func (s *fakeLoggingSession) Initialized() bool { return s.initialized }
+func (s *fakeLoggingSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notifications
+}
+func (s *fakeLoggingSession) SessionID() string                  { return s.id }
+func (s *fakeLoggingSession) SetLogLevel(level mcp.LoggingLevel) { s.level = level }
+func (s *fakeLoggingSession) GetLogLevel() mcp.LoggingLevel      { return s.level }
 
 func TestAITools_UsageAndAudit(t *testing.T) {
 	a := newAIAdapter(t, nil)

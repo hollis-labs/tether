@@ -57,6 +57,7 @@ const (
 type Adapter struct {
 	svc    *app.Service
 	client *client.Client // optional; when set, session-mutating tools route through the daemon
+	mcp    *server.MCPServer
 	token  string
 	scopes map[string]struct{}
 

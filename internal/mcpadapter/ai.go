@@ -16,6 +16,7 @@ import (
 )
 
 func (a *Adapter) registerAITools(s *server.MCPServer) {
+	a.mcp = s
 	a.addTool(s,
 		mcp.NewTool("mux_ai_list_providers",
 			mcp.WithDescription("List configured AI gateway providers exposed by the running muxd daemon."),
@@ -85,7 +86,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_chat",
-			mcp.WithDescription("Invoke the AI gateway with a simple normalized chat request. Requires the ai.invoke scope."),
+			mcp.WithDescription("Invoke the AI gateway with a simple normalized chat request and return the final normalized response. Requires the ai.invoke scope."),
 			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
 			mcp.WithObject("request",
 				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
@@ -105,6 +106,29 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
 		a.handleAIChat,
+	)
+	a.addTool(s,
+		mcp.NewTool("mux_ai_chat_stream",
+			mcp.WithDescription("Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope."),
+			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
+			mcp.WithObject("request",
+				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			),
+			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
+			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
+			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
+			mcp.WithString("model", mcp.Description("Model hint")),
+			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
+			mcp.WithString("intent", mcp.Description("Intent hint")),
+			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
+			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
+			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
+			mcp.WithNumber("max_output_tokens", mcp.Description("Optional max output tokens hint")),
+			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
+			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
+			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
+		),
+		a.handleAIChatStream,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_usage",
@@ -281,6 +305,77 @@ func (a *Adapter) handleAIChat(ctx context.Context, req mcp.CallToolRequest) (*m
 	}), nil
 }
 
+func (a *Adapter) handleAIChatStream(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeAIInvoke); denied != nil {
+		return denied, nil
+	}
+	c, errRes := a.requireAIClient()
+	if errRes != nil {
+		return errRes, nil
+	}
+	request, errTool := aiRequestFromTool(req)
+	if errTool != nil {
+		return errTool, nil
+	}
+	request.Streaming = true
+
+	stream, errCh, err := c.AIChatStream(ctx, api.ChatRequest{Request: request})
+	if err != nil {
+		return a.classifyAIClientErr(err), nil
+	}
+
+	progressToken := any(nil)
+	if req.Params.Meta != nil {
+		progressToken = req.Params.Meta.ProgressToken
+	}
+
+	var (
+		eventCount int
+		finalResp  *llm.Response
+		lastErr    string
+	)
+	for stream != nil || errCh != nil {
+		select {
+		case ev, ok := <-stream:
+			if !ok {
+				stream = nil
+				continue
+			}
+			eventCount++
+			a.emitAIStreamNotification(ctx, progressToken, eventCount, ev)
+			if ev.Kind == llm.StreamEventCompleted && ev.Response != nil {
+				resp := *ev.Response
+				finalResp = &resp
+			}
+			if ev.Kind == llm.StreamEventError && ev.Error != "" {
+				lastErr = ev.Error
+			}
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				return toolError("internal_error", err.Error()), nil
+			}
+		case <-ctx.Done():
+			return toolError("internal_error", ctx.Err().Error()), nil
+		}
+	}
+	if finalResp == nil {
+		if lastErr != "" {
+			return toolError("internal_error", lastErr), nil
+		}
+		return toolError("internal_error", "stream completed without final response"), nil
+	}
+	return toolJSON(map[string]any{
+		"ok":          true,
+		"response":    finalResp,
+		"event_count": eventCount,
+		"streamed":    true,
+	}), nil
+}
+
 func (a *Adapter) handleAIUsage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	c, errRes := a.requireAIClient()
 	if errRes != nil {
@@ -451,6 +546,30 @@ done:
 		"timed_out":      timedOut,
 		"next_since_seq": lastSeq,
 	}), nil
+}
+
+func (a *Adapter) emitAIStreamNotification(ctx context.Context, progressToken any, eventCount int, ev llm.StreamEvent) {
+	if a.mcp == nil {
+		return
+	}
+	payload := map[string]any{
+		"source": "mux_ai_chat_stream",
+		"event":  ev,
+	}
+	_ = a.mcp.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelInfo, "tether.ai.stream", payload))
+	_ = a.mcp.SendNotificationToClient(ctx, "notifications/ai/chat_stream", payload)
+	if progressToken != nil {
+		progress := float64(eventCount)
+		params := map[string]any{
+			"progressToken": progressToken,
+			"progress":      progress,
+			"message":       string(ev.Kind),
+		}
+		if ev.Kind == llm.StreamEventCompleted {
+			params["message"] = "response.completed"
+		}
+		_ = a.mcp.SendNotificationToClient(ctx, "notifications/progress", params)
+	}
 }
 
 type aiBudgetAlertPayload struct {
