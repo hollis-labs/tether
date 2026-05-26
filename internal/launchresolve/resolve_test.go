@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
 func TestResolveRuntimeBinding(t *testing.T) {

@@ -3,7 +3,7 @@ package launchresolve
 import (
 	"errors"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
 // errRegistrarDown is the synthetic outage a faultRegistrar injects.

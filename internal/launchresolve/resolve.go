@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 
 	"github.com/hollis-labs/tether/internal/config"
 )

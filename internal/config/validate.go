@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hollis-labs/go-agent-runtime/bootdir"
+	"github.com/hollis-labs/agentkit/agentruntime/bootdir"
 )
 
 func (c *Catalog) Validate() error {

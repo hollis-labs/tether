@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os/exec"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	gop "github.com/hollis-labs/go-providers/provider"
 	events "github.com/hollis-labs/go-providers/provider/events"

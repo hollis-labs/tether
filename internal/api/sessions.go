@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"

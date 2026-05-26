@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
 // catalogTrustTokens is the closed allow-list of TrustGate.Trust tokens the

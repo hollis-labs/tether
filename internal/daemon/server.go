@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	otelprop "github.com/hollis-labs/go-otel/propagation"
 
 	"github.com/hollis-labs/tether/internal/api"

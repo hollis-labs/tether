@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentsessions"
 )
 
 // maxInputBytes caps the per-request body size for POST /sessions/{id}/input

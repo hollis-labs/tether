@@ -3,7 +3,7 @@ package config
 import (
 	"strings"
 
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 )
 
 const (

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 )
 
 // AgentLaunchPlan maps Tether's persisted launch.Plan onto the shared

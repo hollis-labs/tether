@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
 // fixtureRoot is the in-repo fixture catalog. Tests resolve against it so

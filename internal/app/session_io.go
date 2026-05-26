@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
-	"github.com/hollis-labs/go-agent-runtime/turn"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
+	"github.com/hollis-labs/agentkit/agentsessions"
 )
 
 // SendInput writes data to the named session's input channel. Thin wrapper

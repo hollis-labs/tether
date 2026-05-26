@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
+	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
 	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/launch"
@@ -87,9 +87,9 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
 	}
-	prepared.PlantContext.MuxCommand = opts.MuxCommand
-	prepared.PlantContext.MuxArgs = append([]string(nil), opts.MuxArgs...)
-	prepared.PlantContext.MuxEnv = muxEnvMap(opts.MuxEnv)
+	prepared.PlantContext.SelfMCPCommand = opts.MuxCommand
+	prepared.PlantContext.SelfMCPArgs = append([]string(nil), opts.MuxArgs...)
+	prepared.PlantContext.SelfMCPEnv = muxEnvMap(opts.MuxEnv)
 
 	adapter := gop.NewClaudeAdapterPTY()
 	adapter.ApiKeyHelperPath = opts.APIKeyHelperPath

@@ -3,9 +3,9 @@ package app
 import (
 	"fmt"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-runtime/runtimebind"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/config"

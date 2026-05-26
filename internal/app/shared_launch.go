@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
+	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -69,9 +69,9 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
-	prepared.PlantContext.MuxCommand = plant.MuxCommand
-	prepared.PlantContext.MuxArgs = append([]string(nil), plant.MuxArgs...)
-	prepared.PlantContext.MuxEnv = copyMap(plant.MuxEnv)
+	prepared.PlantContext.SelfMCPCommand = plant.MuxCommand
+	prepared.PlantContext.SelfMCPArgs = append([]string(nil), plant.MuxArgs...)
+	prepared.PlantContext.SelfMCPEnv = copyMap(plant.MuxEnv)
 	if err := providerplant.Plant(ctx, prepared); err != nil {
 		return nil, err
 	}

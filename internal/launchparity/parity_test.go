@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/parity"
+	"github.com/hollis-labs/agentkit/agentlaunch/parity"
 )
 
 // specsRoot is the Tether launch corpus authored in S5 prep-B, relative

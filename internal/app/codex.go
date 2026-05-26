@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hollis-labs/go-agent-runtime/turn"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
 )
 
 // muxClientVersion is the value reported in the JSON-RPC initialize

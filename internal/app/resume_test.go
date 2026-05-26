@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/hollis-labs/go-agent-runtime/checkpoint"
+	"github.com/hollis-labs/agentkit/agentruntime/checkpoint"
 
 	tethercheckpoint "github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/launch"

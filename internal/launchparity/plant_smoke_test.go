@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-launch/agentlaunch"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/launcher"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/parity"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/providerplant"
+	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
+	"github.com/hollis-labs/agentkit/agentlaunch/parity"
+	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
 
 	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"

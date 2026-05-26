@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	runtimecheckpoint "github.com/hollis-labs/go-agent-runtime/checkpoint"
+	runtimecheckpoint "github.com/hollis-labs/agentkit/agentruntime/checkpoint"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/checkpoint"

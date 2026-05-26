@@ -10,11 +10,11 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/go-agent-launch/agentlaunch/sessionshim"
-	"github.com/hollis-labs/go-agent-runtime/runtimekind"
-	"github.com/hollis-labs/go-agent-runtime/sessionkit"
-	"github.com/hollis-labs/go-agent-runtime/turn"
-	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
+	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
+	"github.com/hollis-labs/agentkit/agentruntime/turn"
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
 	"github.com/hollis-labs/tether/internal/agent"
