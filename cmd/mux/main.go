@@ -6,6 +6,12 @@ import (
 	"os"
 )
 
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 // exitCoder is satisfied by errors that want to override the default
 // "any error → exit 1" mapping. The registry subcommand uses this to
 // classify ErrNotFound (1), validation (2), daemon-unreachable (3),

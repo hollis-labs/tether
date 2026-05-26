@@ -34,10 +34,11 @@ The release is ready when all of the following are true:
 
 ### 2. Clean install and build story
 
-- [ ] Make the root release/build path clearly cover both `mux` and Sysop
+- [x] Make the root release/build path clearly cover the Tether runtime binaries (`mux` and `mux-apikey-helper`)
 - [x] Fix Sysop nested-module build so `cd apps/sysop && go build ./cmd/tether_sysop` is green
-- [ ] Decide whether the root Makefile should gain explicit Sysop build/install targets
-- [ ] Add one documented release build sequence for local verification
+- [x] Keep explicit Sysop build/install targets in the root Makefile without folding Sysop into the core tarball flow yet
+- [x] Add one documented Tether install/release sequence for local verification
+- [ ] Decide whether Sysop should ship as part of the same public release contract or remain a separate binary/install guide
 
 ### 3. Public doc consistency
 

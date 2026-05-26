@@ -71,10 +71,11 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 
 ## Dependencies
 
-- **`@hollis-labs/sysop-ui`** (`v0.4.0`) — the React
-  kit + canonical theme. Consumed as a git dependency, pinned to a release
-  tag. For local kit development, link a working copy:
-  `npm install file:<path-to>/libs/sysop-ui` from `frontend/`.
+- **`@hollis-labs/sysop-ui`** (`v0.9.0`) — the React
+  kit + canonical theme. Consumed from the published package registry and
+  pinned to a release version. For local kit development, override it with a
+  working copy from `frontend/`:
+  `npm install file:<path-to>/libs/sysop-ui`.
 - **`github.com/hollis-labs/go-webui`** (`v0.1.0`) —
   the SPA-serving harness.
 

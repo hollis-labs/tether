@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -12,6 +13,7 @@ var catalogPath string
 var rootCmd = &cobra.Command{
 	Use:   "mux",
 	Short: "Tether — local agent session control plane",
+	Version: version,
 }
 
 func init() {
@@ -22,6 +24,7 @@ func init() {
 	home, _ := os.UserHomeDir()
 	defaultCatalog := filepath.Join(home, ".tether", "catalog")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
+	rootCmd.SetVersionTemplate(fmt.Sprintf("mux %s (commit %s, built %s)\n", version, commit, buildDate))
 	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd, messagesCmd, aiCmd, eventsCmd)
 	// Top-level aliases for discoverability.
 	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd, bootExecCmd)

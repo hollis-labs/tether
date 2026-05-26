@@ -17,6 +17,9 @@ import (
 const serviceName = "tether"
 
 var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
 	readSecret   = defaultReadSecret
 	writeSecret  = defaultWriteSecret
 	deleteSecret = defaultDeleteSecret
@@ -34,6 +37,9 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		return usageError()
 	}
 	switch args[0] {
+	case "--version", "version":
+		_, err := fmt.Fprintf(stdout, "mux-apikey-helper %s (commit %s, built %s)\n", version, commit, buildDate)
+		return err
 	case "resolve":
 		if len(args) != 2 {
 			return fmt.Errorf("resolve expects exactly 1 argument")

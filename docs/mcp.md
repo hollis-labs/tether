@@ -17,8 +17,8 @@ subprocess; no daemon needs to be running first.
 ```bash
 cd ~/dev/hollis-labs/apps/tether
 make build          # produces bin/mux
-# or install globally:
-go install ./cmd/mux
+# or install into $GOBIN for development:
+make go-install
 ```
 
 ### 2. Add to your MCP client config

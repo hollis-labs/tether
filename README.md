@@ -38,10 +38,66 @@ fork or service is the official Tether distribution.
 
 See [TRADEMARK.md](TRADEMARK.md) for details.
 
+## Install
+
+Tether ships as two binaries:
+
+- `mux` — the main CLI and daemon launcher
+- `mux-apikey-helper` — optional helper for local keychain-backed AI secrets
+
+Install paths:
+
+### Option 1: Homebrew
+
+Once the tap formula is published:
+
+```sh
+brew install hollis-labs/tap/tether
+```
+
+### Option 2: Release tarball
+
+Once tagged releases are published:
+
+```sh
+curl -L -o tether.tar.gz \
+  https://github.com/hollis-labs/tether/releases/download/v<version>/tether_<version>_darwin_arm64.tar.gz
+tar -xzf tether.tar.gz
+install -d "$HOME/.local/bin"
+install -m 0755 mux "$HOME/.local/bin/"
+install -m 0755 mux-apikey-helper "$HOME/.local/bin/"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Option 3: Build from source
+
+```sh
+git clone git@github.com:hollis-labs/tether.git
+cd tether
+make build
+export PATH="$PWD/bin:$PATH"
+```
+
+Or install into a prefix:
+
+```sh
+make install PREFIX="$HOME/.local"
+```
+
+### Option 4: `go install`
+
+```sh
+go install github.com/hollis-labs/tether/cmd/mux@latest
+go install github.com/hollis-labs/tether/cmd/mux-apikey-helper@latest
+```
+
+See [`docs/install.md`](docs/install.md) for prerequisites, first-run catalog
+setup, keychain configuration, and path details.
+
 ## Build
 
 ```bash
-make build          # produces bin/mux and bin/muxd
+make build          # produces bin/mux and bin/mux-apikey-helper
 make check          # fmt + vet + lint + test-race + vuln
 ```
 

@@ -18,13 +18,13 @@ owned by the daemon, and ACP routes through it over UDS.
 
 ```bash
 cd ~/dev/hollis-labs/apps/tether
-make install        # → /Users/<you>/go/bin/mux
+make go-install     # installs mux to $GOBIN
 ```
 
 ### 2. Start the daemon
 
 ```bash
-mux daemon up
+mux daemon start
 ```
 
 ### 3. Wire your editor
