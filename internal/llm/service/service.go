@@ -10,11 +10,16 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	feotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/go-otel/genai"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -60,10 +65,16 @@ type Service struct {
 // Chat routes one normalized chat request through middleware and into the
 // selected provider adapter.
 func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, error) {
+	ctx, span := feotel.StartSpan(ctx, "tether.ai.chat")
+	defer span.End()
+	recordRequestSpanAttrs(span, req)
+
 	if req.Operation != llm.OperationChat {
+		span.SetStatus(codes.Error, "unsupported operation")
 		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
 	if s.Planner == nil {
+		span.SetStatus(codes.Error, "planner is nil")
 		return llm.Response{}, fmt.Errorf("llm service planner is nil")
 	}
 
@@ -71,7 +82,11 @@ func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, erro
 	start := time.Now()
 	resp, err := handler(ctx, req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		s.recordBudgetRejections(req, s.Planner.Explain(req), time.Since(start))
+	} else {
+		recordResponseSpanAttrs(span, resp)
 	}
 	s.recordAuditEvent("chat", req, router.Plan{
 		Provider:         resp.Route.Provider,
@@ -86,10 +101,16 @@ func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, erro
 // Embed routes one normalized embedding request through middleware and into
 // the selected provider adapter.
 func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, error) {
+	ctx, span := feotel.StartSpan(ctx, "tether.ai.embedding")
+	defer span.End()
+	recordRequestSpanAttrs(span, req)
+
 	if req.Operation != llm.OperationEmbedding {
+		span.SetStatus(codes.Error, "unsupported operation")
 		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
 	if s.Planner == nil {
+		span.SetStatus(codes.Error, "planner is nil")
 		return llm.Response{}, fmt.Errorf("llm service planner is nil")
 	}
 
@@ -97,7 +118,11 @@ func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, err
 	start := time.Now()
 	resp, err := handler(ctx, req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		s.recordBudgetRejections(req, s.Planner.Explain(req), time.Since(start))
+	} else {
+		recordResponseSpanAttrs(span, resp)
 	}
 	s.recordAuditEvent("embedding", req, router.Plan{
 		Provider:         resp.Route.Provider,
@@ -114,16 +139,26 @@ func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, err
 // When the provider lacks native streaming support, this falls back to a unary
 // chat invocation and emits only start/completed events.
 func (s *Service) StreamChat(ctx context.Context, req llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error) {
+	ctx, span := feotel.StartSpan(ctx, "tether.ai.chat.stream")
+	defer span.End()
+	recordRequestSpanAttrs(span, req)
+
 	if req.Operation != llm.OperationChat {
+		span.SetStatus(codes.Error, "unsupported operation")
 		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
 	if s.Planner == nil {
+		span.SetStatus(codes.Error, "planner is nil")
 		return llm.Response{}, fmt.Errorf("llm service planner is nil")
 	}
 	start := time.Now()
 	resp, err := s.streamChat(ctx, req, emit)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		s.recordBudgetRejections(req, s.Planner.Explain(req), time.Since(start))
+	} else {
+		recordResponseSpanAttrs(span, resp)
 	}
 	s.recordAuditEvent("chat", req, router.Plan{
 		Provider:         resp.Route.Provider,
@@ -277,8 +312,14 @@ func (s *Service) handleChat(ctx context.Context, req llm.Request) (llm.Response
 	}
 
 	route := plan.RouteDecision()
+	ctx, span := genai.ModelCallSpan(ctx, route.Model, "chat")
+	defer span.End()
+	recordRouteSpanAttrs(span, route, providerTypeForRoute(s.ProviderInfo, route))
+	callStart := time.Now()
 	resp, err := provider.Chat(ctx, req, route)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return llm.Response{}, err
 	}
 	if resp.Provider == "" {
@@ -291,6 +332,8 @@ func (s *Service) handleChat(ctx context.Context, req llm.Request) (llm.Response
 	if resp.Usage.EstimatedCostUSD == 0 && plan.EstimatedCostUSD > 0 {
 		resp.Usage.EstimatedCostUSD = plan.EstimatedCostUSD
 	}
+	recordResponseSpanAttrs(span, resp)
+	genai.RecordModelLatency(ctx, resp.Model, time.Since(callStart))
 	return resp, nil
 }
 
@@ -311,8 +354,14 @@ func (s *Service) handleEmbed(ctx context.Context, req llm.Request) (llm.Respons
 	}
 
 	route := plan.RouteDecision()
+	ctx, span := genai.ModelCallSpan(ctx, route.Model, "embeddings")
+	defer span.End()
+	recordRouteSpanAttrs(span, route, providerTypeForRoute(s.ProviderInfo, route))
+	callStart := time.Now()
 	resp, err := embedder.Embed(ctx, req, route)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return llm.Response{}, err
 	}
 	if resp.Provider == "" {
@@ -325,6 +374,8 @@ func (s *Service) handleEmbed(ctx context.Context, req llm.Request) (llm.Respons
 	if resp.Usage.EstimatedCostUSD == 0 && plan.EstimatedCostUSD > 0 {
 		resp.Usage.EstimatedCostUSD = plan.EstimatedCostUSD
 	}
+	recordResponseSpanAttrs(span, resp)
+	genai.RecordModelLatency(ctx, resp.Model, time.Since(callStart))
 	return resp, nil
 }
 
@@ -340,6 +391,10 @@ func (s *Service) streamChat(ctx context.Context, req llm.Request, emit func(llm
 	}
 
 	route := plan.RouteDecision()
+	ctx, span := genai.ModelCallSpan(ctx, route.Model, "chat")
+	defer span.End()
+	recordRouteSpanAttrs(span, route, providerTypeForRoute(s.ProviderInfo, route))
+	callStart := time.Now()
 	if emit != nil {
 		if err := emit(llm.StreamEvent{
 			Kind:     llm.StreamEventStart,
@@ -357,6 +412,8 @@ func (s *Service) streamChat(ctx context.Context, req llm.Request, emit func(llm
 		resp, err = provider.Chat(ctx, req, route)
 	}
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return llm.Response{}, err
 	}
 	if resp.Provider == "" {
@@ -369,6 +426,8 @@ func (s *Service) streamChat(ctx context.Context, req llm.Request, emit func(llm
 	if resp.Usage.EstimatedCostUSD == 0 && plan.EstimatedCostUSD > 0 {
 		resp.Usage.EstimatedCostUSD = plan.EstimatedCostUSD
 	}
+	recordResponseSpanAttrs(span, resp)
+	genai.RecordModelLatency(ctx, resp.Model, time.Since(callStart))
 	if emit != nil {
 		if err := emit(llm.StreamEvent{
 			Kind:       llm.StreamEventCompleted,
@@ -382,6 +441,62 @@ func (s *Service) streamChat(ctx context.Context, req llm.Request, emit func(llm
 		}
 	}
 	return resp, nil
+}
+
+func recordRequestSpanAttrs(span interface{ SetAttributes(...attribute.KeyValue) }, req llm.Request) {
+	attrs := []attribute.KeyValue{
+		attribute.String("hollis.app", "tether"),
+		attribute.String("hollis.ai.operation", string(req.Operation)),
+		attribute.String("hollis.ai.provider_hint", req.ProviderHint),
+		attribute.String("hollis.ai.model_hint", req.ModelHint),
+		attribute.Bool("hollis.ai.streaming", req.Streaming),
+		attribute.Int("hollis.ai.input_messages", len(req.Input)),
+		attribute.Int("hollis.ai.embedding_inputs", len(req.EmbeddingInput)),
+	}
+	if req.SessionID != "" {
+		attrs = append(attrs, attribute.String("hollis.session.id", req.SessionID))
+	}
+	if req.CallerID != "" {
+		attrs = append(attrs, attribute.String("hollis.caller.id", req.CallerID))
+	}
+	if req.RequestID != "" {
+		attrs = append(attrs, attribute.String("hollis.request.id", req.RequestID))
+	}
+	span.SetAttributes(attrs...)
+}
+
+func recordRouteSpanAttrs(span interface{ SetAttributes(...attribute.KeyValue) }, route llm.RouteDecision, providerType string) {
+	attrs := []attribute.KeyValue{
+		attribute.String("hollis.ai.provider", route.Provider),
+		attribute.String("hollis.ai.model", route.Model),
+		attribute.String(string(genai.GenAIRequestModelKey), route.Model),
+	}
+	if providerType != "" {
+		attrs = append(attrs, attribute.String(string(genai.GenAISystemKey), providerType))
+	}
+	if route.PolicyVersion != "" {
+		attrs = append(attrs, attribute.String("hollis.ai.policy_version", route.PolicyVersion))
+	}
+	span.SetAttributes(attrs...)
+}
+
+func recordResponseSpanAttrs(span trace.Span, resp llm.Response) {
+	span.SetAttributes(
+		attribute.String("hollis.ai.provider", resp.Provider),
+		attribute.String("hollis.ai.model", resp.Model),
+		attribute.String(string(genai.GenAIResponseFinishReasonKey), resp.StopReason),
+	)
+	genai.RecordTokenUsage(span, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	if resp.StopReason != "" || len(resp.Output) > 0 || len(resp.Embeddings) > 0 {
+		span.SetStatus(codes.Ok, "")
+	}
+}
+
+func providerTypeForRoute(info map[string]ProviderInfo, route llm.RouteDecision) string {
+	if provider, ok := info[route.Provider]; ok {
+		return provider.Type
+	}
+	return ""
 }
 
 func matchesVendor(providerType, vendorID string) bool {

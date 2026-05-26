@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -73,6 +74,9 @@ func (r *ProxyRouter) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp
 				"upstream server %q is unavailable; tool %q cannot be called",
 				rt.ServerID, tReq.Params.Name,
 			)), nil
+		}
+		if args, ok := tReq.Params.Arguments.(map[string]any); ok || tReq.Params.Arguments == nil {
+			tReq.Params.Arguments = otelprop.InjectMCP(tCtx, args)
 		}
 		return rt.Client.CallTool(tCtx, tReq)
 	})

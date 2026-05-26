@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-agent-sessions/agentsessions"
+	otelprop "github.com/hollis-labs/go-otel/propagation"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
@@ -292,7 +293,7 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/mentions", apiHandler)
 		}
 	}
-	return mux
+	return otelprop.HTTPMiddleware(mux)
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —

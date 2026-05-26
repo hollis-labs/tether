@@ -142,9 +142,10 @@ type EventsHistoryQuery struct {
 // New constructs a Client for the given listen_addr. The transport handles
 // unix: and tcp: schemes the same way daemon.Server accepts them.
 func New(listenAddr string) *Client {
+	httpClient := withTracing(daemon.DialHTTPClient(listenAddr))
 	return &Client{
 		baseURL: daemon.BaseURL(listenAddr),
-		http:    daemon.DialHTTPClient(listenAddr),
+		http:    httpClient,
 	}
 }
 

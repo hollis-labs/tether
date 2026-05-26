@@ -8,6 +8,7 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // mockClient satisfies mcpclient.MCPClient for testing.
@@ -165,5 +166,42 @@ func TestProxyRouter_UpstreamTransportError(t *testing.T) {
 	_, err := router.Handle(context.Background(), callReq("flaky_tool"))
 	if err == nil {
 		t.Error("expected error propagated from upstream transport failure")
+	}
+}
+
+func TestProxyRouter_InjectsTraceContextIntoUpstreamCall(t *testing.T) {
+	reg := NewToolRegistry()
+	var gotArgs map[string]any
+	mc := &mockClient{
+		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			gotArgs = req.GetArguments()
+			return mcp.NewToolResultText("ok"), nil
+		},
+	}
+	reg.Register("upstream", mc, []mcp.Tool{makeTool("upstream_tool")})
+
+	router := NewProxyRouter(reg)
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		SpanID:     trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2},
+		TraceFlags: trace.FlagsSampled,
+		Remote:     false,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), sc)
+
+	result, err := router.Handle(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "upstream_tool",
+			Arguments: map[string]any{"input": "hello"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected success result")
+	}
+	if gotArgs["_traceparent"] == "" {
+		t.Fatal("missing injected _traceparent in upstream tool call")
 	}
 }

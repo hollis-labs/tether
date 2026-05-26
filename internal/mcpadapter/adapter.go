@@ -28,9 +28,12 @@ import (
 	"log/slog"
 	"strings"
 
+	feotel "github.com/hollis-labs/go-otel"
+	otelprop "github.com/hollis-labs/go-otel/propagation"
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
@@ -128,7 +131,15 @@ func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerF
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s.AddTool(t, mcpsanitize.Middleware(logger)(h))
+	handler := mcpsanitize.Middleware(logger)(h)
+	s.AddTool(t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
+			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+		}
+		ctx, span := feotel.ToolCallSpan(ctx, t.Name)
+		defer span.End()
+		return handler(ctx, req)
+	})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

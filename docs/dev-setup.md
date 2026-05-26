@@ -106,6 +106,20 @@ cp -R examples/catalog/* "$AGENT_MUX_CATALOG/"
 All artifacts (SQLite state DB, session workspaces, logs, PID file,
 socket) land under `$AGENT_MUX_CATALOG` so cleanup is `rm -rf`.
 
+## OpenTelemetry
+
+Tether initializes OpenTelemetry tracing through `libs/go-otel`.
+
+Useful env vars:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — collector endpoint, default `localhost:4318`
+- `OTEL_SERVICE_NAMESPACE` — Tether sets this to `hollis` unless overridden
+- `HOLLIS_OTEL_DISABLED=1` — disable OTEL bootstrap
+- `TETHER_OTEL_DISABLED=1` — legacy Tether-specific disable alias
+
+The daemon HTTP surface extracts W3C trace context, and Tether's outgoing
+app-to-app HTTP calls inject trace context automatically.
+
 ## AI gateway setup
 
 The in-process AI gateway is configured in `global.yaml`. The current schema

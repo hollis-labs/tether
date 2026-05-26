@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+
+	internalotel "github.com/hollis-labs/tether/internal/otel"
 )
 
 var (
@@ -23,6 +26,14 @@ type exitCoder interface {
 }
 
 func main() {
+	ctx := context.Background()
+	shutdown, err := internalotel.Init(ctx, "tether", version)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: otel init failed:", err)
+	} else if shutdown != nil {
+		defer func() { _ = shutdown(ctx) }()
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var ec exitCoder

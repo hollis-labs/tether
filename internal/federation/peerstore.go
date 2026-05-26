@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	otelprop "github.com/hollis-labs/go-otel/propagation"
 	messaging "github.com/hollis-labs/go-messaging"
 )
 
@@ -69,6 +70,7 @@ func (s *httpPeerStore) url(elem ...string) string {
 // do issues req and maps a non-2xx status to a sentinel or descriptive
 // error. On success it leaves the response body open for the caller.
 func (s *httpPeerStore) do(req *http.Request) (*http.Response, error) {
+	otelprop.InjectHTTP(req.Context(), req)
 	// The request URL is built from the peer's operator-configured,
 	// Config.Validate-checked base URL — not from envelope content — so
 	// this is not an SSRF sink.
