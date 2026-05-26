@@ -1099,7 +1099,7 @@ export function AIPage() {
                         default_provider_order: splitList(event.target.value),
                       })
                     }
-                    placeholder={'anthropic\nopenai'}
+                    placeholder={'anthropic\ngemini\nopenai'}
                   />
                 </FormField>
               </div>
@@ -1366,11 +1366,12 @@ function ProviderDialog({
             <div className="grid gap-3">
               <div className="grid gap-3 sm:grid-cols-[1fr_12rem_8rem]">
                 <FormField label="ID">
-                  <input className={inputClass} value={form.id} onChange={(event) => update({ id: event.target.value })} placeholder="anthropic-primary" />
+                  <input className={inputClass} value={form.id} onChange={(event) => update({ id: event.target.value })} placeholder="provider-primary" />
                 </FormField>
                 <FormField label="Type">
                   <select className={inputClass} value={form.type} onChange={(event) => update({ type: event.target.value })}>
                     <option value="anthropic">anthropic</option>
+                    <option value="gemini">gemini</option>
                     <option value="openai">openai</option>
                     <option value="openai-compatible">openai-compatible</option>
                   </select>
@@ -1439,6 +1440,10 @@ function ProviderDialog({
                   <div className="text-[11px] text-text-subtle">
                     {catalog?.error
                       ? `Catalog lookup error: ${catalog.error}`
+                      : form.type === 'gemini'
+                        ? catalog?.last_fetched_at
+                          ? `Gemini suggestions come from the Google models.dev catalog. Fetched ${formatRelativeTime(catalog.last_fetched_at)}.`
+                          : 'Gemini suggestions come from the Google models.dev catalog when available.'
                       : form.type === 'openai-compatible'
                         ? 'OpenAI-compatible uses the OpenAI catalog as a suggestion set. Add custom local model IDs when needed.'
                         : catalog?.last_fetched_at
@@ -1449,7 +1454,7 @@ function ProviderDialog({
               </FormField>
               <div className="grid gap-3 sm:grid-cols-2">
                 <FormField label="Secret ref">
-                  <input className={inputClass} value={form.secretRef} onChange={(event) => update({ secretRef: event.target.value })} placeholder="helper://anthropic-api-key" />
+                  <input className={inputClass} value={form.secretRef} onChange={(event) => update({ secretRef: event.target.value })} placeholder="keychain://provider/account" />
                 </FormField>
                 <FormField label="Base URL">
                   <input className={inputClass} value={form.baseURL} onChange={(event) => update({ baseURL: event.target.value })} placeholder="http://127.0.0.1:11434/v1" />

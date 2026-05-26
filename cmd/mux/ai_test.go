@@ -188,6 +188,45 @@ func TestAICmdChatStreamPretty(t *testing.T) {
 	}
 }
 
+func TestBuildAIRequestWithImageFile(t *testing.T) {
+	t.Cleanup(resetAIFlags)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(path, []byte("not-a-real-png"), 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	aiImageFiles = []string{path}
+
+	req, err := buildAIRequest(nil)
+	if err != nil {
+		t.Fatalf("buildAIRequest: %v", err)
+	}
+	if len(req.Input) != 1 || len(req.Input[0].Parts) != 1 {
+		t.Fatalf("request parts = %#v", req.Input)
+	}
+	part := req.Input[0].Parts[0]
+	if part.Type != "image" || part.MIMEType != "image/png" || len(part.Data) == 0 {
+		t.Fatalf("image part = %#v", part)
+	}
+}
+
+func TestBuildAIRequestWithImageURL(t *testing.T) {
+	t.Cleanup(resetAIFlags)
+	aiImageURLs = []string{"https://example.com/cat.jpg"}
+
+	req, err := buildAIRequest([]string{"describe this"})
+	if err != nil {
+		t.Fatalf("buildAIRequest: %v", err)
+	}
+	if len(req.Input) != 1 || len(req.Input[0].Parts) != 2 {
+		t.Fatalf("request parts = %#v", req.Input)
+	}
+	part := req.Input[0].Parts[1]
+	if part.Type != "image" || part.MIMEType != "image/jpeg" || part.URL != "https://example.com/cat.jpg" {
+		t.Fatalf("image url part = %#v", part)
+	}
+}
+
 func TestAICmdRoutesPretty(t *testing.T) {
 	_ = newAIFixture(t)
 
@@ -421,6 +460,10 @@ type aiStubService struct {
 }
 
 func (s aiStubService) Chat(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}
+
+func (s aiStubService) Embed(context.Context, llm.Request) (llm.Response, error) {
 	return s.resp, nil
 }
 

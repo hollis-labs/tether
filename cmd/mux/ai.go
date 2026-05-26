@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
+	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -36,6 +40,8 @@ var (
 	aiTokenBudgetFlag int
 	aiCostBudgetFlag  float64
 	aiLatencyTargetMS int
+	aiImageFiles      []string
+	aiImageURLs       []string
 
 	aiAuditEventTypeFlag string
 	aiAuditErrorsOnly    bool
@@ -223,6 +229,31 @@ var aiChatCmd = &cobra.Command{
 			return printJSON(out)
 		}
 		printAIChatResponse(out.Response)
+		return nil
+	},
+}
+
+var aiEmbeddingsCmd = &cobra.Command{
+	Use:   "embeddings [text|-]",
+	Short: "Generate embeddings through the AI gateway",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		req, err := buildAIEmbeddingRequest(args)
+		if err != nil {
+			return err
+		}
+		c, err := aiClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.AIEmbeddings(cmdCtx(cmd), api.ChatRequest{Request: req})
+		if err != nil {
+			return classifyErr(err)
+		}
+		if aiJSONFlag {
+			return printJSON(out)
+		}
+		printAIEmbeddingResponse(out.Response)
 		return nil
 	},
 }
@@ -428,6 +459,10 @@ func buildAIRequest(args []string) (llm.Request, error) {
 	if strings.TrimSpace(aiRequestFileFlag) != "" && strings.TrimSpace(aiRequestJSONFlag) != "" {
 		return llm.Request{}, validationErr("ai: --request-file and --request-json are mutually exclusive")
 	}
+	parts, err := buildAIUserParts(args)
+	if err != nil {
+		return llm.Request{}, err
+	}
 	if strings.TrimSpace(aiRequestFileFlag) != "" || strings.TrimSpace(aiRequestJSONFlag) != "" {
 		if len(args) > 0 {
 			return llm.Request{}, validationErr("ai: positional text cannot be combined with --request-file or --request-json")
@@ -440,18 +475,11 @@ func buildAIRequest(args []string) (llm.Request, error) {
 		if req.Operation == "" {
 			req.Operation = llm.OperationChat
 		}
+		req = appendAIUserParts(req, parts)
 		if len(req.Input) == 0 {
 			return llm.Request{}, validationErr("ai: request input is required")
 		}
 		return req, nil
-	}
-
-	text, err := readAITextArg(args)
-	if err != nil {
-		return llm.Request{}, validationErr("ai: %v", err)
-	}
-	if strings.TrimSpace(text) == "" {
-		return llm.Request{}, validationErr("ai: request text is required")
 	}
 
 	req := applyAIRequestOverrides(llm.Request{
@@ -464,9 +492,48 @@ func buildAIRequest(args []string) (llm.Request, error) {
 			Parts: []llm.ContentPart{{Type: "text", Text: aiSystemFlag}},
 		})
 	}
-	req.Input = append(req.Input, llm.Message{
-		Role:  "user",
-		Parts: []llm.ContentPart{{Type: "text", Text: text}},
+	if len(parts) == 0 {
+		return llm.Request{}, validationErr("ai: request text or image input is required")
+	}
+	req.Input = append(req.Input, llm.Message{Role: "user", Parts: parts})
+	return req, nil
+}
+
+func buildAIEmbeddingRequest(args []string) (llm.Request, error) {
+	if strings.TrimSpace(aiRequestFileFlag) != "" && strings.TrimSpace(aiRequestJSONFlag) != "" {
+		return llm.Request{}, validationErr("ai: --request-file and --request-json are mutually exclusive")
+	}
+	if strings.TrimSpace(aiRequestFileFlag) != "" || strings.TrimSpace(aiRequestJSONFlag) != "" {
+		if len(args) > 0 {
+			return llm.Request{}, validationErr("ai: positional text cannot be combined with --request-file or --request-json")
+		}
+		req, err := readAIRequestOverride()
+		if err != nil {
+			return llm.Request{}, err
+		}
+		req = applyAIRequestOverrides(req)
+		if req.Operation == "" {
+			req.Operation = llm.OperationEmbedding
+		}
+		if req.Operation != llm.OperationEmbedding {
+			return llm.Request{}, validationErr("ai: request operation must be embedding")
+		}
+		if len(req.EmbeddingInput) == 0 {
+			return llm.Request{}, validationErr("ai: embedding_input is required")
+		}
+		return req, nil
+	}
+
+	text, err := readAITextArg(args)
+	if err != nil {
+		return llm.Request{}, validationErr("ai: %v", err)
+	}
+	if strings.TrimSpace(text) == "" {
+		return llm.Request{}, validationErr("ai: embedding text is required")
+	}
+	req := applyAIRequestOverrides(llm.Request{
+		Operation:      llm.OperationEmbedding,
+		EmbeddingInput: []string{text},
 	})
 	return req, nil
 }
@@ -528,8 +595,48 @@ func applyAIRequestOverrides(req llm.Request) llm.Request {
 	return req
 }
 
+func appendAIUserParts(req llm.Request, parts []llm.ContentPart) llm.Request {
+	if len(parts) == 0 {
+		return req
+	}
+	req.Input = append(req.Input, llm.Message{
+		Role:  "user",
+		Parts: append([]llm.ContentPart(nil), parts...),
+	})
+	return req
+}
+
+func buildAIUserParts(args []string) ([]llm.ContentPart, error) {
+	text, err := readAITextArg(args)
+	if err != nil {
+		return nil, validationErr("ai: %v", err)
+	}
+	parts := make([]llm.ContentPart, 0, 1+len(aiImageFiles)+len(aiImageURLs))
+	if strings.TrimSpace(text) != "" {
+		parts = append(parts, llm.ContentPart{Type: "text", Text: text})
+	}
+	for _, path := range aiImageFiles {
+		part, err := imagePartFromFile(path)
+		if err != nil {
+			return nil, validationErr("ai: %v", err)
+		}
+		parts = append(parts, part)
+	}
+	for _, rawURL := range aiImageURLs {
+		part, err := imagePartFromURL(rawURL)
+		if err != nil {
+			return nil, validationErr("ai: %v", err)
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
 func readAITextArg(args []string) (string, error) {
 	if len(args) == 0 {
+		if len(aiImageFiles) > 0 || len(aiImageURLs) > 0 {
+			return "", nil
+		}
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return "", fmt.Errorf("read stdin: %w", err)
@@ -544,6 +651,43 @@ func readAITextArg(args []string) (string, error) {
 		return strings.TrimSpace(string(b)), nil
 	}
 	return args[0], nil
+}
+
+func imagePartFromFile(path string) (llm.ContentPart, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // operator-supplied file path is the purpose of the flag.
+	if err != nil {
+		return llm.ContentPart{}, fmt.Errorf("read image file %q: %w", path, err)
+	}
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(mimeType, "image/") {
+		return llm.ContentPart{}, fmt.Errorf("image file %q is not an image (detected %q)", path, mimeType)
+	}
+	return llm.ContentPart{
+		Type:     "image",
+		MIMEType: mimeType,
+		Data:     data,
+		Name:     filepath.Base(path),
+	}, nil
+}
+
+func imagePartFromURL(rawURL string) (llm.ContentPart, error) {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		return llm.ContentPart{}, fmt.Errorf("parse image url %q: %w", rawURL, err)
+	}
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(parsed.Path)))
+	if !strings.HasPrefix(mimeType, "image/") {
+		return llm.ContentPart{}, fmt.Errorf("image url %q requires an image-like extension so mime type can be inferred", rawURL)
+	}
+	return llm.ContentPart{
+		Type:     "image",
+		MIMEType: mimeType,
+		URL:      rawURL,
+		Name:     filepath.Base(parsed.Path),
+	}, nil
 }
 
 func validateAISinceFlag() error {
@@ -565,6 +709,16 @@ func printAIChatResponse(resp llm.Response) {
 		}
 	}
 	printAIChatSummary(resp)
+}
+
+func printAIEmbeddingResponse(resp llm.Response) {
+	fmt.Printf("provider: %s\nmodel: %s\nembeddings: %d\n", resp.Provider, resp.Model, len(resp.Embeddings))
+	if resp.Usage.InputTokens > 0 {
+		fmt.Printf("input tokens: %d\n", resp.Usage.InputTokens)
+	}
+	if len(resp.Embeddings) > 0 {
+		fmt.Printf("dimensions: %d\n", len(resp.Embeddings[0].Vector))
+	}
 }
 
 func printAIChatSummary(resp llm.Response) {
@@ -792,6 +946,8 @@ func resetAIFlags() {
 	aiRequestJSONFlag = ""
 	aiSystemFlag = ""
 	aiStreamFlag = false
+	aiImageFiles = nil
+	aiImageURLs = nil
 	aiSessionIDFlag = ""
 	aiCallerIDFlag = ""
 	aiRequestIDFlag = ""
@@ -817,6 +973,8 @@ func init() {
 
 	aiChatCmd.Flags().StringVar(&aiSystemFlag, "system", "", "optional system prompt")
 	aiChatCmd.Flags().BoolVar(&aiStreamFlag, "stream", false, "stream incremental response events over SSE")
+	aiChatCmd.Flags().StringArrayVar(&aiImageFiles, "image-file", nil, "append an image file as a user content part")
+	aiChatCmd.Flags().StringArrayVar(&aiImageURLs, "image-url", nil, "append an image URL as a user content part")
 	aiChatCmd.Flags().StringVar(&aiRequestFileFlag, "request-file", "", "path to a normalized AI request in JSON or YAML")
 	aiChatCmd.Flags().StringVar(&aiRequestJSONFlag, "request-json", "", "inline normalized AI request JSON")
 	aiChatCmd.Flags().StringVar(&aiRequestIDFlag, "request-id", "", "request correlation id")
@@ -827,7 +985,18 @@ func init() {
 	aiChatCmd.Flags().Float64Var(&aiCostBudgetFlag, "cost-budget-usd", 0, "cost budget hint in USD")
 	aiChatCmd.Flags().IntVar(&aiLatencyTargetMS, "latency-target-ms", 0, "latency target hint in milliseconds")
 
+	aiEmbeddingsCmd.Flags().StringVar(&aiRequestFileFlag, "request-file", "", "path to a normalized AI request in JSON or YAML")
+	aiEmbeddingsCmd.Flags().StringVar(&aiRequestJSONFlag, "request-json", "", "inline normalized AI request JSON")
+	aiEmbeddingsCmd.Flags().StringVar(&aiRequestIDFlag, "request-id", "", "request correlation id")
+	aiEmbeddingsCmd.Flags().StringVar(&aiModeFlag, "mode", "", "mode hint")
+	aiEmbeddingsCmd.Flags().StringVar(&aiIntentFlag, "intent", "", "intent hint")
+	aiEmbeddingsCmd.Flags().IntVar(&aiTokenBudgetFlag, "token-budget", 0, "token budget hint")
+	aiEmbeddingsCmd.Flags().Float64Var(&aiCostBudgetFlag, "cost-budget-usd", 0, "cost budget hint in USD")
+	aiEmbeddingsCmd.Flags().IntVar(&aiLatencyTargetMS, "latency-target-ms", 0, "latency target hint in milliseconds")
+
 	aiRoutePreviewCmd.Flags().StringVar(&aiSystemFlag, "system", "", "optional system prompt")
+	aiRoutePreviewCmd.Flags().StringArrayVar(&aiImageFiles, "image-file", nil, "append an image file as a user content part")
+	aiRoutePreviewCmd.Flags().StringArrayVar(&aiImageURLs, "image-url", nil, "append an image URL as a user content part")
 	aiRoutePreviewCmd.Flags().StringVar(&aiRequestFileFlag, "request-file", "", "path to a normalized AI request in JSON or YAML")
 	aiRoutePreviewCmd.Flags().StringVar(&aiRequestJSONFlag, "request-json", "", "inline normalized AI request JSON")
 	aiRoutePreviewCmd.Flags().StringVar(&aiRequestIDFlag, "request-id", "", "request correlation id")
@@ -839,6 +1008,8 @@ func init() {
 	aiRoutePreviewCmd.Flags().IntVar(&aiLatencyTargetMS, "latency-target-ms", 0, "latency target hint in milliseconds")
 
 	aiRouteExplainCmd.Flags().StringVar(&aiSystemFlag, "system", "", "optional system prompt")
+	aiRouteExplainCmd.Flags().StringArrayVar(&aiImageFiles, "image-file", nil, "append an image file as a user content part")
+	aiRouteExplainCmd.Flags().StringArrayVar(&aiImageURLs, "image-url", nil, "append an image URL as a user content part")
 	aiRouteExplainCmd.Flags().StringVar(&aiRequestFileFlag, "request-file", "", "path to a normalized AI request in JSON or YAML")
 	aiRouteExplainCmd.Flags().StringVar(&aiRequestJSONFlag, "request-json", "", "inline normalized AI request JSON")
 	aiRouteExplainCmd.Flags().StringVar(&aiRequestIDFlag, "request-id", "", "request correlation id")
@@ -853,5 +1024,5 @@ func init() {
 	aiAuditCmd.Flags().BoolVar(&aiAuditErrorsOnly, "errors-only", false, "show only failed audit events")
 	aiAuditCmd.Flags().IntVar(&aiAuditLimit, "limit", 0, "max rows to return")
 
-	aiCmd.AddCommand(aiProvidersCmd, aiModelsCmd, aiRoutesCmd, aiChatCmd, aiRoutePreviewCmd, aiRouteExplainCmd, aiUsageCmd, aiBudgetsCmd, aiAuditCmd, aiWatchBudgetsCmd)
+	aiCmd.AddCommand(aiProvidersCmd, aiModelsCmd, aiRoutesCmd, aiChatCmd, aiEmbeddingsCmd, aiRoutePreviewCmd, aiRouteExplainCmd, aiUsageCmd, aiBudgetsCmd, aiAuditCmd, aiWatchBudgetsCmd)
 }

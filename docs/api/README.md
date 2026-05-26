@@ -90,9 +90,10 @@ All write-side AI endpoints accept a typed JSON envelope:
 ```
 
 `request.operation` defaults to `"chat"` when omitted. `POST /ai/chat` and
-`POST /ai/chat/stream` reject any other operation; `POST /ai/routes/preview`
+`POST /ai/chat/stream` reject any other operation; `POST /ai/embeddings`
+defaults to `"embedding"` and accepts only that operation. `POST /ai/routes/preview`
 accepts the full normalized request so the planner can inspect capabilities,
-budgets, tools, and attachments before choosing a route.
+budgets, tools, attachments, and embedding inputs before choosing a route.
 
 ### `GET /ai/providers`
 
@@ -354,6 +355,37 @@ data: {"kind":"response.completed","provider":"anthropic-work","model":"claude-s
 `response.completed` carries the final normalized `llm.Response`, including
 usage and route information. `response.error` is emitted when the upstream
 stream fails after the SSE response has already started.
+
+### `POST /ai/embeddings`
+
+Generate embedding vectors through the gateway.
+
+Response (200):
+
+```json
+{
+  "response": {
+    "provider": "openai-work",
+    "model": "text-embedding-3-small",
+    "embeddings": [
+      {"index": 0, "vector": [0.1, 0.2]},
+      {"index": 1, "vector": [0.3, 0.4]}
+    ],
+    "usage": {
+      "input_tokens": 11
+    },
+    "route": {
+      "provider": "openai-work",
+      "model": "text-embedding-3-small",
+      "policy_version": "catalog-ai-v1"
+    }
+  }
+}
+```
+
+Errors: `invalid_request` when the body is malformed, `embedding_input` is
+missing, or `operation` is not `embedding`; `not_found` when no route/provider
+can satisfy the request; `internal_error` for upstream provider failures.
 
 ### `GET /ai/usage`
 

@@ -132,20 +132,27 @@ See [`docs/mcp.md`](docs/mcp.md) for the full tool reference and setup guide.
 ## AI gateway
 
 Tether also exposes a typed local AI gateway when `global.yaml` configures
-at least one enabled AI provider. The current surfaces are:
+at least one enabled AI provider. Supported provider types currently include
+`anthropic`, `gemini`, `openai`, and `openai-compatible`. The current surfaces are:
 
 - HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
-  `/ai/chat/stream`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
-- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|usage|budgets|audit|watch-budgets`
+  `/ai/chat/stream`, `/ai/embeddings`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
 - MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
   `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
-  `mux_ai_chat_stream`,
+  `mux_ai_chat_stream`, `mux_ai_embeddings`,
   `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
 
 `mux ai chat` and `mux ai route-preview` accept either simple text input or a
 full normalized request via `--request-file` or `--request-json`. `mux ai chat
 --stream` uses the daemon SSE surface and renders incremental text deltas plus
 the final normalized response summary.
+For multimodal shorthand, `mux ai chat`, `mux ai route-preview`, and
+`mux ai route-explain` also accept `--image-file` and `--image-url` to append
+image parts without hand-writing normalized JSON.
+`mux ai embeddings "hello world"` generates vectors through the same routed
+gateway, and configured custom local model ids remain routable even when
+models.dev does not yet know them.
 Operators can also define ordered `ai.routing.routes` entries in
 `global.yaml` to steer provider/model selection by mode, intent, reasoning,
 or tool requirements, plus optional `allow_*` policy gates that reject
@@ -156,6 +163,14 @@ budgets are enforced from the `ai_events` history with daily or monthly
 windows and total, caller, or session scope. `mux ai watch-budgets` tails
 live `ai.budget_rejected` daemon events over
 `/events/stream?scope=daemon&kind=ai.budget_rejected`.
+
+Keychain setup examples:
+
+```bash
+printf '%s\n' "$OPENAI_API_KEY" | mux-apikey-helper set keychain://openai/work
+printf '%s\n' "$GEMINI_API_KEY" | mux-apikey-helper set keychain://gemini/work
+printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/work
+```
 
 ## Documentation
 

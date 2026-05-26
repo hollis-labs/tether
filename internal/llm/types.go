@@ -37,10 +37,12 @@ type Request struct {
 	CostBudgetUSD   float64 `json:"cost_budget_usd,omitempty"`
 	LatencyTargetMS int     `json:"latency_target_ms,omitempty"`
 
-	Input       []Message         `json:"input,omitempty"`
-	Tools       []ToolDefinition  `json:"tools,omitempty"`
-	Attachments []Attachment      `json:"attachments,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Input               []Message         `json:"input,omitempty"`
+	EmbeddingInput      []string          `json:"embedding_input,omitempty"`
+	EmbeddingDimensions int               `json:"embedding_dimensions,omitempty"`
+	Tools               []ToolDefinition  `json:"tools,omitempty"`
+	Attachments         []Attachment      `json:"attachments,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
 }
 
 // Message is a normalized conversational message. Providers that do not
@@ -95,10 +97,17 @@ type Response struct {
 	Provider   string        `json:"provider,omitempty"`
 	Model      string        `json:"model,omitempty"`
 	Output     []Message     `json:"output,omitempty"`
+	Embeddings []Embedding   `json:"embeddings,omitempty"`
 	StopReason string        `json:"stop_reason,omitempty"`
 	Refusal    string        `json:"refusal,omitempty"`
 	Usage      Usage         `json:"usage,omitempty"`
 	Route      RouteDecision `json:"route,omitempty"`
+}
+
+// Embedding is one normalized embedding vector result.
+type Embedding struct {
+	Index  int       `json:"index"`
+	Vector []float64 `json:"vector,omitempty"`
 }
 
 // Usage captures normalized provider usage + pricing fields.

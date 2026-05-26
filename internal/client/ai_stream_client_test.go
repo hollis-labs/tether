@@ -73,6 +73,10 @@ func (s streamAIStub) Chat(context.Context, llm.Request) (llm.Response, error) {
 	return s.resp, nil
 }
 
+func (s streamAIStub) Embed(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}
+
 func (s streamAIStub) StreamChat(_ context.Context, _ llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error) {
 	for _, ev := range s.stream {
 		if err := emit(ev); err != nil {

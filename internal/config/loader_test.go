@@ -48,14 +48,17 @@ func TestLoadExampleCatalog(t *testing.T) {
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
 		t.Errorf("daemon.shutdown_timeout = %q, want default %q", got, want)
 	}
-	if len(cat.Global.AI.Providers) != 2 {
-		t.Fatalf("ai.providers len = %d, want 2", len(cat.Global.AI.Providers))
+	if len(cat.Global.AI.Providers) != 3 {
+		t.Fatalf("ai.providers len = %d, want 3", len(cat.Global.AI.Providers))
 	}
 	if got := cat.Global.AI.Providers[0].ID; got != "anthropic-work" {
 		t.Fatalf("ai.providers[0].id = %q", got)
 	}
 	if got := cat.Global.AI.Providers[1].ID; got != "llama-local" {
 		t.Fatalf("ai.providers[1].id = %q", got)
+	}
+	if got := cat.Global.AI.Providers[2].ID; got != "gemini-work" {
+		t.Fatalf("ai.providers[2].id = %q", got)
 	}
 	if got := cat.Global.AI.Providers[0].EffectiveDefaultModel(); got != "claude-sonnet-4-5" {
 		t.Fatalf("ai.providers[0].default model = %q", got)

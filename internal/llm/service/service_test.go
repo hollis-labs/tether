@@ -93,6 +93,47 @@ func TestServiceChatRejectsUnsupportedOperation(t *testing.T) {
 	}
 }
 
+func TestServiceEmbedRoutesProvider(t *testing.T) {
+	t.Parallel()
+
+	svc := Service{
+		Planner: stubPlanner{
+			plan: router.Plan{
+				Provider:         "openai-work",
+				Model:            "text-embedding-3-small",
+				EstimatedCostUSD: 0.0002,
+				Reasons:          []string{"selected first configured route that satisfied policy"},
+				PolicyVersion:    "v1",
+			},
+		},
+		Providers: map[string]llm.ChatProvider{
+			"openai-work": stubEmbeddingProvider{
+				resp: llm.Response{
+					Embeddings: []llm.Embedding{{Index: 0, Vector: []float64{0.1, 0.2}}},
+					Usage:      llm.Usage{InputTokens: 8},
+				},
+			},
+		},
+	}
+
+	resp, err := svc.Embed(context.Background(), llm.Request{
+		Operation:      llm.OperationEmbedding,
+		EmbeddingInput: []string{"hello"},
+	})
+	if err != nil {
+		t.Fatalf("Embed returned err: %v", err)
+	}
+	if resp.Provider != "openai-work" || resp.Model != "text-embedding-3-small" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if len(resp.Embeddings) != 1 || len(resp.Embeddings[0].Vector) != 2 {
+		t.Fatalf("embeddings = %+v", resp.Embeddings)
+	}
+	if resp.Usage.EstimatedCostUSD != 0.0002 {
+		t.Fatalf("EstimatedCostUSD = %f", resp.Usage.EstimatedCostUSD)
+	}
+}
+
 func TestServiceChatErrorsOnMissingProvider(t *testing.T) {
 	t.Parallel()
 
@@ -157,6 +198,21 @@ func TestServicePreviewRoute(t *testing.T) {
 		t.Fatalf("PreviewRoute err = %v", err)
 	}
 	if plan.Provider != "anthropic-work" {
+		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+func TestServicePreviewRouteAllowsEmbeddingOperation(t *testing.T) {
+	t.Parallel()
+
+	svc := Service{
+		Planner: stubPlanner{plan: router.Plan{Provider: "openai-work", Model: "text-embedding-3-small"}},
+	}
+	plan, err := svc.PreviewRoute(llm.Request{Operation: llm.OperationEmbedding, EmbeddingInput: []string{"hello"}})
+	if err != nil {
+		t.Fatalf("PreviewRoute err = %v", err)
+	}
+	if plan.Model != "text-embedding-3-small" {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
@@ -305,6 +361,19 @@ type stubStreamingProvider struct {
 	resp   llm.Response
 	err    error
 	events []llm.StreamEvent
+}
+
+type stubEmbeddingProvider struct {
+	resp llm.Response
+	err  error
+}
+
+func (s stubEmbeddingProvider) Chat(_ context.Context, _ llm.Request, _ llm.RouteDecision) (llm.Response, error) {
+	return llm.Response{}, errors.New("unexpected chat call")
+}
+
+func (s stubEmbeddingProvider) Embed(_ context.Context, _ llm.Request, _ llm.RouteDecision) (llm.Response, error) {
+	return s.resp, s.err
 }
 
 func (s stubStreamingProvider) Chat(_ context.Context, _ llm.Request, _ llm.RouteDecision) (llm.Response, error) {

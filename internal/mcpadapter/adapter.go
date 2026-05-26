@@ -259,3 +259,36 @@ func floatArg(req mcp.CallToolRequest, key string, def float64) float64 {
 		return def
 	}
 }
+
+func strSliceArg(req mcp.CallToolRequest, key string) []string {
+	raw, ok := req.GetArguments()[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}

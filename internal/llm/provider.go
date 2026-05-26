@@ -8,6 +8,12 @@ type ChatProvider interface {
 	Chat(ctx context.Context, req Request, route RouteDecision) (Response, error)
 }
 
+// EmbeddingProvider executes a normalized embedding request against one
+// concrete provider/runtime that has already been selected by the router.
+type EmbeddingProvider interface {
+	Embed(ctx context.Context, req Request, route RouteDecision) (Response, error)
+}
+
 // StreamChatProvider is the optional streaming extension for a chat provider.
 // Implementations emit normalized stream events through emit and return the
 // final accumulated response once the vendor stream completes.

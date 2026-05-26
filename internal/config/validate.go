@@ -109,7 +109,7 @@ func validateAIConfig(ai AIConfig) error {
 		}
 		models := p.EffectiveModels()
 		switch p.Type {
-		case "anthropic", "openai":
+		case "anthropic", "openai", "gemini":
 			if p.SecretRef == "" {
 				return fmt.Errorf("global ai.providers[%d] (%s) missing secret_ref", i, p.ID)
 			}

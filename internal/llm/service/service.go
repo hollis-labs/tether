@@ -83,6 +83,32 @@ func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, erro
 	return resp, err
 }
 
+// Embed routes one normalized embedding request through middleware and into
+// the selected provider adapter.
+func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, error) {
+	if req.Operation != llm.OperationEmbedding {
+		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
+	}
+	if s.Planner == nil {
+		return llm.Response{}, fmt.Errorf("llm service planner is nil")
+	}
+
+	handler := llm.BuildMiddlewareChain(s.handleEmbed, s.Middleware)
+	start := time.Now()
+	resp, err := handler(ctx, req)
+	if err != nil {
+		s.recordBudgetRejections(req, s.Planner.Explain(req), time.Since(start))
+	}
+	s.recordAuditEvent("embedding", req, router.Plan{
+		Provider:         resp.Route.Provider,
+		Model:            resp.Route.Model,
+		EstimatedCostUSD: resp.Usage.EstimatedCostUSD,
+		Reasons:          append([]string(nil), resp.Route.Reasons...),
+		PolicyVersion:    resp.Route.PolicyVersion,
+	}, resp, err, time.Since(start))
+	return resp, err
+}
+
 // StreamChat routes one normalized chat request through the planner and a
 // streaming-capable provider adapter, emitting normalized incremental events.
 // When the provider lacks native streaming support, this falls back to a unary
@@ -114,7 +140,7 @@ func (s *Service) PreviewRoute(req llm.Request) (router.Plan, error) {
 	if req.Operation == "" {
 		req.Operation = llm.OperationChat
 	}
-	if req.Operation != llm.OperationChat {
+	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding {
 		return router.Plan{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
 	if s.Planner == nil {
@@ -134,7 +160,7 @@ func (s *Service) ExplainRoute(req llm.Request) (router.Explanation, error) {
 	if req.Operation == "" {
 		req.Operation = llm.OperationChat
 	}
-	if req.Operation != llm.OperationChat {
+	if req.Operation != llm.OperationChat && req.Operation != llm.OperationEmbedding {
 		return router.Explanation{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
 	}
 	if s.Planner == nil {
@@ -252,6 +278,40 @@ func (s *Service) handleChat(ctx context.Context, req llm.Request) (llm.Response
 
 	route := plan.RouteDecision()
 	resp, err := provider.Chat(ctx, req, route)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	if resp.Provider == "" {
+		resp.Provider = route.Provider
+	}
+	if resp.Model == "" {
+		resp.Model = route.Model
+	}
+	resp.Route = route
+	if resp.Usage.EstimatedCostUSD == 0 && plan.EstimatedCostUSD > 0 {
+		resp.Usage.EstimatedCostUSD = plan.EstimatedCostUSD
+	}
+	return resp, nil
+}
+
+func (s *Service) handleEmbed(ctx context.Context, req llm.Request) (llm.Response, error) {
+	plan, err := s.Planner.Plan(req)
+	if err != nil {
+		return llm.Response{}, err
+	}
+
+	provider, ok := s.Providers[plan.Provider]
+	if !ok {
+		return llm.Response{}, fmt.Errorf("%w: %s", ErrProviderNotRegistered, plan.Provider)
+	}
+
+	embedder, ok := provider.(llm.EmbeddingProvider)
+	if !ok {
+		return llm.Response{}, fmt.Errorf("%w: %s", ErrUnsupportedOperation, req.Operation)
+	}
+
+	route := plan.RouteDecision()
+	resp, err := embedder.Embed(ctx, req, route)
 	if err != nil {
 		return llm.Response{}, err
 	}
@@ -429,13 +489,16 @@ func (s *Service) publishBudgetRejection(req llm.Request, policyVersion string, 
 }
 
 func summarizeRequest(req llm.Request) string {
-	return fmt.Sprintf("messages=%d tools=%d attachments=%d streaming=%t provider_hint=%q model_hint=%q mode=%q intent=%q",
-		len(req.Input), len(req.Tools), len(req.Attachments), req.Streaming, req.ProviderHint, req.ModelHint, req.Mode, req.Intent)
+	return fmt.Sprintf("messages=%d embedding_inputs=%d tools=%d attachments=%d streaming=%t provider_hint=%q model_hint=%q mode=%q intent=%q",
+		len(req.Input), len(req.EmbeddingInput), len(req.Tools), len(req.Attachments), req.Streaming, req.ProviderHint, req.ModelHint, req.Mode, req.Intent)
 }
 
 func summarizeResponse(resp llm.Response) string {
 	var parts []string
 	parts = append(parts, fmt.Sprintf("messages=%d stop_reason=%q", len(resp.Output), resp.StopReason))
+	if len(resp.Embeddings) > 0 {
+		parts = append(parts, fmt.Sprintf("embeddings=%d", len(resp.Embeddings)))
+	}
 	if resp.Refusal != "" {
 		parts = append(parts, "refusal=true")
 	}

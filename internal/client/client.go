@@ -207,6 +207,33 @@ func (c *Client) AIChat(ctx context.Context, req api.ChatRequest) (api.ChatRespo
 	return out, nil
 }
 
+func (c *Client) AIEmbeddings(ctx context.Context, req api.ChatRequest) (api.ChatResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return api.ChatResponse{}, fmt.Errorf("marshal ai embeddings request: %w", err)
+	}
+	longClient := *c.http
+	longClient.Timeout = 0
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/ai/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return api.ChatResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := longClient.Do(httpReq)
+	if err != nil {
+		return api.ChatResponse{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.ChatResponse{}, readError(resp)
+	}
+	var out api.ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return api.ChatResponse{}, fmt.Errorf("decode ai embeddings response: %w", err)
+	}
+	return out, nil
+}
+
 func (c *Client) AIPreviewRoute(ctx context.Context, req api.ChatRequest) (api.RoutePreviewResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {

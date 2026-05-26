@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	openai "github.com/openai/openai-go"
 	sdk "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
@@ -27,6 +28,7 @@ type apiKeyResolver func(context.Context) (string, error)
 type responseClient interface {
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error)
 	NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) responseStream
+	NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, opts ...option.RequestOption) (*openai.CreateEmbeddingResponse, error)
 }
 
 type clientFactory func(apiKey string) responseClient
@@ -39,15 +41,20 @@ type responseStream interface {
 }
 
 type sdkResponseClient struct {
-	svc responses.ResponseService
+	responses  responses.ResponseService
+	embeddings openai.EmbeddingService
 }
 
 func (c sdkResponseClient) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
-	return c.svc.New(ctx, body, opts...)
+	return c.responses.New(ctx, body, opts...)
 }
 
 func (c sdkResponseClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) responseStream {
-	return c.svc.NewStreaming(ctx, body, opts...)
+	return c.responses.NewStreaming(ctx, body, opts...)
+}
+
+func (c sdkResponseClient) NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, opts ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
+	return c.embeddings.New(ctx, body, opts...)
 }
 
 // Config configures one OpenAI provider instance.
@@ -87,7 +94,8 @@ func New(cfg Config) *Provider {
 			if cfg.HTTPClient != nil {
 				opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
 			}
-			return sdkResponseClient{svc: sdk.NewClient(opts...).Responses}
+			client := sdk.NewClient(opts...)
+			return sdkResponseClient{responses: client.Responses, embeddings: client.Embeddings}
 		},
 	}
 }
@@ -115,6 +123,45 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 		return llm.Response{}, err
 	}
 	return translateResponse(resp, route), nil
+}
+
+// Embed sends one normalized embedding request to OpenAI.
+func (p *Provider) Embed(ctx context.Context, req llm.Request, route llm.RouteDecision) (llm.Response, error) {
+	if p.resolveAPIKey == nil && !p.allowUnauth {
+		return llm.Response{}, ErrAPIKeyResolverMissing
+	}
+	apiKey := ""
+	if p.resolveAPIKey != nil {
+		var err error
+		apiKey, err = p.resolveAPIKey(ctx)
+		if err != nil {
+			return llm.Response{}, fmt.Errorf("resolve openai api key: %w", err)
+		}
+	}
+
+	params, err := buildEmbeddingParams(req, route.Model)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	resp, err := p.newClient(apiKey).NewEmbedding(ctx, params)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	out := llm.Response{
+		Provider: route.Provider,
+		Model:    resp.Model,
+		Usage: llm.Usage{
+			InputTokens: int(resp.Usage.PromptTokens),
+		},
+		Embeddings: make([]llm.Embedding, 0, len(resp.Data)),
+	}
+	for _, item := range resp.Data {
+		out.Embeddings = append(out.Embeddings, llm.Embedding{
+			Index:  int(item.Index),
+			Vector: append([]float64(nil), item.Embedding...),
+		})
+	}
+	return out, nil
 }
 
 // StreamChat sends one streaming normalized chat request to OpenAI.
@@ -213,6 +260,24 @@ func buildResponseParams(req llm.Request, model string) (responses.ResponseNewPa
 		}
 		params.Tools = tools
 		params.ParallelToolCalls = param.NewOpt(true)
+	}
+	return params, nil
+}
+
+func buildEmbeddingParams(req llm.Request, model string) (openai.EmbeddingNewParams, error) {
+	if len(req.EmbeddingInput) == 0 {
+		return openai.EmbeddingNewParams{}, fmt.Errorf("%w: embedding_input is required", ErrUnsupportedInput)
+	}
+	params := openai.EmbeddingNewParams{
+		Model:          model,
+		Input:          openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: append([]string(nil), req.EmbeddingInput...)},
+		EncodingFormat: openai.EmbeddingNewParamsEncodingFormatFloat,
+	}
+	if req.EmbeddingDimensions > 0 {
+		params.Dimensions = param.NewOpt(int64(req.EmbeddingDimensions))
+	}
+	if req.CallerID != "" {
+		params.User = param.NewOpt(req.CallerID)
 	}
 	return params, nil
 }

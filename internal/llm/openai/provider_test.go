@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/responses"
 
@@ -276,6 +277,78 @@ func TestProviderChatAllowsUnauthenticatedCompatibleServer(t *testing.T) {
 	}
 }
 
+func TestProviderEmbedBuildsRequestAndTranslatesResponse(t *testing.T) {
+	t.Parallel()
+
+	var captured openai.EmbeddingNewParams
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
+		newClient: func(apiKey string) responseClient {
+			if apiKey != "sk-openai-test" {
+				t.Fatalf("apiKey = %q", apiKey)
+			}
+			return stubResponseClient{
+				newEmbeddingFn: func(_ context.Context, body openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error) {
+					captured = body
+					return &openai.CreateEmbeddingResponse{
+						Model: "text-embedding-3-small",
+						Data: []openai.Embedding{
+							{Index: 0, Embedding: []float64{0.1, 0.2}},
+							{Index: 1, Embedding: []float64{0.3, 0.4}},
+						},
+						Usage: openai.CreateEmbeddingResponseUsage{PromptTokens: 11, TotalTokens: 11},
+					}, nil
+				},
+			}
+		},
+	}
+
+	resp, err := p.Embed(context.Background(), llm.Request{
+		Operation:           llm.OperationEmbedding,
+		EmbeddingInput:      []string{"alpha", "beta"},
+		EmbeddingDimensions: 256,
+		CallerID:            "nanite",
+	}, llm.RouteDecision{Provider: "openai-personal", Model: "text-embedding-3-small"})
+	if err != nil {
+		t.Fatalf("Embed returned err: %v", err)
+	}
+
+	raw, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatalf("marshal captured request: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal captured request: %v", err)
+	}
+	if got["model"] != "text-embedding-3-small" {
+		t.Fatalf("captured model = %v", got["model"])
+	}
+	if got["dimensions"] != float64(256) {
+		t.Fatalf("captured dimensions = %v", got["dimensions"])
+	}
+	input, _ := got["input"].([]any)
+	if len(input) != 2 || input[0] != "alpha" || input[1] != "beta" {
+		t.Fatalf("captured input = %#v", got["input"])
+	}
+	if got["user"] != "nanite" {
+		t.Fatalf("captured user = %v", got["user"])
+	}
+
+	want := llm.Response{
+		Provider: "openai-personal",
+		Model:    "text-embedding-3-small",
+		Usage:    llm.Usage{InputTokens: 11},
+		Embeddings: []llm.Embedding{
+			{Index: 0, Vector: []float64{0.1, 0.2}},
+			{Index: 1, Vector: []float64{0.3, 0.4}},
+		},
+	}
+	if !reflect.DeepEqual(resp, want) {
+		t.Fatalf("response = %+v, want %+v", resp, want)
+	}
+}
+
 func TestProviderStreamChatEmitsTextAndFinalResponse(t *testing.T) {
 	t.Parallel()
 
@@ -342,8 +415,9 @@ func TestProviderStreamChatEmitsTextAndFinalResponse(t *testing.T) {
 }
 
 type stubResponseClient struct {
-	newFn       func(context.Context, responses.ResponseNewParams) (*responses.Response, error)
-	newStreamFn func(context.Context, responses.ResponseNewParams) responseStream
+	newFn          func(context.Context, responses.ResponseNewParams) (*responses.Response, error)
+	newStreamFn    func(context.Context, responses.ResponseNewParams) responseStream
+	newEmbeddingFn func(context.Context, openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error)
 }
 
 func (s stubResponseClient) New(ctx context.Context, body responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
@@ -358,6 +432,13 @@ func (s stubResponseClient) NewStreaming(ctx context.Context, body responses.Res
 		return &stubOpenAIResponseStream{err: errors.New("unexpected call")}
 	}
 	return s.newStreamFn(ctx, body)
+}
+
+func (s stubResponseClient) NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, _ ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
+	if s.newEmbeddingFn == nil {
+		return nil, errors.New("unexpected call")
+	}
+	return s.newEmbeddingFn(ctx, body)
 }
 
 type stubOpenAIResponseStream struct {

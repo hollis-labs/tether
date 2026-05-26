@@ -42,6 +42,11 @@ ai:
       model: llama3.1
       base_url: http://127.0.0.1:11434/v1
       enabled: false
+    - id: gemini-work
+      type: gemini
+      model: gemini-2.5-flash
+      secret_ref: keychain://gemini/work
+      enabled: false
   routing:
     default_provider_order:
       - anthropic-work

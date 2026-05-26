@@ -125,6 +125,7 @@ func NewHandler(deps Deps) http.Handler {
 // AIService is the narrow AI gateway seam exposed over /ai/*.
 type AIService interface {
 	Chat(ctx context.Context, req llm.Request) (llm.Response, error)
+	Embed(ctx context.Context, req llm.Request) (llm.Response, error)
 	StreamChat(ctx context.Context, req llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error)
 	PreviewRoute(req llm.Request) (router.Plan, error)
 	ExplainRoute(req llm.Request) (router.Explanation, error)

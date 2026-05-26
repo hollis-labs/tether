@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -382,6 +383,10 @@ func (s aiStubService) Chat(context.Context, llm.Request) (llm.Response, error) 
 	return s.resp, nil
 }
 
+func (s aiStubService) Embed(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}
+
 func (s aiStubService) StreamChat(_ context.Context, _ llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error) {
 	for _, ev := range s.stream {
 		if err := emit(ev); err != nil {
@@ -466,6 +471,32 @@ func TestAIRequestFromToolBuildsNormalizedRequest(t *testing.T) {
 	if out.ProviderHint != "anthropic-work" || out.CostBudgetUSD != 0.5 || len(out.Input) != 2 {
 		b, _ := json.Marshal(out)
 		t.Fatalf("request = %s", string(b))
+	}
+}
+
+func TestAIRequestFromToolAddsImageInputs(t *testing.T) {
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"text":            "describe this",
+		"image_urls":      []any{"https://example.com/cat.png"},
+		"image_base64":    base64.StdEncoding.EncodeToString([]byte("img")),
+		"image_mime_type": "image/png",
+	}
+	out, errRes := aiRequestFromTool(req)
+	if errRes != nil {
+		t.Fatalf("unexpected tool error: %s", textOf(errRes))
+	}
+	if len(out.Input) != 2 {
+		b, _ := json.Marshal(out)
+		t.Fatalf("request = %s", string(b))
+	}
+	if len(out.Input[1].Parts) != 2 || out.Input[1].Parts[0].Type != "image" || out.Input[1].Parts[0].URL == "" {
+		b, _ := json.Marshal(out)
+		t.Fatalf("request url image = %s", string(b))
+	}
+	if out.Input[1].Parts[1].Type != "image" || len(out.Input[1].Parts[1].Data) == 0 {
+		b, _ := json.Marshal(out)
+		t.Fatalf("request base64 image = %s", string(b))
 	}
 }
 

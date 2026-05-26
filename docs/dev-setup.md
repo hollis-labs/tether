@@ -143,6 +143,11 @@ ai:
       model: llama3.1
       base_url: http://127.0.0.1:11434/v1
       enabled: false
+    - id: gemini-work
+      type: gemini
+      model: gemini-2.5-flash
+      secret_ref: keychain://gemini/work
+      enabled: false
   routing:
     default_provider_order:
       - anthropic-work
@@ -162,9 +167,14 @@ ai:
 
 Provider notes:
 
-- `anthropic` and `openai` require `secret_ref` and `model`.
+- `anthropic`, `gemini`, and `openai` require `secret_ref` and `model`.
 - `openai-compatible` requires `base_url` and `model`; `secret_ref` is
   optional so local unauthenticated servers can work.
+- Configured models that are missing from models.dev are still routable. Tether
+  synthesizes a conservative text-only catalog entry for those ids so local
+  OpenAI-compatible servers can use custom llama/Ollama model names.
+- Gemini currently supports text chat, image input, tool declarations,
+  streaming chat, and embeddings through the same routed AI gateway surfaces.
 - `enabled: true` controls whether the provider is mounted into the daemon.
 - `ai.policy` sets global request-shape defaults.
 - `providers[].policy` overrides those defaults for one provider.
@@ -206,15 +216,23 @@ Secrets are resolved at runtime through `mux-apikey-helper`, not stored in
 the SQLite state DB. Supported refs include `keychain://...` and
 `helper://...`.
 
+Common keychain setup:
+
+```bash
+printf '%s\n' "$OPENAI_API_KEY" | mux-apikey-helper set keychain://openai/work
+printf '%s\n' "$GEMINI_API_KEY" | mux-apikey-helper set keychain://gemini/work
+printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/work
+```
+
 Once configured and the daemon is running, the typed AI surfaces are
 available through:
 
 - HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
-  `/ai/chat/stream`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
-- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|usage|budgets|audit|watch-budgets`
+  `/ai/chat/stream`, `/ai/embeddings`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
 - MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
   `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
-  `mux_ai_chat_stream`,
+  `mux_ai_chat_stream`, `mux_ai_embeddings`,
   `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
 
 For live alerting instead of polling, `mux ai watch-budgets` subscribes to the
@@ -224,6 +242,16 @@ underlying stream is `GET /events/stream?scope=daemon&kind=ai.budget_rejected`.
 For incremental model output, `mux ai chat --stream "..."` uses
 `POST /ai/chat/stream` and prints normalized text deltas as they arrive, then
 the final provider/model/usage summary once `response.completed` lands.
+
+For multimodal shorthand, these commands also accept image flags:
+
+- `mux ai chat "describe this" --image-file ./photo.png`
+- `mux ai chat "what's in this?" --image-url https://example.com/cat.jpg`
+- `mux ai route-preview --image-file ./diagram.png`
+
+Those flags append normalized `image` content parts to the shorthand user
+message. Full normalized request JSON/YAML still works when you need more
+control over multi-message or mixed-role requests.
 
 More generally, the daemon exposes:
 

@@ -2,8 +2,14 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"mime"
+	neturl "net/url"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -47,6 +53,9 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			),
 			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
 			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
+			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
+			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
+			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
 			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
 			mcp.WithString("model", mcp.Description("Model hint")),
 			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
@@ -70,6 +79,9 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			),
 			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
 			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
+			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
+			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
+			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
 			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
 			mcp.WithString("model", mcp.Description("Model hint")),
 			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
@@ -93,6 +105,9 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			),
 			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
 			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
+			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
+			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
+			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
 			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
 			mcp.WithString("model", mcp.Description("Model hint")),
 			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
@@ -108,6 +123,27 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 		a.handleAIChat,
 	)
 	a.addTool(s,
+		mcp.NewTool("mux_ai_embeddings",
+			mcp.WithDescription("Generate embedding vectors through the AI gateway. Requires the ai.invoke scope."),
+			mcp.WithString("text", mcp.Description("Input text for the shorthand embedding request form")),
+			mcp.WithObject("request",
+				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			),
+			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
+			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
+			mcp.WithString("model", mcp.Description("Model hint")),
+			mcp.WithString("mode", mcp.Description("Mode hint")),
+			mcp.WithString("intent", mcp.Description("Intent hint")),
+			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
+			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
+			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
+			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
+			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
+			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
+		),
+		a.handleAIEmbeddings,
+	)
+	a.addTool(s,
 		mcp.NewTool("mux_ai_chat_stream",
 			mcp.WithDescription("Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope."),
 			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
@@ -116,6 +152,9 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			),
 			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
 			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
+			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
+			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
+			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
 			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
 			mcp.WithString("model", mcp.Description("Model hint")),
 			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
@@ -296,6 +335,28 @@ func (a *Adapter) handleAIChat(ctx context.Context, req mcp.CallToolRequest) (*m
 		return errTool, nil
 	}
 	out, err := c.AIChat(ctx, api.ChatRequest{Request: request})
+	if err != nil {
+		return a.classifyAIClientErr(err), nil
+	}
+	return toolJSON(map[string]any{
+		"ok":       true,
+		"response": out.Response,
+	}), nil
+}
+
+func (a *Adapter) handleAIEmbeddings(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeAIInvoke); denied != nil {
+		return denied, nil
+	}
+	c, errRes := a.requireAIClient()
+	if errRes != nil {
+		return errRes, nil
+	}
+	request, errTool := aiEmbeddingRequestFromTool(req)
+	if errTool != nil {
+		return errTool, nil
+	}
+	out, err := c.AIEmbeddings(ctx, api.ChatRequest{Request: request})
 	if err != nil {
 		return a.classifyAIClientErr(err), nil
 	}
@@ -615,8 +676,34 @@ func aiRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResul
 		request.Operation = llm.OperationChat
 	}
 	request = applyAIRequestToolOverrides(req, request)
+	request, errRes = applyAIRequestToolImages(req, request)
+	if errRes != nil {
+		return llm.Request{}, errRes
+	}
 	if len(request.Input) == 0 {
 		return llm.Request{}, toolError("invalid_request", "request input required")
+	}
+	return request, nil
+}
+
+func aiEmbeddingRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResult) {
+	request, errRes := decodeAIRequestOverride(req)
+	if errRes != nil {
+		return llm.Request{}, errRes
+	}
+	if request.Operation == "" {
+		request.Operation = llm.OperationEmbedding
+	}
+	if text := str(req, "text"); text != "" && len(request.EmbeddingInput) == 0 {
+		request.EmbeddingInput = []string{text}
+		request.Input = nil
+	}
+	request = applyAIRequestToolOverrides(req, request)
+	if request.Operation != llm.OperationEmbedding {
+		return llm.Request{}, toolError("invalid_request", "request operation must be embedding")
+	}
+	if len(request.EmbeddingInput) == 0 {
+		return llm.Request{}, toolError("invalid_request", "embedding_input required")
 	}
 	return request, nil
 }
@@ -651,16 +738,17 @@ func decodeAIRequestOverride(req mcp.CallToolRequest) (llm.Request, *mcp.CallToo
 		}
 		return request, nil
 	}
-	if text == "" {
-		return llm.Request{}, toolError("invalid_request", "text, request, or request_json required")
+	if text == "" && len(strSliceArg(req, "image_urls")) == 0 && str(req, "image_base64") == "" {
+		return llm.Request{}, toolError("invalid_request", "text, image_urls, image_base64, request, or request_json required")
 	}
-	return llm.Request{
-		Operation: llm.OperationChat,
-		Input: []llm.Message{{
+	request := llm.Request{Operation: llm.OperationChat}
+	if text != "" {
+		request.Input = []llm.Message{{
 			Role:  "user",
 			Parts: []llm.ContentPart{{Type: "text", Text: text}},
-		}},
-	}, nil
+		}}
+	}
+	return request, nil
 }
 
 func applyAIRequestToolOverrides(req mcp.CallToolRequest, request llm.Request) llm.Request {
@@ -704,6 +792,65 @@ func applyAIRequestToolOverrides(req mcp.CallToolRequest, request llm.Request) l
 		}}, request.Input...)
 	}
 	return request
+}
+
+func applyAIRequestToolImages(req mcp.CallToolRequest, request llm.Request) (llm.Request, *mcp.CallToolResult) {
+	parts := make([]llm.ContentPart, 0, len(strSliceArg(req, "image_urls"))+1)
+	for _, rawURL := range strSliceArg(req, "image_urls") {
+		part, err := imagePartFromToolURL(rawURL)
+		if err != nil {
+			return llm.Request{}, toolError("invalid_request", err.Error())
+		}
+		parts = append(parts, part)
+	}
+	if rawBase64 := str(req, "image_base64"); rawBase64 != "" {
+		part, err := imagePartFromToolBase64(rawBase64, str(req, "image_mime_type"))
+		if err != nil {
+			return llm.Request{}, toolError("invalid_request", err.Error())
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return request, nil
+	}
+	request.Input = append(request.Input, llm.Message{
+		Role:  "user",
+		Parts: parts,
+	})
+	return request, nil
+}
+
+func imagePartFromToolURL(rawURL string) (llm.ContentPart, error) {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		return llm.ContentPart{}, fmt.Errorf("invalid image url %q: %w", rawURL, err)
+	}
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(parsed.Path)))
+	if !strings.HasPrefix(mimeType, "image/") {
+		return llm.ContentPart{}, fmt.Errorf("image url %q requires an image-like extension so mime type can be inferred", rawURL)
+	}
+	return llm.ContentPart{
+		Type:     "image",
+		MIMEType: mimeType,
+		URL:      rawURL,
+		Name:     filepath.Base(parsed.Path),
+	}, nil
+}
+
+func imagePartFromToolBase64(rawBase64, mimeType string) (llm.ContentPart, error) {
+	mimeType = strings.TrimSpace(mimeType)
+	if !strings.HasPrefix(mimeType, "image/") {
+		return llm.ContentPart{}, fmt.Errorf("image_mime_type is required for image_base64 and must start with image/")
+	}
+	data, err := base64.StdEncoding.DecodeString(rawBase64)
+	if err != nil {
+		return llm.ContentPart{}, fmt.Errorf("image_base64 must be valid base64: %w", err)
+	}
+	return llm.ContentPart{
+		Type:     "image",
+		MIMEType: mimeType,
+		Data:     data,
+	}, nil
 }
 
 func (a *Adapter) requireAIClient() (*client.Client, *mcp.CallToolResult) {

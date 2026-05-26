@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/agent"
@@ -28,6 +29,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	llm "github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
+	llmgemini "github.com/hollis-labs/tether/internal/llm/gemini"
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	llmopenai "github.com/hollis-labs/tether/internal/llm/openai"
 	llmopenaicompat "github.com/hollis-labs/tether/internal/llm/openaicompat"
@@ -268,6 +270,21 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				Models:       p.EffectiveModels(),
 				BaseURL:      p.BaseURL,
 			}
+		case "gemini":
+			secretRef := p.SecretRef
+			providers[p.ID] = llmgemini.New(llmgemini.Config{
+				BaseURL: p.BaseURL,
+				ResolveAPIKey: func(ctx context.Context) (string, error) {
+					return resolveAISecret(ctx, secretResolver, secretRef)
+				},
+			})
+			providerInfos[p.ID] = llmservice.ProviderInfo{
+				ID:           p.ID,
+				Type:         p.Type,
+				DefaultModel: p.EffectiveDefaultModel(),
+				Models:       p.EffectiveModels(),
+				BaseURL:      p.BaseURL,
+			}
 		case "openai-compatible":
 			var resolve func(context.Context) (string, error)
 			if p.SecretRef != "" {
@@ -357,17 +374,19 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		return nil
 	}
 
+	catalogView := modelcatalog.NewOverlay(catalog, syntheticConfiguredModels(providerConfigs))
+
 	var evaluators []router.PolicyEvaluator
 	if deps.Usage != nil {
 		evaluators = append(evaluators, usagebudget.Evaluator{Store: deps.Usage})
 	}
-	planner := router.NewWithEvaluators(catalog, router.Policy{
+	planner := router.NewWithEvaluators(catalogView, router.Policy{
 		Version: "catalog-ai-v1",
 		Routes:  routes,
 	}, evaluators...)
 	return &llmservice.Service{
 		Planner:      planner,
-		Catalog:      catalog,
+		Catalog:      catalogView,
 		Providers:    providers,
 		ProviderInfo: providerInfos,
 		Routes:       append([]router.Route(nil), routes...),
@@ -377,10 +396,33 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	}
 }
 
+func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map[string]modelsdev.Model {
+	out := make(map[string]modelsdev.Model)
+	for _, p := range providers {
+		providerID := modelCatalogProviderID(p.Type)
+		for _, modelID := range p.EffectiveModels() {
+			key := providerID + "\x00" + modelID
+			out[key] = modelsdev.Model{
+				ID:     modelID,
+				Name:   modelID,
+				Family: providerID,
+				Modality: modelsdev.Modality{
+					Input:  []string{"text"},
+					Output: []string{"text"},
+				},
+				Capabilities: modelsdev.Capabilities{},
+			}
+		}
+	}
+	return out
+}
+
 func modelCatalogProviderID(providerType string) string {
 	switch providerType {
 	case "openai", "openai-compatible":
 		return "openai"
+	case "gemini":
+		return "google"
 	default:
 		return providerType
 	}

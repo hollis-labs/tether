@@ -4247,6 +4247,8 @@ func aiCatalogVendorProviderID(providerType string) (string, bool) {
 		return "anthropic", true
 	case "openai", "openai-compatible":
 		return "openai", true
+	case "gemini":
+		return "google", true
 	default:
 		return "", false
 	}

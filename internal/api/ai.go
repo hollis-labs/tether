@@ -14,6 +14,8 @@ import (
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
+	llmgemini "github.com/hollis-labs/tether/internal/llm/gemini"
+	llmopenai "github.com/hollis-labs/tether/internal/llm/openai"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
@@ -225,6 +227,7 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/ai/chat", s.handleAIChat)
 	mux.HandleFunc("/ai/chat/stream", s.handleAIChatStream)
+	mux.HandleFunc("/ai/embeddings", s.handleAIEmbeddings)
 	mux.HandleFunc("/ai/providers", s.handleAIProviders)
 	mux.HandleFunc("/ai/models", s.handleAIModels)
 	mux.HandleFunc("/ai/routes", s.handleAIRoutes)
@@ -237,6 +240,39 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	if s.AIAudit != nil {
 		mux.HandleFunc("/ai/audit", s.handleAIAudit)
 	}
+}
+
+func (s *Server) handleAIEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req ChatRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxAIRequestBytes+1))
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "decode body: "+err.Error())
+		return
+	}
+	if req.Request.Operation == "" {
+		req.Request.Operation = llm.OperationEmbedding
+	}
+	if req.Request.Operation != llm.OperationEmbedding {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "operation must be embedding for /ai/embeddings")
+		return
+	}
+	if len(req.Request.EmbeddingInput) == 0 {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "embedding_input is required")
+		return
+	}
+
+	resp, err := s.AI.Embed(r.Context(), req.Request)
+	if err != nil {
+		status, code := aiErrorStatus(err)
+		writeError(w, status, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ChatResponse{Response: resp})
 }
 
 func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
@@ -467,6 +503,10 @@ func aiErrorStatus(err error) (int, string) {
 		return http.StatusBadRequest, CodeInvalidRequest
 	case errors.Is(err, llmanthropic.ErrUnsupportedInput):
 		return http.StatusBadRequest, CodeInvalidRequest
+	case errors.Is(err, llmopenai.ErrUnsupportedInput):
+		return http.StatusBadRequest, CodeInvalidRequest
+	case errors.Is(err, llmgemini.ErrUnsupportedInput):
+		return http.StatusBadRequest, CodeInvalidRequest
 	default:
 		return http.StatusInternalServerError, CodeInternalError
 	}
@@ -660,6 +700,10 @@ func configuredProvidersForVendor(in []llmservice.ProviderInfo, vendorProviderID
 			}
 		case "openai-compatible":
 			if vendorProviderID == "openai" {
+				out = append(out, info)
+			}
+		case "gemini":
+			if vendorProviderID == "google" || vendorProviderID == "gemini" {
 				out = append(out, info)
 			}
 		}

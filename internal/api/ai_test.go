@@ -67,6 +67,36 @@ func TestAIChatRejectsNonChatOperation(t *testing.T) {
 	}
 }
 
+func TestAIEmbeddingsReturnsResponse(t *testing.T) {
+	t.Parallel()
+
+	h := NewHandler(Deps{
+		AI: stubAIService{
+			resp: llm.Response{
+				Provider:   "openai-work",
+				Model:      "text-embedding-3-small",
+				Embeddings: []llm.Embedding{{Index: 0, Vector: []float64{0.1, 0.2, 0.3}}},
+			},
+		},
+	})
+
+	body := bytes.NewBufferString(`{"request":{"embedding_input":["hello world"]}}`)
+	req := httptest.NewRequest(http.MethodPost, "/ai/embeddings", body)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp ChatResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Response.Model != "text-embedding-3-small" || len(resp.Response.Embeddings) != 1 {
+		t.Fatalf("response = %+v", resp.Response)
+	}
+}
+
 func TestAIChatStreamReturnsSSE(t *testing.T) {
 	t.Parallel()
 
@@ -438,6 +468,10 @@ type stubAIService struct {
 }
 
 func (s stubAIService) Chat(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, s.err
+}
+
+func (s stubAIService) Embed(context.Context, llm.Request) (llm.Response, error) {
 	return s.resp, s.err
 }
 
