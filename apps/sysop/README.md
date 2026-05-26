@@ -5,7 +5,8 @@ Agent Ops — the Tether Agent Operations dashboard
 A **Sysop UI** application: a React frontend built on
 [`@hollis-labs/sysop-ui`](https://github.com/hollis-labs/sysop-ui) served by a
 Go binary through the [`go-webui`](https://github.com/hollis-labs/go-webui)
-embed harness. Scaffolded by `folio new sysop-ui`. Served at `/operations`.
+embed harness. Scaffolded by `folio new sysop-ui`. Served at the site root,
+with the Operations page as the home landing.
 
 ## Layout
 
@@ -35,8 +36,9 @@ make run      # Go server on :8947 (serves /api and the last UI build)
 make ui-dev   # Vite dev server with hot reload — proxies /api to :8947
 ```
 
-Open the Vite dev server URL — the app is served under `/operations/`,
-not the root path.
+Open the Vite dev server URL — the app is served at the site root.
+Visiting `/` lands on the Operations page; direct routes like
+`/operations`, `/overview`, `/messaging`, etc. resolve as expected.
 
 ## Build a release binary
 
@@ -45,7 +47,7 @@ make all      # ui-build (vite → internal/webui/dist) then build
 ./tether_sysop
 ```
 
-The Agent Ops UI is then served at <http://localhost:8947/operations/>.
+The Agent Ops UI is then served at <http://localhost:8947/>.
 Cerberus manages this as the `tether-sysop-dev` resource (port 8947).
 Before the first `make ui-build`, `go-webui` serves a "not built"
 placeholder in place of the app.

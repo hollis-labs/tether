@@ -24,9 +24,10 @@ const routeComponents = {
   settings: lazy(() => import('./pages/settings').then((module) => ({ default: module.SettingsPage }))),
 } satisfies Record<Route, ReturnType<typeof lazy>>
 
-const BASE_PATH = '/operations'
+const BASE_PATH = ''
+const HOME_ROUTE: Route = 'operations'
 const ROUTE_PATHS: Record<Route, string> = {
-  overview: '',
+  overview: 'overview',
   operations: 'operations',
   messaging: 'messaging',
   mcp: 'mcp',
@@ -50,10 +51,11 @@ const TITLES: Record<Route, string> = {
 function routeFromPath(pathname: string): Route {
   const trimmed = pathname.replace(/\/+$/, '')
   const rest = trimmed === BASE_PATH ? '' : trimmed.replace(new RegExp(`^${BASE_PATH}/?`), '')
+  if (rest === '') return HOME_ROUTE
   const match = (Object.entries(ROUTE_PATHS) as Array<[Route, string]>).find(
     ([, path]) => path === rest,
   )
-  return match?.[0] ?? 'overview'
+  return match?.[0] ?? HOME_ROUTE
 }
 
 export function App() {

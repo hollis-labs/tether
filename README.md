@@ -159,7 +159,9 @@ make all
 ./tether_sysop
 ```
 
-Sysop serves the UI and API at `http://localhost:8947/operations/`. See
+Sysop serves the UI and API at `http://localhost:8947/` (the Operations
+page is the home landing; `/operations`, `/overview`, etc. are direct
+routes). See
 [`apps/sysop/README.md`](apps/sysop/README.md) for development and packaging
 details.
 

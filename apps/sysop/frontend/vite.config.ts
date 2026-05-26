@@ -7,7 +7,7 @@ import { visualizer } from 'rollup-plugin-visualizer'
 // `build.outDir` points at the Go embed directory so `npm run build`
 // drops the bundle exactly where `//go:embed all:dist` expects it.
 export default defineConfig(({ mode }) => ({
-  base: '/operations/',
+  base: '/',
   plugins: [
     react(),
     tailwindcss(),

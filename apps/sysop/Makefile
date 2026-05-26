@@ -10,7 +10,7 @@ ui-build:
 
 # Run the Agent Ops UI dev server with hot reload. Proxies /api to the Go
 # server on :8947 — run `make run` in another shell. The dev UI is served
-# under /operations/ (see `base` in frontend/vite.config.ts).
+# at the site root (see `base` in frontend/vite.config.ts).
 ui-dev:
 	cd frontend && npm install && npm run dev
 
