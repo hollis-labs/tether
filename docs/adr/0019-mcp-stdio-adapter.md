@@ -10,7 +10,7 @@
 ## Context
 
 Agent-mux exposes a local HTTP API over a Unix-domain socket (ADR 0002). Clients
-access it via the `go-agentmux-client` library or raw HTTP. As the portfolio grows,
+access it via the `go-tether-client` library or raw HTTP. As the portfolio grows,
 LLM-based tools (Claude Code, Codex, Kiro, Hadron blueprints, custom agents) need
 to call agent-mux capabilities directly from tool calls — without writing HTTP
 client code or depending on the Go client library.
@@ -95,7 +95,7 @@ tools over stdio — and wire it as `mux mcp` in the CLI.
   this; writers serialize at the DB level. If contention becomes an issue, a
   proxy-over-UDS mode (routing through the daemon's HTTP API) is the upgrade path.
 - No streaming: agents that want to follow PTY output in real time must poll
-  `mux_session_get` or use the existing `go-agentmux-client` SSE subscription.
+  `mux_session_get` or use the existing `go-tether-client` SSE subscription.
 
 ## Upgrade path
 

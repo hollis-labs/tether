@@ -841,13 +841,13 @@ answer.
 ## Limitations (v0.1.0)
 
 - **No PTY output streaming.** `mux_session_send_input` sends input; reading
-  output requires the daemon's attach endpoint or `go-agentmux-client`. A
+  output requires the daemon's attach endpoint or `go-tether-client`. A
   polling pattern (send input → wait → read session state) works for short
   interactions.
 - **In-process SQLite.** The adapter opens its own DB connection. If the daemon
   is also running, both use SQLite WAL mode — concurrent reads work fine;
   writes serialize at the DB. For heavy concurrent write workloads, run the
-  daemon and use `go-agentmux-client` instead.
+  daemon and use `go-tether-client` instead.
 - **No MCP resources.** Only tools are exposed; MCP resources (for streaming
   file content, etc.) are not yet wired.
 
@@ -858,5 +858,5 @@ answer.
 - [`docs/adr/0019-mcp-stdio-adapter.md`](adr/0019-mcp-stdio-adapter.md) — design rationale
 - [`docs/api/README.md`](api/README.md) — HTTP/UDS daemon API reference
 - [`docs/dev-setup.md`](dev-setup.md) — catalog schema and dev workflow
-- `go-agentmux-client` — Go client library for external consumers (`github.com/hollis-labs/go-agentmux-client`)
+- `go-tether-client` — Go client library for external consumers (`github.com/hollis-labs/go-tether-client`)
 - `examples/catalog/boot-profiles/` — example boot-profile YAMLs

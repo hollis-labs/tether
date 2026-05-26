@@ -230,7 +230,7 @@ ring is replayed silently; clients detect gaps by byte-count comparison.
 
 The MCP adapter (`mux mcp`) does not expose a streaming attach tool. Consumers
 that need live output must use the HTTP daemon's attach endpoint or the
-`go-agentmux-client` library.
+`go-tether-client` library.
 
 **Gap:** No MCP-native streaming output. Implementation note: MCP resources
 (as opposed to tools) are the natural fit for streaming session output.

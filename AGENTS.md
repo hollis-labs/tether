@@ -10,7 +10,7 @@ etc.). It runs as a per-user daemon (`muxd`) on-device, with no cloud
 dependency. Every agent session — launch, attach, stop, checkpoint — goes
 through the daemon; clients reach it over a Unix-domain socket via the `mux`
 CLI, the HTTP API, the MCP stdio adapter, the ACP surface, or the
-`go-agentmux-client` Go library. When Nanite, Torque, or any other app needs
+`go-tether-client` Go library. When Nanite, Torque, or any other app needs
 to run an agent session or send a cross-system message, it goes through
 Tether. Tether is the runtime, not the orchestrator.
 
@@ -57,7 +57,7 @@ Tether. Tether is the runtime, not the orchestrator.
 - **Messaging Store** — Tether implements the `messaging.Store` contract from
   `go-messaging`, backing the `/messages/*` HTTP routes. This is the
   portfolio-wide post office that external clients (Nanite via
-  `go-agentmux-client`) call.
+  `go-tether-client`) call.
 - **Catalog** — user-managed YAML at `~/.tether/catalog/` defining projects,
   agent profiles, providers, and launch configurations. The daemon exposes a
   read-only projection at `/catalog/*`. See `examples/catalog/`.

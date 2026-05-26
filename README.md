@@ -13,7 +13,7 @@ Clients access it over a Unix-domain socket via the `mux` CLI, the HTTP API,
 the MCP adapter, the ACP surface, or the Go client library.
 
 ```
-mux (CLI) / MCP client / HTTP / go-agentmux-client
+mux (CLI) / MCP client / HTTP / go-tether-client
            │
            ▼
    muxd  (unix socket)
@@ -165,6 +165,7 @@ live `ai.budget_rejected` daemon events over
 | [`docs/messaging.md`](docs/messaging.md) | Direct mail, notify+wake, inbox/list semantics |
 | [`docs/mcp.md`](docs/mcp.md) | MCP adapter setup, auth, tool reference |
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |
+| [`docs/go-client-migration.md`](docs/go-client-migration.md) | Migrating apps from `go-agentmux-client` to `go-tether-client` |
 | [`docs/sandboxing.md`](docs/sandboxing.md) | Sandbox profiles (macOS + Linux) |
 | [`docs/adr/`](docs/adr/) | Architecture decision records (ADR 0001–0019) |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow and code style |
