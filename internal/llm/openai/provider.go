@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/shared"
 
 	"github.com/hollis-labs/tether/internal/llm"
 )
@@ -29,6 +30,8 @@ type responseClient interface {
 	New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error)
 	NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) responseStream
 	NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, opts ...option.RequestOption) (*openai.CreateEmbeddingResponse, error)
+	NewChatCompletion(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error)
+	NewChatCompletionStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) chatCompletionStream
 }
 
 type clientFactory func(apiKey string) responseClient
@@ -40,9 +43,17 @@ type responseStream interface {
 	Close() error
 }
 
+type chatCompletionStream interface {
+	Next() bool
+	Current() openai.ChatCompletionChunk
+	Err() error
+	Close() error
+}
+
 type sdkResponseClient struct {
-	responses  responses.ResponseService
-	embeddings openai.EmbeddingService
+	responses       responses.ResponseService
+	embeddings      openai.EmbeddingService
+	chatCompletions openai.ChatCompletionService
 }
 
 func (c sdkResponseClient) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
@@ -55,6 +66,14 @@ func (c sdkResponseClient) NewStreaming(ctx context.Context, body responses.Resp
 
 func (c sdkResponseClient) NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, opts ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
 	return c.embeddings.New(ctx, body, opts...)
+}
+
+func (c sdkResponseClient) NewChatCompletion(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
+	return c.chatCompletions.New(ctx, body, opts...)
+}
+
+func (c sdkResponseClient) NewChatCompletionStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) chatCompletionStream {
+	return c.chatCompletions.NewStreaming(ctx, body, opts...)
 }
 
 // Config configures one OpenAI provider instance.
@@ -95,7 +114,7 @@ func New(cfg Config) *Provider {
 				opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
 			}
 			client := sdk.NewClient(opts...)
-			return sdkResponseClient{responses: client.Responses, embeddings: client.Embeddings}
+			return sdkResponseClient{responses: client.Responses, embeddings: client.Embeddings, chatCompletions: client.Chat.Completions}
 		},
 	}
 }
@@ -120,6 +139,9 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 	}
 	resp, err := p.newClient(apiKey).New(ctx, params)
 	if err != nil {
+		if shouldFallbackToChatCompletions(err) {
+			return p.chatCompletion(ctx, req, route, apiKey)
+		}
 		return llm.Response{}, err
 	}
 	return translateResponse(resp, route), nil
@@ -237,7 +259,123 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 		}
 	}
 	if err := stream.Err(); err != nil {
+		if shouldFallbackToChatCompletions(err) {
+			return p.streamChatCompletion(ctx, req, route, apiKey, emit)
+		}
 		return llm.Response{}, err
+	}
+	return final, nil
+}
+
+func (p *Provider) chatCompletion(ctx context.Context, req llm.Request, route llm.RouteDecision, apiKey string) (llm.Response, error) {
+	params, err := buildChatCompletionParams(req, route.Model)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	resp, err := p.newClient(apiKey).NewChatCompletion(ctx, params)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	return translateChatCompletion(resp, route), nil
+}
+
+func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, route llm.RouteDecision, apiKey string, emit func(llm.StreamEvent) error) (llm.Response, error) {
+	params, err := buildChatCompletionParams(req, route.Model)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	stream := p.newClient(apiKey).NewChatCompletionStreaming(ctx, params)
+	defer stream.Close()
+
+	final := llm.Response{Provider: route.Provider, Model: route.Model}
+	var textBuilder strings.Builder
+	toolCalls := map[int64]llm.ToolUse{}
+	toolOrder := make([]int64, 0)
+	for stream.Next() {
+		chunk := stream.Current()
+		if chunk.Model != "" {
+			final.Model = chunk.Model
+		}
+		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			final.Usage = llm.Usage{
+				InputTokens:     int(chunk.Usage.PromptTokens),
+				OutputTokens:    int(chunk.Usage.CompletionTokens),
+				ReasoningTokens: int(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
+			}
+		}
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				final.StopReason = choice.FinishReason
+			}
+			if strings.TrimSpace(choice.Delta.Content) != "" {
+				textBuilder.WriteString(choice.Delta.Content)
+				if emit != nil {
+					if err := emit(llm.StreamEvent{
+						Kind:     llm.StreamEventTextDelta,
+						Provider: route.Provider,
+						Model:    final.Model,
+						Delta:    choice.Delta.Content,
+					}); err != nil {
+						return llm.Response{}, err
+					}
+				}
+			}
+			if strings.TrimSpace(choice.Delta.Refusal) != "" {
+				final.Refusal += choice.Delta.Refusal
+				if emit != nil {
+					if err := emit(llm.StreamEvent{
+						Kind:     llm.StreamEventRefusalDelta,
+						Provider: route.Provider,
+						Model:    final.Model,
+						Delta:    choice.Delta.Refusal,
+					}); err != nil {
+						return llm.Response{}, err
+					}
+				}
+			}
+			for _, tool := range choice.Delta.ToolCalls {
+				existing, ok := toolCalls[tool.Index]
+				if !ok {
+					existing = llm.ToolUse{}
+					toolOrder = append(toolOrder, tool.Index)
+				}
+				if existing.Invocation == "" {
+					existing.Invocation = tool.ID
+				}
+				if existing.Name == "" {
+					existing.Name = tool.Function.Name
+				}
+				existing.Arguments += tool.Function.Arguments
+				toolCalls[tool.Index] = existing
+			}
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return llm.Response{}, err
+	}
+	if text := strings.TrimSpace(textBuilder.String()); text != "" {
+		final.Output = append(final.Output, llm.Message{
+			Role:  "assistant",
+			Parts: []llm.ContentPart{{Type: "text", Text: text}},
+		})
+	}
+	for _, idx := range toolOrder {
+		toolUse := toolCalls[idx]
+		final.Output = append(final.Output, llm.Message{
+			Role:    "assistant",
+			ToolUse: &toolUse,
+		})
+		if emit != nil {
+			toolCopy := toolUse
+			if err := emit(llm.StreamEvent{
+				Kind:     llm.StreamEventToolUse,
+				Provider: route.Provider,
+				Model:    final.Model,
+				ToolUse:  &toolCopy,
+			}); err != nil {
+				return llm.Response{}, err
+			}
+		}
 	}
 	return final, nil
 }
@@ -259,6 +397,32 @@ func buildResponseParams(req llm.Request, model string) (responses.ResponseNewPa
 			return responses.ResponseNewParams{}, err
 		}
 		params.Tools = tools
+		params.ParallelToolCalls = param.NewOpt(true)
+	}
+	return params, nil
+}
+
+func buildChatCompletionParams(req llm.Request, model string) (openai.ChatCompletionNewParams, error) {
+	messages, err := toChatCompletionMessages(req.Input)
+	if err != nil {
+		return openai.ChatCompletionNewParams{}, err
+	}
+	params := openai.ChatCompletionNewParams{
+		Model:     model,
+		Messages:  messages,
+		MaxTokens: param.NewOpt(int64(maxOutputTokens(req))),
+		Store:     param.NewOpt(false),
+	}
+	if req.CallerID != "" {
+		params.User = param.NewOpt(req.CallerID)
+	}
+	if len(req.Tools) > 0 {
+		tools, err := toChatCompletionTools(req.Tools)
+		if err != nil {
+			return openai.ChatCompletionNewParams{}, err
+		}
+		params.Tools = tools
+		params.ToolChoice.OfAuto = param.NewOpt("auto")
 		params.ParallelToolCalls = param.NewOpt(true)
 	}
 	return params, nil
@@ -417,6 +581,120 @@ func toToolParams(defs []llm.ToolDefinition) ([]responses.ToolUnionParam, error)
 	return tools, nil
 }
 
+func toChatCompletionMessages(messages []llm.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
+	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
+	for _, msg := range messages {
+		switch strings.ToLower(strings.TrimSpace(msg.Role)) {
+		case "system":
+			textParts := make([]openai.ChatCompletionContentPartTextParam, 0, len(msg.Parts))
+			for _, part := range msg.Parts {
+				if !strings.EqualFold(part.Type, "text") {
+					return nil, fmt.Errorf("%w: system messages only support text parts", ErrUnsupportedInput)
+				}
+				textParts = append(textParts, openai.ChatCompletionContentPartTextParam{Text: part.Text})
+			}
+			out = append(out, openai.SystemMessage(textParts))
+		case "user":
+			content, err := toChatCompletionContentParts(msg.Parts)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, openai.UserMessage(content))
+		case "assistant":
+			asst := openai.ChatCompletionAssistantMessageParam{}
+			text := ""
+			for _, part := range msg.Parts {
+				if !strings.EqualFold(part.Type, "text") {
+					return nil, fmt.Errorf("%w: assistant messages only support text parts", ErrUnsupportedInput)
+				}
+				text += part.Text
+			}
+			if text != "" {
+				asst.Content.OfString = param.NewOpt(text)
+			}
+			if msg.ToolUse != nil {
+				asst.ToolCalls = []openai.ChatCompletionMessageToolCallParam{{
+					ID: msg.ToolUse.Invocation,
+					Function: openai.ChatCompletionMessageToolCallFunctionParam{
+						Name:      msg.ToolUse.Name,
+						Arguments: msg.ToolUse.Arguments,
+					},
+				}}
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
+		case "tool":
+			text := ""
+			for _, part := range msg.Parts {
+				if !strings.EqualFold(part.Type, "text") {
+					return nil, fmt.Errorf("%w: tool messages only support text parts", ErrUnsupportedInput)
+				}
+				text += part.Text
+			}
+			out = append(out, openai.ToolMessage(text, msg.Name))
+		default:
+			return nil, fmt.Errorf("%w: unsupported role %q", ErrUnsupportedInput, msg.Role)
+		}
+	}
+	return out, nil
+}
+
+func toChatCompletionContentParts(parts []llm.ContentPart) ([]openai.ChatCompletionContentPartUnionParam, error) {
+	out := make([]openai.ChatCompletionContentPartUnionParam, 0, len(parts))
+	for _, part := range parts {
+		switch strings.ToLower(strings.TrimSpace(part.Type)) {
+		case "text":
+			out = append(out, openai.ChatCompletionContentPartUnionParam{
+				OfText: &openai.ChatCompletionContentPartTextParam{Text: part.Text},
+			})
+		case "image":
+			image, err := toChatCompletionImageParam(part)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, openai.ChatCompletionContentPartUnionParam{OfImageURL: &image})
+		default:
+			return nil, fmt.Errorf("%w: unsupported part type %q", ErrUnsupportedInput, part.Type)
+		}
+	}
+	return out, nil
+}
+
+func toChatCompletionImageParam(part llm.ContentPart) (openai.ChatCompletionContentPartImageParam, error) {
+	image := openai.ChatCompletionContentPartImageParam{}
+	if len(part.Data) > 0 {
+		if part.MIMEType == "" {
+			return openai.ChatCompletionContentPartImageParam{}, fmt.Errorf("%w: image data requires mime type", ErrUnsupportedInput)
+		}
+		image.ImageURL.URL = "data:" + part.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+		return image, nil
+	}
+	if part.URL != "" {
+		image.ImageURL.URL = part.URL
+		return image, nil
+	}
+	return openai.ChatCompletionContentPartImageParam{}, fmt.Errorf("%w: image part requires data or url", ErrUnsupportedInput)
+}
+
+func toChatCompletionTools(defs []llm.ToolDefinition) ([]openai.ChatCompletionToolParam, error) {
+	tools := make([]openai.ChatCompletionToolParam, 0, len(defs))
+	for _, def := range defs {
+		schema := map[string]any{"type": "object", "properties": map[string]any{}}
+		if def.SchemaJSON != "" {
+			if err := json.Unmarshal([]byte(def.SchemaJSON), &schema); err != nil {
+				return nil, fmt.Errorf("parse tool schema for %q: %w", def.Name, err)
+			}
+		}
+		tools = append(tools, openai.ChatCompletionToolParam{
+			Function: shared.FunctionDefinitionParam{
+				Name:        def.Name,
+				Description: param.NewOpt(def.Description),
+				Parameters:  schema,
+			},
+		})
+	}
+	return tools, nil
+}
+
 func translateResponse(resp *responses.Response, route llm.RouteDecision) llm.Response {
 	out := llm.Response{
 		Provider:   route.Provider,
@@ -459,6 +737,51 @@ func translateResponse(resp *responses.Response, route llm.RouteDecision) llm.Re
 		}
 	}
 	return out
+}
+
+func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecision) llm.Response {
+	out := llm.Response{
+		Provider: route.Provider,
+		Model:    resp.Model,
+		Usage: llm.Usage{
+			InputTokens:     int(resp.Usage.PromptTokens),
+			OutputTokens:    int(resp.Usage.CompletionTokens),
+			ReasoningTokens: int(resp.Usage.CompletionTokensDetails.ReasoningTokens),
+		},
+	}
+	if len(resp.Choices) == 0 {
+		return out
+	}
+	choice := resp.Choices[0]
+	out.StopReason = choice.FinishReason
+	if strings.TrimSpace(choice.Message.Content) != "" {
+		out.Output = append(out.Output, llm.Message{
+			Role:  "assistant",
+			Parts: []llm.ContentPart{{Type: "text", Text: choice.Message.Content}},
+		})
+	}
+	if strings.TrimSpace(choice.Message.Refusal) != "" {
+		out.Refusal = choice.Message.Refusal
+		if out.StopReason == "" {
+			out.StopReason = "refusal"
+		}
+	}
+	for _, tool := range choice.Message.ToolCalls {
+		out.Output = append(out.Output, llm.Message{
+			Role: "assistant",
+			ToolUse: &llm.ToolUse{
+				Name:       tool.Function.Name,
+				Arguments:  tool.Function.Arguments,
+				Invocation: tool.ID,
+			},
+		})
+	}
+	return out
+}
+
+func shouldFallbackToChatCompletions(err error) bool {
+	var apiErr *openai.Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
 func stopReason(resp *responses.Response) string {

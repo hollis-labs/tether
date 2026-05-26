@@ -235,6 +235,7 @@ func (s *Server) Handler() http.Handler {
 		if s.AI != nil {
 			mux.Handle("/ai/chat", apiHandler)
 			mux.Handle("/ai/chat/stream", apiHandler)
+			mux.Handle("/ai/embeddings", apiHandler)
 			mux.Handle("/ai/providers", apiHandler)
 			mux.Handle("/ai/models", apiHandler)
 			mux.Handle("/ai/routes", apiHandler)

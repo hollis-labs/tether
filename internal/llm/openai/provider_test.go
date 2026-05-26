@@ -414,10 +414,62 @@ func TestProviderStreamChatEmitsTextAndFinalResponse(t *testing.T) {
 	}
 }
 
+func TestProviderChatFallsBackToChatCompletionsOn404(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
+		newClient: func(string) responseClient {
+			return stubResponseClient{
+				newFn: func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+					return nil, &openai.Error{StatusCode: http.StatusNotFound}
+				},
+				newChatCompletionFn: func(_ context.Context, body openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+					raw, err := json.Marshal(body)
+					if err != nil {
+						t.Fatalf("marshal fallback body: %v", err)
+					}
+					var got map[string]any
+					if err := json.Unmarshal(raw, &got); err != nil {
+						t.Fatalf("unmarshal fallback body: %v", err)
+					}
+					if got["model"] != "llama3.1:8b" {
+						t.Fatalf("fallback model = %v", got["model"])
+					}
+					return mustChatCompletion(t, `{
+					  "id":"chatcmpl-638",
+					  "object":"chat.completion",
+					  "created":1716595200,
+					  "model":"llama3.1:8b",
+					  "choices":[{"index":0,"message":{"role":"assistant","content":"hello local"},"finish_reason":"stop"}],
+					  "usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}
+					}`), nil
+				},
+			}
+		},
+	}
+
+	resp, err := p.Chat(context.Background(), llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{{
+			Role:  "user",
+			Parts: []llm.ContentPart{{Type: "text", Text: "say hello"}},
+		}},
+	}, llm.RouteDecision{Provider: "llama-local", Model: "llama3.1:8b"})
+	if err != nil {
+		t.Fatalf("Chat returned err: %v", err)
+	}
+	if resp.Provider != "llama-local" || resp.Model != "llama3.1:8b" || resp.Output[0].Parts[0].Text != "hello local" {
+		t.Fatalf("response = %+v", resp)
+	}
+}
+
 type stubResponseClient struct {
-	newFn          func(context.Context, responses.ResponseNewParams) (*responses.Response, error)
-	newStreamFn    func(context.Context, responses.ResponseNewParams) responseStream
-	newEmbeddingFn func(context.Context, openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error)
+	newFn                   func(context.Context, responses.ResponseNewParams) (*responses.Response, error)
+	newStreamFn             func(context.Context, responses.ResponseNewParams) responseStream
+	newEmbeddingFn          func(context.Context, openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error)
+	newChatCompletionFn     func(context.Context, openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
+	newChatCompletionStream func(context.Context, openai.ChatCompletionNewParams) chatCompletionStream
 }
 
 func (s stubResponseClient) New(ctx context.Context, body responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
@@ -439,6 +491,20 @@ func (s stubResponseClient) NewEmbedding(ctx context.Context, body openai.Embedd
 		return nil, errors.New("unexpected call")
 	}
 	return s.newEmbeddingFn(ctx, body)
+}
+
+func (s stubResponseClient) NewChatCompletion(ctx context.Context, body openai.ChatCompletionNewParams, _ ...option.RequestOption) (*openai.ChatCompletion, error) {
+	if s.newChatCompletionFn == nil {
+		return nil, errors.New("unexpected call")
+	}
+	return s.newChatCompletionFn(ctx, body)
+}
+
+func (s stubResponseClient) NewChatCompletionStreaming(ctx context.Context, body openai.ChatCompletionNewParams, _ ...option.RequestOption) chatCompletionStream {
+	if s.newChatCompletionStream == nil {
+		return &stubOpenAIChatCompletionStream{err: errors.New("unexpected call")}
+	}
+	return s.newChatCompletionStream(ctx, body)
 }
 
 type stubOpenAIResponseStream struct {
@@ -481,4 +547,36 @@ func mustResponseStreamEvent(t *testing.T, raw string) responses.ResponseStreamE
 		t.Fatalf("Unmarshal(response stream event): %v", err)
 	}
 	return ev
+}
+
+type stubOpenAIChatCompletionStream struct {
+	events []openai.ChatCompletionChunk
+	err    error
+	index  int
+}
+
+func (s *stubOpenAIChatCompletionStream) Next() bool {
+	if s.index >= len(s.events) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *stubOpenAIChatCompletionStream) Current() openai.ChatCompletionChunk {
+	return s.events[s.index-1]
+}
+
+func (s *stubOpenAIChatCompletionStream) Err() error { return s.err }
+
+func (s *stubOpenAIChatCompletionStream) Close() error { return nil }
+
+func mustChatCompletion(t *testing.T, raw string) *openai.ChatCompletion {
+	t.Helper()
+
+	var resp openai.ChatCompletion
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal(chat completion): %v", err)
+	}
+	return &resp
 }
