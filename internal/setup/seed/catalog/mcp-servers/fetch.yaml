@@ -1,0 +1,14 @@
+id: mcp-fetch
+transport: stdio
+# MCP fetch server — gives agents the ability to fetch URLs and web content.
+# Install: npm install -g @modelcontextprotocol/server-fetch
+# Set enabled: true once installed.
+command: npx
+args:
+  - -y
+  - "@modelcontextprotocol/server-fetch"
+enabled: false
+tags:
+  - example
+  - web
+  - fetch

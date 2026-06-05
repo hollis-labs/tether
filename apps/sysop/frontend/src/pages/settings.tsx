@@ -105,6 +105,18 @@ function emptyProviderForm(): ProviderFormState {
   }
 }
 
+const KNOWN_BRANDS = ['claude', 'codex', 'opencode']
+
+const BRAND_HINTS: Record<string, Partial<ProviderFormState>> = {
+  claude: { type: 'cli', runtimeKind: 'streaming-stdio', adapter: 'claude' },
+  codex: { type: 'cli-goprovider', runtimeKind: 'subprocess', adapter: 'codex' },
+  opencode: { type: 'cli', runtimeKind: 'subprocess', adapter: '' },
+}
+
+function isKnownBrand(s: string): boolean {
+  return KNOWN_BRANDS.includes(s)
+}
+
 function splitLines(raw: string): string[] {
   return raw
     .split(/[\n,]/)
@@ -974,7 +986,34 @@ function ProviderDialog({
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FormField label="Provider brand">
-                  <input className={inputClass} value={form.provider} onChange={(e) => update({ provider: e.target.value })} placeholder="claude, codex, opencode" />
+                  <select
+                    className={inputClass}
+                    value={isKnownBrand(form.provider) ? form.provider : '__custom__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '__custom__') {
+                        update({ provider: '' })
+                      } else {
+                        const hint = BRAND_HINTS[v]
+                        update({ provider: v, ...(hint ?? {}) })
+                      }
+                    }}
+                  >
+                    {KNOWN_BRANDS.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                    <option value="__custom__">custom…</option>
+                  </select>
+                  {!isKnownBrand(form.provider) && (
+                    <input
+                      className={`${inputClass} mt-1`}
+                      value={form.provider}
+                      onChange={(e) => update({ provider: e.target.value })}
+                      placeholder="brand name"
+                    />
+                  )}
                 </FormField>
                 <FormField label="Runtime kind">
                   <select className={inputClass} value={form.runtimeKind} onChange={(e) => update({ runtimeKind: e.target.value })}>
