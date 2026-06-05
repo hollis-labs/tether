@@ -126,6 +126,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerRegistryRoutes(mux)
 	s.registerGroupRoutes(mux)
 	s.registerLogsRoutes(mux)
+	s.registerFSRoutes(mux)
 	return mux
 }
 

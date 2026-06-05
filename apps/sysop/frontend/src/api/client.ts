@@ -948,6 +948,20 @@ export interface DaemonLogsInfo {
   clamped?: boolean
 }
 
+export interface FSValidateResponse {
+  exists: boolean
+  executable?: boolean
+  resolved?: string
+  note?: string
+}
+
+export interface FSDetectResponse {
+  brand: string
+  found: boolean
+  path?: string
+  source: string
+}
+
 export const apiClient = {
   getHealth: () => http.get<HealthInfo>('/api/health'),
   getSettings: () => http.get<SettingsInfo>('/api/settings'),
@@ -1050,6 +1064,10 @@ export const apiClient = {
   getToolCalls: () => http.get<ToolCallsInfo>('/api/activity/tool-calls'),
   getDaemonLogs: (tail = 100) =>
     http.get<DaemonLogsInfo>('/api/logs/daemon', { query: { tail: String(tail) } }),
+  validatePath: (path: string, kind: 'file' | 'dir' | 'executable') =>
+    http.post<FSValidateResponse>('/api/fs/validate', { path, kind } as unknown as JsonObject),
+  detectBrand: (brand: string) =>
+    http.get<FSDetectResponse>('/api/fs/detect', { query: { brand } }),
 }
 
 export type AppApiClient = typeof apiClient

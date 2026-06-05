@@ -300,6 +300,8 @@ func (s *Server) Handler() http.Handler {
 		if s.LogsDir != "" {
 			mux.Handle("/logs/daemon", apiHandler)
 		}
+		mux.Handle("/fs/validate", apiHandler)
+		mux.Handle("/fs/detect", apiHandler)
 	}
 	return otelprop.HTTPMiddleware(mux)
 }
