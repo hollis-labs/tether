@@ -213,11 +213,18 @@ const serverColumns: ColumnDef<MCPServerInfo>[] = [
     key: 'enabled',
     header: 'State',
     cell: (s) => (
-      <Pill tone={s.enabled ? 'success' : 'neutral'}>
-        {s.enabled ? 'enabled' : 'disabled'}
-      </Pill>
+      <div className="flex flex-col gap-0.5">
+        <Pill tone={s.enabled ? (s.server_status === 'failed' ? 'danger' : 'success') : 'neutral'}>
+          {s.server_status === 'failed' ? 'failed' : s.enabled ? 'enabled' : 'disabled'}
+        </Pill>
+        {s.server_status === 'failed' && s.server_error && (
+          <span className="max-w-[16rem] truncate text-[10px] text-status-blocked" title={s.server_error}>
+            {s.server_error}
+          </span>
+        )}
+      </div>
     ),
-    sortValue: (s) => (s.enabled ? 1 : 0),
+    sortValue: (s) => (s.server_status === 'failed' ? -1 : s.enabled ? 1 : 0),
   },
 ]
 
@@ -707,6 +714,18 @@ function MCPDetailDialog({
               </Field>
               <Field label="Token">{server.has_token ? 'set' : '—'}</Field>
               <Field label="Enabled">{server.enabled ? 'enabled' : 'disabled'}</Field>
+              {server.server_status && (
+                <Field label="Runtime">
+                  <Pill tone={server.server_status === 'failed' ? 'danger' : 'success'}>
+                    {server.server_status}
+                  </Pill>
+                </Field>
+              )}
+              {server.server_error && (
+                <Field label="Error">
+                  <span className="font-mono text-[11px] text-status-blocked">{server.server_error}</span>
+                </Field>
+              )}
             </dl>
           </DetailSection>
           <DetailSection title="Scopes">

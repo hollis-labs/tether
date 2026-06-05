@@ -3306,19 +3306,21 @@ func bucketCounts(times []time.Time, n int) []int {
 // ─── MCP ─────────────────────────────────────────────────────────────────────
 
 type mcpServerDTO struct {
-	ID          string   `json:"id"`
-	Transport   string   `json:"transport"`
-	Command     string   `json:"command,omitempty"`
-	Args        []string `json:"args,omitempty"`
-	URL         string   `json:"url,omitempty"`
-	EnvKeys     []string `json:"env_keys,omitempty"`
-	HasToken    bool     `json:"has_token"`
-	Scopes      []string `json:"scopes,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Enabled     bool     `json:"enabled"`
-	Visibility  string   `json:"visibility"`
-	ProjectRefs []string `json:"project_refs,omitempty"`
-	LaunchRefs  []string `json:"launch_refs,omitempty"`
+	ID           string   `json:"id"`
+	Transport    string   `json:"transport"`
+	Command      string   `json:"command,omitempty"`
+	Args         []string `json:"args,omitempty"`
+	URL          string   `json:"url,omitempty"`
+	EnvKeys      []string `json:"env_keys,omitempty"`
+	HasToken     bool     `json:"has_token"`
+	Scopes       []string `json:"scopes,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	Enabled      bool     `json:"enabled"`
+	Visibility   string   `json:"visibility"`
+	ProjectRefs  []string `json:"project_refs,omitempty"`
+	LaunchRefs   []string `json:"launch_refs,omitempty"`
+	ServerStatus string   `json:"server_status,omitempty"`
+	ServerError  string   `json:"server_error,omitempty"`
 }
 
 type mcpServersResponse struct {
@@ -3390,7 +3392,41 @@ func (s *appServer) handleMCPServers(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+
+	// Best-effort runtime status probe: merge server_status + server_error.
+	// Failures in the probe are soft — we still return the catalog view.
+	if statuses, err := s.mcpServerStatuses(); err == nil {
+		byID := make(map[string]mcpadapter.ServerStatus, len(statuses))
+		for _, st := range statuses {
+			byID[st.ID] = st
+		}
+		for i := range out {
+			if st, ok := byID[out[i].ID]; ok {
+				out[i].ServerStatus = st.Status
+				out[i].ServerError = st.Error
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, mcpServersResponse{Servers: out})
+}
+
+// mcpServerStatuses probes each enabled MCP server with a short timeout and
+// returns the runtime status summary. Callers treat errors as non-fatal.
+func (s *appServer) mcpServerStatuses() ([]mcpadapter.ServerStatus, error) {
+	entries, err := config.LoadMCPServers(s.catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	registry := mcpadapter.NewToolRegistry()
+	pool := mcpadapter.NewClientPool(entries, registry)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pool.Start(ctx); err != nil {
+		return nil, err
+	}
+	defer pool.Shutdown()
+	return pool.StatusSummary(), nil
 }
 
 func (s *appServer) handleMCPServerSave(w http.ResponseWriter, r *http.Request) {

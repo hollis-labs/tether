@@ -461,6 +461,8 @@ export interface MCPServerInfo {
   visibility: string
   project_refs?: string[]
   launch_refs?: string[]
+  server_status?: string
+  server_error?: string
 }
 
 export interface MCPServersInfo {
