@@ -91,8 +91,9 @@ go install github.com/hollis-labs/tether/cmd/mux@latest
 go install github.com/hollis-labs/tether/cmd/mux-apikey-helper@latest
 ```
 
-See [`docs/install.md`](docs/install.md) for prerequisites, first-run catalog
-setup, keychain configuration, and path details.
+After install, run `mux init` for the guided first-time setup (idempotent,
+skippable at every step). See [`docs/install.md`](docs/install.md) for
+prerequisites, keychain configuration, and path details.
 
 ## Build
 
@@ -107,8 +108,15 @@ full development setup including catalog configuration.
 ## Quick start
 
 ```bash
+# Guided first-time setup (idempotent; detects claude/codex/opencode automatically)
+mux init
+
 # Start the daemon
 mux daemon start
+
+# Check detected provider binaries and system health
+mux detect
+mux doctor
 
 # Launch an agent session from a catalog launch profile
 mux sessions launch myproject-backend
@@ -151,7 +159,18 @@ mux ai chat --stream "Summarize this diff"
 
 ## Sysop GUI
 
-Tether ships with Sysop, the GUI for operating the runtime.
+`tether_sysop` is the operations GUI, bundled in every release tarball and the
+Homebrew formula. Start it after `mux daemon start`:
+
+```bash
+tether_sysop
+# → http://localhost:8947/
+```
+
+The Operations page is the home landing; direct routes include `/overview`,
+`/mcp`, `/ai`, `/activity`, `/tools`, `/registry`, `/logs`, `/settings`.
+
+To build from source:
 
 ```bash
 cd apps/sysop
@@ -159,10 +178,7 @@ make all
 ./tether_sysop
 ```
 
-Sysop serves the UI and API at `http://localhost:8947/` (the Operations
-page is the home landing; `/operations`, `/overview`, etc. are direct
-routes). See
-[`apps/sysop/README.md`](apps/sysop/README.md) for development and packaging
+See [`apps/sysop/README.md`](apps/sysop/README.md) for development and packaging
 details.
 
 ## MCP adapter

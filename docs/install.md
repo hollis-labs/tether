@@ -1,10 +1,11 @@
 # Install Tether
 
-Tether ships as two operator-facing binaries:
+Tether ships as three operator-facing binaries:
 
 - `mux` — the main CLI and daemon launcher
 - `mux-apikey-helper` — optional helper for storing and resolving provider API
   keys from the local keychain
+- `tether_sysop` — the operations GUI (served at `http://localhost:8947/`)
 
 The four supported install paths are Homebrew, GitHub release tarball, source
 install, and `go install`.
@@ -44,6 +45,7 @@ Each archive contains:
 
 - `mux`
 - `mux-apikey-helper`
+- `tether_sysop`
 - `README.md`
 - `LICENSE`
 - `install.md`
@@ -57,6 +59,7 @@ tar -xzf tether.tar.gz
 install -d "$HOME/.local/bin"
 install -m 0755 mux "$HOME/.local/bin/"
 install -m 0755 mux-apikey-helper "$HOME/.local/bin/"
+install -m 0755 tether_sysop "$HOME/.local/bin/"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -114,26 +117,42 @@ go install github.com/hollis-labs/tether/cmd/mux-apikey-helper@latest
 
 ## First-Time Setup
 
-Create a starter catalog:
+Run the guided setup wizard once after install:
 
 ```sh
-install -d "$HOME/.tether/catalog"
-cp -R examples/catalog/* "$HOME/.tether/catalog/"
+mux init
 ```
 
-Start the daemon:
+`mux init` is idempotent. It:
+
+1. Creates `~/.tether/{catalog,state,run,logs}` directories.
+2. Seeds a starter catalog (global config + 3 CLI providers + example MCP server).
+3. Auto-detects installed agent binaries (`claude`, `codex`, `opencode`) and
+   offers to record each path — every step is skippable ("set later in
+   Settings → Providers").
+4. Applies database migrations.
+5. Prints a summary of what was written.
+
+Start the daemon and the operations GUI:
 
 ```sh
 mux daemon start
-mux daemon status
+tether_sysop     # opens the GUI at http://localhost:8947/
+```
+
+Verify detection and system health:
+
+```sh
+mux detect       # reports found/missing + resolved path for each agent binary
+mux doctor       # checks daemon, catalog, migrations, binary paths, permissions
 ```
 
 Optional: store provider API keys in the local keychain:
 
 ```sh
-printf '%s\n' "$OPENAI_API_KEY" | mux-apikey-helper set keychain://openai/work
-printf '%s\n' "$GEMINI_API_KEY" | mux-apikey-helper set keychain://gemini/work
 printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/work
+printf '%s\n' "$OPENAI_API_KEY"    | mux-apikey-helper set keychain://openai/work
+printf '%s\n' "$GEMINI_API_KEY"    | mux-apikey-helper set keychain://gemini/work
 ```
 
 Then verify the CLI:
@@ -143,11 +162,23 @@ mux sessions list
 mux ai providers
 ```
 
+### Manual catalog setup (fallback)
+
+If you prefer not to use `mux init`, you can bootstrap manually:
+
+```sh
+install -d "$HOME/.tether/catalog"
+cp -R examples/catalog/* "$HOME/.tether/catalog/"
+mux daemon start
+```
+
 ## Notes
 
 - Tether state lives under `~/.tether/`; the binary can live anywhere on
   `PATH`.
 - `mux-apikey-helper` is only required if you use `keychain://...` AI secret
   refs.
-- Sysop ships as a separate binary under `apps/sysop/`; see
-  [`apps/sysop/README.md`](../apps/sysop/README.md) for its build/install flow.
+- `tether_sysop` is now included in release tarballs and the Homebrew formula.
+  Start it any time after `mux daemon start` to access the operations GUI.
+- `mux detect` and `mux doctor` reuse the same detection plumbing as `mux init`
+  and are safe to re-run at any time.
