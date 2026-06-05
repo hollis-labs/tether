@@ -2,7 +2,10 @@ id: claude-code
 type: cli
 provider: claude
 runtime_kind: streaming-stdio
-command: claude
+# Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.
+# Set an absolute path here if claude is not on your daemon's PATH.
+# Example: command: /opt/homebrew/bin/claude
+command: ""
 args: []
 bootstrap:
   # streaming-stdio: the daemon launches Claude in NDJSON streaming-input

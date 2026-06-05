@@ -1,0 +1,20 @@
+id: claude-code
+type: cli
+provider: claude
+runtime_kind: streaming-stdio
+# Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.
+# Set an absolute path here if claude is not on your daemon's PATH.
+# Example: command: /opt/homebrew/bin/claude
+command: ""
+args: []
+bootstrap:
+  mode: streaming-stdio
+  prompt_prefix: ""
+env:
+  mode: merge
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - ANTHROPIC_API_KEY
+  redact: []

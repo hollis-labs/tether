@@ -34,9 +34,8 @@ func (c *Catalog) Validate() error {
 		}
 		switch typ {
 		case "cli":
-			if p.Command == "" {
-				return fmt.Errorf("provider %q has empty command", id)
-			}
+			// Empty command is valid: the adapter's Detect() resolves the binary
+			// at launch time via $<BRAND>_CLI_PATH or exec.LookPath.
 		case "cli-goprovider":
 			if p.Adapter == "" {
 				return fmt.Errorf("provider %q (cli-goprovider) missing adapter field", id)

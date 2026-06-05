@@ -1,0 +1,19 @@
+version: 1.0.0
+catalog:
+  roots:
+    projects: projects
+    agents: agents
+    providers: providers
+    launches: launches
+    boot: boot
+  defaults:
+    state_db: ~/.tether/state/tether.db
+    workspace_root: ~/.tether/workspaces
+    temp_root: ~/.tether/tmp
+# daemon defaults apply when this block is absent:
+#   listen_addr: unix:~/.tether/run/muxd.sock
+#   pid_file:    ~/.tether/run/muxd.pid
+#   shutdown_timeout: 10s
+# Uncomment and override to customise (e.g. tcp:127.0.0.1:7180 for debugging).
+# daemon:
+#   listen_addr: unix:~/.tether/run/muxd.sock

@@ -36,9 +36,9 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 	}
 	prepared, err := PrepareClaudeTUI(plan, Options{
 		BootDirRoot: bootRoot,
-		MuxCommand: "/usr/local/bin/mux",
-		MuxArgs:    []string{"--catalog", "/catalog", "mcp", "--proxy"},
-		MuxEnv:     []string{"MUX_MCP_SERVERS=vanta,clockwork"},
+		MuxCommand:  "/usr/local/bin/mux",
+		MuxArgs:     []string{"--catalog", "/catalog", "mcp", "--proxy"},
+		MuxEnv:      []string{"MUX_MCP_SERVERS=vanta,clockwork"},
 		ParentEnv:   []string{"PATH=/bin"},
 	})
 	if err != nil {

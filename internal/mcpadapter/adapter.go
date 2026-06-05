@@ -28,9 +28,9 @@ import (
 	"log/slog"
 	"strings"
 
+	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	feotel "github.com/hollis-labs/go-otel"
 	otelprop "github.com/hollis-labs/go-otel/propagation"
-	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel/trace"

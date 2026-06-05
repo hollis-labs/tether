@@ -11,8 +11,8 @@ import (
 var catalogPath string
 
 var rootCmd = &cobra.Command{
-	Use:   "mux",
-	Short: "Tether — local agent session control plane",
+	Use:     "mux",
+	Short:   "Tether — local agent session control plane",
 	Version: version,
 }
 

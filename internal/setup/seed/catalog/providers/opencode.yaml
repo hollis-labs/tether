@@ -2,8 +2,8 @@ id: opencode
 type: cli
 provider: opencode
 runtime_kind: subprocess
-# Leave command empty to resolve opencode from PATH, or set an absolute path in
-# a local catalog when PATH is not stable for daemon launches.
+# Leave command empty to let the adapter auto-detect opencode from PATH.
+# Set an absolute path here if opencode is not on your daemon's PATH.
 # Example: command: /usr/local/bin/opencode
 command: ""
 args:
