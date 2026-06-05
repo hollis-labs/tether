@@ -23,6 +23,12 @@ type WriteOpts struct {
 	// YAMLs, keyed by brand ("claude", "codex", "opencode"). An empty value
 	// for a brand leaves the provider YAML unchanged (command stays blank).
 	ProviderCommands map[string]string
+	// StateRoot overrides the ~/.tether placeholder in the seeded global.yaml
+	// with an explicit absolute path. When empty the template paths
+	// (e.g. ~/.tether/state/tether.db) are preserved as-is, which is correct
+	// for a standard install. Pass the actual dst path when seeding to a
+	// non-standard location (e.g. in tests or custom --state-dir installs).
+	StateRoot string
 }
 
 // WriteReport summarizes what WriteCatalog did.
@@ -89,6 +95,11 @@ func WriteCatalog(dst string, opts WriteOpts) (WriteReport, error) {
 
 		// Apply ProviderCommands stamp if applicable.
 		data = maybeStampCommand(data, rel, opts.ProviderCommands)
+
+		// Stamp explicit state root paths into global.yaml when requested.
+		if opts.StateRoot != "" && rel == filepath.Join("catalog", "global.yaml") {
+			data = []byte(strings.ReplaceAll(string(data), "~/.tether", opts.StateRoot))
+		}
 
 		written, backed, writeErr := writeFileOnce(dstPath, data, opts.Force)
 		if writeErr != nil {
