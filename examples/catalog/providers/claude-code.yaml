@@ -5,7 +5,7 @@ runtime_kind: streaming-stdio
 # Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.
 # Set an absolute path here if claude is not on your daemon's PATH.
 # Example: command: /opt/homebrew/bin/claude
-command: ""
+command: claude
 args: []
 bootstrap:
   # streaming-stdio: the daemon launches Claude in NDJSON streaming-input

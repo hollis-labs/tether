@@ -942,6 +942,12 @@ export interface ProviderSaveRequest {
   env_redact?: string[]
 }
 
+export interface DaemonLogsInfo {
+  lines: string[]
+  total: number
+  clamped?: boolean
+}
+
 export const apiClient = {
   getHealth: () => http.get<HealthInfo>('/api/health'),
   getSettings: () => http.get<SettingsInfo>('/api/settings'),
@@ -1042,6 +1048,8 @@ export const apiClient = {
     http.post<{ status: string }>('/api/messages/read', { id, as }),
   getEvents: () => http.get<EventsInfo>('/api/activity/events'),
   getToolCalls: () => http.get<ToolCallsInfo>('/api/activity/tool-calls'),
+  getDaemonLogs: (tail = 100) =>
+    http.get<DaemonLogsInfo>('/api/logs/daemon', { query: { tail: String(tail) } }),
 }
 
 export type AppApiClient = typeof apiClient

@@ -63,6 +63,10 @@ type Deps struct {
 	// focused stub for group surfaces without faking the full Registry
 	// CRUD vocabulary.
 	Groups GroupsService
+
+	// LogsDir, when non-empty, enables GET /logs/daemon serving a bounded
+	// tail of LogsDir/muxd.log. Empty disables the endpoint (returns 404).
+	LogsDir string
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -84,6 +88,7 @@ type Server struct {
 	Registry            RegistryService
 	RegistryCatalogRoot string
 	Groups              GroupsService
+	LogsDir             string
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -106,6 +111,7 @@ func NewHandler(deps Deps) http.Handler {
 		Registry:            deps.Registry,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		Groups:              deps.Groups,
+		LogsDir:             deps.LogsDir,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -119,6 +125,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerProxyEventRoutes(mux)
 	s.registerRegistryRoutes(mux)
 	s.registerGroupRoutes(mux)
+	s.registerLogsRoutes(mux)
 	return mux
 }
 

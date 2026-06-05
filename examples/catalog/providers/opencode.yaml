@@ -5,7 +5,7 @@ runtime_kind: subprocess
 # Leave command empty to resolve opencode from PATH, or set an absolute path in
 # a local catalog when PATH is not stable for daemon launches.
 # Example: command: /usr/local/bin/opencode
-command: ""
+command: opencode
 args:
   - run
 bootstrap:

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -66,12 +67,26 @@ var daemonStartCmd = &cobra.Command{
 		// Re-exec ourselves in daemon-run mode. os.Args[0] is our own binary.
 		child := exec.Command(os.Args[0], "daemon", "run", "--catalog", catalogPath) //nolint:gosec // G204: re-exec of own binary
 
-		child.Stdout = nil
-		child.Stderr = nil
+		stateRoot := filepath.Dir(config.Expand(catalogPath))
+		logFile, err := openDaemonLog(filepath.Join(stateRoot, "logs", "muxd.log"))
+		if err != nil {
+			log.Printf("daemon: could not open log file, continuing without file logging: %v", err)
+		}
+		if logFile != nil {
+			child.Stdout = logFile
+			child.Stderr = logFile
+		}
 		child.Stdin = nil
 		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := child.Start(); err != nil {
+			if logFile != nil {
+				_ = logFile.Close()
+			}
 			return fmt.Errorf("spawn daemon: %w", err)
+		}
+		// The child holds the log file fd now; close the parent's copy.
+		if logFile != nil {
+			_ = logFile.Close()
 		}
 		// Detach: don't Wait() on the child. Release OS process resource.
 		if err := child.Process.Release(); err != nil {
@@ -173,6 +188,7 @@ var daemonRunCmd = &cobra.Command{
 			Publisher: svc.Bus,
 		})
 
+		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		server := &daemon.Server{
 			Config:              cfg,
 			Manager:             svc.Manager,
@@ -193,6 +209,7 @@ var daemonRunCmd = &cobra.Command{
 			RegistryCatalogRoot: svc.CatalogRoot,
 			Groups:              svc.Registry,
 			Publisher:           svc.Bus,
+			LogsDir:             filepath.Join(stateRoot, "logs"),
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.
@@ -836,6 +853,40 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		PIDFile:         config.Expand(d.PIDFile),
 		ShutdownTimeout: timeout,
 	}, nil
+}
+
+// openDaemonLog creates the logs directory and opens (or creates+appends)
+// muxd.log with simple size-based rotation. Returns nil on any error so the
+// caller can degrade gracefully (log to stderr) rather than failing the spawn.
+//
+// Rotation: if the current log exceeds 10 MiB, shift generations up to
+// muxd.log.3 (dropping the oldest) before opening a fresh muxd.log.
+func openDaemonLog(logPath string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
+		return nil, err
+	}
+	rotateDaemonLog(logPath, 10<<20, 3) // 10 MiB, keep 3 generations
+	//nolint:gosec // G304: path derived from tether state root, not user input.
+	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+}
+
+// rotateDaemonLog renames logPath → logPath.1 → … → logPath.N when
+// logPath's size exceeds maxBytes, dropping generation N+1 if present.
+func rotateDaemonLog(logPath string, maxBytes int64, generations int) {
+	info, err := os.Stat(logPath)
+	if err != nil || info.Size() <= maxBytes {
+		return
+	}
+	for g := generations; g >= 1; g-- {
+		older := fmt.Sprintf("%s.%d", logPath, g)
+		newer := fmt.Sprintf("%s.%d", logPath, g-1)
+		if g == 1 {
+			newer = logPath
+		}
+		if _, err := os.Stat(newer); err == nil {
+			_ = os.Rename(newer, older)
+		}
+	}
 }
 
 // expandListenAddr runs config.Expand on the path portion of a unix: addr;
