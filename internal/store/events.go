@@ -182,6 +182,7 @@ func (s *Store) QueryEvents(f EventFilter) ([]events.Event, error) {
 		where = append(where, "kind IN ("+strings.Join(placeholders, ", ")+")")
 	}
 	if len(where) > 0 {
+		//nolint:gosec // G202: where holds fixed column predicates with ? placeholders; values are bound via args
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY id DESC LIMIT ?"

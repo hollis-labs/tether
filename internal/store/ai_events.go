@@ -193,6 +193,7 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 	             request_summary, response_summary, timestamp
 	      FROM ai_events`
 	where, args := aiEventWhereClause(f)
+	//nolint:gosec // G202: where is built from fixed column predicates with ? placeholders; values are bound via args
 	q += where
 	q += " ORDER BY id ASC LIMIT ?"
 	args = append(args, limit)
@@ -300,6 +301,13 @@ func (s *Store) QueryAIUsageSummary(f AIUsageFilter) (AIUsageSummary, error) {
 }
 
 func (s *Store) queryAIUsageBreakdown(groupBy, where string, args []any) ([]AIUsageBreakdown, error) {
+	switch groupBy {
+	case "provider", "model", "operation":
+		// allowed grouping columns — fixed internal identifiers
+	default:
+		return nil, fmt.Errorf("queryAIUsageBreakdown: invalid groupBy %q", groupBy)
+	}
+	//nolint:gosec // G201: groupBy is whitelisted above to fixed column names; where uses ? placeholders bound via args
 	q := fmt.Sprintf(`SELECT COALESCE(%s, ''),
 	                         COUNT(*),
 	                         SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),

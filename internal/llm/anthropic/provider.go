@@ -120,7 +120,7 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 		return llm.Response{}, err
 	}
 	stream := p.newClient(apiKey).NewStreaming(ctx, params)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	msg := sdk.Message{}
 	for stream.Next() {

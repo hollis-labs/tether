@@ -82,12 +82,6 @@ func WithNamedHelperResolver(fn func(string) string) Option {
 	}
 }
 
-func withCommandRunner(run commandRunner) Option {
-	return func(r *Resolver) {
-		r.run = run
-	}
-}
-
 // NewResolver returns a secret resolver backed by local helper execution.
 func NewResolver(opts ...Option) *Resolver {
 	r := &Resolver{

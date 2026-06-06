@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
@@ -257,8 +258,15 @@ func (p *Provider) client(ctx context.Context) (modelClient, error) {
 }
 
 func buildGenerateContentRequest(req llm.Request) ([]*genai.Content, *genai.GenerateContentConfig, error) {
+	mot := maxOutputTokens(req)
+	if mot < 0 {
+		mot = 0
+	}
+	if mot > math.MaxInt32 {
+		mot = math.MaxInt32
+	}
 	cfg := &genai.GenerateContentConfig{
-		MaxOutputTokens: int32(maxOutputTokens(req)),
+		MaxOutputTokens: int32(mot),
 	}
 	var systemParts []*genai.Part
 	contents := make([]*genai.Content, 0, len(req.Input))

@@ -74,7 +74,8 @@ func TestServerLevelMiddlewareFires(t *testing.T) {
 	}
 
 	// Collect events — expect exactly one tool_call_end.
-	var got *events.ToolCallEvent
+	var got events.ToolCallEvent
+	found := false
 	deadline := time.After(2 * time.Second)
 collect:
 	for {
@@ -91,14 +92,15 @@ collect:
 				t.Errorf("unmarshal ToolCallEvent: %v", jsonErr)
 				continue
 			}
-			got = &tce
+			got = tce
+			found = true
 			break collect
 		case <-deadline:
 			break collect
 		}
 	}
 
-	if got == nil {
+	if !found {
 		t.Fatal("no tool_call_end event received — s.Use() middleware is not firing for native tools")
 	}
 	if got.ToolName != "native_test_tool" {

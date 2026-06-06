@@ -65,10 +65,10 @@ func TestParseRef(t *testing.T) {
 				if err == nil {
 					t.Fatalf("ParseRef(%q) error = nil, want non-nil", tc.raw)
 				}
-				if tc.wantErr == errAny {
+				if errors.Is(tc.wantErr, errAny) {
 					return
 				}
-				if tc.wantErr == ErrUnsupportedScheme || tc.wantErr == ErrEmptyRef {
+				if errors.Is(tc.wantErr, ErrUnsupportedScheme) || errors.Is(tc.wantErr, ErrEmptyRef) {
 					if !errors.Is(err, tc.wantErr) {
 						t.Fatalf("ParseRef(%q) error = %v, want errors.Is(..., %v)", tc.raw, err, tc.wantErr)
 					}

@@ -340,7 +340,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 	cursor := int64(intArg(req, "cursor", 0))
 	limit := intArg(req, "limit", 100)
 
-	out := make([]eventDTO, 0)
+	var out []eventDTO
 	var nextCursor int64
 	if a.client != nil {
 		rows, err := a.client.EventsHistory(ctx, client.EventsHistoryQuery{
@@ -376,6 +376,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 			Limit:     limit,
 		})
 		if err != nil {
+			//nolint:nilerr // tool errors are returned in-band as a tool result, not as a Go error
 			return toolError("internal_error", "query events: "+err.Error()), nil
 		}
 		out = make([]eventDTO, 0, len(rows))
@@ -518,7 +519,7 @@ func decodeEventScopesAllowEmpty(req mcp.CallToolRequest) ([]events.Scope, *mcp.
 	}
 	scopes := make([]events.Scope, 0, len(raw))
 	for _, rawScope := range raw {
-		scope := events.Scope(rawScope)
+		scope := rawScope
 		switch scope {
 		case events.ScopeDaemon, events.ScopeSession, events.ScopeBroker:
 			scopes = append(scopes, scope)
@@ -538,9 +539,7 @@ func decodeEventScopes(req mcp.CallToolRequest) ([]string, *mcp.CallToolResult) 
 		return []string{events.ScopeDaemon}, nil
 	}
 	scopes := make([]string, 0, len(typed))
-	for _, scope := range typed {
-		scopes = append(scopes, string(scope))
-	}
+	scopes = append(scopes, typed...)
 	return scopes, nil
 }
 
@@ -565,8 +564,6 @@ func stringScopes(scopes []events.Scope) []string {
 		return nil
 	}
 	out := make([]string, 0, len(scopes))
-	for _, scope := range scopes {
-		out = append(out, string(scope))
-	}
+	out = append(out, scopes...)
 	return out
 }
