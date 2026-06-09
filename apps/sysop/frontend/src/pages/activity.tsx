@@ -200,13 +200,25 @@ export function ActivityPage() {
       {
         key: 'error',
         header: 'Error',
-        cell: (t) => (
-          <PayloadActions
-            raw={t.error ?? ''}
-            viewLabel="View error"
-            onView={() => view({ title: `Tool call error — ${t.tool_name}`, raw: t.error ?? '' })}
-          />
-        ),
+        width: 'fill',
+        cell: (t) =>
+          t.error ? (
+            <div className="flex items-start gap-1.5">
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-[11px] text-status-blocked"
+                title={t.error}
+              >
+                {t.error}
+              </span>
+              <PayloadActions
+                raw={t.error}
+                viewLabel="View"
+                onView={() => view({ title: `Tool call error — ${t.tool_name}`, raw: t.error ?? '' })}
+              />
+            </div>
+          ) : (
+            <span className="text-[11px] text-text-subtle">—</span>
+          ),
       },
     ],
     [view],

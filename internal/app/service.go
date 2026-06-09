@@ -11,6 +11,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -83,6 +86,8 @@ type Service struct {
 // with state/attachment/event sinks, and registers the built-in + catalog-
 // declared runtime factories.
 func New(catalogRoot string) (*Service, error) {
+	maybeAutoSeedCatalog(catalogRoot)
+
 	cat, err := config.LoadLayered(catalogRoot)
 	if err != nil {
 		return nil, err
@@ -199,6 +204,27 @@ func (s *Service) Close() error {
 		return err
 	}
 	return s.Store.Close()
+}
+
+// maybeAutoSeedCatalog writes a minimal starter catalog when the catalog root
+// has no global.yaml. This is the non-interactive safety net (D3): the daemon
+// never hard-fails on a missing catalog. Detection and full guided setup are
+// the job of mux init — auto-seed only writes blank-command providers and the
+// minimum needed for the daemon to start.
+func maybeAutoSeedCatalog(catalogRoot string) {
+	globalYAML := filepath.Join(config.Expand(catalogRoot), "global.yaml")
+	if _, err := os.Stat(globalYAML); err == nil {
+		return // catalog already present — no-op
+	}
+	stateRoot := filepath.Dir(config.Expand(catalogRoot))
+	if _, err := setup.WriteCatalog(stateRoot, setup.WriteOpts{
+		Minimal:   true,
+		StateRoot: stateRoot,
+	}); err != nil {
+		log.Printf("auto-seed: failed to seed minimal catalog at %s: %v", stateRoot, err)
+		return
+	}
+	log.Printf("catalog absent — seeded minimal catalog at %s; run 'mux init' for guided setup", stateRoot)
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.

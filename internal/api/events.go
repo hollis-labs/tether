@@ -236,7 +236,7 @@ func parseEventsHistoryFilter(q map[string][]string) (store.EventFilter, error) 
 	for _, s := range q["scope"] {
 		switch s {
 		case events.ScopeSession, events.ScopeDaemon, events.ScopeBroker:
-			f.Scopes = append(f.Scopes, events.Scope(s))
+			f.Scopes = append(f.Scopes, s)
 		default:
 			return f, fmt.Errorf("scope must be one of session/daemon/broker")
 		}

@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	otelprop "github.com/hollis-labs/go-otel/propagation"
 	messaging "github.com/hollis-labs/go-messaging"
+	otelprop "github.com/hollis-labs/go-otel/propagation"
 )
 
 // ErrWrongRecipient is returned by a peer store when a Consume targets an

@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOPRIVATE: "github.com/hollis-labs/*"
+      GONOSUMDB: "github.com/hollis-labs/*"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/sysop/frontend/package-lock.json
+
+      - name: Configure private module access
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}:x-oauth-basic@github.com/hollis-labs/".insteadOf "https://github.com/hollis-labs/"
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release tarballs
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}" \
+          COMMIT="${GITHUB_SHA::8}" \
+          make package-release
+
+      - name: Create GitHub release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TAG="${GITHUB_REF_NAME}"
+
+          # Create the release (draft=false, pre-release if tag contains '-')
+          PRERELEASE=""
+          if echo "$TAG" | grep -q '-'; then
+            PRERELEASE="--prerelease"
+          fi
+
+          gh release create "$TAG" \
+            --title "Tether ${TAG}" \
+            --notes "Release ${TAG}. See [install.md](docs/install.md) for setup instructions." \
+            $PRERELEASE \
+            dist/tether_${VERSION}_darwin_arm64.tar.gz \
+            dist/tether_${VERSION}_darwin_amd64.tar.gz \
+            dist/tether_${VERSION}_linux_arm64.tar.gz \
+            dist/tether_${VERSION}_linux_amd64.tar.gz \
+            dist/checksums.txt
+
+      - name: Render Homebrew formula
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TAG="${GITHUB_REF_NAME}"
+          scripts/render-homebrew-formula.sh "$TAG" dist/checksums.txt \
+            > dist/tether.rb
+          echo "--- Homebrew formula ---"
+          cat dist/tether.rb
+
+      - name: Upload Homebrew formula as release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release upload "$TAG" dist/tether.rb

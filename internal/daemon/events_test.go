@@ -76,7 +76,9 @@ func TestServer_Run_EmitsDaemonLifecycleEvents(t *testing.T) {
 
 	started := pub.findKind(events.KindDaemonStarted)
 	if started == nil {
+		cancel()
 		t.Fatal("no daemon.started event published")
+		return
 	}
 	if started.Scope != events.ScopeDaemon {
 		t.Errorf("started.Scope = %q, want daemon", started.Scope)

@@ -195,6 +195,8 @@ var aiChatCmd = &cobra.Command{
 						continue
 					}
 					switch ev.Kind {
+					case llm.StreamEventStart:
+						// no-op: stream start carries no renderable payload
 					case llm.StreamEventTextDelta:
 						fmt.Print(ev.Delta)
 					case llm.StreamEventRefusalDelta:

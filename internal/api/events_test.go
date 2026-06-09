@@ -77,7 +77,7 @@ func (f *fakeEventsStore) QueryEvents(filter store.EventFilter) ([]events.Event,
 		if len(filter.Scopes) > 0 {
 			matched := false
 			for _, scope := range filter.Scopes {
-				if ev.Scope == string(scope) {
+				if ev.Scope == scope {
 					matched = true
 					break
 				}

@@ -1,0 +1,19 @@
+version: 1.0.0
+catalog:
+  roots:
+    projects: projects
+    agents: agents
+    providers: providers
+    launches: launches
+    boot: boot
+  defaults:
+    state_db: ~/.tether/state/tether.db
+    workspace_root: ~/.tether/workspaces
+    temp_root: ~/.tether/tmp
+# The daemon socket + pidfile live under the same state root as everything
+# above, so an overridden state dir stays fully self-contained. Change
+# listen_addr to e.g. tcp:127.0.0.1:7180 for debugging.
+daemon:
+  listen_addr: unix:~/.tether/run/muxd.sock
+  pid_file: ~/.tether/run/muxd.pid
+  shutdown_timeout: 10s

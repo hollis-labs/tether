@@ -9,6 +9,7 @@ import {
   Plug,
   RefreshCw,
   Rocket,
+  ScanSearch,
   Server,
   Trash2,
   Wrench,
@@ -32,6 +33,7 @@ import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
 import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
 import { useApi } from '../api/context'
 import type {
+  FSValidateResponse,
   SettingsInfo,
   SettingsPathInfo,
   SettingsProviderInfo,
@@ -103,6 +105,18 @@ function emptyProviderForm(): ProviderFormState {
     envPassthrough: 'HOME\nPATH\nSHELL',
     envRedact: '',
   }
+}
+
+const KNOWN_BRANDS = ['claude', 'codex', 'opencode']
+
+const BRAND_HINTS: Record<string, Partial<ProviderFormState>> = {
+  claude: { type: 'cli', runtimeKind: 'streaming-stdio', adapter: 'claude' },
+  codex: { type: 'cli-goprovider', runtimeKind: 'subprocess', adapter: 'codex' },
+  opencode: { type: 'cli', runtimeKind: 'subprocess', adapter: '' },
+}
+
+function isKnownBrand(s: string): boolean {
+  return KNOWN_BRANDS.includes(s)
 }
 
 function splitLines(raw: string): string[] {
@@ -819,9 +833,33 @@ function GlobalSettingsDialog({
   onClose: () => void
   onSave: () => void
 }) {
+  const api = useApi()
+  const [stateDBVal, setStateDBVal] = useState<PathValidation>(IDLE_VALIDATION)
+  const [workspaceVal, setWorkspaceVal] = useState<PathValidation>(IDLE_VALIDATION)
+  const [tempRootVal, setTempRootVal] = useState<PathValidation>(IDLE_VALIDATION)
+
   function update(patch: Partial<GlobalSettingsForm>) {
     if (form) onChange({ ...form, ...patch })
   }
+
+  function validateDir(value: string, set: (v: PathValidation) => void) {
+    if (!value.trim()) { set(IDLE_VALIDATION); return }
+    set({ status: 'checking' })
+    api
+      .validatePath(value.trim(), 'dir')
+      .then((r) => set(fsValidationToState(r, false)))
+      .catch(() => set({ status: 'missing', note: 'check failed' }))
+  }
+
+  function validateFile(value: string, set: (v: PathValidation) => void) {
+    if (!value.trim()) { set(IDLE_VALIDATION); return }
+    set({ status: 'checking' })
+    api
+      .validatePath(value.trim(), 'file')
+      .then((r) => set(fsValidationToState(r, false)))
+      .catch(() => set({ status: 'missing', note: 'check failed' }))
+  }
+
   return (
     <DetailDialog
       open={form !== null}
@@ -897,13 +935,31 @@ function GlobalSettingsDialog({
           <DetailSection title="Storage">
             <div className="grid gap-3 px-1 py-1">
               <FormField label="State DB">
-                <input className={inputClass} value={form.stateDB} onChange={(e) => update({ stateDB: e.target.value })} />
+                <input
+                  className={inputClass}
+                  value={form.stateDB}
+                  onChange={(e) => { update({ stateDB: e.target.value }); setStateDBVal(IDLE_VALIDATION) }}
+                  onBlur={(e) => validateFile(e.target.value, setStateDBVal)}
+                />
+                <ValidationHint v={stateDBVal} />
               </FormField>
               <FormField label="Workspace root">
-                <input className={inputClass} value={form.workspaceRoot} onChange={(e) => update({ workspaceRoot: e.target.value })} />
+                <input
+                  className={inputClass}
+                  value={form.workspaceRoot}
+                  onChange={(e) => { update({ workspaceRoot: e.target.value }); setWorkspaceVal(IDLE_VALIDATION) }}
+                  onBlur={(e) => validateDir(e.target.value, setWorkspaceVal)}
+                />
+                <ValidationHint v={workspaceVal} />
               </FormField>
               <FormField label="Temp root">
-                <input className={inputClass} value={form.tempRoot} onChange={(e) => update({ tempRoot: e.target.value })} />
+                <input
+                  className={inputClass}
+                  value={form.tempRoot}
+                  onChange={(e) => { update({ tempRoot: e.target.value }); setTempRootVal(IDLE_VALIDATION) }}
+                  onBlur={(e) => validateDir(e.target.value, setTempRootVal)}
+                />
+                <ValidationHint v={tempRootVal} />
               </FormField>
             </div>
           </DetailSection>
@@ -911,6 +967,31 @@ function GlobalSettingsDialog({
       )}
     </DetailDialog>
   )
+}
+
+type PathValidationStatus = 'idle' | 'checking' | 'ok' | 'warn' | 'missing'
+interface PathValidation {
+  status: PathValidationStatus
+  resolved?: string
+  note?: string
+}
+const IDLE_VALIDATION: PathValidation = { status: 'idle' }
+
+function fsValidationToState(r: FSValidateResponse, isEmpty: boolean): PathValidation {
+  if (isEmpty) return IDLE_VALIDATION
+  if (!r.exists) return { status: 'missing', note: r.note ?? 'not found' }
+  if (r.executable === false) return { status: 'warn', resolved: r.resolved, note: r.note ?? 'not executable' }
+  return { status: 'ok', resolved: r.resolved }
+}
+
+function ValidationHint({ v }: { v: PathValidation }) {
+  if (v.status === 'idle') return null
+  if (v.status === 'checking') return <p className="mt-0.5 text-[10px] text-text-subtle">Checking…</p>
+  if (v.status === 'ok')
+    return <p className="mt-0.5 text-[10px] text-status-done">✓ {v.resolved}</p>
+  if (v.status === 'warn')
+    return <p className="mt-0.5 text-[10px] text-status-blocked">⚠ {v.note}</p>
+  return <p className="mt-0.5 text-[10px] text-status-blocked">✗ {v.note ?? 'not found'}</p>
 }
 
 function ProviderDialog({
@@ -928,9 +1009,43 @@ function ProviderDialog({
   onClose: () => void
   onSave: () => void
 }) {
+  const api = useApi()
+  const [cmdValidation, setCmdValidation] = useState<PathValidation>(IDLE_VALIDATION)
+  const [detecting, setDetecting] = useState(false)
+
   function update(patch: Partial<ProviderFormState>) {
     if (form) onChange({ ...form, ...patch })
   }
+
+  function validateCommand(value: string) {
+    if (!value.trim()) {
+      setCmdValidation(IDLE_VALIDATION)
+      return
+    }
+    setCmdValidation({ status: 'checking' })
+    api
+      .validatePath(value.trim(), 'executable')
+      .then((r) => setCmdValidation(fsValidationToState(r, false)))
+      .catch(() => setCmdValidation({ status: 'missing', note: 'check failed' }))
+  }
+
+  function detectCommand() {
+    if (!form) return
+    setDetecting(true)
+    api
+      .detectBrand(form.provider || form.id)
+      .then((r) => {
+        if (r.found && r.path) {
+          onChange({ ...form, command: r.path })
+          setCmdValidation({ status: 'ok', resolved: r.path })
+        } else {
+          setCmdValidation({ status: 'missing', note: `${r.brand} not found on this machine` })
+        }
+      })
+      .catch(() => setCmdValidation({ status: 'missing', note: 'detect failed' }))
+      .finally(() => setDetecting(false))
+  }
+
   return (
     <DetailDialog
       open={form !== null}
@@ -974,7 +1089,34 @@ function ProviderDialog({
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FormField label="Provider brand">
-                  <input className={inputClass} value={form.provider} onChange={(e) => update({ provider: e.target.value })} placeholder="claude, codex, opencode" />
+                  <select
+                    className={inputClass}
+                    value={isKnownBrand(form.provider) ? form.provider : '__custom__'}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '__custom__') {
+                        update({ provider: '' })
+                      } else {
+                        const hint = BRAND_HINTS[v]
+                        update({ provider: v, ...(hint ?? {}) })
+                      }
+                    }}
+                  >
+                    {KNOWN_BRANDS.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                    <option value="__custom__">custom…</option>
+                  </select>
+                  {!isKnownBrand(form.provider) && (
+                    <input
+                      className={`${inputClass} mt-1`}
+                      value={form.provider}
+                      onChange={(e) => update({ provider: e.target.value })}
+                      placeholder="brand name"
+                    />
+                  )}
                 </FormField>
                 <FormField label="Runtime kind">
                   <select className={inputClass} value={form.runtimeKind} onChange={(e) => update({ runtimeKind: e.target.value })}>
@@ -992,7 +1134,29 @@ function ProviderDialog({
           <DetailSection title="Command">
             <div className="grid gap-3 px-1 py-1">
               <FormField label="Command">
-                <input className={inputClass} value={form.command} onChange={(e) => update({ command: e.target.value })} placeholder="binary path or empty for adapter auto-detect" />
+                <div className="flex gap-1">
+                  <input
+                    className={`${inputClass} flex-1`}
+                    value={form.command}
+                    onChange={(e) => { update({ command: e.target.value }); setCmdValidation(IDLE_VALIDATION) }}
+                    onBlur={(e) => validateCommand(e.target.value)}
+                    placeholder="binary path or empty for adapter auto-detect"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={detectCommand}
+                    disabled={detecting}
+                    title="Detect binary path on this machine"
+                  >
+                    <ScanSearch className={cn('h-3.5 w-3.5', detecting && 'animate-pulse')} />
+                  </Button>
+                </div>
+                {form.command === '' ? (
+                  <p className="mt-0.5 text-[10px] text-text-subtle">empty — adapter will auto-detect</p>
+                ) : (
+                  <ValidationHint v={cmdValidation} />
+                )}
               </FormField>
               <FormField label="Args">
                 <textarea className={`${inputClass} h-20 resize-y py-2`} value={form.args} onChange={(e) => update({ args: e.target.value })} placeholder="one argument per line" />

@@ -461,6 +461,8 @@ export interface MCPServerInfo {
   visibility: string
   project_refs?: string[]
   launch_refs?: string[]
+  server_status?: string
+  server_error?: string
 }
 
 export interface MCPServersInfo {
@@ -942,6 +944,26 @@ export interface ProviderSaveRequest {
   env_redact?: string[]
 }
 
+export interface DaemonLogsInfo {
+  lines: string[]
+  total: number
+  clamped?: boolean
+}
+
+export interface FSValidateResponse {
+  exists: boolean
+  executable?: boolean
+  resolved?: string
+  note?: string
+}
+
+export interface FSDetectResponse {
+  brand: string
+  found: boolean
+  path?: string
+  source: string
+}
+
 export const apiClient = {
   getHealth: () => http.get<HealthInfo>('/api/health'),
   getSettings: () => http.get<SettingsInfo>('/api/settings'),
@@ -1042,6 +1064,12 @@ export const apiClient = {
     http.post<{ status: string }>('/api/messages/read', { id, as }),
   getEvents: () => http.get<EventsInfo>('/api/activity/events'),
   getToolCalls: () => http.get<ToolCallsInfo>('/api/activity/tool-calls'),
+  getDaemonLogs: (tail = 100) =>
+    http.get<DaemonLogsInfo>('/api/logs/daemon', { query: { tail: String(tail) } }),
+  validatePath: (path: string, kind: 'file' | 'dir' | 'executable') =>
+    http.post<FSValidateResponse>('/api/fs/validate', { path, kind } as unknown as JsonObject),
+  detectBrand: (brand: string) =>
+    http.get<FSDetectResponse>('/api/fs/detect', { query: { brand } }),
 }
 
 export type AppApiClient = typeof apiClient

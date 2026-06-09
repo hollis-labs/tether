@@ -11,8 +11,8 @@ import (
 var catalogPath string
 
 var rootCmd = &cobra.Command{
-	Use:   "mux",
-	Short: "Tether — local agent session control plane",
+	Use:     "mux",
+	Short:   "Tether — local agent session control plane",
 	Version: version,
 }
 
@@ -29,4 +29,6 @@ func init() {
 	// Top-level aliases for discoverability.
 	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd, bootExecCmd)
 	rootCmd.AddCommand(pathCmd())
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(detectCmd, doctorCmd)
 }

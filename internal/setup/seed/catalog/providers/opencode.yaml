@@ -1,0 +1,24 @@
+id: opencode
+type: cli
+provider: opencode
+runtime_kind: subprocess
+# Leave command empty to let the adapter auto-detect opencode from PATH.
+# Set an absolute path here if opencode is not on your daemon's PATH.
+# Example: command: /usr/local/bin/opencode
+command: ""
+args:
+  - run
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  mode: merge
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+  redact:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY

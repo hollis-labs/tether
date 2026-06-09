@@ -9,6 +9,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SYSOP_ROOT="${REPO_ROOT}/apps/sysop"
 DIST_DIR="${DIST_DIR:-${REPO_ROOT}/dist}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 COMMIT="${COMMIT:-$(cd "${REPO_ROOT}" && git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
@@ -30,6 +31,16 @@ echo "Building Tether release artifacts"
 echo "  version: ${VERSION}"
 echo "  commit: ${COMMIT}"
 echo "  build date: ${BUILD_DATE}"
+
+# Build the sysop frontend once — the resulting dist/ is platform-independent
+# and gets embedded into the Go binary for each target below.
+echo
+echo "==> Building sysop frontend (platform-independent)"
+(
+  cd "${SYSOP_ROOT}/frontend"
+  npm install --prefer-offline
+  npm run build
+)
 
 ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}"
 
@@ -60,9 +71,19 @@ for target in "${TARGETS[@]}"; do
       -o "${work_dir}/mux-apikey-helper" ./cmd/mux-apikey-helper
   )
 
+  # Build tether_sysop with the embedded frontend (frontend was pre-built above).
+  (
+    cd "${SYSOP_ROOT}"
+    CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
+      -trimpath \
+      -ldflags "${ldflags}" \
+      -o "${work_dir}/tether_sysop" ./cmd/tether_sysop
+  )
+
   cp "${REPO_ROOT}/README.md" "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/docs/install.md" "${work_dir}/"
 
-  tar -C "${work_dir}" -czf "${archive_path}" mux mux-apikey-helper README.md LICENSE install.md
+  tar -C "${work_dir}" -czf "${archive_path}" \
+    mux mux-apikey-helper tether_sysop README.md LICENSE install.md
   shasum -a 256 "${archive_path}" > "${checksum_path}"
 
   echo "  wrote: ${archive_path}"

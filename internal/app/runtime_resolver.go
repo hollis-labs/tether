@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
@@ -34,6 +35,10 @@ func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeStreamingStdio:
 		return newClaudeStreamingStdioRuntime(p.ID), nil
 	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimePTY:
+		// Deprecated: PTY is not the user-facing runtime going forward (D7, ADR 0044).
+		// subprocess and streaming-stdio are the primary runtimes. PTY is not removed
+		// yet — marker-only until output-capture is fully complete.
+		log.Printf("WARN: resolving deprecated PTY runtime for provider %q; prefer streaming_stdio or subprocess", p.ID)
 		return newClaudePTYRuntime(p.ID), nil
 	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeSubprocess:
 		return newGoproviderRuntime(p.ID, gop.NewClaudeAdapter(), agentsessions.Capabilities{

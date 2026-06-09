@@ -71,7 +71,7 @@ func (f *obsEventsStore) QueryEvents(filter store.EventFilter) ([]events.Event, 
 			if len(filter.Scopes) > 0 {
 				matched := false
 				for _, scope := range filter.Scopes {
-					if e.Scope == string(scope) {
+					if e.Scope == scope {
 						matched = true
 						break
 					}

@@ -17,9 +17,9 @@ import (
 const serviceName = "tether"
 
 var (
-	version   = "dev"
-	commit    = "unknown"
-	buildDate = "unknown"
+	version      = "dev"
+	commit       = "unknown"
+	buildDate    = "unknown"
 	readSecret   = defaultReadSecret
 	writeSecret  = defaultWriteSecret
 	deleteSecret = defaultDeleteSecret

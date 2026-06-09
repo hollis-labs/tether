@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	openai "github.com/openai/openai-go"
-	sdk "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/responses"
@@ -113,7 +112,7 @@ func New(cfg Config) *Provider {
 			if cfg.HTTPClient != nil {
 				opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
 			}
-			client := sdk.NewClient(opts...)
+			client := openai.NewClient(opts...)
 			return sdkResponseClient{responses: client.Responses, embeddings: client.Embeddings, chatCompletions: client.Chat.Completions}
 		},
 	}
@@ -205,7 +204,7 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 		return llm.Response{}, err
 	}
 	stream := p.newClient(apiKey).NewStreaming(ctx, params)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var final llm.Response
 	for stream.Next() {
@@ -285,7 +284,7 @@ func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, ro
 		return llm.Response{}, err
 	}
 	stream := p.newClient(apiKey).NewChatCompletionStreaming(ctx, params)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	final := llm.Response{Provider: route.Provider, Model: route.Model}
 	var textBuilder strings.Builder
@@ -698,7 +697,7 @@ func toChatCompletionTools(defs []llm.ToolDefinition) ([]openai.ChatCompletionTo
 func translateResponse(resp *responses.Response, route llm.RouteDecision) llm.Response {
 	out := llm.Response{
 		Provider:   route.Provider,
-		Model:      string(resp.Model),
+		Model:      resp.Model,
 		StopReason: stopReason(resp),
 		Usage: llm.Usage{
 			InputTokens:     int(resp.Usage.InputTokens),

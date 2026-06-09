@@ -1,0 +1,14 @@
+id: mcp-filesystem
+transport: stdio
+# MCP filesystem server — gives agents sandboxed read/write access to a
+# directory. Install: npm install -g @modelcontextprotocol/server-filesystem
+# Set enabled: true and adjust args to the directories you want to expose.
+command: npx
+args:
+  - -y
+  - "@modelcontextprotocol/server-filesystem"
+  - "~"
+enabled: false
+tags:
+  - example
+  - filesystem

@@ -258,13 +258,15 @@ func TestParse_Sentinel_YesNo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var uiPrompt *Event
+	var uiPrompt Event
+	found := false
 	for i := range events {
 		if events[i].Kind == KindUIPrompt {
-			uiPrompt = &events[i]
+			uiPrompt = events[i]
+			found = true
 		}
 	}
-	if uiPrompt == nil {
+	if !found {
 		t.Fatal("expected KindUIPrompt event from sentinel")
 	}
 	if uiPrompt.UIPrompt.Kind != "yes_no" {

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
-import { Activity, Boxes, BrainCircuit, Gauge, LayoutDashboard, Mail, Network, Plug, Settings } from 'lucide-react'
+import { Activity, Boxes, BrainCircuit, Gauge, LayoutDashboard, Mail, Network, Plug, ScrollText, Settings, Wrench } from 'lucide-react'
 import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-labs/sysop-ui/ui'
 
 /**
@@ -7,7 +7,7 @@ import { NavRail, PageHeader, ThemeSwitcher, type NavRailItem } from '@hollis-la
  * active page. Add pages by extending `Route`, `routeComponents`, `nav`,
  * and `TITLES`.
  */
-type Route = 'overview' | 'operations' | 'messaging' | 'mcp' | 'ai' | 'activity' | 'registry' | 'settings'
+type Route = 'overview' | 'operations' | 'messaging' | 'mcp' | 'ai' | 'activity' | 'registry' | 'logs' | 'settings' | 'tools'
 
 const routeComponents = {
   overview: lazy(() => import('./pages/overview').then((module) => ({ default: module.OverviewPage }))),
@@ -21,7 +21,9 @@ const routeComponents = {
   ai: lazy(() => import('./pages/ai').then((module) => ({ default: module.AIPage }))),
   activity: lazy(() => import('./pages/activity').then((module) => ({ default: module.ActivityPage }))),
   registry: lazy(() => import('./pages/registry').then((module) => ({ default: module.RegistryPage }))),
+  logs: lazy(() => import('./pages/logs').then((module) => ({ default: module.LogsPage }))),
   settings: lazy(() => import('./pages/settings').then((module) => ({ default: module.SettingsPage }))),
+  tools: lazy(() => import('./pages/tools').then((module) => ({ default: module.ToolsPage }))),
 } satisfies Record<Route, ReturnType<typeof lazy>>
 
 const BASE_PATH = ''
@@ -34,7 +36,9 @@ const ROUTE_PATHS: Record<Route, string> = {
   ai: 'ai',
   activity: 'activity',
   registry: 'registry',
+  logs: 'logs',
   settings: 'settings',
+  tools: 'tools',
 }
 
 const TITLES: Record<Route, string> = {
@@ -45,7 +49,9 @@ const TITLES: Record<Route, string> = {
   ai: 'AI Gateway',
   activity: 'Activity Monitor',
   registry: 'Registry',
+  logs: 'Daemon Logs',
   settings: 'Settings',
+  tools: 'Tools & Broker',
 }
 
 function routeFromPath(pathname: string): Route {
@@ -123,11 +129,25 @@ export function App() {
       onSelect: () => navigate('activity'),
     },
     {
+      key: 'tools',
+      label: 'Tools & Broker',
+      icon: <Wrench className="h-4 w-4" />,
+      active: route === 'tools',
+      onSelect: () => navigate('tools'),
+    },
+    {
       key: 'registry',
       label: 'Registry',
       icon: <Network className="h-4 w-4" />,
       active: route === 'registry',
       onSelect: () => navigate('registry'),
+    },
+    {
+      key: 'logs',
+      label: 'Daemon Logs',
+      icon: <ScrollText className="h-4 w-4" />,
+      active: route === 'logs',
+      onSelect: () => navigate('logs'),
     },
     {
       key: 'settings',

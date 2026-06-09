@@ -2,8 +2,9 @@ id: opencode
 type: cli
 provider: opencode
 runtime_kind: subprocess
-# Leave command empty to resolve opencode from PATH, or set an absolute path in
-# a local catalog when PATH is not stable for daemon launches.
+# command may be a bare name (resolved via your daemon's PATH) or an absolute
+# path. Set an absolute path when PATH is not stable for daemon launches.
+# Example: command: /usr/local/bin/opencode
 command: opencode
 args:
   - run

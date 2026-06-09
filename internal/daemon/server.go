@@ -87,7 +87,11 @@ type Server struct {
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
-	Close     func() error
+	// LogsDir is the directory containing muxd.log. When set, the
+	// GET /api/logs/daemon endpoint reads from LogsDir/muxd.log.
+	// Empty disables the endpoint (returns 404).
+	LogsDir string
+	Close   func() error
 
 	startedAt time.Time
 }
@@ -226,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 			Registry:            s.Registry,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			Groups:              s.Groups,
+			LogsDir:             s.LogsDir,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -292,6 +297,11 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/groups/", apiHandler)
 			mux.Handle("/mentions", apiHandler)
 		}
+		if s.LogsDir != "" {
+			mux.Handle("/logs/daemon", apiHandler)
+		}
+		mux.Handle("/fs/validate", apiHandler)
+		mux.Handle("/fs/detect", apiHandler)
 	}
 	return otelprop.HTTPMiddleware(mux)
 }
