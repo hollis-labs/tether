@@ -82,6 +82,9 @@ func tailFile(path string, n int) ([]string, error) {
 
 	var all []string
 	sc := bufio.NewScanner(f)
+	// The default 64 KiB token limit makes Scanner error (ErrTooLong) on a
+	// single long line (stack trace, large JSON payload). Allow up to 1 MiB.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		all = append(all, sc.Text())
 	}

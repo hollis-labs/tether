@@ -206,10 +206,6 @@ func (s *Service) Close() error {
 	return s.Store.Close()
 }
 
-// seedLogicalAgents upserts a logical_agents row for every catalog agent.
-// Returns the number of rows touched. Idempotent: re-running refreshes
-// name/role and updated_at while preserving created_at per the Upsert
-// contract. See ADR 0003.
 // maybeAutoSeedCatalog writes a minimal starter catalog when the catalog root
 // has no global.yaml. This is the non-interactive safety net (D3): the daemon
 // never hard-fails on a missing catalog. Detection and full guided setup are
@@ -231,6 +227,10 @@ func maybeAutoSeedCatalog(catalogRoot string) {
 	log.Printf("catalog absent — seeded minimal catalog at %s; run 'mux init' for guided setup", stateRoot)
 }
 
+// seedLogicalAgents upserts a logical_agents row for every catalog agent.
+// Returns the number of rows touched. Idempotent: re-running refreshes
+// name/role and updated_at while preserving created_at per the Upsert
+// contract. See ADR 0003.
 func seedLogicalAgents(db *store.Store, agents map[string]config.Agent) (int, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	var n int

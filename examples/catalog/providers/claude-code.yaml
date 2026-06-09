@@ -2,8 +2,10 @@ id: claude-code
 type: cli
 provider: claude
 runtime_kind: streaming-stdio
-# Leave command empty to let the adapter auto-detect via $CLAUDE_CLI_PATH or PATH.
-# Set an absolute path here if claude is not on your daemon's PATH.
+# command may be a bare name (resolved via your daemon's PATH) or an absolute
+# path. Set an absolute path if claude is not on the daemon's PATH. For
+# zero-config auto-detection instead, use type: cli-goprovider with an empty
+# command (see claude-goprovider.yaml).
 # Example: command: /opt/homebrew/bin/claude
 command: claude
 args: []

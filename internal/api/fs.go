@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/hollis-labs/tether/internal/setup"
 )
@@ -47,11 +49,32 @@ func (s *Server) handleFSValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	switch req.Kind {
+	case "file", "dir", "executable":
+	default:
+		http.Error(w, "unsupported kind: must be file, dir, or executable", http.StatusBadRequest)
+		return
+	}
+
 	if req.Path == "" {
 		writeJSON(w, http.StatusOK, FSValidateResponse{
 			Exists: false,
 			Note:   "path is empty",
 		})
+		return
+	}
+
+	// An executable given as a bare command name (no path separator) is
+	// resolved via $PATH — the same way the runtime execs it. os.Stat alone
+	// would wrongly report PATH-resolved commands (claude, codex, npx) missing.
+	if req.Kind == "executable" && !strings.ContainsRune(req.Path, os.PathSeparator) {
+		resolved, lookErr := exec.LookPath(req.Path)
+		found := lookErr == nil
+		resp := FSValidateResponse{Exists: found, Executable: &found, Resolved: resolved}
+		if !found {
+			resp.Note = "not found on PATH"
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 

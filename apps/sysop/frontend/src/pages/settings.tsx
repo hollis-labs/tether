@@ -851,6 +851,15 @@ function GlobalSettingsDialog({
       .catch(() => set({ status: 'missing', note: 'check failed' }))
   }
 
+  function validateFile(value: string, set: (v: PathValidation) => void) {
+    if (!value.trim()) { set(IDLE_VALIDATION); return }
+    set({ status: 'checking' })
+    api
+      .validatePath(value.trim(), 'file')
+      .then((r) => set(fsValidationToState(r, false)))
+      .catch(() => set({ status: 'missing', note: 'check failed' }))
+  }
+
   return (
     <DetailDialog
       open={form !== null}
@@ -930,7 +939,7 @@ function GlobalSettingsDialog({
                   className={inputClass}
                   value={form.stateDB}
                   onChange={(e) => { update({ stateDB: e.target.value }); setStateDBVal(IDLE_VALIDATION) }}
-                  onBlur={(e) => validateDir(e.target.value, setStateDBVal)}
+                  onBlur={(e) => validateFile(e.target.value, setStateDBVal)}
                 />
                 <ValidationHint v={stateDBVal} />
               </FormField>

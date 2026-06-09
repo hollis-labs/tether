@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -286,21 +288,35 @@ func checkProviders(cat *config.Catalog) []checkResult {
 			}
 			continue
 		}
-		// Non-empty command: check it's executable.
-		info, err := os.Stat(cmd)
+		// Non-empty command: resolve it the way the runtime execs it — a bare
+		// name (claude, codex, npx) is looked up on $PATH; an absolute/relative
+		// path is stat'd and checked for the executable bit.
+		if !strings.ContainsRune(cmd, os.PathSeparator) {
+			resolved, err := exec.LookPath(cmd)
+			if err != nil {
+				results = append(results, fail(name,
+					fmt.Sprintf("command not found on PATH: %s", cmd),
+					fmt.Sprintf("install the CLI or set an absolute command in catalog/providers/%s.yaml", id)))
+				continue
+			}
+			results = append(results, ok(name, resolved))
+			continue
+		}
+		expanded := config.Expand(cmd)
+		info, err := os.Stat(expanded)
 		if err != nil {
 			results = append(results, fail(name,
 				fmt.Sprintf("command not found: %s", cmd),
 				fmt.Sprintf("install the CLI or update command in catalog/providers/%s.yaml", id)))
 			continue
 		}
-		if info.Mode()&0o111 == 0 {
+		if info.IsDir() || info.Mode()&0o111 == 0 {
 			results = append(results, fail(name,
-				fmt.Sprintf("command not executable: %s", cmd),
-				fmt.Sprintf("chmod +x %s", cmd)))
+				fmt.Sprintf("command not executable: %s", expanded),
+				fmt.Sprintf("chmod +x %s", expanded)))
 			continue
 		}
-		results = append(results, ok(name, cmd))
+		results = append(results, ok(name, expanded))
 	}
 	return results
 }
