@@ -155,21 +155,22 @@ func (r *Resolver) SpecsRoot() string { return r.specsRoot }
 //     input -> AgentSpec (both HARD errors when unresolvable);
 //  6. assemble via agentlaunch.PlanFromLaunch.
 //
-// frontEnd selects missing-required-input handling: FrontEndAutonomous
-// turns an unsatisfied required input into ErrMissingRequiredInputs;
-// FrontEndInteractive surfaces it on the (unused) Missing list instead.
-// The LaunchMode stamped on the plan is derived from frontEnd.
+// onMissing selects missing-required-input handling: PolicyError (the
+// zero value, and the strict default) turns an unsatisfied required input
+// into ErrMissingRequiredInputs; PolicyCollect surfaces it on the (unused)
+// Missing list instead. The LaunchMode stamped on the plan is derived from
+// onMissing.
 //
 // The returned LaunchPlan is Validate()-clean (PlanFromLaunch validates it)
 // and ready for the launcher.Compile -> Prepare -> Plant pipeline.
-func (r *Resolver) Resolve(launchID string, frontEnd agentlaunch.RenderFrontEnd) (agentlaunch.LaunchPlan, error) {
-	return r.ResolveContext(context.Background(), launchID, frontEnd)
+func (r *Resolver) Resolve(launchID string, onMissing agentlaunch.MissingPolicy) (agentlaunch.LaunchPlan, error) {
+	return r.ResolveContext(context.Background(), launchID, onMissing)
 }
 
 // ResolveContext is Resolve with a caller-supplied context. The context
 // bounds the var-resolution I/O (http calls and cmd execution); it is the
 // seam a caller uses to cancel a slow recall endpoint.
-func (r *Resolver) ResolveContext(ctx context.Context, launchID string, frontEnd agentlaunch.RenderFrontEnd) (agentlaunch.LaunchPlan, error) {
+func (r *Resolver) ResolveContext(ctx context.Context, launchID string, onMissing agentlaunch.MissingPolicy) (agentlaunch.LaunchPlan, error) {
 	if launchID == "" {
 		return agentlaunch.LaunchPlan{}, fmt.Errorf("%w: empty launch id", ErrLaunchNotFound)
 	}
@@ -192,16 +193,16 @@ func (r *Resolver) ResolveContext(ctx context.Context, launchID string, frontEnd
 	// 3a. A first render yields the effective input map (defaults
 	// applied). Var sources are parameterized by inputs, so the input map
 	// must be known before var resolution. This render is always done
-	// FrontEndInteractive: with no vars supplied yet, the template's
+	// PolicyCollect: with no vars supplied yet, the template's
 	// {{ vars.* }} refs are all "missing", which an autonomous render
 	// would (wrongly) treat as a hard error — the missing-required-INPUT
 	// check is applied separately below so the autonomous contract still
 	// holds for the input layer.
-	inputRender, err := spec.Render(bag.RenderRequest(agentlaunch.FrontEndInteractive))
+	inputRender, err := spec.Render(bag.RenderRequest(agentlaunch.PolicyCollect))
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, fmt.Errorf("specresolve: launch %q render: %w", launchID, err)
 	}
-	if frontEnd == agentlaunch.FrontEndAutonomous {
+	if onMissing == agentlaunch.PolicyError {
 		if missing := inputMissing(inputRender.Missing); len(missing) > 0 {
 			return agentlaunch.LaunchPlan{}, fmt.Errorf("%w: launch %q: %v",
 				ErrMissingRequiredInputs, launchID, missing)
@@ -215,7 +216,7 @@ func (r *Resolver) ResolveContext(ctx context.Context, launchID string, frontEnd
 	}
 
 	// 4. Re-render with the resolved vars folded into the request.
-	renderReq := bag.RenderRequest(frontEnd)
+	renderReq := bag.RenderRequest(onMissing)
 	renderReq.Vars = vars
 	render, err := spec.Render(renderReq)
 	if err != nil {
@@ -251,7 +252,7 @@ func (r *Resolver) ResolveContext(ctx context.Context, launchID string, frontEnd
 		Render:  render,
 		Runtime: runtime,
 		Agent:   agent,
-		Mode:    modeForFrontEnd(frontEnd),
+		Mode:    modeForMissingPolicy(onMissing),
 	})
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, fmt.Errorf("specresolve: launch %q: %w", launchID, err)
@@ -417,11 +418,12 @@ func inputMissing(missing []string) []string {
 	return out
 }
 
-// modeForFrontEnd maps a render front-end onto the LaunchMode stamped on
-// the assembled plan: the interactive front-end is an interactive launch;
-// the autonomous front-end is a background launch.
-func modeForFrontEnd(fe agentlaunch.RenderFrontEnd) agentlaunch.LaunchMode {
-	if fe == agentlaunch.FrontEndInteractive {
+// modeForMissingPolicy maps a missing-value policy onto the LaunchMode
+// stamped on the assembled plan: PolicyCollect is an interactive launch,
+// PolicyError a background one. The policy doubles as the front-end
+// signal because only an interactive front-end can collect what is missing.
+func modeForMissingPolicy(onMissing agentlaunch.MissingPolicy) agentlaunch.LaunchMode {
+	if onMissing == agentlaunch.PolicyCollect {
 		return agentlaunch.LaunchInteractive
 	}
 	return agentlaunch.LaunchBackground

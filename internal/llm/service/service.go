@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
-	feotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/go-otel"
 	"github.com/hollis-labs/go-otel/genai"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/llm"
@@ -65,7 +65,7 @@ type Service struct {
 // Chat routes one normalized chat request through middleware and into the
 // selected provider adapter.
 func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, error) {
-	ctx, span := feotel.StartSpan(ctx, "tether.ai.chat")
+	ctx, span := hotel.StartSpan(ctx, "tether.ai.chat")
 	defer span.End()
 	recordRequestSpanAttrs(span, req)
 
@@ -101,7 +101,7 @@ func (s *Service) Chat(ctx context.Context, req llm.Request) (llm.Response, erro
 // Embed routes one normalized embedding request through middleware and into
 // the selected provider adapter.
 func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, error) {
-	ctx, span := feotel.StartSpan(ctx, "tether.ai.embedding")
+	ctx, span := hotel.StartSpan(ctx, "tether.ai.embedding")
 	defer span.End()
 	recordRequestSpanAttrs(span, req)
 
@@ -139,7 +139,7 @@ func (s *Service) Embed(ctx context.Context, req llm.Request) (llm.Response, err
 // When the provider lacks native streaming support, this falls back to a unary
 // chat invocation and emits only start/completed events.
 func (s *Service) StreamChat(ctx context.Context, req llm.Request, emit func(llm.StreamEvent) error) (llm.Response, error) {
-	ctx, span := feotel.StartSpan(ctx, "tether.ai.chat.stream")
+	ctx, span := hotel.StartSpan(ctx, "tether.ai.chat.stream")
 	defer span.End()
 	recordRequestSpanAttrs(span, req)
 

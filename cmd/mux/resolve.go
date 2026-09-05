@@ -28,7 +28,7 @@ var resolveCmd = &cobra.Command{
 		// ("catalog") prints the legacy launch.Plan unchanged.
 		var payload any
 		if svc.LaunchEngineIsSpec() {
-			payload, err = svc.SpecResolveLaunchPlan(cmd.Context(), resolveLaunchID, agentlaunch.FrontEndInteractive)
+			payload, err = svc.SpecResolveLaunchPlan(cmd.Context(), resolveLaunchID, agentlaunch.PolicyCollect)
 		} else {
 			payload, err = svc.Resolve(resolveLaunchID)
 		}

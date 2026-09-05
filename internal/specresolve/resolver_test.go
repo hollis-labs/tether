@@ -160,7 +160,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.launchID, func(t *testing.T) {
-			plan, err := r.Resolve(tc.launchID, agentlaunch.FrontEndAutonomous)
+			plan, err := r.Resolve(tc.launchID, agentlaunch.PolicyError)
 			if err != nil {
 				t.Fatalf("Resolve(%q): %v", tc.launchID, err)
 			}
@@ -196,7 +196,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 // precise ErrLaunchNotFound.
 func TestResolve_UnresolvableLaunchID(t *testing.T) {
 	r := newResolver(t, WithCallResolver(&stubCallResolver{value: ""}))
-	_, err := r.Resolve("no-such-launch", agentlaunch.FrontEndAutonomous)
+	_, err := r.Resolve("no-such-launch", agentlaunch.PolicyError)
 	if !errors.Is(err, ErrLaunchNotFound) {
 		t.Fatalf("Resolve(unknown) error = %v, want ErrLaunchNotFound", err)
 	}
@@ -222,7 +222,7 @@ func TestResolve_UnresolvableRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
 	}
-	_, err = r.Resolve("tether-claude", agentlaunch.FrontEndAutonomous)
+	_, err = r.Resolve("tether-claude", agentlaunch.PolicyError)
 	if !errors.Is(err, launchresolve.ErrRuntimeBindingNotFound) {
 		t.Fatalf("Resolve with no runner error = %v, want ErrRuntimeBindingNotFound", err)
 	}
@@ -239,7 +239,7 @@ func TestResolve_OfflineDegraded(t *testing.T) {
 	t.Setenv("TESSERACT_URL", "")
 	r := newResolver(t)
 
-	plan, err := r.Resolve("tether-claude", agentlaunch.FrontEndAutonomous)
+	plan, err := r.Resolve("tether-claude", agentlaunch.PolicyError)
 	if err != nil {
 		t.Fatalf("offline Resolve must still succeed, got: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestResolve_OfflineDegraded_DeadEndpoint(t *testing.T) {
 	t.Setenv("TESSERACT_URL", "http://127.0.0.1:1")
 	r := newResolver(t)
 
-	plan, err := r.Resolve("nanite-claude-stream", agentlaunch.FrontEndAutonomous)
+	plan, err := r.Resolve("nanite-claude-stream", agentlaunch.PolicyError)
 	if err != nil {
 		t.Fatalf("dead-endpoint Resolve must still succeed, got: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestResolve_RecallEndpointReachable(t *testing.T) {
 	t.Setenv("TESSERACT_URL", stub.server.URL)
 	r := newResolver(t)
 
-	plan, err := r.Resolve("tether-claude", agentlaunch.FrontEndAutonomous)
+	plan, err := r.Resolve("tether-claude", agentlaunch.PolicyError)
 	if err != nil {
 		t.Fatalf("Resolve with reachable recall: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestResolve_RecallEndpointReachable(t *testing.T) {
 // to LaunchInteractive and resolves the same corpus launch.
 func TestResolve_InteractiveFrontEnd(t *testing.T) {
 	r := newResolver(t, WithCallResolver(&stubCallResolver{value: "ctx"}))
-	plan, err := r.Resolve("tether-claude", agentlaunch.FrontEndInteractive)
+	plan, err := r.Resolve("tether-claude", agentlaunch.PolicyCollect)
 	if err != nil {
 		t.Fatalf("Resolve interactive: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestResolve_UnauthorizedTrustToken(t *testing.T) {
 		WithCallResolver(&stubCallResolver{value: ""}),
 		WithTrustAuthorizer(denyAll))
 
-	_, err := r.Resolve("tether-claude", agentlaunch.FrontEndAutonomous)
+	_, err := r.Resolve("tether-claude", agentlaunch.PolicyError)
 	if err == nil {
 		t.Fatalf("Resolve must fail when a gated source is denied")
 	}

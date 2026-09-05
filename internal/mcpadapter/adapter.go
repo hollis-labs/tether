@@ -29,7 +29,7 @@ import (
 	"strings"
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
-	feotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/go-otel"
 	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -136,7 +136,7 @@ func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerF
 		if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
-		ctx, span := feotel.ToolCallSpan(ctx, t.Name)
+		ctx, span := hotel.ToolCallSpan(ctx, t.Name)
 		defer span.End()
 		return handler(ctx, req)
 	})
