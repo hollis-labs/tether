@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -107,4 +109,59 @@ func TestMainRunUsage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
+}
+
+// TestDecodeKeyringValue covers the go-keyring interop hazard: entries written
+// by zalando/go-keyring on macOS carry a "go-keyring-base64:" marker that
+// go-keyring's own reader strips, but a raw `security -w` read does not. Left
+// undecoded, the marker string is handed to a service as if it were a
+// credential — the right length and shape, failing only later as a 401.
+func TestDecodeKeyringValue(t *testing.T) {
+	t.Run("decodes a go-keyring-written value", func(t *testing.T) {
+		const secret = "resolved-value-for-test"
+		stored := keyringBase64Prefix + base64.StdEncoding.EncodeToString([]byte(secret))
+		got, err := decodeKeyringValue(stored)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != secret {
+			t.Errorf("decodeKeyringValue = %q, want the decoded secret", got)
+		}
+	})
+
+	t.Run("passes a plain security-written value through", func(t *testing.T) {
+		const secret = "plain-value-written-by-security-cli"
+		got, err := decodeKeyringValue(secret)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != secret {
+			t.Errorf("decodeKeyringValue = %q, want it unchanged", got)
+		}
+	})
+
+	t.Run("never returns the marker string as a secret", func(t *testing.T) {
+		stored := keyringBase64Prefix + base64.StdEncoding.EncodeToString([]byte("real"))
+		got, _ := decodeKeyringValue(stored)
+		if strings.Contains(got, keyringBase64Prefix) {
+			t.Errorf("marker survived into the resolved value: %q", got)
+		}
+	})
+
+	t.Run("corrupt payload is an error, not a passthrough", func(t *testing.T) {
+		got, err := decodeKeyringValue(keyringBase64Prefix + "!!!not-base64!!!")
+		if err == nil {
+			t.Fatalf("expected an error for a corrupt payload, got %q", got)
+		}
+		if got != "" {
+			t.Errorf("returned %q alongside an error; must return empty", got)
+		}
+	})
+
+	t.Run("empty value is untouched", func(t *testing.T) {
+		got, err := decodeKeyringValue("")
+		if err != nil || got != "" {
+			t.Errorf("decodeKeyringValue(\"\") = %q, %v", got, err)
+		}
+	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -206,7 +207,38 @@ func readSecretDarwin(account string) (string, error) {
 		}
 		return "", err
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return decodeKeyringValue(strings.TrimSpace(stdout.String()))
+}
+
+// keyringBase64Prefix is the marker zalando/go-keyring writes ahead of a
+// base64-encoded secret on macOS (keyring_darwin.go, base64EncodingPrefix).
+const keyringBase64Prefix = "go-keyring-base64:"
+
+// decodeKeyringValue reverses go-keyring's macOS storage encoding.
+//
+// This helper reads the keychain through the `security` CLI rather than
+// go-keyring, and the two halves of the portfolio do not agree: Cerberus and
+// Nanite write entries with go-keyring, which stores
+// "go-keyring-base64:<base64>", while go-keyring's own reader decodes that
+// prefix transparently. A raw `security -w` read does not — it returns the
+// marker string verbatim, which is the length and shape of a real credential
+// and fails only later, at the API call, as a 401.
+//
+// Implementing the same read contract here makes the two interoperate in both
+// directions: go-keyring already reads plain values written by `security`, and
+// after this `security`-based reads understand values written by go-keyring.
+//
+// A value carrying the marker but not decoding as base64 is corrupt, and is
+// reported rather than passed through as if it were a secret.
+func decodeKeyringValue(value string) (string, error) {
+	if !strings.HasPrefix(value, keyringBase64Prefix) {
+		return value, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, keyringBase64Prefix))
+	if err != nil {
+		return "", fmt.Errorf("decode go-keyring-encoded secret: %w", err)
+	}
+	return string(decoded), nil
 }
 
 func writeSecretDarwin(account, secret string) error {
