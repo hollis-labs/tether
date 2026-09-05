@@ -5,7 +5,7 @@
 // Tether's cutover gate (EP-20260516-0001 S5.1) needs parity proven over
 // all 64 legacy launches, so this test passes the full corpus via
 // parity.WithCorpus and registers Tether's documented legacy-catalog
-// defects via parity.WithExpectedOldErrors (go-agent-launch v0.3.5+ —
+// defects via parity.WithExpectedDiffs (go-agent-launch v0.3.5+ —
 // caller-side expected registries; no hand-editing of the harness).
 //
 // Parity proves launch *identity* (project / work_dir / runner /
@@ -31,19 +31,37 @@ const specsRoot = "../../testdata/launch-specs"
 // legacy counterpart, so there is nothing to diff it against.
 const minimumConfigBag = "tether-minimum"
 
-// expectedOldErrors registers the launches whose legacy YAML references
-// an agent absent from ~/.tether/catalog/agents/ — the old (catalog-walk)
-// side cannot resolve them. Documented data defects, not parity failures:
-// the new-side bags fold the dangling agent into the agent_role input and
-// resolve fine. Tracked in Vanta (limitations.tether.live_catalog_data_defects).
-// hollislabs-web-writer-claude is already in the harness's built-in
-// registry; these two surfaced when the corpus widened 11 -> 64.
-var expectedOldErrors = map[string]string{
-	"hollislabs-web-claude": "dangling-agent: legacy launch references agent:web-engineer " +
-		"with no agents/web-engineer.yaml; new bag folds it into agent_role",
-	"stack-explorer-auditor-codex": "dangling-agent: legacy launch references " +
-		"agent:stack-explorer-auditor with no agents/stack-explorer-auditor.yaml; " +
-		"new bag folds it into agent_role",
+// Tether registered two dangling-agent defects here — hollislabs-web-claude
+// (agent:web-engineer) and stack-explorer-auditor-codex
+// (agent:stack-explorer-auditor) — for legacy launches naming an agent with no
+// YAML in ~/.tether/catalog/agents/. The catalog has since grown
+// web-engineer.yaml and stack-explorer-auditor.yaml, so both launches now
+// resolve on the old side too and the rot-guard below correctly called the
+// registrations stale. Dropped, per its own instruction.
+//
+// If either agent YAML is ever removed again the old-side error returns as an
+// unexplained parity failure; re-register it through
+// parity.WithExpectedOldErrors rather than editing the harness.
+
+// upstreamStaleExpected is the stale-registration allowlist.
+//
+// parity.RunParity merges its built-in expected-old-error registry with the
+// caller's and offers no way to unregister a built-in entry, so a built-in
+// that the live catalog has outgrown is stale for every consumer and
+// unfixable from here. hollislabs-web-writer-claude is one: agentkit v0.3.0
+// still registers it against a missing agents/web-writer.yaml that now
+// exists. Tether's own registrations stay under the rot-guard; only entries
+// this repo cannot reach belong in here.
+//
+// Keyed by the exact Report.StaleExpected entry, so allowlisting the
+// harness's old-error registration cannot also mask a future stale diff on
+// the same launch.
+//
+// Fixing it upstream is dropping the entry from agentkit's
+// agentlaunch/parity/expected_diffs.go. When that lands, this allowlist goes
+// with it.
+var upstreamStaleExpected = map[string]bool{
+	"expected-old-error hollislabs-web-writer-claude": true,
 }
 
 // agentMuxRepointed is the agent-mux launches NOT in the harness's
@@ -119,7 +137,6 @@ func TestFullCorpusParity(t *testing.T) {
 
 	report, err := parity.RunParity(catalogRoot, specsRoot,
 		parity.WithCorpus(fullCorpus(t)),
-		parity.WithExpectedOldErrors(expectedOldErrors),
 		parity.WithExpectedDiffs(expectedAgentMuxDiffs()...),
 	)
 	if err != nil {
@@ -137,8 +154,16 @@ func TestFullCorpusParity(t *testing.T) {
 
 	// Rot-guard: every registered expected divergence must have been
 	// observed. A stale entry means a defect was fixed (or a launch
-	// removed) and the registration should be dropped.
-	if stale := report.StaleExpected(); len(stale) > 0 {
+	// removed) and the registration should be dropped. Entries the harness
+	// registers itself are exempt — see upstreamStaleExpected.
+	var stale []string
+	for _, e := range report.StaleExpected() {
+		if upstreamStaleExpected[e] {
+			continue
+		}
+		stale = append(stale, e)
+	}
+	if len(stale) > 0 {
 		t.Errorf("stale expected-divergence registrations (no longer observed): %v", stale)
 	}
 }
