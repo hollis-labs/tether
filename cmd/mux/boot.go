@@ -202,7 +202,7 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 		// unchanged. Default ("catalog") leaves specPlan nil.
 		var specPlan *agentlaunch.LaunchPlan
 		if svc.LaunchEngineIsSpec() {
-			resolved, err := svc.SpecResolveLaunchPlan(cmd.Context(), p.Launch, agentlaunch.FrontEndInteractive)
+			resolved, err := svc.SpecResolveLaunchPlan(cmd.Context(), p.Launch, agentlaunch.PolicyCollect)
 			if err != nil {
 				return fmt.Errorf("spec launch engine: resolve %q: %w", p.Launch, err)
 			}

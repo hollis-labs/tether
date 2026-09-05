@@ -80,7 +80,7 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			plan, err := res.Resolve(tc.launchID, agentlaunch.FrontEndAutonomous)
+			plan, err := res.Resolve(tc.launchID, agentlaunch.PolicyError)
 			if err != nil {
 				t.Fatalf("Resolve(%s): %v", tc.launchID, err)
 			}

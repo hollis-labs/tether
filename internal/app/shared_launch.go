@@ -107,7 +107,7 @@ func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, wor
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, fmt.Errorf("spec launch engine: %w", err)
 	}
-	lp, err := resolver.ResolveContext(ctx, plan.LaunchID, agentlaunch.FrontEndInteractive)
+	lp, err := resolver.ResolveContext(ctx, plan.LaunchID, agentlaunch.PolicyCollect)
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, fmt.Errorf("spec launch engine: resolve %q: %w", plan.LaunchID, err)
 	}

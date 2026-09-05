@@ -50,7 +50,17 @@ func TestClientAIChatStream(t *testing.T) {
 				t.Fatalf("stream closed early: %+v", got)
 			}
 			got = append(got, ev)
-		case err := <-errCh:
+		case err, ok := <-errCh:
+			if !ok {
+				// AIChatStream's goroutine closes errCh on clean completion,
+				// so a closed channel is success. Both channels are then
+				// ready at once and select picks between them at random —
+				// reading the close as a failure made this test flake. Drop
+				// errCh from the select and drain the events still buffered
+				// in ch; if there are too few, the ok check above reports it.
+				errCh = nil
+				continue
+			}
 			t.Fatalf("stream err = %v", err)
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for stream events")
@@ -139,14 +149,26 @@ func TestClientAIChatStreamUsesCallerContextNotTransportTimeout(t *testing.T) {
 		t.Fatalf("AIChatStream: %v", err)
 	}
 
-	select {
-	case ev := <-ch:
-		if ev.Kind != llm.StreamEventStart {
-			t.Fatalf("event kind = %q", ev.Kind)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("stream closed with no event")
+			}
+			if ev.Kind != llm.StreamEventStart {
+				t.Fatalf("event kind = %q", ev.Kind)
+			}
+			return
+		case err, ok := <-errCh:
+			if !ok {
+				// Closed errCh means clean completion, not failure — see
+				// TestClientAIChatStream.
+				errCh = nil
+				continue
+			}
+			t.Fatalf("stream err = %v", err)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for stream event")
 		}
-	case err := <-errCh:
-		t.Fatalf("stream err = %v", err)
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for stream event")
 	}
 }

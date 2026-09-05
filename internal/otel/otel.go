@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	feotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/go-otel"
 )
 
 const (
@@ -25,17 +25,17 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 
 	configureLogging()
 
-	return feotel.Init(ctx,
-		feotel.WithServiceName(serviceName),
-		feotel.WithServiceVersion(serviceVersion),
-		feotel.WithServiceNamespace("hollis"),
-		feotel.WithEnvironment(environment()),
+	return hotel.Init(ctx,
+		hotel.WithServiceName(serviceName),
+		hotel.WithServiceVersion(serviceVersion),
+		hotel.WithServiceNamespace("hollis"),
+		hotel.WithEnvironment(environment()),
 	)
 }
 
 // configureLogging installs the trace-attributing handler as slog's default.
 func configureLogging() {
-	slog.SetDefault(slog.New(feotel.NewLogHandler(baseHandler())))
+	slog.SetDefault(slog.New(hotel.NewLogHandler(baseHandler())))
 }
 
 // baseHandler returns the handler that trace_id/span_id are layered onto.

@@ -113,18 +113,18 @@ func (s *Service) LaunchEngineIsSpec() bool {
 // for front-ends that produce the agentlaunch.LaunchPlan themselves
 // (boot-exec, mux resolve) rather than going through compileSharedLaunch.
 //
-// frontEnd selects missing-required-input handling and the stamped launch
-// mode: pass agentlaunch.FrontEndInteractive for the interactive
+// onMissing selects missing-required-input handling and the stamped launch
+// mode: pass agentlaunch.PolicyCollect for the interactive
 // terminal-attached front-ends. The returned plan is Validate()-clean.
 //
 // Callers must only invoke this when LaunchEngineIsSpec reports true; it
 // constructs the resolver lazily and is a no-op cost on the catalog path.
-func (s *Service) SpecResolveLaunchPlan(ctx context.Context, launchID string, frontEnd agentlaunch.RenderFrontEnd) (agentlaunch.LaunchPlan, error) {
+func (s *Service) SpecResolveLaunchPlan(ctx context.Context, launchID string, onMissing agentlaunch.MissingPolicy) (agentlaunch.LaunchPlan, error) {
 	resolver, err := s.specResolverFor()
 	if err != nil {
 		return agentlaunch.LaunchPlan{}, err
 	}
-	return resolver.ResolveContext(ctx, launchID, frontEnd)
+	return resolver.ResolveContext(ctx, launchID, onMissing)
 }
 
 // resolveLaunchSpecsRoot selects the LaunchSpec corpus directory for the
