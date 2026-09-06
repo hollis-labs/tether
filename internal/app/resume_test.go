@@ -38,6 +38,27 @@ func TestResumeHintForCheckpoint_LegacySessionID(t *testing.T) {
 	}
 }
 
+func TestResumeParentSessionID_SetWhenCheckpointHasSource(t *testing.T) {
+	got := resumeParentSessionID(&tethercheckpoint.Checkpoint{SourceSessionID: "sess-parent-1"})
+	if !got.Valid || got.String != "sess-parent-1" {
+		t.Fatalf("expected valid parent session id 'sess-parent-1', got %+v", got)
+	}
+}
+
+func TestResumeParentSessionID_EmptyWhenCheckpointHasNoSource(t *testing.T) {
+	got := resumeParentSessionID(&tethercheckpoint.Checkpoint{})
+	if got.Valid {
+		t.Fatalf("expected no parent session id for a checkpoint with no source session, got %+v", got)
+	}
+}
+
+func TestResumeParentSessionID_NilCheckpoint(t *testing.T) {
+	got := resumeParentSessionID(nil)
+	if got.Valid {
+		t.Fatalf("expected no parent session id for a nil checkpoint, got %+v", got)
+	}
+}
+
 func TestResumeHintForCheckpoint_FreshBootFallback(t *testing.T) {
 	hint := resumeHintForCheckpoint(&tethercheckpoint.Checkpoint{}, &launch.Plan{
 		ProviderBrand: "codex",

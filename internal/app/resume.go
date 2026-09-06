@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -79,6 +80,14 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		ProviderKind:   probe.Kind(),
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
+		// Canonical-session lineage (T02, messaging vNext). Before this,
+		// Tether had no session->session lineage at all: the only backward
+		// pointer was checkpoint.SourceSessionID (which session PRODUCED
+		// the checkpoint being resumed from). ParentSessionID makes that
+		// lineage visible on the new session row itself, without changing
+		// the existing checkpoint-driven --resume decision above.
+		Intent:          "resume",
+		ParentSessionID: resumeParentSessionID(ck),
 	}
 	if err := s.Store.CreateSession(row, plan); err != nil {
 		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
@@ -96,6 +105,17 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		ProviderKind:   l.ProviderKind,
 		LogicalAgentID: l.Plan.LogicalAgentID,
 	}, nil
+}
+
+// resumeParentSessionID resolves the new session's lineage pointer (T02,
+// messaging vNext) from the checkpoint being resumed. Empty when the
+// checkpoint doesn't know its source session -- a pre-T02 checkpoint row,
+// or a checkpoint that was never associated with a producing session.
+func resumeParentSessionID(ck *checkpoint.Checkpoint) sql.NullString {
+	if ck == nil || ck.SourceSessionID == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: ck.SourceSessionID, Valid: true}
 }
 
 func resumeHintForCheckpoint(ck *checkpoint.Checkpoint, plan *launch.Plan) runtimecheckpoint.ResumeHint {

@@ -86,14 +86,29 @@ type SessionRow struct {
 	ProviderID     string
 	// ProviderKind is the runtime family ("cli" | "api"). Added in migration
 	// 0012 (ADR 0022 G3); empty for rows created before the migration.
-	ProviderKind   string
-	Workspace      string
-	State          string
-	PID            sql.NullInt64
-	ExitCode       sql.NullInt64
-	CreatedAt      string
-	UpdatedAt      string
-	EndedAt        sql.NullString
+	ProviderKind string
+	Workspace    string
+	State        string
+	PID          sql.NullInt64
+	ExitCode     sql.NullInt64
+	CreatedAt    string
+	UpdatedAt    string
+	EndedAt      sql.NullString
+	// ParentSessionID names the session this one continues from (set on
+	// resume). Empty for a fresh boot with no lineage. Added migration 0019
+	// (T02, messaging vNext) -- Tether had no session-lineage concept before
+	// this; see planning/docs/messaging-vnext/T01-compatibility-contract.md §2.12.
+	ParentSessionID sql.NullString
+	// Intent records how this session came to exist: one of "preassigned",
+	// "resume", "compact", "fresh", "fork" (mirrors agentkit's
+	// SessionBootstrapIntent vocabulary; "compact"/"fork" are reserved for
+	// launch paths that don't exist in Tether yet -- see T02 research, no
+	// compaction or fork concept exists today). Empty defaults to "fresh".
+	Intent string
+	// Publication records whether this session was ever explicitly
+	// published: "private-local" (default), "published-local", or
+	// "tether-hosted". Empty defaults to "private-local".
+	Publication    string
 	SessionGroupID sql.NullString
 }
 
@@ -101,11 +116,18 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	row.CreatedAt = now
 	row.UpdatedAt = now
+	if row.Intent == "" {
+		row.Intent = "fresh"
+	}
+	if row.Publication == "" {
+		row.Publication = "private-local"
+	}
 	if _, err := s.db.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
-		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt); err != nil {
+		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
+		row.ParentSessionID, row.Intent, row.Publication); err != nil {
 		return err
 	}
 	pb, err := json.Marshal(plan)
@@ -207,7 +229,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("session_group_id = ?", opts.GroupID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -218,7 +240,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -228,8 +250,8 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

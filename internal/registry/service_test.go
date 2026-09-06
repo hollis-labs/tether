@@ -345,6 +345,24 @@ func (s *stubStorage) AttachExternalID(context.Context, string, string, string) 
 func (s *stubStorage) DetachExternalID(context.Context, string, string) error {
 	panic("stubStorage.DetachExternalID: unexpected call")
 }
+func (s *stubStorage) RegisterWithExternalKey(context.Context, registry.Profile, string, string) (string, bool, error) {
+	panic("stubStorage.RegisterWithExternalKey: unexpected call")
+}
+func (s *stubStorage) LeaseBinding(context.Context, string, string, string, string, []string, registry.PublicationVisibility, time.Duration) (registry.RuntimeBinding, error) {
+	panic("stubStorage.LeaseBinding: unexpected call")
+}
+func (s *stubStorage) RenewLease(context.Context, string, time.Duration) (registry.RuntimeBinding, error) {
+	panic("stubStorage.RenewLease: unexpected call")
+}
+func (s *stubStorage) RevokeBinding(context.Context, string) error {
+	panic("stubStorage.RevokeBinding: unexpected call")
+}
+func (s *stubStorage) CurrentBinding(context.Context, string) (registry.RuntimeBinding, error) {
+	panic("stubStorage.CurrentBinding: unexpected call")
+}
+func (s *stubStorage) ListBindingsForTarget(context.Context, string) ([]registry.RuntimeBinding, error) {
+	panic("stubStorage.ListBindingsForTarget: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's

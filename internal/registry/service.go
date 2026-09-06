@@ -82,6 +82,14 @@ type storageBackend interface {
 	LookupURNByExternalID(ctx context.Context, kind Kind, externalID, substrate string) (string, bool, error)
 	AttachExternalID(ctx context.Context, urn, substrate, externalID string) error
 	DetachExternalID(ctx context.Context, urn, substrate string) error
+	RegisterWithExternalKey(ctx context.Context, p Profile, substrate, externalID string) (urn string, created bool, err error)
+
+	// T02 leased runtime bindings.
+	LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration) (RuntimeBinding, error)
+	RenewLease(ctx context.Context, bindingID string, ttl time.Duration) (RuntimeBinding, error)
+	RevokeBinding(ctx context.Context, bindingID string) error
+	CurrentBinding(ctx context.Context, targetURN string) (RuntimeBinding, error)
+	ListBindingsForTarget(ctx context.Context, targetURN string) ([]RuntimeBinding, error)
 
 	// v060-05 group ops (T-02 + T-03 + T-04).
 	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error

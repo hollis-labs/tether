@@ -239,9 +239,22 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		logicalAgentID := plan.LogicalAgentID
 		storeRef := s.Store
 		providerID := plan.ProviderID
+		canonicalSessionID := sessionID
 		onSessionID = func(id string) {
+			// Legacy compatibility mirror -- unchanged. See T01 contract
+			// §3.1: logical_agents.claude_session_id is write-only in
+			// production (nothing reads it back) and shared across every
+			// provider kind rather than scoped per session; kept as-is so
+			// nothing that might still depend on it regresses.
 			if err := storeRef.SetClaudeSessionID(logicalAgentID, id); err != nil {
 				log.Printf("%s: persist session_id for %q failed: %v", providerID, logicalAgentID, err)
+			}
+			// Canonical mapping (T02, messaging vNext): scoped to THIS
+			// session and THIS provider, not a single shared slot on the
+			// logical agent. This is the mapping table new callers should
+			// read; the column above is compatibility-only.
+			if err := storeRef.UpsertSessionProviderMapping(canonicalSessionID, "tether", providerID, id); err != nil {
+				log.Printf("%s: persist session provider mapping for session %q failed: %v", providerID, canonicalSessionID, err)
 			}
 		}
 	}
