@@ -363,6 +363,21 @@ func (s *stubStorage) CurrentBinding(context.Context, string) (registry.RuntimeB
 func (s *stubStorage) ListBindingsForTarget(context.Context, string) ([]registry.RuntimeBinding, error) {
 	panic("stubStorage.ListBindingsForTarget: unexpected call")
 }
+func (s *stubStorage) SetScopedBinding(context.Context, string, string, []string, json.RawMessage, string) (registry.ScopedBinding, error) {
+	panic("stubStorage.SetScopedBinding: unexpected call")
+}
+func (s *stubStorage) ResolveScopedBinding(context.Context, string, string) (registry.ScopedBinding, error) {
+	panic("stubStorage.ResolveScopedBinding: unexpected call")
+}
+func (s *stubStorage) ResolveScopedBindingSingle(context.Context, string, string) (string, registry.ScopedBinding, error) {
+	panic("stubStorage.ResolveScopedBindingSingle: unexpected call")
+}
+func (s *stubStorage) ListScopedBindingRevisions(context.Context, string, string) ([]registry.ScopedBinding, error) {
+	panic("stubStorage.ListScopedBindingRevisions: unexpected call")
+}
+func (s *stubStorage) SetGroupMessageDeliveryMapping(context.Context, string, string) error {
+	panic("stubStorage.SetGroupMessageDeliveryMapping: unexpected call")
+}
 
 func TestService_Register_URNCollisionRetry(t *testing.T) {
 	// Three collisions then success on the fourth attempt. The minter's

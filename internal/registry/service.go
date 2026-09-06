@@ -91,6 +91,15 @@ type storageBackend interface {
 	CurrentBinding(ctx context.Context, targetURN string) (RuntimeBinding, error)
 	ListBindingsForTarget(ctx context.Context, targetURN string) ([]RuntimeBinding, error)
 
+	// T04 scoped role/slot bindings.
+	SetScopedBinding(ctx context.Context, scope, slot string, targetURNs []string, relationship json.RawMessage, createdBy string) (ScopedBinding, error)
+	ResolveScopedBinding(ctx context.Context, scope, slot string) (ScopedBinding, error)
+	ResolveScopedBindingSingle(ctx context.Context, scope, slot string) (string, ScopedBinding, error)
+	ListScopedBindingRevisions(ctx context.Context, scope, slot string) ([]ScopedBinding, error)
+
+	// T04 group-fanout delivery mapping.
+	SetGroupMessageDeliveryMapping(ctx context.Context, messageID, deliveryMessageID string) error
+
 	// v060-05 group ops (T-02 + T-03 + T-04).
 	InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN string) error
 	InsertGroupMember(ctx context.Context, grpURN, memberURN string, role MemberRole, joinedAt time.Time) error
@@ -125,6 +134,11 @@ type Service struct {
 	storage       storageBackend
 	resolvers     map[string]Resolver
 	mentionParser MentionParser
+	// deliveryStore is the T04 group-fanout hook (see group_fanout.go). A
+	// pure go-messaging library interface -- injecting it does not create a
+	// dependency on internal/store, keeping internal/registry's existing
+	// zero-coupling to Tether's own session/store packages intact.
+	deliveryStore GroupFanoutDeliveryStore
 }
 
 // Mention is a resolved @-token extracted from a group message payload.
@@ -209,6 +223,25 @@ func WithMentionParser(p MentionParser) ServiceOption {
 // wiring runs once at daemon startup.
 func (s *Service) SetMentionParser(p MentionParser) {
 	s.mentionParser = p
+}
+
+// WithDeliveryStore installs the T04 group-fanout hook at construction
+// time. See group_fanout.go.
+func WithDeliveryStore(d GroupFanoutDeliveryStore) ServiceOption {
+	return func(s *Service) {
+		s.deliveryStore = d
+	}
+}
+
+// SetDeliveryStore installs (or replaces) the group-fanout hook after
+// construction -- mirrors SetMentionParser's rationale: the composition
+// root builds internal/store.Store (which owns the delivery core) and
+// internal/registry.Service somewhat independently, so wiring one into the
+// other after both exist avoids an artificial construction-order
+// dependency. Passing nil disables fanout (SendToGroup still succeeds;
+// only the durable per-recipient obligation is skipped).
+func (s *Service) SetDeliveryStore(d GroupFanoutDeliveryStore) {
+	s.deliveryStore = d
 }
 
 // NewService binds a Service to a production *Storage. Tests bypass this
@@ -681,6 +714,10 @@ func (s *Service) SendToGroup(ctx context.Context, grpURN, fromURN, kind, thread
 	if s.mentionParser != nil && len(mentions) > 0 {
 		s.mentionParser.Dispatch(ctx, gm, mentions)
 	}
+	// T04: post-commit, best-effort durable fanout. The room body above is
+	// already committed and is SendToGroup's real contract; see
+	// group_fanout.go for why this never rolls back or fails the send.
+	s.sendToGroupWithFanout(ctx, gm)
 	return gm, nil
 }
 

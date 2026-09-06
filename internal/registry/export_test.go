@@ -6,7 +6,10 @@ package registry
 // NewService(*Storage) — there is no way to inject a stub via the public
 // surface, by design.
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // NewServiceFromBackendForTest constructs a Service against any
 // storageBackend. Only available to *_test.go files in this package's
@@ -40,4 +43,12 @@ func SetCLIResolverMaxBytesForTest(r *CLIResolver, n int) {
 // CLIResolver so timeout tests can run in tens of milliseconds.
 func SetCLIResolverTimeoutForTest(r *CLIResolver, d time.Duration) {
 	r.timeout = d
+}
+
+// DBForTest exposes a Storage's underlying *sql.DB so T04 tests can assert
+// against raw messages columns (e.g. delivery_message_id) that Storage
+// itself has no public getter for -- only the setter used internally by
+// group_fanout.go.
+func DBForTest(s *Storage) *sql.DB {
+	return s.db
 }
