@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -49,7 +50,10 @@ type msgSubscription struct {
 // alongside the atomic-delivery pull model.
 func (s *Store) MessagingStore() InboxStore {
 	s.msgOnce.Do(func() {
-		s.msgStore = &messagingStore{db: s.db}
+		s.msgStore = &deliveryBackedStore{
+			messagingStore: &messagingStore{db: s.db},
+			delivery:       s.DeliveryStore(),
+		}
 	})
 	return s.msgStore
 }
@@ -66,6 +70,27 @@ func (ms *messagingStore) Send(ctx context.Context, env messaging.Envelope) (mes
 	}
 	env.ID = id.String()
 	env.CreatedAt = time.Now().UTC()
+	return ms.insertMessageRow(ctx, env, "")
+}
+
+// sendWithID is Send's counterpart for callers that already minted the
+// envelope's ID/CreatedAt elsewhere (T03: deliveryBackedStore.Send reuses
+// the go-messaging delivery core's own minted Message.ID so both stores
+// agree on message identity) and additionally records deliveryID -- the
+// corresponding go-messaging RecipientDelivery.ID -- in messages.delivery_id
+// for later Claim/Ack/Nack/Redrive lookups. deliveryID may be empty (no
+// mapping recorded) for callers that don't have a delivery-core counterpart.
+func (ms *messagingStore) sendWithID(ctx context.Context, env messaging.Envelope, deliveryID string) (messaging.Envelope, error) {
+	if env.ID == "" {
+		return messaging.Envelope{}, fmt.Errorf("messaging store: sendWithID: env.ID required")
+	}
+	if env.CreatedAt.IsZero() {
+		env.CreatedAt = time.Now().UTC()
+	}
+	return ms.insertMessageRow(ctx, env, deliveryID)
+}
+
+func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.Envelope, deliveryID string) (messaging.Envelope, error) {
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
 
@@ -79,11 +104,11 @@ func (ms *messagingStore) Send(ctx context.Context, env messaging.Envelope) (mes
 		payloadStr = string(env.Payload)
 	}
 
-	_, err = ms.db.ExecContext(ctx,
+	_, err := ms.db.ExecContext(ctx,
 		`INSERT INTO messages
 		 (id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
-		  payload, content_type, metadata, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  payload, content_type, metadata, created_at, delivery_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		env.ID,
 		string(env.Kind),
 		string(env.Channel),
@@ -95,6 +120,7 @@ func (ms *messagingStore) Send(ctx context.Context, env messaging.Envelope) (mes
 		nullIfEmpty(env.ContentType),
 		nullIfEmpty(metaJSON),
 		env.CreatedAt.UTC().Format(time.RFC3339Nano),
+		nullIfEmpty(deliveryID),
 	)
 	if err != nil {
 		return messaging.Envelope{}, fmt.Errorf("messaging store: send: %w", err)
@@ -254,31 +280,51 @@ func (ms *messagingStore) Thread(ctx context.Context, threadID string, f messagi
 // ErrNotFound if the id does not exist. Returns ErrWrongRecipient if the
 // message exists but `recipient` is not the intended `to_urn`.
 func (ms *messagingStore) Consume(ctx context.Context, id string, recipient messaging.Address) error {
+	_, _, err := ms.consumeAndReportTransition(ctx, id, recipient)
+	return err
+}
+
+// consumeAndReportTransition is Consume's implementation, extended to
+// report (a) whether THIS call was the one that actually transitioned
+// consumed_at from NULL to set (false on the idempotent replay path or on
+// error) and (b) the row's delivery_id, if any -- both needed by
+// deliveryBackedStore.Consume (T03) to drive delivery-core receipt
+// recording exactly once, on the call that genuinely completes consumption.
+func (ms *messagingStore) consumeAndReportTransition(ctx context.Context, id string, recipient messaging.Address) (transitioned bool, deliveryID string, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := ms.db.ExecContext(ctx,
 		`UPDATE messages SET consumed_at=? WHERE id=? AND to_urn=? AND consumed_at IS NULL`,
 		now, id, recipient.URN())
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		return nil // updated — success
+		var delivery sql.NullString
+		if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=?`, id).Scan(&delivery); scanErr != nil {
+			// The consumed_at update itself already committed and is the
+			// caller's real contract; a failure reading delivery_id back
+			// only costs the best-effort receipt recording, not Consume's
+			// success, so it is logged rather than propagated.
+			log.Printf("messaging store: consume: read back delivery_id for %s failed (best-effort receipt recording skipped): %v", id, scanErr)
+			return true, "", nil
+		}
+		return true, delivery.String, nil // updated — success
 	}
 	// 0 rows: already consumed (idempotent OK), wrong recipient, or not found.
 	var toURN string
 	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=?`, id).Scan(&toURN)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return messaging.ErrNotFound
+			return false, "", messaging.ErrNotFound
 		}
-		return err
+		return false, "", err
 	}
 	if toURN != recipient.URN() {
-		return ErrWrongRecipient
+		return false, "", ErrWrongRecipient
 	}
 	// Row exists and to_urn matches — already consumed. Idempotent.
-	return nil
+	return false, "", nil
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────

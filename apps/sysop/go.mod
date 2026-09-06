@@ -3,7 +3,7 @@ module github.com/hollis-labs/tether/apps/sysop
 go 1.26.2
 
 require (
-	github.com/hollis-labs/go-messaging v0.4.0
+	github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-webui v0.1.0
 	github.com/hollis-labs/tether v0.0.0

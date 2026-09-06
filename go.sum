@@ -70,6 +70,8 @@ github.com/hollis-labs/go-mcp-sanitize v0.1.1 h1:mx/2I2pmWLHdHbc2QECQ3hrBRc49h1y
 github.com/hollis-labs/go-mcp-sanitize v0.1.1/go.mod h1:WBnfVYgUsf2ejTGklWCAF6NZt8Na4+fVEnXtydlcDZM=
 github.com/hollis-labs/go-messaging v0.4.0 h1:9sg/fK60XH8wuYO4W5GMBBceY0/UhJNDfAjF6ckhOW4=
 github.com/hollis-labs/go-messaging v0.4.0/go.mod h1:9KGpsIirex9jgJ9SXwW/PO6vcEl9xCZNguAjEFXlsSw=
+github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c h1:3AxqG15j5AqFDeOgU3pQoo43YwKe3PEuIwLdniwMb7k=
+github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c/go.mod h1:9KGpsIirex9jgJ9SXwW/PO6vcEl9xCZNguAjEFXlsSw=
 github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM7xcGqKMmk=
 github.com/hollis-labs/go-modelsdev v0.2.0/go.mod h1:xmyf7/gXcPVI/0htQZCbUhlkRT798zhjZZ4dYZqsEb4=
 github.com/hollis-labs/go-otel v0.6.1 h1:bPqO0xFkTNIrcgW7J4YM/yt3yn1/2Hy9dKxX6/Etna0=

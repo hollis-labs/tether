@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/hollis-labs/go-messaging/delivery"
 
 	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
 	_ "modernc.org/sqlite"
@@ -27,7 +30,11 @@ type Store struct {
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.
 	msgOnce  sync.Once
-	msgStore *messagingStore
+	msgStore InboxStore
+	// deliveryOnce + deliveryStoreVal mirror msgOnce/msgStore for the
+	// go-messaging delivery-core singleton (T03). See delivery_store.go.
+	deliveryOnce     sync.Once
+	deliveryStoreVal delivery.Store
 }
 
 // Open opens (or creates) the SQLite store at path and runs migrations.
@@ -66,6 +73,18 @@ func Open(path string) (*Store, error) {
 	if _, err := Migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	// go-messaging's own reliable-delivery schema (T03, messaging vNext).
+	// ApplySQLiteSchema is idempotent (CREATE TABLE/INDEX IF NOT EXISTS plus
+	// an ON CONFLICT-upserted version row) and owns its own tables, all
+	// prefixed messaging_* -- no collision with Tether's own `messages`
+	// table. Applied here rather than baked into a numbered Tether
+	// migration file so the library remains the owner of its own schema
+	// evolution, per the architecture's "reconcile the two current
+	// contracts; do not create a third competing bus."
+	if err := delivery.ApplySQLiteSchema(context.Background(), db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
 	return &Store{db: db}, nil
 }

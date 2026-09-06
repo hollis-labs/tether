@@ -11,7 +11,7 @@ require (
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.3.0
 	github.com/hollis-labs/go-mcp-sanitize v0.1.1
-	github.com/hollis-labs/go-messaging v0.4.0
+	github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
 	github.com/hollis-labs/go-providers v0.25.0
