@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/session"
@@ -66,6 +67,21 @@ type fakeLaunchService struct {
 	policyErr error
 
 	runtimeHealthOK map[string]bool
+
+	// attemptWakeLog records every AttemptWake call
+	// (messageID/to/sessionID/wakeText) for assertions. AttemptWake itself
+	// delegates to SendTurn (inputErr/inputLog) so existing notify tests
+	// written against SendTurn's fake behavior are unaffected by T06's
+	// handleMessageNotify now calling AttemptWake instead of SendTurn
+	// directly.
+	attemptWakeLog []attemptWakeCall
+}
+
+type attemptWakeCall struct {
+	MessageID string
+	To        messaging.Address
+	SessionID string
+	WakeText  string
 }
 
 func (f *fakeLaunchService) CreateSession(id string) (LaunchResult, error) {
@@ -185,6 +201,37 @@ func (f *fakeLaunchService) RuntimeHealth(id string) (RuntimeHealthResult, bool)
 		return RuntimeHealthResult{}, false
 	}
 	return RuntimeHealthResult{SessionID: id}, true
+}
+
+// ResolveActorSession replicates resolveNotifySession's pre-T06 legacy
+// newest-running-session scan against the fake's own listRes/
+// runtimeHealthOK fields, so tests written against those fields see
+// unchanged behavior now that the scan lives behind this interface method
+// instead of inline in resolveNotifySession.
+func (f *fakeLaunchService) ResolveActorSession(_ context.Context, logicalAgentID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.listRes {
+		if row.LogicalAgentID == logicalAgentID {
+			if f.runtimeHealthOK != nil && f.runtimeHealthOK[row.ID] {
+				return row.ID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// AttemptWake delegates to the fake's existing SendTurn recording
+// (inputLog/inputErr) so tests asserting wake behavior via those fields
+// continue to work unchanged.
+func (f *fakeLaunchService) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) WakeOutcome {
+	f.mu.Lock()
+	f.attemptWakeLog = append(f.attemptWakeLog, attemptWakeCall{MessageID: messageID, To: to, SessionID: sessionID, WakeText: wakeText})
+	f.mu.Unlock()
+	if err := f.SendTurn(ctx, sessionID, wakeText); err != nil {
+		return WakeOutcome{Attempted: true, SessionID: sessionID, Reason: "turn-submit-failed", Detail: err.Error()}
+	}
+	return WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID}
 }
 
 func newTestHandler(svc LaunchService) http.Handler {

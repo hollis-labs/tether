@@ -34,6 +34,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -182,12 +184,33 @@ func (d *deliveryBackedStore) recordConsumedReceipts(ctx context.Context, delive
 }
 
 // DeliveryStore returns the singleton go-messaging delivery.Store backed by
-// this Store's *sql.DB. Exposed for callers (tests, future T06 pump wiring)
-// that need direct access to Claim/Ack/Nack/Redrive/Attempts/Receipts beyond
-// what the InboxStore surface exposes.
+// this Store's *sql.DB. Exposed for callers (tests, T06's wake pump) that
+// need direct access to Claim/Ack/Nack/Redrive/Attempts/Receipts beyond what
+// the InboxStore surface exposes.
 func (s *Store) DeliveryStore() delivery.Store {
 	s.deliveryOnce.Do(func() {
 		s.deliveryStoreVal = delivery.NewSQLiteStore(s.db)
 	})
 	return s.deliveryStoreVal
+}
+
+// DeliveryIDForMessage reads back the delivery-core RecipientDelivery.ID
+// associated with a `messages` row (T06, messaging vNext). Returns
+// ok=false, not an error, when the message predates T03 (delivery_id is
+// NULL) -- callers use this to distinguish "no delivery-core tracking
+// exists for this message" (a legacy row; skip Claim/Ack bookkeeping) from
+// a genuine lookup failure.
+func (s *Store) DeliveryIDForMessage(ctx context.Context, messageID string) (string, bool, error) {
+	var id sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=?`, messageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, fmt.Errorf("delivery id for message %s: %w", messageID, messaging.ErrNotFound)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("delivery id for message %s: %w", messageID, err)
+	}
+	if !id.Valid || id.String == "" {
+		return "", false, nil
+	}
+	return id.String, true, nil
 }

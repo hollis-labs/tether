@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -93,7 +94,49 @@ type Server struct {
 	LogsDir string
 	Close   func() error
 
+	// WakeSweeper is optional; when set, Run starts a periodic background
+	// pass (wakeSweepInterval) retrying wake attempts the delivery core
+	// already knows are ready -- deliveries a prior wake attempt Nacked as
+	// busy/offline (T06, messaging vNext). Populated from app.Service at
+	// daemon startup; nil in tests that don't need the pump (e.g. Handler
+	// tests that never call Run).
+	WakeSweeper WakeSweeper
+
 	startedAt time.Time
+}
+
+// WakeSweeper is the narrow seam Run uses to drive the shared wake pump.
+// *app.Service satisfies it directly (RunWakeSweep, internal/app/wake.go).
+// A dedicated interface here (rather than reusing api.LaunchService) keeps
+// this daemon-lifecycle concern independent of the HTTP-transport
+// interface and its many existing test doubles.
+type WakeSweeper interface {
+	RunWakeSweep(ctx context.Context) (int, error)
+}
+
+// wakeSweepInterval bounds how often the background pump retries ready
+// deliveries. Short enough that a busy session's queued wake is retried
+// promptly once it goes idle; long enough not to hammer an offline actor.
+// A var (not a const) solely so tests can shrink it instead of waiting out
+// the real production interval.
+var wakeSweepInterval = 5 * time.Second
+
+// runWakeSweepLoop ticks RunWakeSweep until ctx is canceled. Errors are
+// logged, not fatal -- a sweep failure must never bring down the daemon;
+// the next tick simply tries again.
+func (s *Server) runWakeSweepLoop(ctx context.Context) {
+	ticker := time.NewTicker(wakeSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := s.WakeSweeper.RunWakeSweep(ctx); err != nil {
+				log.Printf("daemon: wake sweep failed: %v", err)
+			}
+		}
+	}
 }
 
 func (s *Server) publishDaemon(kind, payloadJSON string) {
@@ -156,6 +199,10 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		serveErr <- nil
 	}()
+
+	if s.WakeSweeper != nil {
+		go s.runWakeSweepLoop(ctx)
+	}
 
 	var runErr error
 	select {

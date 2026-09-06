@@ -101,6 +101,13 @@ type MessageNotifyResult struct {
 	WakeDelivered bool               `json:"wake_delivered"`
 	SessionID     string             `json:"session_id,omitempty"`
 	WakeError     string             `json:"wake_error,omitempty"`
+	// WakeReason carries an observational, non-error wake disposition
+	// (T06, messaging vNext): "busy", "offline", "offline-race",
+	// "stale-generation", or "claim-unavailable". The delivery was
+	// released for retry via the daemon's shared pump in every one of
+	// these cases, not lost. Distinct from WakeError, which is reserved
+	// for an actual failure (SendTurn itself erroring).
+	WakeReason string `json:"wake_reason,omitempty"`
 }
 
 type AIAuditQuery struct {

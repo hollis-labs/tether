@@ -63,6 +63,14 @@ type messageNotifyResponse struct {
 	WakeDelivered bool               `json:"wake_delivered"`
 	SessionID     string             `json:"session_id,omitempty"`
 	WakeError     string             `json:"wake_error,omitempty"`
+	// WakeReason carries an observational, non-error wake disposition
+	// (T06, messaging vNext): "busy", "offline", "offline-race",
+	// "stale-generation", or "claim-unavailable". The delivery was
+	// released for retry via the shared pump (internal/app/wake.go's
+	// RunWakeSweep) in every one of these cases, not lost. Distinct from
+	// WakeError, which is reserved for an actual failure (SendTurn itself
+	// erroring).
+	WakeReason string `json:"wake_reason,omitempty"`
 }
 
 var validUrgencies = map[string]struct{}{
@@ -146,7 +154,7 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		wake = *req.Wake
 	}
 	if wake {
-		sessionID, resolveErr := s.resolveNotifySession(req.SessionID, sent.To)
+		sessionID, resolveErr := s.resolveNotifySession(r.Context(), req.SessionID, sent.To)
 		if resolveErr != nil {
 			res.WakeError = resolveErr.Error()
 		} else if sessionID != "" {
@@ -156,10 +164,28 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 			if text == "" {
 				text = mailboxWakeText(sent, unread, req.Urgency)
 			}
-			if err := s.Service.SendTurn(r.Context(), sessionID, text); err != nil {
-				res.WakeError = err.Error()
-			} else {
-				res.WakeDelivered = true
+			// T06 (messaging vNext): AttemptWake drives a real Claim/Ack/
+			// Nack sequence around this wake attempt (host_accepted/
+			// turn_submitted receipts, busy/offline/stale-generation
+			// handling) instead of calling SendTurn directly -- see
+			// internal/app/wake.go.
+			outcome := s.Service.AttemptWake(r.Context(), sent.ID, sent.To, sessionID, text)
+			res.WakeDelivered = outcome.Delivered
+			switch outcome.Reason {
+			case "":
+				// delivered; nothing more to report.
+			case "turn-submit-failed":
+				if outcome.Detail != "" {
+					res.WakeError = outcome.Detail
+				} else {
+					res.WakeError = outcome.Reason
+				}
+			default:
+				// Observational, non-error dispositions (busy/offline/
+				// stale-generation/claim-unavailable): the delivery was
+				// released for retry via the shared pump, not lost or
+				// silently redirected to a different session.
+				res.WakeReason = outcome.Reason
 			}
 		}
 	}
@@ -174,7 +200,7 @@ func (s *Server) unreadCount(ctx context.Context, to messaging.Address) (int, er
 	return page.Total, nil
 }
 
-func (s *Server) resolveNotifySession(explicit string, to messaging.Address) (string, error) {
+func (s *Server) resolveNotifySession(ctx context.Context, explicit string, to messaging.Address) (string, error) {
 	if explicit != "" {
 		row, err := s.Service.GetSession(explicit)
 		if err != nil {
@@ -215,18 +241,13 @@ func (s *Server) resolveNotifySession(explicit string, to messaging.Address) (st
 	if to.Kind != messaging.KindAgent {
 		return "", nil
 	}
-	rows, err := s.Service.ListSessions(store.ListSessionsOptions{State: "running", Limit: 1000})
-	if err != nil {
-		return "", err
-	}
-	for _, row := range rows {
-		if row.LogicalAgentID == to.ID {
-			if _, ok := s.Service.RuntimeHealth(row.ID); ok {
-				return row.ID, nil
-			}
-		}
-	}
-	return "", nil
+	// T06 (messaging vNext): authoritative actor/session binding
+	// resolution replaces the raw newest-running-session scan that used to
+	// live here directly -- see internal/app/wake.go's ResolveActorSession
+	// (binding-first, with the same newest-running-session heuristic
+	// preserved as its documented legacy fallback for actors nobody has
+	// explicitly bound yet).
+	return s.Service.ResolveActorSession(ctx, to.ID)
 }
 
 func mailboxWakeText(env messaging.Envelope, unread int, urgency string) string {

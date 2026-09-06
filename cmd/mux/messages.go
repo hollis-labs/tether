@@ -144,14 +144,23 @@ var messageNotifyCmd = &cobra.Command{
 			return printJSON(out)
 		}
 		status := "stored"
-		if out.WakeDelivered {
+		switch {
+		case out.WakeDelivered:
 			status = "wake-delivered"
-		} else if out.WakeAttempted {
+		case out.WakeReason != "":
+			// T06 (messaging vNext): busy/offline/stale-generation/
+			// claim-unavailable are normal, retryable dispositions, not
+			// failures -- the daemon's shared pump retries them.
+			status = "wake-pending-retry"
+		case out.WakeAttempted:
 			status = "wake-failed"
 		}
 		fmt.Printf("notified: %s %s unread=%d", out.Message.ID, status, out.UnreadCount)
 		if out.SessionID != "" {
 			fmt.Printf(" session=%s", out.SessionID)
+		}
+		if out.WakeReason != "" {
+			fmt.Printf(" wake_reason=%q", out.WakeReason)
 		}
 		if out.WakeError != "" {
 			fmt.Printf(" wake_error=%q", out.WakeError)

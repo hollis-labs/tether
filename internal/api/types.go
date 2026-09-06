@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/store"
@@ -49,6 +50,30 @@ type LaunchService interface {
 	// Returns (zero, false) when the session is not currently registered
 	// in the runtime manager (never launched, already terminal, or unknown).
 	RuntimeHealth(id string) (RuntimeHealthResult, bool)
+	// ResolveActorSession answers "which session currently owns delivery
+	// for this logical agent" (T06, messaging vNext): the T02 RuntimeBinding
+	// primitive when one has been leased, else the legacy newest-running-
+	// session compatibility heuristic. See internal/app/wake.go.
+	ResolveActorSession(ctx context.Context, logicalAgentID string) (string, error)
+	// AttemptWake drives one Claim/Ack/Nack wake attempt for messageID/to
+	// against an already-resolved sessionID, recording real host_accepted/
+	// turn_submitted delivery receipts and honoring busy/offline/stale-
+	// generation conditions rather than blindly calling SendTurn (T06,
+	// messaging vNext). See internal/app/wake.go.
+	AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) WakeOutcome
+}
+
+// WakeOutcome is AttemptWake's disposition. See internal/app/wake.go's
+// WakeOutcome doc comment for the full Reason vocabulary and rationale —
+// this type lives here (not internal/app) because internal/app already
+// imports internal/api for RuntimeHealthResult, so a shared api-facing
+// result type must live on this side of that dependency edge.
+type WakeOutcome struct {
+	Attempted bool
+	Delivered bool
+	SessionID string
+	Reason    string
+	Detail    string
 }
 
 // RuntimeHealthResult is the api-facing health snapshot. It carries the

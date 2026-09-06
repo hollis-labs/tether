@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -214,6 +215,14 @@ func (s *funcService) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) 
 
 func (s *funcService) RuntimeHealth(_ string) (api.RuntimeHealthResult, bool) {
 	return api.RuntimeHealthResult{}, false
+}
+
+func (s *funcService) ResolveActorSession(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (s *funcService) AttemptWake(_ context.Context, _ string, _ messaging.Address, sessionID, _ string) api.WakeOutcome {
+	return api.WakeOutcome{Reason: "offline", SessionID: sessionID}
 }
 
 func TestClient_ResizeSession(t *testing.T) {

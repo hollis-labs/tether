@@ -211,6 +211,7 @@ var daemonRunCmd = &cobra.Command{
 			RegistryCatalogRoot: svc.CatalogRoot,
 			Groups:              svc.Registry,
 			Publisher:           svc.Bus,
+			WakeSweeper:         svc,
 			LogsDir:             filepath.Join(stateRoot, "logs"),
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
@@ -668,6 +669,14 @@ func (a *serviceAdapter) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolic
 
 func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
 	return a.svc.RuntimeHealth(id)
+}
+
+func (a *serviceAdapter) ResolveActorSession(ctx context.Context, logicalAgentID string) (string, error) {
+	return a.svc.ResolveActorSession(ctx, logicalAgentID)
+}
+
+func (a *serviceAdapter) AttemptWake(ctx context.Context, messageID string, to gomsg.Address, sessionID, wakeText string) api.WakeOutcome {
+	return a.svc.AttemptWake(ctx, messageID, to, sessionID, wakeText)
 }
 
 // newFederatedMessageStore is the T05 (messaging vNext) fix for the gap

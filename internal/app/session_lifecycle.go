@@ -22,10 +22,17 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider"
+	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
+
+// localHostID is the RuntimeBinding host_id every session launched by this
+// daemon leases under. See leaseActorBinding's doc comment for why a fixed
+// literal is accurate rather than invented (no multi-host clustering model
+// exists within one daemon instance -- ADR 0045).
+const localHostID = "local"
 
 // Launched is the success return of CreateSession / LaunchSession. Wait is nil
 // on a Create-only return — there's nothing to wait on until LaunchSession runs.
@@ -313,6 +320,18 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		log.Printf("app: set launch_id on logical_agent %q: %v (non-fatal)", plan.LogicalAgentID, err)
 	}
 
+	// T06 (messaging vNext): this session becomes the durable actor's home
+	// host. Leasing a binding here is what makes ResolveActorSession's
+	// binding-first resolution (wake.go) actually authoritative in
+	// practice, rather than dead T02 infrastructure -- LeaseBinding always
+	// mints max-generation+1, so this call alone fences out whatever
+	// session previously held the binding (concurrent-actor-session /
+	// stale-generation handling), with no separate revoke step required on
+	// the replaced side. Best-effort: a lease failure must not fail an
+	// otherwise-successful launch (established enhancement-write pattern,
+	// e.g. SetClaudeSessionID above).
+	s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+
 	return &Launched{
 		SessionID:    sessionID,
 		Workspace:    ws,
@@ -374,7 +393,61 @@ func (s *Service) StopSession(id string) error {
 			}
 		}
 	}
-	return s.Manager.Stop(context.Background(), id)
+	err = s.Manager.Stop(context.Background(), id)
+	if err == nil && strings.TrimSpace(row.LogicalAgentID) != "" {
+		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
+	}
+	return err
+}
+
+// leaseActorBinding best-effort-leases a T02 RuntimeBinding for a durable
+// actor's session at launch time (T06). No-op when LogicalAgentID is empty
+// (a one-off session that never manufactures a durable actor record just
+// by existing -- architecture: "A one-off session need not manufacture a
+// permanent actor record merely to send a message") or when Registry isn't
+// wired (lighter composition contexts, e.g. read-only `mux mcp`).
+// hostID is a fixed literal: Tether has no multi-host clustering model
+// within one daemon instance (ADR 0045) -- every session a given daemon
+// manages IS that one host, so a constant is accurate, not invented.
+// attemptID reuses sessionID: Tether's runtime model has no finer-grained
+// "attempt" identity distinct from a session today (a resumed session gets
+// a NEW SessionID with parent lineage, per T02, rather than reattaching a
+// prior attempt under the same ID), so session-scoped is the honest
+// current granularity, not a placeholder for something more precise that
+// already exists.
+func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) {
+	if s.Registry == nil || strings.TrimSpace(logicalAgentID) == "" {
+		return
+	}
+	target := registry.LogicalAgentBindingTarget(logicalAgentID)
+	if _, err := s.Registry.LeaseBinding(context.Background(), target, sessionID, localHostID, sessionID, nil, registry.VisibilityPrivateLocal, 0); err != nil {
+		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
+	}
+}
+
+// revokeActorBindingIfCurrent best-effort-revokes id's own binding on
+// graceful stop, but only when it is STILL the current (highest,
+// non-revoked) generation for logicalAgentID -- a delayed stop call for a
+// session already superseded by a newer launch must never revoke the
+// newer session's active binding. Not calling this at all would still be
+// correct (a stale binding is already treated as offline by
+// ResolveActorSession); this is hygiene, not a correctness requirement.
+func (s *Service) revokeActorBindingIfCurrent(sessionID, logicalAgentID string) {
+	if s.Registry == nil {
+		return
+	}
+	ctx := context.Background()
+	target := registry.LogicalAgentBindingTarget(logicalAgentID)
+	current, err := s.Registry.CurrentBinding(ctx, target)
+	if err != nil {
+		return // ErrBindingNotFound or a lookup failure: nothing to revoke.
+	}
+	if current.SessionID != sessionID {
+		return // superseded by a newer launch; leave the newer binding alone.
+	}
+	if err := s.Registry.RevokeBinding(ctx, current.ID); err != nil {
+		log.Printf("app: revoke runtime binding %q for logical agent %q session %q failed (non-fatal): %v", current.ID, logicalAgentID, sessionID, err)
+	}
 }
 
 // WaitSession blocks until the named session reaches a terminal state and
