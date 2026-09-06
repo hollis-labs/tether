@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/hollis-labs/go-messaging"
@@ -27,9 +28,12 @@ type listPageBody struct {
 }
 
 // listPage decodes GET /messages/list and returns the full paged response.
+// T05 (messaging vNext, ADR 0045): the endpoint now requires ?as= to equal
+// ?to=, so this helper auto-derives as=<to> unless the caller already set
+// as= explicitly (e.g. to exercise the mismatch/error path).
 func listPage(t *testing.T, base, query string) listPageBody {
 	t.Helper()
-	resp, err := http.Get(base + "/messages/list?" + query)
+	resp, err := http.Get(base + "/messages/list?" + withDefaultAs(query))
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -51,6 +55,20 @@ func listPage(t *testing.T, base, query string) listPageBody {
 func listMessages(t *testing.T, base, query string) []map[string]any {
 	t.Helper()
 	return listPage(t, base, query).Messages
+}
+
+// withDefaultAs adds as=<to> to query when it carries a to= but no as=
+// already, matching the real client's "the mailbox owner claims themself"
+// convention (internal/client.MessageList).
+func withDefaultAs(query string) string {
+	v, err := url.ParseQuery(query)
+	if err != nil {
+		return query
+	}
+	if v.Get("as") == "" && v.Get("to") != "" {
+		v.Set("as", v.Get("to"))
+	}
+	return v.Encode()
 }
 
 // postAction fires POST base+path and returns the status code.

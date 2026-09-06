@@ -3,7 +3,6 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -11,7 +10,6 @@ import (
 	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/client"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // validMsgKinds is the closed set of allowed kind values for mux_message_send.
@@ -54,6 +52,7 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("mux_message_get",
 		mcp.WithDescription("Get a message envelope by ID."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Sender or recipient URN claiming this read")),
 	), a.handleMessageGet)
 
 	a.addTool(s, mcp.NewTool("mux_message_inbox",
@@ -75,8 +74,9 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 	), a.handleMessageList)
 
 	a.addTool(s, mcp.NewTool("mux_message_thread",
-		mcp.WithDescription("List all messages in a thread by thread ID."),
+		mcp.WithDescription("List all messages in a thread by thread ID, scoped to the ones involving the claimed identity."),
 		mcp.WithString("thread_id", mcp.Required(), mcp.Description("Thread ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Sender or recipient URN claiming this read")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter (optional)")),
 	), a.handleMessageThread)
 
@@ -128,27 +128,33 @@ func (a *Adapter) handleMessageSend(ctx context.Context, req mcp.CallToolRequest
 		return toolError("invalid_request",
 			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", kind)), nil
 	}
-	from, parseErr := messaging.ParseURN(fromURN)
-	if parseErr != nil {
+	// Validate URN shape before a daemon round trip, matching the other
+	// handlers' fail-fast behavior.
+	if _, parseErr := messaging.ParseURN(fromURN); parseErr != nil {
 		return toolError("invalid_request", "invalid from URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	to, parseErr := messaging.ParseURN(toURN)
-	if parseErr != nil {
+	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
 		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	env := messaging.Envelope{
-		From:      from,
-		To:        to,
-		Kind:      msgKind,
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_send requires daemon routing; start MCP with mux mcp"), nil
+	}
+	sendReq := client.MessageSendRequest{
+		From:      fromURN,
+		To:        toURN,
+		Kind:      kind,
 		ThreadID:  str(req, "thread_id"),
 		InReplyTo: str(req, "in_reply_to"),
 	}
 	if p := str(req, "payload_json"); p != "" {
-		env.Payload = []byte(p)
+		sendReq.Payload = []byte(p)
 	}
-	sent, err := a.svc.Store.MessagingStore().Send(ctx, env)
+	sent, err := a.client.MessageSend(ctx, sendReq)
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, ""), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message": sent}), nil
 }
@@ -210,15 +216,22 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, req mcp.CallToolReque
 
 func (a *Adapter) handleMessageGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id := str(req, "message_id")
-	if id == "" {
-		return toolError("invalid_request", "message_id required"), nil
+	asURN := str(req, "as")
+	if id == "" || asURN == "" {
+		return toolError("invalid_request", "message_id and as are required"), nil
 	}
-	env, err := a.svc.Store.MessagingStore().Get(ctx, id)
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
+		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_get requires daemon routing; start MCP with mux mcp"), nil
+	}
+	env, err := a.client.MessageGet(ctx, id, asURN)
 	if err != nil {
-		if isNotFound(err) {
-			return toolError("not_found", "message not found: "+id), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
 		}
-		return toolError("internal_error", err.Error()), nil
+		return classifyClientErr(err, id), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message": env}), nil
 }
@@ -228,38 +241,40 @@ func (a *Adapter) handleMessageInbox(ctx context.Context, req mcp.CallToolReques
 	if toURN == "" {
 		return toolError("invalid_request", "to required"), nil
 	}
-	to, parseErr := messaging.ParseURN(toURN)
-	if parseErr != nil {
+	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
 		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	var f messaging.Filter
-	if ks := str(req, "kind"); ks != "" {
-		for _, k := range strings.Split(ks, ",") {
-			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
-		}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_inbox requires daemon routing; start MCP with mux mcp"), nil
 	}
-	f.ThreadID = str(req, "thread_id")
-	envs, err := a.svc.Store.MessagingStore().Inbox(ctx, to, f)
+	envs, err := a.client.MessageInbox(ctx, toURN, str(req, "kind"), str(req, "thread_id"))
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, ""), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "messages": envs, "count": len(envs)}), nil
 }
 
 func (a *Adapter) handleMessageThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	threadID := str(req, "thread_id")
-	if threadID == "" {
-		return toolError("invalid_request", "thread_id required"), nil
+	asURN := str(req, "as")
+	if threadID == "" || asURN == "" {
+		return toolError("invalid_request", "thread_id and as are required"), nil
 	}
-	var f messaging.Filter
-	if ks := str(req, "kind"); ks != "" {
-		for _, k := range strings.Split(ks, ",") {
-			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
-		}
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
+		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	envs, err := a.svc.Store.MessagingStore().Thread(ctx, threadID, f)
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_thread requires daemon routing; start MCP with mux mcp"), nil
+	}
+	envs, err := a.client.MessageThread(ctx, threadID, asURN, str(req, "kind"))
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, ""), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "messages": envs, "count": len(envs)}), nil
 }
@@ -273,18 +288,17 @@ func (a *Adapter) handleMessageConsume(ctx context.Context, req mcp.CallToolRequ
 	if id == "" || asURN == "" {
 		return toolError("invalid_request", "message_id and as are required"), nil
 	}
-	recipient, parseErr := messaging.ParseURN(asURN)
-	if parseErr != nil {
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
 		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	if err := a.svc.Store.MessagingStore().Consume(ctx, id, recipient); err != nil {
-		if isNotFound(err) {
-			return toolError("not_found", "message not found: "+id), nil
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_consume requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.MessageConsume(ctx, id, asURN); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
 		}
-		if isWrongRecipient(err) {
-			return toolError("conflict", "caller is not the intended recipient of message: "+id), nil
-		}
-		return toolError("internal_error", err.Error()), nil
+		return classifyClientErr(err, id), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
 }
@@ -297,11 +311,14 @@ func (a *Adapter) handleMessageCancel(ctx context.Context, req mcp.CallToolReque
 	if id == "" {
 		return toolError("invalid_request", "message_id required"), nil
 	}
-	if err := a.svc.Store.MessagingStore().Cancel(ctx, id); err != nil {
-		if isNotFound(err) {
-			return toolError("not_found", "message not found: "+id), nil
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_cancel requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.MessageCancel(ctx, id); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
 		}
-		return toolError("internal_error", err.Error()), nil
+		return classifyClientErr(err, id), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
 }
@@ -311,24 +328,20 @@ func (a *Adapter) handleMessageList(ctx context.Context, req mcp.CallToolRequest
 	if toURN == "" {
 		return toolError("invalid_request", "to required"), nil
 	}
-	to, parseErr := messaging.ParseURN(toURN)
-	if parseErr != nil {
+	if _, parseErr := messaging.ParseURN(toURN); parseErr != nil {
 		return toolError("invalid_request", "invalid to URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	var f store.ListFilter
-	if ks := str(req, "kind"); ks != "" {
-		for _, k := range strings.Split(ks, ",") {
-			f.Kind = append(f.Kind, messaging.Kind(strings.TrimSpace(k)))
-		}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_list requires daemon routing; start MCP with mux mcp"), nil
 	}
-	f.ThreadID = str(req, "thread_id")
-	f.IncludeArchived = boolArg(req, "include_archived")
-	f.UnreadOnly = boolArg(req, "unread_only")
-	f.Limit = intArg(req, "limit", 0)
-	f.Offset = intArg(req, "offset", 0)
-	page, err := a.svc.Store.MessagingStore().List(ctx, to, f)
+	page, err := a.client.MessageList(ctx, toURN, str(req, "kind"), str(req, "thread_id"),
+		boolArg(req, "include_archived"), boolArg(req, "unread_only"),
+		intArg(req, "limit", 0), intArg(req, "offset", 0))
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, ""), nil
 	}
 	return toolJSON(map[string]any{
 		"ok":       true,
@@ -341,22 +354,25 @@ func (a *Adapter) handleMessageList(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (a *Adapter) handleMessageMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().MarkRead)
+	return a.messageRecipientAction(ctx, req, "mux_message_mark_read", a.client.MessageMarkRead)
 }
 
 func (a *Adapter) handleMessageArchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().Archive)
+	return a.messageRecipientAction(ctx, req, "mux_message_archive", a.client.MessageArchive)
 }
 
 func (a *Adapter) handleMessageUnarchive(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return a.messageRecipientAction(ctx, req, a.svc.Store.MessagingStore().Unarchive)
+	return a.messageRecipientAction(ctx, req, "mux_message_unarchive", a.client.MessageUnarchive)
 }
 
 // messageRecipientAction is the shared body for the recipient-scoped,
-// idempotent state transitions (mark_read / archive / unarchive). Each
-// requires message.write scope plus message_id + as arguments.
-func (a *Adapter) messageRecipientAction(ctx context.Context, req mcp.CallToolRequest,
-	fn func(context.Context, string, messaging.Address) error) (*mcp.CallToolResult, error) {
+// idempotent state transitions (mark_read / archive / unarchive), now
+// routed through the daemon HTTP client rather than the in-process store
+// (T05: closes the mux-mcp-subprocess bypass, see internal/store's
+// T01/T03 findings on the separate-SQLite-connection gap). Each requires
+// message.write scope plus message_id + as arguments.
+func (a *Adapter) messageRecipientAction(ctx context.Context, req mcp.CallToolRequest, toolName string,
+	fn func(context.Context, string, string) error) (*mcp.CallToolResult, error) {
 	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
 		return denied, nil
 	}
@@ -365,18 +381,17 @@ func (a *Adapter) messageRecipientAction(ctx context.Context, req mcp.CallToolRe
 	if id == "" || asURN == "" {
 		return toolError("invalid_request", "message_id and as are required"), nil
 	}
-	recipient, parseErr := messaging.ParseURN(asURN)
-	if parseErr != nil {
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
 		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
 	}
-	if err := fn(ctx, id, recipient); err != nil {
-		if isNotFound(err) {
-			return toolError("not_found", "message not found: "+id), nil
+	if a.client == nil {
+		return toolError("internal_error", toolName+" requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := fn(ctx, id, asURN); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
 		}
-		if isWrongRecipient(err) {
-			return toolError("conflict", "caller is not the intended recipient of message: "+id), nil
-		}
-		return toolError("internal_error", err.Error()), nil
+		return classifyClientErr(err, id), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
 }

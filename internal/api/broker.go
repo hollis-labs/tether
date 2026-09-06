@@ -214,6 +214,26 @@ func (s *Server) handleListEnvelopes(w http.ResponseWriter, r *http.Request) {
 			"recipient and workflow_id are mutually exclusive")
 		return
 	}
+	// T05 (messaging vNext): a recipient-scoped mailbox read requires the
+	// caller to explicitly claim that identity via ?as= (same-host-trust
+	// convention already used throughout /messages/* and /groups/* -- not
+	// cryptographic verification, but "you must say who you are" is
+	// strictly stronger than the prior zero-claim state, and closes the
+	// concrete gap where this endpoint required no identity assertion at
+	// all, unlike every other mailbox read in the codebase). The
+	// workflow_id-scoped branch remains an operator/debugging query, not a
+	// per-recipient mailbox read, and is intentionally left unchanged.
+	if recipient != "" {
+		as := q.Get("as")
+		if as == "" {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required when listing by recipient")
+			return
+		}
+		if as != recipient {
+			writeError(w, http.StatusForbidden, CodeForbidden, "as must match recipient")
+			return
+		}
+	}
 
 	var (
 		rows []broker.Envelope
@@ -236,7 +256,18 @@ func (s *Server) handleListEnvelopes(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetEnvelope services GET /broker/envelopes/{id}.
-func (s *Server) handleGetEnvelope(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *Server) handleGetEnvelope(w http.ResponseWriter, r *http.Request, id string) {
+	// T05 (messaging vNext): require the caller to claim a party to this
+	// envelope via ?as= before returning it -- previously this endpoint
+	// required no identity assertion at all (not even self-asserted),
+	// unlike every other envelope/message read in the codebase. Same-host
+	// trust convention, not cryptographic verification; see broker.go's
+	// handleListEnvelopes for the identical rationale.
+	as := r.URL.Query().Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
 	e, err := s.Broker.GetEnvelope(id)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
@@ -244,6 +275,10 @@ func (s *Server) handleGetEnvelope(w http.ResponseWriter, _ *http.Request, id st
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	if as != e.Sender && as != e.Recipient {
+		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the envelope's sender or recipient")
 		return
 	}
 	writeJSON(w, http.StatusOK, envelopeToDTO(*e))

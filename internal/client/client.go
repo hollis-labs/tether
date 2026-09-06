@@ -866,9 +866,13 @@ func (c *Client) UpdateLogicalAgentPolicy(ctx context.Context, policy agent.Logi
 // MessageInbox fetches pending messages for a recipient from GET /messages/inbox.
 // The daemon currently treats inbox reads as delivery, so callers should keep
 // returned messages locally if they need to continue displaying them.
+//
+// T05 (messaging vNext, ADR 0045): the daemon requires ?as= to equal ?to= for
+// a mailbox read, so `to` doubles as the caller's identity claim here.
 func (c *Client) MessageInbox(ctx context.Context, to, kind, threadID string) ([]MessageEnvelopeDTO, error) {
 	params := url.Values{}
 	params.Set("to", to)
+	params.Set("as", to)
 	if kind != "" {
 		params.Set("kind", kind)
 	}
@@ -883,9 +887,13 @@ func (c *Client) MessageInbox(ctx context.Context, to, kind, threadID string) ([
 }
 
 // MessageList fetches messages for a recipient without marking them delivered.
+//
+// T05 (messaging vNext, ADR 0045): the daemon requires ?as= to equal ?to= for
+// a mailbox read, so `to` doubles as the caller's identity claim here.
 func (c *Client) MessageList(ctx context.Context, to, kind, threadID string, includeArchived, unreadOnly bool, limit, offset int) (MessageListResult, error) {
 	params := url.Values{}
 	params.Set("to", to)
+	params.Set("as", to)
 	if kind != "" {
 		params.Set("kind", kind)
 	}
@@ -911,19 +919,31 @@ func (c *Client) MessageList(ctx context.Context, to, kind, threadID string, inc
 	return res, nil
 }
 
-// MessageGet fetches one message envelope.
-func (c *Client) MessageGet(ctx context.Context, id string) (MessageEnvelopeDTO, error) {
+// MessageGet fetches one message envelope. as (T05 / ADR 0045: same-host
+// trust model) must be the message's sender or recipient URN.
+func (c *Client) MessageGet(ctx context.Context, id, as string) (MessageEnvelopeDTO, error) {
+	params := url.Values{}
+	params.Set("as", as)
 	var env MessageEnvelopeDTO
-	if err := c.getJSON(ctx, "/messages/"+url.PathEscape(id), &env); err != nil {
+	if err := c.getJSON(ctx, "/messages/"+url.PathEscape(id)+"?"+params.Encode(), &env); err != nil {
 		return MessageEnvelopeDTO{}, err
 	}
 	return env, nil
 }
 
-// MessageThread loads all messages in a Mux message thread.
-func (c *Client) MessageThread(ctx context.Context, threadID string) ([]MessageEnvelopeDTO, error) {
+// MessageThread loads all messages in a Mux message thread that involve as
+// as sender or recipient (T05 / ADR 0045: same-host trust model). kind, when
+// non-empty, is a comma-separated kind filter (matches the HTTP route's
+// ?kind= parameter); pass "" for no filter.
+func (c *Client) MessageThread(ctx context.Context, threadID, as, kind string) ([]MessageEnvelopeDTO, error) {
+	params := url.Values{}
+	params.Set("as", as)
+	if kind != "" {
+		params.Set("kind", kind)
+	}
+	path := "/messages/thread/" + url.PathEscape(threadID) + "?" + params.Encode()
 	var res messageListResponse
-	if err := c.getJSON(ctx, "/messages/thread/"+url.PathEscape(threadID), &res); err != nil {
+	if err := c.getJSON(ctx, path, &res); err != nil {
 		return nil, err
 	}
 	return res.Messages, nil

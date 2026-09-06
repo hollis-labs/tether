@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/federation"
 	llm "github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
 	llmgemini "github.com/hollis-labs/tether/internal/llm/gemini"
@@ -202,7 +204,7 @@ var daemonRunCmd = &cobra.Command{
 			EventsStore:         svc.Store,
 			Catalog:             &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:          svc.Store,
-			MessageStore:        svc.Store.MessagingStore(),
+			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Attachments:         svc.Store,
 			ProxyEvents:         svc.Store,
 			Registry:            svc.Registry,
@@ -666,6 +668,46 @@ func (a *serviceAdapter) UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolic
 
 func (a *serviceAdapter) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
 	return a.svc.RuntimeHealth(id)
+}
+
+// newFederatedMessageStore is the T05 (messaging vNext) fix for the gap
+// ADR-0040 itself documented: "the Router is composed onto
+// Service.Federation but the MCP/HTTP message front-ends still call
+// Store.MessagingStore() directly." When router is nil (the default,
+// standalone, non-federated configuration -- federation.BuildRouter
+// returns nil when the config's `enabled` is false), this returns local
+// unchanged: zero behavior change for every existing non-federated
+// install. When router is non-nil, the four authority-routable
+// messaging.Store methods (Send/Inbox/Subscribe/Consume) are dispatched
+// through it so a message addressed to a configured peer authority
+// actually crosses hosts; List/MarkRead/Archive/Unarchive (InboxStore's
+// superset, which Router does not implement -- it only satisfies the
+// 7-method messaging.Store) and Get/Thread/Cancel (which Router itself
+// unconditionally delegates to its local store anyway, per its own docs)
+// are served directly from local, avoiding a redundant hop.
+func newFederatedMessageStore(local store.InboxStore, router *federation.Router) store.InboxStore {
+	if router == nil {
+		return local
+	}
+	return &federatedMessageStore{InboxStore: local, router: router}
+}
+
+type federatedMessageStore struct {
+	store.InboxStore
+	router *federation.Router
+}
+
+func (f *federatedMessageStore) Send(ctx context.Context, env gomsg.Envelope) (gomsg.Envelope, error) {
+	return f.router.Send(ctx, env)
+}
+func (f *federatedMessageStore) Inbox(ctx context.Context, to gomsg.Address, filt gomsg.Filter) ([]gomsg.Envelope, error) {
+	return f.router.Inbox(ctx, to, filt)
+}
+func (f *federatedMessageStore) Subscribe(ctx context.Context, to gomsg.Address, filt gomsg.Filter) (<-chan gomsg.Envelope, error) {
+	return f.router.Subscribe(ctx, to, filt)
+}
+func (f *federatedMessageStore) Consume(ctx context.Context, id string, recipient gomsg.Address) error {
+	return f.router.Consume(ctx, id, recipient)
 }
 
 // catalogLoader is the production api.CatalogLoader: each Load call

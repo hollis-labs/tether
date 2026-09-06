@@ -176,8 +176,30 @@ func (s *Server) unreadCount(ctx context.Context, to messaging.Address) (int, er
 
 func (s *Server) resolveNotifySession(explicit string, to messaging.Address) (string, error) {
 	if explicit != "" {
-		if _, err := s.Service.GetSession(explicit); err != nil {
+		row, err := s.Service.GetSession(explicit)
+		if err != nil {
 			return "", err
+		}
+		// T05 (messaging vNext): the explicit session_id override must
+		// still correspond to the message's actual recipient -- without
+		// this check, a caller could address a message to one URN while
+		// waking a completely unrelated session by ID, since sending a
+		// message and waking an arbitrary session are different
+		// capabilities (architecture: "Publication/wake/admin capabilities
+		// differ from permission to send"). msg://session/<..>/<id> must
+		// name exactly this session; msg://agent/<..>/<logical_agent_id>
+		// must be the logical agent this session belongs to.
+		switch to.Kind {
+		case messaging.KindSession:
+			if to.ID != explicit {
+				return "", fmt.Errorf("session_id %s does not match the message recipient session %s", explicit, to.ID)
+			}
+		case messaging.KindAgent:
+			if row.LogicalAgentID != to.ID {
+				return "", fmt.Errorf("session_id %s does not belong to recipient logical agent %s", explicit, to.ID)
+			}
+		default:
+			return "", fmt.Errorf("session_id override is not valid for recipient kind %q", to.Kind)
 		}
 		if _, ok := s.Service.RuntimeHealth(explicit); !ok {
 			return "", fmt.Errorf("session %s is not running", explicit)
@@ -333,7 +355,19 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /messages/{id}
+// T05 (messaging vNext): require the caller to claim a party to this
+// message via ?as= before returning it -- previously this endpoint required
+// no identity assertion at all, unlike the recipient-scoped actions
+// (read/archive/unarchive/consume) on the same file which already required
+// ?as=. Same-host trust convention (ADR 0045), not cryptographic
+// verification -- see internal/api/broker.go's handleGetEnvelope for the
+// identical rationale applied to the legacy broker surface.
 func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id string) {
+	as := r.URL.Query().Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
 	env, err := s.MessageStore.Get(r.Context(), id)
 	if err != nil {
 		if isNotFound(err) {
@@ -343,10 +377,14 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	if as != env.From.URN() && as != env.To.URN() {
+		writeError(w, http.StatusForbidden, CodeForbidden, "as must be the message's sender or recipient")
+		return
+	}
 	writeJSON(w, http.StatusOK, env)
 }
 
-// GET /messages/inbox?to=<urn>[&kind=request,notice][&thread_id=X][&limit=N]
+// GET /messages/inbox?to=<urn>&as=<urn>[&kind=request,notice][&thread_id=X][&limit=N]
 func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -356,6 +394,17 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	toURN := q.Get("to")
 	if toURN == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "to query param required")
+		return
+	}
+	// T05 (messaging vNext): a mailbox read requires the caller to
+	// explicitly claim the mailbox owner's identity via ?as= (ADR 0045).
+	as := q.Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
+	if as != toURN {
+		writeError(w, http.StatusForbidden, CodeForbidden, "as must match to")
 		return
 	}
 	to, err := messaging.ParseURN(toURN)
@@ -403,6 +452,17 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	toURN := q.Get("to")
 	if toURN == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "to query param required")
+		return
+	}
+	// T05 (messaging vNext): a mailbox read requires the caller to
+	// explicitly claim the mailbox owner's identity via ?as= (ADR 0045).
+	as := q.Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
+	if as != toURN {
+		writeError(w, http.StatusForbidden, CodeForbidden, "as must match to")
 		return
 	}
 	to, err := messaging.ParseURN(toURN)
@@ -504,6 +564,18 @@ func (s *Server) handleMessagesThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "thread_id required")
 		return
 	}
+	// T05 (messaging vNext): a thread read requires the caller to claim a
+	// party via ?as= (ADR 0045). A thread is a shared request/reply chain
+	// (From/To alternate per turn), not a single mailbox, so rather than
+	// rejecting outright the response is scoped to only the turns that
+	// actually involve the claimed identity -- a legitimate two-party
+	// thread participant still sees every turn, since every turn's From or
+	// To equals one of the two parties.
+	as := r.URL.Query().Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
 
 	var f messaging.Filter
 	if ks := r.URL.Query().Get("kind"); ks != "" {
@@ -517,7 +589,13 @@ func (s *Server) handleMessagesThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+	scoped := make([]messaging.Envelope, 0, len(envs))
+	for _, env := range envs {
+		if as == env.From.URN() || as == env.To.URN() {
+			scoped = append(scoped, env)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": scoped})
 }
 
 // POST /messages/{id}/consume?as=<urn>

@@ -122,7 +122,7 @@ func TestHandleCreateEnvelope_BadJSON(t *testing.T) {
 func TestHandleListEnvelopes_ByRecipient(t *testing.T) {
 	env := broker.Envelope{ID: "e1", Recipient: "bob", CreatedAt: "2026-04-19T10:00:00Z"}
 	b := &fakeBroker{byRecip: map[string][]broker.Envelope{"bob": {env}}}
-	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes?recipient=bob", nil)
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes?recipient=bob&as=bob", nil)
 	rr := httptest.NewRecorder()
 	newBrokerTestHandler(b).ServeHTTP(rr, req)
 
@@ -135,6 +135,28 @@ func TestHandleListEnvelopes_ByRecipient(t *testing.T) {
 	}
 	if len(res.Envelopes) != 1 || res.Envelopes[0].ID != "e1" {
 		t.Errorf("result = %+v", res.Envelopes)
+	}
+}
+
+// TestHandleListEnvelopes_ByRecipient_RequiresAs is T05's (messaging vNext)
+// fix: a recipient-scoped mailbox list previously required no identity
+// claim at all. Now ?as= is mandatory and must match ?recipient=.
+func TestHandleListEnvelopes_ByRecipient_RequiresAs(t *testing.T) {
+	env := broker.Envelope{ID: "e1", Recipient: "bob", CreatedAt: "2026-04-19T10:00:00Z"}
+	b := &fakeBroker{byRecip: map[string][]broker.Envelope{"bob": {env}}}
+
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes?recipient=bob", nil)
+	rr := httptest.NewRecorder()
+	newBrokerTestHandler(b).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing as: status = %d, want 400", rr.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/broker/envelopes?recipient=bob&as=eve", nil)
+	rr2 := httptest.NewRecorder()
+	newBrokerTestHandler(b).ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusForbidden {
+		t.Errorf("mismatched as: status = %d, want 403", rr2.Code)
 	}
 }
 
@@ -174,11 +196,11 @@ func TestHandleListEnvelopes_ConflictingFilters(t *testing.T) {
 func TestHandleGetEnvelope_Found(t *testing.T) {
 	env := broker.Envelope{ID: "e1", Sender: "alice", Recipient: "bob", CreatedAt: "2026-04-19T10:00:00Z"}
 	b := &fakeBroker{rows: map[string]*broker.Envelope{"e1": &env}}
-	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/e1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/e1?as=bob", nil)
 	rr := httptest.NewRecorder()
 	newBrokerTestHandler(b).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d", rr.Code)
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	var dto EnvelopeDTO
 	if err := json.NewDecoder(rr.Body).Decode(&dto); err != nil {
@@ -189,9 +211,39 @@ func TestHandleGetEnvelope_Found(t *testing.T) {
 	}
 }
 
+// TestHandleGetEnvelope_RequiresAs is T05's (messaging vNext) fix: fetching
+// an envelope by ID previously required no identity assertion at all --
+// not even self-asserted, unlike every other envelope/message read in the
+// codebase.
+func TestHandleGetEnvelope_RequiresAs(t *testing.T) {
+	env := broker.Envelope{ID: "e1", Sender: "alice", Recipient: "bob", CreatedAt: "2026-04-19T10:00:00Z"}
+	b := &fakeBroker{rows: map[string]*broker.Envelope{"e1": &env}}
+
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/e1", nil)
+	rr := httptest.NewRecorder()
+	newBrokerTestHandler(b).ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing as: status = %d, want 400", rr.Code)
+	}
+}
+
+// TestHandleGetEnvelope_RejectsUnrelatedCaller proves the identity check is
+// real, not merely present-but-ignored: a caller claiming to be neither the
+// sender nor the recipient is refused.
+func TestHandleGetEnvelope_RejectsUnrelatedCaller(t *testing.T) {
+	env := broker.Envelope{ID: "e1", Sender: "alice", Recipient: "bob", CreatedAt: "2026-04-19T10:00:00Z"}
+	b := &fakeBroker{rows: map[string]*broker.Envelope{"e1": &env}}
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/e1?as=eve", nil)
+	rr := httptest.NewRecorder()
+	newBrokerTestHandler(b).ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rr.Code)
+	}
+}
+
 func TestHandleGetEnvelope_NotFound(t *testing.T) {
 	b := &fakeBroker{rows: map[string]*broker.Envelope{}}
-	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/broker/envelopes/missing?as=bob", nil)
 	rr := httptest.NewRecorder()
 	newBrokerTestHandler(b).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {

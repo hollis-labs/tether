@@ -166,11 +166,14 @@ var messageGetCmd = &cobra.Command{
 	Short: "Get one message by ID",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageAs == "" {
+			return validationErr("messages get: --as <sender-or-recipient-urn> is required")
+		}
 		c, err := newDaemonClient(catalogPath)
 		if err != nil {
 			return classifyErr(err)
 		}
-		msg, err := c.MessageGet(cmdCtx(cmd), args[0])
+		msg, err := c.MessageGet(cmdCtx(cmd), args[0], messageAs)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -232,11 +235,14 @@ var messageThreadCmd = &cobra.Command{
 	Short: "List messages in a thread",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageAs == "" {
+			return validationErr("messages thread: --as <sender-or-recipient-urn> is required")
+		}
 		c, err := newDaemonClient(catalogPath)
 		if err != nil {
 			return classifyErr(err)
 		}
-		msgs, err := c.MessageThread(cmdCtx(cmd), args[0])
+		msgs, err := c.MessageThread(cmdCtx(cmd), args[0], messageAs, "")
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -461,6 +467,9 @@ func init() {
 
 	for _, c := range []*cobra.Command{messageConsumeCmd, messageReadCmd, messageArchiveCmd, messageUnarchiveCmd} {
 		c.Flags().StringVar(&messageAs, "as", "", "recipient URN performing the action")
+	}
+	for _, c := range []*cobra.Command{messageGetCmd, messageThreadCmd} {
+		c.Flags().StringVar(&messageAs, "as", "", "sender or recipient URN claiming this read (T05/ADR 0045)")
 	}
 
 	messagesCmd.AddCommand(

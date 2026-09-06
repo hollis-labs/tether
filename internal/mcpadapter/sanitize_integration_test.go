@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +15,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -31,7 +34,7 @@ import (
 // engage. The lock-in worth holding is therefore "the middleware runs in
 // the request path", not "the sanitizer recovered specific markup".
 func TestSanitizeMiddleware_HelperWrapsAddTool(t *testing.T) {
-	a := newTestAdapter(t)
+	a := newTestAdapterWithDaemon(t)
 	logBuf := &bytes.Buffer{}
 	a.Logger = slog.New(slog.NewTextHandler(logBuf, nil))
 
@@ -178,8 +181,12 @@ func TestAddTool_RegistersWithMiddleware(t *testing.T) {
 // ─── test helpers ─────────────────────────────────────────────────────────────
 
 // newTestAdapter constructs a minimal Adapter backed by a freshly-opened
-// SQLite store in t.TempDir(). Catalog is left empty — the message and
-// catalog tools used by the integration tests don't depend on it.
+// SQLite store in t.TempDir(). Catalog is left empty — the catalog/skills
+// tools used by most integration tests don't depend on it. No daemon
+// client is wired (a.client is nil) — message tools now require daemon
+// routing (T05) and will return a "requires daemon routing" error under
+// this constructor; use newTestAdapterWithDaemon for tests that exercise
+// message tools.
 func newTestAdapter(t *testing.T) *Adapter {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "sanitize-int.db"))
@@ -190,6 +197,29 @@ func newTestAdapter(t *testing.T) *Adapter {
 
 	svc := &app.Service{Store: db}
 	return New(svc, "test-token", []string{ScopeMessageWrite, ScopeSessionWrite})
+}
+
+// newTestAdapterWithDaemon builds the same fixture as newTestAdapter but
+// additionally stands up a real internal/api HTTP test server (the same
+// handler construction the production daemon uses, api.NewHandler) backed
+// by the SAME store, and wires an internal/client.Client pointed at it via
+// NewWithDaemon -- mirroring exactly how "mux mcp" wires message tools
+// through the daemon (T05: message tools no longer touch the store
+// in-process, see internal/mcpadapter/adapter.go's package doc).
+func newTestAdapterWithDaemon(t *testing.T) *Adapter {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "sanitize-int-daemon.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	srv := httptest.NewServer(api.NewHandler(api.Deps{MessageStore: db.MessagingStore()}))
+	t.Cleanup(srv.Close)
+	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+
+	svc := &app.Service{Store: db}
+	return NewWithDaemon(svc, dc, "test-token", []string{ScopeMessageWrite, ScopeSessionWrite})
 }
 
 // parseToolJSON pulls the first text content out of a CallToolResult and

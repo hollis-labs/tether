@@ -4,14 +4,22 @@
 //
 //	mux mcp [--token <tok>] [--scopes session.write,message.write]
 //
-// The adapter wraps app.Service for catalog reads, message ops, and
-// read-only session inspection. Session-mutating tools (create, launch,
-// stop, send, resize, wait, logical-agent resume) route through the
-// running muxd daemon over UDS via internal/client.Client to avoid the
-// split-brain that an in-process app.New() instance would produce
-// against daemon-owned session state. v005-09 introduced the daemon
-// routing — see ADR 0034 (or 0035 if split). All mutating tools require
-// a token and the appropriate scope string.
+// The adapter wraps app.Service for catalog reads and read-only session
+// inspection. Session-mutating tools (create, launch, stop, send, resize,
+// wait, logical-agent resume) AND all message tools (send/notify/get/
+// inbox/list/thread/consume/cancel/mark_read/archive/unarchive) route
+// through the running muxd daemon over UDS via internal/client.Client to
+// avoid the split-brain that an in-process app.New() instance would
+// otherwise produce against daemon-owned session/message state — this
+// process (`mux mcp`) always opens its own separate SQLite connection to
+// the same database file for catalog/session-read purposes, so any tool
+// that WRITES messaging state must not touch that connection directly
+// (T05, messaging vNext: closed the pre-T05 gap where message tools called
+// the in-process store, bypassing the daemon's authorization/fan-out
+// entirely — see planning/docs/messaging-vnext/T01-compatibility-contract.md
+// §2.7). v005-09 introduced the daemon routing for session tools — see
+// ADR 0034 (or 0035 if split). All mutating tools require a token and the
+// appropriate scope string.
 //
 // Scopes:
 //
@@ -94,11 +102,14 @@ func New(svc *app.Service, token string, scopes []string) *Adapter {
 }
 
 // NewWithDaemon constructs an Adapter that routes session-mutating tools
-// through the running muxd daemon at dc, while keeping catalog reads,
-// message ops, and read-only session inspection in-process via svc.
+// AND all message tools through the running muxd daemon at dc, while
+// keeping catalog reads and read-only session inspection in-process via
+// svc.
 //
 // Use this for the production "mux mcp" subcommand. dc must not be nil
-// — pass New for in-process-only mode.
+// — pass New for in-process-only mode (message tools then return a clear
+// "requires daemon routing" error rather than silently touching a second,
+// unfan-out'd SQLite connection).
 func NewWithDaemon(svc *app.Service, dc *client.Client, token string, scopes []string) *Adapter {
 	a := New(svc, token, scopes)
 	a.client = dc

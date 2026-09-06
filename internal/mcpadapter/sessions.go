@@ -479,16 +479,6 @@ func isNotFound(err error) bool {
 		errors.Is(err, messaging.ErrNotFound)
 }
 
-// isWrongRecipient reports whether err signals that the caller is not
-// the intended recipient of a message (store.ErrWrongRecipient).
-// Used by handleMessageConsume to return a distinct conflict error.
-func isWrongRecipient(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, store.ErrWrongRecipient)
-}
-
 // isConflict reports whether err is a "conflict" class error — specifically
 // that a session lifecycle precondition failed (e.g. launching a session
 // that is not in the created state). Uses errors.Is against session.ErrNotCreated.
