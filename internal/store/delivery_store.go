@@ -214,3 +214,75 @@ func (s *Store) DeliveryIDForMessage(ctx context.Context, messageID string) (str
 	}
 	return id.String, true, nil
 }
+
+// ErrNoDeliveryTracking is returned by ClaimMessageDelivery when the
+// target message predates T03 (no delivery_id recorded) -- there is
+// nothing durable to claim.
+var ErrNoDeliveryTracking = errors.New("delivery store: message has no delivery-core tracking")
+
+// ClaimMessageDelivery is the authorized-external-holder counterpart to
+// AttemptWake's internal Claim call (T07, messaging vNext): a published-
+// local bridge (or any other caller) durably claims message id's delivery
+// on its own initiative, rather than Tether pushing a wake. recipient is
+// checked against the message's actual To address using the same
+// self-asserted convention as Consume (ADR 0045) -- this is a new
+// OPERATION under the existing trust model, not a new trust tier.
+// Returns ErrWrongRecipient if recipient doesn't match, and
+// ErrNoDeliveryTracking for a legacy pre-T03 message. The returned
+// delivery.LeaseRef is the bearer credential the caller must present back
+// to AckMessageDelivery/NackMessageDelivery -- it is not looked up or
+// re-derived server-side, exactly like a message/delivery id.
+func (s *Store) ClaimMessageDelivery(ctx context.Context, id string, recipient messaging.Address, holder string, leaseDuration time.Duration) (messaging.Envelope, delivery.LeaseRef, error) {
+	env, err := s.MessagingStore().Get(ctx, id)
+	if err != nil {
+		return messaging.Envelope{}, delivery.LeaseRef{}, err
+	}
+	if env.To.URN() != recipient.URN() {
+		return messaging.Envelope{}, delivery.LeaseRef{}, ErrWrongRecipient
+	}
+	deliveryID, ok, err := s.DeliveryIDForMessage(ctx, id)
+	if err != nil {
+		return messaging.Envelope{}, delivery.LeaseRef{}, err
+	}
+	if !ok {
+		return messaging.Envelope{}, delivery.LeaseRef{}, ErrNoDeliveryTracking
+	}
+	claim, err := s.DeliveryStore().Claim(ctx, delivery.ClaimRequest{
+		DeliveryID:    delivery.DeliveryID(deliveryID),
+		Holder:        holder,
+		LeaseDuration: leaseDuration,
+		Nowait:        true,
+	})
+	if err != nil {
+		return messaging.Envelope{}, delivery.LeaseRef{}, err
+	}
+	lease := delivery.LeaseRef{
+		DeliveryID:        claim.Attempt.DeliveryID,
+		AttemptID:         claim.Attempt.ID,
+		LeaseToken:        claim.Attempt.LeaseToken,
+		BindingGeneration: claim.Attempt.BindingGeneration,
+	}
+	return env, lease, nil
+}
+
+// AckMessageDelivery records stage against lease -- the HTTP-exposed
+// counterpart of the same delivery.Store.Ack calls AttemptWake and
+// Consume already make internally.
+func (s *Store) AckMessageDelivery(ctx context.Context, lease delivery.LeaseRef, stage delivery.ReceiptStage) (delivery.RecipientDelivery, delivery.Attempt, error) {
+	return s.DeliveryStore().Ack(ctx, delivery.AckRequest{Lease: lease, Stage: stage})
+}
+
+// NackMessageDelivery records a failed/declined attempt against lease --
+// the HTTP-exposed counterpart of AttemptWake's internal Nack calls.
+func (s *Store) NackMessageDelivery(ctx context.Context, lease delivery.LeaseRef, retryable bool, errMsg string, nextAttemptIn time.Duration) (delivery.RecipientDelivery, delivery.Attempt, error) {
+	var nextAttemptAt time.Time
+	if nextAttemptIn > 0 {
+		nextAttemptAt = time.Now().Add(nextAttemptIn)
+	}
+	return s.DeliveryStore().Nack(ctx, delivery.NackRequest{
+		Lease:         lease,
+		Retryable:     retryable,
+		Error:         errMsg,
+		NextAttemptAt: nextAttemptAt,
+	})
+}

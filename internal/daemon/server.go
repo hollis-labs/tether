@@ -64,6 +64,11 @@ type Server struct {
 	GroupStore api.SessionGroupStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
+	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
+	// are enabled (T07, messaging vNext) -- durable claim/ack/nack for a
+	// caller pulling its own mailbox on its own initiative. Populated from
+	// app.Service's underlying *store.Store.
+	DeliveryClaims api.DeliveryClaimer
 	// Attachments is optional; when set, GET /sessions/{id}/attachments works.
 	Attachments api.AttachmentStore
 	// Registry is optional; when set, /registry/* federation directory
@@ -272,6 +277,7 @@ func (s *Server) Handler() http.Handler {
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
 			MessageStore:        s.MessageStore,
+			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,

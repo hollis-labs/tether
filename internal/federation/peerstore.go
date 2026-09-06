@@ -143,6 +143,13 @@ func (s *httpPeerStore) Inbox(ctx context.Context, to messaging.Address, f messa
 	u := s.base.JoinPath("messages", "inbox")
 	q := url.Values{}
 	q.Set("to", to.URN())
+	// T07 (messaging vNext): the peer's GET /messages/inbox has required
+	// ?as= matching ?to= since T05 (ADR 0045) -- this client never sent it,
+	// so every federated Inbox call has 400'd against a real peer since
+	// that change landed. `to` is the mailbox being read, so it doubles as
+	// the claim, matching internal/client.Client.MessageInbox's identical
+	// convention for the local (non-federated) client.
+	q.Set("as", to.URN())
 	applyFilter(q, f)
 	u.RawQuery = q.Encode()
 	return s.fetchEnvelopes(ctx, u.String())

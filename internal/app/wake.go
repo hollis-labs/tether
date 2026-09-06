@@ -123,6 +123,15 @@ func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Ser
 		target := registry.LogicalAgentBindingTarget(logicalAgentID)
 		b, err := reg.CurrentBinding(ctx, target)
 		if err == nil {
+			// T07 (messaging vNext): a published-local bridge (leased over
+			// HTTP, see internal/api/bindings.go) is never wake-targetable
+			// -- it has no Tether-managed session for SendTurn to reach,
+			// and Tether never assumes launch/resume authority over one.
+			// Reported identically to "bound owner not running": an
+			// honest, permanent no-route, never a fallback scan.
+			if isPullOnly(b) {
+				return "", nil
+			}
 			if _, ok := rt.health(b.SessionID); ok {
 				return b.SessionID, nil
 			}
@@ -138,6 +147,17 @@ func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Ser
 		// Never explicitly bound: fall through to the legacy heuristic.
 	}
 	return legacyNewestRunningSession(st, rt, logicalAgentID)
+}
+
+// isPullOnly reports whether b is a published-local bridge binding that
+// must never receive a push wake attempt (T07).
+func isPullOnly(b registry.RuntimeBinding) bool {
+	for _, c := range b.Capabilities {
+		if c == api.PullOnlyCapability {
+			return true
+		}
+	}
+	return false
 }
 
 // legacyNewestRunningSession is resolveNotifySession's pre-T06 fallback,

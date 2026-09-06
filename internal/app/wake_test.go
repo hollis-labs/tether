@@ -303,6 +303,103 @@ func TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy(t *testing.
 	}
 }
 
+// ─── T07: published-local (pull-only) bridge bindings never wake-target ───
+
+// TestResolveActorSession_PullOnlyBinding_NeverResolvesEvenWhenHealthWouldMatch
+// proves the pull-only check happens BEFORE the health lookup: even if a
+// pull-only binding's self-asserted SessionID happens to collide with a
+// real, alive local session (a bridge could pick any string), resolution
+// must still refuse to target it -- Tether never assumes launch/resume
+// authority over a published-local actor, full stop, not "only when its
+// self-asserted id happens not to resolve."
+func TestResolveActorSession_PullOnlyBinding_NeverResolvesEvenWhenHealthWouldMatch(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("bridge-session-1", true, agentsessions.LiveStateIdle)
+
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "bridge-session-1", "external-bridge-host", "attempt-1", []string{"pull-only"}, registry.VisibilityPublishedLocal, 0); err != nil {
+		t.Fatalf("lease pull-only binding: %v", err)
+	}
+
+	got, err := resolveActorSession(ctx, st, reg, rt.seam(), "worker")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveActorSession = %q, want \"\" -- a pull-only published-local binding must never be wake-targeted, even though its self-asserted session id happens to be alive", got)
+	}
+}
+
+// TestAttemptWake_PullOnlyTarget_NotifyStoresButNeverAttemptsWake is the
+// end-to-end "unauthorized wake" proof at the notify boundary: a message
+// addressed to a pull-only-bound actor is still durably stored (the
+// mailbox always accepts it), but resolveActorSession's "" means
+// AttemptWake is never even called, so no Claim, no host_accepted, no
+// SendTurn -- the bridge is expected to pull it via GET /messages/inbox on
+// its own schedule instead.
+func TestAttemptWake_PullOnlyTarget_NotifyNeverResolvesASessionToWake(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "bridge-session-1", "external-bridge-host", "attempt-1", []string{"pull-only"}, registry.VisibilityPublishedLocal, 0); err != nil {
+		t.Fatalf("lease pull-only binding: %v", err)
+	}
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	env := sendMessage(t, st, to)
+
+	sessionID, err := resolveActorSession(ctx, st, reg, rt.seam(), "worker")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if sessionID != "" {
+		t.Fatalf("resolved sessionID = %q, want \"\" -- notify must never attempt a wake for a pull-only actor", sessionID)
+	}
+
+	// The message itself is still safely in the durable mailbox for the
+	// bridge to pull later -- pull-only never means "message dropped."
+	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id lookup: ok=%v err=%v", ok, err)
+	}
+	rd, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if rd.Status != delivery.DeliveryPending {
+		t.Fatalf("delivery status = %q, want pending (untouched -- no Claim was ever attempted for a pull-only target)", rd.Status)
+	}
+	if rd.AttemptCount != 0 {
+		t.Fatalf("attempt_count = %d, want 0", rd.AttemptCount)
+	}
+}
+
+// TestRunWakeSweep_PullOnlyTarget_NeverAttemptedAndNeverBurnsCycles proves
+// the sweep pump also respects the pull-only declaration -- it must not
+// loop forever trying (and failing) to wake a target that will never be
+// wake-targetable, wasting sweep cycles on a permanently no-op case.
+func TestRunWakeSweep_PullOnlyTarget_NeverAttemptedAndNeverBurnsCycles(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "bridge-session-1", "external-bridge-host", "attempt-1", []string{"pull-only"}, registry.VisibilityPublishedLocal, 0); err != nil {
+		t.Fatalf("lease pull-only binding: %v", err)
+	}
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	sendMessage(t, st, to)
+
+	n, err := runWakeSweep(ctx, st, reg, rt.seam())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("sweep attempted %d deliveries for a pull-only target, want 0", n)
+	}
+}
+
 // ─── AttemptWake: real Claim/Ack/Nack sequencing ───────────────────────────
 
 func TestAttemptWake_IdleSession_DeliversAndRecordsReceipts(t *testing.T) {

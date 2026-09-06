@@ -67,6 +67,14 @@ type Deps struct {
 	// LogsDir, when non-empty, enables GET /logs/daemon serving a bounded
 	// tail of LogsDir/muxd.log. Empty disables the endpoint (returns 404).
 	LogsDir string
+
+	// DeliveryClaims, when non-nil, enables POST /messages/{id}/claim|ack|nack
+	// (T07, messaging vNext) -- durable claim/ack/nack for a caller pulling
+	// its own mailbox on its own initiative (a published-local bridge, or
+	// any other caller), rather than Tether pushing a wake. *app.Service's
+	// underlying *store.Store satisfies it directly. Absent the dep, these
+	// three actions respond 404 (matches every other optional dependency).
+	DeliveryClaims DeliveryClaimer
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -89,6 +97,7 @@ type Server struct {
 	RegistryCatalogRoot string
 	Groups              GroupsService
 	LogsDir             string
+	DeliveryClaims      DeliveryClaimer
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -112,6 +121,7 @@ func NewHandler(deps Deps) http.Handler {
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
+		DeliveryClaims:      deps.DeliveryClaims,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-messaging/delivery"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -22,6 +23,20 @@ import (
 // surface.
 type MessageStore interface {
 	store.InboxStore
+}
+
+// DeliveryClaimer is the seam the /messages/{id}/claim|ack|nack handlers
+// depend on (T07, messaging vNext) -- durable, authorized claim/ack/nack
+// for a caller pulling its own mailbox (a published-local bridge, or any
+// other caller) rather than Tether pushing a wake. *store.Store satisfies
+// it directly. Optional: when Server.DeliveryClaims is nil, these three
+// actions respond 404, matching every other optional-dependency surface
+// in this package (Registry, Groups, Broker, ...).
+type DeliveryClaimer interface {
+	ClaimMessageDelivery(ctx context.Context, id string, recipient messaging.Address, holder string, leaseDuration time.Duration) (messaging.Envelope, delivery.LeaseRef, error)
+	AckMessageDelivery(ctx context.Context, lease delivery.LeaseRef, stage delivery.ReceiptStage) (delivery.RecipientDelivery, delivery.Attempt, error)
+	NackMessageDelivery(ctx context.Context, lease delivery.LeaseRef, retryable bool, errMsg string, nextAttemptIn time.Duration) (delivery.RecipientDelivery, delivery.Attempt, error)
+	DeliveryIDForMessage(ctx context.Context, messageID string) (string, bool, error)
 }
 
 // registerMessageRoutes mounts the go-messaging-native HTTP surface.
@@ -324,6 +339,24 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMessageUnarchive(w, r, id)
+	case "claim":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageClaim(w, r, id)
+	case "ack":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageAck(w, r, id)
+	case "nack":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleMessageNack(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}
@@ -657,6 +690,213 @@ func (s *Server) handleMessageCancel(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// claimLeaseSeconds bounds a caller-requested claim lease. 0 (unset)
+// falls back to a sane default; a caller cannot hold a lease indefinitely
+// by requesting an absurd duration -- it just gets capped.
+const (
+	defaultClaimLeaseSeconds = 30
+	maxClaimLeaseSeconds     = 300
+)
+
+type messageClaimRequest struct {
+	Holder       string `json:"holder"`
+	LeaseSeconds int    `json:"lease_seconds"`
+}
+
+type messageClaimResponse struct {
+	Message   messaging.Envelope `json:"message"`
+	Lease     delivery.LeaseRef  `json:"lease"`
+	ExpiresIn int                `json:"lease_seconds"`
+}
+
+// handleMessageClaim services POST /messages/{id}/claim?as=<urn> (T07,
+// messaging vNext): durable, authorized claim for a caller pulling its
+// own mailbox on its own initiative -- the counterpart to AttemptWake's
+// internal Claim for a Tether-pushed wake. as must be the message's
+// actual recipient (ADR 0045's self-asserted convention, same as
+// Consume). Body {holder, lease_seconds} is optional; holder defaults to
+// the asserted recipient URN.
+func (s *Server) handleMessageClaim(w http.ResponseWriter, r *http.Request, id string) {
+	if s.DeliveryClaims == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "delivery claims not configured")
+		return
+	}
+	asURN := r.URL.Query().Get("as")
+	if asURN == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as query param required")
+		return
+	}
+	recipient, err := messaging.ParseURN(asURN)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid as URN: "+err.Error())
+		return
+	}
+	var req messageClaimRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxInputBytes+1)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+	if req.Holder == "" {
+		req.Holder = asURN
+	}
+	leaseSeconds := req.LeaseSeconds
+	if leaseSeconds <= 0 {
+		leaseSeconds = defaultClaimLeaseSeconds
+	}
+	if leaseSeconds > maxClaimLeaseSeconds {
+		leaseSeconds = maxClaimLeaseSeconds
+	}
+
+	env, lease, err := s.DeliveryClaims.ClaimMessageDelivery(r.Context(), id, recipient, req.Holder, time.Duration(leaseSeconds)*time.Second)
+	if err != nil {
+		writeClaimError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, messageClaimResponse{Message: env, Lease: lease, ExpiresIn: leaseSeconds})
+}
+
+type messageAckRequest struct {
+	Lease delivery.LeaseRef     `json:"lease"`
+	Stage delivery.ReceiptStage `json:"stage"`
+}
+
+// handleMessageAck services POST /messages/{id}/ack?as=<urn> (T07,
+// messaging vNext). Body carries the exact LeaseRef handleMessageClaim
+// returned and the stage being acknowledged (host_accepted, turn_submitted,
+// or consumed -- the same closed set AttemptWake/Consume already use).
+// The lease token itself is the bearer credential proving the caller
+// legitimately holds this specific claim; ?as= is required for
+// consistency with the rest of the surface (ADR 0045) but is not
+// separately re-verified against the message here -- that check already
+// happened at claim time.
+func (s *Server) handleMessageAck(w http.ResponseWriter, r *http.Request, id string) {
+	if s.DeliveryClaims == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "delivery claims not configured")
+		return
+	}
+	if r.URL.Query().Get("as") == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as query param required")
+		return
+	}
+	var req messageAckRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxInputBytes+1)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Stage != delivery.StageHostAccepted && req.Stage != delivery.StageTurnSubmitted && req.Stage != delivery.StageConsumed {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			fmt.Sprintf("invalid stage %q; valid: host_accepted, turn_submitted, consumed", req.Stage))
+		return
+	}
+	if !s.leaseMatchesMessage(r.Context(), w, id, req.Lease) {
+		return
+	}
+	rd, attempt, err := s.DeliveryClaims.AckMessageDelivery(r.Context(), req.Lease, req.Stage)
+	if err != nil {
+		writeClaimError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"delivery": rd, "attempt": attempt})
+}
+
+type messageNackRequest struct {
+	Lease              delivery.LeaseRef `json:"lease"`
+	Retryable          bool              `json:"retryable"`
+	Error              string            `json:"error"`
+	NextAttemptSeconds int               `json:"next_attempt_seconds"`
+}
+
+// handleMessageNack services POST /messages/{id}/nack?as=<urn> (T07,
+// messaging vNext): the caller declines or fails to finish processing a
+// claimed delivery. Retryable schedules a retry after
+// next_attempt_seconds (default: immediately claimable again);
+// Retryable=false dead-letters it, matching AttemptWake's own Nack
+// semantics (T06) and T03's legacy-import dead-lettering.
+func (s *Server) handleMessageNack(w http.ResponseWriter, r *http.Request, id string) {
+	if s.DeliveryClaims == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "delivery claims not configured")
+		return
+	}
+	if r.URL.Query().Get("as") == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as query param required")
+		return
+	}
+	var req messageNackRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxInputBytes+1)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if !s.leaseMatchesMessage(r.Context(), w, id, req.Lease) {
+		return
+	}
+	rd, attempt, err := s.DeliveryClaims.NackMessageDelivery(r.Context(), req.Lease, req.Retryable, req.Error, time.Duration(req.NextAttemptSeconds)*time.Second)
+	// Nack returns ErrDeadLettered as its own error value on the call that
+	// SUCCESSFULLY dead-letters (T03's delivery_store.go hit this same
+	// surprise first) -- it is the expected outcome of a non-retryable
+	// Nack, not a failure.
+	if err != nil && !errors.Is(err, delivery.ErrDeadLettered) {
+		writeClaimError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"delivery": rd, "attempt": attempt})
+}
+
+// leaseMatchesMessage confirms the caller's presented lease actually
+// belongs to the {id} named in the URL, not just some other delivery it
+// happens to hold -- a caller-side consistency guard (the lease token
+// itself is what actually authorizes Ack/Nack; this catches a caller's
+// own mismatched request rather than adding a new security boundary).
+// Writes an error response and returns false when they don't match.
+func (s *Server) leaseMatchesMessage(ctx context.Context, w http.ResponseWriter, id string, lease delivery.LeaseRef) bool {
+	deliveryID, ok, err := s.DeliveryClaims.DeliveryIDForMessage(ctx, id)
+	if err != nil {
+		writeClaimError(w, err)
+		return false
+	}
+	if !ok || string(lease.DeliveryID) != deliveryID {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "lease does not correspond to message "+id)
+		return false
+	}
+	return true
+}
+
+func writeClaimError(w http.ResponseWriter, err error) {
+	switch {
+	case isNotFound(err):
+		writeError(w, http.StatusNotFound, CodeNotFound, "message not found")
+	case isWrongRecipient(err):
+		writeError(w, http.StatusConflict, CodeConflict, "caller is not the intended recipient")
+	case errors.Is(err, store.ErrNoDeliveryTracking):
+		writeError(w, http.StatusConflict, CodeConflict, err.Error())
+	case errors.Is(err, delivery.ErrAlreadyClaimed):
+		// The "stale lease" conformance case: a concurrent holder already
+		// has an active claim. Observable, not a server error.
+		writeError(w, http.StatusConflict, CodeConflict, "delivery already claimed by another holder")
+	case errors.Is(err, delivery.ErrNoDeliveryReady):
+		// Claim called before next_attempt_at -- a real, expected
+		// "not yet" outcome (e.g. an impatient re-claim right after a
+		// retryable Nack), not a server error.
+		writeError(w, http.StatusConflict, CodeConflict, "no delivery ready to claim yet")
+	case errors.Is(err, delivery.ErrDeadlineExceeded):
+		// A distinct outcome from ErrDeadLettered (Nack's own success
+		// signal for a deliberate non-retryable Nack, T03): here the
+		// caller was trying to make progress (Claim/Ack) and the delivery
+		// core dead-lettered the obligation out from under them because
+		// its deadline had already passed -- the caller's own requested
+		// operation did NOT succeed, so this is an observable conflict,
+		// not a silent 200.
+		writeError(w, http.StatusConflict, CodeConflict, "delivery deadline exceeded; the obligation has been dead-lettered")
+	case errors.Is(err, delivery.ErrStaleLease):
+		writeError(w, http.StatusConflict, CodeConflict, "lease is stale or superseded: "+err.Error())
+	case errors.Is(err, delivery.ErrTerminalDelivery):
+		writeError(w, http.StatusConflict, CodeConflict, "delivery is already terminal: "+err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+	}
 }
 
 // POST /messages/request — blocking request/reply helper.

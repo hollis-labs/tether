@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/memstore"
@@ -174,4 +175,54 @@ func TestRouterRegisterRejectsBadInput(t *testing.T) {
 // Router is itself a Store, so it composes with go-messaging's Dispatcher.
 func TestRouterSatisfiesStore(t *testing.T) {
 	var _ messaging.Store = NewRouter(memstore.New(), "tether")
+}
+
+// TestRouterMutualPeerConfiguration_NoLoop is T07's "routing avoids
+// loops/echo duplicates" acceptance case: two Routers that each treat the
+// OTHER as its one peer must not ping-pong an envelope -- each Send is a
+// single, terminal hop (see router.go's "Loop/echo safety" doc). Both
+// directions are exercised on a bounded timeout so an actual infinite
+// recursion/hang would fail the test rather than run forever.
+func TestRouterMutualPeerConfiguration_NoLoop(t *testing.T) {
+	storeA := memstore.New()
+	storeB := memstore.New()
+	routerA := NewRouter(storeA, "a")
+	routerB := NewRouter(storeB, "b")
+	if err := routerA.Register("b", routerB); err != nil {
+		t.Fatalf("register b on a: %v", err)
+	}
+	if err := routerB.Register("a", routerA); err != nil {
+		t.Fatalf("register a on b: %v", err)
+	}
+
+	done := make(chan error, 2)
+	go func() {
+		_, err := routerA.Send(context.Background(), envTo(addr("b", "worker")))
+		done <- err
+	}()
+	go func() {
+		_, err := routerB.Send(context.Background(), envTo(addr("a", "worker")))
+		done <- err
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Send did not return -- possible routing loop between mutually-configured peers")
+		}
+	}
+
+	// Each envelope landed exactly once, in the OTHER store -- a single
+	// terminal hop, not an echo back to the sender's own authority.
+	bInbox, err := storeB.Inbox(context.Background(), addr("b", "worker"), messaging.Filter{})
+	if err != nil || len(bInbox) != 1 {
+		t.Fatalf("storeB inbox = %v, err=%v, want exactly 1 envelope", bInbox, err)
+	}
+	aInbox, err := storeA.Inbox(context.Background(), addr("a", "worker"), messaging.Filter{})
+	if err != nil || len(aInbox) != 1 {
+		t.Fatalf("storeA inbox = %v, err=%v, want exactly 1 envelope", aInbox, err)
+	}
 }

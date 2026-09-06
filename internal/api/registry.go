@@ -67,6 +67,13 @@ type RegistryService interface {
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
 	BootstrapFromCerberus(ctx context.Context, cerberusHome string, force bool, writeBack bool) (registry.BootstrapReport, error)
+	// RuntimeBinding methods (T07, messaging vNext): the published-local
+	// bridge registration surface. See bindings.go.
+	LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility registry.PublicationVisibility, ttl time.Duration) (registry.RuntimeBinding, error)
+	RenewBindingLease(ctx context.Context, bindingID string, ttl time.Duration) (registry.RuntimeBinding, error)
+	RevokeBinding(ctx context.Context, bindingID string) error
+	CurrentBinding(ctx context.Context, targetURN string) (registry.RuntimeBinding, error)
+	ListBindingsForTarget(ctx context.Context, targetURN string) ([]registry.RuntimeBinding, error)
 }
 
 // kindFromSegment translates the plural URL segment to the singular
@@ -117,6 +124,8 @@ func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
+	mux.HandleFunc("/registry/bindings", s.handleBindingsCollection)
+	mux.HandleFunc("/registry/bindings/", s.handleBindingsItem)
 	mux.HandleFunc("/registry/", s.handleRegistry)
 }
 

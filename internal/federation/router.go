@@ -41,6 +41,22 @@ var ErrNoRoute = errors.New("federation: no route for authority")
 // federation is purely additive. A Router is itself a messaging.Store, so
 // it composes with messaging.NewDispatcher for federated request/reply.
 //
+// Loop/echo safety (T07, messaging vNext): the Router makes exactly ONE
+// routing decision per call and never recurses. storeFor resolves the
+// destination store once; that store's own Send/Inbox/etc. either persists
+// locally (messagingStore) or issues one HTTP round trip (httpPeerStore) --
+// neither path ever calls back into a Router.Send for the same envelope.
+// A receiving peer's own daemon just stores the envelope in its local
+// database; it does not automatically re-forward it anywhere. So an A<->B
+// mutual peer configuration (each treating the other as its one peer) has
+// no path that could ping-pong the same envelope indefinitely -- each
+// Send is a single, terminal hop, not a chain. What one-hop routing does
+// NOT prevent is an operator-authored addressing bug (e.g., a workflow
+// that itself re-sends every inbound message back to its sender's
+// authority) -- that is an application-level loop, outside the Router's
+// authority-routing responsibility, exactly as an email server doesn't
+// stop a mail rule that forwards a message back to its own sender.
+//
 // All methods are safe for concurrent use; the peer registry may be
 // mutated while operations are in flight.
 type Router struct {
