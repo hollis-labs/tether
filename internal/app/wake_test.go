@@ -533,6 +533,66 @@ func TestAttemptWake_IdleSession_DeliversAndRecordsReceipts(t *testing.T) {
 	}
 }
 
+// TestAttemptWake_PendingReceiptMarkerWriteFails_NacksInsteadOfProceeding
+// is the regression test for a gap a second independent review found in
+// the hijack-safety fix above: attemptWake originally treated
+// SetPendingReceiptLease as best-effort, logging and continuing straight
+// to SendTurn on failure. But that marker is what lets Consume later prove
+// this exact lease is safe to reuse -- an unmarked-but-still-open lease is
+// indistinguishable from an independent external claimant's (T07 bridge)
+// lease, so Consume correctly refuses to touch it, a fresh Claim then
+// fails with ErrAlreadyClaimed against this wake's own still-live lease,
+// and the delivery is stranded exactly as before the whole fix -- no crash
+// required, reproduced by a marker-write failure alone. Fixed: a marker
+// write failure now Nacks the just-acquired lease for retry (the same
+// pattern already used for offline/busy/stale-generation/turn-submit
+// failures) instead of proceeding.
+//
+// A real UPDATE failure is simulated with a genuine SQLite trigger that
+// rejects writes to the marker column specifically -- Claim/Ack (against
+// go-messaging's own separate tables) are completely unaffected, so this
+// exercises the real failure path, not a mocked one.
+func TestAttemptWake_PendingReceiptMarkerWriteFails_NacksInsteadOfProceeding(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	env := sendMessage(t, st, to)
+
+	if _, err := st.DB().ExecContext(ctx, `
+		CREATE TRIGGER reject_pending_receipt_marker
+		BEFORE UPDATE OF pending_receipt_attempt_id ON messages
+		BEGIN SELECT RAISE(ABORT, 'simulated marker write failure'); END;
+	`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	outcome := attemptWake(ctx, st, reg, rt.seam(), env.ID, to, "s1", "wake up")
+	if outcome.Delivered {
+		t.Fatalf("outcome = %+v, want Delivered=false", outcome)
+	}
+	if outcome.Reason != "marker-write-failed" {
+		t.Fatalf("outcome.Reason = %q, want marker-write-failed", outcome.Reason)
+	}
+	if rt.sendCallCount("s1") != 0 {
+		t.Fatalf("sendTurn called %d times, want 0 -- must abort before submitting a turn against an unmarked lease", rt.sendCallCount("s1"))
+	}
+
+	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id lookup: ok=%v err=%v", ok, err)
+	}
+	del, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if del.Status == delivery.DeliveryLeased {
+		t.Fatalf("delivery status = leased after a failed marker write, want the lease released (retry_scheduled) -- an unmarked lease must not be left open")
+	}
+}
+
 func TestAttemptWake_BusySession_NacksWithoutSendTurn(t *testing.T) {
 	st, reg := newWakeHarness(t)
 	ctx := context.Background()
@@ -962,6 +1022,70 @@ func TestAttemptWake_ClaimUnavailable_ConcurrentAttemptNoDuplicate(t *testing.T)
 
 // ─── RunWakeSweep: the shared pump retries what a synchronous attempt
 //     couldn't finish, using the exact same AttemptWake path.
+
+// TestRunWakeSweep_ConsumedDeliveryIsNeverRewoken is a remaining instance
+// of CW-20260907-0033, found by independent review: attemptWake claims a
+// delivery and Acks it through StageTurnSubmitted, then deliberately
+// leaves the lease open "awaiting consumption" (Consume is what's supposed
+// to Ack it the rest of the way to Consumed/Delivered). Before the fix,
+// Consume's own receipt recording always tried a brand-new Claim, which
+// go-messaging correctly refuses while that lease is still active
+// (ErrAlreadyClaimed) -- so the old lease was simply left to expire,
+// delivery-core's own release-expired-leases logic made the delivery
+// retry-eligible again, and the next sweep woke an already-fully-consumed
+// message a second time. This reproduces on the ordinary wake -> Consume
+// -> (eventual) lease expiry path -- no crash required.
+func TestRunWakeSweep_ConsumedDeliveryIsNeverRewoken(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	env := sendMessage(t, st, to)
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "s1", "local", "s1", nil, "", 0); err != nil {
+		t.Fatalf("lease: %v", err)
+	}
+
+	wake := attemptWake(ctx, st, reg, rt.seam(), env.ID, to, "s1", "wake up")
+	if !wake.Delivered {
+		t.Fatalf("initial wake: %+v", wake)
+	}
+	if err := st.MessagingStore().Consume(ctx, env.ID, to); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+	}
+	del, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if del.Status != delivery.DeliveryDelivered {
+		t.Fatalf("delivery status after wake+consume = %q, want delivered -- the still-open wake lease was not reused/completed", del.Status)
+	}
+
+	// Advance the (already-terminal) delivery's stale lease_expires_at
+	// directly -- this fixture has no fake-clock seam into the delivery
+	// core, matching TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers's
+	// own note above. A terminal (Delivered) delivery's lease fields are
+	// already cleared by Ack(StageConsumed), so this column write is
+	// inert for a correctly-fixed delivery; it only matters as a guard
+	// against a regression that leaves a stale, non-cleared expiry behind.
+	if _, err := st.DB().ExecContext(ctx, "UPDATE messaging_deliveries SET lease_expires_at=? WHERE id=?",
+		time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano), deliveryID); err != nil {
+		t.Fatalf("advance lease_expires_at: %v", err)
+	}
+
+	attempted, err := runWakeSweep(ctx, st, reg, rt.seam())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if attempted != 0 || rt.sendCallCount("s1") != 1 {
+		t.Fatalf("an already-consumed message was woken again: sweep attempted=%d, total sendTurn calls=%d, want attempted=0 calls=1", attempted, rt.sendCallCount("s1"))
+	}
+}
 
 func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	st, reg := newWakeHarness(t)

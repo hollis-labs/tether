@@ -504,6 +504,234 @@ func TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck(t *testing.T)
 	}
 }
 
+// TestDeliveryBackedConsume_ReusesActiveLeaseAcrossRestart is a second,
+// remaining instance of CW-20260907-0033, found by independent review after
+// the crash-before-ack fix above landed: recordConsumedReceipts always
+// requested a brand-new Claim, which go-messaging correctly refuses
+// (ErrAlreadyClaimed) whenever ANY lease on the delivery is still active --
+// including one Tether's own wake pump already opened and deliberately left
+// open "awaiting consumption" (see internal/app/wake.go's attemptWake). The
+// old code logged and discarded that error, leaving the delivery stuck
+// non-terminal at whatever stage the still-valid lease was at, for every
+// restart point: right after the lease was acquired, or after either
+// partial acknowledgement.
+//
+// The fix (migration 0022) only reuses a lease whose
+// pending_receipt_attempt_id/pending_receipt_lease_token marker matches --
+// written here via SetPendingReceiptLease right after claiming, exactly as
+// leaseForConsumedReceipts's own fallback-Claim branch does in production,
+// simulating that a real prior (interrupted) Consume call reached that same
+// point before whatever crashed/restarted it.
+func TestDeliveryBackedConsume_ReusesActiveLeaseAcrossRestart(t *testing.T) {
+	for _, stage := range []delivery.ReceiptStage{delivery.StageLeaseAcquired, delivery.StageHostAccepted, delivery.StageTurnSubmitted} {
+		t.Run(string(stage), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "review.db")
+			db, err := store.Open(path)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			bob := addr("bob")
+			alice := addr("alice")
+			msg, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{From: alice, To: bob, Kind: messaging.MsgKindNotice})
+			if err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			// Simulate consumed_at already committed by an earlier call
+			// (the scenario the first CW-20260907-0033 fix already
+			// handles) -- this test is specifically about what happens
+			// when that earlier call also opened a still-active lease
+			// (via a prior Consume attempt, or Tether's own wake) before
+			// whatever interrupted it.
+			if _, err := db.DB().Exec(`UPDATE messages SET consumed_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), msg.ID); err != nil {
+				t.Fatalf("simulate consumed_at: %v", err)
+			}
+			id, ok, err := db.DeliveryIDForMessage(context.Background(), msg.ID)
+			if err != nil || !ok {
+				t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+			}
+			claim, err := db.DeliveryStore().Claim(context.Background(), delivery.ClaimRequest{
+				DeliveryID: delivery.DeliveryID(id), Holder: bob.URN(), LeaseDuration: time.Minute, Nowait: true,
+			})
+			if err != nil {
+				t.Fatalf("claim: %v", err)
+			}
+			if err := db.SetPendingReceiptLease(context.Background(), msg.ID, claim.Attempt.ID, claim.Attempt.LeaseToken); err != nil {
+				t.Fatalf("mark pending receipt lease: %v", err)
+			}
+			lease := delivery.LeaseRef{DeliveryID: claim.Attempt.DeliveryID, AttemptID: claim.Attempt.ID, LeaseToken: claim.Attempt.LeaseToken, BindingGeneration: claim.Attempt.BindingGeneration}
+			if stage != delivery.StageLeaseAcquired {
+				if _, _, err := db.DeliveryStore().Ack(context.Background(), delivery.AckRequest{Lease: lease, Stage: delivery.StageHostAccepted}); err != nil {
+					t.Fatalf("ack host_accepted: %v", err)
+				}
+			}
+			if stage == delivery.StageTurnSubmitted {
+				if _, _, err := db.DeliveryStore().Ack(context.Background(), delivery.AckRequest{Lease: lease, Stage: delivery.StageTurnSubmitted}); err != nil {
+					t.Fatalf("ack turn_submitted: %v", err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("close: %v", err)
+			}
+
+			// Reopen (simulating a restart/reconnect) and retry Consume,
+			// same as the caller's own documented-idempotent retry.
+			db, err = store.Open(path)
+			if err != nil {
+				t.Fatalf("reopen: %v", err)
+			}
+			defer db.Close()
+			if err := db.MessagingStore().Consume(context.Background(), msg.ID, bob); err != nil {
+				t.Fatalf("replay consume: %v", err)
+			}
+
+			after, err := db.DeliveryStore().GetDelivery(context.Background(), delivery.DeliveryID(id))
+			if err != nil {
+				t.Fatalf("get delivery: %v", err)
+			}
+			// AttemptCount must stay 1: a real fix REUSES the existing
+			// attempt/lease rather than acquiring a new one (Claim
+			// increments attempt_count every time it succeeds) -- this
+			// distinguishes "the marked lease was actually reused" from a
+			// hypothetical alternate implementation that reaches Delivered
+			// via some other means (e.g. force-clearing the old lease and
+			// claiming fresh), which would leave a stray second attempt.
+			if after.AttemptCount != 1 {
+				t.Fatalf("attempt count = %d after replay, want 1 -- Consume claimed a NEW attempt instead of reusing the marked one", after.AttemptCount)
+			}
+			if after.Status != delivery.DeliveryDelivered {
+				t.Fatalf("Consume replay reported success but delivery stayed %q at prior stage %s -- the still-active, marked lease was not reused (CW-20260907-0033 is not fully fixed)", after.Status, stage)
+			}
+		})
+	}
+}
+
+// TestDeliveryBackedConsume_DoesNotHijackAnIndependentlyClaimedLease is the
+// regression test for the hijack risk a second independent reviewer found
+// in this fix's own first version: reusing ANY active lease (not just a
+// marked, Consume-owned one) could let Consume finish -- or a later
+// legitimate Nack from the real claimant downgrade -- work an entirely
+// independent external process still had in flight via T07's
+// published-local bridge surface (POST /messages/{id}/claim, which is
+// "the counterpart to AttemptWake's internal Claim for a Tether-pushed
+// wake" per its own doc comment, and defaults its `holder` to the exact
+// same asserted recipient URN Consume itself uses -- so Holder identity
+// alone cannot distinguish the two). This test claims the delivery exactly
+// the way that bridge does (ClaimMessageDelivery, no pending-receipt
+// marker) and asserts a subsequent Consume call leaves that claim
+// completely untouched.
+func TestDeliveryBackedConsume_DoesNotHijackAnIndependentlyClaimedLease(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "no-hijack.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	bob := addr("bob")
+	alice := addr("alice")
+	msg, err := db.MessagingStore().Send(ctx, messaging.Envelope{From: alice, To: bob, Kind: messaging.MsgKindNotice})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// An independent external claimant (a T07 bridge) claims the delivery
+	// on its own initiative -- exactly ClaimMessageDelivery's own call
+	// shape, using the same default holder (the recipient's own URN) a
+	// real bridge call would use. Crucially: no SetPendingReceiptLease
+	// call, since the bridge path never makes one.
+	_, bridgeLease, err := db.ClaimMessageDelivery(ctx, msg.ID, bob, bob.URN(), time.Minute)
+	if err != nil {
+		t.Fatalf("bridge claim: %v", err)
+	}
+
+	// The recipient (or anything asserting its identity) calls Consume.
+	// Before this fix's hijack correction, this would have found the
+	// bridge's active lease, driven it straight to Consumed, and stolen it
+	// out from under the bridge's own still-in-flight work.
+	if err := db.MessagingStore().Consume(ctx, msg.ID, bob); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+
+	del, err := db.DeliveryStore().GetDelivery(ctx, bridgeLease.DeliveryID)
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if del.Status != delivery.DeliveryLeased {
+		t.Fatalf("delivery status = %q after Consume, want still leased -- Consume hijacked an independent claimant's active lease", del.Status)
+	}
+	if del.ActiveAttemptID != bridgeLease.AttemptID || del.ActiveLeaseToken != bridgeLease.LeaseToken {
+		t.Fatalf("active attempt/lease changed after Consume (attempt=%s token=%s), want the bridge's original attempt=%s token=%s untouched",
+			del.ActiveAttemptID, del.ActiveLeaseToken, bridgeLease.AttemptID, bridgeLease.LeaseToken)
+	}
+
+	// The bridge can still legitimately finish its own work afterward.
+	if _, _, err := db.AckMessageDelivery(ctx, bridgeLease, delivery.StageConsumed); err != nil {
+		t.Fatalf("bridge's own ack(consumed) after Consume ran: %v", err)
+	}
+	final, err := db.DeliveryStore().GetDelivery(ctx, bridgeLease.DeliveryID)
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if final.Status != delivery.DeliveryDelivered {
+		t.Fatalf("delivery status = %q after the bridge's own ack(consumed), want delivered", final.Status)
+	}
+}
+
+// TestDeliveryBackedConsume_ClaimsFreshFromRetryScheduled covers the one
+// non-Leased, non-Pending status leaseForConsumedReceipts's reuse-gate
+// (`del.Status == delivery.DeliveryLeased`) must correctly fall through
+// for: a delivery that was Nacked retryable (e.g. a prior wake attempt
+// failed and released it) has NO active lease at all -- Nack clears
+// ActiveAttemptID/ActiveLeaseToken -- so Consume must claim fresh here,
+// exactly as it already does for a plain Pending delivery.
+func TestDeliveryBackedConsume_ClaimsFreshFromRetryScheduled(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "retry-scheduled.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	bob := addr("bob")
+	alice := addr("alice")
+	msg, err := db.MessagingStore().Send(ctx, messaging.Envelope{From: alice, To: bob, Kind: messaging.MsgKindNotice})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	id, ok, err := db.DeliveryIDForMessage(ctx, msg.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+	}
+	claim, err := db.DeliveryStore().Claim(ctx, delivery.ClaimRequest{
+		DeliveryID: delivery.DeliveryID(id), Holder: "some-host", LeaseDuration: time.Minute, Nowait: true,
+	})
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	lease := delivery.LeaseRef{DeliveryID: claim.Attempt.DeliveryID, AttemptID: claim.Attempt.ID, LeaseToken: claim.Attempt.LeaseToken, BindingGeneration: claim.Attempt.BindingGeneration}
+	if _, _, err := db.DeliveryStore().Nack(ctx, delivery.NackRequest{Lease: lease, Retryable: true, Error: "simulated transient failure"}); err != nil {
+		t.Fatalf("nack: %v", err)
+	}
+	del, err := db.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(id))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if del.Status != delivery.DeliveryRetryScheduled {
+		t.Fatalf("test setup invalid: status = %q, want retry_scheduled", del.Status)
+	}
+
+	if err := db.MessagingStore().Consume(ctx, msg.ID, bob); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	after, err := db.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(id))
+	if err != nil {
+		t.Fatalf("get delivery after consume: %v", err)
+	}
+	if after.Status != delivery.DeliveryDelivered {
+		t.Fatalf("status after consume = %q, want delivered -- Consume must claim fresh from retry_scheduled", after.Status)
+	}
+}
+
 func TestDeliveryBackedConsume_PreT03MessageHasNoDeliveryID(t *testing.T) {
 	// A message with no delivery_id (e.g. imported from before T03, or sent
 	// through a path that predates this decorator) must still Consume

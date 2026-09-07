@@ -1,0 +1,51 @@
+-- 0022_consume_lease_marker.sql
+--
+-- Messaging vNext follow-up fix (independent review, CW-20260907-0033's
+-- second/remaining instance). Adds two additive, nullable columns marking
+-- which delivery-core attempt+lease (if any) is "owned" by Tether's own
+-- Consume-completion machinery, as opposed to an independent external
+-- claimant using the T07 published-local bridge surface
+-- (POST /messages/{id}/claim|ack|nack, internal/api/messages.go).
+--
+-- Why this is needed: Consume's receipt recording (internal/store/
+-- delivery_store.go's recordConsumedReceipts) must reuse a delivery's
+-- already-active lease rather than attempting a new Claim, since
+-- go-messaging correctly refuses any new Claim while a lease is live
+-- (ErrAlreadyClaimed) -- including one Tether's own wake pump
+-- (internal/app/wake.go's attemptWake) deliberately left open "awaiting
+-- consumption." But an active lease might instead belong to a completely
+-- independent external bridge process that claimed the SAME delivery via
+-- the public /claim endpoint and is still doing its own real work --
+-- reusing THAT lease would let an unrelated Consume call finish (or,
+-- worse, a later Nack from the bridge itself downgrade) work the bridge
+-- hasn't actually completed. Holder identity alone can't distinguish the
+-- two: handleMessageClaim defaults `holder` to the same asserted `?as=`
+-- recipient URN that Consume's own fallback Claim also uses.
+--
+-- These two columns are the explicit, unambiguous signal instead: they are
+-- written ONLY by (a) attemptWake, immediately after ITS OWN Claim
+-- succeeds (before any Ack -- not after turn_submitted; writing it this
+-- early is what makes a restart immediately after claiming, before any
+-- receipt is even recorded, still recoverable), and (b) Consume's own
+-- fallback Claim call, immediately after claiming (so a crash before
+-- finishing the Ack sequence is still recoverable on retry). The T07
+-- claim/ack/nack HTTP surface never writes them. Consume's receipt
+-- recording only reuses the delivery's current active lease when these
+-- columns are non-NULL AND exactly match its current active attempt id +
+-- lease token -- otherwise it falls back to attempting a fresh Claim,
+-- which fails safely (logged, discarded) if truly still held by an
+-- independent claimant, exactly matching the pre-fix behavior for that
+-- case. attemptWake treats a failure to write this marker as fatal to the
+-- wake attempt itself (Nacks the just-acquired lease for retry rather than
+-- proceeding) -- an unmarked-but-still-open lease is indistinguishable
+-- from an independent claimant's, so leaving it open unmarked would
+-- silently reopen the exact bug this migration exists to close.
+--
+-- Nullable, unindexed: existing rows carry NULL and are unaffected. Not
+-- cleared on read (a stale value naturally stops matching once a delivery
+-- moves to a new attempt/lease token, which is always fresh per Claim), so
+-- no reconciliation/backfill is needed for rows that predate this
+-- migration.
+
+ALTER TABLE messages ADD COLUMN pending_receipt_attempt_id TEXT;
+ALTER TABLE messages ADD COLUMN pending_receipt_lease_token TEXT;

@@ -279,6 +279,38 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		BindingGeneration: claim.Attempt.BindingGeneration,
 	}
 
+	// Mark this claim as Consume-owned immediately: attemptWake drives the
+	// lease through StageTurnSubmitted below and then deliberately leaves
+	// it open "awaiting consumption," which only Consume's own receipt
+	// recording (internal/store/delivery_store.go's recordConsumedReceipts)
+	// is meant to finish. That function only reuses an already-active
+	// lease when this exact marker matches it -- see its doc comment for
+	// why (an independent review found blindly reusing ANY active lease
+	// could hijack an unrelated external claimant's still-in-flight work
+	// via the T07 published-local bridge surface).
+	//
+	// NOT best-effort: unlike the receipt Acks below, a failed marker
+	// write here is not a benign "Consume will just re-claim instead" --
+	// this wake attempt is ABOUT to leave the lease open specifically so
+	// Consume can reuse it later, and Consume can only do that by matching
+	// this marker. An unmarked-but-still-open lease is indistinguishable
+	// from an independent external claimant's lease (a second, deeper
+	// review found exactly this: a swallowed failure here reproduces the
+	// original stranded-delivery bug with no crash required, since Consume
+	// correctly refuses to touch an unmarked active lease and a fresh
+	// Claim attempt then fails with ErrAlreadyClaimed against this wake's
+	// own still-live lease). So a failure here is treated the same as any
+	// other post-claim failure this function already Nacks for retry
+	// (offline/busy/stale-generation/turn-submit-failed): release the
+	// lease now, while it's still cheap to do so, rather than leave it
+	// open in a state neither Consume nor a future wake attempt can safely
+	// reuse.
+	if err := st.SetPendingReceiptLease(ctx, messageID, lease.AttemptID, lease.LeaseToken); err != nil {
+		log.Printf("app: attempt wake: recording pending-receipt marker for message %s failed, releasing the claim for retry rather than leaving an unmarked lease open: %v", messageID, err)
+		nackRetryable(ctx, ds, lease, "failed to record pending-receipt marker: "+err.Error(), wakeBusyRetryBackoff)
+		return api.WakeOutcome{Attempted: true, SessionID: sessionID, Reason: "marker-write-failed", Detail: err.Error()}
+	}
+
 	// Real, timely host-accepted receipt: recorded now, at the moment
 	// Tether is about to hand this delivery to a concrete session -- not
 	// synthesized later at Consume time the way the consume-only path
