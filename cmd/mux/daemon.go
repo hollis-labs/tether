@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/apikeyhelper"
@@ -190,6 +191,11 @@ var daemonRunCmd = &cobra.Command{
 			Publisher: svc.Bus,
 		})
 
+		a2aHandler, err := buildA2AAdapter(svc.CatalogRoot, svc.Store.MessagingStore())
+		if err != nil {
+			return err
+		}
+
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		server := &daemon.Server{
 			Config:              cfg,
@@ -218,6 +224,7 @@ var daemonRunCmd = &cobra.Command{
 			DeliveryTrace:       svc.Store,
 			DeliveryRepair:      svc.Store,
 			Retention:           svc.Store,
+			A2A:                 a2aHandler,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.
@@ -227,6 +234,42 @@ var daemonRunCmd = &cobra.Command{
 
 		return server.Run(ctx)
 	},
+}
+
+// buildA2AAdapter loads the opt-in A2A binding catalog (T10, messaging
+// vNext) and constructs the adapter's HTTP handler. Returns a nil handler
+// (not an error) when no bindings are configured -- "the feature stays
+// optional for local messaging" (T10 acceptance #3): an empty/missing
+// <catalogRoot>/a2a/ directory means the A2A surface doesn't exist on
+// this daemon at all, matching the daemon.Server.A2A field's nil-means-
+// absent convention.
+func buildA2AAdapter(catalogRoot string, sender a2aadapter.MessageSender) (http.Handler, error) {
+	entries, err := config.LoadA2ABindings(catalogRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load a2a bindings: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	bindings := make([]a2aadapter.AgentBinding, len(entries))
+	for i, e := range entries {
+		bindings[i] = a2aadapter.AgentBinding{
+			ID:               e.ID,
+			TargetURN:        e.TargetURN,
+			DisplayName:      e.DisplayName,
+			Description:      e.Description,
+			BaseURL:          e.BaseURL,
+			BearerToken:      e.BearerToken,
+			TaskMode:         e.TaskMode,
+			TaskAwaitTimeout: e.TaskAwaitTimeout(),
+		}
+	}
+	adapter, err := a2aadapter.NewAdapter(a2aadapter.Config{Bindings: bindings}, sender)
+	if err != nil {
+		return nil, fmt.Errorf("build a2a adapter: %w", err)
+	}
+	return adapter.Mux(), nil
 }
 
 func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiServiceDeps) api.AIService {

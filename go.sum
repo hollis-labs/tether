@@ -4,6 +4,8 @@ cloud.google.com/go/auth v0.18.2 h1:+Nbt5Ev0xEqxlNjd6c+yYUeosQ5TtEUaNcN/3FozlaM=
 cloud.google.com/go/auth v0.18.2/go.mod h1:xD+oY7gcahcu7G2SG2DsBerfFxgPAJz17zz2joOFF3M=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
+github.com/a2aproject/a2a-go/v2 v2.5.0 h1:ZdcFoxv+nZTUV0i2ue5hES76YCANFPG9vjqd7vK8yWM=
+github.com/a2aproject/a2a-go/v2 v2.5.0/go.mod h1:NcRp/ZHxgMzDj12/BteIC2gOjljuEBKaGRfEdJ2lNSI=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/anthropics/anthropic-sdk-go v1.45.0 h1:rWnpyBpm9OAm97jyH5bi6W4SRCwJeNY/RyhaJ7CHSUI=
@@ -68,8 +70,6 @@ github.com/hollis-labs/go-llm-types v0.3.0 h1:QR4RX0F1zX0fYBh7sDVxnsFxmQ/vjlvc7b
 github.com/hollis-labs/go-llm-types v0.3.0/go.mod h1:BP8FMqmTWvi2vQ7dNybTGJ+FFzXS4gMMhAjyTHlNq84=
 github.com/hollis-labs/go-mcp-sanitize v0.1.1 h1:mx/2I2pmWLHdHbc2QECQ3hrBRc49h1ym1fdQM8396t0=
 github.com/hollis-labs/go-mcp-sanitize v0.1.1/go.mod h1:WBnfVYgUsf2ejTGklWCAF6NZt8Na4+fVEnXtydlcDZM=
-github.com/hollis-labs/go-messaging v0.4.0 h1:9sg/fK60XH8wuYO4W5GMBBceY0/UhJNDfAjF6ckhOW4=
-github.com/hollis-labs/go-messaging v0.4.0/go.mod h1:9KGpsIirex9jgJ9SXwW/PO6vcEl9xCZNguAjEFXlsSw=
 github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c h1:3AxqG15j5AqFDeOgU3pQoo43YwKe3PEuIwLdniwMb7k=
 github.com/hollis-labs/go-messaging v0.4.1-0.20260906180631-2a0132bb3e2c/go.mod h1:9KGpsIirex9jgJ9SXwW/PO6vcEl9xCZNguAjEFXlsSw=
 github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM7xcGqKMmk=

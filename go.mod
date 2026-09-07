@@ -5,6 +5,7 @@ go 1.26.2
 toolchain go1.26.6
 
 require (
+	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agentkit v0.5.1
@@ -93,6 +94,7 @@ require (
 	go.opentelemetry.io/otel/log v0.22.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

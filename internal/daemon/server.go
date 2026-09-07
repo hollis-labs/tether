@@ -117,7 +117,19 @@ type Server struct {
 	// same /messages/ subtree, same no-separate-mux-entry reasoning as
 	// DeliveryTrace.
 	Retention api.RetentionStore
-	Close     func() error
+	// A2A is optional; when non-nil, its handler is mounted at "/a2a/"
+	// (prefix stripped) -- the bounded, explicitly namespaced A2A
+	// interoperability adapter (T10, messaging vNext). Held as a bare
+	// http.Handler (constructed from internal/a2aadapter.NewAdapter at
+	// composition time, see cmd/mux/daemon.go) rather than that
+	// package's concrete type, so this package's import set doesn't grow
+	// for what is, from here, just another optional mounted handler --
+	// matching the deliberately minimal set of internal packages this
+	// file otherwise depends on. Absent entirely means the A2A surface
+	// doesn't exist on this daemon at all (T10 acceptance #3: "the
+	// feature stays optional for local messaging").
+	A2A   http.Handler
+	Close func() error
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -284,6 +296,13 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	if s.A2A != nil {
+		// A totally separate handler tree from api.NewHandler -- A2A has
+		// its own wire format (JSON-RPC/well-known-card), not Tether's
+		// writeJSON/CodeXxx envelope, so it is deliberately NOT routed
+		// through apiHandler below (T10, messaging vNext).
+		mux.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
+	}
 	if s.Service != nil || s.Catalog != nil || s.AI != nil {
 		apiHandler := api.NewHandler(api.Deps{
 			Service:             s.Service,
