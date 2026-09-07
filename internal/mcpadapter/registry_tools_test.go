@@ -89,6 +89,7 @@ func callRegistryTool(t *testing.T, a *Adapter, name string, args map[string]any
 	a.registerRegistryTools(s)
 	a.registerBindingsTools(s)
 	a.registerWhoamiTools(s)
+	a.registerScopedBindingsTools(s)
 
 	c, err := mcpclient.NewInProcessClient(s)
 	if err != nil {

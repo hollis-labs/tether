@@ -133,6 +133,15 @@ func bindingsClient() (*client.BindingsClient, error) {
 	return c.Bindings(), nil
 }
 
+// scopedBindingsClient shares the same test seam as registryClient (T08).
+func scopedBindingsClient() (*client.ScopedBindingsClient, error) {
+	c, err := registryClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	return c.ScopedBindings(), nil
+}
+
 // ─── parent command ─────────────────────────────────────────────────────────
 
 var registryCmd = &cobra.Command{
@@ -686,6 +695,119 @@ func printBinding(b registry.RuntimeBinding) {
 	}
 }
 
+// ─── scoped-bindings (T08: CLI parity for T04's scoped role/slot primitive) ──
+
+var scopedBindingsCmd = &cobra.Command{
+	Use:   "scoped-bindings",
+	Short: "Consumer-owned scope/slot role bindings (e.g. 'reviewer' or 'engineer' within a run)",
+	Long: `Operate against the daemon's scoped role/slot binding primitive
+(internal/registry/scoped_bindings.go): a consumer-owned scope plus
+role/slot name maps to one or more participant URNs, with a full,
+versioned provenance history. Tether does not interpret scope/slot names
+or grant command authority from a binding -- staffing, activation, and
+workflow decisions remain consumer-owned.`,
+}
+
+var (
+	scopedBindingScope     string
+	scopedBindingSlot      string
+	scopedBindingTargets   []string
+	scopedBindingCreatedBy string
+	scopedBindingSingle    bool
+)
+
+var scopedBindingsSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Publish a new revision for (scope, slot)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" {
+			return validationErr("registry scoped-bindings set: --scope and --slot are required")
+		}
+		if scopedBindingCreatedBy == "" {
+			return validationErr("registry scoped-bindings set: --created-by <urn> is required for provenance")
+		}
+		if len(scopedBindingTargets) == 0 {
+			return validationErr("registry scoped-bindings set: --target <urn> is required (repeatable)")
+		}
+		sc, err := scopedBindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := sc.Set(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot, scopedBindingTargets, nil, scopedBindingCreatedBy)
+		if err != nil {
+			return classifyErr(err)
+		}
+		printScopedBinding(out)
+		return nil
+	},
+}
+
+var scopedBindingsResolveCmd = &cobra.Command{
+	Use:   "resolve",
+	Short: "Resolve the current revision for (scope, slot)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" {
+			return validationErr("registry scoped-bindings resolve: --scope and --slot are required")
+		}
+		sc, err := scopedBindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		if scopedBindingSingle {
+			target, binding, err := sc.ResolveSingle(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot)
+			if err != nil {
+				return classifyErr(err)
+			}
+			fmt.Printf("target_urn: %s\n", target)
+			printScopedBinding(binding)
+			return nil
+		}
+		out, err := sc.Resolve(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot)
+		if err != nil {
+			return classifyErr(err)
+		}
+		printScopedBinding(out)
+		return nil
+	},
+}
+
+var scopedBindingsRevisionsCmd = &cobra.Command{
+	Use:   "revisions",
+	Short: "List every revision ever published for (scope, slot), newest first",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" {
+			return validationErr("registry scoped-bindings revisions: --scope and --slot are required")
+		}
+		sc, err := scopedBindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := sc.ListRevisions(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot)
+		if err != nil {
+			return classifyErr(err)
+		}
+		for _, b := range out {
+			printScopedBinding(b)
+			fmt.Println("---")
+		}
+		return nil
+	},
+}
+
+// printScopedBinding writes a stable, line-oriented rendering of a
+// registry.ScopedBinding.
+func printScopedBinding(b registry.ScopedBinding) {
+	fmt.Printf("scope:       %s\n", b.Scope)
+	fmt.Printf("slot:        %s\n", b.Slot)
+	fmt.Printf("revision:    %d\n", b.Revision)
+	fmt.Printf("target_urns: %s\n", strings.Join(b.TargetURNs, ","))
+	fmt.Printf("created_by:  %s\n", b.CreatedBy)
+	fmt.Printf("created_at:  %s\n", b.CreatedAt.Format(time.RFC3339))
+	if len(b.Relationship) > 0 {
+		fmt.Printf("relationship: %s\n", b.Relationship)
+	}
+}
+
 // ─── pretty-printer ─────────────────────────────────────────────────────────
 
 // printProfile writes a stable, line-oriented rendering of a Profile.
@@ -906,6 +1028,11 @@ func resetRegistryFlags() {
 	bindingLeaseCaps = []string{"pull-only"}
 	bindingLeaseTTL = 0
 	bindingsJSON = false
+	scopedBindingScope = ""
+	scopedBindingSlot = ""
+	scopedBindingTargets = nil
+	scopedBindingCreatedBy = ""
+	scopedBindingSingle = false
 }
 
 // cmdCtx returns cmd.Context() if non-nil, otherwise
@@ -966,6 +1093,17 @@ func init() {
 
 	bindingsCmd.AddCommand(bindingsLeaseCmd, bindingsRenewCmd, bindingsRevokeCmd, bindingsCurrentCmd, bindingsListCmd)
 	registryCmd.AddCommand(bindingsCmd)
+
+	for _, c := range []*cobra.Command{scopedBindingsSetCmd, scopedBindingsResolveCmd, scopedBindingsRevisionsCmd} {
+		c.Flags().StringVar(&scopedBindingScope, "scope", "", "consumer-owned scope, e.g. a run or team id")
+		c.Flags().StringVar(&scopedBindingSlot, "slot", "", "role/slot name within the scope, e.g. 'reviewer'")
+	}
+	scopedBindingsSetCmd.Flags().StringArrayVar(&scopedBindingTargets, "target", nil, "target URN for this slot; repeatable for fanout")
+	scopedBindingsSetCmd.Flags().StringVar(&scopedBindingCreatedBy, "created-by", "", "caller URN recorded as provenance for this revision")
+	scopedBindingsResolveCmd.Flags().BoolVar(&scopedBindingSingle, "single", false, "resolve to exactly one target, erroring on zero or multiple")
+
+	scopedBindingsCmd.AddCommand(scopedBindingsSetCmd, scopedBindingsResolveCmd, scopedBindingsRevisionsCmd)
+	registryCmd.AddCommand(scopedBindingsCmd)
 
 	registryCmd.AddCommand(
 		registryRegisterCmd,

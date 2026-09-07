@@ -20,4 +20,5 @@ func (a *Adapter) registerTools(s *server.MCPServer) {
 	a.registerGroupTools(s)
 	a.registerBindingsTools(s)
 	a.registerWhoamiTools(s)
+	a.registerScopedBindingsTools(s)
 }

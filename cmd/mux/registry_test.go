@@ -788,6 +788,79 @@ func TestRegistryBindings_Lease_MissingFlags_Exit2(t *testing.T) {
 	assertExitCode(t, err, 2)
 }
 
+// ─── scoped-bindings (T08) ────────────────────────────────────────────────
+
+func TestRegistryScopedBindings_SetResolveRevisions_Roundtrip(t *testing.T) {
+	_ = newFixture(t)
+
+	scopedBindingScope = "run-1"
+	scopedBindingSlot = "reviewer"
+	scopedBindingTargets = []string{"msg://agent/agent-mux/agt_a"}
+	scopedBindingCreatedBy = "msg://agent/agent-mux/agt_owner"
+
+	out := captureRegistryStdout(t, func() {
+		if err := scopedBindingsSetCmd.RunE(scopedBindingsSetCmd, nil); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+	})
+	if !strings.Contains(out, "revision:    1") {
+		t.Fatalf("set output missing revision 1: %s", out)
+	}
+
+	out = captureRegistryStdout(t, func() {
+		if err := scopedBindingsResolveCmd.RunE(scopedBindingsResolveCmd, nil); err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+	})
+	if !strings.Contains(out, "target_urns: msg://agent/agent-mux/agt_a") {
+		t.Fatalf("resolve output = %s, want the set target", out)
+	}
+
+	scopedBindingSingle = true
+	out = captureRegistryStdout(t, func() {
+		if err := scopedBindingsResolveCmd.RunE(scopedBindingsResolveCmd, nil); err != nil {
+			t.Fatalf("resolve single: %v", err)
+		}
+	})
+	if !strings.Contains(out, "target_urn: msg://agent/agent-mux/agt_a") {
+		t.Fatalf("resolve single output = %s, want the single target", out)
+	}
+
+	// A second revision, then list history.
+	scopedBindingTargets = []string{"msg://agent/agent-mux/agt_b"}
+	if err := scopedBindingsSetCmd.RunE(scopedBindingsSetCmd, nil); err != nil {
+		t.Fatalf("set 2: %v", err)
+	}
+	out = captureRegistryStdout(t, func() {
+		if err := scopedBindingsRevisionsCmd.RunE(scopedBindingsRevisionsCmd, nil); err != nil {
+			t.Fatalf("revisions: %v", err)
+		}
+	})
+	if strings.Count(out, "scope:       run-1") != 2 {
+		t.Fatalf("revisions output = %s, want 2 revisions listed", out)
+	}
+}
+
+func TestRegistryScopedBindings_Set_MissingFlags_Exit2(t *testing.T) {
+	_ = newFixture(t)
+	if err := scopedBindingsSetCmd.RunE(scopedBindingsSetCmd, nil); err == nil {
+		t.Fatal("expected a validation error with no flags set")
+	} else {
+		assertExitCode(t, err, 2)
+	}
+}
+
+func TestRegistryScopedBindings_Resolve_NotFound_Exit1(t *testing.T) {
+	_ = newFixture(t)
+	scopedBindingScope = "nope"
+	scopedBindingSlot = "nope"
+	err := scopedBindingsResolveCmd.RunE(scopedBindingsResolveCmd, nil)
+	if err == nil {
+		t.Fatal("expected a not-found error")
+	}
+	assertExitCode(t, err, 1)
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 // assertExitCode walks an error chain to find an exitErr and verifies

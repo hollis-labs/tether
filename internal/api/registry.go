@@ -76,6 +76,11 @@ type RegistryService interface {
 	RevokeBinding(ctx context.Context, bindingID string) error
 	CurrentBinding(ctx context.Context, targetURN string) (registry.RuntimeBinding, error)
 	ListBindingsForTarget(ctx context.Context, targetURN string) ([]registry.RuntimeBinding, error)
+	// Scoped role/slot bindings (T04, exposed in T08). See scoped_bindings.go.
+	SetScopedBinding(ctx context.Context, scope, slot string, targetURNs []string, relationship json.RawMessage, createdBy string) (registry.ScopedBinding, error)
+	ResolveScopedBinding(ctx context.Context, scope, slot string) (registry.ScopedBinding, error)
+	ResolveScopedBindingSingle(ctx context.Context, scope, slot string) (string, registry.ScopedBinding, error)
+	ListScopedBindingRevisions(ctx context.Context, scope, slot string) ([]registry.ScopedBinding, error)
 }
 
 // kindFromSegment translates the plural URL segment to the singular

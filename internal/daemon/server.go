@@ -350,6 +350,9 @@ func (s *Server) Handler() http.Handler {
 			mux.Handle("/catalog/launches", apiHandler)
 		}
 		if s.Registry != nil {
+			// "/registry/" is a subtree (prefix) pattern -- it already
+			// covers /registry/bindings* and /registry/scoped-bindings*
+			// (T07, T08) without a separate mux.Handle call per subpath.
 			mux.Handle("/registry/", apiHandler)
 			mux.Handle("/whoami", apiHandler)
 		}
