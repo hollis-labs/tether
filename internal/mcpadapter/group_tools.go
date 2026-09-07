@@ -1,7 +1,10 @@
 // Package mcpadapter — group_tools.go wires the native tether_group_*
-// MCP tools (T-v060-05-06). One tool per HTTP endpoint in
-// internal/api/groups.go; dispatch goes through a.svc.Registry (same
-// composition root as the HTTP surface, per ADR 0034 — no HTTP loopback).
+// MCP tools (T-v060-05-06, converted to daemon routing in T08 messaging
+// vNext). One tool per HTTP endpoint in internal/api/groups.go; every
+// handler now routes through a.client (the daemon HTTP client) rather
+// than dispatching to a.svc.Registry in-process — see registry_tools.go's
+// package doc for why (the `mux mcp` split-brain SQLite-connection issue
+// T05 fixed for messages, applied here too).
 //
 // Scope. Membership + post + read tools require `groups.write`. Read
 // tools (lookup, list-for-member, list-members, list-messages,
@@ -37,6 +40,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
 )
 
@@ -46,8 +50,8 @@ import (
 const ScopeGroupsWrite = "groups.write"
 
 // registerGroupTools wires every tether_group_* native tool onto s.
-// Mirrors registerRegistryTools — all handlers dispatch directly to
-// a.svc.Registry (which is *registry.Service in production).
+// Mirrors registerRegistryTools — every handler routes through a.client
+// to the daemon's /groups HTTP surface.
 func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("tether_group_create",
 		mcp.WithDescription(
@@ -308,39 +312,43 @@ func (a *Adapter) handleGroupCreate(ctx context.Context, req mcp.CallToolRequest
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	name := str(req, "display_name")
 	creator := str(req, "creator_urn")
 	if name == "" || creator == "" {
 		return toolError("invalid_request", "display_name and creator_urn are required"), nil
 	}
-	caps := stringSliceArg(req, "capabilities")
-	p := registry.Profile{
-		DisplayName:   name,
-		Description:   str(req, "description"),
-		Role:          str(req, "role"),
-		Capabilities:  caps,
-		LastUpdatedBy: creator,
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_create requires daemon routing; start MCP with mux mcp"), nil
 	}
-	out, err := a.svc.Registry.Register(ctx, registry.KindGroup, p)
+	out, err := a.client.Groups().Create(ctx, client.CreateGroupRequest{
+		DisplayName:  name,
+		Description:  str(req, "description"),
+		Role:         str(req, "role"),
+		Capabilities: stringSliceArg(req, "capabilities"),
+		CreatorURN:   creator,
+	})
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 func (a *Adapter) handleGroupLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	urn := str(req, "urn")
 	if urn == "" {
 		return toolError("invalid_request", "urn is required"), nil
 	}
-	out, err := a.svc.Registry.Lookup(ctx, urn)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_lookup requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().Lookup(ctx, urn)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	if out.Kind != registry.KindGroup {
@@ -350,15 +358,18 @@ func (a *Adapter) handleGroupLookup(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (a *Adapter) handleGroupListForMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	member := str(req, "member_urn")
 	if member == "" {
 		return toolError("invalid_request", "member_urn is required"), nil
 	}
-	out, err := a.svc.Registry.ListGroupsForMember(ctx, member)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_list_for_member requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().ListForMember(ctx, member)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	if out == nil {
@@ -371,16 +382,19 @@ func (a *Adapter) handleGroupArchive(ctx context.Context, req mcp.CallToolReques
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	urn := str(req, "urn")
 	by := str(req, "by")
 	if urn == "" || by == "" {
 		return toolError("invalid_request", "urn and by are required"), nil
 	}
-	out, err := a.svc.Registry.ArchiveGroup(ctx, urn, by)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_archive requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().Archive(ctx, urn, by)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
@@ -390,9 +404,6 @@ func (a *Adapter) handleGroupInvite(ctx context.Context, req mcp.CallToolRequest
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	member := str(req, "member_urn")
 	by := str(req, "by")
@@ -400,8 +411,14 @@ func (a *Adapter) handleGroupInvite(ctx context.Context, req mcp.CallToolRequest
 	if grp == "" || member == "" || by == "" {
 		return toolError("invalid_request", "group_urn, member_urn, and by are required"), nil
 	}
-	out, err := a.svc.Registry.AddMember(ctx, grp, member, by, registry.MemberRole(role))
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_invite requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().AddMember(ctx, grp, member, by, registry.MemberRole(role))
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "member": out}), nil
@@ -411,16 +428,19 @@ func (a *Adapter) handleGroupKick(ctx context.Context, req mcp.CallToolRequest) 
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	member := str(req, "member_urn")
 	by := str(req, "by")
 	if grp == "" || member == "" || by == "" {
 		return toolError("invalid_request", "group_urn, member_urn, and by are required"), nil
 	}
-	if err := a.svc.Registry.RemoveMember(ctx, grp, member, by); err != nil {
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_kick requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.Groups().RemoveMember(ctx, grp, member, by); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true}), nil
@@ -430,15 +450,18 @@ func (a *Adapter) handleGroupLeave(ctx context.Context, req mcp.CallToolRequest)
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	member := str(req, "member_urn")
 	if grp == "" || member == "" {
 		return toolError("invalid_request", "group_urn and member_urn are required"), nil
 	}
-	if err := a.svc.Registry.LeaveGroup(ctx, grp, member); err != nil {
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_leave requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.Groups().Leave(ctx, grp, member); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true}), nil
@@ -448,9 +471,6 @@ func (a *Adapter) handleGroupSetRole(ctx context.Context, req mcp.CallToolReques
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	member := str(req, "member_urn")
 	role := str(req, "role")
@@ -458,22 +478,31 @@ func (a *Adapter) handleGroupSetRole(ctx context.Context, req mcp.CallToolReques
 	if grp == "" || member == "" || role == "" || by == "" {
 		return toolError("invalid_request", "group_urn, member_urn, role, and by are required"), nil
 	}
-	if err := a.svc.Registry.SetMemberRole(ctx, grp, member, registry.MemberRole(role), by); err != nil {
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_set_role requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.Groups().SetMemberRole(ctx, grp, member, registry.MemberRole(role), by); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true}), nil
 }
 
 func (a *Adapter) handleGroupListMembers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	if grp == "" {
 		return toolError("invalid_request", "group_urn is required"), nil
 	}
-	out, err := a.svc.Registry.ListMembers(ctx, grp)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_list_members requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().ListMembers(ctx, grp)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	if out == nil {
@@ -486,23 +515,17 @@ func (a *Adapter) handleGroupPost(ctx context.Context, req mcp.CallToolRequest) 
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	from := str(req, "from_urn")
 	if grp == "" || from == "" {
 		return toolError("invalid_request", "group_urn and from_urn are required"), nil
 	}
 	kind := str(req, "kind")
-	if kind == "" {
-		kind = "message"
-	}
 	threadID := str(req, "thread_id")
 	contentType := str(req, "content_type")
 
 	// Re-marshal the payload object so we get a json.RawMessage suitable
-	// for the registry layer. The same round-trip pattern as
+	// for the client layer. The same round-trip pattern as
 	// decodeProfileArg in registry_tools.go.
 	raw, ok := req.GetArguments()["payload"]
 	if !ok {
@@ -513,21 +536,30 @@ func (a *Adapter) handleGroupPost(ctx context.Context, req mcp.CallToolRequest) 
 		return toolError("invalid_request", "re-marshal payload: "+mErr.Error()), nil //nolint:nilerr
 	}
 
-	out, err := a.svc.Registry.SendToGroup(ctx, grp, from, kind, threadID, contentType, pb)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_post requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().Send(ctx, grp, client.SendGroupRequest{
+		From:        from,
+		Kind:        kind,
+		ThreadID:    threadID,
+		ContentType: contentType,
+		Payload:     pb,
+	})
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{
 		"ok":         true,
-		"message_id": out.ID,
+		"message_id": out.MessageID,
 		"group_seq":  out.GroupSeq,
 	}), nil
 }
 
 func (a *Adapter) handleGroupRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	grp := str(req, "group_urn")
 	as := str(req, "as")
 	if grp == "" || as == "" {
@@ -537,31 +569,31 @@ func (a *Adapter) handleGroupRead(ctx context.Context, req mcp.CallToolRequest) 
 	limit := intArg(req, "limit", 100)
 	threadID := str(req, "thread_id")
 
-	out, err := a.svc.Registry.ListGroupMessages(ctx, grp, as, sinceSeq, threadID, limit)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_read requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().ListMessages(ctx, grp, client.ListMessagesParams{
+		As: as, SinceSeq: sinceSeq, ThreadID: threadID, Limit: limit,
+	})
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
-	if out == nil {
-		out = []registry.GroupMessage{}
-	}
-	next := sinceSeq
-	for _, m := range out {
-		if m.GroupSeq > next {
-			next = m.GroupSeq
-		}
+	messages := out.Messages
+	if messages == nil {
+		messages = []registry.GroupMessage{}
 	}
 	return toolJSON(map[string]any{
 		"ok":       true,
-		"messages": out,
-		"next_seq": next,
+		"messages": messages,
+		"next_seq": out.NextSeq,
 	}), nil
 }
 
 func (a *Adapter) handleGroupMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errRes := a.checkScope(ScopeGroupsWrite); errRes != nil {
-		return errRes, nil
-	}
-	if errRes := a.requireRegistry(); errRes != nil {
 		return errRes, nil
 	}
 	grp := str(req, "group_urn")
@@ -573,16 +605,19 @@ func (a *Adapter) handleGroupMarkRead(ctx context.Context, req mcp.CallToolReque
 	if upTo < 0 {
 		return toolError("invalid_request", "up_to_seq is required and must be ≥ 0"), nil
 	}
-	if err := a.svc.Registry.MarkRead(ctx, grp, as, upTo); err != nil {
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_mark_read requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.Groups().MarkRead(ctx, grp, as, upTo); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true}), nil
 }
 
 func (a *Adapter) handleGroupMentions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	as := str(req, "as")
 	if as == "" {
 		return toolError("invalid_request", "as is required"), nil
@@ -596,8 +631,14 @@ func (a *Adapter) handleGroupMentions(ctx context.Context, req mcp.CallToolReque
 		}
 		since = t
 	}
-	out, err := a.svc.Registry.GetMyMentions(ctx, as, since, limit)
+	if a.client == nil {
+		return toolError("internal_error", "tether_group_mentions requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Groups().Mentions(ctx, client.MentionsParams{As: as, Since: since, Limit: limit})
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapGroupErr(err), nil
 	}
 	if out == nil {

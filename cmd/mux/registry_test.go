@@ -690,6 +690,104 @@ func TestRegistry_Bootstrap_Force_RefreshesEdits(t *testing.T) {
 	}
 }
 
+// ─── bindings (T08) ─────────────────────────────────────────────────────────
+
+func TestRegistryBindings_LeaseCurrentListRenewRevoke_Roundtrip(t *testing.T) {
+	_ = newFixture(t)
+	target := "msg://agent/agent-mux/worker"
+
+	bindingLeaseTargetURN = target
+	bindingLeaseSessionID = "bridge-1"
+	bindingLeaseHostID = "host-1"
+	bindingLeaseAttemptID = "attempt-1"
+	bindingLeaseCaps = []string{"pull-only"}
+
+	out := captureRegistryStdout(t, func() {
+		if err := bindingsLeaseCmd.RunE(bindingsLeaseCmd, nil); err != nil {
+			t.Fatalf("lease: %v", err)
+		}
+	})
+	if !strings.Contains(out, "target_urn:  "+target) || !strings.Contains(out, "visibility:  published-local") {
+		t.Fatalf("lease output missing expected fields: %s", out)
+	}
+	// Extract the minted binding id from the pretty-printed output.
+	var bindingID string
+	for _, line := range strings.Split(out, "\n") {
+		if id, ok := strings.CutPrefix(line, "id:          "); ok {
+			bindingID = id
+		}
+	}
+	if bindingID == "" {
+		t.Fatalf("could not find binding id in lease output: %s", out)
+	}
+
+	out = captureRegistryStdout(t, func() {
+		if err := bindingsCurrentCmd.RunE(bindingsCurrentCmd, nil); err != nil {
+			t.Fatalf("current: %v", err)
+		}
+	})
+	if !strings.Contains(out, "id:          "+bindingID) {
+		t.Fatalf("current output = %s, want binding id %s", out, bindingID)
+	}
+
+	bindingLeaseTTL = 3600
+	out = captureRegistryStdout(t, func() {
+		if err := bindingsRenewCmd.RunE(bindingsRenewCmd, []string{bindingID}); err != nil {
+			t.Fatalf("renew: %v", err)
+		}
+	})
+	if !strings.Contains(out, "lease_expires_at:") {
+		t.Fatalf("renew output = %s, want a lease_expires_at line", out)
+	}
+
+	out = captureRegistryStdout(t, func() {
+		if err := bindingsRevokeCmd.RunE(bindingsRevokeCmd, []string{bindingID}); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+	})
+	if !strings.Contains(out, "revoked: "+bindingID) {
+		t.Fatalf("revoke output = %s, want confirmation", out)
+	}
+
+	out = captureRegistryStdout(t, func() {
+		if err := bindingsListCmd.RunE(bindingsListCmd, nil); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+	})
+	if !strings.Contains(out, "id:          "+bindingID) {
+		t.Fatalf("list output = %s, want the revoked binding still listed", out)
+	}
+}
+
+func TestRegistryBindings_Lease_CannotSupersedeTetherManagedBinding(t *testing.T) {
+	f := newFixture(t)
+	target := "msg://agent/agent-mux/worker"
+	if _, err := f.svc.LeaseBinding(context.Background(), target, "real-session", "local", "real-session", nil, registry.VisibilityPrivateLocal, 0); err != nil {
+		t.Fatalf("seed private-local binding: %v", err)
+	}
+
+	bindingLeaseTargetURN = target
+	bindingLeaseSessionID = "bridge-1"
+	bindingLeaseHostID = "host-1"
+	bindingLeaseAttemptID = "attempt-1"
+	bindingLeaseCaps = []string{"pull-only"}
+
+	err := bindingsLeaseCmd.RunE(bindingsLeaseCmd, nil)
+	if err == nil {
+		t.Fatal("expected an error superseding a Tether-managed binding")
+	}
+	assertExitCode(t, err, 4)
+}
+
+func TestRegistryBindings_Lease_MissingFlags_Exit2(t *testing.T) {
+	_ = newFixture(t)
+	err := bindingsLeaseCmd.RunE(bindingsLeaseCmd, nil)
+	if err == nil {
+		t.Fatal("expected a validation error with no flags set")
+	}
+	assertExitCode(t, err, 2)
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 // assertExitCode walks an error chain to find an exitErr and verifies

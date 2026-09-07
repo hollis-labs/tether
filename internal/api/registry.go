@@ -58,6 +58,7 @@ import (
 type RegistryService interface {
 	Register(ctx context.Context, kind registry.Kind, p registry.Profile) (registry.Profile, error)
 	Lookup(ctx context.Context, urn string) (registry.Profile, error)
+	LookupExternalIDsForURN(ctx context.Context, urn string) ([]registry.ExternalID, error)
 	LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error)
 	Merge(ctx context.Context, urnSrc, urnDst string) (registry.Profile, error)
 	Search(ctx context.Context, kind registry.Kind, f registry.Filter) ([]registry.Profile, error)

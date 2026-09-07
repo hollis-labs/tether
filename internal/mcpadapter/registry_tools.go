@@ -1,8 +1,21 @@
-// Package mcpadapter — registry_tools.go wires the six native
+// Package mcpadapter — registry_tools.go wires the native
 // `tether_registry_*` MCP tools for the v0.6 federation directory service
-// (T-v060-01-06). Tools dispatch directly to a.svc.Registry in-process,
-// matching ADR 0034's "MCP shares the same Service composition root" rule:
-// no HTTP loop back through the daemon, no parallel registry instance.
+// (T-v060-01-06, extended in T08 messaging vNext).
+//
+// T08 (messaging vNext, CW-20260906-0039): every handler here now routes
+// through a.client (the daemon HTTP client), not a.svc.Registry
+// in-process. `mux mcp` opens its OWN separate SQLite connection to
+// ~/.tether/state/tether.db, distinct from the running daemon's
+// in-process Registry instance (internal/mcpadapter/adapter.go's package
+// doc) -- a `mux mcp` registry write previously landed on a DIFFERENT
+// connection than the live daemon's, invisible to it until the next
+// catalog reload, the exact split-brain bug class T05 closed for message
+// tools. The original comment here cited "ADR 0034's 'MCP shares the same
+// Service composition root' rule" -- ADR 0034 (docs/adr/0034-acp-surface.md)
+// is the ACP surface adoption record and contains no such rule; ADR 0035
+// (mcpadapter-daemon-client-routing) is the actual routing decision record,
+// and its "Messages stays in-process" carve-out is what T05 later overrode
+// for messages. This is the same override applied to registry/group tools.
 //
 // Tool-prefix choice. Names use the `tether_` prefix (not `mux_`) per D14
 // and the sprint spec — the directory service is the first surface where
@@ -11,10 +24,10 @@
 //
 // Scope. Read tools (`lookup`, `search`) are unauthenticated — same-host
 // UDS trust per D7 — and reuse the no-scope pattern from skills.go.
-// Write tools (`register`, `update_self`, `deregister`, `sync`) require
-// the new `registry.write` scope. Sync is classified as a write because
-// it mutates the cached_at column and replaces thin-profile fields from
-// the callback payload.
+// Write tools (`register`, `update_self`, `deregister`, `sync`, `merge`)
+// require the new `registry.write` scope. Sync is classified as a write
+// because it mutates the cached_at column and replaces thin-profile
+// fields from the callback payload.
 //
 // Schema shape. mcp-go's `WithObject(name, opts...)` declares a JSON-
 // schema object with `type:"object", properties:{}` and no implicit
@@ -64,11 +77,11 @@ import (
 // granting catalog YAML writes, and vice versa.
 const ScopeRegistryWrite = "registry.write"
 
-// registerRegistryTools wires the six tether_registry_* native tools onto s.
-// All six dispatch directly to *registry.Service in-process — there is no
-// HTTP loop. Read tools (lookup, search) are unauthenticated; write tools
-// (register, update_self, deregister, sync) require the registry.write
-// scope.
+// registerRegistryTools wires the tether_registry_* native tools onto s.
+// Every tool routes through a.client to the daemon's /registry HTTP
+// surface (T08). Read tools (lookup, lookup_by, search) are
+// unauthenticated; write tools (register, update_self, deregister, sync,
+// merge) require the registry.write scope.
 func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("tether_registry_register",
 		mcp.WithDescription(
@@ -170,6 +183,20 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		),
 	), a.handleRegistryDeregister)
 
+	a.addTool(s, mcp.NewTool("tether_registry_merge",
+		mcp.WithDescription(
+			"Merge a source profile into a destination profile: the source's external-ID mappings "+
+				"are reattached to the destination and the source row is soft-deleted (status='deprecated'). "+
+				"Returns the canonical destination Profile. Requires the registry.write scope.",
+		),
+		mcp.WithString("urn", mcp.Required(),
+			mcp.Description("Source URN to merge away."),
+		),
+		mcp.WithString("into", mcp.Required(),
+			mcp.Description("Destination URN the source's identity mappings are reattached to."),
+		),
+	), a.handleRegistryMerge)
+
 	a.addTool(s, mcp.NewTool("tether_registry_sync",
 		mcp.WithDescription(
 			"Refresh thin-profile columns from the row's callback URI. Returns one of two success shapes:\n"+
@@ -197,9 +224,6 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRe
 	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 
 	kind, errRes := requireKind(req)
 	if errRes != nil {
@@ -211,8 +235,14 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRe
 		return errRes, nil
 	}
 
-	out, err := a.svc.Registry.Register(ctx, kind, profile)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().Register(ctx, kind, profile)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
@@ -220,24 +250,24 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRe
 
 // handleRegistryLookup services tether_registry_lookup. Read-only; no scope.
 func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	urn := str(req, "urn")
 	if urn == "" {
 		return toolError("invalid_request", "urn is required"), nil
 	}
-	out, err := a.svc.Registry.Lookup(ctx, urn)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().Lookup(ctx, urn)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	kind, errRes := requireKind(req)
 	if errRes != nil {
 		return errRes, nil
@@ -246,8 +276,14 @@ func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRe
 	if externalID == "" {
 		return toolError("invalid_request", "external_id is required"), nil
 	}
-	out, err := a.svc.Registry.LookupBy(ctx, kind, externalID, str(req, "substrate"))
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().LookupBy(ctx, kind, externalID, str(req, "substrate"))
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
@@ -255,9 +291,6 @@ func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRe
 
 // handleRegistrySearch services tether_registry_search. Read-only; no scope.
 func (a *Adapter) handleRegistrySearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	kind, errRes := requireKind(req)
 	if errRes != nil {
 		return errRes, nil
@@ -270,8 +303,14 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, req mcp.CallToolRequ
 		SkillName:  str(req, "skill_name"),
 		Status:     str(req, "status"),
 	}
-	out, err := a.svc.Registry.Search(ctx, kind, f)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().Search(ctx, kind, f)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	if out == nil {
@@ -288,9 +327,6 @@ func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, req mcp.CallTool
 	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	urn := str(req, "urn")
 	if urn == "" {
 		return toolError("invalid_request", "urn is required"), nil
@@ -299,8 +335,14 @@ func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, req mcp.CallTool
 	if errRes != nil {
 		return errRes, nil
 	}
-	out, err := a.svc.Registry.UpdateSelf(ctx, urn, patch)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().UpdateSelf(ctx, urn, patch)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
@@ -311,56 +353,77 @@ func (a *Adapter) handleRegistryDeregister(ctx context.Context, req mcp.CallTool
 	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
 		return errRes, nil
 	}
-	if errRes := a.requireRegistry(); errRes != nil {
-		return errRes, nil
-	}
 	urn := str(req, "urn")
 	if urn == "" {
 		return toolError("invalid_request", "urn is required"), nil
 	}
-	out, err := a.svc.Registry.Deregister(ctx, urn)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_deregister requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().Deregister(ctx, urn)
 	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
+}
+
+// handleRegistryMerge services tether_registry_merge.
+func (a *Adapter) handleRegistryMerge(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+		return errRes, nil
+	}
+	urn := str(req, "urn")
+	into := str(req, "into")
+	if urn == "" || into == "" {
+		return toolError("invalid_request", "urn and into are required"), nil
+	}
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_merge requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, err := a.client.Registry().Merge(ctx, urn, into)
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
 		return mapRegistryErr(err), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 // handleRegistrySync services tether_registry_sync. Distinct from the rest
-// of the dispatch matrix because ErrNoCallback is a success result (the
-// row deliberately has no callback configured — see Service.Sync's godoc),
-// not an error envelope.
+// of the dispatch matrix because "no callback configured" is a success
+// result (see Service.Sync's godoc), not an error envelope --
+// RegistryClient.Sync surfaces that as its own synced=false return value
+// (HTTP 204) rather than a registry.ErrNoCallback sentinel, since the
+// sentinel doesn't cross the wire.
 func (a *Adapter) handleRegistrySync(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
-	}
-	if errRes := a.requireRegistry(); errRes != nil {
 		return errRes, nil
 	}
 	urn := str(req, "urn")
 	if urn == "" {
 		return toolError("invalid_request", "urn is required"), nil
 	}
-	out, err := a.svc.Registry.Sync(ctx, urn)
+	if a.client == nil {
+		return toolError("internal_error", "tether_registry_sync requires daemon routing; start MCP with mux mcp"), nil
+	}
+	out, synced, err := a.client.Registry().Sync(ctx, urn)
 	if err != nil {
-		if errors.Is(err, registry.ErrNoCallback) {
-			return toolJSON(map[string]any{"ok": true, "synced": false}), nil
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
 		}
 		return mapRegistryErr(err), nil
+	}
+	if !synced {
+		return toolJSON(map[string]any{"ok": true, "synced": false}), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "synced": true, "profile": out}), nil
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-
-// requireRegistry returns a non-nil error result when a.svc or a.svc.Registry
-// is nil. Mirrors the catalog/skills nil-guard so the registry tools fail
-// gracefully on unconfigured Adapters.
-func (a *Adapter) requireRegistry() *mcp.CallToolResult {
-	if a.svc == nil || a.svc.Registry == nil {
-		return toolError("internal_error", "registry service not configured")
-	}
-	return nil
-}
 
 // requireKind reads the kind argument and validates it against the v060-01
 // vocabulary (agent + project). Service.Register/Search also validates,
@@ -447,6 +510,12 @@ func mapRegistryErr(err error) *mcp.CallToolResult {
 		return toolError("internal_error", err.Error())
 	case errors.Is(err, registry.ErrMintExhausted):
 		return toolError("internal_error", err.Error())
+	case errors.Is(err, registry.ErrStaleGeneration), errors.Is(err, registry.ErrVisibilityConflict):
+		// T08: binding-lease/renew conflicts (a newer generation exists, or
+		// the target is already bound to a Tether-managed session) are
+		// real, expected outcomes of concurrent-actor-session handling and
+		// the T07 supersede guard -- not server errors.
+		return toolError("conflict", err.Error())
 	default:
 		return toolError("internal_error", err.Error())
 	}

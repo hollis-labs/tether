@@ -124,6 +124,15 @@ func registryClient() (*client.RegistryClient, error) {
 	return c.Registry(), nil
 }
 
+// bindingsClient shares the same test seam as registryClient (T08).
+func bindingsClient() (*client.BindingsClient, error) {
+	c, err := registryClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	return c.Bindings(), nil
+}
+
 // ─── parent command ─────────────────────────────────────────────────────────
 
 var registryCmd = &cobra.Command{
@@ -519,6 +528,164 @@ directly from the callback URI.`,
 	},
 }
 
+// ─── bindings (T08: CLI parity for T07's HTTP-only surface) ─────────────────
+
+var bindingsCmd = &cobra.Command{
+	Use:   "bindings",
+	Short: "Leased runtime bindings — which host/session currently owns delivery for a target",
+	Long: `Operate against the daemon's RuntimeBinding primitive (internal/registry/bindings.go):
+which concrete host/session currently owns message delivery for a
+msg://session/... or msg://agent/... target, with generation fencing
+during replacement/recovery.
+
+'lease' is the same external, self-asserted surface T07's published-local
+bridges use (POST /registry/bindings): it always mints visibility
+published-local and requires capabilities exactly ["pull-only"] -- it
+cannot supersede a binding Tether itself manages (private-local/
+tether-hosted). All subcommands route through the daemon; nothing here
+touches SQLite directly.`,
+}
+
+var (
+	bindingLeaseTargetURN string
+	bindingLeaseSessionID string
+	bindingLeaseHostID    string
+	bindingLeaseAttemptID string
+	bindingLeaseCaps      []string
+	bindingLeaseTTL       int
+	bindingsJSON          bool
+)
+
+var bindingsLeaseCmd = &cobra.Command{
+	Use:   "lease",
+	Short: "Lease a published-local (pull-only) binding for a target",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bindingLeaseTargetURN == "" || bindingLeaseSessionID == "" || bindingLeaseHostID == "" || bindingLeaseAttemptID == "" {
+			return validationErr("registry bindings lease: --target-urn, --session-id, --host-id, and --attempt-id are required")
+		}
+		bc, err := bindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := bc.Lease(cmdCtx(cmd), bindingLeaseTargetURN, bindingLeaseSessionID, bindingLeaseHostID, bindingLeaseAttemptID, bindingLeaseCaps, bindingLeaseTTL)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if bindingsJSON {
+			return printJSON(out)
+		}
+		printBinding(out)
+		return nil
+	},
+}
+
+var bindingsRenewCmd = &cobra.Command{
+	Use:   "renew <binding-id>",
+	Short: "Extend an existing binding's lease",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		bc, err := bindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := bc.Renew(cmdCtx(cmd), args[0], bindingLeaseTTL)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if bindingsJSON {
+			return printJSON(out)
+		}
+		printBinding(out)
+		return nil
+	},
+}
+
+var bindingsRevokeCmd = &cobra.Command{
+	Use:   "revoke <binding-id>",
+	Short: "Relinquish a binding lease (idempotent)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		bc, err := bindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		if err := bc.Revoke(cmdCtx(cmd), args[0]); err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("revoked: %s\n", args[0])
+		return nil
+	},
+}
+
+var bindingsCurrentCmd = &cobra.Command{
+	Use:   "current --target-urn <urn>",
+	Short: "Show the authoritative current binding for a target",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bindingLeaseTargetURN == "" {
+			return validationErr("registry bindings current: --target-urn is required")
+		}
+		bc, err := bindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := bc.Current(cmdCtx(cmd), bindingLeaseTargetURN)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if bindingsJSON {
+			return printJSON(out)
+		}
+		printBinding(out)
+		return nil
+	},
+}
+
+var bindingsListCmd = &cobra.Command{
+	Use:   "list --target-urn <urn>",
+	Short: "List every binding ever leased for a target, newest generation first",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bindingLeaseTargetURN == "" {
+			return validationErr("registry bindings list: --target-urn is required")
+		}
+		bc, err := bindingsClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := bc.ListForTarget(cmdCtx(cmd), bindingLeaseTargetURN)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if bindingsJSON {
+			return printJSON(out)
+		}
+		for _, b := range out {
+			printBinding(b)
+			fmt.Println("---")
+		}
+		return nil
+	},
+}
+
+// printBinding writes a stable, line-oriented rendering of a RuntimeBinding.
+func printBinding(b registry.RuntimeBinding) {
+	fmt.Printf("id:          %s\n", b.ID)
+	fmt.Printf("target_urn:  %s\n", b.TargetURN)
+	fmt.Printf("session_id:  %s\n", b.SessionID)
+	fmt.Printf("host_id:     %s\n", b.HostID)
+	fmt.Printf("attempt_id:  %s\n", b.AttemptID)
+	fmt.Printf("generation:  %d\n", b.Generation)
+	fmt.Printf("visibility:  %s\n", b.Visibility)
+	if len(b.Capabilities) > 0 {
+		fmt.Printf("capabilities: %s\n", strings.Join(b.Capabilities, ","))
+	}
+	if b.LeaseExpiresAt != nil {
+		fmt.Printf("lease_expires_at: %s\n", b.LeaseExpiresAt.Format(time.RFC3339))
+	}
+	if b.RevokedAt != nil {
+		fmt.Printf("revoked_at:  %s\n", b.RevokedAt.Format(time.RFC3339))
+	}
+}
+
 // ─── pretty-printer ─────────────────────────────────────────────────────────
 
 // printProfile writes a stable, line-oriented rendering of a Profile.
@@ -732,6 +899,13 @@ func resetRegistryFlags() {
 	bootstrapForce = false
 	bootstrapSubstrate = ""
 	bootstrapWriteBack = true
+	bindingLeaseTargetURN = ""
+	bindingLeaseSessionID = ""
+	bindingLeaseHostID = ""
+	bindingLeaseAttemptID = ""
+	bindingLeaseCaps = []string{"pull-only"}
+	bindingLeaseTTL = 0
+	bindingsJSON = false
 }
 
 // cmdCtx returns cmd.Context() if non-nil, otherwise
@@ -777,6 +951,21 @@ func init() {
 	registryBootstrapCmd.Flags().BoolVar(&bootstrapForce, "force", false, "patch existing rows with the catalog YAMLs' current thin profile + bump cached_at")
 	registryBootstrapCmd.Flags().StringVar(&bootstrapSubstrate, "substrate", "", "bootstrap only one substrate ('tether' default, or 'cerberus')")
 	registryBootstrapCmd.Flags().BoolVar(&bootstrapWriteBack, "write-back", true, "write registry_urn back into imported source YAMLs")
+
+	for _, c := range []*cobra.Command{bindingsLeaseCmd, bindingsCurrentCmd, bindingsListCmd} {
+		c.Flags().StringVar(&bindingLeaseTargetURN, "target-urn", "", "msg:// target URN (session or agent)")
+		c.Flags().BoolVar(&bindingsJSON, "json", false, "emit raw JSON instead of the pretty rendering")
+	}
+	bindingsLeaseCmd.Flags().StringVar(&bindingLeaseSessionID, "session-id", "", "self-asserted session id the caller is leasing on behalf of")
+	bindingsLeaseCmd.Flags().StringVar(&bindingLeaseHostID, "host-id", "", "identifier for the external host/bridge process")
+	bindingsLeaseCmd.Flags().StringVar(&bindingLeaseAttemptID, "attempt-id", "", "identifier for this specific lease attempt")
+	bindingsLeaseCmd.Flags().StringSliceVar(&bindingLeaseCaps, "capabilities", []string{"pull-only"}, `capabilities; must be exactly "pull-only"`)
+	bindingsLeaseCmd.Flags().IntVar(&bindingLeaseTTL, "ttl-seconds", 0, "lease duration in seconds; 0 means no expiry")
+	bindingsRenewCmd.Flags().IntVar(&bindingLeaseTTL, "ttl-seconds", 0, "new lease duration in seconds; 0 means no expiry")
+	bindingsRenewCmd.Flags().BoolVar(&bindingsJSON, "json", false, "emit raw JSON instead of the pretty rendering")
+
+	bindingsCmd.AddCommand(bindingsLeaseCmd, bindingsRenewCmd, bindingsRevokeCmd, bindingsCurrentCmd, bindingsListCmd)
+	registryCmd.AddCommand(bindingsCmd)
 
 	registryCmd.AddCommand(
 		registryRegisterCmd,

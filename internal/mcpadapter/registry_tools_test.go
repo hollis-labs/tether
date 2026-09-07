@@ -1,10 +1,14 @@
 package mcpadapter
 
-// registry_tools_test.go — end-to-end coverage for the six
-// tether_registry_* MCP tools (T-v060-01-06). Each test wires a real
-// *registry.Service over a real *registry.Storage on an in-memory
-// SQLite DB and drives the tools through the in-process MCP client.
-// This mirrors internal/api/registry_test.go's shape one layer down.
+// registry_tools_test.go — end-to-end coverage for the
+// tether_registry_* MCP tools (T-v060-01-06, converted to daemon routing
+// in T08). Each test wires a real *registry.Service over a real
+// *registry.Storage on an in-memory SQLite DB, stands up a real
+// internal/api HTTP test server in front of it, and drives the tools
+// through the in-process MCP client with a.client pointed at that server
+// (NewWithDaemon) — mirroring internal/mcpadapter/sanitize_integration_test.go's
+// newTestAdapterWithDaemon pattern. This also mirrors
+// internal/api/registry_test.go's shape one layer down.
 //
 // Coverage:
 //   - tether_registry_register: happy path; caller-supplied URN rejection.
@@ -16,15 +20,17 @@ package mcpadapter
 //   - tether_registry_deregister: happy path returns deprecated profile; 404.
 //   - tether_registry_sync:     no-callback returns ok+synced=false (not error);
 //                               file:// callback round-trip refreshes the row.
-//   - nil-guard: requireRegistry returns internal_error envelope when
-//                a.svc.Registry is nil (not a panic).
+//   - nil-guard: a.client == nil (daemon not wired) returns an internal_error
+//                envelope, not a panic.
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,16 +38,22 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
 // newRegistryAdapter builds an Adapter wired with a live registry.Service
-// backed by an in-memory SQLite DB. Optional ServiceOptions let individual
-// tests register Sync resolvers. The adapter holds ScopeRegistryWrite so
-// mutating tools dispatch; tests that need to validate scope-gating can
-// pass empty scopes via newRegistryAdapterWithScopes.
+// backed by an in-memory SQLite DB, plus a real internal/api HTTP test
+// server (T08: registry tools now route through the daemon, the same
+// mux-mcp split-brain fix T05 applied to message tools) and an
+// internal/client.Client pointed at it via NewWithDaemon. Optional
+// ServiceOptions let individual tests register Sync resolvers. The
+// adapter holds ScopeRegistryWrite so mutating tools dispatch; tests that
+// need to validate scope-gating can pass empty scopes via
+// newRegistryAdapterWithScopes.
 func newRegistryAdapter(t *testing.T, opts ...registry.ServiceOption) (*Adapter, *registry.Service) {
 	t.Helper()
 	return newRegistryAdapterWithScopes(t, []string{ScopeRegistryWrite}, opts...)
@@ -59,7 +71,12 @@ func newRegistryAdapterWithScopes(t *testing.T, scopes []string, opts ...registr
 	}
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage, opts...)
-	a := New(&app.Service{Registry: svc}, "test-token", scopes)
+
+	srv := httptest.NewServer(api.NewHandler(api.Deps{Registry: svc}))
+	t.Cleanup(srv.Close)
+	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+
+	a := NewWithDaemon(&app.Service{Registry: svc}, dc, "test-token", scopes)
 	return a, svc
 }
 
@@ -70,6 +87,8 @@ func callRegistryTool(t *testing.T, a *Adapter, name string, args map[string]any
 	t.Helper()
 	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
 	a.registerRegistryTools(s)
+	a.registerBindingsTools(s)
+	a.registerWhoamiTools(s)
 
 	c, err := mcpclient.NewInProcessClient(s)
 	if err != nil {
@@ -551,8 +570,9 @@ func TestRegistryTools_Sync_NotFound(t *testing.T) {
 // ─── nil-guard ────────────────────────────────────────────────────────────────
 
 func TestRegistryTools_NilGuard(t *testing.T) {
-	// Adapter with an app.Service that has NO Registry — every tool returns
-	// an internal_error envelope rather than panicking.
+	// Adapter built via New (in-process only, no daemon client wired) —
+	// every registry tool now requires daemon routing (T08) and returns an
+	// internal_error envelope rather than panicking when a.client is nil.
 	a := New(&app.Service{}, "test-token", []string{ScopeRegistryWrite})
 
 	res := callRegistryTool(t, a, "tether_registry_lookup", map[string]any{

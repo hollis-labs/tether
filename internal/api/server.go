@@ -75,6 +75,14 @@ type Deps struct {
 	// underlying *store.Store satisfies it directly. Absent the dep, these
 	// three actions respond 404 (matches every other optional dependency).
 	DeliveryClaims DeliveryClaimer
+
+	// SessionBootstrap, when non-nil, enables POST /sessions/bootstrap
+	// (T08, messaging vNext) -- the provider-neutral local bootstrap/
+	// registration helper an external launcher (agent-setup) can invoke
+	// at the launch/host boundary. *app.Service's underlying *store.Store
+	// satisfies it directly. Absent the dep, the route 404s (matches
+	// every other optional dependency).
+	SessionBootstrap SessionBootstrapStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -98,6 +106,7 @@ type Server struct {
 	Groups              GroupsService
 	LogsDir             string
 	DeliveryClaims      DeliveryClaimer
+	SessionBootstrap    SessionBootstrapStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -122,6 +131,7 @@ func NewHandler(deps Deps) http.Handler {
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
 		DeliveryClaims:      deps.DeliveryClaims,
+		SessionBootstrap:    deps.SessionBootstrap,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -135,6 +145,8 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerProxyEventRoutes(mux)
 	s.registerRegistryRoutes(mux)
 	s.registerGroupRoutes(mux)
+	s.registerWhoamiRoutes(mux)
+	s.registerSessionBootstrapRoutes(mux)
 	s.registerLogsRoutes(mux)
 	s.registerFSRoutes(mux)
 	return mux

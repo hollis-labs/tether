@@ -822,6 +822,16 @@ func (s *Service) Lookup(ctx context.Context, urn string) (Profile, error) {
 	return s.storage.GetProfile(ctx, urn)
 }
 
+// LookupExternalIDsForURN returns every external-id attachment recorded
+// for urn (T08: exposed publicly for the self-discovery/whoami surface;
+// previously storage-internal only, used by Merge/AttachExternalID).
+func (s *Service) LookupExternalIDsForURN(ctx context.Context, urn string) ([]ExternalID, error) {
+	if urn == "" {
+		return nil, fmt.Errorf("registry: lookup external ids: %w: urn required", ErrInvalidRequest)
+	}
+	return s.storage.LookupExternalIDsForURN(ctx, urn)
+}
+
 // LookupBy resolves one substrate-local identifier to its registry profile.
 // When substrate is empty, the earliest-attached match across every substrate
 // wins.

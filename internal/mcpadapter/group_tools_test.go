@@ -1,20 +1,26 @@
 package mcpadapter
 
 // group_tools_test.go — end-to-end coverage for the tether_group_*
-// MCP tools (T-v060-05-06). Wires a real *registry.Service over an
-// in-memory SQLite DB and drives the tools through the in-process MCP
-// client. Mirrors registry_tools_test.go's shape.
+// MCP tools (T-v060-05-06, converted to daemon routing in T08). Wires a
+// real *registry.Service over an in-memory SQLite DB, a real internal/api
+// HTTP test server in front of it, and drives the tools through the
+// in-process MCP client with a.client pointed at that server
+// (NewWithDaemon). Mirrors registry_tools_test.go's shape.
 
 import (
 	"context"
 	"database/sql"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -31,7 +37,12 @@ func newGroupAdapter(t *testing.T) *Adapter {
 	}
 	storage := registry.NewStorage(db)
 	svc := registry.NewService(storage)
-	return New(&app.Service{Registry: svc}, "test-token", []string{ScopeRegistryWrite, ScopeGroupsWrite})
+
+	srv := httptest.NewServer(api.NewHandler(api.Deps{Registry: svc, Groups: svc}))
+	t.Cleanup(srv.Close)
+	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+
+	return NewWithDaemon(&app.Service{Registry: svc}, dc, "test-token", []string{ScopeRegistryWrite, ScopeGroupsWrite})
 }
 
 // callGroupTool dispatches a group tool by name through an in-process

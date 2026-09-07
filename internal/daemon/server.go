@@ -97,7 +97,13 @@ type Server struct {
 	// GET /api/logs/daemon endpoint reads from LogsDir/muxd.log.
 	// Empty disables the endpoint (returns 404).
 	LogsDir string
-	Close   func() error
+	// SessionBootstrap is optional; when set, POST /sessions/bootstrap is
+	// mounted (T08, messaging vNext) -- the provider-neutral local
+	// bootstrap/registration helper an external launcher invokes at the
+	// launch/host boundary. Populated from app.Service's underlying
+	// *store.Store at daemon startup.
+	SessionBootstrap api.SessionBootstrapStore
+	Close            func() error
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -284,6 +290,7 @@ func (s *Server) Handler() http.Handler {
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			Groups:              s.Groups,
 			LogsDir:             s.LogsDir,
+			SessionBootstrap:    s.SessionBootstrap,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
@@ -344,6 +351,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.Registry != nil {
 			mux.Handle("/registry/", apiHandler)
+			mux.Handle("/whoami", apiHandler)
 		}
 		if s.Groups != nil {
 			mux.Handle("/groups", apiHandler)
@@ -352,6 +360,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.LogsDir != "" {
 			mux.Handle("/logs/daemon", apiHandler)
+		}
+		if s.SessionBootstrap != nil {
+			mux.Handle("/sessions/bootstrap", apiHandler)
 		}
 		mux.Handle("/fs/validate", apiHandler)
 		mux.Handle("/fs/detect", apiHandler)
