@@ -51,15 +51,15 @@ it synthesizes what a consumer or operator needs from it.
 
 | Component | Current state | What needs to happen before a consumer can pin a released version |
 |---|---|---|
-| `github.com/hollis-labs/tether` (this repo) | `main` @ `858dda7` (T11) | Nothing blocking — `main` is the landed baseline. No tag has been cut for this epic; cutting one (e.g. `v0.6.0`) is an explicit release action left to Chrispian. |
-| `github.com/hollis-labs/go-messaging` | Tether's `go.mod` requires an **unreleased pseudo-version** at commit `2a0132b`. A real tag already exists strictly past that commit: `v0.5.0`, which dereferences (it's an annotated tag) to commit `9789d8f` ("fix: satisfy delivery SQLite release lint checks") — exactly `origin/main`'s current tip, confirmed via `git rev-parse v0.5.0^{commit}` == `git rev-parse origin/main`. | No new tag needs to be cut. Tether's `go.mod` should be bumped to the existing `v0.5.0` tag instead of staying on the pseudo-version. |
-| `github.com/hollis-labs/go-tether-client` | `main` @ `a8fb61c`, one commit past `fa4df9a` (session-bootstrap helper, T08) — the new commit fixes the `?as=`-omitting `Get`/`Inbox`/`Thread`/`Subscribe` calls this task's own review found (§7); **not pushed to `origin` yet** | A new tag (e.g. `v0.2.0`) needs to be cut at `a8fb61c` (not `fa4df9a` — that commit predates the `?as=` fix and would ship a client every one of these four calls fails against). Its own `go.mod` still pins `go-messaging v0.2.0` — by its own CHANGELOG note this is a **deliberate, already-documented deferral** ("nothing added in this change depends on go-messaging at all, and bumping it is a separate, independently-reviewable change"), not an oversight. Bump it to the `v0.5.0` tag above in the same pass, or explicitly leave it and note why in that release's own changelog entry. |
+| `github.com/hollis-labs/tether` (this repo) | `main` @ `75f80e8` (this closeout) | Nothing blocking — `main` is the landed baseline. No tag has been cut for this epic; cutting one (e.g. `v0.6.0`) is an explicit release action left to Chrispian. |
+| `github.com/hollis-labs/go-messaging` | Tether's `go.mod` is now pinned to **`v0.5.1`** (tagged and pushed to `origin/main` as part of this closeout, commit `3964a1b`) — a real released fix for a late-`Nack`-reverses-a-completed-`Consume` race an independent review found (§7), not present in `v0.5.0`. | Done. Nothing further needed here; `v0.5.1` is a real, pushed, tagged release on GitHub. |
+| `github.com/hollis-labs/go-tether-client` | `main` @ `a8fb61c`, one commit past `fa4df9a` (session-bootstrap helper, T08) — the new commit fixes the `?as=`-omitting `Get`/`Inbox`/`Thread`/`Subscribe` calls this task's own review found (§7); **not pushed to `origin` yet** | A new tag (e.g. `v0.2.0`) needs to be cut at `a8fb61c` (not `fa4df9a` — that commit predates the `?as=` fix and would ship a client every one of these four calls fails against). Its own `go.mod` still pins `go-messaging v0.2.0` — by its own CHANGELOG note this is a **deliberate, already-documented deferral** ("nothing added in this change depends on go-messaging at all, and bumping it is a separate, independently-reviewable change"), not an oversight. Bump it to the `v0.5.1` tag above in the same pass, or explicitly leave it and note why in that release's own changelog entry. |
 
-**Safe release order**, if/when Chrispian authorizes cutting tags:
+**Safe release order**, if/when Chrispian authorizes cutting the remaining tags:
 
-1. Bump Tether's `go.mod` to `go-messaging`'s existing `v0.5.0` tag (no new tag needed there).
-2. Push `go-tether-client`'s `a8fb61c` to `origin`, update its `go.mod` to the same `go-messaging` tag (or explicitly decline to, per its own CHANGELOG precedent), and tag it at the resulting commit.
-3. Tag `tether` itself at `858dda7` (or later, if more work lands first).
+1. ~~Bump Tether's `go.mod` to a released `go-messaging` tag.~~ Done — pinned to `v0.5.1`.
+2. Push `go-tether-client`'s `a8fb61c` to `origin`, update its `go.mod` to the `go-messaging v0.5.1` tag (or explicitly decline to, per its own CHANGELOG precedent), and tag it at the resulting commit.
+3. Tag `tether` itself at `75f80e8` (or later, if more work lands first).
 4. Only then should any consumer's `go.mod` be updated to reference tagged versions instead of `main`/pseudo-versions.
 
 Nothing above requires a schema migration to run against a live database before
@@ -360,7 +360,50 @@ changed:
   caller's own retry-after-failure self-healing. See
   `TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck`
   (`internal/store/delivery_store_test.go`) for the regression test, which
-  fails against the pre-fix code.
+  fails against the pre-fix code. **This was not the whole story** — two
+  further, more subtle instances of the same underlying issue were found
+  and fixed in follow-up review passes, described next.
+- **`Consume` could also get stuck behind Tether's own still-open wake
+  lease** (a second instance of CW-20260907-0033, found by review after
+  the fix above landed): `Consume`'s receipt recording always attempted a
+  brand-new delivery-core `Claim`, which is correctly refused whenever
+  the delivery already has ANY unexpired active lease — including one
+  Tether's own wake pump deliberately left open "awaiting consumption."
+  Fixed by reusing the delivery's current active lease instead of
+  claiming fresh — but a following independent review found that first
+  version unsafe: it could reuse (hijack) a lease held by a completely
+  independent external process via T07's published-local bridge surface
+  (`POST /messages/{id}/claim|ack|nack`), since that endpoint defaults
+  its holder to the same asserted recipient URN `Consume` itself uses.
+  Fixed properly via migration `0022`: an explicit ownership marker on
+  `messages`, written only by `attemptWake` (right after its own claim)
+  and by `Consume`'s own fallback-claim path — never by the T07 bridge —
+  so `Consume` only ever reuses a lease it can prove is its own. A
+  further review found a marker-write failure itself needed to be
+  fatal-to-the-wake-attempt (Nack and retry), not best-effort, or the
+  exact same stranding could reopen with no crash at all. See
+  `TestDeliveryBackedConsume_DoesNotHijackAnIndependentlyClaimedLease`
+  and `TestAttemptWake_PendingReceiptMarkerWriteFails_NacksInsteadOfProceeding`.
+- **A late `Nack` could reverse an already-completed `Consume`** (a third
+  instance found by yet another independent review, reproducing with no
+  crash at all): `attemptWake`'s own lease can legitimately be completed
+  by a *concurrent* `Consume` call while `attemptWake` is still mid-flight
+  (between its `host_accepted` Ack and its busy/offline/send-error check).
+  When `attemptWake` then observes a failure and Nacks that same,
+  by-then-stale lease, `go-messaging`'s `Nack` incorrectly let the late
+  Nack through against the already-`Consumed` attempt, reversing an
+  already-`Delivered` delivery back to `retry_scheduled` — causing the
+  next wake sweep to redeliver already-consumed content. **This fix
+  belongs in, and landed in, the shared `go-messaging` library itself**,
+  not Tether: released as `v0.5.1` (tagged and pushed to
+  `github.com/hollis-labs/go-messaging`'s `main`), `Nack` now treats an
+  already-`StageConsumed` attempt the same as `Failed`/`DeadLettered` — a
+  harmless no-op — fixed identically in both the SQLite and in-memory
+  backends, with a new permanent shared contract-suite test covering
+  both. This repo's `go.mod` is now pinned to that release; see
+  `TestAttemptWake_ConcurrentConsumeDuringBusyCheckStaysDelivered`
+  (`internal/app/wake_test.go`) for the consumer-side regression test,
+  confirmed to fail against the previously-pinned `v0.5.0`.
 - **`POST /groups/{urn}/messages` could report unqualified success after a
   total fanout failure**: if the delivery-core `Enqueue` call failed
   entirely (not just the bookkeeping `delivery_message_id` mapping write —
@@ -616,6 +659,34 @@ documented:
    HTTP response, the Go client, the CLI, and the MCP tool — no schema
    change, per the chosen fix scope). Regression test:
    `TestGroupFanout_EnqueueFailureIsSurfacedNotSwallowed`.
+
+A fourth pass (an independent review of item 1's fix above, dispatched by
+the executor before considering it closed) found item 1 was incomplete:
+`Consume` could still get stuck behind Tether's own still-open wake lease
+(commit `64a981f`), fixed by reusing the delivery's current active lease —
+but a further independent review of THAT fix found reusing any active
+lease indiscriminately could hijack an independent external claimant's
+lease via T07's published-local bridge surface, fixed via a new ownership
+marker (migration `0022`) that only `Consume`/`attemptWake` ever write —
+and a further review of THAT found a marker-write failure needed to be
+treated as fatal to the wake attempt (Nack and retry), not best-effort, or
+the same stranding could reopen with no crash at all. See §7 for the full
+narrative and regression tests; each of the three iterations here was
+independently confirmed to fail against the version it replaced before
+being accepted.
+
+A fifth pass (Chrispian's own further direct review) found one more real
+gap in the now-hijack-safe `Consume` fix: a late `Nack` racing a
+concurrent, legitimate `Consume` could still reverse an already-completed
+delivery back to `retry_scheduled`, reproducing with no crash at all. This
+one was a bug in the shared `go-messaging` library itself, not Tether —
+fixed there (both SQLite and in-memory backends, plus a new shared
+contract-suite test), released as `go-messaging v0.5.1` (tagged, pushed to
+`origin/main` on GitHub), and this repo's `go.mod` bumped to that release
+(commit `75f80e8`) alongside a consumer-side regression test
+(`TestAttemptWake_ConcurrentConsumeDuringBusyCheckStaysDelivered`),
+confirmed to fail against the previously-pinned `v0.5.0` and pass again
+once restored to `v0.5.1`.
 4. The go-messaging `v0.5.0` tag was mischaracterized as sitting at commit
    `70770fb` with a further untagged commit on top — corrected after
    re-running `git rev-parse v0.5.0^{commit}` directly: the tag is an
@@ -627,7 +698,14 @@ documented:
    corrected to point a first-claim use case at the concurrent-claim
    primitive over a shared mailbox instead (§8.3).
 
-All five are reflected in this version of the document (§2, §6, §7, §8.3,
-§9); the three code fixes above pass `make check` clean (1661 tests,
-0 lint issues, 0 vulnerabilities) in the tether repo, and go-tether-client's
-own fix passes `go build`/`go vet`/`go test ./...` clean in that repository.
+All five of the third pass's findings are reflected in this version of the
+document (§2, §6, §7, §8.3, §9), and the fourth and fifth passes' fixes are
+reflected too (§7, §2, §12 above). Every code fix across all three passes
+carries its own regression test, independently confirmed to fail against
+the code/release it replaced. `make check` passes clean in the tether repo
+as of the final commit in this chain (`75f80e8`): 1673 tests (race-enabled),
+0 lint issues, 0 govulncheck vulnerabilities, 66.9% coverage. `go-tether-client`'s
+own fix passes `go build`/`go vet`/`go test ./...` clean in that repository
+(still local-only, not pushed). `go-messaging`'s fix passes that
+repository's own `make check` (fmt/vet/lint/test-race/vuln) and is live on
+GitHub as the pushed, tagged `v0.5.1` release.
