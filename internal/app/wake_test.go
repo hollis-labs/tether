@@ -1087,6 +1087,93 @@ func TestRunWakeSweep_ConsumedDeliveryIsNeverRewoken(t *testing.T) {
 	}
 }
 
+// TestAttemptWake_ConcurrentConsumeDuringBusyCheckStaysDelivered is the
+// consumer-side regression test for a go-messaging bug an independent
+// review found (fixed in go-messaging v0.5.1, this repo now pins that
+// release): attemptWake's own lease can legitimately be completed by a
+// CONCURRENT Consume call while attemptWake itself is still mid-flight
+// (specifically, between its host_accepted Ack and its busy/offline/
+// send-error check) -- this is not a crash or a hijack, just two
+// legitimate operations racing on the same, correctly-owned lease. When
+// attemptWake then observes "busy" and Nacks that lease, the Nack must be
+// a no-op against an already-Delivered attempt, not reverse it back to
+// retry_scheduled -- otherwise the next wake sweep re-delivers content the
+// recipient already consumed.
+//
+// Before go-messaging v0.5.1, Nack's completed-idempotent lease-fencing
+// allowance let a late Nack through against an already-StageConsumed
+// attempt (its early no-op guard checked only Failed/DeadLettered), so
+// this reproduced with no crash at all. This test drives real Claim/
+// Consume/Ack/Nack/sweep production code, only substituting the runtime
+// health seam to inject the interleaving deterministically.
+func TestAttemptWake_ConcurrentConsumeDuringBusyCheckStaysDelivered(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	env := sendMessage(t, st, to)
+	if _, err := reg.LeaseBinding(ctx, registry.LogicalAgentBindingTarget("worker"), "s1", "local", "s1", nil, "", 0); err != nil {
+		t.Fatalf("lease: %v", err)
+	}
+	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, env.ID)
+	if err != nil || !ok {
+		t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+	}
+
+	// Wrap the health seam: the FIRST call (attemptWake's busy/offline
+	// check, which runs after Claim/marker/host_accepted but before
+	// SendTurn) triggers a real, concurrent Consume for the SAME message
+	// first, then reports the session as busy -- reproducing "a legitimate
+	// consumer finished this exact lease while attemptWake was still
+	// mid-flight."
+	seam := rt.seam()
+	originalHealth := seam.health
+	seam.health = func(sessionID string) (api.RuntimeHealthResult, bool) {
+		if err := st.MessagingStore().Consume(ctx, env.ID, to); err != nil {
+			t.Fatalf("concurrent consume: %v", err)
+		}
+		mid, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+		if err != nil {
+			t.Fatalf("get delivery mid-wake: %v", err)
+		}
+		if mid.Status != delivery.DeliveryDelivered {
+			t.Fatalf("concurrent consume failed to finish the marked lease: %s", mid.Status)
+		}
+		result, exists := originalHealth(sessionID)
+		result.Health.State = agentsessions.LiveStateProcessing
+		return result, exists
+	}
+
+	outcome := attemptWake(ctx, st, reg, seam, env.ID, to, "s1", "wake up")
+	if outcome.Reason != "busy" {
+		t.Fatalf("outcome = %+v, want Reason=busy", outcome)
+	}
+
+	after, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if after.Status != delivery.DeliveryDelivered {
+		t.Fatalf("status = %q after wake's late Nack, want delivered -- a late Nack reversed a completed Consume", after.Status)
+	}
+
+	// Force the (already-terminal) delivery ready for a sweep, same
+	// technique as TestRunWakeSweep_ConsumedDeliveryIsNeverRewoken.
+	if _, err := st.DB().ExecContext(ctx, "UPDATE messaging_deliveries SET next_attempt_at=? WHERE id=?",
+		time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano), deliveryID); err != nil {
+		t.Fatalf("advance next_attempt_at: %v", err)
+	}
+	attempted, err := runWakeSweep(ctx, st, reg, rt.seam())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if attempted != 0 || rt.sendCallCount("s1") != 0 {
+		t.Fatalf("an already-consumed message was woken again: sweep attempted=%d, total sendTurn calls=%d, want attempted=0 calls=0", attempted, rt.sendCallCount("s1"))
+	}
+}
+
 func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	st, reg := newWakeHarness(t)
 	ctx := context.Background()
