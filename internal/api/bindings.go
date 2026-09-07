@@ -97,34 +97,7 @@ func (s *Server) handleBindingLease(w http.ResponseWriter, r *http.Request) {
 			`capabilities must be exactly ["pull-only"] -- push-notified bridging over a caller-supplied webhook is not implemented; the bridge pulls its own mailbox instead`)
 		return
 	}
-	// A distinct review pass flagged a real gap here: LeaseBinding itself
-	// performs no ownership check at all -- it unconditionally mints the
-	// next generation for whatever target_urn is named. Without a guard,
-	// any same-host caller who knows/guesses a logical_agent_id could
-	// silence wake delivery for a CURRENTLY RUNNING, healthy local
-	// session with one call (isPullOnly in internal/app/wake.go would
-	// then permanently suppress its wake path until an operator noticed
-	// and revoked the binding). This endpoint may only supersede a
-	// binding that is ALREADY published-local (or supersede nothing, for
-	// a never-bound target) -- taking over a private-local/tether-hosted
-	// binding (a real Tether-managed session) is refused, observably.
-	// Tether's OWN internal launch path (session_lifecycle.go's
-	// leaseActorBinding) is deliberately NOT subject to this guard --
-	// a legitimate host reactivating a durable actor that was previously
-	// pull-only-bound must be able to reclaim it freely; only THIS
-	// external, self-asserted HTTP surface is restricted. The check-then-
-	// lease sequence below is not atomic (a narrow TOCTOU window exists
-	// between the read and LeaseBinding's own write), matching this
-	// endpoint's existing same-host trust posture -- a courtesy/policy
-	// guard against casual takeover, not a hardened security boundary.
-	if current, err := s.Registry.CurrentBinding(r.Context(), req.TargetURN); err == nil {
-		if current.Visibility != registry.VisibilityPublishedLocal {
-			writeError(w, http.StatusConflict, CodeConflict,
-				"target_urn is currently bound to a Tether-managed session (visibility "+string(current.Visibility)+"); this endpoint cannot supersede it")
-			return
-		}
-	} else if !errors.Is(err, registry.ErrBindingNotFound) {
-		writeBindingError(w, err)
+	if !s.refuseToSupersedeManagedSession(w, r, req.TargetURN) {
 		return
 	}
 	ttl := time.Duration(req.TTLSeconds) * time.Second
@@ -217,6 +190,47 @@ func (s *Server) handleBindingRevoke(w http.ResponseWriter, r *http.Request, bin
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// refuseToSupersedeManagedSession is the shared guard between
+// handleBindingLease and bootstrap.go's handleBootstrapSession (T08): a
+// distinct review pass on T07 flagged that LeaseBinding itself performs
+// no ownership check at all -- it unconditionally mints the next
+// generation for whatever target_urn is named. Without a guard, any
+// same-host caller who knows/guesses a logical_agent_id could silence
+// wake delivery for a CURRENTLY RUNNING, healthy local session with one
+// call (isPullOnly in internal/app/wake.go would then permanently
+// suppress its wake path until an operator noticed and revoked the
+// binding). Both external, self-asserted HTTP surfaces that can mint a
+// published-local binding may only supersede a binding that is ALREADY
+// published-local (or supersede nothing, for a never-bound target) --
+// taking over a private-local/tether-hosted binding (a real Tether-
+// managed session) is refused, observably. Tether's OWN internal launch
+// path (session_lifecycle.go's leaseActorBinding) is deliberately NOT
+// subject to this guard -- a legitimate host reactivating a durable actor
+// that was previously pull-only-bound must be able to reclaim it freely.
+// The check-then-lease sequence is not atomic (a narrow TOCTOU window
+// exists between the read and LeaseBinding's own write), matching this
+// endpoint's existing same-host trust posture -- a courtesy/policy guard
+// against casual takeover, not a hardened security boundary.
+//
+// Returns false (having already written a response) when the lease must
+// be refused; true when the caller should proceed.
+func (s *Server) refuseToSupersedeManagedSession(w http.ResponseWriter, r *http.Request, targetURN string) bool {
+	current, err := s.Registry.CurrentBinding(r.Context(), targetURN)
+	if err != nil {
+		if errors.Is(err, registry.ErrBindingNotFound) {
+			return true
+		}
+		writeBindingError(w, err)
+		return false
+	}
+	if current.Visibility != registry.VisibilityPublishedLocal {
+		writeError(w, http.StatusConflict, CodeConflict,
+			"target_urn is currently bound to a Tether-managed session (visibility "+string(current.Visibility)+"); this endpoint cannot supersede it")
+		return false
+	}
+	return true
 }
 
 func writeBindingError(w http.ResponseWriter, err error) {

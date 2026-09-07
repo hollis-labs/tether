@@ -86,6 +86,38 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN consuming the message")),
 	), a.handleMessageConsume)
 
+	a.addTool(s, mcp.NewTool("mux_message_claim",
+		mcp.WithDescription("Durably claim a message's delivery for authorized, self-initiated processing (T07/T08: the published-local bridge contract) -- pull and process on your own schedule rather than waiting for a Tether-pushed wake. Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN claiming the delivery")),
+		mcp.WithString("holder", mcp.Description("Claimant identifier (defaults to 'as')")),
+		mcp.WithNumber("lease_seconds", mcp.Description("Lease duration; 0 or omitted uses the daemon default")),
+	), a.handleMessageClaim)
+
+	a.addTool(s, mcp.NewTool("mux_message_ack",
+		mcp.WithDescription("Record a delivery receipt stage (host_accepted, turn_submitted, or consumed) against a lease mux_message_claim returned. Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN performing the action")),
+		mcp.WithString("delivery_id", mcp.Required(), mcp.Description("lease.delivery_id from the claim response")),
+		mcp.WithString("attempt_id", mcp.Required(), mcp.Description("lease.attempt_id from the claim response")),
+		mcp.WithString("lease_token", mcp.Required(), mcp.Description("lease.lease_token from the claim response")),
+		mcp.WithNumber("binding_generation", mcp.Description("lease.binding_generation from the claim response, if any")),
+		mcp.WithString("stage", mcp.Required(), mcp.Description("host_accepted, turn_submitted, or consumed")),
+	), a.handleMessageAck)
+
+	a.addTool(s, mcp.NewTool("mux_message_nack",
+		mcp.WithDescription("Decline or fail a claimed delivery. retryable=true (default) schedules a retry; retryable=false dead-letters it. Requires message.write scope."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
+		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN performing the action")),
+		mcp.WithString("delivery_id", mcp.Required(), mcp.Description("lease.delivery_id from the claim response")),
+		mcp.WithString("attempt_id", mcp.Required(), mcp.Description("lease.attempt_id from the claim response")),
+		mcp.WithString("lease_token", mcp.Required(), mcp.Description("lease.lease_token from the claim response")),
+		mcp.WithNumber("binding_generation", mcp.Description("lease.binding_generation from the claim response, if any")),
+		mcp.WithBoolean("retryable", mcp.Description("false dead-letters instead of scheduling a retry (default true)")),
+		mcp.WithString("error", mcp.Description("Reason recorded on the delivery attempt")),
+		mcp.WithNumber("next_attempt_seconds", mcp.Description("Retry backoff; 0 or omitted makes it immediately claimable again")),
+	), a.handleMessageNack)
+
 	a.addTool(s, mcp.NewTool("mux_message_cancel",
 		mcp.WithDescription("Cancel a pending message. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
@@ -301,6 +333,95 @@ func (a *Adapter) handleMessageConsume(ctx context.Context, req mcp.CallToolRequ
 		return classifyClientErr(err, id), nil
 	}
 	return toolJSON(map[string]any{"ok": true, "message_id": id}), nil
+}
+
+func (a *Adapter) handleMessageClaim(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
+		return denied, nil
+	}
+	id := str(req, "message_id")
+	asURN := str(req, "as")
+	if id == "" || asURN == "" {
+		return toolError("invalid_request", "message_id and as are required"), nil
+	}
+	if _, parseErr := messaging.ParseURN(asURN); parseErr != nil {
+		return toolError("invalid_request", "invalid as URN: "+parseErr.Error()), nil //nolint:nilerr
+	}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_claim requires daemon routing; start MCP with mux mcp"), nil
+	}
+	claimed, err := a.client.MessageClaim(ctx, id, asURN, str(req, "holder"), intArg(req, "lease_seconds", 0))
+	if err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, id), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "claim": claimed}), nil
+}
+
+// leaseFromArgs assembles a client.MessageLease from the flat lease_*
+// tool arguments mux_message_ack/nack share.
+func leaseFromArgs(req mcp.CallToolRequest) client.MessageLease {
+	var gen int64
+	if v, ok := req.GetArguments()["binding_generation"].(float64); ok {
+		gen = int64(v)
+	}
+	return client.MessageLease{
+		DeliveryID: str(req, "delivery_id"), AttemptID: str(req, "attempt_id"),
+		LeaseToken: str(req, "lease_token"), BindingGeneration: gen,
+	}
+}
+
+func (a *Adapter) handleMessageAck(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
+		return denied, nil
+	}
+	id := str(req, "message_id")
+	asURN := str(req, "as")
+	stage := str(req, "stage")
+	if id == "" || asURN == "" || stage == "" {
+		return toolError("invalid_request", "message_id, as and stage are required"), nil
+	}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_ack requires daemon routing; start MCP with mux mcp"), nil
+	}
+	if err := a.client.MessageAck(ctx, id, asURN, leaseFromArgs(req), stage); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, id), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "message_id": id, "stage": stage}), nil
+}
+
+func (a *Adapter) handleMessageNack(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if denied := a.checkScope(ScopeMessageWrite); denied != nil {
+		return denied, nil
+	}
+	id := str(req, "message_id")
+	asURN := str(req, "as")
+	if id == "" || asURN == "" {
+		return toolError("invalid_request", "message_id and as are required"), nil
+	}
+	if a.client == nil {
+		return toolError("internal_error", "mux_message_nack requires daemon routing; start MCP with mux mcp"), nil
+	}
+	// retryable defaults to true when omitted -- boolArg's own default
+	// (false for absent/non-bool) is the wrong polarity for this tool, so
+	// the omitted case is handled explicitly here rather than reusing it
+	// directly.
+	retryable := true
+	if _, present := req.GetArguments()["retryable"]; present {
+		retryable = boolArg(req, "retryable")
+	}
+	if err := a.client.MessageNack(ctx, id, asURN, leaseFromArgs(req), retryable, str(req, "error"), intArg(req, "next_attempt_seconds", 0)); err != nil {
+		if isDaemonUnreachable(err) {
+			return daemonUnreachableError(err), nil
+		}
+		return classifyClientErr(err, id), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "message_id": id, "retryable": retryable}), nil
 }
 
 func (a *Adapter) handleMessageCancel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

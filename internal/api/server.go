@@ -137,6 +137,8 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerGroupRoutes(mux)
 	s.registerLogsRoutes(mux)
 	s.registerFSRoutes(mux)
+	s.registerWhoAmIRoutes(mux)
+	s.registerBootstrapRoutes(mux)
 	return mux
 }
 

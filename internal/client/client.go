@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/registry"
 )
 
 // ErrDaemonUnreachable means the daemon process is not accepting
@@ -1045,6 +1046,108 @@ func (c *Client) MessageCancel(ctx context.Context, id string) error {
 	return readError(resp)
 }
 
+// MessageLease is the bearer credential a claim returns and ack/nack must
+// present back (T07/T08, messaging vNext). Mirrors go-messaging's
+// delivery.LeaseRef on the wire without importing that package here --
+// this client deliberately stays decoupled from go-messaging's own types
+// (see the MessageEnvelopeDTO doc above).
+type MessageLease struct {
+	DeliveryID        string `json:"delivery_id"`
+	AttemptID         string `json:"attempt_id"`
+	LeaseToken        string `json:"lease_token"`
+	BindingGeneration int64  `json:"binding_generation,omitempty"`
+}
+
+// MessageClaimResult is POST /messages/{id}/claim's response.
+type MessageClaimResult struct {
+	Message   MessageEnvelopeDTO `json:"message"`
+	Lease     MessageLease       `json:"lease"`
+	ExpiresIn int                `json:"lease_seconds"`
+}
+
+// MessageClaim durably claims a message's delivery on behalf of the
+// named recipient (as) so the caller can process it on its own
+// initiative rather than waiting for Tether to push a wake -- the
+// published-local bridge contract (T07). holder identifies the claimant
+// (defaults server-side to as when empty); leaseSeconds <= 0 uses the
+// server's default.
+func (c *Client) MessageClaim(ctx context.Context, id, as, holder string, leaseSeconds int) (MessageClaimResult, error) {
+	body, err := json.Marshal(map[string]any{"holder": holder, "lease_seconds": leaseSeconds})
+	if err != nil {
+		return MessageClaimResult{}, fmt.Errorf("marshal claim request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/claim?as="+url.QueryEscape(as), bytes.NewReader(body))
+	if err != nil {
+		return MessageClaimResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MessageClaimResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return MessageClaimResult{}, readError(resp)
+	}
+	var out MessageClaimResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return MessageClaimResult{}, fmt.Errorf("decode claim response: %w", err)
+	}
+	return out, nil
+}
+
+// MessageAck records stage against a lease MessageClaim returned. stage
+// must be one of "host_accepted", "turn_submitted", "consumed".
+func (c *Client) MessageAck(ctx context.Context, id, as string, lease MessageLease, stage string) error {
+	body, err := json.Marshal(map[string]any{"lease": lease, "stage": stage})
+	if err != nil {
+		return fmt.Errorf("marshal ack request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/ack?as="+url.QueryEscape(as), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return readError(resp)
+}
+
+// MessageNack declines or fails to finish processing a claimed delivery.
+// retryable schedules a retry after nextAttemptSeconds (<=0: immediately
+// claimable again); retryable=false dead-letters it.
+func (c *Client) MessageNack(ctx context.Context, id, as string, lease MessageLease, retryable bool, errMsg string, nextAttemptSeconds int) error {
+	body, err := json.Marshal(map[string]any{
+		"lease": lease, "retryable": retryable, "error": errMsg, "next_attempt_seconds": nextAttemptSeconds,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal nack request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/nack?as="+url.QueryEscape(as), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return readError(resp)
+}
+
 // MessageMarkRead marks a message read by the named recipient.
 func (c *Client) MessageMarkRead(ctx context.Context, id, as string) error {
 	return c.messageRecipientAction(ctx, id, "read", as)
@@ -1058,6 +1161,118 @@ func (c *Client) MessageArchive(ctx context.Context, id, as string) error {
 // MessageUnarchive restores an archived message for the named recipient.
 func (c *Client) MessageUnarchive(ctx context.Context, id, as string) error {
 	return c.messageRecipientAction(ctx, id, "unarchive", as)
+}
+
+// WhoAmIBinding mirrors internal/api/whoami.go's whoAmIBinding DTO.
+type WhoAmIBinding struct {
+	ID           string   `json:"id"`
+	SessionID    string   `json:"session_id"`
+	HostID       string   `json:"host_id"`
+	Generation   int64    `json:"generation"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Visibility   string   `json:"visibility"`
+}
+
+// WhoAmISession mirrors internal/api/whoami.go's whoAmISession DTO.
+type WhoAmISession struct {
+	SessionID    string   `json:"session_id"`
+	Host         string   `json:"host"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// WhoAmIResult is GET /whoami's response (T08, messaging vNext):
+// self-discovery for a self-asserted URN (ADR 0045 -- this reports what
+// Tether currently knows about that identity, it does not verify the
+// claim). Profile uses registry.Profile directly (unlike the message
+// DTOs, this client already depends on internal/registry for
+// RegistryClient, so there is no external-dependency reason to duplicate
+// its shape here).
+type WhoAmIResult struct {
+	URN     string             `json:"urn"`
+	Profile *registry.Profile  `json:"profile,omitempty"`
+	Binding *WhoAmIBinding     `json:"binding,omitempty"`
+	Groups  []registry.Profile `json:"groups,omitempty"`
+	Session *WhoAmISession     `json:"session,omitempty"`
+}
+
+// WhoAmI GETs /whoami?urn=<urn>.
+func (c *Client) WhoAmI(ctx context.Context, urn string) (WhoAmIResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/whoami?urn="+url.QueryEscape(urn), nil)
+	if err != nil {
+		return WhoAmIResult{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return WhoAmIResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return WhoAmIResult{}, readError(resp)
+	}
+	var out WhoAmIResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return WhoAmIResult{}, fmt.Errorf("decode whoami response: %w", err)
+	}
+	return out, nil
+}
+
+// BootstrapSessionRequest is POST /bootstrap/session's request body (T08,
+// messaging vNext) -- the provider-neutral local bootstrap/registration
+// helper agent-setup invokes at the launch/host boundary. SessionID (the
+// preassigned SESSION) is required; every other field is optional. See
+// internal/api/bootstrap.go's doc comment for the full publication/
+// idempotency contract.
+type BootstrapSessionRequest struct {
+	SessionID      string `json:"session_id"`
+	Intent         string `json:"intent,omitempty"`
+	LogicalAgentID string `json:"logical_agent_id,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+	ProviderID     string `json:"provider_id,omitempty"`
+	Publication    string `json:"publication,omitempty"`
+	HostID         string `json:"host_id,omitempty"`
+	AttemptID      string `json:"attempt_id,omitempty"`
+	Substrate      string `json:"substrate,omitempty"`
+}
+
+// BootstrapSessionResult is POST /bootstrap/session's response: a
+// WhoAmIResult for the identity this call resolved, plus two flags
+// distinguishing a fresh registration/lease from an idempotent repeat.
+type BootstrapSessionResult struct {
+	WhoAmIResult
+	RegisteredNow bool `json:"registered_now,omitempty"`
+	ReusedBinding bool `json:"reused_binding,omitempty"`
+}
+
+// BootstrapSession POSTs /bootstrap/session. Callers on an unreachable
+// daemon should catch ErrDaemonUnreachable (via errors.Is on the
+// returned error) and fall back to a purely local SESSION identity
+// instead of failing the launch -- "bootstrap and local messaging cannot
+// require online Tether" is a requirement on the CALLING side; this
+// method is the online-Tether half of that story, not an offline mode
+// of its own.
+func (c *Client) BootstrapSession(ctx context.Context, req BootstrapSessionRequest) (BootstrapSessionResult, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return BootstrapSessionResult{}, fmt.Errorf("marshal bootstrap request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/bootstrap/session", bytes.NewReader(body))
+	if err != nil {
+		return BootstrapSessionResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return BootstrapSessionResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return BootstrapSessionResult{}, readError(resp)
+	}
+	var out BootstrapSessionResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return BootstrapSessionResult{}, fmt.Errorf("decode bootstrap response: %w", err)
+	}
+	return out, nil
 }
 
 func (c *Client) messageRecipientAction(ctx context.Context, id, action, as string) error {

@@ -42,15 +42,20 @@ import (
 )
 
 // ScopedBinding is one revision of a (scope, slot) resolution.
+//
+// JSON tags (T08, messaging vNext): see RuntimeBinding's identical note
+// in bindings.go -- added when this type gained its first external,
+// cross-module consumer; previously untagged and inconsistently
+// PascalCase on the wire versus every other type in this API.
 type ScopedBinding struct {
-	ID           string
-	Scope        string
-	Slot         string
-	Revision     int64
-	TargetURNs   []string
-	Relationship json.RawMessage
-	CreatedBy    string
-	CreatedAt    time.Time
+	ID           string          `json:"id"`
+	Scope        string          `json:"scope"`
+	Slot         string          `json:"slot"`
+	Revision     int64           `json:"revision"`
+	TargetURNs   []string        `json:"target_urns"`
+	Relationship json.RawMessage `json:"relationship,omitempty"`
+	CreatedBy    string          `json:"created_by"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 // ErrAmbiguousBinding is returned by ResolveScopedBindingSingle when the

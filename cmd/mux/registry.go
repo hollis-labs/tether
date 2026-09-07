@@ -519,6 +519,185 @@ directly from the callback URI.`,
 	},
 }
 
+// ─── bindings (T07/T08, messaging vNext) ────────────────────────────────────
+//
+// `mux registry bindings ...` is the CLI face of the published-local
+// bridge registration surface (internal/api/bindings.go). Always mints
+// VisibilityPublishedLocal server-side; capabilities are locked to
+// ["pull-only"] (push-notified bridging is not implemented).
+
+var (
+	bindingTargetURN  string
+	bindingSessionID  string
+	bindingHostID     string
+	bindingAttemptID  string
+	bindingTTLSeconds int
+)
+
+var registryBindingsCmd = &cobra.Command{
+	Use:   "bindings",
+	Short: "Manage published-local bridge RuntimeBindings",
+}
+
+var registryBindingLeaseCmd = &cobra.Command{
+	Use:   "lease",
+	Short: "Lease a published-local binding for a target URN",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bindingTargetURN == "" || bindingSessionID == "" || bindingHostID == "" || bindingAttemptID == "" {
+			return validationErr("registry bindings lease: --target-urn, --session-id, --host-id and --attempt-id are required")
+		}
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		b, err := rc.LeaseBinding(cmdCtx(cmd), bindingTargetURN, bindingSessionID, bindingHostID, bindingAttemptID,
+			[]string{"pull-only"}, time.Duration(bindingTTLSeconds)*time.Second)
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(b)
+	},
+}
+
+var registryBindingRenewCmd = &cobra.Command{
+	Use:   "renew <binding-id>",
+	Short: "Renew a binding's lease",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		b, err := rc.RenewBindingLease(cmdCtx(cmd), args[0], time.Duration(bindingTTLSeconds)*time.Second)
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(b)
+	},
+}
+
+var registryBindingRevokeCmd = &cobra.Command{
+	Use:   "revoke <binding-id>",
+	Short: "Revoke a binding",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		if err := rc.RevokeBinding(cmdCtx(cmd), args[0]); err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("revoked: %s\n", args[0])
+		return nil
+	},
+}
+
+var registryBindingCurrentCmd = &cobra.Command{
+	Use:   "current <target-urn>",
+	Short: "Show the current binding for a target URN",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		b, err := rc.CurrentBinding(cmdCtx(cmd), args[0])
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(b)
+	},
+}
+
+var registryBindingListCmd = &cobra.Command{
+	Use:   "list <target-urn>",
+	Short: "List every binding ever leased for a target URN (audit view)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		rows, err := rc.ListBindings(cmdCtx(cmd), args[0])
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(map[string]any{"bindings": rows})
+	},
+}
+
+// ─── scoped role/slot bindings (T04 primitive, T08 CLI exposure) ───────────
+
+var (
+	scopedBindingScope      string
+	scopedBindingSlot       string
+	scopedBindingTargetURNs []string
+	scopedBindingCreatedBy  string
+)
+
+var registryScopedBindingCmd = &cobra.Command{
+	Use:   "scoped-binding",
+	Short: "Manage consumer-owned scope/slot role resolution bindings",
+}
+
+var registryScopedBindingSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Publish a new revision for a scope/slot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" || scopedBindingCreatedBy == "" {
+			return validationErr("registry scoped-binding set: --scope, --slot and --created-by are required")
+		}
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		b, err := rc.SetScopedBinding(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot, scopedBindingTargetURNs, nil, scopedBindingCreatedBy)
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(b)
+	},
+}
+
+var registryScopedBindingResolveCmd = &cobra.Command{
+	Use:   "resolve",
+	Short: "Resolve the current revision for a scope/slot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" {
+			return validationErr("registry scoped-binding resolve: --scope and --slot are required")
+		}
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		b, err := rc.ResolveScopedBinding(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot)
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(b)
+	},
+}
+
+var registryScopedBindingHistoryCmd = &cobra.Command{
+	Use:   "history",
+	Short: "List every revision for a scope/slot, newest first",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if scopedBindingScope == "" || scopedBindingSlot == "" {
+			return validationErr("registry scoped-binding history: --scope and --slot are required")
+		}
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		rows, err := rc.ListScopedBindingRevisions(cmdCtx(cmd), scopedBindingScope, scopedBindingSlot)
+		if err != nil {
+			return classifyErr(err)
+		}
+		return printJSON(map[string]any{"revisions": rows})
+	},
+}
+
 // ─── pretty-printer ─────────────────────────────────────────────────────────
 
 // printProfile writes a stable, line-oriented rendering of a Profile.
@@ -778,6 +957,34 @@ func init() {
 	registryBootstrapCmd.Flags().StringVar(&bootstrapSubstrate, "substrate", "", "bootstrap only one substrate ('tether' default, or 'cerberus')")
 	registryBootstrapCmd.Flags().BoolVar(&bootstrapWriteBack, "write-back", true, "write registry_urn back into imported source YAMLs")
 
+	registryBindingLeaseCmd.Flags().StringVar(&bindingTargetURN, "target-urn", "", "target URN to bind")
+	registryBindingLeaseCmd.Flags().StringVar(&bindingSessionID, "session-id", "", "the bridge's own session/process identifier")
+	registryBindingLeaseCmd.Flags().StringVar(&bindingHostID, "host-id", "", "the bridge's own host identifier")
+	registryBindingLeaseCmd.Flags().StringVar(&bindingAttemptID, "attempt-id", "", "the bridge's own attempt identifier (new value = reconnect)")
+	registryBindingLeaseCmd.Flags().IntVar(&bindingTTLSeconds, "ttl-seconds", 0, "lease TTL; 0 means no expiry")
+	registryBindingRenewCmd.Flags().IntVar(&bindingTTLSeconds, "ttl-seconds", 0, "new lease TTL; 0 means no expiry")
+	registryBindingsCmd.AddCommand(
+		registryBindingLeaseCmd,
+		registryBindingRenewCmd,
+		registryBindingRevokeCmd,
+		registryBindingCurrentCmd,
+		registryBindingListCmd,
+	)
+
+	registryScopedBindingSetCmd.Flags().StringVar(&scopedBindingScope, "scope", "", "consumer-owned scope (e.g. torque:sprint:X)")
+	registryScopedBindingSetCmd.Flags().StringVar(&scopedBindingSlot, "slot", "", "role/slot name (e.g. reviewer)")
+	registryScopedBindingSetCmd.Flags().StringArrayVar(&scopedBindingTargetURNs, "target-urn", nil, "target URN filling this slot; repeatable for fanout")
+	registryScopedBindingSetCmd.Flags().StringVar(&scopedBindingCreatedBy, "created-by", "", "provenance: who is publishing this revision")
+	for _, c := range []*cobra.Command{registryScopedBindingResolveCmd, registryScopedBindingHistoryCmd} {
+		c.Flags().StringVar(&scopedBindingScope, "scope", "", "consumer-owned scope (e.g. torque:sprint:X)")
+		c.Flags().StringVar(&scopedBindingSlot, "slot", "", "role/slot name (e.g. reviewer)")
+	}
+	registryScopedBindingCmd.AddCommand(
+		registryScopedBindingSetCmd,
+		registryScopedBindingResolveCmd,
+		registryScopedBindingHistoryCmd,
+	)
+
 	registryCmd.AddCommand(
 		registryRegisterCmd,
 		registryLookupCmd,
@@ -788,6 +995,8 @@ func init() {
 		registryDeregisterCmd,
 		registrySyncCmd,
 		registryBootstrapCmd,
+		registryBindingsCmd,
+		registryScopedBindingCmd,
 	)
 	rootCmd.AddCommand(registryCmd)
 }

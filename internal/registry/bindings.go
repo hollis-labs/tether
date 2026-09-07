@@ -45,20 +45,30 @@ import (
 )
 
 // RuntimeBinding is one leased host/attempt attempt against a target URN.
+//
+// JSON tags (T08, messaging vNext): added when this type gained its
+// first external, cross-module consumer (go-tether-client). Before this,
+// the type had no tags at all, so encoding/json's default behavior
+// marshaled it as PascalCase ("TargetURN", "SessionID", ...) -- silently
+// inconsistent with every other wire type in this API (messaging.Envelope,
+// registry.Profile, etc. all use snake_case). Internal decoders
+// (internal/client/registry_client.go) are unaffected: they decode
+// straight into this same struct, so adding tags only makes their
+// matching exact instead of relying on Go's case-insensitive fallback.
 type RuntimeBinding struct {
-	ID             string
-	TargetURN      string
-	SessionID      string
-	HostID         string
-	AttemptID      string
-	Generation     int64
-	Capabilities   []string
-	Visibility     PublicationVisibility
-	LeasedAt       time.Time
-	LeaseExpiresAt *time.Time
-	RevokedAt      *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID             string                `json:"id"`
+	TargetURN      string                `json:"target_urn"`
+	SessionID      string                `json:"session_id"`
+	HostID         string                `json:"host_id"`
+	AttemptID      string                `json:"attempt_id"`
+	Generation     int64                 `json:"generation"`
+	Capabilities   []string              `json:"capabilities,omitempty"`
+	Visibility     PublicationVisibility `json:"visibility"`
+	LeasedAt       time.Time             `json:"leased_at"`
+	LeaseExpiresAt *time.Time            `json:"lease_expires_at,omitempty"`
+	RevokedAt      *time.Time            `json:"revoked_at,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
 }
 
 // PublicationVisibility mirrors agentkit's PublicationChoice vocabulary

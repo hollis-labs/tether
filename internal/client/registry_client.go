@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/registry"
 )
@@ -381,6 +382,249 @@ func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool, substrate s
 		return registry.BootstrapReport{}, fmt.Errorf("decode bootstrap response: %w", err)
 	}
 	return out, nil
+}
+
+// ─── bindings (T07/T08, messaging vNext) ────────────────────────────────────
+//
+// Mirrors internal/api/bindings.go's /registry/bindings surface: the
+// published-local bridge registration contract. LeaseBinding always mints
+// a VisibilityPublishedLocal binding server-side regardless of what the
+// caller passes -- there is no way to request private-local/tether-hosted
+// visibility through this client, matching the HTTP contract exactly.
+
+// LeaseBinding POSTs /registry/bindings. capabilities must be exactly
+// ["pull-only"] server-side (push-notified bridging is not implemented);
+// ttl of 0 means no expiry.
+func (rc *RegistryClient) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, ttl time.Duration) (registry.RuntimeBinding, error) {
+	body, err := json.Marshal(map[string]any{
+		"target_urn": targetURN, "session_id": sessionID, "host_id": hostID, "attempt_id": attemptID,
+		"capabilities": capabilities, "ttl_seconds": int(ttl.Seconds()),
+	})
+	if err != nil {
+		return registry.RuntimeBinding{}, fmt.Errorf("marshal lease request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+"/registry/bindings", bytes.NewReader(body))
+	if err != nil {
+		return registry.RuntimeBinding{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.RuntimeBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated {
+		return registry.RuntimeBinding{}, readRegistryError(resp)
+	}
+	var out registry.RuntimeBinding
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.RuntimeBinding{}, fmt.Errorf("decode lease response: %w", err)
+	}
+	return out, nil
+}
+
+// RenewBindingLease POSTs /registry/bindings/{id}/renew.
+func (rc *RegistryClient) RenewBindingLease(ctx context.Context, bindingID string, ttl time.Duration) (registry.RuntimeBinding, error) {
+	body, err := json.Marshal(map[string]any{"ttl_seconds": int(ttl.Seconds())})
+	if err != nil {
+		return registry.RuntimeBinding{}, fmt.Errorf("marshal renew request: %w", err)
+	}
+	path := "/registry/bindings/" + url.PathEscape(bindingID) + "/renew"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return registry.RuntimeBinding{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.RuntimeBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.RuntimeBinding{}, readRegistryError(resp)
+	}
+	var out registry.RuntimeBinding
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.RuntimeBinding{}, fmt.Errorf("decode renew response: %w", err)
+	}
+	return out, nil
+}
+
+// RevokeBinding POSTs /registry/bindings/{id}/revoke.
+func (rc *RegistryClient) RevokeBinding(ctx context.Context, bindingID string) error {
+	path := "/registry/bindings/" + url.PathEscape(bindingID) + "/revoke"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusNoContent {
+		return readRegistryError(resp)
+	}
+	return nil
+}
+
+// CurrentBinding GETs /registry/bindings?target_urn=...&current=true.
+func (rc *RegistryClient) CurrentBinding(ctx context.Context, targetURN string) (registry.RuntimeBinding, error) {
+	path := "/registry/bindings?" + url.Values{"target_urn": {targetURN}, "current": {"true"}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.RuntimeBinding{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.RuntimeBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.RuntimeBinding{}, readRegistryError(resp)
+	}
+	var out registry.RuntimeBinding
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.RuntimeBinding{}, fmt.Errorf("decode current binding response: %w", err)
+	}
+	return out, nil
+}
+
+// ListBindings GETs /registry/bindings?target_urn=... — every binding ever
+// leased for targetURN, newest generation first (audit view).
+func (rc *RegistryClient) ListBindings(ctx context.Context, targetURN string) ([]registry.RuntimeBinding, error) {
+	path := "/registry/bindings?" + url.Values{"target_urn": {targetURN}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, readRegistryError(resp)
+	}
+	var out struct {
+		Bindings []registry.RuntimeBinding `json:"bindings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode list bindings response: %w", err)
+	}
+	return out.Bindings, nil
+}
+
+// ─── scoped role/slot bindings (T04 primitive, T08 HTTP exposure) ─────────
+//
+// Mirrors internal/api/scoped_bindings.go's /registry/scoped-bindings
+// surface: a consumer-owned scope/slot resolution mapping (e.g. scope
+// "torque:sprint:X" slot "reviewer" -> one or more registry URNs). Pure
+// resolution/mapping, no workflow/staffing semantics.
+
+// SetScopedBinding POSTs /registry/scoped-bindings, publishing a new
+// revision for (scope, slot). relationship is optional free-form JSON
+// (e.g. {"reports_to": "msg://..."}); pass nil for none.
+func (rc *RegistryClient) SetScopedBinding(ctx context.Context, scope, slot string, targetURNs []string, relationship json.RawMessage, createdBy string) (registry.ScopedBinding, error) {
+	body, err := json.Marshal(map[string]any{
+		"scope": scope, "slot": slot, "target_urns": targetURNs, "relationship": relationship, "created_by": createdBy,
+	})
+	if err != nil {
+		return registry.ScopedBinding{}, fmt.Errorf("marshal scoped binding request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+"/registry/scoped-bindings", bytes.NewReader(body))
+	if err != nil {
+		return registry.ScopedBinding{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.ScopedBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated {
+		return registry.ScopedBinding{}, readRegistryError(resp)
+	}
+	var out registry.ScopedBinding
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.ScopedBinding{}, fmt.Errorf("decode scoped binding response: %w", err)
+	}
+	return out, nil
+}
+
+// ResolveScopedBinding GETs /registry/scoped-bindings?scope=&slot=, the
+// current revision (possibly multiple targets).
+func (rc *RegistryClient) ResolveScopedBinding(ctx context.Context, scope, slot string) (registry.ScopedBinding, error) {
+	path := "/registry/scoped-bindings?" + url.Values{"scope": {scope}, "slot": {slot}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.ScopedBinding{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.ScopedBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.ScopedBinding{}, readRegistryError(resp)
+	}
+	var out registry.ScopedBinding
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.ScopedBinding{}, fmt.Errorf("decode scoped binding response: %w", err)
+	}
+	return out, nil
+}
+
+// ResolveScopedBindingSingle GETs /registry/scoped-bindings?...&single=true,
+// erroring observably (via readRegistryError) when the current revision
+// has zero or multiple targets instead of picking one itself.
+func (rc *RegistryClient) ResolveScopedBindingSingle(ctx context.Context, scope, slot string) (string, registry.ScopedBinding, error) {
+	path := "/registry/scoped-bindings?" + url.Values{"scope": {scope}, "slot": {slot}, "single": {"true"}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return "", registry.ScopedBinding{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return "", registry.ScopedBinding{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return "", registry.ScopedBinding{}, readRegistryError(resp)
+	}
+	var out struct {
+		TargetURN string                 `json:"target_urn"`
+		Binding   registry.ScopedBinding `json:"binding"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", registry.ScopedBinding{}, fmt.Errorf("decode scoped binding response: %w", err)
+	}
+	return out.TargetURN, out.Binding, nil
+}
+
+// ListScopedBindingRevisions GETs /registry/scoped-bindings/history
+// ?scope=&slot=, the full provenance history newest-first.
+func (rc *RegistryClient) ListScopedBindingRevisions(ctx context.Context, scope, slot string) ([]registry.ScopedBinding, error) {
+	path := "/registry/scoped-bindings/history?" + url.Values{"scope": {scope}, "slot": {slot}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, readRegistryError(resp)
+	}
+	var out struct {
+		Revisions []registry.ScopedBinding `json:"revisions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode scoped binding history response: %w", err)
+	}
+	return out.Revisions, nil
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

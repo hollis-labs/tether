@@ -74,6 +74,19 @@ type RegistryService interface {
 	RevokeBinding(ctx context.Context, bindingID string) error
 	CurrentBinding(ctx context.Context, targetURN string) (registry.RuntimeBinding, error)
 	ListBindingsForTarget(ctx context.Context, targetURN string) ([]registry.RuntimeBinding, error)
+	// Scoped role/slot binding methods (T04 primitive, HTTP-exposed in
+	// T08). See scoped_bindings.go.
+	SetScopedBinding(ctx context.Context, scope, slot string, targetURNs []string, relationship json.RawMessage, createdBy string) (registry.ScopedBinding, error)
+	ResolveScopedBinding(ctx context.Context, scope, slot string) (registry.ScopedBinding, error)
+	ResolveScopedBindingSingle(ctx context.Context, scope, slot string) (string, registry.ScopedBinding, error)
+	ListScopedBindingRevisions(ctx context.Context, scope, slot string) ([]registry.ScopedBinding, error)
+	// ListGroupsForMember also appears on GroupsService (T04); declared
+	// here too so whoami.go (T08) can use it via Server.Registry without
+	// requiring Server.Groups to be separately wired.
+	ListGroupsForMember(ctx context.Context, memberURN string) ([]registry.Profile, error)
+	// RegisterIdempotent (T02) backs bootstrap.go's launch-bootstrap
+	// helper (T08): owner-scoped idempotent registration by external key.
+	RegisterIdempotent(ctx context.Context, kind registry.Kind, p registry.Profile, substrate, externalID string) (registry.Profile, bool, error)
 }
 
 // kindFromSegment translates the plural URL segment to the singular
@@ -126,6 +139,7 @@ func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
 	mux.HandleFunc("/registry/bindings", s.handleBindingsCollection)
 	mux.HandleFunc("/registry/bindings/", s.handleBindingsItem)
+	s.registerScopedBindingRoutes(mux)
 	mux.HandleFunc("/registry/", s.handleRegistry)
 }
 

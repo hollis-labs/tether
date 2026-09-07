@@ -283,6 +283,115 @@ var messageConsumeCmd = &cobra.Command{
 	},
 }
 
+var (
+	messageClaimHolder       string
+	messageClaimLeaseSeconds int
+	messageAckStage          string
+	messageNackRetryable     bool
+	messageNackError         string
+	messageNackNextAttempt   int
+)
+
+// messageClaimCmd, messageAckCmd, messageNackCmd (T08, messaging vNext):
+// CLI exposure for the T07 durable claim/ack/nack surface -- a
+// published-local bridge (or any operator) pulling and durably
+// processing its own mailbox on its own initiative, rather than Tether
+// pushing a wake.
+var messageClaimCmd = &cobra.Command{
+	Use:   "claim <message-id>",
+	Short: "Durably claim a message's delivery for authorized, self-initiated processing",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageAs == "" {
+			return validationErr("messages claim: --as <recipient-urn> is required")
+		}
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		claimed, err := c.MessageClaim(cmdCtx(cmd), args[0], messageAs, messageClaimHolder, messageClaimLeaseSeconds)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if messageJSONFlag {
+			return printJSON(claimed)
+		}
+		fmt.Printf("claimed: %s lease_delivery_id=%s lease_seconds=%d\n", args[0], claimed.Lease.DeliveryID, claimed.ExpiresIn)
+		return nil
+	},
+}
+
+var messageAckCmd = &cobra.Command{
+	Use:   "ack <message-id>",
+	Short: "Record a delivery receipt stage against a claimed lease (host_accepted|turn_submitted|consumed)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageAs == "" {
+			return validationErr("messages ack: --as <recipient-urn> is required")
+		}
+		if messageAckStage == "" {
+			return validationErr("messages ack: --stage <host_accepted|turn_submitted|consumed> is required")
+		}
+		lease, err := parseMessageLeaseFlags()
+		if err != nil {
+			return validationErr("messages ack: %v", err)
+		}
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if err := c.MessageAck(cmdCtx(cmd), args[0], messageAs, lease, messageAckStage); err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("acked: %s stage=%s\n", args[0], messageAckStage)
+		return nil
+	},
+}
+
+var messageNackCmd = &cobra.Command{
+	Use:   "nack <message-id>",
+	Short: "Decline or fail a claimed delivery (retryable or dead-lettered)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageAs == "" {
+			return validationErr("messages nack: --as <recipient-urn> is required")
+		}
+		lease, err := parseMessageLeaseFlags()
+		if err != nil {
+			return validationErr("messages nack: %v", err)
+		}
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if err := c.MessageNack(cmdCtx(cmd), args[0], messageAs, lease, messageNackRetryable, messageNackError, messageNackNextAttempt); err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("nacked: %s retryable=%v\n", args[0], messageNackRetryable)
+		return nil
+	},
+}
+
+// messageLeaseDeliveryID etc. carry the lease MessageClaim printed, since
+// ack/nack must present it back verbatim (it is the bearer credential
+// proving the caller legitimately holds this specific claim).
+var (
+	messageLeaseDeliveryID        string
+	messageLeaseAttemptID         string
+	messageLeaseToken             string
+	messageLeaseBindingGeneration int64
+)
+
+func parseMessageLeaseFlags() (client.MessageLease, error) {
+	if messageLeaseDeliveryID == "" || messageLeaseAttemptID == "" || messageLeaseToken == "" {
+		return client.MessageLease{}, fmt.Errorf("--lease-delivery-id, --lease-attempt-id and --lease-token are required (from the earlier `claim` call's output)")
+	}
+	return client.MessageLease{
+		DeliveryID: messageLeaseDeliveryID, AttemptID: messageLeaseAttemptID,
+		LeaseToken: messageLeaseToken, BindingGeneration: messageLeaseBindingGeneration,
+	}, nil
+}
+
 var messageCancelCmd = &cobra.Command{
 	Use:   "cancel <message-id>",
 	Short: "Cancel a pending message",
@@ -481,6 +590,21 @@ func init() {
 		c.Flags().StringVar(&messageAs, "as", "", "sender or recipient URN claiming this read (T05/ADR 0045)")
 	}
 
+	messageClaimCmd.Flags().StringVar(&messageAs, "as", "", "recipient URN claiming the delivery")
+	messageClaimCmd.Flags().StringVar(&messageClaimHolder, "holder", "", "claimant identifier (defaults to --as)")
+	messageClaimCmd.Flags().IntVar(&messageClaimLeaseSeconds, "lease-seconds", 0, "lease duration, 0 uses the daemon default")
+	for _, c := range []*cobra.Command{messageAckCmd, messageNackCmd} {
+		c.Flags().StringVar(&messageAs, "as", "", "recipient URN performing the action")
+		c.Flags().StringVar(&messageLeaseDeliveryID, "lease-delivery-id", "", "lease.delivery_id from the earlier claim")
+		c.Flags().StringVar(&messageLeaseAttemptID, "lease-attempt-id", "", "lease.attempt_id from the earlier claim")
+		c.Flags().StringVar(&messageLeaseToken, "lease-token", "", "lease.lease_token from the earlier claim")
+		c.Flags().Int64Var(&messageLeaseBindingGeneration, "lease-binding-generation", 0, "lease.binding_generation from the earlier claim")
+	}
+	messageAckCmd.Flags().StringVar(&messageAckStage, "stage", "", "host_accepted, turn_submitted, or consumed")
+	messageNackCmd.Flags().BoolVar(&messageNackRetryable, "retryable", true, "false dead-letters the delivery instead of scheduling a retry")
+	messageNackCmd.Flags().StringVar(&messageNackError, "error", "", "reason recorded on the delivery attempt")
+	messageNackCmd.Flags().IntVar(&messageNackNextAttempt, "next-attempt-seconds", 0, "retry backoff; 0 makes it immediately claimable again")
+
 	messagesCmd.AddCommand(
 		messageSendCmd,
 		messageNotifyCmd,
@@ -488,6 +612,9 @@ func init() {
 		messageInboxCmd,
 		messageListCmd,
 		messageThreadCmd,
+		messageClaimCmd,
+		messageAckCmd,
+		messageNackCmd,
 		messageConsumeCmd,
 		messageCancelCmd,
 		messageReadCmd,

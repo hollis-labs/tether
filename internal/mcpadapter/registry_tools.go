@@ -51,6 +51,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -183,6 +184,263 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 			mcp.Description("Full URN of the row to sync."),
 		),
 	), a.handleRegistrySync)
+
+	a.registerBindingTools(s)
+	a.registerScopedBindingTools(s)
+}
+
+// registerBindingTools wires the published-local bridge registration
+// surface (T07, HTTP-exposed via internal/api/bindings.go; T08 adds this
+// MCP surface). Dispatches directly to a.svc.Registry in-process, same
+// convention as every other tool in this file.
+func (a *Adapter) registerBindingTools(s *server.MCPServer) {
+	a.addTool(s, mcp.NewTool("tether_registry_lease_binding",
+		mcp.WithDescription(
+			"Lease a published-local RuntimeBinding for target_urn -- the bridge registration "+
+				"contract for a durable actor Tether does not launch/manage a session for. Always "+
+				"mints visibility=published-local server-side; capabilities must be exactly "+
+				"['pull-only'] (push-notified bridging over a caller-supplied webhook is not "+
+				"implemented). Refuses (conflict) to supersede a binding that is already "+
+				"Tether-managed (private-local/tether-hosted). Requires the registry.write scope.",
+		),
+		mcp.WithString("target_urn", mcp.Required(), mcp.Description("Target URN to bind (typically msg://agent/agent-mux/<logical_agent_id>).")),
+		mcp.WithString("session_id", mcp.Required(), mcp.Description("The bridge's own session/process identifier.")),
+		mcp.WithString("host_id", mcp.Required(), mcp.Description("The bridge's own host identifier.")),
+		mcp.WithString("attempt_id", mcp.Required(), mcp.Description("The bridge's own attempt identifier; a new value on a later call signals a reconnect.")),
+		mcp.WithNumber("ttl_seconds", mcp.Description("Lease TTL; 0 or omitted means no expiry.")),
+	), a.handleRegistryLeaseBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_renew_binding",
+		mcp.WithDescription("Renew a binding's lease. Fails (conflict) if a newer generation has since superseded it. Requires the registry.write scope."),
+		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding ID returned by lease_binding.")),
+		mcp.WithNumber("ttl_seconds", mcp.Description("New lease TTL; 0 or omitted means no expiry.")),
+	), a.handleRegistryRenewBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_revoke_binding",
+		mcp.WithDescription("Revoke a binding. Idempotent: revoking an already-revoked binding is a no-op success. Requires the registry.write scope."),
+		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding ID to revoke.")),
+	), a.handleRegistryRevokeBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_current_binding",
+		mcp.WithDescription("Return the current (highest-generation, non-revoked, non-expired) binding for target_urn, or not_found. Read-only; no scope required."),
+		mcp.WithString("target_urn", mcp.Required(), mcp.Description("Target URN to look up.")),
+	), a.handleRegistryCurrentBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_list_bindings",
+		mcp.WithDescription("List every binding ever leased for target_urn, newest generation first (audit view). Read-only; no scope required."),
+		mcp.WithString("target_urn", mcp.Required(), mcp.Description("Target URN to look up.")),
+	), a.handleRegistryListBindings)
+}
+
+func (a *Adapter) handleRegistryLeaseBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+		return errRes, nil
+	}
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	targetURN := str(req, "target_urn")
+	sessionID := str(req, "session_id")
+	hostID := str(req, "host_id")
+	attemptID := str(req, "attempt_id")
+	if targetURN == "" || sessionID == "" || hostID == "" || attemptID == "" {
+		return toolError("invalid_request", "target_urn, session_id, host_id and attempt_id are required"), nil
+	}
+	if current, err := a.svc.Registry.CurrentBinding(ctx, targetURN); err == nil {
+		if current.Visibility != registry.VisibilityPublishedLocal {
+			return toolError("conflict", "target_urn is currently bound to a Tether-managed session (visibility "+string(current.Visibility)+"); this tool cannot supersede it"), nil
+		}
+	} else if !errors.Is(err, registry.ErrBindingNotFound) {
+		return mapRegistryErr(err), nil
+	}
+	out, err := a.svc.Registry.LeaseBinding(ctx, targetURN, sessionID, hostID, attemptID,
+		[]string{"pull-only"}, registry.VisibilityPublishedLocal, intSecondsArg(req, "ttl_seconds"))
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
+}
+
+func (a *Adapter) handleRegistryRenewBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+		return errRes, nil
+	}
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	bindingID := str(req, "binding_id")
+	if bindingID == "" {
+		return toolError("invalid_request", "binding_id is required"), nil
+	}
+	out, err := a.svc.Registry.RenewBindingLease(ctx, bindingID, intSecondsArg(req, "ttl_seconds"))
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
+}
+
+func (a *Adapter) handleRegistryRevokeBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+		return errRes, nil
+	}
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	bindingID := str(req, "binding_id")
+	if bindingID == "" {
+		return toolError("invalid_request", "binding_id is required"), nil
+	}
+	if err := a.svc.Registry.RevokeBinding(ctx, bindingID); err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding_id": bindingID}), nil
+}
+
+func (a *Adapter) handleRegistryCurrentBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	targetURN := str(req, "target_urn")
+	if targetURN == "" {
+		return toolError("invalid_request", "target_urn is required"), nil
+	}
+	out, err := a.svc.Registry.CurrentBinding(ctx, targetURN)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
+}
+
+func (a *Adapter) handleRegistryListBindings(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	targetURN := str(req, "target_urn")
+	if targetURN == "" {
+		return toolError("invalid_request", "target_urn is required"), nil
+	}
+	out, err := a.svc.Registry.ListBindingsForTarget(ctx, targetURN)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	if out == nil {
+		out = []registry.RuntimeBinding{}
+	}
+	return toolJSON(map[string]any{"ok": true, "bindings": out}), nil
+}
+
+// registerScopedBindingTools wires the consumer-owned scope/slot role
+// resolution surface (a T04 primitive, HTTP-exposed in T08's
+// internal/api/scoped_bindings.go; this is its MCP counterpart).
+func (a *Adapter) registerScopedBindingTools(s *server.MCPServer) {
+	a.addTool(s, mcp.NewTool("tether_registry_set_scoped_binding",
+		mcp.WithDescription(
+			"Publish a new revision for a consumer-owned scope/slot (e.g. scope "+
+				"'torque:sprint:X' slot 'reviewer'). Pure resolution/mapping -- no workflow, "+
+				"staffing or activation semantics. Prior revisions are preserved untouched "+
+				"(a later rebind never retroactively changes an already-frozen delivery's "+
+				"recorded recipient set). Requires the registry.write scope.",
+		),
+		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope, e.g. 'torque:sprint:CW-20260906-0023'.")),
+		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name, e.g. 'reviewer'.")),
+		mcp.WithArray("target_urns", mcp.Required(), mcp.Description("Target URN(s) filling this slot; more than one means fanout.")),
+		mcp.WithString("created_by", mcp.Required(), mcp.Description("Provenance: who is publishing this revision.")),
+	), a.handleSetScopedBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_resolve_scoped_binding",
+		mcp.WithDescription(
+			"Resolve the current revision for a scope/slot. single=true uses "+
+				"ResolveScopedBindingSingle, erroring (conflict) on zero or multiple current "+
+				"targets rather than picking one -- for a caller that needs exactly one "+
+				"recipient and wants an explicit, observable ambiguity error. Read-only; no "+
+				"scope required.",
+		),
+		mcp.WithString("scope", mcp.Required(), mcp.Description("Scope to resolve.")),
+		mcp.WithString("slot", mcp.Required(), mcp.Description("Slot to resolve.")),
+		mcp.WithBoolean("single", mcp.Description("Require exactly one target (default false: return the full binding/target list).")),
+	), a.handleResolveScopedBinding)
+
+	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_history",
+		mcp.WithDescription("List every revision for a scope/slot, newest first (full provenance history). Read-only; no scope required."),
+		mcp.WithString("scope", mcp.Required(), mcp.Description("Scope to look up.")),
+		mcp.WithString("slot", mcp.Required(), mcp.Description("Slot to look up.")),
+	), a.handleScopedBindingHistory)
+}
+
+func (a *Adapter) handleSetScopedBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+		return errRes, nil
+	}
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	scope := str(req, "scope")
+	slot := str(req, "slot")
+	createdBy := str(req, "created_by")
+	if scope == "" || slot == "" || createdBy == "" {
+		return toolError("invalid_request", "scope, slot and created_by are required"), nil
+	}
+	var targets []string
+	if raw, ok := req.GetArguments()["target_urns"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				targets = append(targets, s)
+			}
+		}
+	}
+	out, err := a.svc.Registry.SetScopedBinding(ctx, scope, slot, targets, nil, createdBy)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
+}
+
+func (a *Adapter) handleResolveScopedBinding(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	scope := str(req, "scope")
+	slot := str(req, "slot")
+	if scope == "" || slot == "" {
+		return toolError("invalid_request", "scope and slot are required"), nil
+	}
+	if boolArg(req, "single") {
+		target, out, err := a.svc.Registry.ResolveScopedBindingSingle(ctx, scope, slot)
+		if err != nil {
+			return mapRegistryErr(err), nil
+		}
+		return toolJSON(map[string]any{"ok": true, "target_urn": target, "binding": out}), nil
+	}
+	out, err := a.svc.Registry.ResolveScopedBinding(ctx, scope, slot)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
+}
+
+func (a *Adapter) handleScopedBindingHistory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if errRes := a.requireRegistry(); errRes != nil {
+		return errRes, nil
+	}
+	scope := str(req, "scope")
+	slot := str(req, "slot")
+	if scope == "" || slot == "" {
+		return toolError("invalid_request", "scope and slot are required"), nil
+	}
+	out, err := a.svc.Registry.ListScopedBindingRevisions(ctx, scope, slot)
+	if err != nil {
+		return mapRegistryErr(err), nil
+	}
+	if out == nil {
+		out = []registry.ScopedBinding{}
+	}
+	return toolJSON(map[string]any{"ok": true, "revisions": out}), nil
+}
+
+// intSecondsArg reads a ttl_seconds-style number argument and converts it
+// to a time.Duration, defaulting to 0 (no expiry) when absent.
+func intSecondsArg(req mcp.CallToolRequest, key string) time.Duration {
+	return time.Duration(intArg(req, key, 0)) * time.Second
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
@@ -447,6 +705,17 @@ func mapRegistryErr(err error) *mcp.CallToolResult {
 		return toolError("internal_error", err.Error())
 	case errors.Is(err, registry.ErrMintExhausted):
 		return toolError("internal_error", err.Error())
+	case errors.Is(err, registry.ErrBindingNotFound):
+		return toolError("not_found", err.Error())
+	case errors.Is(err, registry.ErrStaleGeneration):
+		// A real, expected outcome of concurrent-actor-session handling
+		// (T06) -- the caller's binding was fenced out by a newer
+		// generation, not a server error.
+		return toolError("conflict", err.Error())
+	case errors.Is(err, registry.ErrBindingHasNoTargets):
+		return toolError("not_found", err.Error())
+	case errors.Is(err, registry.ErrAmbiguousBinding):
+		return toolError("conflict", err.Error())
 	default:
 		return toolError("internal_error", err.Error())
 	}
