@@ -20,6 +20,7 @@ package federation_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,24 +69,27 @@ func TestPeerStoreInbox_AgainstRealDaemon_RequiredAsIsSent(t *testing.T) {
 	}
 }
 
-// TestPeerDaemon_CrossAuthorityAccessFailure_Is403AndObservable is T07's
-// "cross-authority access failures are observable" acceptance case.
+// TestRealDaemon_MessageGet_RejectsPresentButWrongAs verifies the real
+// internal/api.Server (not the federation package's hand-rolled fakeDaemon
+// stand-in) rejects a present-but-wrong ?as= with 403 on GET /messages/{id}
+// (T05, ADR 0045).
 //
-// A distinct review pass correctly flagged that a first draft of this
-// test routed through httpPeerStore.Get -- which structurally can never
-// send a WRONG ?as= (the shared messaging.Store interface's Get(ctx, id)
-// carries no identity parameter at all, so peerstore.go never sends `as`
-// for Get), meaning it could only ever observe the weaker "no claim at
-// all" 400 path (internal/api/messages.go's handleMessageGet requires
-// `as`) rather than the actual cross-authority 403 rejection
-// (`as` present but wrong) -- a broken authorization check on that 403
-// branch would NOT have been caught by that version.
-//
-// This version issues a raw HTTP GET with a present-but-wrong ?as=
-// directly against the real peer daemon (the same internal/api.Server a
-// federated hop ultimately talks to), so it actually exercises and
-// verifies the 403 branch itself, not a different, weaker one.
-func TestPeerDaemon_CrossAuthorityAccessFailure_Is403AndObservable(t *testing.T) {
+// A distinct review pass on T07 correctly flagged that an earlier version
+// of this test was mislabeled as a FEDERATION acceptance case ("cross-
+// authority access failure... observable across a hop") when it neither
+// routes through httpPeerStore/Router nor could: messaging.Store's
+// Get(ctx, id) carries no caller identity at all, so peerstore.go's Get
+// now refuses outright (ErrNoIdentityToAssert) rather than ever sending a
+// wrong -- or any -- ?as=. Router.Get also always resolves locally by
+// design (ids carry no authority to route on; see router.go), so a Get
+// request structurally never crosses a federation hop in the first place.
+// This test verifies real, valuable behavior (the actual production
+// handler's authorization, not the hand-rolled fake's), but it is a plain
+// internal/api integration check, not federation/T07 evidence. See
+// TestRealDaemon_FederatedConsume_WrongRecipientObservableAcrossHop below
+// for the genuine federation-routed "cross-boundary failure is observable"
+// proof.
+func TestRealDaemon_MessageGet_RejectsPresentButWrongAs(t *testing.T) {
 	ctx := context.Background()
 	srv := realDaemon(t)
 	ps, err := federation.HTTPDialer(nil)(federation.Peer{Authority: "torque", BaseURL: srv.URL})
@@ -112,5 +116,51 @@ func TestPeerDaemon_CrossAuthorityAccessFailure_Is403AndObservable(t *testing.T)
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "sender or recipient") {
 		t.Fatalf("body = %s, want a descriptive rejection naming the actual cross-authority reason, not a generic/unlabeled failure", body)
+	}
+}
+
+// TestRealDaemon_FederatedConsume_WrongRecipientObservableAcrossHop is the
+// genuine federation-routed proof for T07's "cross-authority access
+// failure... observable" acceptance case: unlike Get/Thread (which never
+// cross a hop at all, see above), Consume DOES route across a real
+// federation hop by recipient.Authority (router.go), and its recipient
+// address is exactly what peerstore.go asserts as ?as= -- so a caller
+// addressing the wrong recipient produces a genuine, peer-daemon-enforced
+// 409 that must propagate back through httpPeerStore as a distinguishable
+// error, not a swallowed generic failure or a false success.
+func TestRealDaemon_FederatedConsume_WrongRecipientObservableAcrossHop(t *testing.T) {
+	ctx := context.Background()
+	srv := realDaemon(t)
+	peerStore, err := federation.HTTPDialer(nil)(federation.Peer{Authority: "torque", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("HTTPDialer: %v", err)
+	}
+	local, err := store.Open(t.TempDir() + "/local.db")
+	if err != nil {
+		t.Fatalf("open local store: %v", err)
+	}
+	t.Cleanup(func() { local.Close() })
+	r := federation.NewRouter(local.MessagingStore(), "tether")
+	if err := r.Register("torque", peerStore); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "torque", ID: "real-owner"}
+	env := messaging.Envelope{Kind: messaging.MsgKindNotice, From: messaging.Address{Kind: messaging.KindAgent, Authority: "tether", ID: "sender"}, To: to}
+	sent, err := r.Send(ctx, env)
+	if err != nil {
+		t.Fatalf("Send (routed to the peer authority): %v", err)
+	}
+
+	imposter := messaging.Address{Kind: messaging.KindAgent, Authority: "torque", ID: "imposter"}
+	err = r.Consume(ctx, sent.ID, imposter)
+	if !errors.Is(err, federation.ErrWrongRecipient) {
+		t.Fatalf("Consume across the real federation hop as the wrong recipient: got %v, want federation.ErrWrongRecipient (observable, distinguishable -- not a generic 500 or a silent success)", err)
+	}
+
+	// The genuine recipient can still consume it -- the failure above was
+	// real authorization, not a broken/wedged delivery.
+	if err := r.Consume(ctx, sent.ID, to); err != nil {
+		t.Fatalf("Consume as the real recipient: %v", err)
 	}
 }

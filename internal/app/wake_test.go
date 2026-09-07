@@ -20,6 +20,8 @@ package app
 //   TestAttemptWake_BusySession_NacksWithoutSendTurn
 //   TestAttemptWake_OfflineSession_NoClaimAttempted
 //   TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy
+//   TestResolveActorSession_ExpiredPullOnlyLease_StillFencesNoLegacyFallback
+//   TestResolveActorSession_ReclaimedFromBridgeThenLapsed_FallsBackToLegacy
 //
 // Acceptance #2 (crash at persist/claim/host-accept/turn-submit/receipt
 // boundaries leaves replayable evidence, no falsely acknowledged loss):
@@ -300,6 +302,100 @@ func TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy(t *testing.
 	}
 	if got != "s-legacy" {
 		t.Fatalf("resolveActorSession (post-expiry) = %q, want %q (an expired lease must fall back to the legacy scan, not report a permanently stuck offline actor)", got, "s-legacy")
+	}
+}
+
+// TestResolveActorSession_ExpiredPullOnlyLease_StillFencesNoLegacyFallback
+// is the negative case a distinct review pass on T06/T07 found missing: a
+// PULL-ONLY binding's lease expiring must NOT behave like
+// TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy above --
+// CurrentBinding's ErrBindingNotFound is ambiguous between "never leased"
+// and "leased but lapsed," and only the pull-only case must keep fencing
+// after its own lease lapses (e.g. a published-local bridge that missed a
+// renewal window). Falling through to the legacy scan here would let an
+// unrelated same-logical-agent-ID running session receive a wake that was
+// never authorized -- exactly the unauthorized reroute the architecture
+// and this file's own doc comment forbid.
+func TestResolveActorSession_ExpiredPullOnlyLease_StillFencesNoLegacyFallback(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("bridge-session-1", true, agentsessions.LiveStateIdle)
+	rt.setAlive("s-unrelated-legacy", true, agentsessions.LiveStateIdle)
+
+	if err := st.CreateSession(store.SessionRow{ID: "s-unrelated-legacy", LogicalAgentID: "worker", State: "running"}, nil); err != nil {
+		t.Fatalf("create legacy session: %v", err)
+	}
+
+	target := registry.LogicalAgentBindingTarget("worker")
+	if _, err := reg.LeaseBinding(ctx, target, "bridge-session-1", "external-bridge-host", "attempt-1",
+		[]string{"pull-only"}, registry.VisibilityPublishedLocal, 20*time.Millisecond); err != nil {
+		t.Fatalf("lease pull-only binding with short ttl: %v", err)
+	}
+
+	// While the lease is still live, pull-only fencing applies as already
+	// covered by TestResolveActorSession_PullOnlyBinding_NeverResolvesEvenWhenHealthWouldMatch.
+	time.Sleep(40 * time.Millisecond)
+
+	got, err := resolveActorSession(ctx, st, reg, rt.seam(), "worker")
+	if err != nil {
+		t.Fatalf("resolve (post-expiry): %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveActorSession (pull-only lease expired) = %q, want \"\" -- an unrenewed published-local bridge must never be silently rerouted to an unrelated running session for the same logical agent", got)
+	}
+}
+
+// TestResolveActorSession_ReclaimedFromBridgeThenLapsed_FallsBackToLegacy
+// is the negative case a SECOND distinct review pass found the first fix
+// above got wrong: it originally checked pull-only across the target's
+// ENTIRE binding history, not just its most recent generation. That is too
+// broad -- a target that was briefly bridge-bound, then legitimately
+// reclaimed by Tether's own internal launch path (a fresh, non-pull-only
+// generation superseding the bridge's), and whose Tether-hosted session
+// later stopped normally (revoking ITS OWN binding), must fall through to
+// the legacy heuristic like any other ordinary stopped session -- not stay
+// permanently fenced by a bridge generation that is no longer the actor's
+// most recent owner of record. Only the highest generation's visibility
+// should ever decide this, matching CurrentBinding's own generation-
+// fencing rule for the live case.
+func TestResolveActorSession_ReclaimedFromBridgeThenLapsed_FallsBackToLegacy(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s-unrelated-legacy", true, agentsessions.LiveStateIdle)
+
+	if err := st.CreateSession(store.SessionRow{ID: "s-unrelated-legacy", LogicalAgentID: "worker", State: "running"}, nil); err != nil {
+		t.Fatalf("create legacy session: %v", err)
+	}
+
+	target := registry.LogicalAgentBindingTarget("worker")
+	// Gen 1: a bridge leases pull-only with a short ttl that lapses.
+	if _, err := reg.LeaseBinding(ctx, target, "bridge-session-1", "external-bridge-host", "attempt-1",
+		[]string{"pull-only"}, registry.VisibilityPublishedLocal, 20*time.Millisecond); err != nil {
+		t.Fatalf("lease pull-only gen 1: %v", err)
+	}
+	time.Sleep(40 * time.Millisecond)
+
+	// Gen 2: Tether's own launch path reclaims the target (private-local,
+	// no ttl) -- the legitimate exemption api/bindings.go documents.
+	reclaimed, err := reg.LeaseBinding(ctx, target, "s-reclaimed", "local", "s-reclaimed", nil, registry.VisibilityPrivateLocal, 0)
+	if err != nil {
+		t.Fatalf("lease private-local gen 2 (reclaim): %v", err)
+	}
+
+	// Gen 2's own session later stops normally and revokes its binding --
+	// an ordinary lifecycle event, unrelated to the earlier bridge.
+	if err := reg.RevokeBinding(ctx, reclaimed.ID); err != nil {
+		t.Fatalf("revoke gen 2: %v", err)
+	}
+
+	got, err := resolveActorSession(ctx, st, reg, rt.seam(), "worker")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "s-unrelated-legacy" {
+		t.Fatalf("resolveActorSession = %q, want %q -- the actor's most recent binding (gen 2) was never pull-only, so its later revocation must fall through to the legacy heuristic like any other stopped session, not stay fenced by an older, superseded bridge generation", got, "s-unrelated-legacy")
 	}
 }
 

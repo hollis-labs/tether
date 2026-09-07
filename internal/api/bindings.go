@@ -97,39 +97,36 @@ func (s *Server) handleBindingLease(w http.ResponseWriter, r *http.Request) {
 			`capabilities must be exactly ["pull-only"] -- push-notified bridging over a caller-supplied webhook is not implemented; the bridge pulls its own mailbox instead`)
 		return
 	}
-	// A distinct review pass flagged a real gap here: LeaseBinding itself
-	// performs no ownership check at all -- it unconditionally mints the
-	// next generation for whatever target_urn is named. Without a guard,
-	// any same-host caller who knows/guesses a logical_agent_id could
-	// silence wake delivery for a CURRENTLY RUNNING, healthy local
-	// session with one call (isPullOnly in internal/app/wake.go would
-	// then permanently suppress its wake path until an operator noticed
-	// and revoked the binding). This endpoint may only supersede a
-	// binding that is ALREADY published-local (or supersede nothing, for
-	// a never-bound target) -- taking over a private-local/tether-hosted
-	// binding (a real Tether-managed session) is refused, observably.
-	// Tether's OWN internal launch path (session_lifecycle.go's
-	// leaseActorBinding) is deliberately NOT subject to this guard --
-	// a legitimate host reactivating a durable actor that was previously
-	// pull-only-bound must be able to reclaim it freely; only THIS
-	// external, self-asserted HTTP surface is restricted. The check-then-
-	// lease sequence below is not atomic (a narrow TOCTOU window exists
-	// between the read and LeaseBinding's own write), matching this
-	// endpoint's existing same-host trust posture -- a courtesy/policy
-	// guard against casual takeover, not a hardened security boundary.
-	if current, err := s.Registry.CurrentBinding(r.Context(), req.TargetURN); err == nil {
-		if current.Visibility != registry.VisibilityPublishedLocal {
+	// LeaseBinding itself performs no ownership check at all -- it
+	// unconditionally mints the next generation for whatever target_urn is
+	// named. Without a guard, any same-host caller who knows/guesses a
+	// logical_agent_id could silence wake delivery for a CURRENTLY
+	// RUNNING, healthy local session with one call (isPullOnly in
+	// internal/app/wake.go would then permanently suppress its wake path
+	// until an operator noticed and revoked the binding). This endpoint
+	// may only supersede a binding that is ALREADY published-local (or
+	// supersede nothing, for a never-bound target) -- taking over a
+	// private-local/tether-hosted binding (a real Tether-managed session)
+	// is refused, observably. Tether's OWN internal launch path
+	// (session_lifecycle.go's leaseActorBinding) is deliberately NOT
+	// subject to this guard -- a legitimate host reactivating a durable
+	// actor that was previously pull-only-bound must be able to reclaim it
+	// freely; only THIS external, self-asserted HTTP surface is
+	// restricted. LeaseBindingUnlessVisibility checks the current binding
+	// and mints the new one inside ONE transaction (registry/bindings.go)
+	// -- a distinct review pass found the original check-then-lease
+	// sequence here raced against Tether's own internal launch path
+	// committing a fresh binding in the gap between the two calls, which
+	// this closes rather than merely documenting.
+	ttl := time.Duration(req.TTLSeconds) * time.Second
+	b, err := s.Registry.LeaseBindingUnlessVisibility(r.Context(), req.TargetURN, req.SessionID, req.HostID, req.AttemptID, req.Capabilities, registry.VisibilityPublishedLocal, ttl,
+		registry.VisibilityPrivateLocal, registry.VisibilityTetherHosted)
+	if err != nil {
+		if errors.Is(err, registry.ErrVisibilityConflict) {
 			writeError(w, http.StatusConflict, CodeConflict,
-				"target_urn is currently bound to a Tether-managed session (visibility "+string(current.Visibility)+"); this endpoint cannot supersede it")
+				"target_urn is currently bound to a Tether-managed session; this endpoint cannot supersede it: "+err.Error())
 			return
 		}
-	} else if !errors.Is(err, registry.ErrBindingNotFound) {
-		writeBindingError(w, err)
-		return
-	}
-	ttl := time.Duration(req.TTLSeconds) * time.Second
-	b, err := s.Registry.LeaseBinding(r.Context(), req.TargetURN, req.SessionID, req.HostID, req.AttemptID, req.Capabilities, registry.VisibilityPublishedLocal, ttl)
-	if err != nil {
 		writeBindingError(w, err)
 		return
 	}

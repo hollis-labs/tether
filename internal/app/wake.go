@@ -21,9 +21,11 @@ package app
 //     for a different running session (that would be exactly the kind of
 //     unauthorized reroute of a stable-actor destination the architecture
 //     forbids: "stable actor destinations follow authorized activation").
-//     Only when NO binding has ever been leased for the target does the
-//     legacy newest-running-session scan run, as a documented compatibility
-//     fallback for actors nobody has explicitly bound yet.
+//     The legacy newest-running-session scan runs only when no binding has
+//     ever been leased for the target, or every prior lapsed binding was
+//     non-pull-only -- a pull-only binding's "never wake-targetable" fence
+//     survives its own lease expiry, so an unrenewed published-local
+//     bridge is never silently rerouted to an unrelated running session.
 //   - AttemptWake drives the actual go-messaging delivery.Store Claim/Ack/
 //     Nack sequence around a wake attempt: Claim, Ack(host_accepted) the
 //     moment Tether is about to hand off to a concrete session, then check
@@ -144,7 +146,46 @@ func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Ser
 		if !errors.Is(err, registry.ErrBindingNotFound) {
 			return "", fmt.Errorf("resolve actor session: current binding: %w", err)
 		}
-		// Never explicitly bound: fall through to the legacy heuristic.
+		// CurrentBinding's ErrBindingNotFound is ambiguous by itself: it
+		// covers "never leased," "every binding revoked," AND "every
+		// binding's lease expired" alike (see its own doc comment in
+		// bindings.go). Only the first case is safe to treat as "fall
+		// through to the legacy compatibility heuristic" -- a lapsed lease
+		// on a binding that was pull-only must still fence exactly like a
+		// live one: a published-local bridge's owner must never be
+		// silently substituted by an unrelated same-logical-agent-ID
+		// session just because its lease wasn't renewed in time (a
+		// realistic case: a bridge process misses a renewal window).
+		//
+		// The check below looks ONLY at the single highest-generation
+		// binding (ListBindingsForTarget's own contract: "newest generation
+		// first"), not the whole history -- an earlier draft of this fix
+		// scanned every prior binding and got this wrong: a target that was
+		// briefly bridge-bound, then legitimately reclaimed by Tether's own
+		// internal launch path (session_lifecycle.go's leaseActorBinding,
+		// which supersedes with a fresh, non-pull-only generation with no
+		// visibility guard -- see api/bindings.go's comment on why that
+		// path is exempt), and whose Tether-hosted session LATER stopped
+		// and revoked its own binding, must fall through to the legacy
+		// heuristic like any other ordinary stopped session -- not be
+		// permanently fenced forever by a bridge binding several
+		// generations back that is no longer the actor's most recent
+		// owner of record. Only the MOST RECENT generation's visibility
+		// answers "is this actor currently a published-local bridge,"
+		// exactly the same generation-fencing rule CurrentBinding itself
+		// uses for the live case.
+		ever, listErr := reg.ListBindingsForTarget(ctx, target)
+		if listErr != nil {
+			return "", fmt.Errorf("resolve actor session: list bindings for fallback check: %w", listErr)
+		}
+		if len(ever) > 0 && isPullOnly(ever[0]) {
+			return "", nil
+		}
+		// Never explicitly bound, or the most recent binding was lapsed
+		// non-pull-only (e.g. a stopped Tether-hosted session that revoked
+		// or never renewed): fall through to the legacy heuristic. This is
+		// the same compatibility behavior a never-bound actor already
+		// gets, not a bypass of an active fencing guarantee.
 	}
 	return legacyNewestRunningSession(st, rt, logicalAgentID)
 }

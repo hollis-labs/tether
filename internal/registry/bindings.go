@@ -97,12 +97,35 @@ var ErrStaleGeneration = errors.New("registry: binding generation superseded")
 // ErrBindingNotFound is returned when a binding id doesn't exist.
 var ErrBindingNotFound = errors.New("registry: binding not found")
 
+// ErrVisibilityConflict is returned by LeaseBindingUnlessVisibility when a
+// live current binding's visibility is in the caller's blocked set.
+var ErrVisibilityConflict = errors.New("registry: binding visibility conflict")
+
 // LeaseBinding mints a new binding for targetURN at generation
 // (current max + 1), inside one transaction so two concurrent leasers for
 // the same target cannot both win the same generation number. ttl <= 0
 // means no expiry (the binding is current until explicitly revoked or
 // superseded by a newer generation).
 func (s *Storage) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration) (RuntimeBinding, error) {
+	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, nil)
+}
+
+// LeaseBindingUnlessVisibility mints a new binding exactly like LeaseBinding,
+// but atomically refuses (ErrVisibilityConflict) if a live (non-revoked,
+// non-expired) current binding exists for targetURN whose visibility is in
+// blocked. The current-binding check and the generation mint/insert run
+// inside the SAME transaction, so there is no window between reading the
+// current binding and committing a new one -- unlike a caller doing its own
+// CurrentBinding-then-LeaseBinding sequence, which race-loses against a
+// concurrent leaser that commits in between (a real gap a distinct review
+// pass found in internal/api/bindings.go's external HTTP surface: an
+// external caller and Tether's own internal launch path racing to bind the
+// same target_urn).
+func (s *Storage) LeaseBindingUnlessVisibility(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked ...PublicationVisibility) (RuntimeBinding, error) {
+	return s.leaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, blocked)
+}
+
+func (s *Storage) leaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked []PublicationVisibility) (RuntimeBinding, error) {
 	if targetURN == "" || sessionID == "" || hostID == "" || attemptID == "" {
 		return RuntimeBinding{}, fmt.Errorf("registry: lease binding: target_urn, session_id, host_id and attempt_id are required")
 	}
@@ -116,6 +139,26 @@ func (s *Storage) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID
 		return RuntimeBinding{}, fmt.Errorf("registry: lease binding: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	if len(blocked) > 0 {
+		nowStr := formatTime(time.Now().UTC())
+		current, err := scanBindingTx(ctx, tx,
+			`SELECT `+bindingColumns+` FROM runtime_bindings
+			 WHERE target_urn = ? AND revoked_at IS NULL
+			   AND (lease_expires_at IS NULL OR lease_expires_at > ?)
+			 ORDER BY generation DESC LIMIT 1`,
+			targetURN, nowStr)
+		if err != nil && !errors.Is(err, ErrBindingNotFound) {
+			return RuntimeBinding{}, fmt.Errorf("registry: lease binding: read current binding: %w", err)
+		}
+		if err == nil {
+			for _, v := range blocked {
+				if current.Visibility == v {
+					return RuntimeBinding{}, fmt.Errorf("%w: target_urn is currently bound with visibility %s", ErrVisibilityConflict, current.Visibility)
+				}
+			}
+		}
+	}
 
 	var maxGen sql.NullInt64
 	if err := tx.QueryRowContext(ctx,

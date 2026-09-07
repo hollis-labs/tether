@@ -70,6 +70,7 @@ type RegistryService interface {
 	// RuntimeBinding methods (T07, messaging vNext): the published-local
 	// bridge registration surface. See bindings.go.
 	LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility registry.PublicationVisibility, ttl time.Duration) (registry.RuntimeBinding, error)
+	LeaseBindingUnlessVisibility(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility registry.PublicationVisibility, ttl time.Duration, blocked ...registry.PublicationVisibility) (registry.RuntimeBinding, error)
 	RenewBindingLease(ctx context.Context, bindingID string, ttl time.Duration) (registry.RuntimeBinding, error)
 	RevokeBinding(ctx context.Context, bindingID string) error
 	CurrentBinding(ctx context.Context, targetURN string) (registry.RuntimeBinding, error)

@@ -122,21 +122,22 @@ func (s *httpPeerStore) Send(ctx context.Context, env messaging.Envelope) (messa
 	return out, nil
 }
 
-func (s *httpPeerStore) Get(ctx context.Context, id string) (messaging.Envelope, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url("messages", id), nil)
-	if err != nil {
-		return messaging.Envelope{}, err
-	}
-	resp, err := s.do(req)
-	if err != nil {
-		return messaging.Envelope{}, err
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	var out messaging.Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return messaging.Envelope{}, fmt.Errorf("federation: decode get response: %w", err)
-	}
-	return out, nil
+// ErrNoIdentityToAssert is returned by Get and Thread: unlike Inbox/Send/
+// Consume/Subscribe, messaging.Store's Get(ctx, id) and Thread(ctx,
+// threadID, filter) signatures carry no caller/recipient address at all --
+// there is no value this adapter could put in the peer's required ?as=
+// (ADR 0045, required since T05) that would actually be the caller's own
+// claimed identity rather than a guess. Router.Get/Thread (router.go)
+// already never call this hop for exactly this reason ("ids carry no
+// authority to route on" -- both always resolve locally), so this error is
+// reachable only if a future caller wires a peer store into a path this
+// package's own Router does not use today. Failing fast and explicitly
+// here is strictly better than silently omitting ?as= and letting the
+// call round-trip to a real peer just to get a generic 400.
+var ErrNoIdentityToAssert = errors.New("federation: messaging.Store's Get/Thread signature carries no caller identity to assert via the peer's required ?as=")
+
+func (s *httpPeerStore) Get(_ context.Context, _ string) (messaging.Envelope, error) {
+	return messaging.Envelope{}, ErrNoIdentityToAssert
 }
 
 func (s *httpPeerStore) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
@@ -155,12 +156,10 @@ func (s *httpPeerStore) Inbox(ctx context.Context, to messaging.Address, f messa
 	return s.fetchEnvelopes(ctx, u.String())
 }
 
-func (s *httpPeerStore) Thread(ctx context.Context, threadID string, f messaging.Filter) ([]messaging.Envelope, error) {
-	u := s.base.JoinPath("messages", "thread", threadID)
-	q := url.Values{}
-	applyFilter(q, f)
-	u.RawQuery = q.Encode()
-	return s.fetchEnvelopes(ctx, u.String())
+// Thread has the same missing-identity limitation as Get -- see
+// ErrNoIdentityToAssert.
+func (s *httpPeerStore) Thread(_ context.Context, _ string, _ messaging.Filter) ([]messaging.Envelope, error) {
+	return nil, ErrNoIdentityToAssert
 }
 
 // fetchEnvelopes GETs a route that returns {"messages": [...]} and decodes

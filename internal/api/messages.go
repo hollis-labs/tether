@@ -866,7 +866,18 @@ func (s *Server) leaseMatchesMessage(ctx context.Context, w http.ResponseWriter,
 
 func writeClaimError(w http.ResponseWriter, err error) {
 	switch {
-	case isNotFound(err):
+	case isNotFound(err), errors.Is(err, delivery.ErrNotFound):
+		// delivery.ErrNotFound is distinct from the messaging-level
+		// sentinels isNotFound checks and previously fell through to the
+		// generic 500 default below -- the same "silent 500 on an
+		// otherwise-observable outcome" class this switch already patches
+		// for ErrDeadlineExceeded/ErrNoDeliveryReady. Not currently
+		// reachable through this handler's own callers (leaseMatchesMessage
+		// already 400s an unrelated delivery id before Ack/Nack runs, and
+		// go-messaging's sqlite Ack/Nack report a lease/attempt mismatch as
+		// ErrStaleLease, not ErrNotFound) -- defensive completeness for the
+		// sentinel's other callers (e.g. GetDelivery), not a demonstrated
+		// live path today.
 		writeError(w, http.StatusNotFound, CodeNotFound, "message not found")
 	case isWrongRecipient(err):
 		writeError(w, http.StatusConflict, CodeConflict, "caller is not the intended recipient")

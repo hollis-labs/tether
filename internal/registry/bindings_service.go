@@ -16,6 +16,15 @@ func (s *Service) LeaseBinding(ctx context.Context, targetURN, sessionID, hostID
 	return s.storage.LeaseBinding(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl)
 }
 
+// LeaseBindingUnlessVisibility is the Service-level entry point for an
+// atomically guarded lease. See bindings.go.
+func (s *Service) LeaseBindingUnlessVisibility(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked ...PublicationVisibility) (RuntimeBinding, error) {
+	if targetURN == "" {
+		return RuntimeBinding{}, fmt.Errorf("registry: lease binding: %w: target_urn required", ErrInvalidRequest)
+	}
+	return s.storage.LeaseBindingUnlessVisibility(ctx, targetURN, sessionID, hostID, attemptID, capabilities, visibility, ttl, blocked...)
+}
+
 // RenewBindingLease extends an existing binding's lease. See bindings.go.
 func (s *Service) RenewBindingLease(ctx context.Context, bindingID string, ttl time.Duration) (RuntimeBinding, error) {
 	if bindingID == "" {

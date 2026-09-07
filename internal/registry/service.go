@@ -86,6 +86,9 @@ type storageBackend interface {
 
 	// T02 leased runtime bindings.
 	LeaseBinding(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration) (RuntimeBinding, error)
+	// T07: atomically guarded variant closing a TOCTOU window a distinct
+	// review pass found in the external HTTP binding-lease surface.
+	LeaseBindingUnlessVisibility(ctx context.Context, targetURN, sessionID, hostID, attemptID string, capabilities []string, visibility PublicationVisibility, ttl time.Duration, blocked ...PublicationVisibility) (RuntimeBinding, error)
 	RenewLease(ctx context.Context, bindingID string, ttl time.Duration) (RuntimeBinding, error)
 	RevokeBinding(ctx context.Context, bindingID string) error
 	CurrentBinding(ctx context.Context, targetURN string) (RuntimeBinding, error)

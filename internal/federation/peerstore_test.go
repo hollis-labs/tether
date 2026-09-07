@@ -147,7 +147,12 @@ func peerStore(t *testing.T, baseURL string) messaging.Store {
 	return st
 }
 
-func TestPeerStoreSendGet(t *testing.T) {
+// TestPeerStoreSend proves Send still round-trips over the hop; Get's
+// honest-failure behavior is covered separately below (a distinct review
+// pass found Get/Thread cannot correctly assert the peer's required ?as=
+// -- see ErrNoIdentityToAssert -- so Get no longer attempts the round trip
+// at all).
+func TestPeerStoreSend(t *testing.T) {
 	ctx := context.Background()
 	srv, ms := fakeDaemon(t)
 	ps := peerStore(t, srv.URL)
@@ -162,17 +167,39 @@ func TestPeerStoreSendGet(t *testing.T) {
 	if _, err := ms.Get(ctx, sent.ID); err != nil {
 		t.Fatalf("remote store missing the sent envelope: %v", err)
 	}
+}
 
-	got, err := ps.Get(ctx, sent.ID)
+// TestPeerStoreGetAndThread_FailHonestly_NoIdentityToAssert is the
+// distinct-review-pass fix: messaging.Store's Get(ctx, id) and
+// Thread(ctx, threadID, filter) signatures carry no caller/recipient
+// address, so this adapter has nothing correct to put in the peer's
+// required ?as= (ADR 0045). Before this fix, both silently omitted ?as=
+// and would 400 against a real T05+ peer -- the same latent regression
+// class T05 introduced for Inbox and this task fixed there. Failing fast,
+// client-side, with a clear sentinel is strictly better than a confusing
+// network round trip that always 400s.
+func TestPeerStoreGetAndThread_FailHonestly_NoIdentityToAssert(t *testing.T) {
+	ctx := context.Background()
+	srv, _ := fakeDaemon(t)
+	ps := peerStore(t, srv.URL)
+
+	to := addr("torque", "worker")
+	env := envTo(to)
+	env.ThreadID = "thread-1"
+	sent, err := ps.Send(ctx, env)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
-	if got.ID != sent.ID || got.To.URN() != sent.To.URN() {
-		t.Fatalf("Get round-trip mismatch: got %+v", got)
+
+	if _, err := ps.Get(ctx, sent.ID); !errors.Is(err, ErrNoIdentityToAssert) {
+		t.Fatalf("Get: got %v, want ErrNoIdentityToAssert", err)
+	}
+	if _, err := ps.Thread(ctx, "thread-1", messaging.Filter{}); !errors.Is(err, ErrNoIdentityToAssert) {
+		t.Fatalf("Thread: got %v, want ErrNoIdentityToAssert", err)
 	}
 }
 
-func TestPeerStoreInboxAndThread(t *testing.T) {
+func TestPeerStoreInbox(t *testing.T) {
 	ctx := context.Background()
 	srv, _ := fakeDaemon(t)
 	ps := peerStore(t, srv.URL)
@@ -190,14 +217,6 @@ func TestPeerStoreInboxAndThread(t *testing.T) {
 	}
 	if len(inbox) != 1 {
 		t.Fatalf("Inbox returned %d envelopes, want 1", len(inbox))
-	}
-
-	thread, err := ps.Thread(ctx, "thread-1", messaging.Filter{})
-	if err != nil {
-		t.Fatalf("Thread: %v", err)
-	}
-	if len(thread) != 1 || thread[0].ThreadID != "thread-1" {
-		t.Fatalf("Thread returned %d envelopes, want the one in thread-1", len(thread))
 	}
 }
 
@@ -223,10 +242,6 @@ func TestPeerStoreErrorMapping(t *testing.T) {
 	ctx := context.Background()
 	srv, _ := fakeDaemon(t)
 	ps := peerStore(t, srv.URL)
-
-	if _, err := ps.Get(ctx, "no-such-id"); !errors.Is(err, messaging.ErrNotFound) {
-		t.Fatalf("Get of a missing id: got %v, want ErrNotFound", err)
-	}
 
 	// Send to one recipient, then consume as a different one → 409.
 	sent, err := ps.Send(ctx, envTo(addr("torque", "alice")))
