@@ -215,6 +215,9 @@ var daemonRunCmd = &cobra.Command{
 			WakeSweeper:         svc,
 			LogsDir:             filepath.Join(stateRoot, "logs"),
 			SessionBootstrap:    svc.Store,
+			DeliveryTrace:       svc.Store,
+			DeliveryRepair:      svc.Store,
+			Retention:           svc.Store,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.

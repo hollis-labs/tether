@@ -300,6 +300,199 @@ var messageCancelCmd = &cobra.Command{
 	},
 }
 
+var messageTraceCmd = &cobra.Command{
+	Use:   "trace <message-id>",
+	Short: "Show the structured delivery trace for a message (T09)",
+	Long: `Show who sent to whom, why a binding resolved, which host
+accepted, which turn was submitted, and why retry/expiry occurred, by
+joining message/delivery/attempt/receipt data with binding history.
+
+Accepts a Tether message id (the common case). A group-fanout
+recipient's delivery has no corresponding message-table row; tracing one
+specific fanout delivery is not yet supported via this command (use the
+redrive command's delivery-id support to repair one, and inspect the
+group's canonical message for the room-level view).`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.MessageTrace(cmdCtx(cmd), args[0])
+		if err != nil {
+			return classifyErr(err)
+		}
+		if messageJSONFlag {
+			return printJSON(out)
+		}
+		printTrace(out)
+		return nil
+	},
+}
+
+var (
+	messageRedriveAuthorizedBy string
+	messageRedriveDeadline     int
+)
+
+var messageRedriveCmd = &cobra.Command{
+	Use:   "redrive <message-id-or-delivery-id>",
+	Short: "Authorized retry of a dead-lettered delivery (T09)",
+	Long: `Reopen a dead-lettered delivery for retry. Idempotent: calling
+this again on an already-retryable delivery reports redriven=false, not
+an error. Accepts a Tether message id for the common 1:1 case, or a
+literal delivery id to address one specific group-fanout recipient's
+delivery (group-fanout deliveries have no message-table row of their
+own) -- use 'mux messages trace' or an operator's own inspection to find
+that delivery id.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if messageRedriveAuthorizedBy == "" {
+			return validationErr("messages redrive: --authorized-by <urn> is required")
+		}
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.MessageRedrive(cmdCtx(cmd), args[0], messageRedriveAuthorizedBy, messageRedriveDeadline)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if messageJSONFlag {
+			return printJSON(out)
+		}
+		if out.Redriven {
+			fmt.Printf("redriven: %s (delivery %s) status=%s\n", out.MessageID, out.DeliveryID, out.Status)
+		} else {
+			fmt.Printf("no-op: %s (delivery %s) already status=%s\n", out.MessageID, out.DeliveryID, out.Status)
+		}
+		return nil
+	},
+}
+
+var messageRetentionCandidatesHours int
+
+var messageRetentionCmd = &cobra.Command{
+	Use:   "retention",
+	Short: "Explicit, manual-only message-body retention controls (T09)",
+	Long: `Preview and purge message bodies. Nothing purges automatically --
+every purge is a distinct, explicitly authorized operator action on one
+message at a time. A message with a pending delivery obligation (still
+pending/leased/retry_scheduled, or dead-lettered and therefore still
+repairable via 'mux messages redrive') is refused, never silently
+skipped or silently purged.`,
+}
+
+var messageRetentionCandidatesCmd = &cobra.Command{
+	Use:   "candidates",
+	Short: "Preview messages eligible for a body purge (read-only)",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.MessageRetentionCandidates(cmdCtx(cmd), messageRetentionCandidatesHours)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if messageJSONFlag {
+			return printJSON(out)
+		}
+		if len(out) == 0 {
+			fmt.Println("(no retention candidates)")
+			return nil
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "MESSAGE_ID\tCREATED_AT\tSTATUS\tELIGIBLE")
+		for _, cand := range out {
+			status := cand.Status
+			if !cand.HasDelivery {
+				status = "(no delivery tracking)"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%v\n", cand.MessageID, cand.CreatedAt, status, cand.Eligible)
+		}
+		return tw.Flush()
+	},
+}
+
+var messagePurgeAuthorizedBy string
+
+var messagePurgeCmd = &cobra.Command{
+	Use:   "purge <message-id>",
+	Short: "Purge one message's body/metadata (T09)",
+	Long: `Clears one message's payload and metadata, leaving its
+structural/trace fields (id, kind, from, to, thread, timestamps) intact.
+Irreversible. Refuses with an error if the message has a pending
+delivery obligation -- see 'mux messages retention candidates' to check
+eligibility first. Idempotent: purging an already-purged message
+succeeds again with purged=false.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if messagePurgeAuthorizedBy == "" {
+			return validationErr("messages retention purge: --authorized-by <urn> is required")
+		}
+		c, err := newDaemonClient(catalogPath)
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.MessagePurge(cmdCtx(cmd), args[0], messagePurgeAuthorizedBy)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if messageJSONFlag {
+			return printJSON(out)
+		}
+		if out.Purged {
+			fmt.Printf("purged: %s\n", out.MessageID)
+		} else {
+			fmt.Printf("no-op: %s (already purged, or had no body)\n", out.MessageID)
+		}
+		return nil
+	},
+}
+
+// printTrace writes a stable, line-oriented rendering of a MessageTraceResult.
+func printTrace(out client.MessageTraceResult) {
+	fmt.Printf("message_id: %s\n", out.MessageID)
+	fmt.Printf("from:       %s\n", out.From)
+	fmt.Printf("to:         %s\n", out.To)
+	fmt.Printf("kind:       %s\n", out.Kind)
+	if out.ThreadID != "" {
+		fmt.Printf("thread_id:  %s\n", out.ThreadID)
+	}
+	if out.DeliveryID == "" {
+		fmt.Println("delivery:   (no delivery-core tracking for this message)")
+		return
+	}
+	fmt.Printf("delivery_id: %s\n", out.DeliveryID)
+	fmt.Printf("status:      %s\n", out.Status)
+	fmt.Printf("attempt_count: %d\n", out.AttemptCount)
+	if out.DeadLetterReason != "" {
+		fmt.Printf("dead_letter_reason: %s\n", out.DeadLetterReason)
+	}
+	for i, a := range out.Attempts {
+		fmt.Printf("--- attempt %d ---\n", i+1)
+		fmt.Printf("  holder:             %s\n", a.Holder)
+		if a.BindingGeneration != 0 {
+			fmt.Printf("  binding_generation: %d\n", a.BindingGeneration)
+		}
+		if a.HostID != "" {
+			fmt.Printf("  host_id:            %s\n", a.HostID)
+		}
+		fmt.Printf("  stage:              %s\n", a.Stage)
+		if a.HostAcceptedAt != "" {
+			fmt.Printf("  host_accepted_at:   %s\n", a.HostAcceptedAt)
+		}
+		if a.TurnSubmittedAt != "" {
+			fmt.Printf("  turn_submitted_at:  %s\n", a.TurnSubmittedAt)
+		}
+		if a.Error != "" {
+			fmt.Printf("  error:              %s (retryable=%v)\n", a.Error, a.Retryable)
+		}
+	}
+}
+
 var messageReadCmd = &cobra.Command{
 	Use:   "read <message-id>",
 	Short: "Mark a message read by its recipient",
@@ -481,6 +674,13 @@ func init() {
 		c.Flags().StringVar(&messageAs, "as", "", "sender or recipient URN claiming this read (T05/ADR 0045)")
 	}
 
+	messageRedriveCmd.Flags().StringVar(&messageRedriveAuthorizedBy, "authorized-by", "", "URN recorded as provenance for this repair")
+	messageRedriveCmd.Flags().IntVar(&messageRedriveDeadline, "new-deadline-seconds", 0, "new delivery deadline in seconds from now; 0 means no deadline")
+
+	messageRetentionCandidatesCmd.Flags().IntVar(&messageRetentionCandidatesHours, "older-than-hours", 0, "lookback window in hours; 0 uses the daemon's default")
+	messagePurgeCmd.Flags().StringVar(&messagePurgeAuthorizedBy, "authorized-by", "", "URN recorded as provenance for this purge")
+	messageRetentionCmd.AddCommand(messageRetentionCandidatesCmd, messagePurgeCmd)
+
 	messagesCmd.AddCommand(
 		messageSendCmd,
 		messageNotifyCmd,
@@ -488,6 +688,9 @@ func init() {
 		messageInboxCmd,
 		messageListCmd,
 		messageThreadCmd,
+		messageTraceCmd,
+		messageRedriveCmd,
+		messageRetentionCmd,
 		messageConsumeCmd,
 		messageCancelCmd,
 		messageReadCmd,

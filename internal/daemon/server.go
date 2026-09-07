@@ -103,7 +103,21 @@ type Server struct {
 	// launch/host boundary. Populated from app.Service's underlying
 	// *store.Store at daemon startup.
 	SessionBootstrap api.SessionBootstrapStore
-	Close            func() error
+	// DeliveryTrace is optional; when set, GET /messages/{id}/trace is
+	// enabled (T09, messaging vNext) -- served through the already-
+	// mounted /messages/ subtree, so no separate mux.Handle entry is
+	// needed here (only the api.Deps wiring below).
+	DeliveryTrace api.DeliveryTraceStore
+	// DeliveryRepair is optional; when set, POST /messages/{id}/redrive
+	// is enabled (T09, messaging vNext) -- same /messages/ subtree, same
+	// no-separate-mux-entry reasoning as DeliveryTrace.
+	DeliveryRepair api.DeliveryTraceStore
+	// Retention is optional; when set, GET /messages/retention/candidates
+	// and POST /messages/{id}/purge are enabled (T09, messaging vNext) --
+	// same /messages/ subtree, same no-separate-mux-entry reasoning as
+	// DeliveryTrace.
+	Retention api.RetentionStore
+	Close     func() error
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -291,6 +305,9 @@ func (s *Server) Handler() http.Handler {
 			Groups:              s.Groups,
 			LogsDir:             s.LogsDir,
 			SessionBootstrap:    s.SessionBootstrap,
+			DeliveryTrace:       s.DeliveryTrace,
+			DeliveryRepair:      s.DeliveryRepair,
+			Retention:           s.Retention,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.

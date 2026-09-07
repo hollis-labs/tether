@@ -83,6 +83,31 @@ type Deps struct {
 	// satisfies it directly. Absent the dep, the route 404s (matches
 	// every other optional dependency).
 	SessionBootstrap SessionBootstrapStore
+
+	// DeliveryTrace, when non-nil, enables GET /messages/{id}/trace (T09,
+	// messaging vNext) -- the structured delivery trace joining
+	// message/delivery/attempt/receipt data with binding history.
+	// *app.Service's underlying *store.Store satisfies it directly.
+	// Absent the dep, the trace action responds 404 (matches every other
+	// optional dependency).
+	DeliveryTrace DeliveryTraceStore
+
+	// DeliveryRepair, when non-nil, enables POST /messages/{id}/redrive
+	// (T09, messaging vNext) -- authorized retry/redrive of a dead-
+	// lettered delivery. Deliberately a SEPARATE field from DeliveryTrace
+	// (same underlying capability, same *store.Store satisfies both)
+	// so an operator can wire read-only tracing without also granting
+	// write/repair capability. Absent the dep, the redrive action
+	// responds 404 (matches every other optional dependency).
+	DeliveryRepair DeliveryTraceStore
+
+	// Retention, when non-nil, enables GET /messages/retention/candidates
+	// and POST /messages/{id}/purge (T09, messaging vNext) -- the
+	// explicit, manual-only message-body retention/purge surface.
+	// *app.Service's underlying *store.Store satisfies it directly.
+	// Absent the dep, both actions respond 404 (matches every other
+	// optional dependency).
+	Retention RetentionStore
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -107,6 +132,9 @@ type Server struct {
 	LogsDir             string
 	DeliveryClaims      DeliveryClaimer
 	SessionBootstrap    SessionBootstrapStore
+	DeliveryTrace       DeliveryTraceStore
+	DeliveryRepair      DeliveryTraceStore
+	Retention           RetentionStore
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -132,6 +160,9 @@ func NewHandler(deps Deps) http.Handler {
 		LogsDir:             deps.LogsDir,
 		DeliveryClaims:      deps.DeliveryClaims,
 		SessionBootstrap:    deps.SessionBootstrap,
+		DeliveryTrace:       deps.DeliveryTrace,
+		DeliveryRepair:      deps.DeliveryRepair,
+		Retention:           deps.Retention,
 	}
 	mux := http.NewServeMux()
 	s.registerSessionRoutes(mux)
@@ -147,6 +178,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerGroupRoutes(mux)
 	s.registerWhoamiRoutes(mux)
 	s.registerSessionBootstrapRoutes(mux)
+	s.registerRetentionRoutes(mux)
 	s.registerScopedBindingRoutes(mux)
 	s.registerLogsRoutes(mux)
 	s.registerFSRoutes(mux)

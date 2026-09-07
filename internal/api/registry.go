@@ -270,6 +270,11 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 // drawn from query params; status defaults to active. Empty result is
 // `{"<kind-plural>": []}` (non-null slice, matches the catalog
 // convention in catalog.go).
+//
+// Responses are redacted (see redactProfile) -- Search is genuinely
+// public discovery: unlike whoami's targeted, self-asserted ?as= lookup,
+// it requires no identity assertion at all and lets any same-host caller
+// browse every registered row.
 func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, kind registry.Kind) {
 	q := r.URL.Query()
 	if externalID := q.Get("external_id"); externalID != "" {
@@ -279,7 +284,7 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			singularForKind(kind): out,
+			singularForKind(kind): redactProfile(out),
 		})
 		return
 	}
@@ -296,13 +301,12 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 		writeRegistryError(w, err)
 		return
 	}
-	if out == nil {
-		out = []registry.Profile{}
-	}
 	// Single-key envelope keyed on the plural form — `{"agents": [...]}`
 	// or `{"projects": [...]}` — matching the catalog list pattern.
+	// redactProfiles always returns a non-nil slice, preserving the
+	// non-null-empty-result convention even when out is nil.
 	writeJSON(w, http.StatusOK, map[string]any{
-		pluralForKind(kind): out,
+		pluralForKind(kind): redactProfiles(out),
 	})
 }
 
@@ -313,13 +317,94 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 // minted as an agent fetched under /registry/projects/... still returns
 // the row. The kind in the path is a routing convenience, not an
 // authorization check.
+//
+// Response is redacted (see redactProfile) for the same "public
+// discovery" reason as Search — Lookup takes no ?as= and performs no
+// ownership check, so any URN is fetchable by any same-host caller.
 func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request, urn string) {
 	out, err := s.Registry.Lookup(r.Context(), urn)
 	if err != nil {
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, redactProfile(out))
+}
+
+// redactedProfile is the wire shape Search and Lookup ("public discovery"
+// -- unscoped browsing, no identity assertion) return in place of the
+// full registry.Profile. T09 acceptance #3 ("privacy tests redact
+// secrets/private native metadata on public discovery") targets exactly
+// four fields this type drops: Callback (a scheme+target pointer that is
+// frequently a filesystem path -- T02's own acceptance criteria calls
+// this out by name: "leaking provider IDs, paths and secrets"),
+// HostAddress (an internal network address), KindMeta (arbitrary
+// per-kind operational JSON -- the "private native metadata" the
+// acceptance text names), and ExternalIDs (the "provider IDs" T02
+// prohibits leaking). Fields are dropped entirely rather than replaced
+// with placeholders: a caller who legitimately needs them has a route
+// that provides them at full fidelity -- whoami's targeted ?as= query
+// (architecture explicitly wants self-discovery to return "identity
+// mappings... and host"), or Register/UpdateSelf/Sync/Deregister/Merge,
+// none of which this redaction touches.
+//
+// Caveat (found in this task's own review, not fixed here -- out of
+// T09's scope fence): those write-path routes are described above as
+// "the row's own owner acting on their own data," but nothing in this
+// codebase actually verifies that -- same-host, self-asserted, no-auth-v1
+// (ADR 0045) means any caller who knows a URN can PATCH/DELETE/Sync it
+// and get the full unredacted Profile back, not just the row's true
+// owner. That gap is pre-existing (not introduced by this redaction) and
+// matches the declared trust model, but it means Search/Lookup redaction
+// alone is a much narrower privacy improvement in practice than
+// "redacted on public discovery" implies -- the same fields remain one
+// PATCH away for anyone who already has the URN. Left as a follow-up
+// (an ownership/ADR question, not a routine fix) rather than expanded
+// here.
+type redactedProfile struct {
+	URN           string           `json:"urn"`
+	Kind          registry.Kind    `json:"kind"`
+	MuxInstanceID string           `json:"mux_instance_id"`
+	DisplayName   string           `json:"display_name"`
+	Title         string           `json:"title,omitempty"`
+	Role          string           `json:"role,omitempty"`
+	Description   string           `json:"description,omitempty"`
+	Avatar        string           `json:"avatar,omitempty"`
+	Project       string           `json:"project,omitempty"`
+	Status        registry.Status  `json:"status"`
+	CachedAt      *time.Time       `json:"cached_at,omitempty"`
+	HealthStatus  string           `json:"health_status,omitempty"`
+	LastSeenAt    *time.Time       `json:"last_seen_at,omitempty"`
+	MergedInto    string           `json:"merged_into,omitempty"`
+	LastUpdatedBy string           `json:"last_updated_by,omitempty"`
+	Capabilities  []string         `json:"capabilities,omitempty"`
+	Skills        []registry.Skill `json:"skills,omitempty"`
+	Links         []registry.Link  `json:"links,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
+func redactProfile(p registry.Profile) redactedProfile {
+	return redactedProfile{
+		URN: p.URN, Kind: p.Kind, MuxInstanceID: p.MuxInstanceID,
+		DisplayName: p.DisplayName, Title: p.Title, Role: p.Role,
+		Description: p.Description, Avatar: p.Avatar, Project: p.Project,
+		Status: p.Status, CachedAt: p.CachedAt, HealthStatus: p.HealthStatus,
+		LastSeenAt: p.LastSeenAt, MergedInto: p.MergedInto,
+		LastUpdatedBy: p.LastUpdatedBy, Capabilities: p.Capabilities,
+		Skills: p.Skills, Links: p.Links,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+	}
+}
+
+// redactProfiles always returns a non-nil slice (even for a nil/empty
+// input), preserving the `{"agents": []}` non-null-empty-result
+// convention handleRegistrySearch's own doc comment establishes.
+func redactProfiles(ps []registry.Profile) []redactedProfile {
+	out := make([]redactedProfile, len(ps))
+	for i, p := range ps {
+		out[i] = redactProfile(p)
+	}
+	return out
 }
 
 // handleRegistryUpdate services PATCH /registry/{kind}/{urn}. Body is

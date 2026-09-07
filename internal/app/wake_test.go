@@ -646,6 +646,79 @@ func TestAttemptWake_ReceiptTrail_MatchesArchitectureVocabulary(t *testing.T) {
 	}
 }
 
+// TestAttemptWake_ClaimCapturesLiveBindingGeneration is a T09 (messaging
+// vNext, CW-20260906-0040) design-research fix: before this, no Tether
+// call site ever set ClaimRequest.BindingGeneration, so every persisted
+// Attempt recorded generation 0 regardless of which binding was actually
+// live -- a delivery trace could never honestly answer "which binding
+// generation served this attempt." attemptWake now resolves the live
+// generation for actor-kind targets before Claim and passes it through.
+func TestAttemptWake_ClaimCapturesLiveBindingGeneration(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	target := registry.LogicalAgentBindingTarget("worker")
+	// Two generations minted so the "live" one is unambiguously non-zero
+	// and distinguishable from a stale/never-set value.
+	if _, err := reg.LeaseBinding(ctx, target, "s0", "local", "s0", nil, "", 0); err != nil {
+		t.Fatalf("lease gen 1: %v", err)
+	}
+	live, err := reg.LeaseBinding(ctx, target, "s1", "local", "s1", nil, "", 0)
+	if err != nil {
+		t.Fatalf("lease gen 2: %v", err)
+	}
+
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	env := sendMessage(t, st, to)
+	outcome := attemptWake(ctx, st, reg, rt.seam(), env.ID, to, "s1", "wake up")
+	if !outcome.Delivered {
+		t.Fatalf("outcome = %+v, want Delivered=true", outcome)
+	}
+
+	deliveryID, _, _ := st.DeliveryIDForMessage(ctx, env.ID)
+	attempts, err := st.DeliveryStore().Attempts(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %+v, want exactly 1", attempts)
+	}
+	if attempts[0].BindingGeneration != live.Generation {
+		t.Fatalf("attempt.BindingGeneration = %d, want the live generation %d", attempts[0].BindingGeneration, live.Generation)
+	}
+}
+
+// TestAttemptWake_ExplicitSessionTarget_NoBindingGenerationRecorded
+// verifies the field stays honestly zero for an exact-session-addressed
+// wake, since a pinned session address has no binding generation
+// concept at all (T06: "an exact session address is pinned and never
+// subject to actor rebinding") -- recording a fabricated non-zero value
+// here would misrepresent the trace.
+func TestAttemptWake_ExplicitSessionTarget_NoBindingGenerationRecorded(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+
+	to := messaging.Address{Kind: messaging.KindSession, Authority: "test", ID: "s1"}
+	env := sendMessage(t, st, to)
+	outcome := attemptWake(ctx, st, reg, rt.seam(), env.ID, to, "s1", "wake up")
+	if !outcome.Delivered {
+		t.Fatalf("outcome = %+v, want Delivered=true", outcome)
+	}
+
+	deliveryID, _, _ := st.DeliveryIDForMessage(ctx, env.ID)
+	attempts, err := st.DeliveryStore().Attempts(ctx, delivery.DeliveryID(deliveryID))
+	if err != nil {
+		t.Fatalf("attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].BindingGeneration != 0 {
+		t.Fatalf("attempts = %+v, want exactly 1 with BindingGeneration=0", attempts)
+	}
+}
+
 // ─── Crash-boundary evidence ────────────────────────────────────────────────
 //
 // TestAttemptWake_BusySession_NacksWithoutSendTurn above is the real,

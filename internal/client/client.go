@@ -1045,6 +1045,171 @@ func (c *Client) MessageCancel(ctx context.Context, id string) error {
 	return readError(resp)
 }
 
+// MessageTraceReceipt mirrors internal/api's TraceReceipt (T09, messaging
+// vNext).
+type MessageTraceReceipt struct {
+	AttemptID string `json:"attempt_id,omitempty"`
+	Stage     string `json:"stage"`
+	At        string `json:"at"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// MessageTraceAttempt mirrors internal/api's TraceAttempt (T09).
+type MessageTraceAttempt struct {
+	AttemptID         string `json:"attempt_id"`
+	Holder            string `json:"holder"`
+	BindingGeneration int64  `json:"binding_generation,omitempty"`
+	HostID            string `json:"host_id,omitempty"`
+	BindingVisibility string `json:"binding_visibility,omitempty"`
+	AcquiredAt        string `json:"acquired_at"`
+	Stage             string `json:"stage"`
+	HostAcceptedAt    string `json:"host_accepted_at,omitempty"`
+	TurnSubmittedAt   string `json:"turn_submitted_at,omitempty"`
+	ConsumedAt        string `json:"consumed_at,omitempty"`
+	FailedAt          string `json:"failed_at,omitempty"`
+	Error             string `json:"error,omitempty"`
+	Retryable         bool   `json:"retryable,omitempty"`
+	NextAttemptAt     string `json:"next_attempt_at,omitempty"`
+}
+
+// MessageTraceResult mirrors internal/api's TraceResponse (T09): the
+// structured delivery trace for GET /messages/{id}/trace.
+type MessageTraceResult struct {
+	MessageID        string                `json:"message_id"`
+	From             string                `json:"from"`
+	To               string                `json:"to"`
+	Kind             string                `json:"kind"`
+	ThreadID         string                `json:"thread_id,omitempty"`
+	DeliveryID       string                `json:"delivery_id,omitempty"`
+	Status           string                `json:"status,omitempty"`
+	AttemptCount     int                   `json:"attempt_count,omitempty"`
+	DeadLetterReason string                `json:"dead_letter_reason,omitempty"`
+	Attempts         []MessageTraceAttempt `json:"attempts,omitempty"`
+	Receipts         []MessageTraceReceipt `json:"receipts,omitempty"`
+}
+
+// MessageTrace GETs /messages/{id}/trace (T09, messaging vNext): the
+// structured delivery trace joining message/delivery/attempt/receipt
+// data with binding history. id may be a Tether message id (the common
+// case) or, for a group-fanout recipient's delivery, that delivery's own
+// id -- see internal/api/repair.go's doc comment on why the fallback
+// exists (this endpoint currently only accepts a message id; addressing
+// a specific fanout delivery by id is redrive-only for now).
+func (c *Client) MessageTrace(ctx context.Context, id string) (MessageTraceResult, error) {
+	var out MessageTraceResult
+	if err := c.getJSON(ctx, "/messages/"+url.PathEscape(id)+"/trace", &out); err != nil {
+		return MessageTraceResult{}, err
+	}
+	return out, nil
+}
+
+// MessageRedriveResult mirrors internal/api's messageRedriveResponse (T09).
+type MessageRedriveResult struct {
+	MessageID  string `json:"message_id"`
+	DeliveryID string `json:"delivery_id"`
+	Status     string `json:"status"`
+	Redriven   bool   `json:"redriven"`
+}
+
+// MessageRedrive POSTs /messages/{id}/redrive (T09, messaging vNext):
+// authorized retry of a dead-lettered delivery. id may be a Tether
+// message id or a literal delivery id (needed to address one specific
+// group-fanout recipient's delivery -- see internal/api/repair.go).
+// Idempotent: calling this again on an already-retryable (non-terminal)
+// delivery returns Redriven=false, not an error.
+func (c *Client) MessageRedrive(ctx context.Context, id, authorizedBy string, newDeadlineSeconds int) (MessageRedriveResult, error) {
+	body, err := json.Marshal(map[string]any{
+		"authorized_by":        authorizedBy,
+		"new_deadline_seconds": newDeadlineSeconds,
+	})
+	if err != nil {
+		return MessageRedriveResult{}, fmt.Errorf("marshal redrive request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/redrive", bytes.NewReader(body))
+	if err != nil {
+		return MessageRedriveResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MessageRedriveResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return MessageRedriveResult{}, readError(resp)
+	}
+	var out MessageRedriveResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return MessageRedriveResult{}, fmt.Errorf("decode redrive response: %w", err)
+	}
+	return out, nil
+}
+
+// MessageRetentionCandidate mirrors internal/api's retentionCandidateDTO
+// (T09): one message old enough to be considered for a body purge,
+// annotated with its current purge eligibility.
+type MessageRetentionCandidate struct {
+	MessageID   string `json:"message_id"`
+	CreatedAt   string `json:"created_at"`
+	HasDelivery bool   `json:"has_delivery"`
+	Status      string `json:"status,omitempty"`
+	Eligible    bool   `json:"eligible"`
+}
+
+// MessageRetentionCandidates GETs /messages/retention/candidates (T09,
+// messaging vNext): a read-only preview of what a purge run would
+// affect. olderThanHours <= 0 uses the server's default lookback window.
+func (c *Client) MessageRetentionCandidates(ctx context.Context, olderThanHours int) ([]MessageRetentionCandidate, error) {
+	path := "/messages/retention/candidates"
+	if olderThanHours > 0 {
+		path += "?older_than_hours=" + strconv.Itoa(olderThanHours)
+	}
+	var out struct {
+		Candidates []MessageRetentionCandidate `json:"candidates"`
+	}
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return out.Candidates, nil
+}
+
+// MessagePurgeResult mirrors internal/api's messagePurgeResponse (T09).
+type MessagePurgeResult struct {
+	MessageID string `json:"message_id"`
+	Purged    bool   `json:"purged"`
+}
+
+// MessagePurge POSTs /messages/{id}/purge (T09, messaging vNext): clears
+// one message's body/metadata. Refuses (a non-nil error wrapping a 409)
+// when the message has a pending delivery obligation. Idempotent:
+// purging an already-purged message returns Purged=false, not an error.
+func (c *Client) MessagePurge(ctx context.Context, id, authorizedBy string) (MessagePurgeResult, error) {
+	body, err := json.Marshal(map[string]any{"authorized_by": authorizedBy})
+	if err != nil {
+		return MessagePurgeResult{}, fmt.Errorf("marshal purge request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/messages/"+url.PathEscape(id)+"/purge", bytes.NewReader(body))
+	if err != nil {
+		return MessagePurgeResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MessagePurgeResult{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return MessagePurgeResult{}, readError(resp)
+	}
+	var out MessagePurgeResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return MessagePurgeResult{}, fmt.Errorf("decode purge response: %w", err)
+	}
+	return out, nil
+}
+
 // MessageMarkRead marks a message read by the named recipient.
 func (c *Client) MessageMarkRead(ctx context.Context, id, as string) error {
 	return c.messageRecipientAction(ctx, id, "read", as)

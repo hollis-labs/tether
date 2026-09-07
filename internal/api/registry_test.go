@@ -616,6 +616,125 @@ func TestRegistry_MethodNotAllowed_OnCollection(t *testing.T) {
 	}
 }
 
+// ─── T09 acceptance #3: privacy redaction on public discovery ─────────────
+
+func TestRegistry_Lookup_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *testing.T) {
+	r := newRegServer(t)
+	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
+		DisplayName:   "Secretive",
+		LastUpdatedBy: "tester",
+		Callback:      &registry.Callback{Scheme: "file", Target: "file:///Users/tester/.tether/catalog/agents/secretive.yaml"},
+		KindMeta:      json.RawMessage(`{"internal_note":"do not leak"}`),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: status = %d: %s", resp.StatusCode, body)
+	}
+	var created registry.Profile
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	// Register's own response is the caller acting on their own
+	// just-submitted data, not browsing someone else's -- full fidelity
+	// is correct there and is NOT what this test is about.
+	if created.Callback == nil || len(created.KindMeta) == 0 {
+		t.Fatalf("register response unexpectedly redacted: %+v", created)
+	}
+
+	hostAddr := "10.0.0.7:9999"
+	if _, err := r.svc.UpdateSelf(context.Background(), created.URN, registry.UpdatePatch{
+		HostAddress: &hostAddr, LastUpdatedBy: "tester",
+	}); err != nil {
+		t.Fatalf("UpdateSelf host_address: %v", err)
+	}
+	if err := r.svc.AttachExternalID(context.Background(), created.URN, "cerberus", "secret-provider-id"); err != nil {
+		t.Fatalf("AttachExternalID: %v", err)
+	}
+
+	resp, body = r.do(http.MethodGet, itemURL("agents", created.URN), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("lookup: status = %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	var got registry.Profile
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode lookup: %v", err)
+	}
+	if got.DisplayName != "Secretive" {
+		t.Errorf("display_name = %q, want the public field preserved", got.DisplayName)
+	}
+}
+
+func TestRegistry_Search_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *testing.T) {
+	r := newRegServer(t)
+	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
+		DisplayName:   "Searchable Secretive",
+		LastUpdatedBy: "tester",
+		Callback:      &registry.Callback{Scheme: "cli", Target: "/usr/local/bin/launch-with-secrets --token=abc123"},
+		KindMeta:      json.RawMessage(`{"api_key":"shh"}`),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: status = %d: %s", resp.StatusCode, body)
+	}
+	var created registry.Profile
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	if err := r.svc.AttachExternalID(context.Background(), created.URN, "cerberus", "secret-provider-id"); err != nil {
+		t.Fatalf("AttachExternalID: %v", err)
+	}
+
+	resp, body = r.do(http.MethodGet, "/registry/agents", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search: status = %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	var found bool
+	for _, a := range decodeSearchAgents(t, body) {
+		if a.URN != created.URN {
+			continue
+		}
+		found = true
+		if a.DisplayName != "Searchable Secretive" {
+			t.Errorf("display_name = %q, want the public field preserved", a.DisplayName)
+		}
+	}
+	if !found {
+		t.Fatalf("created agent missing from search results")
+	}
+
+	// LookupBy — the external_id query-param branch of the same handler
+	// — is redacted the same way.
+	resp, body = r.do(http.MethodGet, "/registry/agents?external_id=secret-provider-id&substrate=cerberus", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("lookup_by: status = %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+}
+
+// assertNoLeakedRegistryFields fails the test if any of the four fields
+// T09 acceptance #3 targets for redaction (callback, host_address,
+// kind_meta, external_ids) appear anywhere in a "public discovery"
+// response body. A raw substring check against the wire JSON keys and
+// secret values, rather than unmarshaling into registry.Profile and
+// checking for zero fields — a struct-level check can't tell "redacted"
+// apart from "never set," and would keep passing even if a future change
+// silently reintroduced the field under a different Go field ordering.
+func assertNoLeakedRegistryFields(t *testing.T, body []byte) {
+	t.Helper()
+	for _, key := range []string{`"callback"`, `"host_address"`, `"kind_meta"`, `"external_ids"`} {
+		if bytes.Contains(body, []byte(key)) {
+			t.Errorf("response leaks redacted field %s: %s", key, body)
+		}
+	}
+	for _, secret := range []string{"do not leak", "shh", "secret-provider-id", "10.0.0.7", "launch-with-secrets", "abc123"} {
+		if bytes.Contains(body, []byte(secret)) {
+			t.Errorf("response leaks secret value %q: %s", secret, body)
+		}
+	}
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 // registerOne posts a minimal Profile and returns the canonical body. Test

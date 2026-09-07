@@ -357,6 +357,12 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMessageNack(w, r, id)
+	case "trace":
+		s.handleMessageTrace(w, r, id)
+	case "redrive":
+		s.handleMessageRedrive(w, r, id)
+	case "purge":
+		s.handleMessagePurge(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

@@ -239,12 +239,31 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		return sendTurnDirect(ctx, rt, sessionID, wakeText)
 	}
 
+	// T09 (messaging vNext, CW-20260906-0040): capture the binding
+	// generation live at claim time so it lands on the persisted Attempt
+	// (delivery.Claim stores whatever BindingGeneration it's given,
+	// purely for observability -- it enforces nothing). Before this,
+	// Tether never set this field on ANY claim, so a delivery trace could
+	// never answer "which binding generation actually served this
+	// attempt" -- confirmed by T09 design research: every persisted
+	// Attempt had BindingGeneration=0 regardless of which binding was
+	// really live. Only meaningful for actor-kind targets, matching the
+	// stale-generation check below; an exact session address has no
+	// binding generation to report.
+	var bindingGeneration int64
+	if to.Kind == messaging.KindAgent && reg != nil {
+		if b, err := reg.CurrentBinding(ctx, registry.LogicalAgentBindingTarget(to.ID)); err == nil {
+			bindingGeneration = b.Generation
+		}
+	}
+
 	ds := st.DeliveryStore()
 	claim, claimErr := ds.Claim(ctx, delivery.ClaimRequest{
-		DeliveryID:    delivery.DeliveryID(deliveryID),
-		Holder:        sessionID,
-		LeaseDuration: wakeClaimLeaseDuration,
-		Nowait:        true,
+		DeliveryID:        delivery.DeliveryID(deliveryID),
+		Holder:            sessionID,
+		LeaseDuration:     wakeClaimLeaseDuration,
+		Nowait:            true,
+		BindingGeneration: bindingGeneration,
 	})
 	if claimErr != nil {
 		// Already claimed by a concurrent attempt (another notify call or
