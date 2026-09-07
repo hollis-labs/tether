@@ -357,6 +357,9 @@ Symbol vocabulary (v060-05 D6):
 			return printJSON(out)
 		}
 		fmt.Printf("posted: message_id=%s group_seq=%d\n", out.MessageID, out.GroupSeq)
+		if out.FanoutError != "" {
+			fmt.Fprintf(os.Stderr, "warning: room post succeeded, but durable delivery fanout to members failed: %s\n", out.FanoutError)
+		}
 		return nil
 	},
 }

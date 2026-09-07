@@ -288,6 +288,13 @@ type SendGroupRequest struct {
 type SendGroupResult struct {
 	MessageID string `json:"message_id"`
 	GroupSeq  int64  `json:"group_seq"`
+	// FanoutError is non-empty only when durable per-recipient delivery
+	// fanout for this post was attempted and failed -- the room post
+	// itself always succeeds regardless. Empty does not guarantee
+	// delivery (fanout may not have been attempted at all); see
+	// registry.GroupMessage.FanoutError's doc comment for the full
+	// semantics.
+	FanoutError string `json:"fanout_error,omitempty"`
 }
 
 // Send POSTs /groups/{urn}/messages. Returns `{message_id, group_seq}`.

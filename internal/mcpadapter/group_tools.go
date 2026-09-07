@@ -552,11 +552,18 @@ func (a *Adapter) handleGroupPost(ctx context.Context, req mcp.CallToolRequest) 
 		}
 		return mapGroupErr(err), nil
 	}
-	return toolJSON(map[string]any{
+	result := map[string]any{
 		"ok":         true,
 		"message_id": out.MessageID,
 		"group_seq":  out.GroupSeq,
-	}), nil
+	}
+	if out.FanoutError != "" {
+		// The room post above succeeded regardless (see
+		// registry.GroupMessage.FanoutError's doc comment) -- this only
+		// means no member received a durable delivery obligation for it.
+		result["fanout_error"] = out.FanoutError
+	}
+	return toolJSON(result), nil
 }
 
 func (a *Adapter) handleGroupRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

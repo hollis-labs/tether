@@ -280,23 +280,26 @@ func (ms *messagingStore) Thread(ctx context.Context, threadID string, f messagi
 // ErrNotFound if the id does not exist. Returns ErrWrongRecipient if the
 // message exists but `recipient` is not the intended `to_urn`.
 func (ms *messagingStore) Consume(ctx context.Context, id string, recipient messaging.Address) error {
-	_, _, err := ms.consumeAndReportTransition(ctx, id, recipient)
+	_, err := ms.consumeAndReportDeliveryID(ctx, id, recipient)
 	return err
 }
 
-// consumeAndReportTransition is Consume's implementation, extended to
-// report (a) whether THIS call was the one that actually transitioned
-// consumed_at from NULL to set (false on the idempotent replay path or on
-// error) and (b) the row's delivery_id, if any -- both needed by
-// deliveryBackedStore.Consume (T03) to drive delivery-core receipt
-// recording exactly once, on the call that genuinely completes consumption.
-func (ms *messagingStore) consumeAndReportTransition(ctx context.Context, id string, recipient messaging.Address) (transitioned bool, deliveryID string, err error) {
+// consumeAndReportDeliveryID is Consume's implementation, extended to also
+// report the row's delivery_id, if any, so deliveryBackedStore.Consume
+// (T03) can drive delivery-core receipt recording on top. Per the
+// CW-20260907-0033 fix, deliveryID is read back and returned on BOTH the
+// transitioning call and the idempotent-replay call (a prior call may have
+// committed consumed_at and then crashed/failed before recording
+// delivery-core receipts -- a replay is the caller's only remaining chance
+// to complete that best-effort recording), not only the call that actually
+// transitions consumed_at from NULL to set.
+func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id string, recipient messaging.Address) (deliveryID string, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := ms.db.ExecContext(ctx,
 		`UPDATE messages SET consumed_at=? WHERE id=? AND to_urn=? AND consumed_at IS NULL`,
 		now, id, recipient.URN())
 	if err != nil {
-		return false, "", err
+		return "", err
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
@@ -307,24 +310,33 @@ func (ms *messagingStore) consumeAndReportTransition(ctx context.Context, id str
 			// only costs the best-effort receipt recording, not Consume's
 			// success, so it is logged rather than propagated.
 			log.Printf("messaging store: consume: read back delivery_id for %s failed (best-effort receipt recording skipped): %v", id, scanErr)
-			return true, "", nil
+			return "", nil
 		}
-		return true, delivery.String, nil // updated — success
+		return delivery.String, nil // updated — success
 	}
 	// 0 rows: already consumed (idempotent OK), wrong recipient, or not found.
 	var toURN string
 	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=?`, id).Scan(&toURN)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, "", messaging.ErrNotFound
+			return "", messaging.ErrNotFound
 		}
-		return false, "", err
+		return "", err
 	}
 	if toURN != recipient.URN() {
-		return false, "", ErrWrongRecipient
+		return "", ErrWrongRecipient
 	}
-	// Row exists and to_urn matches — already consumed. Idempotent.
-	return false, "", nil
+	// Row exists and to_urn matches — already consumed. Idempotent. Still
+	// read back delivery_id: a prior call may have committed consumed_at
+	// and then crashed/failed before recording delivery-core receipts
+	// (CW-20260907-0033), and this replay is the caller's only remaining
+	// chance to complete that best-effort receipt recording.
+	var delivery sql.NullString
+	if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=?`, id).Scan(&delivery); scanErr != nil {
+		log.Printf("messaging store: consume: read back delivery_id for %s failed on idempotent replay (best-effort receipt recording skipped): %v", id, scanErr)
+		return "", nil
+	}
+	return delivery.String, nil
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────

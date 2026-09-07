@@ -112,19 +112,34 @@ func (s *Service) fanOutGroupMessage(ctx context.Context, gm GroupMessage) (deli
 }
 
 // sendToGroupWithFanout wraps the existing content write (unchanged) with
-// best-effort fanout-obligation creation. Called from SendToGroup.
-func (s *Service) sendToGroupWithFanout(ctx context.Context, gm GroupMessage) {
+// best-effort fanout-obligation creation. Called from SendToGroup, which
+// never fails or rolls back the room post because of what this returns
+// (the room body existing is what every existing caller depends on, and it
+// already committed by the time this runs) -- but the caller DOES surface
+// a non-empty return value to the original sender via GroupMessage.
+// FanoutError (fixed for the gap found during this task's T12 handoff
+// review: a fully-failed Enqueue call used to be indistinguishable from
+// success to the sender, leaving the post with zero recipient delivery
+// obligations and no signal that anything was wrong).
+func (s *Service) sendToGroupWithFanout(ctx context.Context, gm GroupMessage) (fanoutErr string) {
 	deliveryMessageID, err := s.fanOutGroupMessage(ctx, gm)
 	if err != nil {
 		log.Printf("registry: group fanout for message %s (group %s) failed -- room body is durable, only the delivery-core fanout obligation is missing, needs manual/T09 reconciliation: %v", gm.ID, gm.GroupURN, err)
-		return
+		return err.Error()
 	}
 	if deliveryMessageID == "" {
-		return
+		return ""
 	}
 	if err := s.storage.SetGroupMessageDeliveryMapping(ctx, gm.ID, deliveryMessageID); err != nil {
 		log.Printf("registry: record group fanout mapping for message %s failed: %v", gm.ID, err)
+		// The delivery obligations themselves were created successfully --
+		// only the bookkeeping column linking the room post back to them
+		// failed to record (CW-20260907-0034's already-filed orphaned-
+		// mapping gap). Not reported as a FanoutError: recipients DO have
+		// real delivery obligations here, unlike the Enqueue-failure case
+		// above.
 	}
+	return ""
 }
 
 // SetGroupMessageDeliveryMapping records the delivery-core Message.ID that

@@ -435,6 +435,12 @@ type sendGroupRequest struct {
 type sendGroupResponse struct {
 	MessageID string `json:"message_id"`
 	GroupSeq  int64  `json:"group_seq"`
+	// FanoutError mirrors registry.GroupMessage.FanoutError -- see that
+	// field's doc comment. Empty (the field is omitted) means fanout
+	// succeeded, wasn't attempted (no other members, or fanout disabled),
+	// or this endpoint's SendToGroup call didn't attempt it -- NOT a
+	// delivery guarantee.
+	FanoutError string `json:"fanout_error,omitempty"`
 }
 
 // handleGroupSend services POST /groups/{urn}/messages. Returns
@@ -463,8 +469,9 @@ func (s *Server) handleGroupSend(w http.ResponseWriter, r *http.Request, grpURN 
 		return
 	}
 	writeJSON(w, http.StatusCreated, sendGroupResponse{
-		MessageID: gm.ID,
-		GroupSeq:  gm.GroupSeq,
+		MessageID:   gm.ID,
+		GroupSeq:    gm.GroupSeq,
+		FanoutError: gm.FanoutError,
 	})
 }
 

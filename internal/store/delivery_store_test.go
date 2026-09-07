@@ -19,8 +19,12 @@ package store_test
 //  5. TestDeliveryBackedSend_* / TestDeliveryBackedConsume_* — the
 //     deliveryBackedStore decorator's own integration behavior: Send creates
 //     a real delivery obligation sharing the message's own ID; Consume
-//     drives host_accepted/turn_submitted/consumed receipts exactly once,
-//     on the transitioning call only.
+//     drives host_accepted/turn_submitted/consumed receipts, idempotently,
+//     on every call that has a delivery_id (fixed for CW-20260907-0033 --
+//     see TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck --
+//     receipt recording used to be gated on the transitioning call only,
+//     permanently stranding a delivery if the process crashed between the
+//     two writes).
 
 import (
 	"context"
@@ -363,7 +367,7 @@ func TestDeliveryBackedSend_CreatesRealDeliveryObligation(t *testing.T) {
 	}
 }
 
-func TestDeliveryBackedConsume_RecordsReceiptsOnlyOnTransition(t *testing.T) {
+func TestDeliveryBackedConsume_RecordsReceiptsIdempotently(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "consume.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -419,6 +423,84 @@ func TestDeliveryBackedConsume_RecordsReceiptsOnlyOnTransition(t *testing.T) {
 	}
 	if len(receiptsAfter) != len(receipts) {
 		t.Fatalf("expected the idempotent replay to add no new receipts: before=%d after=%d", len(receipts), len(receiptsAfter))
+	}
+}
+
+// TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck is the
+// CW-20260907-0033 regression test. Consume's two writes (messages.
+// consumed_at, delivery-core receipts) are against separate stores with no
+// shared transaction; if the process crashed/failed between them, the old
+// code (gating recordConsumedReceipts on "this call transitioned
+// consumed_at") could NEVER retry the receipt recording -- the row is
+// already consumed, so every future call takes the idempotent no-op branch
+// and returns immediately, permanently stranding the delivery in a
+// non-terminal state. This test manually reproduces exactly that
+// intermediate state (consumed_at committed, delivery-core untouched) and
+// asserts a later Consume call -- the caller's own retry-after-failure,
+// which Consume's documented idempotency already invites -- completes the
+// missing receipts and drives the delivery to Delivered.
+func TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "consume-crash-recovery.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	ms := db.MessagingStore()
+	sent, err := ms.Send(context.Background(), messaging.Envelope{From: addr("alice"), To: addr("bob"), Kind: messaging.MsgKindNotice})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// Simulate the crash window: commit consumed_at directly (bypassing
+	// Consume entirely), leaving the delivery-core row exactly as Enqueue
+	// left it -- no claim, no receipts beyond StagePersisted.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.DB().Exec(`UPDATE messages SET consumed_at=? WHERE id=?`, now, sent.ID); err != nil {
+		t.Fatalf("simulate crash-window consumed_at: %v", err)
+	}
+
+	var deliveryID sql.NullString
+	if err := db.DB().QueryRow(`SELECT delivery_id FROM messages WHERE id=?`, sent.ID).Scan(&deliveryID); err != nil {
+		t.Fatalf("read delivery_id: %v", err)
+	}
+	if !deliveryID.Valid {
+		t.Fatalf("expected delivery_id to be recorded on send")
+	}
+	del, err := db.DeliveryStore().GetDelivery(context.Background(), delivery.DeliveryID(deliveryID.String))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if del.Status == delivery.DeliveryDelivered {
+		t.Fatalf("test setup invalid: delivery must NOT already be terminal before the recovery call")
+	}
+
+	// The recovery call: an idempotent replay from the caller's perspective
+	// (consumed_at is already set), but the first real chance to record
+	// delivery-core receipts.
+	if err := ms.Consume(context.Background(), sent.ID, addr("bob")); err != nil {
+		t.Fatalf("recovery consume: %v", err)
+	}
+
+	del, err = db.DeliveryStore().GetDelivery(context.Background(), delivery.DeliveryID(deliveryID.String))
+	if err != nil {
+		t.Fatalf("get delivery after recovery: %v", err)
+	}
+	if del.Status != delivery.DeliveryDelivered {
+		t.Fatalf("expected the recovery call to drive the delivery to 'delivered', got %q -- the stranded-delivery bug (CW-20260907-0033) is not fixed", del.Status)
+	}
+	receipts, err := db.DeliveryStore().Receipts(context.Background(), delivery.DeliveryID(deliveryID.String))
+	if err != nil {
+		t.Fatalf("receipts: %v", err)
+	}
+	stages := map[delivery.ReceiptStage]bool{}
+	for _, r := range receipts {
+		stages[r.Stage] = true
+	}
+	for _, want := range []delivery.ReceiptStage{delivery.StageHostAccepted, delivery.StageTurnSubmitted, delivery.StageConsumed} {
+		if !stages[want] {
+			t.Fatalf("expected the recovery call to record receipt stage %q, got stages %+v", want, stages)
+		}
 	}
 }
 

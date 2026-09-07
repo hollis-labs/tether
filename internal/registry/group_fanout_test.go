@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
@@ -207,6 +208,61 @@ func TestGroupFanout_DisabledWhenNoDeliveryStoreConfigured(t *testing.T) {
 	}
 	if _, ok := lookupDeliveryMessageID(t, storage, gm.ID); ok {
 		t.Fatalf("expected no delivery_message_id mapping when fanout is disabled")
+	}
+}
+
+// failingDeliveryStore always errors on Enqueue, simulating a genuinely
+// unreachable/broken delivery core (as opposed to
+// TestGroupFanout_DisabledWhenNoDeliveryStoreConfigured's "not configured
+// at all" case).
+type failingDeliveryStore struct{}
+
+func (failingDeliveryStore) Enqueue(context.Context, delivery.EnqueueRequest) (delivery.EnqueueResult, error) {
+	return delivery.EnqueueResult{}, errors.New("simulated delivery core outage")
+}
+
+// TestGroupFanout_EnqueueFailureIsSurfacedNotSwallowed is the regression
+// test for the gap found during this task's T12 handoff review: a fully
+// failed Enqueue call used to be indistinguishable from success to the
+// sender (SendToGroup always returned a nil error), leaving the post with
+// ZERO recipient delivery obligations and no signal anything was wrong.
+// The room post must still succeed (fanout failure never rolls it back),
+// but the caller must now be told via GroupMessage.FanoutError.
+func TestGroupFanout_EnqueueFailureIsSurfacedNotSwallowed(t *testing.T) {
+	svc, storage := newServiceWithStorage(t)
+	svc.SetDeliveryStore(failingDeliveryStore{})
+	ctx := context.Background()
+
+	g, owner := groupFixture(t, svc, "Fanout-Enqueue-Failure")
+	bob := registerCreator(t, svc, "Bob")
+	if _, err := svc.AddMember(ctx, g.URN, bob.URN, owner.URN, registry.MemberRoleMember); err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
+
+	gm, err := svc.SendToGroup(ctx, g.URN, owner.URN, "notice", "", "application/json", json.RawMessage(`{"text":"hi"}`))
+	if err != nil {
+		t.Fatalf("send must still succeed despite the fanout failure: %v", err)
+	}
+	if gm.FanoutError == "" {
+		t.Fatalf("expected GroupMessage.FanoutError to be set when Enqueue fails -- the caller must not see unqualified success")
+	}
+
+	// Room body is still durable and unaffected.
+	msgs, err := svc.ListGroupMessages(ctx, g.URN, owner.URN, 0, "", 10)
+	if err != nil {
+		t.Fatalf("list group messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected the room post to survive the fanout failure, got %d messages", len(msgs))
+	}
+	// A re-read of the same message must not report the transient
+	// send-time failure as if it were current/stored state.
+	if msgs[0].FanoutError != "" {
+		t.Fatalf("FanoutError must not be persisted/replayed on a later read, got %q", msgs[0].FanoutError)
+	}
+
+	if _, ok := lookupDeliveryMessageID(t, storage, gm.ID); ok {
+		t.Fatalf("expected no delivery_message_id mapping when Enqueue itself failed")
 	}
 }
 

@@ -56,7 +56,7 @@ const deliveryConsumeLeaseDuration = 30 * time.Second
 // not exported -- callers depend on the InboxStore interface, not this
 // concrete type. Embeds the concrete *messagingStore (not just the
 // InboxStore interface) so it can reach the two package-private helper
-// methods (sendWithID, consumeAndReportTransition) that exist solely to
+// methods (sendWithID, consumeAndReportDeliveryID) that exist solely to
 // support this decorator without widening the public InboxStore contract
 // every other implementer/stub would have to satisfy.
 type deliveryBackedStore struct {
@@ -129,17 +129,34 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 }
 
 // Consume drives the same idempotent, recipient-scoped consumed_at update
-// as before (delegated to the wrapped InboxStore), then -- ONLY on the call
-// that actually transitions consumed_at from NULL to set (never on the
-// idempotent no-op replay) -- claims and acknowledges the corresponding
-// delivery through host_accepted/turn_submitted/consumed in one immediate
-// sequence. Tether's Consume has no separate "I'm now processing" signal
-// distinct from "I finished processing" (T02 design research), so all three
-// stages are recorded together rather than held open as a real lease.
+// as before (delegated to the wrapped InboxStore), then claims and
+// acknowledges the corresponding delivery through
+// host_accepted/turn_submitted/consumed in one immediate sequence. Tether's
+// Consume has no separate "I'm now processing" signal distinct from "I
+// finished processing" (T02 design research), so all three stages are
+// recorded together rather than held open as a real lease.
 //
-// Delivery-core recording here is best-effort: if the message predates T03
-// (no delivery_id recorded) or the delivery-core call fails for any reason
-// (including a genuine race against another claimant), Consume still
+// Fixed for CW-20260907-0033: receipt recording is attempted on EVERY call
+// that has a delivery_id, not only the call that transitions consumed_at
+// from NULL to set. The two writes (messages.consumed_at, delivery-core
+// receipts) are against separate stores with no shared transaction --
+// consumed_at can commit and the process can then crash/fail before
+// recording receipts, permanently stranding that delivery in a non-terminal
+// state (never redriven, since delivery-core sees no ack; never purgeable,
+// since it never reaches Delivered) with delivery-core's own retry/wake
+// logic repeatedly re-attempting a message the recipient already consumed.
+// Re-attempting on every idempotent replay (including a client's own
+// retry-after-connection-loss, which Consume's documented idempotency
+// already invites) makes this self-healing: recordConsumedReceipts is
+// itself best-effort and safe to call against an already-terminal delivery
+// (Claim fails cleanly, logged, no-op -- see below and
+// TestDeliveryBackedConsume_RecordsReceiptsOnlyOnTransition's replay
+// assertion), so retrying it costs nothing on the already-complete path and
+// closes the crash window on the incomplete one.
+//
+// Delivery-core recording here remains best-effort: if the message predates
+// T03 (no delivery_id recorded) or the delivery-core call fails for any
+// reason (including a genuine race against another claimant), Consume still
 // succeeds from the caller's perspective -- the `messages.consumed_at`
 // update is Consume's core, tested contract; delivery-core receipt tracking
 // is an additive enhancement layered on top, consistent with how this
@@ -147,11 +164,11 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 // SetClaudeSessionID/UpsertSessionProviderMapping failures are logged, not
 // propagated).
 func (d *deliveryBackedStore) Consume(ctx context.Context, id string, recipient messaging.Address) error {
-	transitioned, deliveryID, err := d.consumeAndReportTransition(ctx, id, recipient)
+	deliveryID, err := d.consumeAndReportDeliveryID(ctx, id, recipient)
 	if err != nil {
 		return err
 	}
-	if !transitioned || deliveryID == "" {
+	if deliveryID == "" {
 		return nil
 	}
 	d.recordConsumedReceipts(ctx, deliveryID, recipient)

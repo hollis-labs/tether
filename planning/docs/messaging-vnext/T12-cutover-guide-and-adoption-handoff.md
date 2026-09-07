@@ -52,13 +52,13 @@ it synthesizes what a consumer or operator needs from it.
 | Component | Current state | What needs to happen before a consumer can pin a released version |
 |---|---|---|
 | `github.com/hollis-labs/tether` (this repo) | `main` @ `858dda7` (T11) | Nothing blocking — `main` is the landed baseline. No tag has been cut for this epic; cutting one (e.g. `v0.6.0`) is an explicit release action left to Chrispian. |
-| `github.com/hollis-labs/go-messaging` | Tether's `go.mod` requires an **unreleased pseudo-version** at commit `2a0132b`. A real tag already exists past that commit — `v0.5.0` at `70770fb` — and `origin/main` has one further untagged commit (`9789d8f`, "fix: satisfy delivery SQLite release lint checks") on top of that tag. | No new tag needs to be cut. Tether's `go.mod` should be bumped to the existing `v0.5.0` tag (or a future tag past `9789d8f`, if that lint fix should be included) instead of staying on the pseudo-version. |
-| `github.com/hollis-labs/go-tether-client` | `main` @ `fa4df9a`, one commit past the `v0.1.0` tag (session-bootstrap helper, T08, currently in the CHANGELOG's `## Unreleased` section) | A new tag (e.g. `v0.2.0`) needs to be cut at `fa4df9a`. Its own `go.mod` still pins `go-messaging v0.2.0` — by its own CHANGELOG note this is a **deliberate, already-documented deferral** ("nothing added in this change depends on go-messaging at all, and bumping it is a separate, independently-reviewable change"), not an oversight. Bump it to the `v0.5.0` tag above in the same pass, or explicitly leave it and note why in that release's own changelog entry. |
+| `github.com/hollis-labs/go-messaging` | Tether's `go.mod` requires an **unreleased pseudo-version** at commit `2a0132b`. A real tag already exists strictly past that commit: `v0.5.0`, which dereferences (it's an annotated tag) to commit `9789d8f` ("fix: satisfy delivery SQLite release lint checks") — exactly `origin/main`'s current tip, confirmed via `git rev-parse v0.5.0^{commit}` == `git rev-parse origin/main`. | No new tag needs to be cut. Tether's `go.mod` should be bumped to the existing `v0.5.0` tag instead of staying on the pseudo-version. |
+| `github.com/hollis-labs/go-tether-client` | `main` @ `a8fb61c`, one commit past `fa4df9a` (session-bootstrap helper, T08) — the new commit fixes the `?as=`-omitting `Get`/`Inbox`/`Thread`/`Subscribe` calls this task's own review found (§7); **not pushed to `origin` yet** | A new tag (e.g. `v0.2.0`) needs to be cut at `a8fb61c` (not `fa4df9a` — that commit predates the `?as=` fix and would ship a client every one of these four calls fails against). Its own `go.mod` still pins `go-messaging v0.2.0` — by its own CHANGELOG note this is a **deliberate, already-documented deferral** ("nothing added in this change depends on go-messaging at all, and bumping it is a separate, independently-reviewable change"), not an oversight. Bump it to the `v0.5.0` tag above in the same pass, or explicitly leave it and note why in that release's own changelog entry. |
 
 **Safe release order**, if/when Chrispian authorizes cutting tags:
 
 1. Bump Tether's `go.mod` to `go-messaging`'s existing `v0.5.0` tag (no new tag needed there).
-2. Update `go-tether-client`'s `go.mod` to the same `go-messaging` tag (or explicitly decline to, per its own CHANGELOG precedent) and tag `go-tether-client` at `fa4df9a` (or a fresh commit if the go-messaging bump lands as a new commit on top of it).
+2. Push `go-tether-client`'s `a8fb61c` to `origin`, update its `go.mod` to the same `go-messaging` tag (or explicitly decline to, per its own CHANGELOG precedent), and tag it at the resulting commit.
 3. Tag `tether` itself at `858dda7` (or later, if more work lands first).
 4. Only then should any consumer's `go.mod` be updated to reference tagged versions instead of `main`/pseudo-versions.
 
@@ -323,8 +323,10 @@ consumer's own upgrade path.
 
 ## 7. Fixed during this epic's own review passes (relevant to any consumer relying on prior behavior)
 
-Two adversarial review passes (T09's and T11's) found and fixed real, shipped
-behavior a consumer should know changed:
+Three adversarial/fact-check review passes (T09's, T11's, and this task's own
+follow-up closeout pass, prompted by a further independent review of this very
+document) found and fixed real, shipped behavior a consumer should know
+changed:
 
 - **`GET /whoami`** used to return a fully unredacted registry profile
   (`Callback`, `HostAddress`, `KindMeta`, `ExternalIDs`) for any URN a caller
@@ -345,6 +347,48 @@ behavior a consumer should know changed:
   mutating a live daemon's session state. Relevant if any consumer's own
   process supervisor (or agent-setup's launch scripts) ever raced a restart
   against a still-running daemon.
+- **`Consume` could permanently strand a delivery** (CW-20260907-0033,
+  previously backlog, now fixed): if the daemon process crashed/failed
+  between committing `messages.consumed_at` and recording the corresponding
+  delivery-core receipts, the receipt recording could never be retried (the
+  message was already "consumed" from the caller's perspective, so every
+  future call took the idempotent no-op path) — the delivery stayed
+  non-terminal forever, perpetually re-attempted by delivery-core's own
+  retry/wake logic even though the recipient had already consumed the
+  message. Fixed: receipt recording is now attempted on every `Consume`
+  call that has a `delivery_id`, not only the transitioning one, making a
+  caller's own retry-after-failure self-healing. See
+  `TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck`
+  (`internal/store/delivery_store_test.go`) for the regression test, which
+  fails against the pre-fix code.
+- **`POST /groups/{urn}/messages` could report unqualified success after a
+  total fanout failure**: if the delivery-core `Enqueue` call failed
+  entirely (not just the bookkeeping `delivery_message_id` mapping write —
+  that narrower gap remains open, CW-20260907-0034), the room post still
+  succeeded and the response gave the sender no way to know that **zero**
+  group members received a durable delivery obligation for it. Fixed
+  (response-transparency, no schema change): the room post still always
+  succeeds (never rolled back), but the response now carries a
+  `fanout_error` field (HTTP: `sendGroupResponse.fanout_error`; Go client:
+  `SendGroupResult.FanoutError`; CLI: a stderr warning line; MCP:
+  `tether_group_post`'s result gains a `fanout_error` key) whenever fanout
+  was attempted and failed. Empty/absent means success, "not attempted"
+  (no other members, or fanout disabled), or simply not known on a later
+  read — never a delivery guarantee. See
+  `TestGroupFanout_EnqueueFailureIsSurfacedNotSwallowed`
+  (`internal/registry/group_fanout_test.go`).
+- **`go-tether-client`'s `Get`/`Inbox`/`Thread`/`Subscribe` omitted `?as=`
+  entirely**, so every one of them was rejected (`400 invalid_request`) by
+  the current daemon — found during this task's own adoption-readiness
+  review (§9's "public Go client" gap; see below). Fixed in
+  `go-tether-client` commit `a8fb61c` (separate repository, committed to its
+  local `main`, **not yet pushed or tagged**): `Inbox`/`Subscribe` now assert
+  `?as=<the `to` address they were already called with>`; `Get`/`Thread`
+  require a new `WithSelfURN` client option (they have no address parameter
+  of their own to derive the claim from) and return the new
+  `ErrSelfURNRequired` sentinel client-side if it isn't configured. See that
+  repository's own `CHANGELOG.md` `## Unreleased` section for the full
+  description.
 
 ## 8. Consumer adoption checklists
 
@@ -427,15 +471,22 @@ reply threaded via `in_reply_to`, and both legs confirmed durable via `GET
   T09 built for exactly this kind of external tracker.
 
 **Not required**: no group surface needed unless Torque's task model
-involves broadcasting to multiple runners at once (in which case, use §3.3's
-group fanout, which already gives per-recipient frozen delivery — a natural
-fit for "assign this to whichever of these N runners claims it first" via
-concurrent claim, §3.4/§9).
+involves broadcasting the SAME task to every member of a fixed roster at
+once (in which case, use §3.3's group fanout — but note it is NOT a "first
+runner claims it" mechanism: fanout gives each of the N group members their
+OWN independent, guaranteed delivery of the post, not one shared job N
+runners compete over). For "assign this task to whichever of a pool of
+runners claims it first," model the runners as pulling from one SHARED
+recipient address instead (all runners consume the same mailbox) and use
+the concurrent-claim primitive (§3.4/§9) over that single mailbox's
+messages — a genuinely different addressing shape than group membership.
 
 ## 9. Known gaps carried forward (backlog, not blockers)
 
-Mostly filed during T10/T11 as this epic's own findings (one additional item
-below has no Torque task yet); none block this handoff:
+Filed during T10/T11/this task's own closeout as findings; none block this
+handoff. **CW-20260907-0033 was filed as backlog and is no longer open** —
+this task's own follow-up closeout fixed it (§7) rather than deferring it, so
+it no longer appears below.
 
 | Torque ID | Gap | Why not fixed here |
 |---|---|---|
@@ -443,9 +494,8 @@ below has no Torque task yet); none block this handoff:
 | CW-20260907-0029 | `/a2a/` shares a listener/mux with every same-host-trust route; no network-boundary separation for genuinely external A2A traffic | Architectural question bigger than one feature; needs its own design pass. |
 | CW-20260907-0031 | The repo's own `api-stub` test provider fails to launch through the real daemon HTTP path (`agentlaunch/compile: matrix: unknown provider id`) | Unrelated subsystem (launch-plan compilation), likely bitrot in a v0.0.2-era fixture; found while building an e2e private-local-binding test, not investigated further to avoid disproportionate effort. |
 | CW-20260907-0032 | `registry.VisibilityTetherHosted` is a defined enum value with **zero** code path that ever creates it | Needs an actual design decision (what "hosted" means, distinct from "private-local"), not a bug fix. |
-| CW-20260907-0033 | `Consume`'s receipt-recording can permanently desync from message content state on a narrow crash window (confirmed by code tracing, not reproduced) — self-perpetuating redundant wake notifications, no data loss | Needs careful design (retry-safe receipt recording or a reconciliation pass); a rushed fix risks a new bug in delivery-core interaction semantics. |
 | CW-20260907-0034 | Bundled minor items: `GET /registry/bindings?target_urn=` has no ownership check; group-fanout's `delivery_message_id` mapping write isn't atomic with fanout (currently latent, nothing reads that column yet); `e2e/`'s crash tests only kill at safe operation boundaries, not mid-write | All low-severity/should-fix per T11's independent review; none block this handoff. |
-| — (untracked) | `POST /messages/{id}/claim|ack|nack` (durable claim primitives, §3.4) have no typed Go client wrapper — only raw HTTP today | Minor, additive gap; no Torque task filed yet for this specific item. |
+| CW-20260907-0038 | `POST /messages/{id}/claim|ack|nack` (durable claim primitives, §3.4) have no typed Go client wrapper in `go-tether-client` — only raw HTTP today | Explicitly deferred during this task's own closeout when fixing that client's `?as=` gap (§7) — the narrower "client-level self-identity" fix was chosen over "full parity," so claim/ack/nack wrappers remain a separate follow-up. |
 
 ## 10. Rollout / rollback
 
@@ -518,8 +568,10 @@ real inaccuracies, each independently re-verified against live code/git
 state before correction (not merely trusted from the review's own wording):
 a broken `mux registry register` copy-paste example (§4.1, real flags
 verified via `--help`); a stale go-messaging release-order claim (§2/§11 —
-`v0.5.0` already exists at commit `70770fb`, verified via `git fetch --tags`
-+ `git merge-base --is-ancestor` + `git log`); a stale Federation Router
+`v0.5.0` already exists past Tether's pinned commit, verified via
+`git fetch --tags` + `git merge-base --is-ancestor` + `git log` — see the
+third paragraph below for a correction to exactly which commit the tag
+itself resolves to); a stale Federation Router
 claim (§6 — confirmed live-wired via T05's `newFederatedMessageStore`/
 `federation.BuildRouter`, read directly in `cmd/mux/daemon.go` and
 `internal/app/service.go`); a migration-range over-attribution (§2/§6/§10 —
@@ -535,3 +587,47 @@ note (§3.5 — `mux_message_redrive` requires it too, not just purge); and a
 dangling "see §9" cross-reference for the claim/ack/nack client-wrapper gap
 (§3.4 — now a real row in §9's table). All seven are corrected in this
 version of the document.
+
+A third pass — this time Chrispian's own direct review of the platform,
+not a delegated fact-check — found three further substantive gaps and two
+further document inaccuracies, all independently re-verified against live
+code/git state and then acted on (fixed, with tests) rather than only
+documented:
+
+1. `Consume` could permanently strand a delivery on a narrow crash window
+   (CW-20260907-0033, previously filed as backlog needing design care) —
+   confirmed by tracing `consumeAndReportDeliveryID`/`recordConsumedReceipts`
+   in `internal/store`, then **fixed**: receipt recording now retries on
+   every idempotent replay, not only the transitioning call. Regression
+   test: `TestDeliveryBackedConsume_RecoversReceiptsAfterCrashBeforeAck`
+   (fails against the pre-fix code).
+2. `go-tether-client`'s `Get`/`Inbox`/`Thread`/`Subscribe` genuinely omitted
+   `?as=` and would be rejected by the current daemon — confirmed by
+   reading the client's source directly, then **fixed** in that repository
+   (commit `a8fb61c`, not yet pushed), with claim/ack/nack wrappers
+   explicitly scoped out and filed as CW-20260907-0038. Regression tests:
+   `TestHTTPStore_GetAndThread_RequireSelfURN`,
+   `TestHTTPStore_SendsAsQueryParam`.
+3. Group fanout could report unqualified send success after a total
+   delivery-core Enqueue failure, leaving zero recipients with a delivery
+   obligation and no signal to the sender — confirmed by reading
+   `group_fanout.go`/`service.go` directly, then **fixed**
+   (response-transparency: a new `fanout_error` field surfaced through the
+   HTTP response, the Go client, the CLI, and the MCP tool — no schema
+   change, per the chosen fix scope). Regression test:
+   `TestGroupFanout_EnqueueFailureIsSurfacedNotSwallowed`.
+4. The go-messaging `v0.5.0` tag was mischaracterized as sitting at commit
+   `70770fb` with a further untagged commit on top — corrected after
+   re-running `git rev-parse v0.5.0^{commit}` directly: the tag is an
+   annotated tag that dereferences to `9789d8f`, exactly `origin/main`'s
+   tip, so no further commit sits un-tagged past it (§2).
+5. §8.3's suggestion that group fanout suits "whichever of N runners claims
+   it first" was a category error — fanout gives each member their OWN
+   guaranteed delivery, not one shared job N runners compete over —
+   corrected to point a first-claim use case at the concurrent-claim
+   primitive over a shared mailbox instead (§8.3).
+
+All five are reflected in this version of the document (§2, §6, §7, §8.3,
+§9); the three code fixes above pass `make check` clean (1661 tests,
+0 lint issues, 0 vulnerabilities) in the tether repo, and go-tether-client's
+own fix passes `go build`/`go vet`/`go test ./...` clean in that repository.

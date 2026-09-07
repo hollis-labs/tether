@@ -206,6 +206,21 @@ type GroupMessage struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	ContentType string          `json:"content_type,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
+
+	// FanoutError is set only on the GroupMessage returned directly by
+	// SendToGroup, and only when durable per-recipient fanout was
+	// attempted (a deliveryStore is configured and the group had members
+	// besides the sender) and failed. The room post itself always
+	// succeeds regardless (see sendToGroupWithFanout) -- this field is
+	// how the ORIGINAL caller learns that no member received a durable
+	// delivery obligation for this specific post, instead of the send
+	// silently reporting unqualified success. Not persisted: a later
+	// read of this same message (ListGroupMessages) always has this
+	// field empty, since fanout is not retried and its outcome is not
+	// stored anywhere. Empty means fanout succeeded, was not attempted
+	// (no other members, or fanout disabled), or is simply not known (a
+	// re-read) -- NOT a guarantee of successful delivery.
+	FanoutError string `json:"fanout_error,omitempty"`
 }
 
 // ArrayMode controls how an UpdateSelf array patch merges into the

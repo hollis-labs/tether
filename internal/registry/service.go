@@ -720,7 +720,10 @@ func (s *Service) SendToGroup(ctx context.Context, grpURN, fromURN, kind, thread
 	// T04: post-commit, best-effort durable fanout. The room body above is
 	// already committed and is SendToGroup's real contract; see
 	// group_fanout.go for why this never rolls back or fails the send.
-	s.sendToGroupWithFanout(ctx, gm)
+	// The outcome IS surfaced to the caller via gm.FanoutError, though --
+	// see that field's doc comment for why a fully-failed fanout must not
+	// be indistinguishable from success.
+	gm.FanoutError = s.sendToGroupWithFanout(ctx, gm)
 	return gm, nil
 }
 
