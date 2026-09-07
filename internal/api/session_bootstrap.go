@@ -119,10 +119,23 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			row.ParentSessionID = sql.NullString{String: req.ParentSessionID, Valid: true}
 		}
 		if err := s.SessionBootstrap.CreateSession(row, nil); err != nil {
-			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
-			return
+			// A concurrent bootstrap call for the SAME session_id may
+			// have already won this exact race (T11 security review,
+			// CW-20260906-0042: GetSession-then-CreateSession has no
+			// transaction spanning the two) -- re-check before treating
+			// this as a real failure, so "a second hook invocation must
+			// not invent a competing identity" (this endpoint's own
+			// reason for existing) holds under genuine concurrency, not
+			// only sequential retries.
+			if _, getErr := s.SessionBootstrap.GetSession(req.SessionID); getErr != nil {
+				writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			// Someone else's concurrent call created it first; fall
+			// through to the idempotent path below (created stays false).
+		} else {
+			created = true
 		}
-		created = true
 	}
 
 	for _, m := range req.ProviderMappings {

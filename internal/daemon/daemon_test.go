@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,42 @@ func TestListener_UnixStaleSocketRemoved(t *testing.T) {
 		t.Fatalf("second Listener (stale socket): %v", err)
 	}
 	defer lis2.Close()
+}
+
+// TestListener_UnixRefusesToStealALiveSocket is T11's durability review
+// evidence (CW-20260906-0042): a socket-typed file existing at the
+// target path is NOT sufficient proof of staleness if something is
+// actually still listening on it -- the live-reproduced split-brain this
+// closes doesn't even require a stale/missing PID file, just a second
+// Listener() call at the same path while the first is still live.
+func TestListener_UnixRefusesToStealALiveSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket test requires unix")
+	}
+	dir := shortTempDir(t)
+	path := filepath.Join(dir, "s.sock")
+	addr := "unix:" + path
+
+	lis1, err := Listener(addr)
+	if err != nil {
+		t.Fatalf("first Listener: %v", err)
+	}
+	defer lis1.Close()
+
+	if _, err := Listener(addr); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("second Listener while the first is still live: err = %v, want a wrapped ErrAlreadyRunning", err)
+	}
+
+	// The live socket file must still be there and still working --
+	// refusing the second bind must not have deleted or damaged it.
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("live socket file missing after a refused steal attempt: %v", statErr)
+	}
+	conn, dialErr := net.Dial("unix", path)
+	if dialErr != nil {
+		t.Fatalf("original listener no longer reachable after a refused steal attempt: %v", dialErr)
+	}
+	_ = conn.Close()
 }
 
 func TestListener_UnixRefusesRegularFile(t *testing.T) {

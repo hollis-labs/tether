@@ -39,7 +39,7 @@ func TestHandleMessagesSubscribe_SSEFraming(t *testing.T) {
 	alice := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "alice"}
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-		srv.URL+"/messages/subscribe?to="+alice.URN(), nil)
+		srv.URL+"/messages/subscribe?to="+alice.URN()+"&as="+alice.URN(), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -122,5 +122,43 @@ func TestHandleMessagesSubscribe_MissingTo(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestHandleMessagesSubscribe_RequiresAsMatchingTo is T11's independent
+// security review evidence (CW-20260906-0042): every sibling mailbox
+// read on this file (Get/Inbox/List/Thread, T05) requires ?as= matching
+// the mailbox owner; this endpoint was the one T05 missed, letting a
+// live, persistent, real-time stream be opened with strictly less
+// identity assertion than the equivalent one-shot batch read of the same
+// mailbox.
+func TestHandleMessagesSubscribe_RequiresAsMatchingTo(t *testing.T) {
+	srv, _ := newMessageTestServer(t)
+	alice := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "alice"}
+	carol := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "carol"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// No ?as= at all.
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/messages/subscribe?to="+alice.URN(), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get (no as): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("no ?as=: status = %d, want 400", resp.StatusCode)
+	}
+
+	// ?as= present but not matching ?to=.
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/messages/subscribe?to="+alice.URN()+"&as="+carol.URN(), nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("get (mismatched as): %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Errorf("mismatched ?as=: status = %d, want 403", resp2.StatusCode)
 	}
 }

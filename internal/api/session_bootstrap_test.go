@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/store"
@@ -204,6 +205,55 @@ func TestSessionBootstrap_RequiresSessionID(t *testing.T) {
 	resp, _ := postBootstrap(t, srv.URL, map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestSessionBootstrap_ConcurrentCallsForSameSessionIDNeverFail is T11's
+// independent security review evidence (CW-20260906-0042): GetSession
+// and CreateSession have no transaction spanning them, so two genuinely
+// concurrent bootstrap calls for the SAME session_id (the exact "second
+// hook invocation" scenario this endpoint exists for, just racing
+// instead of sequential) could both observe "not found" and both attempt
+// CreateSession; the loser must not surface a raw 500 from the resulting
+// constraint violation. Exactly one call must report Created=true.
+func TestSessionBootstrap_ConcurrentCallsForSameSessionIDNeverFail(t *testing.T) {
+	srv, _ := newSessionBootstrapServer(t)
+	const sessionID = "sess-race-e2e"
+
+	const racers = 8
+	var wg sync.WaitGroup
+	statuses := make([]int, racers)
+	responses := make([]sessionBootstrapResponse, racers)
+	wg.Add(racers)
+	for i := range racers {
+		go func(i int) {
+			defer wg.Done()
+			resp, out := postBootstrap(t, srv.URL, map[string]any{"session_id": sessionID, "intent": "preassigned"})
+			statuses[i] = resp.StatusCode
+			responses[i] = out
+		}(i)
+	}
+	wg.Wait()
+
+	var createdCount, okCount int
+	for i, status := range statuses {
+		if status != http.StatusOK {
+			t.Errorf("racer %d: status = %d, want 200 (never a race-induced 500)", i, status)
+			continue
+		}
+		okCount++
+		if responses[i].Created {
+			createdCount++
+		}
+		if responses[i].SessionID != sessionID {
+			t.Errorf("racer %d: session_id = %q, want %q", i, responses[i].SessionID, sessionID)
+		}
+	}
+	if okCount != racers {
+		t.Fatalf("okCount = %d, want %d (every concurrent call must succeed)", okCount, racers)
+	}
+	if createdCount != 1 {
+		t.Fatalf("createdCount = %d, want exactly 1", createdCount)
 	}
 }
 

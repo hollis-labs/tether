@@ -987,6 +987,24 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "to query param required")
 		return
 	}
+	// T11 durability/security review (CW-20260906-0042): every sibling
+	// mailbox read on this file (Get/Inbox/List/Thread) requires the
+	// caller to claim the mailbox owner's identity via ?as= (T05, ADR
+	// 0045) -- this endpoint was the one T05 missed. ?as= is unverified
+	// like everywhere else on this surface, so this isn't a new
+	// confidentiality boundary (the same content is already obtainable
+	// via .../list?to=X&as=X); it closes an inconsistency where opening
+	// a live, persistent, real-time tap on any mailbox required strictly
+	// less than a one-shot batch read of the same mailbox.
+	as := q.Get("as")
+	if as == "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "as is required")
+		return
+	}
+	if as != toURN {
+		writeError(w, http.StatusForbidden, CodeForbidden, "as must match to")
+		return
+	}
 	to, err := messaging.ParseURN(toURN)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid to URN: "+err.Error())

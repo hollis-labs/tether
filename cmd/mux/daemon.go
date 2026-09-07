@@ -115,6 +115,34 @@ var daemonRunCmd = &cobra.Command{
 	Short:  "Run the daemon in the foreground (invoked by `daemon start`; avoid calling directly)",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Pre-flight liveness check BEFORE app.New: app.New unconditionally
+		// runs seedLogicalAgents (a DB write) and, on a catalog-absent
+		// first run, auto-seeds catalog files; the code below additionally
+		// runs ReconcileStaleState (marks any 'launching'/'running' session
+		// row 'failed') and a full registry bootstrap -- all against the
+		// SAME state.db a second `daemon run` invocation would share with
+		// an already-live daemon. daemon.Server.Run has its own PID-file
+		// liveness check, but it fires only after all of that has already
+		// mutated the database (T11 durability review, CW-20260906-0042:
+		// live-reproduced this exact ordering letting a second invocation
+		// silently mark a live daemon's genuinely-running sessions
+		// "failed" before ever discovering it couldn't actually bind).
+		// This check is deliberately best-effort and duplicated here: if
+		// the catalog doesn't exist yet (first-ever run), there is no PID
+		// file to read and therefore nothing that could already be live
+		// for this state root -- safe to fall through to the normal
+		// auto-seed path in app.New below. See also
+		// internal/daemon/listener_unix.go's removeStaleSocket, hardened
+		// by the same review to refuse stealing a socket something is
+		// still actually listening on, independent of PID-file integrity.
+		if cat, cfgErr := config.Load(catalogPath); cfgErr == nil {
+			if daemonCfg, err := daemonConfigFromCatalog(cat); err == nil {
+				if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsAlive(pid) {
+					return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
+				}
+			}
+		}
+
 		svc, err := app.New(catalogPath)
 		if err != nil {
 			return err

@@ -82,7 +82,7 @@ func TestHandleMessagesSubscribe_ScopedToRecipient_ExcludesOthers(t *testing.T) 
 	alice := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "alice"}
 	carol := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "carol"}
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/messages/subscribe?to="+alice.URN(), nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/messages/subscribe?to="+alice.URN()+"&as="+alice.URN(), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
