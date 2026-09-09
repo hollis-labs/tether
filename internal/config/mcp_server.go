@@ -22,11 +22,11 @@ import (
 // time; see resolveEntrySecrets.
 type MCPServerEntry struct {
 	ID        string            `yaml:"id"`
-	Transport string            `yaml:"transport"` // "stdio" | "sse"
+	Transport string            `yaml:"transport"` // "stdio" | "sse" | "http"
 	Command   string            `yaml:"command"`   // stdio: binary path
 	Args      []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
 	Env       map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
-	URL       string            `yaml:"url"`       // sse: endpoint URL
+	URL       string            `yaml:"url"`       // sse, http: endpoint URL
 	Token     string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
 	Scopes    []string          `yaml:"scopes"`
 	Enabled   *bool             `yaml:"enabled"` // nil → defaults to true
