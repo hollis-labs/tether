@@ -1,0 +1,80 @@
+kind: cerberus-project/v1
+owner: tether
+namespace: local
+project:
+  id: tether
+  name: Tether
+resources:
+  - id: tether-daemon-service
+    name: Tether Daemon Service
+    type: process
+    project: tether
+    connector: local
+    config:
+      build_strategy:
+        kind: make_standard
+      command:
+        - ./bin/mux
+        - daemon
+        - run
+        - --catalog
+        - /Users/chrispian/.tether/catalog
+      dir: /Users/chrispian/dev/hollis-labs/apps/tether
+      env:
+        HOME: /Users/chrispian
+        PATH: /Users/chrispian/.local/bin:/Users/chrispian/.bun/bin:/Users/chrispian/go/bin:/Users/chrispian/.opencode/bin:/Users/chrispian/bin:/Users/chrispian/helpers:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrispian/.cargo/bin:/Users/chrispian/.orbstack/bin
+        SHELL: /bin/zsh
+      mode: os_service
+      run_from: artifact
+      supervisor: launchd
+    tags:
+      - daemon
+      - mcp
+      - go
+      - launchd
+      - v2
+  - id: tether-dev
+    name: Tether (Dev)
+    type: process
+    project: tether
+    connector: local
+    config:
+      auto_restart: false
+      auto_start: true
+      command:
+        - make
+        - run
+      dir: /Users/chrispian/dev/hollis-labs/apps/tether/apps/sysop
+      mode: dev_session
+      port: 8947
+      run_from: workspace
+      url: http://127.0.0.1:8947/operations/
+    tags:
+      - frontend
+      - go
+      - dev
+      - workspace
+      - v2
+  - id: tether-ui-dev
+    name: Tether UI (Dev)
+    type: process
+    project: tether
+    connector: local
+    config:
+      auto_restart: false
+      auto_start: false
+      command:
+        - make
+        - ui-dev
+      dir: /Users/chrispian/dev/hollis-labs/apps/tether/apps/sysop
+      mode: dev_session
+      port: 5177
+      run_from: workspace
+      url: http://127.0.0.1:5177/operations/
+    tags:
+      - frontend
+      - vite
+      - dev
+      - workspace
+      - v2
+registry_urn: msg://agent/agent-mux/prj_a8melpmw8k
