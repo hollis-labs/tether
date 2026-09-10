@@ -205,8 +205,34 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 			return nil, fmt.Errorf("start sse transport: %w", err)
 		}
 		return c, nil
+	case "http":
+		// Streamable HTTP. Each request is an ordinary POST, so there is no
+		// long-lived stream to lose when the upstream restarts — which is the
+		// property "sse" lacks and the reason this case exists.
+		if entry.URL == "" {
+			return nil, fmt.Errorf("http transport requires url")
+		}
+		opts := []transport.StreamableHTTPCOption{}
+		if entry.Token != "" {
+			// transport.WithHTTPHeaders, not mcpclient.WithHeaders: the latter
+			// returns a transport.ClientOption, which is SSE-only.
+			opts = append(opts, transport.WithHTTPHeaders(map[string]string{
+				"Authorization": "Bearer " + entry.Token,
+			}))
+		}
+		c, err := mcpclient.NewStreamableHttpClient(entry.URL, opts...)
+		if err != nil {
+			return nil, err
+		}
+		// Start opens no connection for this transport, but it is what installs
+		// the transport's notification handler — without it the OnNotification
+		// hook in startOne never sees tools/list_changed.
+		if err := c.Start(ctx); err != nil {
+			return nil, fmt.Errorf("start http transport: %w", err)
+		}
+		return c, nil
 	default:
-		return nil, fmt.Errorf("unknown transport %q (want stdio or sse)", entry.Transport)
+		return nil, fmt.Errorf("unknown transport %q (want stdio, sse, or http)", entry.Transport)
 	}
 }
 

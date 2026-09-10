@@ -68,6 +68,29 @@ tags: [memory]
 		}
 	})
 
+	t.Run("valid http entry", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "mcp-servers", "tangent.yaml"), `
+id: tangent
+transport: http
+url: "http://127.0.0.1:7842/mcp"
+tags: [interactive-ui]
+`)
+		entries, err := LoadMCPServers(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 entry, got %d", len(entries))
+		}
+		if entries[0].Transport != "http" {
+			t.Errorf("Transport = %q, want %q", entries[0].Transport, "http")
+		}
+		if entries[0].URL != "http://127.0.0.1:7842/mcp" {
+			t.Errorf("URL = %q", entries[0].URL)
+		}
+	})
+
 	t.Run("env var expansion", func(t *testing.T) {
 		t.Setenv("TEST_MUX_TOKEN", "secret-tok")
 		t.Setenv("TEST_MUX_URL", "http://host:9090/sse")
