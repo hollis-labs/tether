@@ -40,10 +40,12 @@ Defined codes:
 | Code                | HTTP | Meaning                                       |
 |---------------------|------|-----------------------------------------------|
 | `invalid_request`   | 400  | malformed body, missing required param        |
+| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
+| `locked`            | 423  | resource is archived or otherwise closed to writes |
 | `not_implemented`   | 501  | route exists, semantics land in a later version |
 | `internal_error`    | 500  | unexpected server failure                     |
 
