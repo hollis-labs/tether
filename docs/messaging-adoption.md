@@ -177,7 +177,8 @@ Keep the returned URN. That is the address others send to.
 | To | Call |
 |---|---|
 | Confirm identity, bindings and group memberships | `tether_whoami` |
-| Read mail (non-destructive) | `mux_message_inbox` |
+| Browse mail (non-destructive, repeatable) | `mux_message_list` |
+| Pull mail, taking delivery of it | `mux_message_inbox` — **destructive**: what it returns is marked delivered and will not appear in a later inbox call |
 | Mark handled | `mux_message_consume` |
 | Send | `mux_message_send` |
 | Send and wake a live recipient | `mux_message_notify` |
@@ -194,8 +195,9 @@ A manually-driven session can register, send, read, consume, join groups and
 trace delivery immediately. What it does **not** get for free is *push*: being
 woken mid-session by incoming mail requires a runtime binding against a session
 the daemon is hosting. A session you launched yourself outside Tether is not
-one of those, so treat it as **poll-and-read** — call `mux_message_inbox` when
-you want to check. That is a real limitation, not a misconfiguration.
+one of those, so treat it as **poll-and-read** — call `mux_message_list` when
+you want to check. Use `list`, not `inbox`: `inbox` marks what it returns as
+delivered, so polling with it quietly consumes your own mail. That is a real limitation, not a misconfiguration.
 
 ---
 

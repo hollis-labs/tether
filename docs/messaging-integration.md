@@ -60,9 +60,18 @@ the mistake this split exists to prevent.
 
 Two models, and the choice is not free.
 
-**Pull** — `Inbox`/`mux_message_inbox` on a cadence you choose. Works
-everywhere, with no binding and no daemon-hosted session. Non-destructive, so
-polling is cheap and safe to retry.
+**Pull** — on a cadence you choose. Works everywhere, with no binding and no
+daemon-hosted session. **Two different calls, and the distinction matters:**
+
+- `mux_message_list` / the client's list read is **non-destructive and
+  repeatable**. This is the polling call.
+- `mux_message_inbox` / `Inbox` is an **atomic-delivery pull**: returned
+  messages are marked delivered and **will not come back on a later inbox
+  call**. It is a take, not a look.
+
+Build the poll loop on `list`. Reach for `inbox` only where exactly-once
+hand-off to one consumer is what you want, and where losing the batch on a
+crash between the pull and the work is acceptable.
 
 **Push** — the daemon wakes a live session when mail arrives. Requires a
 **runtime binding** leased against a session *the daemon is hosting*. An app
@@ -92,9 +101,15 @@ window where the daemon thinks a dead session is current.
 
 ## 3. Reading is not handling
 
-`Inbox` does not clear anything. `Consume` is the call that records a message
-as handled, and the two are deliberately separate so a crash between reading
-and acting does not lose the message.
+`list` does not clear anything, and `consume` is the call that records a
+message as handled. The two are deliberately separate so a crash between
+reading and acting does not lose the message.
+
+Note `inbox` sits between them and is easy to misread as a browse: it does not
+mark a message *consumed*, but it does mark it *delivered*, which is enough to
+keep it out of every later inbox call. Pulling with `inbox` and crashing before
+you act loses the batch from that view — which is exactly the failure this
+section is about.
 
 **Consume after you have acted, not after you have read.** An app that consumes
 on read and then crashes has silently dropped work, and nothing in the system

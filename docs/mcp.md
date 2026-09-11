@@ -523,7 +523,9 @@ message's sender or recipient, or the call returns `forbidden` (403).
 | `as` | string | ✓ | Caller URN asserting the read (ADR 0045) |
 
 #### `mux_message_inbox`
-List messages in a recipient's inbox.
+Pull a recipient's undelivered messages — the atomic-delivery agent pull model.
+**Destructive:** what it returns is marked delivered and will not appear in a
+future inbox call. For a repeatable browse, use `mux_message_list`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
