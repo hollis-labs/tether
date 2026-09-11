@@ -386,8 +386,14 @@ is not running yet. Follow with `mux_session_launch`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `launch_id` | string | ✓ | Launch profile ID (see `mux_catalog_list_launches`) |
-| `boot_prompt` | string | — | Override the catalog's static boot fragments |
+| `launch_id` | string | ✓ | Launch profile ID from the catalog (see mux_catalog_list_launches) |
+| `boot_prompt` | string | — | Optional boot prompt override; replaces catalog static boot fragments verbatim |
+| `agent_file` | string | — | v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent. |
+| `agent_inline` | string | — | v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order. |
+| `boot_profile` | string | — | v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers). |
+| `injection` | string | — | Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead. |
+| `override` | string | — | v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map). |
+| `prompt_append` | string | — | Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt. |
 
 ```json
 // Response
@@ -508,11 +514,13 @@ session can be resolved.
 | `no_wake` | boolean | — | Store only; skip wake injection |
 
 #### `mux_message_get`
-Get a message by ID.
+Get a message by ID. Scoped to the claimed identity — `as` must be the
+message's sender or recipient, or the call returns `forbidden` (403).
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `message_id` | string | ✓ | Message ID |
+| `as` | string | ✓ | Caller URN asserting the read (ADR 0045) |
 
 #### `mux_message_inbox`
 List messages in a recipient's inbox.
@@ -524,11 +532,13 @@ List messages in a recipient's inbox.
 | `thread_id` | string | — | Thread ID filter |
 
 #### `mux_message_thread`
-List all messages in a thread.
+List all messages in a thread, scoped to the ones involving the claimed
+identity.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `thread_id` | string | ✓ | Thread ID |
+| `as` | string | ✓ | Caller URN asserting the read (ADR 0045) |
 | `kind` | string | — | Comma-separated kind filter |
 
 #### `mux_message_consume` _(message.write)_
@@ -546,42 +556,390 @@ Cancel a pending message.
 |---|---|---|---|
 | `message_id` | string | ✓ | Message ID |
 
-#### Identity, bindings, groups and delivery trace
+---
 
-The messaging vNext epic added tool groups that are **not** given per-tool
-tables below. They are live and stable; `mux mcp` emits the authoritative
-parameter schema for each, and
-[messaging-adoption.md](./messaging-adoption.md) is the task-shaped guide.
+### Identity and self-discovery
 
-| Group | Tools | Scope |
-|---|---|---|
-| Self-discovery | `tether_whoami` | none |
-| Registry identity | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync` | `registry.write` |
-| Registry reads | `tether_registry_lookup`, `tether_registry_lookup_by`, `tether_registry_search` | none |
-| Runtime bindings | `tether_registry_binding_lease`, `..._renew`, `..._revoke` | `registry.write` |
-| Binding reads | `tether_registry_binding_current`, `tether_registry_binding_list` | none |
-| Scoped role/slot bindings | `tether_registry_scoped_binding_set` (write), `..._resolve`, `..._revisions` (read) | `registry.write` / none |
-| Groups | `tether_group_create`, `_post`, `_invite`, `_kick`, `_leave`, `_archive`, `_set_role`, `_mark_read` | `groups.write` |
-| Group reads | `tether_group_read`, `_lookup`, `_mentions`, `_list_members`, `_list_for_member` | none |
-| Delivery trace & repair | `mux_message_trace`, `mux_message_retention_candidates` (read); `mux_message_redrive`, `mux_message_purge` | none / `delivery.write` |
+Added by messaging vNext. The caller identity these tools carry is
+**self-asserted and unverified** (ADR 0045, same-host trust) — it is addressing
+and an audit trail, not authentication.
 
-**Every messaging read takes an `as` parameter** carrying the caller's URN
-(ADR 0045). It is self-asserted and unverified — addressing and audit, not
-authentication — but it is required, and omitting it returns
-`invalid_request`.
+The parameter carrying it is **not uniformly named**: `to` on
+`mux_message_inbox`/`mux_message_list`, `as` on most other reads,
+`authorized_by` on the repair tools below, and `by` / `member_urn` /
+`from_urn` / `creator_urn` on the group tools. Each table states which.
+
+#### `tether_whoami`
+Answers "who am I, and is anything currently bound to me?" — the registered Profile, attached external-id mappings, group memberships, and the current RuntimeBinding. Every field is independently best-effort: an unregistered or never-bound identity comes back as a normal result, not an error, so this is also how a session checks whether it has an identity at all.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `as` | string | ✓ | msg:// URN to look up (self-asserted, no verification). |
+
+---
+
+### Registry
+
+The federation directory — identity rows for agents and projects. It holds
+identity and a callback URI, never operational content (ADR 0041 D18).
+
+#### `tether_registry_register` _(registry.write)_
+Register a new agent or project profile. **The server mints the URN** — supplying a `urn` field returns `invalid_request`. `profile` matches `registry.Profile`: `display_name` is the only required field; `title`, `role`, `description`, `avatar`, `project`, `status`, `callback`, `capabilities`, `skills`, `links`, `kind_meta`, `host_address` and `health_status` are optional. Returns the canonical Profile with the minted URN.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `kind` | string | ✓ | Entity kind: 'agent' or 'project'. |
+| `profile` | object | ✓ | Profile JSON to register. See tool description for the field shape. |
+
+#### `tether_registry_lookup`
+Look up one profile by URN. Soft-deleted (`status='deprecated'`) rows **are** returned here — they are excluded only from default search results.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `urn` | string | ✓ | Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx. |
+
+#### `tether_registry_lookup_by`
+Resolve a substrate-local external id to one registry profile. Returns 0 or 1 row. Use it when you hold a local id — a Tether catalog slug, a Cerberus owner — and need the canonical URN. Note this is the one registry tool whose `kind` also accepts `group`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `external_id` | string | ✓ | Substrate-local identifier to resolve. |
+| `kind` | string | ✓ | Entity kind to resolve: 'agent', 'project', or 'group'. |
+| `substrate` | string | — | Optional substrate scope such as 'tether' or 'cerberus'. |
+
+#### `tether_registry_search`
+Search by filter; all filters AND together, results ordered alphabetically on `display_name`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `kind` | string | ✓ | Entity kind to search: 'agent' or 'project'. |
+| `capability` | string | — | Filter to rows that carry this capability string. |
+| `project` | string | — | Filter on project (exact match). |
+| `role` | string | — | Filter on role (exact match). |
+| `skill_name` | string | — | Filter to rows that carry a skill with this name. |
+| `status` | string | — | Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all. |
+| `title` | string | — | Filter on title (exact match). |
+
+#### `tether_registry_update_self` _(registry.write)_
+Partial-merge update. Scalar fields update column-wise — only fields present in the patch are touched. Array fields follow the patch semantics in the tool's own description; read it via `mux mcp` before relying on replace-vs-append behavior.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `patch` | object | ✓ | UpdatePatch JSON. See tool description for partial-merge semantics. |
+| `urn` | string | ✓ | Full URN of the row to update. |
+
+#### `tether_registry_deregister` _(registry.write)_
+Soft-delete: status flips to `deprecated`. The row stays visible to direct lookup so callers can audit it, and drops out of default search.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `urn` | string | ✓ | Full URN of the row to soft-delete. |
+
+#### `tether_registry_merge` _(registry.write)_
+Merge a source profile into a destination: the source's external-id mappings reattach to the destination and the source row is soft-deleted. Returns the destination Profile. This is the deduplication tool — use it when two rows turn out to be the same actor.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `into` | string | ✓ | Destination URN the source's identity mappings are reattached to. |
+| `urn` | string | ✓ | Source URN to merge away. |
+
+#### `tether_registry_sync` _(registry.write)_
+Refresh thin-profile columns from the row's `callback` URI. Two success shapes: `{ok:true, synced:false}` when no callback is configured, `{ok:true, synced:true, profile:<refreshed>}` when one was invoked. **Raw callback payload is never stored** — ADR 0041 D18; the registry holds identity, never operational content.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `urn` | string | ✓ | Full URN of the row to sync. |
+
+---
+
+### Runtime bindings
+
+Which live session currently receives mail for an actor. An actor with no
+binding still accumulates mail; it just has nowhere to be pushed right now.
+
+#### `tether_registry_binding_lease` _(registry.write)_
+Declare that a session now receives mail for `target_urn`. Always mints `visibility='published-local'`, and `capabilities` must be exactly `["pull-only"]` — caller-supplied-webhook push bridging is not implemented, so the bridge pulls its own mailbox. Refuses with `conflict` rather than superseding a binding Tether itself manages.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `attempt_id` | string | ✓ | Identifier for this specific lease attempt. |
+| `capabilities` | array | ✓ | Must be exactly ["pull-only"]. |
+| `host_id` | string | ✓ | Identifier for the external host/bridge process. |
+| `session_id` | string | ✓ | Self-asserted session id the caller is leasing on behalf of. |
+| `target_urn` | string | ✓ | msg:// target URN (session or agent). |
+| `ttl_seconds` | number | — | Lease duration in seconds; 0 or omitted means no expiry. |
+
+#### `tether_registry_binding_renew` _(registry.write)_
+Extend a lease. Fails `conflict` when a newer generation already exists for the same target — which is what a crashed predecessor's replacement looks like, so treat that as legitimate takeover rather than a retryable fault.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `binding_id` | string | ✓ | Binding id returned by a prior lease. |
+| `ttl_seconds` | number | — | New lease duration in seconds; 0 or omitted means no expiry. |
+
+#### `tether_registry_binding_revoke` _(registry.write)_
+Relinquish a lease. Idempotent. Good hygiene on clean shutdown; a crash simply lets the lease expire instead.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `binding_id` | string | ✓ | Binding id to revoke. |
+
+#### `tether_registry_binding_current`
+The authoritative current binding for a target — highest generation, non-revoked, non-expired.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `target_urn` | string | ✓ | msg:// target URN. |
+
+#### `tether_registry_binding_list`
+Every binding ever leased for a target, newest generation first. The audit view.
+
+> Any same-host caller can list any target's bindings — there is no ownership check on this route today (CW-20260907-0034).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `target_urn` | string | ✓ | msg:// target URN. |
+
+---
+
+### Scoped role/slot bindings
+
+Consumer-owned `(scope, slot)` → target mappings, revision-tracked.
+
+#### `tether_registry_scoped_binding_set` _(registry.write)_
+Publish a new revision of a consumer-owned `(scope, slot)` role binding — for example `scope='run-42'`, `slot='reviewer'`. **Tether does not interpret scope or slot names, and a binding grants no command authority.** It is a directory entry the consumer gives meaning to.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `created_by` | string | ✓ | Caller URN recorded as provenance for this revision. |
+| `scope` | string | ✓ | Consumer-owned scope, e.g. a run or team id. |
+| `slot` | string | ✓ | Role/slot name within the scope, e.g. 'reviewer'. |
+| `target_urns` | array | ✓ | One or more target URNs for this slot. |
+
+#### `tether_registry_scoped_binding_resolve`
+Resolve the current revision for a `(scope, slot)`. `single=true` resolves to exactly one target and errors `conflict` on zero or several, rather than making the caller guess.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `scope` | string | ✓ | Consumer-owned scope. |
+| `slot` | string | ✓ | Role/slot name within the scope. |
+| `single` | boolean | — | Resolve to exactly one target (default false: return every target). |
+
+#### `tether_registry_scoped_binding_revisions`
+Every revision ever published for a `(scope, slot)`, newest first.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `scope` | string | ✓ | Consumer-owned scope. |
+| `slot` | string | ✓ | Role/slot name within the scope. |
+
+---
+
+### Groups
+
+Group rooms with mailbox-pull delivery, a per-member read cursor, and
+server-side `@` mention parsing. See [ADR 0042](adr/0042-group-messaging.md)
+and [groups/symbols.md](./groups/symbols.md).
+
+#### `tether_group_create` _(groups.write)_
+Create a group. The server mints a 3-segment URN — `msg://group/<authority>/grp_<10 alnum>` (ADR 0042; the 3-segment form was locked over the original 2-segment spec). The creator is added with `role='owner'` in the same transaction.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `creator_urn` | string | ✓ | Caller URN; must exist as an active agent/project registry row. Becomes the owner. |
+| `display_name` | string | ✓ | Human-readable group name. |
+| `capabilities` | array | — | Topic tags for discovery via tether_registry_search. |
+| `description` | string | — | Free-form description of the group's purpose. |
+| `role` | string | — | Group category (free-form), e.g. 'design-room' / 'incident-bridge' / 'project-coord'. |
+
+#### `tether_group_lookup`
+Look up a group by URN. Archived groups are still returned — callers often need their metadata. An agent URN returns `not_found`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `urn` | string | ✓ | Full group URN, e.g. msg://group/agent-mux/grp_xxxxxxxxxx. |
+
+#### `tether_group_list_members`
+Members of a group, ordered by `joined_at`, with display names hydrated from the registry.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_urn` | string | ✓ | Full group URN. |
+
+#### `tether_group_list_for_member`
+Groups a member belongs to, including archived ones — those stay visible to former members.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `member_urn` | string | ✓ | Full URN of the member whose group list we're fetching. |
+
+#### `tether_group_invite` _(groups.write)_
+Add a member. Owners and moderators only. The member URN must already exist in the registry.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `by` | string | ✓ | Caller URN (must be owner or moderator). |
+| `group_urn` | string | ✓ | Full group URN. |
+| `member_urn` | string | ✓ | Full URN of the member being invited (must exist in registry). |
+| `role` | string | — | Role at invite time: 'member' (default) \| 'moderator'. |
+
+#### `tether_group_kick` _(groups.write)_
+Remove a member. Owners and moderators only. The owner cannot be removed this way — they transfer ownership with `tether_group_set_role`, then use `tether_group_leave`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `by` | string | ✓ | Caller URN (must be owner or moderator). |
+| `group_urn` | string | ✓ | Full group URN. |
+| `member_urn` | string | ✓ | Full URN of the member being kicked. |
+
+#### `tether_group_leave` _(groups.write)_
+Self-removal. If the leaver is the owner, another member must already hold `owner` or `moderator`, or the call is refused `forbidden` with `cannot_leave_without_owner_transfer`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `group_urn` | string | ✓ | Full group URN. |
+| `member_urn` | string | ✓ | Caller URN (the leaver — must equal the caller's own identity). |
+
+#### `tether_group_set_role` _(groups.write)_
+Change a member's role. Promotion to `owner` transfers ownership and is owner-only; moderators can promote to `moderator` but no further.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `by` | string | ✓ | Caller URN (must be owner or moderator; only owner can promote to owner). |
+| `group_urn` | string | ✓ | Full group URN. |
+| `member_urn` | string | ✓ | Full URN of the member whose role is changing. |
+| `role` | string | ✓ | New role: 'member' \| 'moderator' \| 'owner'. |
+
+#### `tether_group_archive` _(groups.write)_
+Soft-delete a group. It becomes read-only — history stays readable, new messages are refused with `locked` (423). Owner or moderator only.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `by` | string | ✓ | Caller URN (must be the group's owner or a moderator). |
+| `urn` | string | ✓ | Full group URN to archive. |
+
+#### `tether_group_post` _(groups.write)_
+Post to a group. The caller must be a member and the group must not be archived. Returns `{message_id, group_seq}`.
+
+**Symbol vocabulary** (ADR 0042, `docs/groups/symbols.md`): `@<urn>` or `@<display_name>` is a **mention** — the daemon parses the payload before commit, resolves each token via the registry, and emits a notice to the mentioned URN's personal inbox after the group message commits. An ambiguous short form returns `invalid_request` with a `candidates` list; re-issue with the full URN. `!<command>` and `:<directive>` are **reserved namespaces the daemon does not parse** — it delivers those bytes verbatim and the consuming agent decides what they mean.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `from_urn` | string | ✓ | Caller URN (must be a member of the group). |
+| `group_urn` | string | ✓ | Full group URN to post into. |
+| `payload` | object | ✓ | Envelope payload as a JSON object. The daemon-side mention parser scans this for '@' tokens. |
+| `content_type` | string | — | MIME-ish content type for the payload (e.g. 'text/plain', 'application/json'). |
+| `kind` | string | — | Envelope kind. Defaults to 'message'. Other valid values match the messaging-store kind vocabulary. |
+| `thread_id` | string | — | Optional thread id — groups subdivide into threads via this field (no hierarchical URN). |
+
+#### `tether_group_read`
+Non-destructive read. **Does not bump the read cursor** — call `tether_group_mark_read` once you have acknowledged the batch.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `as` | string | ✓ | Caller URN (must be a member; identity surrogate per v060-05). |
+| `group_urn` | string | ✓ | Full group URN. |
+| `limit` | number | — | Max messages to return. Server default: 100. |
+| `since_seq` | number | — | Lower bound on group_seq (exclusive). 0 → use caller's last_read_seq. |
+| `thread_id` | string | — | Optional thread id filter. |
+
+#### `tether_group_mark_read` _(groups.write)_
+Bump the caller's read cursor. Idempotent and monotonic: a smaller `up_to_seq` is silently a no-op.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `as` | string | ✓ | Caller URN. |
+| `group_urn` | string | ✓ | Full group URN. |
+| `up_to_seq` | number | ✓ | New cursor value — last_read_seq becomes max(last_read_seq, up_to_seq). |
+
+#### `tether_group_mentions`
+The caller's own mention notices across every group. Usually what you want when catching up, rather than reading each room in full.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `as` | string | ✓ | Caller URN — the member whose mentions are being read. |
+| `limit` | number | — | Max mentions to return. Server default: 50. |
+| `since` | string | — | RFC3339 timestamp; mentions emitted after this are returned. Empty → no lower bound. |
+
+---
+
+### Delivery trace, repair and retention
+
+#### `mux_message_trace`
+Full delivery state for one message. Read this before theorising about a message that did not arrive — it distinguishes never-sent from sent-and-unclaimed from delivered-and-ignored, and those have nothing to do with each other.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `message_id` | string | ✓ | Message ID. |
+
+#### `mux_message_retention_candidates`
+Messages eligible for a privacy-safe body purge.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `older_than_hours` | number | — | Lookback window in hours; 0 or omitted uses the daemon's default. |
+
+#### `mux_message_redrive` _(delivery.write)_
+Re-attempt a stuck or dead-lettered delivery. A repair tool — drive it from trace evidence, not as a retry reflex.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `authorized_by` | string | ✓ | URN recorded as provenance for this repair (self-asserted, ADR 0045). |
+| `message_id` | string | ✓ | Message ID, or a literal delivery id for a group-fanout recipient. |
+| `new_deadline_seconds` | number | — | New delivery deadline in seconds from now; 0 or omitted means no deadline. |
+
+#### `mux_message_purge` _(delivery.write)_
+Clear one message's body and metadata, leaving its structural and trace fields (id, kind, from, to, thread, timestamps) intact. **Irreversible.** Refuses when the message still has a pending delivery obligation — including dead-lettered, which remains repairable via `mux_message_redrive` and would resend an empty message if purged first. Idempotent: purging an already-purged message reports `purged=false` rather than erroring.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `authorized_by` | string | ✓ | URN recorded as provenance for this purge (self-asserted, ADR 0045). |
+| `message_id` | string | ✓ | Message ID. |
 
 ---
 
 ### Agents
 
+Catalog agent profiles. Not messaging — listed here because `catalog.write`
+appears in the scope table above.
+
 #### `mux_agent_list`
 List agent profiles in the catalog.
 
-#### `mux_agent_show`
-Show one agent profile by id.
+_No parameters._
 
-#### `mux_agent_create` / `mux_agent_edit` _(catalog.write)_
-Create or edit an agent profile.
+#### `mux_agent_show`
+Show one agent profile.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Agent ID |
+
+#### `mux_agent_create` _(catalog.write)_
+Create an agent profile in the catalog.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended. |
+| `agent_prompt` | string | — | Agent persona prompt (optional). |
+| `name` | string | — | Human-readable name (defaults to id). |
+| `project` | string | — | Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/. |
+| `roles` | string | — | Comma-separated role list (optional). |
+| `scope` | string | — | Discovery layer: project (default) \| user \| system. |
+| `skills` | string | — | Comma-separated skill ID list (optional). |
+| `system_prompt` | string | — | Agent system prompt (optional). |
+
+#### `mux_agent_edit` _(catalog.write)_
+Edit an existing agent profile. Only fields present in the call are changed.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Agent ID to edit. |
+| `agent_prompt` | string | — | New persona prompt (optional). |
+| `name` | string | — | New human-readable name (optional). |
+| `roles` | string | — | Comma-separated role list — replaces existing roles; empty string clears them (optional). |
+| `skills` | string | — | Comma-separated skill ID list — replaces existing skills; empty string clears them (optional). |
+| `system_prompt` | string | — | New system prompt (optional). |
 
 ---
 

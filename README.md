@@ -253,6 +253,7 @@ printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/
 | [`docs/dev-setup.md`](docs/dev-setup.md) | Full dev setup, catalog schema, common tasks |
 | [`docs/messaging.md`](docs/messaging.md) | Direct mail, notify+wake, inbox/list semantics |
 | [`docs/messaging-adoption.md`](docs/messaging-adoption.md) | How an app, agent or hand-run MCP session joins messaging |
+| [`docs/messaging-integration.md`](docs/messaging-integration.md) | Implementer's guide: identity ownership, binding lifecycle, error handling |
 | [`docs/messaging-federation.md`](docs/messaging-federation.md) | Cross-host peer routing and trust |
 | [`docs/mcp.md`](docs/mcp.md) | MCP adapter setup, auth, tool reference |
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |

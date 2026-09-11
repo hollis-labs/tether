@@ -1190,28 +1190,177 @@ Body is empty; response is a `BootstrapReport`:
 Added by the messaging vNext epic. These separate *who an actor durably is*
 from *which live session currently receives its mail*. See
 [ADR 0045](../adr/0045-messaging-principal-trust-model.md) for the same-host
-trust model and [docs/messaging-adoption.md](../messaging-adoption.md) for
-the adoption walkthrough.
+trust model and [messaging-adoption.md](../messaging-adoption.md) for the
+adoption walkthrough.
 
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/whoami` | `GET` | Self-discovery for the URN in `?as=`. Returns the registered Profile (if any), attached external-id mappings, group memberships, and the current RuntimeBinding (if any). Every field is independently best-effort — an unregistered or never-bound identity is a normal `200`, not an error. |
-| `/sessions/bootstrap` | `POST` | Resolve and register a session's canonical identity at the launch boundary. Idempotent: a repeated call for the same preassigned session id never errors and never mints a competing identity. |
-| `/registry/bindings` | `POST` | Lease a runtime binding — declare that a session now receives mail for `target_urn`. Body requires `target_urn`, `session_id`, `host_id`, `attempt_id`. `capabilities` must be exactly `["pull-only"]`; caller-supplied-webhook push bridging is not implemented, the bridge pulls its own mailbox instead. Refuses with `invalid_request` if the target is already bound to a Tether-managed session. |
-| `/registry/bindings` | `GET` | List bindings for `?target_urn=`. Add `?current=true` for only the active one. **No ownership check today** — any same-host caller can list any target's bindings (CW-20260907-0034). |
-| `/registry/bindings/{id}/renew` | `POST` | Extend a lease. Fails `conflict` if a newer generation exists for the same target. |
-| `/registry/bindings/{id}/revoke` | `POST` | Relinquish a lease. Idempotent. |
-| `/registry/scoped-bindings` | `POST` | Set a scoped role/slot binding — bind a role name to an actor within a scope. Revision-tracked. |
-| `/registry/scoped-bindings/resolve` | `GET` | Resolve a role/slot to the actor currently filling it. |
-| `/registry/scoped-bindings/revisions` | `GET` | Revision history for a scoped binding. |
+> **Casing is not uniform across this group.** Request bodies are `snake_case`.
+> `/whoami` responds in `snake_case`, but the binding routes marshal
+> `registry.RuntimeBinding` and `registry.ScopedBinding` directly — those
+> structs carry no JSON tags, so their responses come back **`PascalCase`**
+> (`ID`, `TargetURN`, `LeaseExpiresAt`, …). Decode them into the Go types
+> rather than hand-written snake_case structs.
+
+### `GET /whoami` — Self-discovery
+
+Query: `as` (required) — the `msg://` URN to look up, self-asserted and
+unverified.
+
+Every field is independently best-effort; an unregistered or never-bound
+identity is a normal `200`, not an error.
+
+```json
+{
+  "urn": "msg://agent/agent-mux/agt_x9k2p4qrst",
+  "profile": { "...": "redacted Profile; omitted when unregistered" },
+  "external_ids": [ { "substrate": "tether", "external_id": "...", "attached_at": "..." } ],
+  "groups": [ { "...": "redacted group Profiles" } ],
+  "binding": { "...": "RuntimeBinding (PascalCase); omitted when unbound" }
+}
+```
+
+| Condition | Status | Code |
+|---|---|---|
+| `as` missing | 400 | `invalid_request` |
+| method other than GET | 405 | `method_not_allowed` |
+
+### `POST /sessions/bootstrap` — Resolve a session's canonical identity
+
+The launch-boundary helper. **Idempotent** — a repeated call for the same
+`session_id` returns the existing identity rather than minting a competitor.
+
+```json
+{
+  "session_id": "sess-1",
+  "intent": "...",
+  "parent_session_id": "...",
+  "logical_agent_id": "...",
+  "publication": "...",
+  "provider_mappings": [ { "owner": "...", "provider": "...", "native_session_id": "..." } ]
+}
+```
+
+Response: `{"session_id": "...", "created": true}` — `created` distinguishes a
+fresh mint from an idempotent replay.
+
+| Condition | Status | Code |
+|---|---|---|
+| malformed body | 400 | `invalid_request` |
+| `session_id` missing | 400 | `invalid_request` |
+| method other than POST | 405 | `method_not_allowed` |
+
+### `POST /registry/bindings` — Lease a runtime binding
+
+```json
+{
+  "target_urn": "msg://agent/agent-mux/agt_x9k2p4qrst",
+  "session_id": "sess-1",
+  "host_id": "host-1",
+  "attempt_id": "attempt-1",
+  "capabilities": ["pull-only"],
+  "ttl_seconds": 3600
+}
+```
+
+`target_urn`, `session_id`, `host_id` and `attempt_id` are required.
+`capabilities` must be **exactly** `["pull-only"]` — caller-supplied-webhook
+push bridging is not implemented, so the bridge pulls its own mailbox.
+`ttl_seconds` of 0 or omitted means no expiry. Visibility is always minted
+`published-local`; a caller-declared visibility is never accepted.
+
+Response: `201 Created` + the `RuntimeBinding` (PascalCase), carrying `ID`,
+`Generation`, `Visibility` and `LeaseExpiresAt`.
+
+| Condition | Status | Code |
+|---|---|---|
+| malformed body, missing required field, or capabilities not exactly `["pull-only"]` | 400 | `invalid_request` |
+| target is bound to a Tether-managed session this endpoint cannot supersede | 409 | `conflict` |
+| registry not configured | 404 | `not_found` |
+
+### `GET /registry/bindings` — List bindings for a target
+
+Query: `target_urn` (required), `current=true` (optional) to return only the
+active binding.
+
+Response: `{"bindings": [ RuntimeBinding, … ]}`, newest generation first.
+
+> **No ownership check.** Any same-host caller can list any target's bindings
+> (CW-20260907-0034).
+
+| Condition | Status | Code |
+|---|---|---|
+| `target_urn` missing | 400 | `invalid_request` |
+
+### `POST /registry/bindings/{id}/renew` — Extend a lease
+
+Body is optional: `{"ttl_seconds": 3600}`. Response `200` + the refreshed
+`RuntimeBinding`.
+
+| Condition | Status | Code |
+|---|---|---|
+| unknown binding id | 404 | `not_found` |
+| a newer generation exists for this target | 409 | `conflict` |
+| method other than POST | 405 | `method_not_allowed` |
+
+A `conflict` here means the caller has been fenced out by a newer generation —
+an expected outcome of concurrent-actor-session handling, not a server fault.
+Stop rather than retry.
+
+### `POST /registry/bindings/{id}/revoke` — Relinquish a lease
+
+No body. Response **`204 No Content`**. Idempotent.
+
+| Condition | Status | Code |
+|---|---|---|
+| unknown binding id | 404 | `not_found` |
+| method other than POST | 405 | `method_not_allowed` |
+
+An unrecognized action segment returns `404 not_found` naming the action.
+
+### `POST /registry/scoped-bindings` — Publish a role/slot revision
+
+```json
+{
+  "scope": "run-42",
+  "slot": "reviewer",
+  "target_urns": ["msg://agent/agent-mux/agt_x9k2p4qrst"],
+  "relationship": { "any": "json" },
+  "created_by": "msg://agent/agent-mux/agt_other"
+}
+```
+
+`scope` and `slot` are required. `relationship` is opaque JSON passed through
+untouched — **note this field is HTTP-only; the `tether_registry_scoped_binding_set`
+MCP tool does not expose it.**
+
+Tether does not interpret scope or slot names, and a binding confers no command
+authority. Response: `201 Created` + the `ScopedBinding` (PascalCase), carrying
+its `Revision`.
+
+| Condition | Status | Code |
+|---|---|---|
+| malformed body, or `scope`/`slot` missing | 400 | `invalid_request` |
+| method other than POST | 405 | `method_not_allowed` |
+
+### `GET /registry/scoped-bindings/resolve` — Resolve a slot
+
+Query: `scope`, `slot`, and optional `single=true`.
+
+With `single=true` the response is `{"target_urn": "...", "binding": {…}}` and
+zero-or-several targets is a `409 conflict` rather than a guess. Without it,
+every target is returned.
+
+### `GET /registry/scoped-bindings/revisions` — Revision history
+
+Query: `scope`, `slot`. Response: `{"revisions": [ ScopedBinding, … ]}`,
+newest first.
 
 ### Other routes not yet given full entries
 
 Reachable and stable, but documented here only in summary:
 
 | Route | Method | Description |
-|-------|--------|-------------|
-| `/messages/retention/candidates` | `GET` | Messages eligible for privacy-safe body purge. Structural/trace fields are retained; see the Messages section's purge/redrive notes. |
+|---|---|---|
+| `/messages/retention/candidates` | `GET` | Messages eligible for privacy-safe body purge. Optional `older_than_hours`. |
 | `/session-groups`, `/session-groups/{id}` | `GET`, `POST` | Session-group membership surface. |
 | `/broker/requests` | `POST` | Legacy broker envelope intake, retained for pre-vNext consumers. |
 | `/logs/daemon` | `GET` | Tail the daemon log. |

@@ -4,7 +4,11 @@ How an app, an agent, or a session you are running by hand joins Tether's
 messaging system and starts sending and receiving mail.
 
 This is the task-shaped companion to [messaging.md](./messaging.md), which is
-the reference for the surface itself. If you are adopting on behalf of a whole
+the reference for the surface itself. Once you are past orientation and
+actually building,
+[messaging-integration.md](./messaging-integration.md) carries the
+implementer's decisions — where identity is minted and stored, binding
+lifecycle across a restart, and which errors are permanent. If you are adopting on behalf of a whole
 application, also read
 [`planning/docs/messaging-vnext/T12-cutover-guide-and-adoption-handoff.md`](../planning/docs/messaging-vnext/T12-cutover-guide-and-adoption-handoff.md)
 — it carries the capability-by-capability map, the troubleshooting walkthrough,
