@@ -150,8 +150,40 @@ command, and directive conventions.
 
 ## Surfaces
 
+### Core send/read
+
 | Surface | Commands / routes |
 |---|---|
 | CLI | `mux messages send`, `notify`, `get`, `inbox`, `list`, `thread`, `read`, `consume`, `archive`, `unarchive`, `cancel` |
 | MCP | `mux_message_send`, `mux_message_notify`, `mux_message_get`, `mux_message_inbox`, `mux_message_list`, `mux_message_thread`, `mux_message_mark_read`, `mux_message_consume`, `mux_message_archive`, `mux_message_unarchive`, `mux_message_cancel` |
 | HTTP | `/messages`, `/messages/notify`, `/messages/{id}`, `/messages/inbox`, `/messages/list`, `/messages/thread/{thread_id}`, `/messages/subscribe` |
+
+### Identity and runtime bindings
+
+Who an actor durably *is*, and which live session currently receives its mail.
+
+| Surface | Commands / routes |
+|---|---|
+| CLI | `mux registry register`, `update-self`, `deregister`, `lookup`, `search`, `merge`, `sync`, `mux whoami`, `mux registry binding lease\|renew\|revoke\|current\|list` |
+| MCP | `tether_whoami`, `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_lookup`, `tether_registry_lookup_by`, `tether_registry_search`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_binding_current`, `tether_registry_binding_list`, `tether_registry_scoped_binding_set`, `tether_registry_scoped_binding_resolve`, `tether_registry_scoped_binding_revisions` |
+| HTTP | `/whoami`, `/registry`, `/registry/bindings`, `/registry/scoped-bindings`, `/registry/scoped-bindings/resolve`, `/registry/scoped-bindings/revisions`, `/sessions/bootstrap` |
+
+### Groups
+
+| Surface | Commands / routes |
+|---|---|
+| MCP | `tether_group_create`, `tether_group_post`, `tether_group_read`, `tether_group_lookup`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_archive`, `tether_group_set_role`, `tether_group_mark_read`, `tether_group_mentions`, `tether_group_list_members`, `tether_group_list_for_member` |
+| HTTP | `/groups`, `/session-groups` |
+
+### Delivery trace, repair and retention
+
+| Surface | Commands / routes |
+|---|---|
+| MCP | `mux_message_trace`, `mux_message_redrive`, `mux_message_purge`, `mux_message_retention_candidates` |
+| HTTP | `/messages/{id}/trace`, `/messages/{id}/redrive`, `/messages/{id}/purge`, `/messages/retention/candidates`, `/messages/{id}/claim`, `/messages/{id}/ack`, `/messages/{id}/nack` |
+
+`claim`/`ack`/`nack` are the durable-delivery primitives. They are raw HTTP
+only — `go-tether-client` has no typed wrapper for them yet (CW-20260907-0038).
+
+> **Every messaging read must assert a caller identity** via `?as=<urn>`
+> (ADR 0045). See [messaging-adoption.md](./messaging-adoption.md).

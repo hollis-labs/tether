@@ -1057,8 +1057,8 @@ The federation directory service. Mux owns public-identity rows for
 agents + projects; substrates retain operational config behind each row's
 `callback` URI. Cross-substrate dedup is driven by substrate-local
 `external_id` attachments and `LookupBy(kind, external_id, substrate?)`.
-See [ADR 0041](adr/0041-registry-directory-service.md),
-[ADR 0043](adr/0043-cross-substrate-dedup.md), and
+See [ADR 0041](../adr/0041-registry-directory-service.md),
+[ADR 0043](../adr/0043-cross-substrate-dedup.md), and
 [docs/registry/overview.md](../registry/overview.md).
 
 The `{kind}` URL segment is **plural** (`agents`, `projects`); the
@@ -1180,6 +1180,39 @@ Body is empty; response is a `BootstrapReport`:
 | unsupported kind segment | 404 | `not_found` |
 | method not allowed | 405 | `method_not_allowed` |
 | other | 500 | `internal_error` |
+
+---
+
+## Identity, session bootstrap & runtime bindings
+
+Added by the messaging vNext epic. These separate *who an actor durably is*
+from *which live session currently receives its mail*. See
+[ADR 0045](../adr/0045-messaging-principal-trust-model.md) for the same-host
+trust model and [docs/messaging-adoption.md](../messaging-adoption.md) for
+the adoption walkthrough.
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/whoami` | `GET` | Self-discovery for the URN in `?as=`. Returns the registered Profile (if any), attached external-id mappings, group memberships, and the current RuntimeBinding (if any). Every field is independently best-effort — an unregistered or never-bound identity is a normal `200`, not an error. |
+| `/sessions/bootstrap` | `POST` | Resolve and register a session's canonical identity at the launch boundary. Idempotent: a repeated call for the same preassigned session id never errors and never mints a competing identity. |
+| `/registry/bindings` | `POST` | Lease a runtime binding — declare that a session now receives mail for `target_urn`. Body requires `target_urn`, `session_id`, `host_id`, `attempt_id`. `capabilities` must be exactly `["pull-only"]`; caller-supplied-webhook push bridging is not implemented, the bridge pulls its own mailbox instead. Refuses with `invalid_request` if the target is already bound to a Tether-managed session. |
+| `/registry/bindings` | `GET` | List bindings for `?target_urn=`. Add `?current=true` for only the active one. **No ownership check today** — any same-host caller can list any target's bindings (CW-20260907-0034). |
+| `/registry/bindings/{id}/renew` | `POST` | Extend a lease. Fails `conflict` if a newer generation exists for the same target. |
+| `/registry/bindings/{id}/revoke` | `POST` | Relinquish a lease. Idempotent. |
+| `/registry/scoped-bindings` | `POST` | Set a scoped role/slot binding — bind a role name to an actor within a scope. Revision-tracked. |
+| `/registry/scoped-bindings/resolve` | `GET` | Resolve a role/slot to the actor currently filling it. |
+| `/registry/scoped-bindings/revisions` | `GET` | Revision history for a scoped binding. |
+
+### Other routes not yet given full entries
+
+Reachable and stable, but documented here only in summary:
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/messages/retention/candidates` | `GET` | Messages eligible for privacy-safe body purge. Structural/trace fields are retained; see the Messages section's purge/redrive notes. |
+| `/session-groups`, `/session-groups/{id}` | `GET`, `POST` | Session-group membership surface. |
+| `/broker/requests` | `POST` | Legacy broker envelope intake, retained for pre-vNext consumers. |
+| `/logs/daemon` | `GET` | Tail the daemon log. |
 
 ---
 

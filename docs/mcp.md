@@ -85,9 +85,25 @@ Mutating tools require a **token** and the corresponding **scope**:
 
 | Scope | Grants access to |
 |---|---|
-| `session.write` | `mux_session_create`, `mux_session_launch`, `mux_session_stop`, `mux_session_send_input`, `mux_session_resize`, `mux_logical_agent_resume` |
-| `message.write` | `mux_message_send`, `mux_message_consume`, `mux_message_cancel` |
+| `session.write` | `mux_session_create`, `mux_session_launch`, `mux_session_stop`, `mux_session_send_input`, `mux_session_send_turn`, `mux_session_resize`, `mux_logical_agent_resume` |
+| `message.write` | `mux_message_send`, `mux_message_notify`, `mux_message_consume`, `mux_message_cancel`, `mux_message_mark_read`, `mux_message_archive`, `mux_message_unarchive` |
+| `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
+| `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
+| `delivery.write` | `mux_message_redrive`, `mux_message_purge` |
+| `catalog.write` | `mux_agent_create`, `mux_agent_edit` |
 | `ai.invoke` | `mux_ai_chat`, `mux_ai_chat_stream`, `mux_ai_embeddings` |
+
+Scopes are per capability group, not a hierarchy — `registry.write` does not
+imply `groups.write`, and neither implies `message.write`. Grant the ones the
+client actually needs.
+
+An agent participating in messaging typically needs
+`message.write,registry.write` — `registry.write` to register its identity and
+lease a runtime binding, `message.write` to send and consume. Add
+`groups.write` only if it creates or administers group rooms; posting to a
+group it already belongs to is `groups.write` as well (`tether_group_post`).
+
+See [messaging-adoption.md](./messaging-adoption.md) for the full opt-in walkthrough.
 
 Pass both via flags or environment variables:
 
@@ -529,6 +545,43 @@ Cancel a pending message.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `message_id` | string | ✓ | Message ID |
+
+#### Identity, bindings, groups and delivery trace
+
+The messaging vNext epic added tool groups that are **not** given per-tool
+tables below. They are live and stable; `mux mcp` emits the authoritative
+parameter schema for each, and
+[messaging-adoption.md](./messaging-adoption.md) is the task-shaped guide.
+
+| Group | Tools | Scope |
+|---|---|---|
+| Self-discovery | `tether_whoami` | none |
+| Registry identity | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync` | `registry.write` |
+| Registry reads | `tether_registry_lookup`, `tether_registry_lookup_by`, `tether_registry_search` | none |
+| Runtime bindings | `tether_registry_binding_lease`, `..._renew`, `..._revoke` | `registry.write` |
+| Binding reads | `tether_registry_binding_current`, `tether_registry_binding_list` | none |
+| Scoped role/slot bindings | `tether_registry_scoped_binding_set` (write), `..._resolve`, `..._revisions` (read) | `registry.write` / none |
+| Groups | `tether_group_create`, `_post`, `_invite`, `_kick`, `_leave`, `_archive`, `_set_role`, `_mark_read` | `groups.write` |
+| Group reads | `tether_group_read`, `_lookup`, `_mentions`, `_list_members`, `_list_for_member` | none |
+| Delivery trace & repair | `mux_message_trace`, `mux_message_retention_candidates` (read); `mux_message_redrive`, `mux_message_purge` | none / `delivery.write` |
+
+**Every messaging read takes an `as` parameter** carrying the caller's URN
+(ADR 0045). It is self-asserted and unverified — addressing and audit, not
+authentication — but it is required, and omitting it returns
+`invalid_request`.
+
+---
+
+### Agents
+
+#### `mux_agent_list`
+List agent profiles in the catalog.
+
+#### `mux_agent_show`
+Show one agent profile by id.
+
+#### `mux_agent_create` / `mux_agent_edit` _(catalog.write)_
+Create or edit an agent profile.
 
 ---
 
