@@ -49,7 +49,7 @@ below either attaches it for you or requires you to supply it:
 |---|---|
 | `go-tether-client` | `Inbox`/`Subscribe` derive it from the recipient argument; `Get`/`Thread` read it from `WithSelfURN`. |
 | CLI | Positional `<to-urn>` argument, or the `--as` flag on `mux whoami`. |
-| MCP | The `as` parameter on the read tools. |
+| MCP | A parameter on the tool, but **the name varies**: `mux_message_inbox` and `mux_message_list` take `to`; `mux_message_get`, `mux_message_thread`, `mux_message_consume`, `mux_message_mark_read`, `mux_message_archive`, `mux_message_unarchive`, `tether_group_read` and `tether_group_mentions` take `as`; `tether_whoami` takes `as`. Repair tools (`mux_message_redrive`, `mux_message_purge`) take `authorized_by` instead, recorded as provenance. |
 | Raw HTTP | You append it yourself. |
 
 Writes (`send`, `consume`, `cancel`) carry the identity in the body instead.
