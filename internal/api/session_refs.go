@@ -118,11 +118,28 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 	if source == "" {
 		source = store.SourceAPI
 	}
-	if source == store.SourceProxy {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"source=proxy is not settable through this endpoint; it records what the proxy observed, and a caller asserting it would erase the distinction between observed and asserted")
-		return
-	}
+	// THERE IS DELIBERATELY NO GUARD ON source HERE, INCLUDING ON
+	// source=proxy. An earlier version of this handler rejected it, on the
+	// reasoning that a caller claiming its assertion was proxy-observed would
+	// erase the distinction the column carries. That was wrong twice over.
+	//
+	// It did not enforce what it claimed. Under ADR 0045 the daemon cannot
+	// distinguish the real proxy from any other same-host caller — identity
+	// here is self-asserted and unverified by design, the same as ?as=. So
+	// the guard blocked nothing an impersonator would do.
+	//
+	// And it blocked the one caller telling the truth. `mux mcp --proxy` runs
+	// in a SEPARATE PROCESS from the daemon and cannot reach the store; it
+	// writes through this endpoint like everyone else (the same route
+	// proxy_events already takes, cmd/mux/mcp.go). A guard that cannot detect
+	// impersonation but does stop the honest caller is strictly worse than no
+	// guard: it costs a real obstacle and buys a false assurance.
+	//
+	// What `source` actually records is WHO ASSERTED the ref — proxy-observed
+	// versus agent-self-reported. Provenance, not authentication. No consumer
+	// may read source=proxy as verified; see migration 0024 and
+	// store.AttachSessionRef. Making it verifiable is deferred hardening,
+	// tracked at CW-20260912-0100, and deliberately not attempted here.
 	row := store.SessionRefRow{
 		SessionID: sessionID, Kind: req.Kind, RefID: req.RefID,
 		URI: req.URI, Relation: req.Relation, Source: source,

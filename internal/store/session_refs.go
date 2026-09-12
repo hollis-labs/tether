@@ -192,6 +192,21 @@ func (s *Store) AttachSessionRef(ref SessionRefRow) (AttachRefResult, error) {
 
 	case ref.Source == SourceProxy && existingSource != SourceProxy:
 		// Better evidence for the same fact. Only source moves; at stays.
+		//
+		// THIS IS THE ONE PLACE `source` HAS A MECHANICAL EFFECT rather than a
+		// documentary one, which makes it the place a reader is most likely to
+		// infer an authority the value does not carry. It does not carry one.
+		// SourceProxy means the proxy OBSERVED this call; it does not mean the
+		// identifier was validated, that the caller was entitled to it, or
+		// that anything checked. Nothing verifies the claim — the attach
+		// endpoint has no guard on source and could not enforce one under ADR
+		// 0045's same-host trust model.
+		//
+		// So "better evidence" is a statement about PROVENANCE, not
+		// verification: an observation closer to the call site outranks a
+		// self-report about it. Upgrading is still right — it stops a digest
+		// understating what it holds — but a consumer must never read the
+		// resulting SourceProxy row as verified.
 		if _, err := s.db.Exec(
 			`UPDATE session_refs SET source=? WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
 			SourceProxy, ref.SessionID, ref.Kind, ref.RefID, ref.Relation,
