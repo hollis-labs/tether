@@ -296,6 +296,12 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
+	// Answer codex app-server's server-initiated approval requests. Only
+	// the jsonrpc-stdio runtime ever consults this, so setting it for every
+	// launch is inert elsewhere rather than conditional here. Without it
+	// agentkit's nil-hook fallback refuses every MCP tool call — see
+	// codex_approval.go.
+	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 

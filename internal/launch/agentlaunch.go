@@ -31,10 +31,11 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 			ID: agentID,
 		},
 		Provider: agentlaunch.ProviderSpec{
-			ID:     plan.ProviderBrand,
-			Binary: plan.Command,
-			Flags:  append([]string(nil), plan.Args...),
-			Env:    copyMap(plan.Env),
+			ID:         plan.ProviderBrand,
+			Binary:     plan.Command,
+			Flags:      append([]string(nil), plan.Args...),
+			Env:        copyMap(plan.Env),
+			Permission: providerPermission(plan.ProviderBrand),
 		},
 		Runtime: mapRuntime(plan.RuntimeKind),
 		Workspace: agentlaunch.WorkspaceSpec{
@@ -136,4 +137,32 @@ func splitCSV(in string) []string {
 		}
 	}
 	return out
+}
+
+// providerPermission maps Tether's launch posture onto the approval
+// vocabulary the planting adapter expects. providerplant.DefaultResolver
+// assigns ProviderSpec.Permission straight onto the adapter
+// (ClaudeAdapter.PermissionMode / CodexAdapter.ApprovalPolicy), and each
+// provider's vocabulary is its own — there is no shared one.
+//
+// Tether left this empty for every provider, which for codex meant
+// go-providers' "never" default, and under "never" codex refuses EVERY MCP
+// tool call before it even asks ("MCP tool call requires approval, but
+// approval policy is never"). A launched codex worker could see the mux MCP
+// server its own launch planted and call nothing on it.
+//
+// "on-request" is the value that lets codex ask instead of refusing;
+// internal/app/codex_approval.go answers those requests. Both halves are
+// required — the policy alone just moves the failure, and the hook alone is
+// never reached.
+//
+// Only codex is mapped here. Claude is deliberately left empty: its headless
+// posture already rides on the --dangerously-skip-permissions flag that
+// launch.Resolve splices into argv, and changing what lands in the planted
+// settings.json is a separate change with its own blast radius.
+func providerPermission(providerBrand string) string {
+	if providerBrand == "codex" {
+		return "on-request"
+	}
+	return ""
 }
