@@ -101,15 +101,27 @@ Notify response fields:
 | `unread_count` | Current unread count for the recipient after storing. |
 | `wake_attempted` | A live session was resolved and the daemon tried to wake it. |
 | `wake_delivered` | Wake turn was accepted by the session runtime. |
+| `wake_reason` | Observational, non-error disposition when the wake did not land: `busy`, `offline-race`, `stale-generation`, `claim-unavailable`, `marker-write-failed`. The delivery was released for retry, not lost. |
 | `wake_error` | In-band wake failure; the durable message still exists. |
 
 The default wake text tells the agent it has unread mail and asks it to run its
 normal inbox-check procedure. It does not require the agent to abandon current
 work unless the agent's own checklist treats the message as urgent.
 
-Current limitation: notify is best-effort for currently live sessions. Tether
-does not yet run a background retry worker that wakes an agent later when it is
-resumed or relaunched.
+### Retry
+
+A notify call's own wake attempt is synchronous and best-effort, but a wake that
+cannot land immediately is **not lost**. A busy session (`wake_reason: busy`) or
+an unresolved recipient releases the delivery for retry with a bounded backoff,
+and the daemon runs a background wake sweep on a short ticker that retries ready
+deliveries through the exact same path a fresh notify uses, re-resolving the
+recipient each pass. In practice a wake sent while an agent is mid-turn lands as
+a new turn shortly after that turn finishes.
+
+What Tether still does not do is **relaunch** anything to deliver mail. It never
+assumes launch or resume authority over a stopped session. Mail for an actor
+with no live session accumulates durably and is delivered once a session owns
+its binding again — started by you, not by the daemon.
 
 ## Reading Mail
 
