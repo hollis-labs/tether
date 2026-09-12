@@ -43,6 +43,26 @@ import (
 // nothing outside this file assembles the string.
 const workstreamSIDPrefix = "ws_"
 
+// WorkstreamNamespace is where a workstream's contained content lives, and the
+// workstream it belongs to.
+//
+// The id rides along rather than being left for the caller to look up: a caller
+// holding the namespace almost always wants to correlate it back to a
+// workstream, the resolver has already done that resolution internally, and a
+// second round trip to recover something we just computed is waste. It is also
+// the field that was declared and never populated in the first cut of the HTTP
+// response -- an always-empty sibling of the interesting value, which a
+// consumer cannot tell apart from "there is no workstream".
+type WorkstreamNamespace struct {
+	// Namespace is the Tesseract memory namespace to write into.
+	Namespace string
+	// WorkstreamID is the workstream the namespace belongs to, WITHOUT the
+	// ws_ prefix -- the prefix is a property of the namespace string, not of
+	// the id, and returning it here would invite someone to compare a
+	// prefixed value against workstreams.id.
+	WorkstreamID string
+}
+
 // ErrNotAWorkstream is returned when an id that should name a workstream does
 // not. Distinct from ErrWorkstreamNotFound so the session-id case can say
 // something more useful than "not found".
@@ -66,19 +86,19 @@ var ErrNotAWorkstream = errors.New("id does not name a workstream")
 //
 // userID is a parameter because Tether does not own the Tesseract user
 // identity and should not invent one.
-func (s *Store) SessionWorkstreamNamespace(userID, sessionID, memoryType string) (string, error) {
+func (s *Store) SessionWorkstreamNamespace(userID, sessionID, memoryType string) (WorkstreamNamespace, error) {
 	switch {
 	case strings.TrimSpace(userID) == "":
-		return "", errors.New("workstream namespace: user id required")
+		return WorkstreamNamespace{}, errors.New("workstream namespace: user id required")
 	case strings.TrimSpace(sessionID) == "":
-		return "", errors.New("workstream namespace: session id required")
+		return WorkstreamNamespace{}, errors.New("workstream namespace: session id required")
 	case strings.TrimSpace(memoryType) == "":
-		return "", errors.New("workstream namespace: memory type required")
+		return WorkstreamNamespace{}, errors.New("workstream namespace: memory type required")
 	}
 
 	row, err := s.GetSession(sessionID)
 	if err != nil {
-		return "", fmt.Errorf("workstream namespace for session %q: %w", sessionID, err)
+		return WorkstreamNamespace{}, fmt.Errorf("workstream namespace for session %q: %w", sessionID, err)
 	}
 	if !row.WorkstreamID.Valid || row.WorkstreamID.String == "" {
 		// Deliberately not auto-creating one. EnsureSessionWorkstream exists
@@ -86,9 +106,13 @@ func (s *Store) SessionWorkstreamNamespace(userID, sessionID, memoryType string)
 		// namespace lookup silently mutates the session's lineage — a read
 		// that writes. The caller asks for a container explicitly or is told
 		// it has none.
-		return "", fmt.Errorf("session %q belongs to no workstream: call EnsureSessionWorkstream first (%w)", sessionID, ErrWorkstreamNotFound)
+		return WorkstreamNamespace{}, fmt.Errorf("session %q belongs to no workstream: call EnsureSessionWorkstream first (%w)", sessionID, ErrWorkstreamNotFound)
 	}
-	return s.workstreamNamespace(userID, row.WorkstreamID.String, memoryType)
+	ns, err := s.workstreamNamespace(userID, row.WorkstreamID.String, memoryType)
+	if err != nil {
+		return WorkstreamNamespace{}, err
+	}
+	return WorkstreamNamespace{Namespace: ns, WorkstreamID: row.WorkstreamID.String}, nil
 }
 
 // workstreamNamespace builds the namespace for a workstream id.

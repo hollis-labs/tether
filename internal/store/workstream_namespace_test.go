@@ -35,12 +35,12 @@ func TestSessionWorkstreamNamespace_SurvivesACompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("namespace(after): %v", err)
 	}
-	if nsBefore != nsAfter {
-		t.Errorf("containment did not survive the compaction:\n  before %s\n  after  %s", nsBefore, nsAfter)
+	if nsBefore.Namespace != nsAfter.Namespace {
+		t.Errorf("containment did not survive the compaction:\n  before %s\n  after  %s", nsBefore.Namespace, nsAfter.Namespace)
 	}
 	want := "user/chrispian/session/ws_" + ws.ID + "/memory/notes"
-	if nsBefore != want {
-		t.Errorf("namespace = %q, want %q", nsBefore, want)
+	if nsBefore.Namespace != want {
+		t.Errorf("namespace = %q, want %q", nsBefore.Namespace, want)
 	}
 }
 
@@ -58,11 +58,11 @@ func TestSessionWorkstreamNamespace_IDIsPrefixed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("namespace: %v", err)
 	}
-	if !strings.Contains(got, "/session/ws_") {
-		t.Errorf("namespace = %q; the workstream id must be prefixed so it cannot be mistaken for a session id", got)
+	if !strings.Contains(got.Namespace, "/session/ws_") {
+		t.Errorf("namespace = %q; the workstream id must be prefixed so it cannot be mistaken for a session id", got.Namespace)
 	}
-	if strings.Contains(got, "/session/"+ws.ID) {
-		t.Errorf("namespace = %q carries a BARE workstream id in the session slot; that is the silent-failure shape", got)
+	if strings.Contains(got.Namespace, "/session/"+ws.ID) {
+		t.Errorf("namespace = %q carries a BARE workstream id in the session slot; that is the silent-failure shape", got.Namespace)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestSessionWorkstreamNamespace_DoesNotValidateMemoryType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an unrecognized type must pass through, not be rejected here: %v", err)
 	}
-	if !strings.HasSuffix(got, "/memory/a_type_tether_has_never_heard_of") {
-		t.Errorf("namespace = %q", got)
+	if !strings.HasSuffix(got.Namespace, "/memory/a_type_tether_has_never_heard_of") {
+		t.Errorf("namespace = %q", got.Namespace)
 	}
 }
 
@@ -146,5 +146,47 @@ func TestSessionWorkstreamNamespace_RequiresItsArguments(t *testing.T) {
 		if _, err := db.SessionWorkstreamNamespace(c.user, c.session, c.mtype); err == nil {
 			t.Errorf("(%q,%q,%q) was accepted", c.user, c.session, c.mtype)
 		}
+	}
+}
+
+// Every field of the result must be populated, not only the one a caller
+// happens to be reading.
+//
+// This is the regression for a real defect: WorkstreamID was declared on the
+// HTTP response and assigned on no code path, so it was always "". A consumer
+// could not tell that apart from "there is no workstream" — and the
+// no-workstream case is already a 404, so the empty string carried nothing but
+// ambiguity.
+//
+// The existing tests did not catch it because they assert the namespace
+// string, which is the interesting value. An always-empty SIBLING field is
+// invisible to a test that checks the field it cares about, which is why this
+// one asserts the whole struct.
+func TestSessionWorkstreamNamespace_PopulatesEveryField(t *testing.T) {
+	db := openWorkstreamStore(t)
+	ws, err := db.CreateWorkstream(WorkstreamRow{Name: "complete"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+	mustCreateSession(t, db, SessionRow{
+		ID: "s", State: "running", Intent: "fresh",
+		WorkstreamID: sql.NullString{String: ws.ID, Valid: true},
+	})
+
+	got, err := db.SessionWorkstreamNamespace("chrispian", "s", "notes")
+	if err != nil {
+		t.Fatalf("namespace: %v", err)
+	}
+	if got.Namespace == "" {
+		t.Error("Namespace is empty")
+	}
+	if got.WorkstreamID != ws.ID {
+		t.Errorf("WorkstreamID = %q, want %q", got.WorkstreamID, ws.ID)
+	}
+	// The id must be BARE. The ws_ prefix belongs to the namespace string;
+	// returning a prefixed id here would invite comparing it against
+	// workstreams.id, where it would never match.
+	if strings.HasPrefix(got.WorkstreamID, workstreamSIDPrefix) {
+		t.Errorf("WorkstreamID = %q carries the ws_ prefix; it must be comparable against workstreams.id", got.WorkstreamID)
 	}
 }

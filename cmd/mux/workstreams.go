@@ -182,6 +182,9 @@ session id, deliberately, because a bare id there would fail silently instead.`,
 		if workstreamJSON {
 			return printJSON(out)
 		}
+		// Plain output is the namespace alone, on one line, so it pipes into
+		// a tesseract write without trimming. The workstream id is in --json
+		// for anyone who needs to correlate.
 		fmt.Println(out.Namespace)
 		return nil
 	},

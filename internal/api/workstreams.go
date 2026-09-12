@@ -23,7 +23,7 @@ type WorkstreamStore interface {
 	ListWorkstreams(opts store.ListWorkstreamsOptions) ([]store.WorkstreamRow, error)
 	AssignSessionWorkstream(sessionID, workstreamID string) error
 	EnsureSessionWorkstream(sessionID string, seed store.WorkstreamRow) (store.WorkstreamRow, error)
-	SessionWorkstreamNamespace(userID, sessionID, memoryType string) (string, error)
+	SessionWorkstreamNamespace(userID, sessionID, memoryType string) (store.WorkstreamNamespace, error)
 }
 
 // WorkstreamDTO is the wire shape for a workstream.
@@ -255,7 +255,7 @@ func (s *Server) handleSessionWorkstreamNamespace(w http.ResponseWriter, r *http
 	if memoryType == "" {
 		memoryType = "notes"
 	}
-	ns, err := s.Workstreams.SessionWorkstreamNamespace(userID, sessionID, memoryType)
+	res, err := s.Workstreams.SessionWorkstreamNamespace(userID, sessionID, memoryType)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrWorkstreamNotFound), errors.Is(err, store.ErrSessionNotFound), errors.Is(err, store.ErrNotAWorkstream):
@@ -265,5 +265,7 @@ func (s *Server) handleSessionWorkstreamNamespace(w http.ResponseWriter, r *http
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, WorkstreamNamespaceResponse{Namespace: ns})
+	writeJSON(w, http.StatusOK, WorkstreamNamespaceResponse{
+		Namespace: res.Namespace, WorkstreamID: res.WorkstreamID,
+	})
 }

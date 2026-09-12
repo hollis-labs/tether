@@ -99,7 +99,9 @@ func (a *Adapter) handleWorkstreamNamespace(ctx context.Context, req mcp.CallToo
 	if err != nil {
 		return workstreamErr(err), nil
 	}
-	return toolJSON(map[string]any{"ok": true, "namespace": out.Namespace}), nil
+	return toolJSON(map[string]any{
+		"ok": true, "namespace": out.Namespace, "workstream_id": out.WorkstreamID,
+	}), nil
 }
 
 // workstreamClient guards the daemon-routing precondition shared by every
