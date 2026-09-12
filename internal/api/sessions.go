@@ -150,6 +150,8 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionWorkstream(w, r, id)
+	case "refs":
+		s.handleSessionRefs(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

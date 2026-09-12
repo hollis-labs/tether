@@ -147,6 +147,8 @@ func (s *Server) handleWorkstreamsItem(w http.ResponseWriter, r *http.Request) {
 		s.handleGetWorkstream(w, id)
 	case sub == "sessions" && r.Method == http.MethodPost:
 		s.handleAssignWorkstream(w, r, id)
+	case sub == "refs" && r.Method == http.MethodGet:
+		s.handleWorkstreamRefs(w, r, id)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeInvalidRequest, "method not allowed")
 	}

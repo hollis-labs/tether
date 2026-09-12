@@ -65,6 +65,8 @@ type Server struct {
 	// Workstreams is optional; when set, /workstreams endpoints and the
 	// per-session workstream sub-resource are mounted (S1, CW-20260912-0059).
 	Workstreams api.WorkstreamStore
+	// SessionRefs is optional; when set, session-ref endpoints are mounted.
+	SessionRefs api.SessionRefStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -319,6 +321,7 @@ func (s *Server) Handler() http.Handler {
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
 			Workstreams:         s.Workstreams,
+			SessionRefs:         s.SessionRefs,
 			MessageStore:        s.MessageStore,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,

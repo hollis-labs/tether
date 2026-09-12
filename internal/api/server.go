@@ -35,7 +35,10 @@ type Deps struct {
 	GroupStore  SessionGroupStore
 	// Workstreams, when non-nil, enables the /workstreams endpoints and the
 	// per-session workstream sub-resource (S1, CW-20260912-0059).
-	Workstreams  WorkstreamStore
+	Workstreams WorkstreamStore
+	// SessionRefs, when non-nil, enables /sessions/{id}/refs and the
+	// /workstreams/{id}/refs roll-up (S2, CW-20260912-0060).
+	SessionRefs  SessionRefStore
 	MessageStore MessageStore
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
 	// persisting and querying MCP relay tool call events. Populated by the
@@ -127,6 +130,7 @@ type Server struct {
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
 	Workstreams         WorkstreamStore
+	SessionRefs         SessionRefStore
 	MessageStore        MessageStore
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
@@ -156,6 +160,7 @@ func NewHandler(deps Deps) http.Handler {
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
 		Workstreams:         deps.Workstreams,
+		SessionRefs:         deps.SessionRefs,
 		MessageStore:        deps.MessageStore,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,

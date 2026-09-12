@@ -1449,3 +1449,55 @@ func (c *Client) EnsureSessionWorkstream(ctx context.Context, sessionID, name, w
 		&out, http.StatusOK)
 	return out, err
 }
+
+// ─── session refs (S2, CW-20260912-0060) ─────────────────────────────────────
+
+// AttachSessionRef records that a session touched an object, via
+// POST /sessions/{id}/refs. Idempotent: a repeat succeeds with
+// inserted=false. source=proxy is rejected by the daemon — only the proxy
+// itself writes that, because it is the one thing a caller must not be able
+// to claim.
+func (c *Client) AttachSessionRef(ctx context.Context, sessionID string, req api.SessionRefAttachRequest) (api.SessionRefAttachResponse, error) {
+	var out api.SessionRefAttachResponse
+	err := c.postWorkstreamJSON(ctx, "/sessions/"+url.PathEscape(sessionID)+"/refs", req, &out, http.StatusOK)
+	return out, err
+}
+
+func refQuery(kind, relation, source string) string {
+	params := url.Values{}
+	if kind != "" {
+		params.Set("kind", kind)
+	}
+	if relation != "" {
+		params.Set("relation", relation)
+	}
+	if source != "" {
+		params.Set("source", source)
+	}
+	if len(params) == 0 {
+		return ""
+	}
+	return "?" + params.Encode()
+}
+
+// ListSessionRefs fetches one session's refs via GET /sessions/{id}/refs.
+func (c *Client) ListSessionRefs(ctx context.Context, sessionID, kind, relation, source string) ([]api.SessionRefDTO, error) {
+	var res api.SessionRefListResponse
+	path := "/sessions/" + url.PathEscape(sessionID) + "/refs" + refQuery(kind, relation, source)
+	if err := c.getJSON(ctx, path, &res); err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	return res.Refs, nil
+}
+
+// ListWorkstreamRefs fetches the workstream roll-up via
+// GET /workstreams/{id}/refs — every ref from every session in the
+// workstream, which is what survives a compaction.
+func (c *Client) ListWorkstreamRefs(ctx context.Context, workstreamID, kind, relation, source string) ([]api.SessionRefDTO, error) {
+	var res api.SessionRefListResponse
+	path := "/workstreams/" + url.PathEscape(workstreamID) + "/refs" + refQuery(kind, relation, source)
+	if err := c.getJSON(ctx, path, &res); err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	return res.Refs, nil
+}
