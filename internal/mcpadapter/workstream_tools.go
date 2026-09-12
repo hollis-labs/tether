@@ -11,6 +11,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/client"
 )
 
 // registerWorkstreamTools wires the workstream tool set onto s.
@@ -81,6 +84,99 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		mcp.WithString("user", mcp.Required(), mcp.Description("Tesseract user id; Tether does not own that identity and will not invent one.")),
 		mcp.WithString("type", mcp.Description("Tesseract memory type: notes, todos, decisions, ... Defaults to notes. Passed through unvalidated — the vocabulary is Tesseract's.")),
 	), a.handleWorkstreamNamespace)
+
+	a.addTool(s, mcp.NewTool("tether_workstream_digest",
+		mcp.WithDescription(
+			"What a session, or a whole workstream across its lineage, actually touched "+
+				"and actually left behind. This is the recovery view: hand the output to an "+
+				"agent as context rather than reading a transcript.\n\n"+
+				"Pass session_id for the everyday grain (what did I touch this session) or "+
+				"workstream_id for the roll-up across a compaction. Exactly one.\n\n"+
+				"Refs are split into left_behind (created/updated -- what this work produced) "+
+				"and touched (read/referenced -- what it consulted). Read left_behind first; "+
+				"it is what a reviewer and a recovery instruction both care about.\n\n"+
+				"BEFORE CONCLUDING A SESSION DID NOTHING, read coverage. Every session in the "+
+				"span carries a ref_attribution saying whether its proxy could produce an "+
+				"observed ref at all, and coverage.proxy_attributable counts how many could. "+
+				"When that is zero, an empty source=proxy column is a fact about "+
+				"configuration and says nothing about what the agent did. coverage.truncated "+
+				"says whether the ref list was cut at the limit.",
+		),
+		mcp.WithString("session_id", mcp.Description("Session to digest. Its own refs only; the response carries its workstream so you can escalate to the roll-up.")),
+		mcp.WithString("workstream_id", mcp.Description("Workstream to digest. Rolls up every session in the container -- the grain that survives a compaction.")),
+		mcp.WithString("kind", mcp.Description("Filter to one ref kind: torque_task, tesseract_revision, git_commit, ...")),
+		mcp.WithString("relation", mcp.Description("Filter to one relation: created, updated, read, referenced.")),
+		mcp.WithString("source", mcp.Description("Filter to one source: proxy (observed by the proxy), api, or agent (self-asserted). proxy means OBSERVED, never validated.")),
+		mcp.WithString("since", mcp.Description("RFC3339 UTC lower bound on a ref's timestamp. Ask what was in flight rather than everything ever.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum refs to return; the response reports whether it truncated.")),
+	), a.handleWorkstreamDigest)
+
+	a.addTool(s, mcp.NewTool("tether_workstreams_for_ref",
+		mcp.WithDescription(
+			"Which workstreams contain a session that touched this object -- the reverse "+
+				"lookup. Use it when you hold an identifier and want the work it came out of: "+
+				"\"which Tesseract records came from CW-20260911-0039?\" starts here, then "+
+				"digests the result.\n\n"+
+				"RETURNS ALL MATCHES AND NEVER PICKS ONE. Two separate efforts touching the "+
+				"same task is ordinary, so a single answer would look authoritative and be "+
+				"wrong whenever the ambiguity is real.",
+		),
+		mcp.WithString("ref", mcp.Required(), mcp.Description("Selector as <kind>:<ref_id>, for example torque_task:CW-20260912-0063. Split on the FIRST colon only, so a ref_id containing colons (msg://...) is preserved.")),
+	), a.handleWorkstreamsForRef)
+}
+
+func (a *Adapter) handleWorkstreamDigest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID, workstreamID := str(req, "session_id"), str(req, "workstream_id")
+	switch {
+	case sessionID == "" && workstreamID == "":
+		return toolError("invalid_request", "one of session_id or workstream_id is required"), nil
+	case sessionID != "" && workstreamID != "":
+		// Not a preference to resolve: they are different questions, and
+		// silently answering one of them would give a caller who meant the
+		// other a plausible wrong answer with no way to notice.
+		return toolError("invalid_request", "session_id and workstream_id are mutually exclusive: session grain is this session's own refs, workstream grain rolls up the whole lineage"), nil
+	}
+	if errRes := a.workstreamClientReady(); errRes != nil {
+		return errRes, nil
+	}
+	q := client.DigestQuery{
+		Kind:     str(req, "kind"),
+		Relation: str(req, "relation"),
+		Source:   str(req, "source"),
+		Since:    str(req, "since"),
+		Limit:    intArg(req, "limit", 0),
+	}
+	var (
+		out api.DigestResponse
+		err error
+	)
+	if sessionID != "" {
+		out, err = a.client.SessionDigest(ctx, sessionID, q)
+	} else {
+		out, err = a.client.WorkstreamDigest(ctx, workstreamID, q)
+	}
+	if err != nil {
+		return workstreamErr(err), nil
+	}
+	return toolJSON(map[string]any{"ok": true, "digest": out}), nil
+}
+
+func (a *Adapter) handleWorkstreamsForRef(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	selector := str(req, "ref")
+	if selector == "" {
+		return toolError("invalid_request", "ref is required, as <kind>:<ref_id>"), nil
+	}
+	if errRes := a.workstreamClientReady(); errRes != nil {
+		return errRes, nil
+	}
+	out, err := a.client.WorkstreamsForRef(ctx, selector)
+	if err != nil {
+		return workstreamErr(err), nil
+	}
+	// Reported rather than left for the caller to count: "which workstream"
+	// answered with three is a materially different answer from one, and the
+	// count is what makes a consumer notice.
+	return toolJSON(map[string]any{"ok": true, "matched": len(out), "workstreams": out}), nil
 }
 
 func (a *Adapter) handleWorkstreamNamespace(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

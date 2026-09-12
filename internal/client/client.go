@@ -1523,3 +1523,74 @@ func (c *Client) SessionWorkstreamNamespace(ctx context.Context, sessionID, user
 	}
 	return out, nil
 }
+
+// DigestQuery is the shared filter for the two digest grains. Zero value asks
+// for everything within the server's default limit.
+//
+// Since is an RFC3339 UTC lower bound: recovery usually wants "what was in
+// flight", not "everything ever".
+type DigestQuery struct {
+	Kind     string
+	Relation string
+	Source   string
+	Since    string
+	Limit    int
+}
+
+func (q DigestQuery) encode() string {
+	params := url.Values{}
+	for k, v := range map[string]string{
+		"kind": q.Kind, "relation": q.Relation, "source": q.Source, "since": q.Since,
+	} {
+		if v != "" {
+			params.Set(k, v)
+		}
+	}
+	if q.Limit > 0 {
+		params.Set("limit", strconv.Itoa(q.Limit))
+	}
+	if len(params) == 0 {
+		return ""
+	}
+	return "?" + params.Encode()
+}
+
+// SessionDigest fetches GET /sessions/{id}/digest — one session's own refs,
+// split into what it left behind and what it merely consulted.
+//
+// This does NOT roll up the lineage; WorkstreamDigest is that. The response
+// carries the session's workstream so a caller can escalate in one hop.
+func (c *Client) SessionDigest(ctx context.Context, sessionID string, q DigestQuery) (api.DigestResponse, error) {
+	var out api.DigestResponse
+	path := "/sessions/" + url.PathEscape(sessionID) + "/digest" + q.encode()
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.DigestResponse{}, wrapIfUnreachable(err)
+	}
+	return out, nil
+}
+
+// WorkstreamDigest fetches GET /workstreams/{id}/digest — the roll-up across
+// every session in the container, which is what survives a compaction.
+func (c *Client) WorkstreamDigest(ctx context.Context, workstreamID string, q DigestQuery) (api.DigestResponse, error) {
+	var out api.DigestResponse
+	path := "/workstreams/" + url.PathEscape(workstreamID) + "/digest" + q.encode()
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.DigestResponse{}, wrapIfUnreachable(err)
+	}
+	return out, nil
+}
+
+// WorkstreamsForRef fetches GET /workstreams?ref=<kind>:<ref_id> — which
+// workstreams contain a session that touched this object.
+//
+// Returns ALL matches. Two efforts touching the same task is ordinary, so a
+// single answer would be confidently wrong whenever the ambiguity is real.
+func (c *Client) WorkstreamsForRef(ctx context.Context, selector string) ([]api.WorkstreamDTO, error) {
+	var res api.WorkstreamListResponse
+	params := url.Values{}
+	params.Set("ref", selector)
+	if err := c.getJSON(ctx, "/workstreams?"+params.Encode(), &res); err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	return res.Workstreams, nil
+}

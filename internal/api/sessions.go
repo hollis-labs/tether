@@ -158,6 +158,8 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionWorkstreamNamespace(w, r, id)
+	case "digest":
+		s.handleSessionDigest(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

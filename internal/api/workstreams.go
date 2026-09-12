@@ -120,6 +120,10 @@ func (s *Server) handleCreateWorkstream(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListWorkstreams(w http.ResponseWriter, r *http.Request) {
+	if selector := r.URL.Query().Get("ref"); selector != "" {
+		s.handleWorkstreamsForRef(w, r, selector)
+		return
+	}
 	opts := store.ListWorkstreamsOptions{
 		Status:     r.URL.Query().Get("status"),
 		WorkflowID: r.URL.Query().Get("workflow_id"),
@@ -129,6 +133,50 @@ func (s *Server) handleListWorkstreams(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	writeWorkstreamList(w, rows)
+}
+
+// handleWorkstreamsForRef answers "which workstreams touched this object",
+// the reverse of every other query here.
+//
+// It lives on the collection rather than at a path of its own for two
+// reasons. A list is already the honest return type for a question whose
+// answer may legitimately be several -- two efforts touching one task is
+// ordinary, and store.WorkstreamsForRef returns all of them rather than
+// picking one. And adding a top-level path means adding a daemon mount, which
+// this sprint has already forgotten three times (see daemon.apiMounts).
+//
+// ref= IS EXCLUSIVE WITH status= AND workflow_id=, deliberately rather than
+// silently. ANDing them would read as a refinement while actually answering a
+// different question -- "which of the workstreams that touched X are active"
+// requires resolving X first, and a caller who wanted that can filter the
+// result. Rejecting the combination costs one round trip and removes a way to
+// get a confidently wrong answer.
+func (s *Server) handleWorkstreamsForRef(w http.ResponseWriter, r *http.Request, selector string) {
+	if s.Digests == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "digests are not enabled on this server")
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("status") != "" || q.Get("workflow_id") != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"ref cannot be combined with status or workflow_id: ref asks which workstreams touched an object, which is a different question from which workstreams match a filter -- resolve the ref first, then filter the result")
+		return
+	}
+	kind, refID, err := store.ParseRefSelector(selector)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+	rows, err := s.Digests.WorkstreamsForRef(kind, refID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeWorkstreamList(w, rows)
+}
+
+func writeWorkstreamList(w http.ResponseWriter, rows []store.WorkstreamRow) {
 	out := make([]WorkstreamDTO, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, workstreamToDTO(row))
@@ -150,6 +198,8 @@ func (s *Server) handleWorkstreamsItem(w http.ResponseWriter, r *http.Request) {
 		s.handleAssignWorkstream(w, r, id)
 	case sub == "refs" && r.Method == http.MethodGet:
 		s.handleWorkstreamRefs(w, r, id)
+	case sub == "digest" && r.Method == http.MethodGet:
+		s.handleWorkstreamDigest(w, r, id)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeInvalidRequest, "method not allowed")
 	}

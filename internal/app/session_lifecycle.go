@@ -266,15 +266,32 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		}
 	}
 
+	// One decision, one value. The argv that gets planted and the attribution
+	// that gets stamped come from the same call, so nothing here can write a
+	// stamp that disagrees with the flags actually planted -- see MuxMCPPlan.
+	//
+	// extractRefs is false because nothing can turn it on yet
+	// (CW-20260912-0112); the resulting "none" is the honest record that this
+	// session's proxy was not asked to record refs, which S5's digest renders
+	// instead of showing an unexplained empty proxy column.
+	mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, false)
 	prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 		MuxCommand: muxCommandPath(),
-		MuxArgs:    MuxMCPArgs(s.CatalogRoot, sessionID),
+		MuxArgs:    mcpPlan.Args,
 		MuxEnv:     muxEnvMap(plan.Env),
 	})
 	if err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, fmt.Errorf("prepare shared launch: %w", err)
+	}
+	// Stamped AFTER the planting succeeded, not before: the column records
+	// what was planted, and a failed prepare planted nothing. Best-effort --
+	// a launch must not fail because an audit field could not be written, and
+	// the column's NULL state already means "unknown", which is the truth if
+	// this write is the thing that failed.
+	if err := s.Store.SetSessionRefAttribution(sessionID, mcpPlan.Attribution); err != nil {
+		log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
 	}
 
 	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)

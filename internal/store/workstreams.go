@@ -118,13 +118,20 @@ func (s *Store) ListWorkstreams(opts ListWorkstreamsOptions) ([]WorkstreamRow, e
 		return nil, fmt.Errorf("list workstreams: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return scanWorkstreams(rows, "list workstreams")
+}
 
+// scanWorkstreams drains a workstream result set. Shared with the reverse
+// lookup in digest.go so both listings decode the nullable columns the same
+// way -- name and workflow_id are NULL-when-unset, and a second hand-written
+// scan loop is where that detail drifts.
+func scanWorkstreams(rows *sql.Rows, what string) ([]WorkstreamRow, error) {
 	var out []WorkstreamRow
 	for rows.Next() {
 		var w WorkstreamRow
 		var name, workflowID sql.NullString
 		if err := rows.Scan(&w.ID, &name, &workflowID, &w.Status, &w.CreatedAt, &w.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("list workstreams: scan: %w", err)
+			return nil, fmt.Errorf("%s: scan: %w", what, err)
 		}
 		w.Name, w.WorkflowID = name.String, workflowID.String
 		out = append(out, w)

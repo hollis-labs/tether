@@ -1,0 +1,53 @@
+-- 0025_session_ref_attribution.sql
+--
+-- S5 of sprint SP-20260912-0001 (CW-20260912-0063), design record
+-- CW-20260912-0023.
+--
+-- WHY A COLUMN AND NOT AN INFERENCE. S5's digest has to distinguish "no refs
+-- because nothing happened" from "no refs because this session could never
+-- produce one." The obvious inference is launch_id: Tether launched it, so its
+-- proxy could attribute calls to it.
+--
+-- That inference is FALSE, measured 2026-09-12. All 129 sessions carry a
+-- launch_id and not one of them can produce a source='proxy' ref, because
+-- MuxMCPPlant does not emit --extract-refs and there is no config seam that
+-- would make it (CW-20260912-0112). A two-valued rendering built on launch_id
+-- would label every one of them "attributable" and then show it empty, which
+-- converts "we never looked" into "we looked and there was nothing" -- a
+-- stronger claim than the bare-empty rendering it replaces, and exactly the
+-- absent-implies-something failure migration 0024 exists to forbid.
+--
+-- So the fact is RECORDED BY THE CODE THAT DECIDES IT, at the moment it
+-- decides it, rather than reconstructed later from a different field. See
+-- app.MuxMCPPlant, which returns the argv and this value together so no caller
+-- can hold a planted flag and a stamp that disagree.
+--
+-- VOCABULARY (deliberately not CHECK-constrained; see below):
+--
+--   proxy      -- a .mcp.json was planted carrying BOTH --session and
+--                 --extract-refs. This session's proxy can produce refs.
+--   none       -- planted with --session but WITHOUT --extract-refs. The proxy
+--                 knows which session it serves and was not asked to record.
+--                 Every launched session today.
+--   unlaunched -- no .mcp.json was planted for this session at all. The
+--                 POST /sessions/bootstrap path: an external caller owns the
+--                 process, so nothing carries --session and the proxy cannot
+--                 attribute a call to this row however much work it does.
+--   NULL       -- the row predates this migration, or was written by a path
+--                 that does not plant. Read as "unknown", which is an honest
+--                 third state and NOT a synonym for "none".
+--
+-- NOT BACKFILLED, ON PURPOSE. Stamping the 129 existing rows with 'none' would
+-- be true today and would also be a claim this migration cannot support: it
+-- would assert that we know what was planted for a session launched days ago.
+-- NULL says we do not know, which is the fact. The digest renders it as
+-- "unknown" and says so.
+--
+-- NOT CHECK-CONSTRAINED, matching session_refs.kind and for the same reason
+-- stated in 0024: a new attribution value means another planting path became
+-- describable, which is ordinary growth. What a CHECK would protect here is
+-- nothing -- unlike `source` and `relation`, a surprise value cannot change
+-- what an existing row MEANS, it just fails to match any renderer.
+ALTER TABLE sessions ADD COLUMN ref_attribution TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_ref_attribution ON sessions(ref_attribution);

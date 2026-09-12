@@ -1448,6 +1448,44 @@ distinction inline so agent authors see it at the tool level.
 
 ---
 
+## Workstreams, refs & digests
+
+The durable container for work that outlives a session, what each session
+touched, and the assembled recovery view. Full reference, including what an
+empty digest does and does not mean, is in
+[`docs/workstreams.md`](../workstreams.md) — this is the endpoint index.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/workstreams` | Create a container. Empty body is valid. |
+| `GET` | `/workstreams` | List, newest first. `?status=`, `?workflow_id=`. |
+| `GET` | `/workstreams?ref=<kind>:<ref_id>` | **Reverse lookup**: which workstreams touched this object. Returns every match. Not combinable with `status`/`workflow_id`. |
+| `GET` | `/workstreams/{id}` | One workstream. |
+| `POST` | `/workstreams/{id}/sessions` | Assign a session (`{"session_id": "..."}`). |
+| `GET` | `/workstreams/{id}/refs` | Flat ref roll-up across the container's sessions. |
+| `GET` | `/workstreams/{id}/digest` | Assembled digest, rolled up across the lineage. |
+| `POST` | `/sessions/{id}/workstream` | Assign, clear, or `{"ensure": true}` to create one for the lineage. |
+| `GET` | `/sessions/{id}/refs` | This session's refs. |
+| `POST` | `/sessions/{id}/refs` | Attach a ref. Idempotent on `(session, kind, ref_id, relation)`. |
+| `GET` | `/sessions/{id}/digest` | Assembled digest for this session alone. |
+| `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's content belongs in Tesseract. `?user=` required, `?type=` defaults to `notes`. |
+
+Digest filters, shared by both grains: `kind`, `relation`, `source`, `since`
+(RFC3339 **UTC**), `limit`.
+
+Three things to know before reading a response:
+
+- **`source` means observed, not validated.** `proxy` says the proxy saw the
+  identifier go by; nothing checked that it refers to anything, and under
+  ADR 0045 the daemon cannot distinguish the real proxy from another same-host
+  caller. It is provenance, never authentication.
+- **An absent ref is never evidence.** Read `coverage.proxy_attributable` and
+  each session's `ref_attribution` before concluding a session did nothing.
+  Today that count is always zero — `--extract-refs` has no config seam
+  (`CW-20260912-0112`), so `source=proxy` is unreachable by construction.
+- **Truncation is reported, not silent.** `coverage.limit` and
+  `coverage.truncated` always appear.
+
 ## Versioning & stability
 
 The routes documented here are stable for v0.0.2 — Nanite and Clockwork

@@ -114,6 +114,17 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			State:          "external",
 			Intent:         intent,
 			Publication:    req.Publication,
+			// This endpoint records identity and launches nothing, so no
+			// .mcp.json is planted and no `mux mcp --session` carries this
+			// id. The session's proxied calls therefore cannot be attributed
+			// to it however much work it does.
+			//
+			// Stated HERE rather than inferred later from state=="external",
+			// for the reason migration 0025 gives: the fact belongs to the
+			// path that decides it. A digest that inferred it from state
+			// would be reading a field that describes lifecycle to answer a
+			// question about planting, and the two are free to diverge.
+			RefAttribution: sql.NullString{String: store.RefAttributionUnlaunched, Valid: true},
 		}
 		if req.ParentSessionID != "" {
 			row.ParentSessionID = sql.NullString{String: req.ParentSessionID, Valid: true}

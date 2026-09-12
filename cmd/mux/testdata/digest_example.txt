@@ -1,0 +1,23 @@
+workstream 01a09759-f4fa-7a6f-8738-d702b1330fa5 (session-correlation)
+  status active  workflow SP-20260912-0001
+
+SPAN  3 session(s), crossing a lineage boundary
+  sess-a  fresh       completed  refs=2    attribution=none
+  sess-b  compact     completed  refs=2    attribution=none  <- sess-a
+  sess-c  resume      running    refs=1    attribution=none  <- sess-b
+
+LEFT BEHIND (created / updated)
+  torque_task
+    created     CW-20260912-0112             agent  2026-09-12T21:18:27Z
+    updated     CW-20260912-0063             agent  2026-09-12T21:19:05Z
+  git_commit
+    created     cc817eb                      api    2026-09-12T20:44:00Z
+
+TOUCHED (read / referenced)
+  torque_task
+    read        CW-20260912-0061             agent  2026-09-12T16:00:00Z
+    read        CW-20260912-0060             agent  2026-09-12T19:00:00Z
+
+TOTALS  5 ref(s)  by source: api=1 agent=4
+COVERAGE  limit=500 truncated=false  attribution: none=3
+  ! no session here could produce a proxy-observed ref, because ref extraction was not enabled for it (CW-20260912-0112): an empty proxy column says nothing about what these sessions did

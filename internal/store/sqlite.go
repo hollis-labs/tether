@@ -135,6 +135,13 @@ type SessionRow struct {
 	// inheritWorkstreamID in workstreams.go. Added migration 0023
 	// (S1, CW-20260912-0059).
 	WorkstreamID sql.NullString
+	// RefAttribution records whether this session's proxy could ever produce
+	// a source='proxy' ref: "proxy", "none", "unlaunched", or empty for a row
+	// that predates the stamp (read as "unknown"). Written at the planting
+	// site from the value the planting itself produced, never inferred from
+	// launch_id -- that inference is false for every session that exists
+	// today. Added migration 0025 (S5, CW-20260912-0063).
+	RefAttribution sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -156,12 +163,19 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	// re-attached by hand is orphaned by the exact event it was meant to
 	// survive. See workstreams.go.
 	row.WorkstreamID = s.inheritWorkstreamID(row)
+	// ref_attribution is INSERTED, not only updated later. A caller that knows
+	// at creation time that nothing will be planted for this session -- the
+	// /sessions/bootstrap path -- says so on the row, and leaving the column
+	// out of this statement would silently discard that, which is the
+	// declared-but-never-assigned shape this sprint has already produced twice.
+	// The launch path leaves it NULL here and stamps it after planting, since
+	// what was planted is not known until it has been.
 	if _, err := s.db.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
-		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID); err != nil {
+		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution); err != nil {
 		return err
 	}
 	pb, err := json.Marshal(plan)
@@ -263,7 +277,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("session_group_id = ?", opts.GroupID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -274,7 +288,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -284,8 +298,8 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

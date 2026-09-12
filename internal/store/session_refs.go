@@ -227,7 +227,14 @@ type ListSessionRefsOptions struct {
 	Kind     string
 	Relation string
 	Source   string
-	Limit    int
+	// Since bounds the listing to refs recorded at or after this RFC3339
+	// timestamp. Recovery asks "what was in flight", not "everything ever".
+	// Compared as a string, which is correct only because `at` is always
+	// written by AttachSessionRef as UTC RFC3339 -- a fixed-width,
+	// lexicographically ordered encoding. A caller passing a local-offset
+	// timestamp would compare wrong, so the API surfaces document UTC.
+	Since string
+	Limit int
 }
 
 // filterArgs returns the six bound values the shared filter predicate needs.
@@ -238,7 +245,7 @@ type ListSessionRefsOptions struct {
 // whether a filter could reach the query text -- it cannot, there is no query
 // text to reach. An empty filter matches everything via the first arm.
 func (o ListSessionRefsOptions) filterArgs() []any {
-	return []any{o.Kind, o.Kind, o.Relation, o.Relation, o.Source, o.Source}
+	return []any{o.Kind, o.Kind, o.Relation, o.Relation, o.Source, o.Source, o.Since, o.Since}
 }
 
 func (o ListSessionRefsOptions) limit() int {
@@ -255,6 +262,7 @@ const sessionRefFilter = `
 	  AND (? = '' OR r.kind = ?)
 	  AND (? = '' OR r.relation = ?)
 	  AND (? = '' OR r.source = ?)
+	  AND (? = '' OR r.at >= ?)
 	ORDER BY r.at DESC, r.id DESC
 	LIMIT ?`
 

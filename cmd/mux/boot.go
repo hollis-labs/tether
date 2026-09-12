@@ -217,7 +217,14 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 			// the user drives it, so there is no Tether session row to
 			// attribute proxied calls to. Reporting none is correct — a
 			// fabricated attribution would be worse than an absent one.
-			MuxArgs:   app.MuxMCPArgs(catalogRoot, ""),
+			//
+			// The plan's Attribution is deliberately DISCARDED here, and that
+			// is not the same thing as ignoring it: this path creates no
+			// session row, so there is nothing to stamp it onto. It still goes
+			// through MuxMCPPlant rather than assembling its own argv, so a
+			// future third caller inherits the coupled shape instead of
+			// inventing an uncoupled one.
+			MuxArgs:   app.MuxMCPPlant(catalogRoot, "", false).Args,
 			MuxEnv:    muxEnv,
 			ParentEnv: os.Environ(),
 			SpecPlan:  specPlan,

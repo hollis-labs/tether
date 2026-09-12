@@ -67,6 +67,8 @@ type Server struct {
 	Workstreams api.WorkstreamStore
 	// SessionRefs is optional; when set, session-ref endpoints are mounted.
 	SessionRefs api.SessionRefStore
+	// Digests is optional; when set, the digest endpoints are mounted.
+	Digests api.DigestStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -322,6 +324,7 @@ func (s *Server) Handler() http.Handler {
 			GroupStore:          s.GroupStore,
 			Workstreams:         s.Workstreams,
 			SessionRefs:         s.SessionRefs,
+			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,

@@ -240,6 +240,7 @@ var daemonRunCmd = &cobra.Command{
 			GroupStore:          svc.Store,
 			Workstreams:         svc.Store,
 			SessionRefs:         svc.Store,
+			Digests:             svc.Store,
 			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			DeliveryClaims:      svc.Store,
 			Attachments:         svc.Store,
