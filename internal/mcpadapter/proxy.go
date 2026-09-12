@@ -6,6 +6,8 @@ import (
 
 	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ToolCallHandler is the terminal handler in a middleware chain. It receives
@@ -65,6 +67,22 @@ func (r *ProxyRouter) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	// Inject server ID into context so middleware can read it without
 	// needing to look up the registry again.
 	ctx = WithServerID(ctx, rt.ServerID)
+
+	// Record WHICH upstream on the span. This is the dimension that makes a
+	// proxied span worth creating at all -- without it, Torque latency cannot
+	// be separated from Tesseract latency, and the tool name is not a reliable
+	// substitute (proxy_events records server "mux" for Torque tools today, so
+	// name-to-server is already not a mapping anything should lean on).
+	//
+	// Set here rather than at span creation because this is the one place the
+	// registry lookup has already happened; doing it in addProxyTools would
+	// mean a second lookup and a second thing that can disagree. A no-op when
+	// no span is recording, so this is safe on every path.
+	//
+	// mux_call also reaches Handle, and its span (created natively by addTool)
+	// picks the attribute up here too. That is intended: mux_call forwards to
+	// an upstream as well and should carry which one.
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("hollis.tool.server", rt.ServerID))
 
 	// Terminal handler: forward to upstream.
 	terminal := ToolCallHandler(func(tCtx context.Context, tReq mcp.CallToolRequest) (*mcp.CallToolResult, error) {

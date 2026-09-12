@@ -13,6 +13,10 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
+	hotel "github.com/hollis-labs/go-otel"
+	otelprop "github.com/hollis-labs/go-otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 )
@@ -83,11 +87,38 @@ func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
 	tools := make([]server.ServerTool, 0, len(defs))
 	for _, def := range defs {
 		def := def
+		sanitized := mcpsanitize.Middleware(logger)(func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return c.router.Handle(handlerCtx, req)
+		})
 		tools = append(tools, server.ServerTool{
 			Tool: def,
-			Handler: mcpsanitize.Middleware(logger)(func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return c.router.Handle(handlerCtx, req)
-			}),
+			// Span creation mirrors addTool (adapter.go) deliberately: until
+			// CW-20260912-0068 this was the ONLY registration path in the
+			// package that did not create one, so every call every session
+			// made to Torque, Tesseract and Cerberus through `mux mcp --proxy`
+			// was absent from tracing.
+			//
+			// Note what is NOT changed to fix that: proxy.go's InjectMCP call
+			// on the forwarded request. It was already there and already
+			// running on every proxied call — InjectMCP returns its params
+			// untouched when the span context is invalid, and with no span
+			// upstream the context never was valid. So the propagation was an
+			// active code path with nothing to say, and creating the span here
+			// is what gives it something. Injection starts working without the
+			// injection line changing.
+			//
+			// The wrapper sits OUTSIDE the sanitize middleware, matching
+			// addTool's ordering, so the span covers sanitization as well as
+			// the upstream call and the context reaching the terminal handler
+			// carries it.
+			Handler: func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
+					handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
+				}
+				handlerCtx, span := hotel.ToolCallSpan(handlerCtx, def.Name)
+				defer span.End()
+				return sanitized(handlerCtx, req)
+			},
 		})
 	}
 	c.server.AddTools(tools...)
