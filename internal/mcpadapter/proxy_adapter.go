@@ -111,6 +111,20 @@ func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
 			// addTool's ordering, so the span covers sanitization as well as
 			// the upstream call and the context reaching the terminal handler
 			// carries it.
+			//
+			// IF YOU ARE HERE BECAUSE TRACE CONTEXT IS STILL NOT REACHING AN
+			// UPSTREAM: check that a real TracerProvider is installed before
+			// suspecting this code. OpenTelemetry's default global provider is
+			// a no-op, and its spans carry an INVALID span context — so
+			// ToolCallSpan below succeeds, returns a span, and InjectMCP then
+			// correctly writes nothing. The symptom is byte-identical to the
+			// bug this block fixed: the upstream receives its arguments with
+			// no _traceparent, exactly as it did before the span existed.
+			//
+			// cmd/mux/main.go calls internalotel.Init, so the daemon is fine.
+			// That is precisely why this bites somewhere else — a test, a
+			// short-lived tool, an embedding of this package — and looks
+			// impossible when it does.
 			Handler: func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
 					handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
