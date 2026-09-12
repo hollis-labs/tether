@@ -337,81 +337,11 @@ func (s *Server) Handler() http.Handler {
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.
-		if s.Service != nil {
-			mux.Handle("/sessions", apiHandler)
-			mux.Handle("/sessions/", apiHandler)
-		}
-		if s.AI != nil {
-			mux.Handle("/ai/chat", apiHandler)
-			mux.Handle("/ai/chat/stream", apiHandler)
-			mux.Handle("/ai/embeddings", apiHandler)
-			mux.Handle("/ai/providers", apiHandler)
-			mux.Handle("/ai/models", apiHandler)
-			mux.Handle("/ai/routes", apiHandler)
-			mux.Handle("/ai/routes/explain", apiHandler)
-			mux.Handle("/ai/routes/preview", apiHandler)
-			if s.AIUsage != nil {
-				mux.Handle("/ai/usage", apiHandler)
-				mux.Handle("/ai/budgets", apiHandler)
-			}
-			if s.AIAudit != nil {
-				mux.Handle("/ai/audit", apiHandler)
+		for _, m := range s.apiMounts() {
+			if m.enabled {
+				mux.Handle(m.path, apiHandler)
 			}
 		}
-		if s.Service != nil {
-			mux.Handle("/logical-agents/", apiHandler)
-		}
-		if s.Broker != nil {
-			mux.Handle("/broker/envelopes", apiHandler)
-			mux.Handle("/broker/envelopes/", apiHandler)
-			mux.Handle("/broker/requests", apiHandler)
-		}
-		if s.GroupStore != nil {
-			mux.Handle("/session-groups", apiHandler)
-			mux.Handle("/session-groups/", apiHandler)
-		}
-		if s.MessageStore != nil {
-			mux.Handle("/messages", apiHandler)
-			mux.Handle("/messages/", apiHandler)
-			mux.Handle("/messages/subscribe", apiHandler)
-			mux.Handle("/messages/inbox", apiHandler)
-			mux.Handle("/messages/request", apiHandler)
-		}
-		if s.EventsStore != nil {
-			mux.Handle("/events", apiHandler)
-		}
-		if s.Bus != nil {
-			mux.Handle("/events/stream", apiHandler)
-		}
-		if s.ProxyEvents != nil {
-			mux.Handle("/proxy/events", apiHandler)
-		}
-		if s.Catalog != nil {
-			mux.Handle("/catalog/projects", apiHandler)
-			mux.Handle("/catalog/agents", apiHandler)
-			mux.Handle("/catalog/providers", apiHandler)
-			mux.Handle("/catalog/launches", apiHandler)
-		}
-		if s.Registry != nil {
-			// "/registry/" is a subtree (prefix) pattern -- it already
-			// covers /registry/bindings* and /registry/scoped-bindings*
-			// (T07, T08) without a separate mux.Handle call per subpath.
-			mux.Handle("/registry/", apiHandler)
-			mux.Handle("/whoami", apiHandler)
-		}
-		if s.Groups != nil {
-			mux.Handle("/groups", apiHandler)
-			mux.Handle("/groups/", apiHandler)
-			mux.Handle("/mentions", apiHandler)
-		}
-		if s.LogsDir != "" {
-			mux.Handle("/logs/daemon", apiHandler)
-		}
-		if s.SessionBootstrap != nil {
-			mux.Handle("/sessions/bootstrap", apiHandler)
-		}
-		mux.Handle("/fs/validate", apiHandler)
-		mux.Handle("/fs/detect", apiHandler)
 	}
 	return otelprop.HTTPMiddleware(mux)
 }
@@ -470,4 +400,109 @@ func BaseURL(addr string) string {
 		return "http://" + strings.TrimPrefix(addr, "tcp:")
 	}
 	return ""
+}
+
+// apiMount is one entry in the outer mux's allowlist: a top-level path
+// internal/api owns, and whether this Server has the dependency that makes it
+// serviceable.
+type apiMount struct {
+	path    string
+	enabled bool
+}
+
+// apiMounts is THE list of api paths the daemon routes, and the single source
+// for both Handler() and the regression test that checks it against what
+// internal/api actually registers.
+//
+// It used to be a run of mux.Handle calls inline in Handler(), which meant the
+// only way to check it was to make an HTTP request per path with every
+// optional dependency stubbed. That is why CW-20260912-0059 shipped with
+// /workstreams registered in api, wired in Deps, and never routed here: the
+// feature was correct everywhere it was tested, and unreachable in production.
+//
+// ADDING A ROUTE TO internal/api MEANS ADDING IT HERE. Nothing derives one
+// from the other -- Go's ServeMux exposes no way to enumerate its patterns --
+// so route_mount_test.go compares this list against a maintained inventory of
+// api's paths and fails when they diverge.
+func (s *Server) apiMounts() []apiMount {
+	hasService := s.Service != nil
+	hasAI := s.AI != nil
+	return []apiMount{
+		{"/sessions", hasService},
+		{"/sessions/", hasService},
+
+		// Both forms, and the bare one is NOT redundant: api registers
+		// /logical-agents and /logical-agents/ as two different handlers
+		// (collection vs item, checkpoints.go:128-129). Mounting only the
+		// subtree left the collection unreachable — ServeMux redirected the
+		// bare path into the subtree, so a list request silently arrived at
+		// the item handler with an empty id. Found by the CW-20260912-0059
+		// audit, same class and cause as /workstreams.
+		{"/logical-agents", hasService},
+		{"/logical-agents/", hasService},
+
+		{"/ai/chat", hasAI},
+		{"/ai/chat/stream", hasAI},
+		{"/ai/embeddings", hasAI},
+		{"/ai/providers", hasAI},
+		{"/ai/models", hasAI},
+		{"/ai/routes", hasAI},
+		{"/ai/routes/explain", hasAI},
+		{"/ai/routes/preview", hasAI},
+		{"/ai/usage", hasAI && s.AIUsage != nil},
+		{"/ai/budgets", hasAI && s.AIUsage != nil},
+		{"/ai/audit", hasAI && s.AIAudit != nil},
+
+		{"/broker/envelopes", s.Broker != nil},
+		{"/broker/envelopes/", s.Broker != nil},
+		{"/broker/requests", s.Broker != nil},
+
+		{"/session-groups", s.GroupStore != nil},
+		{"/session-groups/", s.GroupStore != nil},
+
+		// Both forms: "/workstreams" for the collection and "/workstreams/"
+		// as the subtree covering /{id} and /{id}/refs. Registering only the
+		// subtree would leave the collection reachable solely via ServeMux's
+		// redirect.
+		{"/workstreams", s.Workstreams != nil},
+		{"/workstreams/", s.Workstreams != nil},
+
+		// "/messages/" is a subtree pattern; the explicit siblings below it
+		// are listed because api registers them as exact patterns, and an
+		// exact pattern must be mounted to take precedence over the subtree.
+		{"/messages", s.MessageStore != nil},
+		{"/messages/", s.MessageStore != nil},
+		{"/messages/subscribe", s.MessageStore != nil},
+		{"/messages/inbox", s.MessageStore != nil},
+		{"/messages/list", s.MessageStore != nil},
+		{"/messages/notify", s.MessageStore != nil},
+		{"/messages/request", s.MessageStore != nil},
+		{"/messages/thread/", s.MessageStore != nil},
+		{"/messages/retention/candidates", s.MessageStore != nil},
+
+		{"/events", s.EventsStore != nil},
+		{"/events/stream", s.Bus != nil},
+		{"/proxy/events", s.ProxyEvents != nil},
+
+		{"/catalog/projects", s.Catalog != nil},
+		{"/catalog/agents", s.Catalog != nil},
+		{"/catalog/providers", s.Catalog != nil},
+		{"/catalog/launches", s.Catalog != nil},
+
+		// "/registry/" is a subtree pattern -- it already covers
+		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)
+		// without a separate entry per subpath.
+		{"/registry/", s.Registry != nil},
+		{"/whoami", s.Registry != nil},
+
+		{"/groups", s.Groups != nil},
+		{"/groups/", s.Groups != nil},
+		{"/mentions", s.Groups != nil},
+
+		{"/logs/daemon", s.LogsDir != ""},
+		{"/sessions/bootstrap", s.SessionBootstrap != nil},
+
+		{"/fs/validate", true},
+		{"/fs/detect", true},
+	}
 }
