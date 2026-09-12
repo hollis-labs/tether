@@ -133,6 +133,13 @@ type AttachRefResult struct {
 // Read-then-write is safe here without an explicit transaction: the store runs
 // on a single connection (SetMaxOpenConns(1) in Open, to serialize all access),
 // so no other statement can interleave between the lookup and the write.
+//
+// THAT IS AN INVARIANT THIS FUNCTION DEPENDS ON, not just a fact about Open.
+// If MaxOpenConns is ever raised above 1 -- a reasonable-looking throughput
+// change with no visible connection to this file -- this function must become
+// an explicit transaction. Without one, two concurrent attaches of the same ref
+// would both read "absent", both insert, and one would fail the UNIQUE
+// constraint: an error on a path whose whole contract is that a repeat is safe.
 func (s *Store) AttachSessionRef(ref SessionRefRow) (AttachRefResult, error) {
 	if ref.SessionID == "" {
 		return AttachRefResult{}, errors.New("attach session ref: session_id required")

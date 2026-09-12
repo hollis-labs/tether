@@ -34,6 +34,11 @@ CREATE TABLE workstreams (
     -- correlation and does not resolve it -- the same boundary ADR 0041
     -- draws for the registry, which holds identity and a callback and never
     -- operational content.
+    --
+    -- Consequence: a workflow_id may name a workflow that never existed, or
+    -- one since deleted, and nothing here will notice. A reader resolving it
+    -- must treat "not found" as ordinary, not as corruption. Filtering
+    -- workstreams by workflow_id is therefore a lookup, never a validation.
     workflow_id TEXT,
     status      TEXT NOT NULL DEFAULT 'active'
         CHECK(status IN ('active', 'closed')),
