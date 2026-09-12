@@ -14,29 +14,29 @@ import (
 func (a *Adapter) registerHealthTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("mux_health",
 		mcp.WithDescription("Health check for the agent-mux MCP adapter. Returns version and catalog summary."),
-	), a.handleHealth)
+	), Reads("svc health snapshot; no store or catalog write"), a.handleHealth)
 }
 
 func (a *Adapter) registerCatalogTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("mux_catalog_list_projects",
 		mcp.WithDescription("List all projects defined in the agent-mux catalog."),
-	), a.handleListProjects)
+	), Reads("svc.ListProjects: catalog walk"), a.handleListProjects)
 
 	a.addTool(s, mcp.NewTool("mux_catalog_list_agents",
 		mcp.WithDescription("List all agent profiles defined in the agent-mux catalog."),
-	), a.handleListAgents)
+	), Reads("svc.ListAgents: catalog walk"), a.handleListAgents)
 
 	a.addTool(s, mcp.NewTool("mux_catalog_list_providers",
 		mcp.WithDescription("List all provider definitions in the agent-mux catalog."),
-	), a.handleListProviders)
+	), Reads("svc.ListProviders: catalog walk"), a.handleListProviders)
 
 	a.addTool(s, mcp.NewTool("mux_catalog_list_launches",
 		mcp.WithDescription("List all launch profiles in the agent-mux catalog. A launch profile combines a project, agent, and provider into a named runnable configuration."),
-	), a.handleListLaunches)
+	), Reads("catalog launches listing"), a.handleListLaunches)
 
 	a.addTool(s, mcp.NewTool("mux_catalog_list_boot_profiles",
 		mcp.WithDescription("List available boot prompt profiles from the catalog boot-profiles directory."),
-	), a.handleListBootProfiles)
+	), Reads("catalog boot-profiles directory listing"), a.handleListBootProfiles)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

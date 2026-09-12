@@ -22,12 +22,12 @@ import (
 func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("mux_agent_list",
 		mcp.WithDescription("List all agents across the system, user, and project discovery layers. Each entry is annotated with the layer it resolved from and its file path. Read-only; no scope required."),
-	), a.handleAgentList)
+	), Reads("catalog agent listing"), a.handleAgentList)
 
 	a.addTool(s, mcp.NewTool("mux_agent_show",
 		mcp.WithDescription("Show one agent's full resolved definition, including which discovery layer it came from and its file path. Read-only; no scope required."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID")),
-	), a.handleAgentShow)
+	), Reads("catalog agent lookup"), a.handleAgentShow)
 
 	a.addTool(s, mcp.NewTool("mux_agent_create",
 		mcp.WithDescription("Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase)."),
@@ -39,7 +39,7 @@ func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
 		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list (optional).")),
 		mcp.WithString("system_prompt", mcp.Description("Agent system prompt (optional).")),
 		mcp.WithString("agent_prompt", mcp.Description("Agent persona prompt (optional).")),
-	), a.handleAgentCreate)
+	), Writes(), a.handleAgentCreate)
 
 	a.addTool(s, mcp.NewTool("mux_agent_edit",
 		mcp.WithDescription("Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved."),
@@ -49,7 +49,7 @@ func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
 		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list — replaces existing skills; empty string clears them (optional).")),
 		mcp.WithString("system_prompt", mcp.Description("New system prompt (optional).")),
 		mcp.WithString("agent_prompt", mcp.Description("New persona prompt (optional).")),
-	), a.handleAgentEdit)
+	), Writes(), a.handleAgentEdit)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

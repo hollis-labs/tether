@@ -29,7 +29,7 @@ func (a *Adapter) registerScopedBindingsTools(s *server.MCPServer) {
 		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope, e.g. 'reviewer'.")),
 		mcp.WithArray("target_urns", mcp.Required(), mcp.Description("One or more target URNs for this slot.")),
 		mcp.WithString("created_by", mcp.Required(), mcp.Description("Caller URN recorded as provenance for this revision.")),
-	), a.handleScopedBindingSet)
+	), Writes(), a.handleScopedBindingSet)
 
 	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_resolve",
 		mcp.WithDescription(
@@ -40,13 +40,13 @@ func (a *Adapter) registerScopedBindingsTools(s *server.MCPServer) {
 		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope.")),
 		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope.")),
 		mcp.WithBoolean("single", mcp.Description("Resolve to exactly one target (default false: return every target).")),
-	), a.handleScopedBindingResolve)
+	), Reads("scoped binding resolution"), a.handleScopedBindingResolve)
 
 	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_revisions",
 		mcp.WithDescription("List every revision ever published for (scope, slot), newest first. Read-only; no scope required."),
 		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope.")),
 		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope.")),
-	), a.handleScopedBindingRevisions)
+	), Reads("scoped binding revision history"), a.handleScopedBindingRevisions)
 }
 
 func (a *Adapter) handleScopedBindingSet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

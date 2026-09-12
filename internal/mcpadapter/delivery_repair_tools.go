@@ -30,7 +30,7 @@ func (a *Adapter) registerDeliveryRepairTools(s *server.MCPServer) {
 				"retry/expiry occurred. Read-only; no scope required.",
 		),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID.")),
-	), a.handleMessageTraceTool)
+	), Reads("GET /messages/{id}/trace"), a.handleMessageTraceTool)
 
 	a.addTool(s, mcp.NewTool("mux_message_redrive",
 		mcp.WithDescription(
@@ -43,7 +43,7 @@ func (a *Adapter) registerDeliveryRepairTools(s *server.MCPServer) {
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID, or a literal delivery id for a group-fanout recipient.")),
 		mcp.WithString("authorized_by", mcp.Required(), mcp.Description("URN recorded as provenance for this repair (self-asserted, ADR 0045).")),
 		mcp.WithNumber("new_deadline_seconds", mcp.Description("New delivery deadline in seconds from now; 0 or omitted means no deadline.")),
-	), a.handleMessageRedriveTool)
+	), Writes(), a.handleMessageRedriveTool)
 
 	a.addTool(s, mcp.NewTool("mux_message_retention_candidates",
 		mcp.WithDescription(
@@ -54,7 +54,7 @@ func (a *Adapter) registerDeliveryRepairTools(s *server.MCPServer) {
 				"excluded). No scope required.",
 		),
 		mcp.WithNumber("older_than_hours", mcp.Description("Lookback window in hours; 0 or omitted uses the daemon's default.")),
-	), a.handleMessageRetentionCandidatesTool)
+	), Reads("GET /messages/retention/candidates: reports, deletes nothing"), a.handleMessageRetentionCandidatesTool)
 
 	a.addTool(s, mcp.NewTool("mux_message_purge",
 		mcp.WithDescription(
@@ -68,7 +68,7 @@ func (a *Adapter) registerDeliveryRepairTools(s *server.MCPServer) {
 		),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID.")),
 		mcp.WithString("authorized_by", mcp.Required(), mcp.Description("URN recorded as provenance for this purge (self-asserted, ADR 0045).")),
-	), a.handleMessagePurgeTool)
+	), Destroys("permanently deletes messages; irreversible"), a.handleMessagePurgeTool)
 }
 
 func (a *Adapter) handleMessageTraceTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

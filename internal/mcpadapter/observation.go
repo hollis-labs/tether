@@ -56,7 +56,7 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 				mcp.Description("Pagination cursor: smallest seq from previous page; omit on first page"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("GET /sessions/{id}/events"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			sessionID := str(req, "session_id")
 			if sessionID == "" {
 				return toolError("invalid_request", "session_id required"), nil
@@ -135,7 +135,7 @@ func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
 				mcp.Description("Session UUID"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("GET /sessions/{id}/checkpoints"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			sessionID := str(req, "session_id")
 			if sessionID == "" {
 				return toolError("invalid_request", "session_id required"), nil
@@ -176,7 +176,7 @@ func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
 				mcp.Description("Session UUID"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("GET /sessions/{id}/attachments"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			sessionID := str(req, "session_id")
 			if sessionID == "" {
 				return toolError("invalid_request", "session_id required"), nil
@@ -246,7 +246,7 @@ func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
 				mcp.Description("RFC3339 lower-bound timestamp; excludes events at or before this time"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("GET /proxy/events"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			f := store.ProxyEventFilter{
 				SessionID: str(req, "session_id"),
 				ServerID:  str(req, "server"),
@@ -317,7 +317,7 @@ func (a *Adapter) registerEventsHistoryTool(s *server.MCPServer) {
 				mcp.Description("Max events to return (default 100, max 1000)."),
 			),
 		),
-		a.handleEventsHistory,
+		Reads("GET /events"), a.handleEventsHistory,
 	)
 }
 
@@ -430,7 +430,7 @@ func (a *Adapter) registerEventsWaitTool(s *server.MCPServer) {
 				mcp.Description("Maximum matching events to return before stopping (default 1, max 100)."),
 			),
 		),
-		a.handleEventsWait,
+		Reads("event stream subscription; consumes nothing"), a.handleEventsWait,
 	)
 }
 

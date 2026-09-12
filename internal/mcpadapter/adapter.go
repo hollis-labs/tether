@@ -160,7 +160,23 @@ func (a *Adapter) Run(ctx context.Context) error {
 // All registerXxx helpers must call a.addTool(s, tool, handler) instead of
 // s.AddTool(tool, handler) directly so the protection stays uniform across
 // every tool surface registered by the adapter.
-func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerFunc) {
+//
+// b is REQUIRED and has no usable zero value: a tool cannot be registered
+// without stating what it does. See behavior.go for why, and for the precise
+// statement of what that does and does not prevent (it prevents omission, not
+// a wrong value).
+//
+// An unset Behavior panics rather than registering. That is deliberate: every
+// tool registers at process start, so the failure is immediate, total and
+// deterministic in every run and every test -- it cannot ship. Publishing a
+// zero-valued Behavior would advertise readOnly=false, destructive=false, the
+// most permissive tuple of all, which is the opposite of the cautious default
+// this work is replacing.
+func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, b Behavior, h server.ToolHandlerFunc) {
+	if !b.valid() {
+		panic("mcpadapter: tool " + t.Name + " registered with an unset Behavior; use Reads, Writes or Destroys")
+	}
+	b.annotations()(&t)
 	logger := a.Logger
 	if logger == nil {
 		logger = slog.Default()

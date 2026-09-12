@@ -27,7 +27,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 		mcp.NewTool("mux_ai_list_providers",
 			mcp.WithDescription("List configured AI gateway providers exposed by the running muxd daemon."),
 		),
-		a.handleAIProviders,
+		Reads("configured provider listing from the catalog"), a.handleAIProviders,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_list_models",
@@ -36,13 +36,13 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 				mcp.Description("Optional configured provider id filter"),
 			),
 		),
-		a.handleAIModels,
+		Reads("configured model listing from the catalog"), a.handleAIModels,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_list_routes",
 			mcp.WithDescription("List the configured AI planner routes exposed by the running muxd daemon."),
 		),
-		a.handleAIRoutes,
+		Reads("configured route listing from the catalog"), a.handleAIRoutes,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_route_preview",
@@ -68,7 +68,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
-		a.handleAIRoutePreview,
+		Reads("route resolution is computed and persisted nowhere"), a.handleAIRoutePreview,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_route_explain",
@@ -94,7 +94,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
-		a.handleAIRouteExplain,
+		Reads("route resolution is computed and persisted nowhere"), a.handleAIRouteExplain,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_chat",
@@ -120,7 +120,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
-		a.handleAIChat,
+		Writes().OpenWorld(), a.handleAIChat,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_embeddings",
@@ -141,7 +141,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
-		a.handleAIEmbeddings,
+		Writes().OpenWorld(), a.handleAIEmbeddings,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_chat_stream",
@@ -167,7 +167,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
 			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
 		),
-		a.handleAIChatStream,
+		Writes().OpenWorld(), a.handleAIChatStream,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_usage",
@@ -179,7 +179,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithString("operation", mcp.Description("Filter by operation kind, default chat")),
 			mcp.WithString("since", mcp.Description("RFC3339 lower-bound timestamp")),
 		),
-		a.handleAIUsage,
+		Reads("GET /ai/usage"), a.handleAIUsage,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_budgets",
@@ -189,7 +189,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithString("session_id", mcp.Description("Session id used for session-scoped budgets")),
 			mcp.WithString("caller_id", mcp.Description("Caller id used for caller-scoped budgets")),
 		),
-		a.handleAIBudgets,
+		Reads("GET /ai/budgets"), a.handleAIBudgets,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_audit",
@@ -203,7 +203,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("limit", mcp.Description("Max rows to return (default 100, max 2000)")),
 			mcp.WithBoolean("errors_only", mcp.Description("When true, only return failed events")),
 		),
-		a.handleAIAudit,
+		Reads("GET /ai/audit"), a.handleAIAudit,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_budget_alerts",
@@ -215,7 +215,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithString("since", mcp.Description("RFC3339 lower-bound timestamp")),
 			mcp.WithNumber("limit", mcp.Description("Max rows to return (default 100, max 2000)")),
 		),
-		a.handleAIBudgetAlerts,
+		Reads("budget alert listing"), a.handleAIBudgetAlerts,
 	)
 	a.addTool(s,
 		mcp.NewTool("mux_ai_wait_budget_alerts",
@@ -228,7 +228,7 @@ func (a *Adapter) registerAITools(s *server.MCPServer) {
 			mcp.WithNumber("wait_ms", mcp.Description("Maximum time to wait for events in milliseconds (default 5000)")),
 			mcp.WithNumber("max_events", mcp.Description("Maximum matching events to return before stopping (default 1)")),
 		),
-		a.handleAIWaitBudgetAlerts,
+		Reads("blocks on an alert it does not cause"), a.handleAIWaitBudgetAlerts,
 	)
 }
 

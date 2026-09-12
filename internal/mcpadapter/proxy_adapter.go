@@ -409,7 +409,7 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 				mcp.Description("Max tools to return (default 10, max 50)"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("searches the merged tool catalog").OpenWorld(), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			intent := str(req, "intent")
 			category := str(req, "category")
 			tagsRaw := str(req, "tags")
@@ -492,7 +492,7 @@ func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *Discove
 				mcp.Description("Max recommendations to return (default 8, max 20)"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("searches the merged tool catalog").OpenWorld(), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			intent := str(req, "intent")
 			category := str(req, "category")
 			tagsRaw := str(req, "tags")
@@ -657,7 +657,7 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 				mcp.Description("Arguments object matching the tool's input schema"),
 			),
 		),
-		func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Writes().OpenWorld(), func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			toolName := str(req, "tool_name")
 			if toolName == "" {
 				return toolError("invalid_request", "tool_name is required"), nil
@@ -728,7 +728,7 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 					"Use mux_discover to search the catalog by intent/category when you don't know a tool name.",
 			),
 		),
-		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("configured upstream listing"), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			live := pool.StatusSummary()
 			liveByID := make(map[string]ServerStatus, len(live))
 			for _, s := range live {
@@ -788,7 +788,7 @@ func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPo
 				mcp.Description("Optional upstream server ID to refresh. Empty refreshes every connected upstream."),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Writes().OpenWorld(), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			serverID := strings.TrimSpace(str(req, "server"))
 
 			var (

@@ -33,7 +33,7 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("payload_json", mcp.Description("JSON payload body (optional)")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID for grouping related messages (optional)")),
 		mcp.WithString("in_reply_to", mcp.Description("Message ID this message is in reply to (optional)")),
-	), a.handleMessageSend)
+	), Writes(), a.handleMessageSend)
 
 	a.addTool(s, mcp.NewTool("mux_message_notify",
 		mcp.WithDescription("Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope."),
@@ -47,20 +47,20 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithString("session_id", mcp.Description("Explicit live session ID to wake (optional override)")),
 		mcp.WithString("wake_text", mcp.Description("Override daemon-generated mailbox wake text (optional)")),
 		mcp.WithBoolean("no_wake", mcp.Description("Store the message but skip wake injection")),
-	), a.handleMessageNotify)
+	), Writes(), a.handleMessageNotify)
 
 	a.addTool(s, mcp.NewTool("mux_message_get",
 		mcp.WithDescription("Get a message envelope by ID."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Sender or recipient URN claiming this read")),
-	), a.handleMessageGet)
+	), Reads("GET /messages/{id}"), a.handleMessageGet)
 
 	a.addTool(s, mcp.NewTool("mux_message_inbox",
 		mcp.WithDescription("Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call. For a non-destructive, repeatable listing use mux_message_list instead."),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient URN")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation")),
 		mcp.WithString("thread_id", mcp.Description("Thread ID filter (optional)")),
-	), a.handleMessageInbox)
+	), Writes(), a.handleMessageInbox)
 
 	a.addTool(s, mcp.NewTool("mux_message_list",
 		mcp.WithDescription("List a recipient's messages non-destructively. Repeatable: no delivered_at/read_at side effects. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set."),
@@ -71,43 +71,43 @@ func (a *Adapter) registerMessageTools(s *server.MCPServer) {
 		mcp.WithBoolean("unread_only", mcp.Description("Return only unread messages (default false)")),
 		mcp.WithNumber("limit", mcp.Description("Max results per page, clamped to [1,100] (default 100)")),
 		mcp.WithNumber("offset", mcp.Description("Number of messages to skip for pagination (default 0)")),
-	), a.handleMessageList)
+	), Reads("GET /messages/list: does NOT mark delivered, unlike inbox"), a.handleMessageList)
 
 	a.addTool(s, mcp.NewTool("mux_message_thread",
 		mcp.WithDescription("List all messages in a thread by thread ID, scoped to the ones involving the claimed identity."),
 		mcp.WithString("thread_id", mcp.Required(), mcp.Description("Thread ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Sender or recipient URN claiming this read")),
 		mcp.WithString("kind", mcp.Description("Comma-separated kind filter (optional)")),
-	), a.handleMessageThread)
+	), Reads("GET /messages/thread/{id}"), a.handleMessageThread)
 
 	a.addTool(s, mcp.NewTool("mux_message_consume",
 		mcp.WithDescription("Mark a message as consumed by the recipient. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN consuming the message")),
-	), a.handleMessageConsume)
+	), Writes(), a.handleMessageConsume)
 
 	a.addTool(s, mcp.NewTool("mux_message_cancel",
 		mcp.WithDescription("Cancel a pending message. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
-	), a.handleMessageCancel)
+	), Destroys("sets canceled_at one-way; the message can never be delivered and there is no uncancel"), a.handleMessageCancel)
 
 	a.addTool(s, mcp.NewTool("mux_message_mark_read",
 		mcp.WithDescription("Mark a message as read by its recipient (idempotent). Does not consume or delete it. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN marking the message read")),
-	), a.handleMessageMarkRead)
+	), Writes(), a.handleMessageMarkRead)
 
 	a.addTool(s, mcp.NewTool("mux_message_archive",
 		mcp.WithDescription("Archive (soft-delete) a message for its recipient (idempotent). Archived messages drop out of default mux_message_list results. Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN archiving the message")),
-	), a.handleMessageArchive)
+	), Writes(), a.handleMessageArchive)
 
 	a.addTool(s, mcp.NewTool("mux_message_unarchive",
 		mcp.WithDescription("Restore an archived message for its recipient (idempotent). Requires message.write scope."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message ID")),
 		mcp.WithString("as", mcp.Required(), mcp.Description("Recipient URN restoring the message")),
-	), a.handleMessageUnarchive)
+	), Writes(), a.handleMessageUnarchive)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

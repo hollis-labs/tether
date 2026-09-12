@@ -78,7 +78,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithArray("capabilities",
 			mcp.Description("Topic tags for discovery via tether_registry_search."),
 		),
-	), a.handleGroupCreate)
+	), Writes(), a.handleGroupCreate)
 
 	a.addTool(s, mcp.NewTool("tether_group_lookup",
 		mcp.WithDescription(
@@ -89,7 +89,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full group URN, e.g. msg://group/agent-mux/grp_xxxxxxxxxx."),
 		),
-	), a.handleGroupLookup)
+	), Reads("group profile lookup"), a.handleGroupLookup)
 
 	a.addTool(s, mcp.NewTool("tether_group_list_for_member",
 		mcp.WithDescription(
@@ -99,7 +99,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("member_urn", mcp.Required(),
 			mcp.Description("Full URN of the member whose group list we're fetching."),
 		),
-	), a.handleGroupListForMember)
+	), Reads("groups-for-member listing"), a.handleGroupListForMember)
 
 	a.addTool(s, mcp.NewTool("tether_group_archive",
 		mcp.WithDescription(
@@ -113,7 +113,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("by", mcp.Required(),
 			mcp.Description("Caller URN (must be the group's owner or a moderator)."),
 		),
-	), a.handleGroupArchive)
+	), Destroys("archives the group one-way; there is no unarchive tool"), a.handleGroupArchive)
 
 	a.addTool(s, mcp.NewTool("tether_group_invite",
 		mcp.WithDescription(
@@ -134,7 +134,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 			mcp.Description("Role at invite time: 'member' (default) | 'moderator'."),
 			mcp.Enum("member", "moderator"),
 		),
-	), a.handleGroupInvite)
+	), Writes(), a.handleGroupInvite)
 
 	a.addTool(s, mcp.NewTool("tether_group_kick",
 		mcp.WithDescription(
@@ -152,7 +152,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("by", mcp.Required(),
 			mcp.Description("Caller URN (must be owner or moderator)."),
 		),
-	), a.handleGroupKick)
+	), Destroys("removes a member; their access and unread position are gone"), a.handleGroupKick)
 
 	a.addTool(s, mcp.NewTool("tether_group_leave",
 		mcp.WithDescription(
@@ -167,7 +167,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("member_urn", mcp.Required(),
 			mcp.Description("Caller URN (the leaver — must equal the caller's own identity)."),
 		),
-	), a.handleGroupLeave)
+	), Destroys("removes the caller from the group; rejoining needs a new invite"), a.handleGroupLeave)
 
 	a.addTool(s, mcp.NewTool("tether_group_set_role",
 		mcp.WithDescription(
@@ -188,7 +188,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("by", mcp.Required(),
 			mcp.Description("Caller URN (must be owner or moderator; only owner can promote to owner)."),
 		),
-	), a.handleGroupSetRole)
+	), Writes(), a.handleGroupSetRole)
 
 	a.addTool(s, mcp.NewTool("tether_group_list_members",
 		mcp.WithDescription(
@@ -198,7 +198,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithString("group_urn", mcp.Required(),
 			mcp.Description("Full group URN."),
 		),
-	), a.handleGroupListMembers)
+	), Reads("member listing"), a.handleGroupListMembers)
 
 	a.addTool(s, mcp.NewTool("tether_group_post",
 		mcp.WithDescription(
@@ -247,7 +247,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithObject("payload", mcp.Required(),
 			mcp.Description("Envelope payload as a JSON object. The daemon-side mention parser scans this for '@' tokens."),
 		),
-	), a.handleGroupPost)
+	), Writes(), a.handleGroupPost)
 
 	a.addTool(s, mcp.NewTool("tether_group_read",
 		mcp.WithDescription(
@@ -271,7 +271,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithNumber("limit",
 			mcp.Description("Max messages to return. Server default: 100."),
 		),
-	), a.handleGroupRead)
+	), Reads("registry.ListGroupMessages is a pure read; MarkRead is a separate explicit call"), a.handleGroupRead)
 
 	a.addTool(s, mcp.NewTool("tether_group_mark_read",
 		mcp.WithDescription(
@@ -287,7 +287,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithNumber("up_to_seq", mcp.Required(),
 			mcp.Description("New cursor value — last_read_seq becomes max(last_read_seq, up_to_seq)."),
 		),
-	), a.handleGroupMarkRead)
+	), Writes(), a.handleGroupMarkRead)
 
 	a.addTool(s, mcp.NewTool("tether_group_mentions",
 		mcp.WithDescription(
@@ -303,7 +303,7 @@ func (a *Adapter) registerGroupTools(s *server.MCPServer) {
 		mcp.WithNumber("limit",
 			mcp.Description("Max mentions to return. Server default: 50."),
 		),
-	), a.handleGroupMentions)
+	), Reads("registry.GetMyMentions: query only"), a.handleGroupMentions)
 }
 
 // ─── handlers ────────────────────────────────────────────────────────────

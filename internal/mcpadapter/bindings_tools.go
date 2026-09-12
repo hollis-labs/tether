@@ -36,28 +36,28 @@ func (a *Adapter) registerBindingsTools(s *server.MCPServer) {
 		mcp.WithString("attempt_id", mcp.Required(), mcp.Description("Identifier for this specific lease attempt.")),
 		mcp.WithArray("capabilities", mcp.Required(), mcp.Description(`Must be exactly ["pull-only"].`)),
 		mcp.WithNumber("ttl_seconds", mcp.Description("Lease duration in seconds; 0 or omitted means no expiry.")),
-	), a.handleBindingLease)
+	), Writes(), a.handleBindingLease)
 
 	a.addTool(s, mcp.NewTool("tether_registry_binding_renew",
 		mcp.WithDescription("Extend an existing binding's lease. Fails (conflict) if a newer generation now exists for the same target. Requires the registry.write scope."),
 		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding id returned by a prior lease.")),
 		mcp.WithNumber("ttl_seconds", mcp.Description("New lease duration in seconds; 0 or omitted means no expiry.")),
-	), a.handleBindingRenew)
+	), Writes(), a.handleBindingRenew)
 
 	a.addTool(s, mcp.NewTool("tether_registry_binding_revoke",
 		mcp.WithDescription("Relinquish a binding lease. Idempotent. Requires the registry.write scope."),
 		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding id to revoke.")),
-	), a.handleBindingRevoke)
+	), Destroys("revokes the lease; the holder stops receiving without being told"), a.handleBindingRevoke)
 
 	a.addTool(s, mcp.NewTool("tether_registry_binding_current",
 		mcp.WithDescription("Get the authoritative current binding for a target -- the highest-generation, non-revoked, non-expired binding. Read-only; no scope required."),
 		mcp.WithString("target_urn", mcp.Required(), mcp.Description("msg:// target URN.")),
-	), a.handleBindingCurrent)
+	), Reads("current binding lookup"), a.handleBindingCurrent)
 
 	a.addTool(s, mcp.NewTool("tether_registry_binding_list",
 		mcp.WithDescription("List every binding ever leased for a target, newest generation first (audit view). Read-only; no scope required."),
 		mcp.WithString("target_urn", mcp.Required(), mcp.Description("msg:// target URN.")),
-	), a.handleBindingList)
+	), Reads("binding listing"), a.handleBindingList)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ func (a *Adapter) registerToolCallEventsTool(s *server.MCPServer, proxyStore Pro
 				mcp.Description("When true, return only events where the tool call failed"),
 			),
 		),
-		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Reads("proxy_events query"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			f := store.ProxyEventFilter{}
 
 			if v := str(req, "server"); v != "" {

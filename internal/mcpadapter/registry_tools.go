@@ -102,7 +102,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithObject("profile", mcp.Required(),
 			mcp.Description("Profile JSON to register. See tool description for the field shape."),
 		),
-	), a.handleRegistryRegister)
+	), Writes(), a.handleRegistryRegister)
 
 	a.addTool(s, mcp.NewTool("tether_registry_lookup",
 		mcp.WithDescription(
@@ -113,7 +113,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
 		),
-	), a.handleRegistryLookup)
+	), Reads("registry profile lookup"), a.handleRegistryLookup)
 
 	a.addTool(s, mcp.NewTool("tether_registry_lookup_by",
 		mcp.WithDescription(
@@ -129,7 +129,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 			mcp.Description("Substrate-local identifier to resolve."),
 		),
 		mcp.WithString("substrate", mcp.Description("Optional substrate scope such as 'tether' or 'cerberus'.")),
-	), a.handleRegistryLookupBy)
+	), Reads("registry lookup by external id"), a.handleRegistryLookupBy)
 
 	a.addTool(s, mcp.NewTool("tether_registry_search",
 		mcp.WithDescription(
@@ -148,7 +148,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("capability", mcp.Description("Filter to rows that carry this capability string.")),
 		mcp.WithString("skill_name", mcp.Description("Filter to rows that carry a skill with this name.")),
 		mcp.WithString("status", mcp.Description("Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all.")),
-	), a.handleRegistrySearch)
+	), Reads("registry search"), a.handleRegistrySearch)
 
 	a.addTool(s, mcp.NewTool("tether_registry_update_self",
 		mcp.WithDescription(
@@ -170,7 +170,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithObject("patch", mcp.Required(),
 			mcp.Description("UpdatePatch JSON. See tool description for partial-merge semantics."),
 		),
-	), a.handleRegistryUpdateSelf)
+	), Writes(), a.handleRegistryUpdateSelf)
 
 	a.addTool(s, mcp.NewTool("tether_registry_deregister",
 		mcp.WithDescription(
@@ -181,7 +181,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full URN of the row to soft-delete."),
 		),
-	), a.handleRegistryDeregister)
+	), Destroys("removes the identity and its bindings; anything addressing it stops resolving"), a.handleRegistryDeregister)
 
 	a.addTool(s, mcp.NewTool("tether_registry_merge",
 		mcp.WithDescription(
@@ -195,7 +195,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("into", mcp.Required(),
 			mcp.Description("Destination URN the source's identity mappings are reattached to."),
 		),
-	), a.handleRegistryMerge)
+	), Writes(), a.handleRegistryMerge)
 
 	a.addTool(s, mcp.NewTool("tether_registry_sync",
 		mcp.WithDescription(
@@ -209,7 +209,7 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full URN of the row to sync."),
 		),
-	), a.handleRegistrySync)
+	), Writes(), a.handleRegistrySync)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

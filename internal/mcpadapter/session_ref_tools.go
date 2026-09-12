@@ -35,7 +35,7 @@ func (a *Adapter) registerSessionRefTools(s *server.MCPServer) {
 		mcp.WithString("ref_id", mcp.Required(), mcp.Description("The identifier, e.g. CW-20260912-0023 or 37b4dc0.")),
 		mcp.WithString("uri", mcp.Description("Optional resolvable locator.")),
 		mcp.WithString("relation", mcp.Description("created | updated | read | referenced. Defaults to referenced. This is what makes the record answer a question: reading a task and creating one are both 'touched', but only one is 'left behind'.")),
-	), a.handleWorkstreamAttach)
+	), Writes(), a.handleWorkstreamAttach)
 
 	a.addTool(s, mcp.NewTool("tether_session_refs",
 		mcp.WithDescription(
@@ -54,7 +54,7 @@ func (a *Adapter) registerSessionRefTools(s *server.MCPServer) {
 		mcp.WithString("kind", mcp.Description("Filter by kind.")),
 		mcp.WithString("relation", mcp.Description("Filter by relation.")),
 		mcp.WithString("source", mcp.Description("Filter by source: proxy, api or agent.")),
-	), a.handleSessionRefs)
+	), Reads("store.ListSessionRefs / ListWorkstreamRefs: SELECT"), a.handleSessionRefs)
 }
 
 func (a *Adapter) handleWorkstreamAttach(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

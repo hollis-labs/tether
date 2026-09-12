@@ -33,18 +33,18 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		),
 		mcp.WithString("name", mcp.Description("Optional human label.")),
 		mcp.WithString("workflow_id", mcp.Description("Optional correlation id for a workflow owned by another system. Free-form; Tether records it and never resolves it.")),
-	), a.handleWorkstreamCreate)
+	), Writes(), a.handleWorkstreamCreate)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_get",
 		mcp.WithDescription("Fetch one workstream by id."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Workstream id.")),
-	), a.handleWorkstreamGet)
+	), Reads("store.GetWorkstream: single SELECT"), a.handleWorkstreamGet)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_list",
 		mcp.WithDescription("List workstreams, newest first."),
 		mcp.WithString("status", mcp.Description("Filter by status: active or closed.")),
 		mcp.WithString("workflow_id", mcp.Description("Filter by workflow correlation id.")),
-	), a.handleWorkstreamList)
+	), Reads("store.ListWorkstreams: SELECT"), a.handleWorkstreamList)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_assign",
 		mcp.WithDescription(
@@ -53,7 +53,7 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session to stamp.")),
 		mcp.WithString("workstream_id", mcp.Description("Workstream to assign; empty clears the association.")),
-	), a.handleWorkstreamAssign)
+	), Writes(), a.handleWorkstreamAssign)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_ensure",
 		mcp.WithDescription(
@@ -65,7 +65,7 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session that needs a container.")),
 		mcp.WithString("name", mcp.Description("Optional label, used only when one is created.")),
 		mcp.WithString("workflow_id", mcp.Description("Optional workflow correlation id, used only when one is created.")),
-	), a.handleWorkstreamEnsure)
+	), Writes(), a.handleWorkstreamEnsure)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_namespace",
 		mcp.WithDescription(
@@ -83,7 +83,7 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("The session asking. Its workstream is resolved for you.")),
 		mcp.WithString("user", mcp.Required(), mcp.Description("Tesseract user id; Tether does not own that identity and will not invent one.")),
 		mcp.WithString("type", mcp.Description("Tesseract memory type: notes, todos, decisions, ... Defaults to notes. Passed through unvalidated — the vocabulary is Tesseract's.")),
-	), a.handleWorkstreamNamespace)
+	), Reads("store.SessionWorkstreamNamespace resolves and deliberately does not auto-create a workstream"), a.handleWorkstreamNamespace)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_digest",
 		mcp.WithDescription(
@@ -109,7 +109,7 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 		mcp.WithString("source", mcp.Description("Filter to one source: proxy (observed by the proxy), api, or agent (self-asserted). proxy means OBSERVED, never validated.")),
 		mcp.WithString("since", mcp.Description("RFC3339 UTC lower bound on a ref's timestamp. Ask what was in flight rather than everything ever.")),
 		mcp.WithNumber("limit", mcp.Description("Maximum refs to return; the response reports whether it truncated.")),
-	), a.handleWorkstreamDigest)
+	), Reads("store.SessionDigest / WorkstreamDigest: SELECT only"), a.handleWorkstreamDigest)
 
 	a.addTool(s, mcp.NewTool("tether_workstreams_for_ref",
 		mcp.WithDescription(
@@ -122,7 +122,7 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 				"wrong whenever the ambiguity is real.",
 		),
 		mcp.WithString("ref", mcp.Required(), mcp.Description("Selector as <kind>:<ref_id>, for example torque_task:CW-20260912-0063. Split on the FIRST colon only, so a ref_id containing colons (msg://...) is preserved.")),
-	), a.handleWorkstreamsForRef)
+	), Reads("store.WorkstreamsForRef: one SELECT DISTINCT"), a.handleWorkstreamsForRef)
 }
 
 func (a *Adapter) handleWorkstreamDigest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

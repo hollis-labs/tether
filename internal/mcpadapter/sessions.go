@@ -22,12 +22,12 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 		mcp.WithString("state", mcp.Description("Filter by session state: created, running, stopped, failed")),
 		mcp.WithString("cursor", mcp.Description("RFC3339 pagination cursor — returns sessions older than this timestamp")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 50, max 200)")),
-	), a.handleSessionList)
+	), Reads("GET /sessions; svc.ListSessions + AttachedClients"), a.handleSessionList)
 
 	a.addTool(s, mcp.NewTool("mux_session_get",
 		mcp.WithDescription("Get a single agent session by ID."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), a.handleSessionGet)
+	), Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"), a.handleSessionGet)
 
 	a.addTool(s, mcp.NewTool("mux_session_create",
 		mcp.WithDescription("Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile."),
@@ -39,46 +39,46 @@ func (a *Adapter) registerSessionTools(s *server.MCPServer) {
 		mcp.WithString("override", mcp.Description("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).")),
 		mcp.WithString("prompt_append", mcp.Description("Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.")),
 		mcp.WithString("injection", mcp.Description("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.")),
-	), a.handleSessionCreate)
+	), Writes(), a.handleSessionCreate)
 
 	a.addTool(s, mcp.NewTool("mux_session_launch",
 		mcp.WithDescription("Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID returned by mux_session_create")),
-	), a.handleSessionLaunch)
+	), Writes(), a.handleSessionLaunch)
 
 	a.addTool(s, mcp.NewTool("mux_session_stop",
 		mcp.WithDescription("Send a stop signal to a running session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), a.handleSessionStop)
+	), Destroys("terminates the running process; a stopped session cannot be relaunched, only resumed into a new one"), a.handleSessionStop)
 
 	a.addTool(s, mcp.NewTool("mux_session_wait",
 		mcp.WithDescription("Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), a.handleSessionWait)
+	), Reads("GET /sessions/{id}/wait blocks on a state change it does not cause"), a.handleSessionWait)
 
 	a.addTool(s, mcp.NewTool("mux_session_send_input",
 		mcp.WithDescription("Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 		mcp.WithString("input", mcp.Required(), mcp.Description("Text to send to the session (a newline is NOT appended automatically)")),
-	), a.handleSessionSendInput)
+	), Writes(), a.handleSessionSendInput)
 
 	a.addTool(s, mcp.NewTool("mux_session_send_turn",
 		mcp.WithDescription("Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 		mcp.WithString("text", mcp.Required(), mcp.Description("User-facing message body. Framing is applied per the session's caps.")),
-	), a.handleSessionSendTurn)
+	), Writes(), a.handleSessionSendTurn)
 
 	a.addTool(s, mcp.NewTool("mux_session_resize",
 		mcp.WithDescription("Resize the PTY terminal for a running session."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
 		mcp.WithNumber("rows", mcp.Required(), mcp.Description("Terminal rows (must be > 0)")),
 		mcp.WithNumber("cols", mcp.Required(), mcp.Description("Terminal columns (must be > 0)")),
-	), a.handleSessionResize)
+	), Writes(), a.handleSessionResize)
 
 	a.addTool(s, mcp.NewTool("mux_session_health",
 		mcp.WithDescription("Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running."),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), a.handleSessionHealth)
+	), Reads("svc.RuntimeHealth: live snapshot, no state change"), a.handleSessionHealth)
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ func (a *Adapter) registerWhoamiTools(s *server.MCPServer) {
 				"best-effort.",
 		),
 		mcp.WithString("as", mcp.Required(), mcp.Description("msg:// URN to look up (self-asserted, no verification).")),
-	), a.handleWhoami)
+	), Reads("resolves the caller identity; asserts nothing"), a.handleWhoami)
 }
 
 func (a *Adapter) handleWhoami(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

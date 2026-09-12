@@ -193,6 +193,67 @@ See `examples/catalog/` in the repo for complete working examples, and
 
 ---
 
+## Tool annotations
+
+Every tool publishes MCP annotation hints. A client uses them to decide what it
+can run without asking, so a wrong hint is worse than a vague one.
+
+| hint | what Tether publishes |
+|---|---|
+| `readOnlyHint` | **assessed per tool.** True only where the call path was traced and modifies nothing. |
+| `destructiveHint` | **assessed per tool.** True only where information is irreversibly lost, not merely written. |
+| `openWorldHint` | **assessed per tool.** True where the tool reaches outside the local daemon and catalog: the MCP proxy, the AI gateway. |
+| `idempotentHint` | **NOT assessed. Left at its cautious default (`false`) on every tool.** |
+
+That last row is the important one. `idempotentHint: false` here means *nobody
+decided*, not *this tool is not idempotent* — several tools are idempotent and
+say otherwise. Assessing repeat semantics per tool is a separate piece of work,
+and shipping a thin version would be worse than not shipping one, because an
+unassessed cautious default is indistinguishable from an assessed one. **Do not
+read Tether's `idempotentHint` as a claim.** The other three are claims.
+
+### How `readOnlyHint` is established
+
+By tracing the call path to a store operation — never from the tool's name, its
+scope, or the HTTP verb behind it. `mux_message_inbox` is why:
+
+```
+mux_message_inbox        ← a read verb, and unscoped
+  a.client.MessageInbox  ← reads as a read
+    GET /messages/inbox  ← an HTTP GET
+      MessageStore.Inbox ← reads as a read
+        UPDATE messages SET delivered_at   ← the truth, four layers down
+```
+
+Every signal above the last line is wrong. `mux_message_inbox` is annotated as a
+write, and **retrying it is not free** — the second call consumes a different
+set of messages, because the first already marked the boundary. The verb is
+tracked as a defect at `CW-20260912-0114`.
+
+`tether_group_read` is the near-miss that is genuinely a read:
+`registry.ListGroupMessages` contains no write and `MarkRead` is a separate
+explicit call.
+
+### What enforces this
+
+- A tool **cannot be registered without declaring its behavior** — it is a
+  required parameter and the code will not compile without it.
+- A tool claiming read-only while calling a client method classified as a write
+  **fails the test suite**.
+- Tools whose name reads as a read but which write are pinned by name, so none
+  can be flipped by pattern-matching.
+
+The second control reaches tools that call the daemon over its client. It does
+**not** reach tools served in-process, the AI gateway, or the proxy tools — for
+those the annotation rests on review. Stated because a green suite should not be
+read as more coverage than it has.
+
+### Annotations on proxied tools
+
+Tools relayed from upstream MCP servers pass through **verbatim**, including
+whatever annotations the upstream advertises. Tether does not assess or rewrite
+another application's tools. Everything above describes Tether's own tools.
+
 ## Tool reference
 
 ### Health

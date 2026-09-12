@@ -16,7 +16,7 @@ import (
 func (a *Adapter) registerSkillTools(s *server.MCPServer) {
 	a.addTool(s, mcp.NewTool("mux_skill_list",
 		mcp.WithDescription("List Tether skills visible through layered discovery. Returns id, name, description, triggers, path, and layer; use mux_skill_get to load a skill body."),
-	), a.handleSkillList)
+	), Reads("skill catalog listing"), a.handleSkillList)
 	a.addTool(s, mcp.NewTool("mux_skill_broker",
 		mcp.WithDescription("Return ranked skill recommendations for a specific task, role, project, or trigger set. This is the progressive-discovery companion to mux_skill_list: it returns metadata, reasons, and ranking, then the caller uses mux_skill_get for the chosen skill body."),
 		mcp.WithString("query", mcp.Description("Free-text task or intent, for example 'refactor handler' or 'capture findings'")),
@@ -26,11 +26,11 @@ func (a *Adapter) registerSkillTools(s *server.MCPServer) {
 		mcp.WithString("triggers", mcp.Description("Optional comma-separated preferred trigger terms, for example 'refactor,cleanup'")),
 		mcp.WithString("layers", mcp.Description("Optional comma-separated layer filter, for example 'project,user'")),
 		mcp.WithNumber("limit", mcp.Description("Optional max results, default 5, max 20")),
-	), a.handleSkillBroker)
+	), Reads("skills.BrokerLayered reads the catalog and cwd; selection only"), a.handleSkillBroker)
 	a.addTool(s, mcp.NewTool("mux_skill_get",
 		mcp.WithDescription("Load a Tether skill by id and return its instructions. Use when a boot prompt lists a skill pointer like `/refactor-go`; pass `refactor-go` as skill_id, then follow the returned body."),
 		mcp.WithString("skill_id", mcp.Required(), mcp.Description("Skill id from the boot prompt, with or without the leading slash")),
-	), a.handleSkill)
+	), Reads("skill catalog file read"), a.handleSkill)
 }
 
 func (a *Adapter) handleSkillList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
