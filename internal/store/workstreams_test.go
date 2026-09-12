@@ -35,7 +35,9 @@ func parentRef(id string) sql.NullString {
 	return sql.NullString{String: id, Valid: true}
 }
 
-// This is S1's acceptance criterion, and the one it is easy to get wrong by
+// S1's named acceptance criterion, kept explicit even though
+// TestCreateSession_InheritsOnParentPresenceWhateverTheIntent now subsumes it:
+// the task asks for these three proven directly, and it is easy to get wrong by
 // implementing for 'compact' alone and calling it done. A compaction creates a
 // NEW session row, so a container keyed on session_id is orphaned by exactly
 // the event it exists to survive — and 'resume' and 'fork' create new rows the
@@ -123,12 +125,14 @@ func TestCreateSession_ExplicitWorkstreamBeatsInheritance(t *testing.T) {
 	}
 }
 
-// 'fresh' has no lineage and 'preassigned' describes how the id was chosen
-// rather than that the work continues something, so neither inherits. Asserted
-// so that widening lineageIntents is a deliberate act with a failing test
-// attached, not a silent behavior change.
-func TestCreateSession_NonLineageIntentsDoNotInherit(t *testing.T) {
-	for _, intent := range []string{"fresh", "preassigned"} {
+// The signal is parent_session_id, not intent. Intent says WHY a session
+// exists; the parent pointer says WHAT it continues. Gating inheritance on
+// intent is what lets them disagree — 'preassigned' describes only how the id
+// was chosen, so a caller could assert a lineage the enumeration then refused
+// to honor. This is the regression proof for that hole: EVERY intent inherits
+// when a parent is present.
+func TestCreateSession_InheritsOnParentPresenceWhateverTheIntent(t *testing.T) {
+	for _, intent := range []string{"resume", "compact", "fork", "preassigned", "fresh"} {
 		t.Run(intent, func(t *testing.T) {
 			db := openWorkstreamStore(t)
 			ws, err := db.CreateWorkstream(WorkstreamRow{})
@@ -142,10 +146,89 @@ func TestCreateSession_NonLineageIntentsDoNotInherit(t *testing.T) {
 			child := mustCreateSession(t, db, SessionRow{
 				ID: "c", State: "running", Intent: intent, ParentSessionID: parentRef("p"),
 			})
-			if child.WorkstreamID.Valid {
-				t.Errorf("%s inherited %q; only resume/compact/fork should", intent, child.WorkstreamID.String)
+			if child.WorkstreamID.String != ws.ID {
+				t.Errorf("%s + parent inherited %q, want %q", intent, child.WorkstreamID.String, ws.ID)
 			}
 		})
+	}
+}
+
+// The other half of the same rule: no parent, no inheritance, whatever the
+// intent claims. A session that names no lineage has none.
+func TestCreateSession_NoParentMeansNoInheritance(t *testing.T) {
+	for _, intent := range []string{"fresh", "preassigned", "resume"} {
+		t.Run(intent, func(t *testing.T) {
+			db := openWorkstreamStore(t)
+			child := mustCreateSession(t, db, SessionRow{
+				ID: "c", State: "running", Intent: intent,
+			})
+			if child.WorkstreamID.Valid {
+				t.Errorf("%s with no parent inherited %q; want none", intent, child.WorkstreamID.String)
+			}
+		})
+	}
+}
+
+// Divergence within one lineage is reachable via a direct assign to a
+// mid-lineage session, so the outcome is defined rather than incidental:
+// nearest-ancestor-wins for the answer, never-overwrite for the write.
+//
+// The never-overwrite half is the one with teeth. Before it, stampLineage
+// skipped only rows carrying the SAME id, so the further ancestor here was
+// silently re-parented into the nearer workstream — losing an association an
+// operator deliberately made, unrecoverably.
+func TestEnsureSessionWorkstream_DivergentAncestorsAreNotOverwritten(t *testing.T) {
+	db := openWorkstreamStore(t)
+
+	far, err := db.CreateWorkstream(WorkstreamRow{Name: "root's own"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+	near, err := db.CreateWorkstream(WorkstreamRow{Name: "mid's own"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+
+	mustCreateSession(t, db, SessionRow{
+		ID: "root", State: "running", Intent: "fresh",
+		WorkstreamID: sql.NullString{String: far.ID, Valid: true},
+	})
+	// 'mid' would inherit far.ID, then an operator reassigns it.
+	mustCreateSession(t, db, SessionRow{
+		ID: "mid", State: "running", Intent: "compact", ParentSessionID: parentRef("root"),
+	})
+	if err := db.AssignSessionWorkstream("mid", near.ID); err != nil {
+		t.Fatalf("AssignSessionWorkstream: %v", err)
+	}
+	// 'leaf' is created after the divergence and left without one.
+	mustCreateSession(t, db, SessionRow{ID: "leaf", State: "running", Intent: "fresh"})
+	if _, err := db.db.Exec(`UPDATE sessions SET parent_session_id='mid' WHERE id='leaf'`); err != nil {
+		t.Fatalf("link leaf: %v", err)
+	}
+
+	got, err := db.EnsureSessionWorkstream("leaf", WorkstreamRow{Name: "should not be created"})
+	if err != nil {
+		t.Fatalf("EnsureSessionWorkstream: %v", err)
+	}
+	if got.ID != near.ID {
+		t.Errorf("nearest-ancestor-wins violated: got %q, want %q", got.ID, near.ID)
+	}
+
+	// The gap is filled...
+	leaf, err := db.GetSession("leaf")
+	if err != nil {
+		t.Fatalf("GetSession(leaf): %v", err)
+	}
+	if leaf.WorkstreamID.String != near.ID {
+		t.Errorf("leaf workstream = %q, want %q", leaf.WorkstreamID.String, near.ID)
+	}
+	// ...and the divergent ancestor is left exactly where the operator put it.
+	root, err := db.GetSession("root")
+	if err != nil {
+		t.Fatalf("GetSession(root): %v", err)
+	}
+	if root.WorkstreamID.String != far.ID {
+		t.Errorf("root was re-parented to %q; it must keep %q", root.WorkstreamID.String, far.ID)
 	}
 }
 

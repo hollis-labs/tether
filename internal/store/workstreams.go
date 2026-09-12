@@ -24,20 +24,6 @@ import (
 // when the named workstream does not exist.
 var ErrWorkstreamNotFound = errors.New("workstream not found")
 
-// lineageIntents are the intents that continue an existing unit of work, and
-// therefore the ones that inherit their parent's workstream.
-//
-// 'fresh' and 'preassigned' are deliberately absent. 'fresh' has no lineage by
-// definition. 'preassigned' means an external caller named the session id
-// before it existed (the /sessions/bootstrap path) — it describes how the ID
-// was chosen, not that the work continues something, so it is not treated as
-// lineage even on the rare row that also carries a parent.
-var lineageIntents = map[string]bool{
-	"resume":  true,
-	"compact": true,
-	"fork":    true,
-}
-
 // WorkstreamRow mirrors the workstreams table.
 type WorkstreamRow struct {
 	ID   string
@@ -230,11 +216,27 @@ func (s *Store) EnsureSessionWorkstream(sessionID string, seed WorkstreamRow) (W
 	return created, nil
 }
 
-// stampLineage assigns workstreamID to every session in chain that does not
-// already carry it.
+// stampLineage fills GAPS: it assigns workstreamID to sessions in chain that
+// carry no workstream, and leaves any session already carrying a DIFFERENT one
+// untouched.
+//
+// Divergence within one lineage is reachable — an operator can assign a
+// workstream directly to a mid-lineage session — so the behavior has to be
+// defined rather than left to whatever the walk happens to do. It is defined
+// as nearest-ancestor-wins for the ANSWER (EnsureSessionWorkstream returns the
+// closest workstream it finds) and never-overwrite for the WRITE.
+//
+// Never-overwrite is the half that matters. An earlier version of this
+// function skipped only rows already carrying the SAME id, so a further
+// ancestor holding a different workstream was silently re-parented into the
+// nearer one. Quietly moving work out of a container an operator deliberately
+// put it in is worse than leaving a lineage that spans two containers, and it
+// is unrecoverable — the previous association is gone with nothing recording
+// that it existed.
 func (s *Store) stampLineage(chain []SessionRow, workstreamID string) error {
 	for _, row := range chain {
-		if row.WorkstreamID.Valid && row.WorkstreamID.String == workstreamID {
+		if row.WorkstreamID.Valid && row.WorkstreamID.String != "" {
+			// Already placed, here or elsewhere. Either way, not ours to move.
 			continue
 		}
 		if err := s.AssignSessionWorkstream(row.ID, workstreamID); err != nil {
@@ -286,14 +288,28 @@ func (s *Store) sessionLineage(sessionID string) ([]SessionRow, error) {
 //
 // An explicit workstream on the incoming row always wins; this only fills a
 // gap.
+//
+// THE SIGNAL IS parent_session_id, NOT intent. Those two fields answer
+// different questions: intent says WHY a session exists, parent_session_id
+// says WHAT it continues. They are orthogonal, so gating an inheritance
+// decision on intent is what lets them disagree — a caller can set
+// intent='preassigned' (which describes only how the id was chosen) together
+// with a parent, and the enumeration would then refuse to honor a lineage the
+// caller explicitly asserted.
+//
+// An enumeration also rots: a sixth intent arrives, someone has to remember to
+// classify it, and the failure is silent and looks exactly like the orphaning
+// this whole feature exists to prevent. Presence of a parent cannot rot —
+// there is no other reading of that field than "this continues that".
+//
+// A parented session that should get its OWN container is still expressible:
+// assign one explicitly afterward. The common case is automatic and the
+// exception is deliberate, which is the right way round.
 func (s *Store) inheritWorkstreamID(row SessionRow) sql.NullString {
 	if row.WorkstreamID.Valid && row.WorkstreamID.String != "" {
 		return row.WorkstreamID
 	}
 	if !row.ParentSessionID.Valid || row.ParentSessionID.String == "" {
-		return sql.NullString{}
-	}
-	if !lineageIntents[row.Intent] {
 		return sql.NullString{}
 	}
 	parent, err := s.GetSession(row.ParentSessionID.String)
