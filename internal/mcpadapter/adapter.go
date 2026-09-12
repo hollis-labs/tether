@@ -77,6 +77,30 @@ type Adapter struct {
 	// wires this to stderr so warn lines do not collide with the protocol
 	// stream on stdout.
 	Logger *slog.Logger
+
+	// SessionID is the Tether session this adapter process serves, from
+	// `mux mcp --session`. Empty when the proxy is reached by something with
+	// no Tether session — a hand-launched client, or boot-exec — which is a
+	// legitimate state, not a misconfiguration.
+	//
+	// It is attached to every tool-call context via WithSessionID, which the
+	// logging middleware already reads for proxy_events and which S3's
+	// extraction needs to attribute a ref. Before CW-20260912-0074 nothing
+	// ever called WithSessionID, so every proxy_events row recorded an
+	// unknown session and nobody was told.
+	SessionID string
+
+	// ExtractRefs enables S3's proxy-side identifier extraction. Off by
+	// default: this is the first thing in the proxy to capture argument
+	// VALUES rather than shapes, so it is opt-in until it has been watched on
+	// real traffic. See extract.go for what it does and does not store.
+	ExtractRefs bool
+
+	// refs is where extracted refs are written. Nil disables extraction
+	// regardless of ExtractRefs -- the proxy runs in its own process and
+	// reaches the daemon over HTTP, so with no client there is nowhere to
+	// write.
+	refs refAttacher
 }
 
 // New constructs an Adapter wrapping svc. token and scopes gate mutating
@@ -143,6 +167,7 @@ func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerF
 	}
 	handler := mcpsanitize.Middleware(logger)(h)
 	s.AddTool(t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		ctx = a.withSessionID(ctx)
 		if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
@@ -312,4 +337,29 @@ func strSliceArg(req mcp.CallToolRequest, key string) []string {
 	default:
 		return nil
 	}
+}
+
+// withSessionID attaches this adapter's session to ctx, so the logging
+// middleware and the proxy extraction path can attribute the call. A no-op
+// when the adapter has no session, which leaves sessionIDFromContext
+// answering "" exactly as it did before -- an absent attribution rather than
+// a wrong one.
+func (a *Adapter) withSessionID(ctx context.Context) context.Context {
+	if a.SessionID == "" {
+		return ctx
+	}
+	return WithSessionID(ctx, a.SessionID)
+}
+
+// SetRefAttacher wires where extracted session refs are written. Separate from
+// the constructors because extraction is opt-in and only the `mux mcp` command
+// has the daemon client to supply.
+func (a *Adapter) SetRefAttacher(r refAttacher) { a.refs = r }
+
+// logger returns the adapter's logger or slog's default, matching addTool.
+func (a *Adapter) logger() *slog.Logger {
+	if a.Logger != nil {
+		return a.Logger
+	}
+	return slog.Default()
 }

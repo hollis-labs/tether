@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/daemon"
@@ -58,15 +59,19 @@ Example MCP client config (mcp.json):
 }
 
 var (
-	mcpToken   string
-	mcpScopes  string
-	mcpProxy   bool
-	mcpBroker  bool
-	mcpServers string
-	mcpOnly    string
+	mcpExtractRefs bool
+	mcpSession     string
+	mcpToken       string
+	mcpScopes      string
+	mcpProxy       bool
+	mcpBroker      bool
+	mcpServers     string
+	mcpOnly        string
 )
 
 func init() {
+	mcpCmd.Flags().BoolVar(&mcpExtractRefs, "extract-refs", false, "record identifiers seen in proxied tool arguments as session refs (requires --session; off by default)")
+	mcpCmd.Flags().StringVar(&mcpSession, "session", "", "Tether session id this proxy serves; attributes proxied tool calls to it (set automatically in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: AGENT_MUX_MCP_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: AGENT_MUX_MCP_SCOPES)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
@@ -115,6 +120,17 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		adapter = mcpadapter.NewWithDaemon(svc, client.New(listenAddr), token, scopes)
 	} else {
 		adapter = mcpadapter.New(svc, token, scopes)
+	}
+	adapter.SessionID = mcpSession
+	if mcpExtractRefs {
+		if listenAddr == "" {
+			return fmt.Errorf("--extract-refs needs the daemon: refs are written over HTTP because `mux mcp` runs in its own process, and the daemon address could not be resolved")
+		}
+		if mcpSession == "" {
+			return fmt.Errorf("--extract-refs needs --session: an extracted ref attaches to a session, and there is nothing to attach to without one")
+		}
+		adapter.ExtractRefs = true
+		adapter.SetRefAttacher(refAttacherClient{c: client.New(listenAddr)})
 	}
 	// Route the go-mcp-sanitize middleware's warn telemetry to stderr so the
 	// stdio MCP protocol stream on stdout stays clean.
@@ -306,4 +322,16 @@ func splitScopes(s string) []string {
 		}
 	}
 	return out
+}
+
+// refAttacherClient adapts the daemon client to the narrow seam the mcp
+// adapter needs. The adapter cannot depend on api's request types directly --
+// it is the proxy, not the daemon -- so the shape is flattened here.
+type refAttacherClient struct{ c *client.Client }
+
+func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind, refID, relation, source string) error {
+	_, err := r.c.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{
+		Kind: kind, RefID: refID, Relation: relation, Source: source,
+	})
+	return err
 }

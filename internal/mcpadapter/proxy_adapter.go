@@ -125,12 +125,21 @@ func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
 			// short-lived tool, an embedding of this package — and looks
 			// impossible when it does.
 			Handler: func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				handlerCtx = c.adapter.withSessionID(handlerCtx)
 				if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
 					handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
 				}
 				handlerCtx, span := hotel.ToolCallSpan(handlerCtx, def.Name)
 				defer span.End()
-				return sanitized(handlerCtx, req)
+
+				res, err := sanitized(handlerCtx, req)
+				// S3 extraction reads the OUTBOUND arguments into Tether's
+				// own store. It runs after the call so it can gate on
+				// success, and it never touches req -- adding anything to the
+				// forwarded call is CW-20260912-0024, the opposite direction
+				// through this same seam. See extract.go.
+				c.adapter.recordRefs(handlerCtx, req, err == nil && (res == nil || !res.IsError))
+				return res, err
 			},
 		})
 	}

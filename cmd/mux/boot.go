@@ -213,10 +213,14 @@ docs/adr/0039-boot-exec-claude-only-scope.md.`,
 			BootDirRoot:      tempRoot,
 			APIKeyHelperPath: app.ResolveAPIKeyHelperPath(),
 			MuxCommand:       muxCommand,
-			MuxArgs:          app.MuxMCPArgs(catalogRoot),
-			MuxEnv:           muxEnv,
-			ParentEnv:        os.Environ(),
-			SpecPlan:         specPlan,
+			// No session id: boot-exec execs into the native Claude CLI and
+			// the user drives it, so there is no Tether session row to
+			// attribute proxied calls to. Reporting none is correct — a
+			// fabricated attribution would be worse than an absent one.
+			MuxArgs:   app.MuxMCPArgs(catalogRoot, ""),
+			MuxEnv:    muxEnv,
+			ParentEnv: os.Environ(),
+			SpecPlan:  specPlan,
 		})
 		if err != nil {
 			return err

@@ -25,13 +25,29 @@ func muxEnvMap(env map[string]string) map[string]string {
 // broken. The --token here is only the adapter's presence check — it is opaque
 // and unvalidated (see docs/mcp.md), not a secret. Meaningful per-call
 // authorization belongs in the broker, not in a launch-time scope flag.
-func MuxMCPArgs(catalogRoot string) []string {
-	return []string{
+//
+// sessionID is threaded through as --session so the proxy knows WHICH session
+// it is serving. Nothing else tells it: before CW-20260912-0074 the plumbing
+// existed and was never connected — mcpadapter.WithSessionID was defined and
+// called from nowhere, and every one of proxy_events' 2000 rows carried an
+// empty session_id as a result. Without it the proxy can say a session called
+// torque_task_get and not which task, and S3's extraction has no session to
+// attach a ref to.
+//
+// Empty sessionID emits no flag, which is honest rather than defensive: a
+// caller with no session genuinely has none to report, and an empty
+// attribution is better than a fabricated one.
+func MuxMCPArgs(catalogRoot, sessionID string) []string {
+	args := []string{
 		"--catalog", catalogRoot,
 		"mcp", "--proxy",
 		"--token", "tether-worker",
 		"--scopes", "session.write,message.write,catalog.write",
 	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
+	return args
 }
 
 func mergeEnv(base []string, overlay map[string]string) []string {
