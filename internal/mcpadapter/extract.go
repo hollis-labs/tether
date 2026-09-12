@@ -98,11 +98,16 @@ const (
 	maxScanValues = 512
 )
 
-// scanLimitExceeded is returned via the bool so the caller can log the refusal
-// rather than silently recording less than it should have.
+// scanResult carries the refs, or the fact that the scan was abandoned.
+//
+// The field is `refused`, not `truncated`, because the behavior is refusal:
+// nothing is kept. A field named truncated would describe the opposite of what
+// happens, and the tempting way to reconcile a name with its code is to change
+// the code — which here would mean silently producing partial ref sets, the
+// exact failure the refusal exists to prevent.
 type scanResult struct {
-	refs      []extractedRef
-	truncated bool
+	refs    []extractedRef
+	refused bool
 }
 
 // extractRefs walks args and returns the identifiers matching the allowlist.
@@ -155,7 +160,7 @@ func extractRefs(toolName string, args map[string]any) scanResult {
 
 	for _, v := range args {
 		if !walk(v, 0) {
-			return scanResult{truncated: true}
+			return scanResult{refused: true}
 		}
 	}
 	return scanResult{refs: out}
@@ -218,7 +223,7 @@ func (a *Adapter) recordRefs(ctx context.Context, req mcp.CallToolRequest, callO
 		return
 	}
 	res := extractRefs(req.Params.Name, req.GetArguments())
-	if res.truncated {
+	if res.refused {
 		a.logger().Warn("session ref extraction skipped: argument scan exceeded its limit",
 			"tool", req.Params.Name, "max_values", maxScanValues, "max_depth", maxScanDepth)
 		return

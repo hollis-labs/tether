@@ -1501,3 +1501,25 @@ func (c *Client) ListWorkstreamRefs(ctx context.Context, workstreamID, kind, rel
 	}
 	return res.Refs, nil
 }
+
+// SessionWorkstreamNamespace asks the daemon where a session's workstream-scoped
+// contained content belongs in Tesseract. Tether returns the location and
+// stores no content; the caller writes to Tesseract itself.
+func (c *Client) SessionWorkstreamNamespace(ctx context.Context, sessionID, userID, memoryType string) (api.WorkstreamNamespaceResponse, error) {
+	params := url.Values{}
+	if userID != "" {
+		params.Set("user", userID)
+	}
+	if memoryType != "" {
+		params.Set("type", memoryType)
+	}
+	path := "/sessions/" + url.PathEscape(sessionID) + "/workstream-namespace"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var out api.WorkstreamNamespaceResponse
+	if err := c.getJSON(ctx, path, &out); err != nil {
+		return api.WorkstreamNamespaceResponse{}, wrapIfUnreachable(err)
+	}
+	return out, nil
+}

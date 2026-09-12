@@ -23,6 +23,7 @@ type WorkstreamStore interface {
 	ListWorkstreams(opts store.ListWorkstreamsOptions) ([]store.WorkstreamRow, error)
 	AssignSessionWorkstream(sessionID, workstreamID string) error
 	EnsureSessionWorkstream(sessionID string, seed store.WorkstreamRow) (store.WorkstreamRow, error)
+	SessionWorkstreamNamespace(userID, sessionID, memoryType string) (string, error)
 }
 
 // WorkstreamDTO is the wire shape for a workstream.
@@ -228,4 +229,41 @@ func writeAssignError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 	}
+}
+
+// WorkstreamNamespaceResponse is the wire shape for the containment-namespace
+// lookup.
+type WorkstreamNamespaceResponse struct {
+	Namespace    string `json:"namespace"`
+	WorkstreamID string `json:"workstream_id"`
+}
+
+// handleSessionWorkstreamNamespace services
+// GET /sessions/{id}/workstream-namespace?user=&type=.
+//
+// Tether returns WHERE contained content belongs and stores none of it: the
+// caller writes to Tesseract itself. That split is not incidental — Tesseract's
+// actor rule refuses an app write to a user/* namespace, so a Tether-side write
+// could not succeed even if the design wanted one.
+func (s *Server) handleSessionWorkstreamNamespace(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if s.Workstreams == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "workstreams are not enabled on this server")
+		return
+	}
+	userID := r.URL.Query().Get("user")
+	memoryType := r.URL.Query().Get("type")
+	if memoryType == "" {
+		memoryType = "notes"
+	}
+	ns, err := s.Workstreams.SessionWorkstreamNamespace(userID, sessionID, memoryType)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrWorkstreamNotFound), errors.Is(err, store.ErrSessionNotFound), errors.Is(err, store.ErrNotAWorkstream):
+			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+		default:
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, WorkstreamNamespaceResponse{Namespace: ns})
 }

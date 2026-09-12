@@ -152,6 +152,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionWorkstream(w, r, id)
 	case "refs":
 		s.handleSessionRefs(w, r, id)
+	case "workstream-namespace":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSessionWorkstreamNamespace(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

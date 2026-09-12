@@ -35,7 +35,7 @@ func TestExtractRefs_MatchesTheAllowlistOnly(t *testing.T) {
 		"count":    42,
 	}
 	got := extractRefs("torque_task_get", args)
-	if got.truncated {
+	if got.refused {
 		t.Fatal("unexpected truncation")
 	}
 	kinds := map[string]string{}
@@ -89,8 +89,8 @@ func TestExtractRefs_RefusesRatherThanTruncating(t *testing.T) {
 	wide["real"] = "CW-20260912-0061"
 
 	got := extractRefs("torque_task_get", wide)
-	if !got.truncated {
-		t.Fatal("a payload past the value ceiling must report truncation")
+	if !got.refused {
+		t.Fatal("a payload past the value ceiling must report refusal")
 	}
 	if len(got.refs) != 0 {
 		t.Errorf("got %d refs on a truncated scan; a partial set is worse than none because nothing marks it incomplete", len(got.refs))
@@ -103,8 +103,8 @@ func TestExtractRefs_RefusesPathologicalDepth(t *testing.T) {
 		deep = map[string]any{"n": deep}
 	}
 	got := extractRefs("torque_task_get", map[string]any{"root": deep})
-	if !got.truncated || len(got.refs) != 0 {
-		t.Errorf("deep nesting must refuse: truncated=%v refs=%d", got.truncated, len(got.refs))
+	if !got.refused || len(got.refs) != 0 {
+		t.Errorf("deep nesting must refuse: refused=%v refs=%d", got.refused, len(got.refs))
 	}
 }
 

@@ -18,8 +18,18 @@ func otelInjectForTest(ctx context.Context, args map[string]any) map[string]any 
 	return otelprop.InjectMCP(ctx, args)
 }
 
+// fakeRemoteContext builds a remote span context AND installs the tracer and
+// propagator the extraction path needs.
+//
+// recordingTracer is not optional here, and these tests were silently
+// depending on another test having installed one: ExtractMCP goes through
+// otel.GetTextMapPropagator(), whose default is a no-op that recovers nothing.
+// Run in a filter that excluded the Proxied tests, every assertion below
+// failed — which is the right outcome, but it means they had been passing on
+// global state a sibling file happened to set. Each test now installs its own.
 func fakeRemoteContext(t *testing.T) (context.Context, string) {
 	t.Helper()
+	recordingTracer(t)
 	sc := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    trace.TraceID{9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9},
 		SpanID:     trace.SpanID{8, 8, 8, 8, 8, 8, 8, 8},
