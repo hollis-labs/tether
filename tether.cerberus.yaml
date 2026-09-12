@@ -13,6 +13,31 @@ resources:
     config:
       build_strategy:
         kind: make_standard
+        # Both rules are required, for different reasons.
+        #
+        # target: make_standard otherwise runs `make install`, and this
+        # Makefile's install target follows the BSD/GNU convention into
+        # $(PREFIX)/bin = /usr/local/bin, which needs root — deploy failed
+        # with "install: chmod 755 /usr/local/bin: Operation not permitted".
+        # Cerberus installs the artifact into its own install_root itself,
+        # so it wants a BUILD, not a system install.
+        #
+        # output: `make build` emits two binaries (bin/mux and
+        # bin/mux-apikey-helper), so deploy must be told which one IS the
+        # service. Without it, deploy refuses with "artifact deployment
+        # requires build_strategy.rules.output naming the binary the build
+        # produces; command[0] is not a build-output contract" — command[0]
+        # is a path to run, not a contract about what the build emits.
+        rules:
+          target: build
+          # bin/mux, NOT mux: rules.output resolves against the BUILD DIR
+          # (the repo root here), not against wherever the Makefile happens
+          # to write. A bare `mux` resolved to <repo>/mux — a stale,
+          # gitignored binary left over from an earlier `go build -o mux`,
+          # which deploy then activated and reported as success while the
+          # daemon kept running five-day-old code. Keep this pointed at the
+          # path `make build` actually writes.
+          output: bin/mux
       command:
         - ./bin/mux
         - daemon
@@ -21,6 +46,19 @@ resources:
         - /Users/chrispian/.tether/catalog
       dir: /Users/chrispian/dev/hollis-labs/apps/tether
       env:
+        # PREFIX redirects `make install` away from /usr/local/bin.
+        # Cerberus's artifact install step always runs `make install` when a
+        # Makefile is present (internal/connector/local/install.go), and it
+        # passes this env through. This Makefile's install target honors
+        # PREFIX/BINDIR/DESTDIR per BSD/GNU convention, whose default
+        # /usr/local needs root — deploy failed with "install: chmod 755
+        # /usr/local/bin: Operation not permitted".
+        #
+        # Pointing it at Cerberus's own install_root keeps the side effect
+        # inside the directory Cerberus already owns. Deliberately NOT
+        # ~/.local, which precedes ~/go/bin on PATH here and would shadow
+        # the `mux` CLI with a copy deploy happens to have built.
+        PREFIX: /Users/chrispian/.cerberus/apps/tether/tether-daemon-service
         HOME: /Users/chrispian
         PATH: /Users/chrispian/.local/bin:/Users/chrispian/.bun/bin:/Users/chrispian/go/bin:/Users/chrispian/.opencode/bin:/Users/chrispian/bin:/Users/chrispian/helpers:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrispian/.cargo/bin:/Users/chrispian/.orbstack/bin
         SHELL: /bin/zsh

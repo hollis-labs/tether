@@ -2,6 +2,7 @@
 .superpowers/
 /mux
 /hadrond
+/.cerberus-build.lock
 /.claude/
 /coverage.out
 **/.DS_Store
