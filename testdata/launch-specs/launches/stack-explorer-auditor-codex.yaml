@@ -1,13 +1,16 @@
 # Reproduces legacy ~/.tether/catalog/launches/stack-explorer-auditor-codex.yaml.
 # Boot-profile folded: (no boot-profile for auditor agent; uses backend role)
-# Legacy: project=stack-explorer / agent=stack-explorer-auditor / provider=codex-cli / workspace.mode=hybrid.
+# Legacy: project=stack-explorer / agent=stack-explorer-auditor / provider=codex-app-server / workspace.mode=hybrid.
+# Repointed 2026-09-12: the codex-cli provider has no command and no
+# auto-detectable binary (`mux doctor` reports it unusable), so every
+# launch on it failed. codex-app-server is the framed, steerable path.
 spec: tether.launch
 name: stack-explorer-auditor-codex
 inputs:
   work_dir: ~/dev/hollis-labs/apps/stack-explorer
-  runner: codex-cli
+  runner: codex-app-server
   isolation: hybrid
   project: stack-explorer
   agent: stack-explorer-auditor
   agent_role: domain/backend/worker
-  display_name: "Stack Explorer — Auditor (Codex CLI)"
+  display_name: "Stack Explorer — Auditor (Codex App-Server)"

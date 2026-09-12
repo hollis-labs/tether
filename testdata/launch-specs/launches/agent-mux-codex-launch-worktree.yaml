@@ -1,13 +1,16 @@
 # Reproduces legacy ~/.tether/catalog/launches/agent-mux-codex-launch-worktree.yaml.
 # Boot-profile folded: agent-mux.codex.main.worktree.yaml
-# Legacy: project=tether / agent=general / provider=codex-cli / workspace.mode=worktree.
+# Legacy: project=tether / agent=general / provider=codex-app-server / workspace.mode=worktree.
+# Repointed 2026-09-12: the codex-cli provider has no command and no
+# auto-detectable binary (`mux doctor` reports it unusable), so every
+# launch on it failed. codex-app-server is the framed, steerable path.
 spec: tether.launch
 name: agent-mux-codex-launch-worktree
 inputs:
   work_dir: ~/dev/hollis-labs/apps/agent-mux
-  runner: codex-cli
+  runner: codex-app-server
   isolation: worktree
   project: agent-mux
   agent: general
   agent_role: domain/backend/worker
-  display_name: "Agent Mux — Codex CLI (Worktree)"
+  display_name: "Agent Mux — Codex App-Server (Worktree)"

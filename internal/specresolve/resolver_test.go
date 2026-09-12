@@ -133,11 +133,17 @@ func TestResolve_RealLaunches(t *testing.T) {
 			wantWSMode:   agentlaunch.WorkspacePersistent,
 		},
 		{
+			// Repointed 2026-09-12 from the codex-cli runner to
+			// codex-app-server: codex-cli declares no command and no
+			// binary auto-detects, so this launch could not start at
+			// all. The runtime moves with it — codex-cli was a
+			// single-turn subprocess, app-server is the long-lived
+			// JSON-RPC daemon.
 			launchID:     "agent-mux-codex-launch",
 			wantProject:  "agent-mux",
 			wantWorkdir:  "~/dev/hollis-labs/apps/agent-mux",
 			wantProvider: "codex",
-			wantRuntime:  agentlaunch.RuntimeSubprocess,
+			wantRuntime:  agentlaunch.RuntimeJsonRpcStdio,
 			wantAgent:    "general",
 			wantWSMode:   agentlaunch.WorkspacePersistent,
 		},
