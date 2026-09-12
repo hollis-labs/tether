@@ -144,6 +144,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSessionHealth(w, r, id)
+	case "workstream":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSessionWorkstream(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "unknown action "+action)
 	}

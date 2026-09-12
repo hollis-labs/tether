@@ -129,6 +129,12 @@ type SessionRow struct {
 	// "tether-hosted". Empty defaults to "private-local".
 	Publication    string
 	SessionGroupID sql.NullString
+	// WorkstreamID names the durable container this session's work belongs
+	// to. Nullable: a session is not required to have one. Set explicitly,
+	// or inherited from parent_session_id on a resume/compact/fork -- see
+	// inheritWorkstreamID in workstreams.go. Added migration 0023
+	// (S1, CW-20260912-0059).
+	WorkstreamID sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -141,12 +147,21 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	if row.Publication == "" {
 		row.Publication = "private-local"
 	}
+	// Lineage inheritance happens HERE, not in the callers. CreateSession is
+	// the single path every session row reaches the DB through (the launch
+	// path, resume, and /sessions/bootstrap all land here), so a
+	// resume/compact/fork child inherits its parent's workstream whether or
+	// not the caller thought about it. That is the whole point of S1: a
+	// compaction creates a new session row, and anything that has to be
+	// re-attached by hand is orphaned by the exact event it was meant to
+	// survive. See workstreams.go.
+	row.WorkstreamID = s.inheritWorkstreamID(row)
 	if _, err := s.db.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
-		row.ParentSessionID, row.Intent, row.Publication); err != nil {
+		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID); err != nil {
 		return err
 	}
 	pb, err := json.Marshal(plan)
@@ -248,7 +263,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("session_group_id = ?", opts.GroupID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -259,7 +274,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -269,8 +284,8 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

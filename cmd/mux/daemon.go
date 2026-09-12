@@ -238,6 +238,7 @@ var daemonRunCmd = &cobra.Command{
 			EventsStore:         svc.Store,
 			Catalog:             &catalogLoader{root: svc.CatalogRoot},
 			GroupStore:          svc.Store,
+			Workstreams:         svc.Store,
 			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			DeliveryClaims:      svc.Store,
 			Attachments:         svc.Store,

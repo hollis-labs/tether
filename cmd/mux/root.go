@@ -31,4 +31,5 @@ func init() {
 	rootCmd.AddCommand(pathCmd())
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(detectCmd, doctorCmd)
+	rootCmd.AddCommand(workstreamsCmd)
 }

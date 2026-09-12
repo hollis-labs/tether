@@ -62,6 +62,9 @@ type Server struct {
 	Catalog api.CatalogLoader
 	// GroupStore is optional; when set, /session-groups endpoints are mounted.
 	GroupStore api.SessionGroupStore
+	// Workstreams is optional; when set, /workstreams endpoints and the
+	// per-session workstream sub-resource are mounted (S1, CW-20260912-0059).
+	Workstreams api.WorkstreamStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
@@ -315,6 +318,7 @@ func (s *Server) Handler() http.Handler {
 			EventsStore:         s.EventsStore,
 			Catalog:             s.Catalog,
 			GroupStore:          s.GroupStore,
+			Workstreams:         s.Workstreams,
 			MessageStore:        s.MessageStore,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,

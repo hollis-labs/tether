@@ -1362,3 +1362,90 @@ func isUnreachable(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "connection refused") || strings.Contains(s, "no such file or directory")
 }
+
+// ─── workstreams (S1, CW-20260912-0059) ──────────────────────────────────────
+
+// postWorkstreamJSON POSTs body to path and decodes a workstream-shaped
+// response. out may be nil for endpoints that answer 204.
+func (c *Client) postWorkstreamJSON(ctx context.Context, path string, body any, out any, wantStatus int) error {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal %s request: %w", path, err)
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, rdr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		return readError(resp)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// CreateWorkstream creates a workstream via POST /workstreams.
+func (c *Client) CreateWorkstream(ctx context.Context, name, workflowID string) (api.WorkstreamDTO, error) {
+	var out api.WorkstreamDTO
+	err := c.postWorkstreamJSON(ctx, "/workstreams",
+		api.WorkstreamCreateRequest{Name: name, WorkflowID: workflowID},
+		&out, http.StatusCreated)
+	return out, err
+}
+
+// GetWorkstream fetches one workstream via GET /workstreams/{id}.
+func (c *Client) GetWorkstream(ctx context.Context, id string) (api.WorkstreamDTO, error) {
+	var out api.WorkstreamDTO
+	if err := c.getJSON(ctx, "/workstreams/"+url.PathEscape(id), &out); err != nil {
+		return api.WorkstreamDTO{}, wrapIfUnreachable(err)
+	}
+	return out, nil
+}
+
+// ListWorkstreams lists workstreams via GET /workstreams.
+func (c *Client) ListWorkstreams(ctx context.Context, status, workflowID string) ([]api.WorkstreamDTO, error) {
+	params := url.Values{}
+	if status != "" {
+		params.Set("status", status)
+	}
+	if workflowID != "" {
+		params.Set("workflow_id", workflowID)
+	}
+	path := "/workstreams"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var res api.WorkstreamListResponse
+	if err := c.getJSON(ctx, path, &res); err != nil {
+		return nil, wrapIfUnreachable(err)
+	}
+	return res.Workstreams, nil
+}
+
+// AssignSessionWorkstream stamps a workstream onto a session via
+// POST /sessions/{id}/workstream. An empty workstreamID clears it.
+func (c *Client) AssignSessionWorkstream(ctx context.Context, sessionID, workstreamID string) error {
+	return c.postWorkstreamJSON(ctx, "/sessions/"+url.PathEscape(sessionID)+"/workstream",
+		api.SessionWorkstreamRequest{WorkstreamID: workstreamID}, nil, http.StatusNoContent)
+}
+
+// EnsureSessionWorkstream returns the session's workstream, creating one for
+// the lineage when it has none — the "obtain one in one call" path.
+func (c *Client) EnsureSessionWorkstream(ctx context.Context, sessionID, name, workflowID string) (api.WorkstreamDTO, error) {
+	var out api.WorkstreamDTO
+	err := c.postWorkstreamJSON(ctx, "/sessions/"+url.PathEscape(sessionID)+"/workstream",
+		api.SessionWorkstreamRequest{Ensure: true, Name: name, WorkflowID: workflowID},
+		&out, http.StatusOK)
+	return out, err
+}

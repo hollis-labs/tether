@@ -23,16 +23,19 @@ type AttachmentStore interface {
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
-	Service      LaunchService
-	AI           AIService
-	AIAudit      AIAuditStore
-	AIUsage      AIUsageStore
-	Checkpoints  CheckpointStore
-	Broker       BrokerService
-	Bus          events.Bus
-	EventsStore  EventsStore
-	Catalog      CatalogLoader
-	GroupStore   SessionGroupStore
+	Service     LaunchService
+	AI          AIService
+	AIAudit     AIAuditStore
+	AIUsage     AIUsageStore
+	Checkpoints CheckpointStore
+	Broker      BrokerService
+	Bus         events.Bus
+	EventsStore EventsStore
+	Catalog     CatalogLoader
+	GroupStore  SessionGroupStore
+	// Workstreams, when non-nil, enables the /workstreams endpoints and the
+	// per-session workstream sub-resource (S1, CW-20260912-0059).
+	Workstreams  WorkstreamStore
 	MessageStore MessageStore
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
 	// persisting and querying MCP relay tool call events. Populated by the
@@ -123,6 +126,7 @@ type Server struct {
 	EventsStore         EventsStore
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
+	Workstreams         WorkstreamStore
 	MessageStore        MessageStore
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
@@ -151,6 +155,7 @@ func NewHandler(deps Deps) http.Handler {
 		EventsStore:         deps.EventsStore,
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
+		Workstreams:         deps.Workstreams,
 		MessageStore:        deps.MessageStore,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
@@ -172,6 +177,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerEventRoutes(mux)
 	s.registerCatalogRoutes(mux)
 	s.registerSessionGroupRoutes(mux)
+	s.registerWorkstreamRoutes(mux)
 	s.registerMessageRoutes(mux)
 	s.registerProxyEventRoutes(mux)
 	s.registerRegistryRoutes(mux)
