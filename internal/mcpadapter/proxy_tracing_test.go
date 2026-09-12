@@ -23,6 +23,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -45,29 +46,44 @@ func otelStartTestSpan(t *testing.T, name string) (context.Context, trace.Span) 
 // would reproduce the exact bug it is meant to catch and still pass, because
 // "no span created" and "span created but not recording" are indistinguishable
 // downstream.
+//
+// It also installs a TextMapPropagator, which production gets from hotel.Init
+// (go-otel hotel.go:96). That is needed because INJECTION AND EXTRACTION ARE
+// ASYMMETRIC: InjectMCP formats the traceparent string by hand and works with
+// no propagator configured, while ExtractMCP goes through
+// otel.GetTextMapPropagator() and silently recovers nothing without one. A
+// harness that set only the provider would exercise injection honestly and
+// quietly no-op every extraction assertion.
 func recordingTracer(t *testing.T) {
 	t.Helper()
-	prev := otelGetTracerProvider()
+	prevTP := otelGetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
 	otelSetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 	t.Cleanup(func() {
 		_ = tp.Shutdown(context.Background())
-		otelSetTracerProvider(prev)
+		otelSetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
 	})
 }
 
 // proxiedCallCapture wires a proxy catalog over a mock upstream, registers one
-// proxied tool through addProxyTools, and returns the arguments the upstream
-// actually received for a call made through a real in-process MCP client.
-func proxiedCallCapture(t *testing.T, toolName string) map[string]any {
+// proxied tool through addProxyTools, and returns the arguments AND the _meta
+// the upstream actually received for a call made through a real in-process MCP
+// client. Both sides are returned because the assertion that matters is not
+// only that trace context arrived but that it arrived in the right half.
+func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, *mcp.Meta) {
 	t.Helper()
 
 	var received map[string]any
+	var receivedMeta *mcp.Meta
 	mc := &mockClient{
 		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if args, ok := req.Params.Arguments.(map[string]any); ok {
 				received = args
 			}
+			receivedMeta = req.Params.Meta
 			return mcp.NewToolResultText("ok"), nil
 		},
 	}
@@ -107,7 +123,7 @@ func proxiedCallCapture(t *testing.T, toolName string) map[string]any {
 	if received == nil {
 		t.Fatal("upstream never received the call")
 	}
-	return received
+	return received, receivedMeta
 }
 
 // The acceptance criterion: a direct proxied call produces a span, and trace
@@ -115,17 +131,19 @@ func proxiedCallCapture(t *testing.T, toolName string) map[string]any {
 func TestProxiedCall_PropagatesTraceContextToUpstream(t *testing.T) {
 	recordingTracer(t)
 
-	got := proxiedCallCapture(t, "upstream_traced")
+	args, meta := proxiedCallCapture(t, "upstream_traced")
 
-	if _, ok := got["_traceparent"]; !ok {
-		keys := make([]string, 0, len(got))
-		for k := range got {
-			keys = append(keys, k)
-		}
-		t.Fatalf("upstream received %v with no _traceparent; the proxied path is still untraced", keys)
+	// CW-20260907-0026 moved the carrier from arguments to _meta. The probe's
+	// original finding is unchanged -- a proxied call must be traced -- but the
+	// place to look for the evidence moved with it.
+	if meta == nil {
+		t.Fatal("upstream received no _meta; the proxied path is still untraced")
 	}
-	if got["input"] != "hi" {
-		t.Errorf("injection disturbed the payload: %v", got)
+	if tp, _ := meta.AdditionalFields["_traceparent"].(string); tp == "" {
+		t.Fatalf("upstream _meta carried %v with no _traceparent; the proxied path is still untraced", meta.AdditionalFields)
+	}
+	if args["input"] != "hi" {
+		t.Errorf("injection disturbed the payload: %v", args)
 	}
 }
 
@@ -134,9 +152,12 @@ func TestProxiedCall_PropagatesTraceContextToUpstream(t *testing.T) {
 // and InjectMCP correctly writes nothing -- this pins that the mechanism is
 // the span, so a future change that fakes the header without a span fails here.
 func TestProxiedCall_NoTracerMeansNoInjection(t *testing.T) {
-	got := proxiedCallCapture(t, "upstream_untraced")
+	args, meta := proxiedCallCapture(t, "upstream_untraced")
 
-	if _, ok := got["_traceparent"]; ok {
+	if meta != nil {
+		t.Errorf("_meta manufactured with no tracer configured: %v", meta.AdditionalFields)
+	}
+	if _, ok := args["_traceparent"]; ok {
 		t.Error("_traceparent injected with no tracer configured; propagation must derive from a recording span")
 	}
 }

@@ -38,7 +38,6 @@ import (
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	hotel "github.com/hollis-labs/go-otel"
-	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel/trace"
@@ -144,7 +143,7 @@ func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, h server.ToolHandlerF
 	}
 	handler := mcpsanitize.Middleware(logger)(h)
 	s.AddTool(t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
 		ctx, span := hotel.ToolCallSpan(ctx, t.Name)

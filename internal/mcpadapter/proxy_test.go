@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -169,12 +170,14 @@ func TestProxyRouter_UpstreamTransportError(t *testing.T) {
 	}
 }
 
-func TestProxyRouter_InjectsTraceContextIntoUpstreamCall(t *testing.T) {
+func TestProxyRouter_InjectsTraceContextIntoUpstreamMeta(t *testing.T) {
 	reg := NewToolRegistry()
 	var gotArgs map[string]any
+	var gotMeta *mcp.Meta
 	mc := &mockClient{
 		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			gotArgs = req.GetArguments()
+			gotMeta = req.Params.Meta
 			return mcp.NewToolResultText("ok"), nil
 		},
 	}
@@ -201,7 +204,25 @@ func TestProxyRouter_InjectsTraceContextIntoUpstreamCall(t *testing.T) {
 	if result.IsError {
 		t.Fatal("expected success result")
 	}
-	if gotArgs["_traceparent"] == "" {
-		t.Fatal("missing injected _traceparent in upstream tool call")
+
+	if gotMeta == nil {
+		t.Fatal("no _meta on the upstream call; trace context has nowhere to ride")
+	}
+	if tp, _ := gotMeta.AdditionalFields["_traceparent"].(string); tp == "" {
+		t.Errorf("missing _traceparent in _meta: %v", gotMeta.AdditionalFields)
+	}
+
+	// The point of the whole change: nothing metadata-shaped reaches
+	// arguments, so an upstream declaring additionalProperties:false at its
+	// schema root has nothing to reject. Asserted as "no underscore keys at
+	// all" rather than "no _traceparent", so a future metadata key added to
+	// the wrong side fails here too.
+	for k := range gotArgs {
+		if strings.HasPrefix(k, "_") {
+			t.Errorf("underscore key %q reached upstream arguments; a strict schema would reject the whole call", k)
+		}
+	}
+	if gotArgs["input"] != "hello" {
+		t.Errorf("payload disturbed: %v", gotArgs)
 	}
 }

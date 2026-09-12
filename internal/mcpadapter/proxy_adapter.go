@@ -14,7 +14,6 @@ import (
 
 	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	hotel "github.com/hollis-labs/go-otel"
-	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -126,7 +125,7 @@ func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
 			// short-lived tool, an embedding of this package — and looks
 			// impossible when it does.
 			Handler: func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				if sc := trace.SpanContextFromContext(otelprop.ExtractMCP(req.GetArguments())); sc.IsValid() {
+				if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
 					handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
 				}
 				handlerCtx, span := hotel.ToolCallSpan(handlerCtx, def.Name)

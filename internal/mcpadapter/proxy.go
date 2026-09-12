@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	otelprop "github.com/hollis-labs/go-otel/propagation"
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -93,9 +92,10 @@ func (r *ProxyRouter) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp
 				rt.ServerID, tReq.Params.Name,
 			)), nil
 		}
-		if args, ok := tReq.Params.Arguments.(map[string]any); ok || tReq.Params.Arguments == nil {
-			tReq.Params.Arguments = otelprop.InjectMCP(tCtx, args)
-		}
+		// Trace context rides in params._meta, never in params.arguments --
+		// an upstream with additionalProperties:false at its schema root
+		// correctly rejects an argument it did not declare. See trace_meta.go.
+		tReq = injectTraceContextMeta(tCtx, tReq)
 		return rt.Client.CallTool(tCtx, tReq)
 	})
 
