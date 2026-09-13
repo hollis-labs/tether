@@ -147,6 +147,55 @@ Tether `mux_*` tools, `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`,
 explicit `--only` flag uses its own comma-separated value and does not widen
 from the environment.
 
+### Upstream failures and recovery
+
+Each stdio upstream has its own supervisor. After a confirmed process exit,
+the proxy reconnects that server, initializes it, and replaces its tool list
+and client connection. Other upstreams retain their connections. Clean exit,
+nonzero exit, and signal termination all receive the same bounded retry
+policy; a clean exit is not interpreted as a request to replace a stale binary.
+
+There are at most five restart attempts, delayed by 1, 2, 4, 8, and 16 seconds.
+A successful handshake does not reset the budget: the connection must remain
+open for 60 seconds. Startup failures also consume this budget. After exhaustion,
+correct the upstream failure and start a new proxy session. `mux_catalog_refresh`
+refreshes tool schemas on existing connections; it does not reset the budget.
+Initialization and tool-list requests have a 10-second timeout.
+
+The supervisor sends no process signals. If stdout closes while the child is
+still alive, the connection closes and recovery waits for actual process exit.
+Likewise, a child that ignores stdin EOF is not forcibly terminated. Closing the
+proxy cancels pending restart timers. This policy supervises local stdio children;
+it does not add remote HTTP/SSE reconnection or periodic liveness probes.
+
+In normal proxy modes, `mux_health` returns `ok: false` and names
+`unavailable_servers` when an observed connection has failed or is recovering.
+`mux_catalog_list_mcp_servers` includes `status` (`starting`, `connected`,
+`reconnecting`, or `failed`), `restart_attempts`, `restart_limit`,
+`recovery_exhausted`, `next_retry_at`, and `last_exit` (kind, exit code, signal,
+and timestamp when available). `tool_count` includes cached tool definitions;
+it does not establish availability. These are observed states, not active probes.
+
+`mux_discover` and `mux_discover_tools` exclude unavailable upstreams from search
+results and report `complete: false` with the missing servers. An empty result
+with incomplete discovery does not establish that a product has no matching tool.
+Cached native tool registrations fail explicitly while recovery is pending.
+
+The proxy continuously drains stderr and retains an 8 KiB tail for status reads,
+redacting values supplied by the catalog's environment and token configuration,
+including incomplete value prefixes at the end of a live snapshot and fragments
+at the start of a truncated tail.
+This is bounded process-local diagnostic retention, not durable logging or a
+general secret detector. Connection loss, restart scheduling, and retry exhaustion
+also produce diagnostics on the proxy's stderr. In curated `--only` mode, native
+introspection remains suppressed; use that stderr stream to observe failures.
+
+An in-flight call fails when its transport closes and is **never replayed**.
+Its error says execution outcome may be unknown: a side effect can complete
+before the response is lost. Calls rejected during recovery say they were not
+sent. After reconnection, subsequent calls use the new client, and changed tool
+schemas follow the existing tool-list notification path.
+
 ### Semantic Discovery
 
 In normal proxy and `--servers` mode, `mux_discover_tools` provides a concise

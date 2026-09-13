@@ -43,14 +43,23 @@ func (a *Adapter) registerCatalogTools(s *server.MCPServer) {
 
 func (a *Adapter) handleHealth(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cat := a.svc.Catalog
-	return toolJSON(map[string]any{
+	payload := map[string]any{
 		"ok":        true,
 		"version":   version,
 		"projects":  len(cat.Projects),
 		"agents":    len(cat.Agents),
 		"providers": len(cat.Providers),
 		"launches":  len(cat.Launches),
-	}), nil
+	}
+	if a.upstreams != nil {
+		statuses := a.upstreams.StatusSummary()
+		absent := unavailableServers(statuses)
+		payload["ok"] = len(absent) == 0
+		payload["upstream_servers"] = statuses
+		payload["unavailable_servers"] = absent
+		payload["health_basis"] = "observed connections; no active liveness probe"
+	}
+	return toolJSON(payload), nil
 }
 
 func (a *Adapter) handleListProjects(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
