@@ -416,6 +416,18 @@ MCP error with code
 `catalog_reload_failed`. `mux_health` remains callable but reports `ok: false`,
 `catalog_read.status: "reload_failed"`, and the error instead of stale counts.
 The next call retries from disk and recovers as soon as the catalog is valid.
+Reload errors contain only bounded `category` and `location` values. Raw decoder
+and validator messages are not returned because they can contain configuration
+values.
+
+```json
+{
+  "ok": false,
+  "code": "catalog_reload_failed",
+  "message": "launch catalog reload failed",
+  "error": { "category": "decode", "location": "launches" }
+}
+```
 
 This read path does not replace the service's startup catalog, reconfigure
 provider factories, or mutate daemon-owned sessions. `mux_catalog_refresh`

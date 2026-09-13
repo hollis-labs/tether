@@ -81,12 +81,126 @@ func TestCatalogReadReportsMalformedEditAndRecovers(t *testing.T) {
 	if got := read["status"]; got != "reload_failed" {
 		t.Fatalf("catalog status = %v, want reload_failed", got)
 	}
-	if read["error"] == "" {
-		t.Fatal("catalog reload failure omitted error detail")
-	}
+	assertCatalogFailure(t, read["error"], "decode", "launches")
 	if _, exists := healthBody["launches"]; exists {
 		t.Fatal("health exposed stale launch counts after catalog reload failure")
 	}
+
+	writeCatalogGeneration(t, root, "recovered")
+	assertCatalogReadIDs(t, a, "recovered")
+}
+
+func TestCatalogReloadErrorsDoNotExposeConfigurationValues(t *testing.T) {
+	const marker = "FAKE0015"
+	tests := []struct {
+		name         string
+		global       string
+		wantCategory string
+		wantLocation string
+	}{
+		{
+			name:         "decoder",
+			global:       "version: 0.1.0\nai:\n  providers:\n    - id: test\n      enabled: " + marker + "\n",
+			wantCategory: "decode",
+			wantLocation: "global",
+		},
+		{
+			name:         "validator",
+			global:       "version: 0.1.0\ncatalog:\n  defaults:\n    permission_mode: " + marker + "\n",
+			wantCategory: "validation",
+			wantLocation: "global.catalog.defaults.permission_mode",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := newCatalogReadFixture(t, "good")
+			initial, err := config.LoadLayered(root)
+			if err != nil {
+				t.Fatalf("load initial catalog: %v", err)
+			}
+			a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
+			writeFile(t, filepath.Join(root, "global.yaml"), test.global)
+
+			handlers := []struct {
+				name   string
+				health bool
+				call   func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+			}{
+				{name: "health", health: true, call: a.handleHealth},
+				{name: "projects", call: a.handleListProjects},
+				{name: "agents", call: a.handleListAgents},
+				{name: "providers", call: a.handleListProviders},
+				{name: "launches", call: a.handleListLaunches},
+			}
+			for _, handler := range handlers {
+				result, callErr := handler.call(context.Background(), mcp.CallToolRequest{})
+				if callErr != nil {
+					t.Fatalf("%s: %v", handler.name, callErr)
+				}
+				wire := textOf(result)
+				if strings.Contains(wire, marker) {
+					t.Errorf("%s exposed configuration value: %s", handler.name, wire)
+				}
+				body := parseToolJSON(t, result)
+				if handler.health {
+					if result.IsError {
+						t.Fatalf("health returned tool error: %s", wire)
+					}
+					if body["ok"] != false {
+						t.Fatalf("health ok = %v, want false", body["ok"])
+					}
+					if _, exists := body["launches"]; exists {
+						t.Fatal("health exposed stale counts after reload failure")
+					}
+					read := body["catalog_read"].(map[string]any)
+					assertCatalogFailure(t, read["error"], test.wantCategory, test.wantLocation)
+					continue
+				}
+				if !result.IsError || body["code"] != "catalog_reload_failed" {
+					t.Fatalf("%s result = %#v, want catalog_reload_failed", handler.name, body)
+				}
+				assertCatalogFailure(t, body["error"], test.wantCategory, test.wantLocation)
+			}
+
+			writeFile(t, filepath.Join(root, "global.yaml"), "version: 0.1.0\n")
+			result, callErr := a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
+			if callErr != nil || result.IsError {
+				t.Fatalf("next-read recovery failed: err=%v result=%s", callErr, textOf(result))
+			}
+		})
+	}
+}
+
+func TestCatalogReadRejectsIncompleteRecordsAndReferences(t *testing.T) {
+	root := newCatalogReadFixture(t, "good")
+	initial, err := config.LoadLayered(root)
+	if err != nil {
+		t.Fatalf("load initial catalog: %v", err)
+	}
+	a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
+
+	writeFile(t, filepath.Join(root, "projects", "good.yaml"), "name: missing id\n")
+	result, err := a.handleListProjects(context.Background(), mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("missing id read: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("missing id result = %s, want tool error", textOf(result))
+	}
+	body := parseToolJSON(t, result)
+	assertCatalogFailure(t, body["error"], "validation", "projects.id")
+
+	writeCatalogGeneration(t, root, "valid")
+	writeFile(t, filepath.Join(root, "launches", "valid.yaml"), "id: valid-launch\nproject: valid-project\nagent: valid-agent\nprovider: missing-provider\n")
+	result, err = a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("missing reference read: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("missing reference result = %s, want tool error", textOf(result))
+	}
+	body = parseToolJSON(t, result)
+	assertCatalogFailure(t, body["error"], "validation", "launches")
 
 	writeCatalogGeneration(t, root, "recovered")
 	assertCatalogReadIDs(t, a, "recovered")
@@ -232,5 +346,22 @@ func assertCatalogObservation(t *testing.T, body map[string]any) {
 	}
 	if read["observed_at"] == "" {
 		t.Fatal("catalog read omitted observed_at")
+	}
+}
+
+func assertCatalogFailure(t *testing.T, value any, wantCategory, wantLocation string) {
+	t.Helper()
+	failure, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("catalog failure = %#v, want object", value)
+	}
+	if got := failure["category"]; got != wantCategory {
+		t.Fatalf("catalog failure category = %v, want %q", got, wantCategory)
+	}
+	if got := failure["location"]; got != wantLocation {
+		t.Fatalf("catalog failure location = %v, want %q", got, wantLocation)
+	}
+	if len(failure) != 2 {
+		t.Fatalf("catalog failure fields = %#v, want bounded category/location", failure)
 	}
 }

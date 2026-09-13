@@ -2,7 +2,10 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strings"
 	"time"
@@ -19,51 +22,156 @@ import (
 // long-running MCP process observes valid on-disk edits without replacing the
 // Service catalog used by runtime factories and launch ownership.
 type catalogReadObservation struct {
-	Status     string    `json:"status"`
-	Source     string    `json:"source"`
-	ObservedAt time.Time `json:"observed_at"`
-	Validated  bool      `json:"validated"`
-	Error      string    `json:"error,omitempty"`
+	Status     string              `json:"status"`
+	Source     string              `json:"source"`
+	ObservedAt time.Time           `json:"observed_at"`
+	Validated  bool                `json:"validated"`
+	Error      *catalogReadFailure `json:"error,omitempty"`
 }
 
-func (a *Adapter) catalogForRead() (*config.Catalog, catalogReadObservation, error) {
+// catalogReadFailure is the complete error boundary for catalog reload
+// responses. Category and location are selected from fixed vocabularies; the
+// underlying loader or validator error is deliberately not retained because
+// YAML decoder and validation messages can contain raw configuration values.
+type catalogReadFailure struct {
+	Category string `json:"category"`
+	Location string `json:"location"`
+}
+
+func (a *Adapter) catalogForRead() (*config.Catalog, catalogReadObservation, *catalogReadFailure) {
 	observation := catalogReadObservation{
 		Status:     "reload_failed",
 		Source:     "catalog_root",
 		ObservedAt: time.Now().UTC(),
 	}
 	if a == nil || a.svc == nil {
-		err := fmt.Errorf("catalog service is unavailable")
-		observation.Error = err.Error()
-		return nil, observation, err
+		failure := &catalogReadFailure{Category: "unavailable", Location: "adapter"}
+		observation.Error = failure
+		return nil, observation, failure
 	}
 
 	root := strings.TrimSpace(a.svc.CatalogRoot)
 	if root == "" {
 		observation.Source = "startup_snapshot"
 		if a.svc.Catalog == nil {
-			err := fmt.Errorf("catalog is unavailable")
-			observation.Error = err.Error()
-			return nil, observation, err
+			failure := &catalogReadFailure{Category: "unavailable", Location: "catalog"}
+			observation.Error = failure
+			return nil, observation, failure
 		}
 		observation.Status = "current"
 		return a.svc.Catalog, observation, nil
 	}
 
 	cat, err := config.LoadLayered(root)
-	if err == nil {
-		err = cat.Validate()
-	}
 	observation.ObservedAt = time.Now().UTC()
 	if err != nil {
-		err = fmt.Errorf("reload launch catalog: %w", err)
-		observation.Error = err.Error()
-		return nil, observation, err
+		failure := classifyCatalogLoadFailure(err)
+		observation.Error = failure
+		return nil, observation, failure
+	}
+	if failure := validateCatalogRead(cat); failure != nil {
+		observation.Error = failure
+		return nil, observation, failure
 	}
 
 	observation.Status = "current"
 	observation.Validated = true
 	return cat, observation, nil
+}
+
+func validateCatalogRead(cat *config.Catalog) *catalogReadFailure {
+	if cat == nil {
+		return &catalogReadFailure{Category: "unavailable", Location: "catalog"}
+	}
+	for _, project := range cat.Projects {
+		if strings.TrimSpace(project.ID) == "" {
+			return &catalogReadFailure{Category: "validation", Location: "projects.id"}
+		}
+	}
+	for _, agent := range cat.Agents {
+		if strings.TrimSpace(agent.ID) == "" {
+			return &catalogReadFailure{Category: "validation", Location: "agents.id"}
+		}
+	}
+	for _, provider := range cat.Providers {
+		if strings.TrimSpace(provider.ID) == "" {
+			return &catalogReadFailure{Category: "validation", Location: "providers.id"}
+		}
+	}
+	for _, launch := range cat.Launches {
+		if strings.TrimSpace(launch.ID) == "" {
+			return &catalogReadFailure{Category: "validation", Location: "launches.id"}
+		}
+	}
+	if err := cat.Validate(); err != nil {
+		return &catalogReadFailure{Category: "validation", Location: catalogValidationLocation(err)}
+	}
+	return nil
+}
+
+func classifyCatalogLoadFailure(err error) *catalogReadFailure {
+	category := "load"
+	var pathErr *fs.PathError
+	message := err.Error()
+	switch {
+	case errors.As(err, &pathErr):
+		category = "io"
+	case strings.Contains(message, "parse ") || strings.Contains(message, "yaml:"):
+		category = "decode"
+	case strings.Contains(message, "discover layered agents"):
+		category = "discovery"
+	}
+	return &catalogReadFailure{Category: category, Location: catalogLoadLocation(message)}
+}
+
+func catalogLoadLocation(message string) string {
+	normalized := strings.ReplaceAll(message, `\`, "/")
+	switch {
+	case strings.Contains(normalized, "global.yaml") || strings.Contains(normalized, "load global:"):
+		return "global"
+	case strings.Contains(normalized, "/projects/"):
+		return "projects"
+	case strings.Contains(normalized, "/providers/"):
+		return "providers"
+	case strings.Contains(normalized, "/launches/"):
+		return "launches"
+	case strings.Contains(normalized, "/sandbox-profiles/") || strings.Contains(normalized, "load sandbox-profiles"):
+		return "sandbox_profiles"
+	case strings.Contains(normalized, "/agents/") || strings.Contains(normalized, "discover layered agents"):
+		return "agents"
+	default:
+		return "catalog"
+	}
+}
+
+func catalogValidationLocation(err error) string {
+	message := err.Error()
+	switch {
+	case strings.HasPrefix(message, "launch "):
+		return "launches"
+	case strings.HasPrefix(message, "provider "):
+		return "providers"
+	case strings.HasPrefix(message, "agent "):
+		return "agents"
+	case strings.HasPrefix(message, "global defaults.permission_mode"):
+		return "global.catalog.defaults.permission_mode"
+	case strings.HasPrefix(message, "global ai."):
+		return "global.ai"
+	case strings.HasPrefix(message, "federation"):
+		return "global.federation"
+	default:
+		return "catalog"
+	}
+}
+
+func catalogReloadToolError(failure *catalogReadFailure) *mcp.CallToolResult {
+	body, _ := json.Marshal(map[string]any{
+		"ok":      false,
+		"code":    "catalog_reload_failed",
+		"message": "launch catalog reload failed",
+		"error":   failure,
+	})
+	return mcp.NewToolResultError(string(body))
 }
 
 func (a *Adapter) registerHealthTools(s *server.MCPServer) {
@@ -124,7 +232,7 @@ func (a *Adapter) handleHealth(_ context.Context, _ mcp.CallToolRequest) (*mcp.C
 func (a *Adapter) handleListProjects(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return toolError("catalog_reload_failed", err.Error()), nil
+		return catalogReloadToolError(err), nil
 	}
 	projects := make([]config.Project, 0, len(cat.Projects))
 	for _, project := range cat.Projects {
@@ -142,7 +250,7 @@ func (a *Adapter) handleListProjects(_ context.Context, _ mcp.CallToolRequest) (
 func (a *Adapter) handleListAgents(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return toolError("catalog_reload_failed", err.Error()), nil
+		return catalogReloadToolError(err), nil
 	}
 	agents := make([]config.Agent, 0, len(cat.Agents))
 	for _, agent := range cat.Agents {
@@ -160,7 +268,7 @@ func (a *Adapter) handleListAgents(_ context.Context, _ mcp.CallToolRequest) (*m
 func (a *Adapter) handleListProviders(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return toolError("catalog_reload_failed", err.Error()), nil
+		return catalogReloadToolError(err), nil
 	}
 	providers := make([]config.Provider, 0, len(cat.Providers))
 	for _, provider := range cat.Providers {
@@ -178,7 +286,7 @@ func (a *Adapter) handleListProviders(_ context.Context, _ mcp.CallToolRequest) 
 func (a *Adapter) handleListLaunches(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return toolError("catalog_reload_failed", err.Error()), nil
+		return catalogReloadToolError(err), nil
 	}
 	type launchBrief struct {
 		ID       string `json:"id"`
