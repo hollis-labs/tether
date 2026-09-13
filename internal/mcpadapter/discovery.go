@@ -98,6 +98,10 @@ type SearchResult struct {
 //     within tags, OR across intent words.
 //   - limit: capped at 50; 0 means 10.
 func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, limit int) ([]SearchResult, int) {
+	return idx.search(intent, category, extraTags, limit, nil)
+}
+
+func (idx *DiscoveryIndex) search(intent, category string, extraTags []string, limit int, unavailable map[string]bool) ([]SearchResult, int) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -126,6 +130,9 @@ func (idx *DiscoveryIndex) Search(intent, category string, extraTags []string, l
 
 	results := make([]scored, 0, len(idx.entries))
 	for _, e := range idx.entries {
+		if unavailable[e.ServerID] {
+			continue
+		}
 		// Category filter (hard AND).
 		if catLower != "" && !hasTag(e.Tags, catLower) {
 			continue

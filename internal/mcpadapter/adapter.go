@@ -65,11 +65,12 @@ const (
 
 // Adapter exposes the agent-mux runtime as MCP tools over stdio.
 type Adapter struct {
-	svc    *app.Service
-	client *client.Client // optional; when set, session-mutating tools route through the daemon
-	mcp    *server.MCPServer
-	token  string
-	scopes map[string]struct{}
+	upstreams *ClientPool // set before proxy handlers start
+	svc       *app.Service
+	client    *client.Client // optional; when set, session-mutating tools route through the daemon
+	mcp       *server.MCPServer
+	token     string
+	scopes    map[string]struct{}
 
 	// Logger receives the warn-level telemetry emitted by the
 	// go-mcp-sanitize middleware when it cleans a polluted tool call.

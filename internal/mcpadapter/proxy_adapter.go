@@ -203,6 +203,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	registry := NewToolRegistry()
 	pool := NewClientPool(entries, registry)
+	a.upstreams = pool
 
 	// Wire LoggingMiddleware when a Bus is provided.
 	var mws []ToolCallMiddleware
@@ -238,6 +239,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	// Plain router — no middleware; observation is handled server-side above.
 	plainRouter := NewProxyRouter(registry)
+	plainRouter.pool = pool
 
 	if opts.Only && len(opts.ServerFilter) == 0 {
 		return fmt.Errorf("curated proxy --only requires a non-empty server filter")
@@ -278,7 +280,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		index:      idx,
 		serverTags: serverTags,
 		allowed:    allowed,
-		firehose:   firehose,
+		firehose:   firehose && !opts.BrokerMode,
 	}
 	pool.SetToolRefreshHandler(liveCatalog.applyRefresh)
 
@@ -423,7 +425,8 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 				}
 			}
 
-			results, totalMatches := idx.Search(intent, category, extraTags, limit)
+			statuses := a.upstreamStatus()
+			results, totalMatches := idx.search(intent, category, extraTags, limit, unavailableIDs(statuses))
 
 			tools := make([]map[string]any, 0, len(results))
 			for _, r := range results {
@@ -454,6 +457,7 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 					len(tools), totalMatches,
 				)
 			}
+			addAvailability(payload, statuses)
 			return toolJSON(payload), nil
 		},
 	)
@@ -512,8 +516,11 @@ func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *Discove
 				}
 			}
 
-			results, totalMatches := idx.Search(intent, category, extraTags, limit)
-			return toolJSON(semanticDiscoveryPayload(intent, results, totalMatches, isNative)), nil
+			statuses := a.upstreamStatus()
+			results, totalMatches := idx.search(intent, category, extraTags, limit, unavailableIDs(statuses))
+			payload := semanticDiscoveryPayload(intent, results, totalMatches, isNative)
+			addAvailability(payload, statuses)
+			return toolJSON(payload), nil
 		},
 	)
 }

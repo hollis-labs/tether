@@ -24,6 +24,7 @@ type ToolCallMiddleware interface {
 // upstream client via the ToolRegistry. Native tools must not reach this
 // router — they are dispatched by the MCP server handler before calling Handle.
 type ProxyRouter struct {
+	pool       *ClientPool
 	registry   *ToolRegistry
 	middleware []ToolCallMiddleware
 }
@@ -92,11 +93,20 @@ func (r *ProxyRouter) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp
 				rt.ServerID, tReq.Params.Name,
 			)), nil
 		}
+		if r.pool != nil {
+			if err := r.pool.unavailableError(rt.ServerID, rt.Client); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
 		// Trace context rides in params._meta, never in params.arguments --
 		// an upstream with additionalProperties:false at its schema root
 		// correctly rejects an argument it did not declare. See trace_meta.go.
 		tReq = injectTraceContextMeta(tCtx, tReq)
-		return rt.Client.CallTool(tCtx, tReq)
+		result, err := rt.Client.CallTool(tCtx, tReq)
+		if err != nil && r.pool != nil {
+			return nil, fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)
+		}
+		return result, err
 	})
 
 	// Apply middleware chain (if any) around the terminal handler.
