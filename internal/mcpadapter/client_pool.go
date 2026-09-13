@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -438,6 +439,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 }
 
 func (p *ClientPool) refreshServer(ctx context.Context, id string, client mcpclient.MCPClient, source string) (ToolRefreshResult, error) {
+	callerCtx := ctx
 	p.mu.Lock()
 	if p.refreshing[client] {
 		p.mu.Unlock()
@@ -450,7 +452,10 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client mcpcli
 	defer cancel()
 	result, err := client.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
-		p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
+		callerErr := callerCtx.Err()
+		if callerErr == nil || !errors.Is(err, callerErr) {
+			p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
+		}
 		return ToolRefreshResult{}, err
 	}
 	return p.publish(ctx, id, client, result.Tools, true)
