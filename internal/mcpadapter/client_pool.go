@@ -17,16 +17,17 @@ import (
 )
 
 type clientStatus struct {
-	entry     config.MCPServerEntry
-	client    mcpclient.MCPClient
-	toolCount int
-	err       error
-	state     string
-	restarts  int
-	nextRetry time.Time
-	lastExit  *UpstreamExit
-	stderr    string
-	exhausted bool
+	entry      config.MCPServerEntry
+	client     mcpclient.MCPClient
+	toolCount  int
+	err        error
+	state      string
+	restarts   int
+	nextRetry  time.Time
+	lastExit   *UpstreamExit
+	stderr     string
+	exhausted  bool
+	lastLaunch *LaunchObservation
 }
 
 type ToolRefreshResult struct {
@@ -55,6 +56,7 @@ func (e *RefreshAllError) Error() string {
 
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
+	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
 	mu                 sync.Mutex
@@ -75,7 +77,7 @@ type recoveryPolicy struct {
 }
 
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
-	return &ClientPool{entries: entries, registry: registry,
+	return &ClientPool{runtime: processObservation, entries: entries, registry: registry,
 		statuses: make(map[string]*clientStatus), refreshing: make(map[mcpclient.MCPClient]bool),
 		policy: recoveryPolicy{delays: []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}, stableFor: time.Minute, handshakeTimeout: 10 * time.Second}}
 }
@@ -126,6 +128,10 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		if err == nil {
 			p.mu.Lock()
 			s.client = client
+			if leaf, ok := client.(*stdioUpstream); ok {
+				launch := leaf.launch
+				s.lastLaunch = &launch
+			}
 			p.mu.Unlock()
 			client.OnNotification(func(n mcp.JSONRPCNotification) {
 				if n.Method == mcp.MethodNotificationToolsListChanged {
@@ -134,7 +140,7 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 			})
 			initCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
 			var result *mcp.ListToolsResult
-			_, err = client.Initialize(initCtx, mcp.InitializeRequest{Params: mcp.InitializeParams{ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION, ClientInfo: mcp.Implementation{Name: "agent-mux-proxy", Version: version}}})
+			_, err = client.Initialize(initCtx, p.initializeRequest(entry, client))
 			if err != nil {
 				err = fmt.Errorf("initialize: %w", err)
 			} else {
@@ -396,18 +402,20 @@ func (p *ClientPool) Shutdown() {
 // ServerStatus reports observed connection state, not an active health probe.
 // ToolCount includes cached definitions; availability is given by Status.
 type ServerStatus struct {
-	ID                string        `json:"id"`
-	Transport         string        `json:"transport"`
-	Status            string        `json:"status"`
-	Error             string        `json:"error,omitempty"`
-	ToolCount         int           `json:"tool_count"`
-	Tags              []string      `json:"tags,omitempty"`
-	RestartAttempts   int           `json:"restart_attempts"`
-	RestartLimit      int           `json:"restart_limit"`
-	NextRetryAt       *time.Time    `json:"next_retry_at,omitempty"`
-	LastExit          *UpstreamExit `json:"last_exit,omitempty"`
-	StderrTail        string        `json:"stderr_tail,omitempty"`
-	RecoveryExhausted bool          `json:"recovery_exhausted"`
+	ID                string              `json:"id"`
+	Transport         string              `json:"transport"`
+	Status            string              `json:"status"`
+	Error             string              `json:"error,omitempty"`
+	ToolCount         int                 `json:"tool_count"`
+	Tags              []string            `json:"tags,omitempty"`
+	RestartAttempts   int                 `json:"restart_attempts"`
+	RestartLimit      int                 `json:"restart_limit"`
+	NextRetryAt       *time.Time          `json:"next_retry_at,omitempty"`
+	LastExit          *UpstreamExit       `json:"last_exit,omitempty"`
+	StderrTail        string              `json:"stderr_tail,omitempty"`
+	RecoveryExhausted bool                `json:"recovery_exhausted"`
+	LastLaunch        *LaunchObservation  `json:"last_launch,omitempty"`
+	Recovery          RecoveryObservation `json:"recovery"`
 }
 
 func (p *ClientPool) StatusSummary() []ServerStatus {
@@ -417,6 +425,11 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 	for _, s := range p.statuses {
 		ss := ServerStatus{ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, ToolCount: s.toolCount, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
 		ss.RecoveryExhausted = s.exhausted
+		ss.Recovery = p.recoveryObservation(s)
+		if s.lastLaunch != nil {
+			launch := *s.lastLaunch
+			ss.LastLaunch = &launch
+		}
 		if s.entry.Transport == "stdio" {
 			ss.RestartLimit = len(p.policy.delays)
 		}

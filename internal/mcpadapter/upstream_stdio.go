@@ -30,6 +30,7 @@ type stdioUpstream struct {
 	stdout *os.File
 	stderr stderrTail
 	exit   UpstreamExit // published by closing done
+	launch LaunchObservation
 }
 
 type UpstreamExit struct {
@@ -170,6 +171,7 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 	}
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
 	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
+	u.launch = observeLaunch(u.cmd, entry)
 	u.cmd.Env = os.Environ()
 	u.stderr.secrets = stderrRedactionValues(entry)
 	for k, v := range entry.Env {
@@ -195,6 +197,7 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 		_ = writer.Close()
 		return nil, err
 	}
+	u.launch.PID = u.cmd.Process.Pid
 	_ = writer.Close()
 	t := transport.NewIO(&eofReader{Reader: stdout, lost: u.lost}, stdin, nil)
 	u.Client = mcpclient.NewClient(t)

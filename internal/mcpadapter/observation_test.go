@@ -205,7 +205,7 @@ func TestObservationTools_EventsHistoryRejectsInvalidScope(t *testing.T) {
 
 func callObservationTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
-	s := mcpserver.NewMCPServer("test", version, mcpserver.WithToolCapabilities(true))
+	s := mcpserver.NewMCPServer("test", "test", mcpserver.WithToolCapabilities(true))
 	a.registerObservationTools(s)
 
 	c, err := mcpclient.NewInProcessClient(s)
