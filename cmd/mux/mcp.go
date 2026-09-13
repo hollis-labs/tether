@@ -122,6 +122,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		adapter = mcpadapter.New(svc, token, scopes)
 	}
 	adapter.SessionID = mcpSession
+	adapter.SetBuildMetadata(version, commit, buildDate)
 	if mcpExtractRefs {
 		if listenAddr == "" {
 			return fmt.Errorf("--extract-refs needs the daemon: refs are written over HTTP because `mux mcp` runs in its own process, and the daemon address could not be resolved")

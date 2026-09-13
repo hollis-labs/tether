@@ -45,7 +45,8 @@ func (a *Adapter) handleHealth(_ context.Context, _ mcp.CallToolRequest) (*mcp.C
 	cat := a.svc.Catalog
 	payload := map[string]any{
 		"ok":        true,
-		"version":   version,
+		"version":   a.runtime.Build.Version,
+		"runtime":   a.runtime,
 		"projects":  len(cat.Projects),
 		"agents":    len(cat.Agents),
 		"providers": len(cat.Providers),

@@ -16,7 +16,7 @@ func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool
 	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
 	reg.Register("beta", mc, []mcp.Tool{makeTool("beta_tool_x")})
 
-	s := server.NewMCPServer("test", version, server.WithToolCapabilities(true))
+	s := server.NewMCPServer("test", "test", server.WithToolCapabilities(true))
 	a := &Adapter{}
 	if !only {
 		a.registerTools(s)

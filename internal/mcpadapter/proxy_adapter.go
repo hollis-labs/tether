@@ -203,6 +203,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	registry := NewToolRegistry()
 	pool := NewClientPool(entries, registry)
+	pool.runtime = a.runtime
 	a.upstreams = pool
 
 	// Wire LoggingMiddleware when a Bus is provided.
@@ -218,8 +219,9 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	s := server.NewMCPServer(
 		"agent-mux",
-		version,
+		a.runtime.Build.Version,
 		server.WithToolCapabilities(true),
+		server.WithExperimental(map[string]any{RuntimeObservationCapability: a.runtime}),
 	)
 
 	// Register LoggingMiddleware as a server-level tool handler middleware so

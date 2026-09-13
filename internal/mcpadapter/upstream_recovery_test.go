@@ -82,6 +82,11 @@ func TestUpstreamFixture(t *testing.T) {
 		var result any
 		switch req.Method {
 		case "initialize":
+			if os.Getenv("TETHER_UPSTREAM_RECORD_INITIALIZE") == "1" {
+				if err := os.WriteFile(filepath.Join(dir, name+".initialize.json"), scanner.Bytes(), 0600); err != nil {
+					os.Exit(92)
+				}
+			}
 			result = map[string]any{"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": name, "version": "fixture"}}
 		case "tools/list":
 			defs := []mcp.Tool{mcp.NewTool(name+"_probe", mcp.WithDescription(name+" fixture probe"))}

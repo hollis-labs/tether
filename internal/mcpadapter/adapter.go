@@ -46,8 +46,6 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 )
 
-const version = "0.2.0"
-
 // Scope constants for mutating tool groups.
 const (
 	ScopeSessionWrite = "session.write"
@@ -65,7 +63,8 @@ const (
 
 // Adapter exposes the agent-mux runtime as MCP tools over stdio.
 type Adapter struct {
-	upstreams *ClientPool // set before proxy handlers start
+	runtime   RuntimeObservation // captured from this process, never the installed path
+	upstreams *ClientPool        // set before proxy handlers start
 	svc       *app.Service
 	client    *client.Client // optional; when set, session-mutating tools route through the daemon
 	mcp       *server.MCPServer
@@ -119,9 +118,10 @@ func New(svc *app.Service, token string, scopes []string) *Adapter {
 		}
 	}
 	return &Adapter{
-		svc:    svc,
-		token:  strings.TrimSpace(token),
-		scopes: scopeSet,
+		runtime: processObservation,
+		svc:     svc,
+		token:   strings.TrimSpace(token),
+		scopes:  scopeSet,
 	}
 }
 
@@ -145,8 +145,9 @@ func NewWithDaemon(svc *app.Service, dc *client.Client, token string, scopes []s
 func (a *Adapter) Run(ctx context.Context) error {
 	s := server.NewMCPServer(
 		"agent-mux",
-		version,
+		a.runtime.Build.Version,
 		server.WithToolCapabilities(true),
+		server.WithExperimental(map[string]any{RuntimeObservationCapability: a.runtime}),
 	)
 	a.registerTools(s)
 	ctxFunc := func(_ context.Context) context.Context { return ctx }

@@ -103,7 +103,7 @@ func TestAITools_ChatStreamSendsNotificationsAndReturnsFinalResponse(t *testing.
 
 	hostport := srv.URL[len("http://"):]
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", []string{ScopeAIInvoke})
-	s := mcpserver.NewMCPServer("test", version, mcpserver.WithToolCapabilities(true))
+	s := mcpserver.NewMCPServer("test", "test", mcpserver.WithToolCapabilities(true))
 	a.registerAITools(s)
 
 	req := mcp.CallToolRequest{}
@@ -267,7 +267,7 @@ func TestAITools_WaitBudgetAlerts(t *testing.T) {
 
 func callAITool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
-	s := mcpserver.NewMCPServer("test", version, mcpserver.WithToolCapabilities(true))
+	s := mcpserver.NewMCPServer("test", "test", mcpserver.WithToolCapabilities(true))
 	a.registerAITools(s)
 
 	c, err := mcpclient.NewInProcessClient(s)

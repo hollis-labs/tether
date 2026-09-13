@@ -75,6 +75,71 @@ Once your client is connected, call `mux_health`:
 
 ---
 
+## Running proxy and leaf launch observations
+
+MCP `serverInfo.version`, the proxy's upstream `clientInfo.version`, and
+`mux_health.version` use metadata embedded in the running `mux` program. Builds
+made with the Makefile include its version, commit and build date; ordinary
+`go build` / `go install` can report `dev` or the module version. Replacing a
+file on disk does not change an existing process's reported build.
+
+`mux_health.runtime` and downstream initialize's
+`capabilities.experimental["hollis-labs.dev/mcp-runtime"]` identify that process:
+schema version 1, a per-process UUID (`instance_id`), PID, observation time and
+build metadata. The UUID distinguishes instances even if a PID is reused. It
+is not an authentication credential. `build.image_identity` is **unknown**:
+version labels, commits (including dirty builds), and build dates are not a
+verified digest of the running image. This slice never reads the mutable
+executable pathname to claim running-image identity.
+
+For each actual stdio child, the proxy sends an observation in upstream
+initialize's same experimental capability key:
+
+```json
+{
+  "schema_version": 1,
+  "mode": "observation-only",
+  "owner": { "schema_version": 1, "instance_id": "...", "pid": 123,
+    "observed_at": "...", "build": { "version": "dev", "go_version": "...",
+      "image_identity": "unknown", "image_identity_reason": "running-image-digest-unavailable" } },
+  "launch": { "selector": "/opt/bin/tesseract", "selector_kind": "absolute",
+    "resolved_path": "/opt/releases/tesseract-A", "resolution": "pre-spawn-path-observation",
+    "relaunch_lookup": "selector", "target_relation": "unknown", "pid": 124, "observed_at": "..." },
+  "recovery": { "mechanism": "stdio-exit-bounded-retry", "attempts_used": 0,
+    "attempt_limit": 5, "attempts_remaining": 5, "exit_permitted": false, "reservation": "none" }
+}
+```
+
+The selector is retained separately from its symlink-resolved path. Resolution
+is observed before spawn and may race with replacement; it does not identify
+the image that actually ran. `target_relation` remains unknown because a
+script or native wrapper can launch another program. A consumer must establish
+the relationship to its own running image before comparing replacements.
+Missing resolution is unknown; credential-bearing paths are omitted with
+`resolution: "redacted"`. Arguments and environment values are never included.
+
+For a PATH command, `selector_kind` is `path` and `relaunch_lookup` is
+`proxy-PATH`. For a relative path they are `relative` and
+`proxy-working-directory`. `exec.Command` uses the **proxy's** PATH before child
+environment overrides are applied. These selectors are resolved again by the
+owner on retry; the child's PATH or current directory cannot establish what
+the owner will launch next. This v1 observation does not publish that private
+environment or provide an owner-resolution query. A consumer that cannot
+resolve the actual next candidate must report unknown.
+
+`mux_health.upstream_servers` and `mux_catalog_list_mcp_servers` expose
+`last_launch` and a current `recovery` snapshot. Initialize's snapshot is only
+for that handshake; it does not update when the retry budget resets or is
+consumed. **No snapshot reserves a replacement attempt or permits exit.**
+`exit_permitted` is always false and `reservation` is always `none`. Remote
+HTTP/SSE connections receive no local relaunch claim. Curated `--only` keeps
+its existing tool surface while still reporting the owner in initialization.
+
+CW-20260913-0013 must provide verified running-image/candidate comparison at the
+shared consumer boundary. CW-20260912-0028 remains separately gated on current
+owner admission and product-specific safe draining. This observation contract
+does not enable self-exit, change recovery delays, or authorize a live rollout.
+
 ## Authentication and scopes
 
 Read-only tools (catalog reads, session reads, message reads, health, boot
