@@ -378,7 +378,20 @@ Returns adapter version and catalog summary. No auth required.
 
 ```json
 // Response
-{ "ok": true, "version": "0.1.0", "projects": 3, "agents": 5, "providers": 2, "launches": 4 }
+{
+  "ok": true,
+  "version": "0.1.0",
+  "projects": 3,
+  "agents": 5,
+  "providers": 2,
+  "launches": 4,
+  "catalog_read": {
+    "status": "current",
+    "source": "catalog_root",
+    "observed_at": "2026-09-13T12:00:00Z",
+    "validated": true
+  }
+}
 ```
 
 ---
@@ -386,6 +399,28 @@ Returns adapter version and catalog summary. No auth required.
 ### Catalog
 
 All catalog tools are read-only and require no auth.
+
+`mux_health`, `mux_catalog_list_projects`, `mux_catalog_list_agents`,
+`mux_catalog_list_providers`, and `mux_catalog_list_launches` reload and validate
+the layered launch catalog for every call. A running MCP adapter therefore sees
+valid file edits on the next read without a process restart. Each successful
+response includes `catalog_read` with its source, observation time, and
+validation status.
+
+Each call uses one fully loaded catalog value, and that generation passes
+project, agent, provider, and launch cross-reference validation as a whole.
+Catalog files do not form a filesystem transaction; write individual files
+atomically and keep intermediate states valid when coordinating several files.
+If a call observes a malformed or incomplete edit, catalog list tools return an
+MCP error with code
+`catalog_reload_failed`. `mux_health` remains callable but reports `ok: false`,
+`catalog_read.status: "reload_failed"`, and the error instead of stale counts.
+The next call retries from disk and recovers as soon as the catalog is valid.
+
+This read path does not replace the service's startup catalog, reconfigure
+provider factories, or mutate daemon-owned sessions. `mux_catalog_refresh`
+continues to refresh upstream MCP `tools/list` caches only. Boot-profile reads
+already load their directory for each call.
 
 #### `mux_catalog_list_projects`
 List all projects defined in the catalog.
@@ -405,7 +440,13 @@ List all launch profiles. Each launch combines a project, agent, and provider.
   "ok": true,
   "launches": [
     { "id": "myproject-backend", "project": "myproject", "agent": "backend", "provider": "claude-stream" }
-  ]
+  ],
+  "catalog_read": {
+    "status": "current",
+    "source": "catalog_root",
+    "observed_at": "2026-09-13T12:00:00Z",
+    "validated": true
+  }
 }
 ```
 
