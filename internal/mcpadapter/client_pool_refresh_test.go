@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +107,56 @@ func TestClientPool_RefreshAllReturnsPartialResults(t *testing.T) {
 	}
 	if _, ok := refreshErr.Failures["broken"]; !ok {
 		t.Fatalf("failures = %#v, want broken server entry", refreshErr.Failures)
+	}
+}
+
+func TestClientPool_RefreshCallerCancellationPreservesHealthyStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+	}{
+		{name: "canceled", ctx: func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		}},
+		{name: "deadline", ctx: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), time.Nanosecond)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockClient{listToolsFunc: func(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}}
+			pool := NewClientPool(nil, NewToolRegistry())
+			pool.statuses["healthy"] = &clientStatus{entry: config.MCPServerEntry{ID: "healthy"}, client: client, state: "connected", toolCount: 1}
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			if _, err := pool.RefreshServer(ctx, "healthy"); err == nil {
+				t.Fatal("RefreshServer returned nil error for canceled caller")
+			}
+			status := pool.StatusSummary()[0]
+			if status.Status != "connected" || status.Error != "" {
+				t.Fatalf("caller cancellation changed healthy status: %+v", status)
+			}
+		})
+	}
+}
+
+func TestClientPool_RefreshInternalTimeoutMarksUpstreamFailed(t *testing.T) {
+	client := &mockClient{listToolsFunc: func(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	pool := NewClientPool(nil, NewToolRegistry())
+	pool.policy.handshakeTimeout = time.Millisecond
+	pool.statuses["stalled"] = &clientStatus{entry: config.MCPServerEntry{ID: "stalled"}, client: client, state: "connected", toolCount: 1}
+	if _, err := pool.RefreshServer(context.Background(), "stalled"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RefreshServer error = %v, want deadline exceeded", err)
+	}
+	status := pool.StatusSummary()[0]
+	if status.Status != "failed" || !strings.Contains(status.Error, "deadline exceeded") {
+		t.Fatalf("internal refresh timeout did not mark upstream failed: %+v", status)
 	}
 }

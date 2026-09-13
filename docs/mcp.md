@@ -183,8 +183,9 @@ Cached native tool registrations fail explicitly while recovery is pending.
 
 The proxy continuously drains stderr and retains an 8 KiB tail for status reads,
 redacting values supplied by the catalog's environment and token configuration,
-including incomplete value prefixes at the end of a live snapshot and fragments
-at the start of a truncated tail.
+plus argument values resolved from secret references or `${VAR}` substitutions.
+This includes incomplete value prefixes at the end of a live snapshot and
+fragments at the start of a truncated tail.
 This is bounded process-local diagnostic retention, not durable logging or a
 general secret detector. Connection loss, restart scheduling, and retry exhaustion
 also produce diagnostics on the proxy's stderr. In curated `--only` mode, native

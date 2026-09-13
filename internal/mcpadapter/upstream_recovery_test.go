@@ -49,7 +49,10 @@ func TestUpstreamFixture(t *testing.T) {
 				_ = os.Remove(filepath.Join(dir, name+".exit"))
 				appendEvent("exit")
 				if string(b) == "signal" {
-					_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+					if err := syscall.Kill(os.Getpid(), syscall.SIGKILL); err != nil {
+						os.Exit(91)
+					}
+					select {}
 				}
 				if string(b) == "stdout" {
 					stdoutClosed.Store(true)
@@ -406,5 +409,26 @@ func TestUpstreamStderr_BoundedAcrossWritesAndRedacted(t *testing.T) {
 	truncated := tail.String()
 	if len(truncated) > stderrTailBytes || strings.HasPrefix(truncated, secret[1:]) {
 		t.Fatalf("truncated stderr snapshot exposed credential suffix: length=%d head=%q", len(truncated), truncated[:64])
+	}
+}
+
+func TestUpstreamStderr_RedactsResolvedArgumentSecretsOnly(t *testing.T) {
+	t.Setenv("TEST_MCP_ARG_SECRET", "resolved-argument-secret")
+	dir := t.TempDir()
+	serverDir := filepath.Join(dir, "mcp-servers")
+	if err := os.MkdirAll(serverDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	catalog := []byte("id: test\ntransport: stdio\ncommand: /bin/test\nargs: [mcp, '${TEST_MCP_ARG_SECRET}']\n")
+	if err := os.WriteFile(filepath.Join(serverDir, "test.yaml"), catalog, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := config.LoadMCPServers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := stderrRedactionValues(entries[0])
+	if got := redactStderr("argument resolved-argument-secret; ordinary mcp", values); got != "argument [redacted]; ordinary mcp" {
+		t.Fatalf("stderr redaction = %q", got)
 	}
 }

@@ -31,12 +31,22 @@ type MCPServerEntry struct {
 	Scopes    []string          `yaml:"scopes"`
 	Enabled   *bool             `yaml:"enabled"` // nil → defaults to true
 	Tags      []string          `yaml:"tags"`
+
+	// argumentRedactionValues carries resolved argument secret material to the
+	// stdio process owner without exposing it through YAML serialization.
+	argumentRedactionValues []string
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
 // field (nil pointer) is treated as true.
 func (e *MCPServerEntry) IsEnabled() bool {
 	return e.Enabled == nil || *e.Enabled
+}
+
+// ArgumentRedactionValues returns secret material resolved from argument
+// references or environment substitutions. The caller receives a copy.
+func (e *MCPServerEntry) ArgumentRedactionValues() []string {
+	return append([]string(nil), e.argumentRedactionValues...)
 }
 
 var envVarRE = regexp.MustCompile(`\$\{([^}]+)\}`)
@@ -47,6 +57,15 @@ func expandEnvRefs(s string) string {
 		key := match[2 : len(match)-1] // strip ${ and }
 		return os.Getenv(key)
 	})
+}
+
+func envRefValues(s string) []string {
+	matches := envVarRE.FindAllStringSubmatch(s, -1)
+	values := make([]string, 0, len(matches))
+	for _, match := range matches {
+		values = append(values, os.Getenv(match[1]))
+	}
+	return values
 }
 
 // secretRefTimeout bounds one helper invocation. Resolution shells out to
@@ -105,8 +124,12 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	if len(entry.Args) > 0 {
 		args := make([]string, len(entry.Args))
 		for i, arg := range entry.Args {
+			secretRef := isSecretRef(arg)
 			if args[i], err = resolveSecretRef(ctx, fmt.Sprintf("args[%d]", i), arg); err != nil {
 				return err
+			}
+			if secretRef {
+				entry.argumentRedactionValues = append(entry.argumentRedactionValues, args[i])
 			}
 		}
 		entry.Args = args
@@ -193,6 +216,7 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		entry.URL = expandEnvRefs(entry.URL)
 		entry.Token = expandEnvRefs(entry.Token)
 		for i, arg := range entry.Args {
+			entry.argumentRedactionValues = append(entry.argumentRedactionValues, envRefValues(arg)...)
 			entry.Args[i] = expandEnvRefs(arg)
 		}
 		expanded := make(map[string]string, len(entry.Env))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -268,6 +269,15 @@ env:
 		if e.Token != "resolved-helper" {
 			t.Errorf("Token = %q, want resolved value", e.Token)
 		}
+		redactions := e.ArgumentRedactionValues()
+		if !slices.Contains(redactions, "resolved-bearer") {
+			t.Errorf("ArgumentRedactionValues() = %v, want resolved argument value", redactions)
+		}
+		for _, unwanted := range []string{"resolved-openai-key", "resolved-helper", "mcp", "--token", "not-a-ref"} {
+			if slices.Contains(redactions, unwanted) {
+				t.Errorf("ArgumentRedactionValues() = %v, contains non-argument or literal value %q", redactions, unwanted)
+			}
+		}
 	})
 
 	t.Run("catalog loader leaves refs unresolved", func(t *testing.T) {
@@ -404,6 +414,10 @@ args: [mcp, "${TEST_MCP_ARG}"]
 		}
 		if len(entries[0].Args) != 2 || entries[0].Args[1] != "expanded-arg" {
 			t.Errorf("Args = %v, want ${VAR} expanded", entries[0].Args)
+		}
+		redactions := entries[0].ArgumentRedactionValues()
+		if !slices.Contains(redactions, "expanded-arg") || slices.Contains(redactions, "mcp") {
+			t.Errorf("ArgumentRedactionValues() = %v, want only the substituted argument value", redactions)
 		}
 	})
 }

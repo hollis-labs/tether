@@ -171,10 +171,9 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
 	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
 	u.cmd.Env = os.Environ()
-	u.stderr.secrets = append(u.stderr.secrets, entry.Token)
+	u.stderr.secrets = stderrRedactionValues(entry)
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
-		u.stderr.secrets = append(u.stderr.secrets, v)
 	}
 	u.cmd.Stderr = &u.stderr
 	// Bound waiting for inherited stderr pipes after the process itself exits.
@@ -215,6 +214,15 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 		close(u.done)
 	}()
 	return u, nil
+}
+
+func stderrRedactionValues(entry config.MCPServerEntry) []string {
+	values := []string{entry.Token}
+	values = append(values, entry.ArgumentRedactionValues()...)
+	for _, value := range entry.Env {
+		values = append(values, value)
+	}
+	return values
 }
 
 func (u *stdioUpstream) Close() error {
