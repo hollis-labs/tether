@@ -245,6 +245,9 @@ func (s *Service) RegisterIdempotent(ctx context.Context, kind Kind, p Profile, 
 	if p.LastUpdatedBy == "" {
 		p.LastUpdatedBy = "system:register"
 	}
+	if len(p.FieldMetadata) == 0 {
+		p.FieldMetadata = SynthesizeFieldMetadata(p)
+	}
 
 	winnerURN, wasCreated, err := s.storage.RegisterWithExternalKey(ctx, p, substrate, externalID)
 	if err != nil {

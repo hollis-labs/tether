@@ -2,6 +2,9 @@ package registry_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -364,5 +367,274 @@ func TestBackfillFieldMetadata(t *testing.T) {
 	}
 	if count2 != 0 {
 		t.Errorf("Second BackfillFieldMetadata count = %d; want 0", count2)
+	}
+}
+
+func TestService_Sync_NeverTouchesAuthoredFields(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "sync_payload.json")
+	payload := []byte(`{
+		"display_name": "Synced Derived Name",
+		"project": "synced-project",
+		"health_status": "degraded",
+		"host_address": "10.0.0.1:9090",
+		"description": "Attempted overwrite description",
+		"tags": ["overwritten-tag"],
+		"guidelines": "Attempted overwrite guidelines",
+		"entry_points": ["overwritten.go"],
+		"title": "Attempted Overwrite Title",
+		"role": "Attempted Overwrite Role",
+		"avatar": "https://overwritten.invalid/avatar.png",
+		"capabilities": ["overwritten-cap"],
+		"skills": [{"name": "overwritten-skill"}],
+		"links": [{"kind": "bad", "target": "https://bad.invalid"}]
+	}`)
+	if err := os.WriteFile(target, payload, 0o644); err != nil {
+		t.Fatalf("write payload fixture: %v", err)
+	}
+
+	resolver, err := registry.NewFileResolver(root)
+	if err != nil {
+		t.Fatalf("NewFileResolver: %v", err)
+	}
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	storage := registry.NewStorage(db)
+	svc := registry.NewService(storage, registry.WithResolver(resolver))
+	ctx := context.Background()
+
+	skillTime := time.Now().UTC().Truncate(time.Second)
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName:  "Original Name",
+		Project:      "original-project",
+		HealthStatus: "healthy",
+		HostAddress:  "127.0.0.1:8080",
+		Description:  "Original authored description",
+		Tags:         []string{"backend", "go"},
+		Guidelines:   "Original authored guidelines",
+		EntryPoints:  []string{"cmd/app/main.go"},
+		Title:        "Staff Engineer",
+		Role:         "Tech Lead",
+		Avatar:       "https://example.com/avatar.png",
+		Capabilities: []string{"golang", "sqlite"},
+		Skills: []registry.Skill{
+			{Name: "debugging", LearnedAt: skillTime},
+		},
+		Links: []registry.Link{
+			{Kind: "repo", Target: "https://github.com/hollis-labs/tether"},
+		},
+		Callback: &registry.Callback{
+			Scheme: "file",
+			Target: "file://" + target,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Sync against the payload that specifies conflicting values for ALL fields.
+	synced, err := svc.Sync(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// 1. Derived fields MUST update to the new values
+	if synced.DisplayName != "Synced Derived Name" {
+		t.Errorf("DisplayName = %q; want %q", synced.DisplayName, "Synced Derived Name")
+	}
+	if synced.Project != "synced-project" {
+		t.Errorf("Project = %q; want %q", synced.Project, "synced-project")
+	}
+	if synced.HealthStatus != "degraded" {
+		t.Errorf("HealthStatus = %q; want %q", synced.HealthStatus, "degraded")
+	}
+	if synced.HostAddress != "10.0.0.1:9090" {
+		t.Errorf("HostAddress = %q; want %q", synced.HostAddress, "10.0.0.1:9090")
+	}
+
+	// 2. Authored fields MUST remain byte-for-byte untouched (CW-20260912-0095 Scope Item 3)
+	if synced.Description != "Original authored description" {
+		t.Errorf("Description = %q; want %q", synced.Description, "Original authored description")
+	}
+	if !reflect.DeepEqual(synced.Tags, []string{"backend", "go"}) {
+		t.Errorf("Tags = %v; want [backend go]", synced.Tags)
+	}
+	if synced.Guidelines != "Original authored guidelines" {
+		t.Errorf("Guidelines = %q; want %q", synced.Guidelines, "Original authored guidelines")
+	}
+	if !reflect.DeepEqual(synced.EntryPoints, []string{"cmd/app/main.go"}) {
+		t.Errorf("EntryPoints = %v; want [cmd/app/main.go]", synced.EntryPoints)
+	}
+	if synced.Title != "Staff Engineer" {
+		t.Errorf("Title = %q; want %q", synced.Title, "Staff Engineer")
+	}
+	if synced.Role != "Tech Lead" {
+		t.Errorf("Role = %q; want %q", synced.Role, "Tech Lead")
+	}
+	if synced.Avatar != "https://example.com/avatar.png" {
+		t.Errorf("Avatar = %q; want %q", synced.Avatar, "https://example.com/avatar.png")
+	}
+	if !reflect.DeepEqual(synced.Capabilities, []string{"golang", "sqlite"}) {
+		t.Errorf("Capabilities = %v; want [golang sqlite]", synced.Capabilities)
+	}
+	if len(synced.Skills) != 1 || synced.Skills[0].Name != "debugging" {
+		t.Errorf("Skills = %v; want [{debugging}]", synced.Skills)
+	}
+	if len(synced.Links) != 1 || synced.Links[0].Kind != "repo" || synced.Links[0].Target != "https://github.com/hollis-labs/tether" {
+		t.Errorf("Links = %v; want repo link", synced.Links)
+	}
+
+	// 3. Stamped freshness: CachedAt row-level bumped, and per-field CachedAt stamped ONLY on touched derived fields
+	if synced.CachedAt == nil {
+		t.Fatal("synced.CachedAt is nil; want bumped value")
+	}
+	for _, derivedField := range []string{"display_name", "project", "health_status", "host_address"} {
+		meta, ok := synced.FieldMetaFor(derivedField)
+		if !ok {
+			t.Errorf("missing FieldMetadata for derived field %q", derivedField)
+			continue
+		}
+		if meta.Class != registry.FieldClassDerived {
+			t.Errorf("FieldMetadata[%q].Class = %q; want derived", derivedField, meta.Class)
+		}
+		if meta.CachedAt == nil || !meta.CachedAt.Equal(*synced.CachedAt) {
+			t.Errorf("FieldMetadata[%q].CachedAt = %v; want %v", derivedField, meta.CachedAt, synced.CachedAt)
+		}
+		if meta.LastUpdatedBy != "system:sync" {
+			t.Errorf("FieldMetadata[%q].LastUpdatedBy = %q; want system:sync", derivedField, meta.LastUpdatedBy)
+		}
+	}
+	for _, authoredField := range []string{"description", "tags", "guidelines", "entry_points", "title", "role", "avatar", "capabilities"} {
+		meta, ok := synced.FieldMetaFor(authoredField)
+		if ok && meta.CachedAt != nil {
+			t.Errorf("authored field %q unexpectedly has CachedAt stamped: %v", authoredField, meta.CachedAt)
+		}
+	}
+}
+
+func TestService_Sync_ResolverFailureLeavesLastGood(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "sync_target.json")
+	if err := os.WriteFile(target, []byte(`{"display_name": "Initial Good Name", "health_status": "healthy"}`), 0o644); err != nil {
+		t.Fatalf("write initial fixture: %v", err)
+	}
+
+	resolver, err := registry.NewFileResolver(root)
+	if err != nil {
+		t.Fatalf("NewFileResolver: %v", err)
+	}
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	storage := registry.NewStorage(db)
+	svc := registry.NewService(storage, registry.WithResolver(resolver))
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
+		DisplayName: "Initial Register Name",
+		Description: "Important authored note",
+		Role:        "specialist",
+		Callback: &registry.Callback{
+			Scheme: "file",
+			Target: "file://" + target,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// 1. First sync succeeds, establishing the initial good state
+	lastGood, err := svc.Sync(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if lastGood.DisplayName != "Initial Good Name" {
+		t.Fatalf("first Sync DisplayName = %q; want Initial Good Name", lastGood.DisplayName)
+	}
+	if lastGood.CachedAt == nil {
+		t.Fatal("first Sync CachedAt is nil")
+	}
+
+	// 2. Break the fixture (corrupt JSON)
+	if err := os.WriteFile(target, []byte(`{INVALID JSON`), 0o644); err != nil {
+		t.Fatalf("corrupt fixture: %v", err)
+	}
+
+	// 3. Second sync must fail and report the failure (must not pretend success)
+	_, syncErr := svc.Sync(ctx, reg.URN)
+	if syncErr == nil {
+		t.Fatal("second Sync succeeded; want error on corrupt payload")
+	}
+
+	// 4. Stored state must remain completely unchanged (last good value intact, not blanked)
+	reloaded, err := svc.Lookup(ctx, reg.URN)
+	if err != nil {
+		t.Fatalf("Lookup after failed sync: %v", err)
+	}
+	if reloaded.DisplayName != lastGood.DisplayName {
+		t.Errorf("DisplayName mutated on failure: got %q, want %q", reloaded.DisplayName, lastGood.DisplayName)
+	}
+	if reloaded.HealthStatus != lastGood.HealthStatus {
+		t.Errorf("HealthStatus mutated on failure: got %q, want %q", reloaded.HealthStatus, lastGood.HealthStatus)
+	}
+	if reloaded.Description != lastGood.Description {
+		t.Errorf("Description mutated on failure: got %q, want %q", reloaded.Description, lastGood.Description)
+	}
+	if reloaded.Role != lastGood.Role {
+		t.Errorf("Role mutated on failure: got %q, want %q", reloaded.Role, lastGood.Role)
+	}
+	if !reloaded.CachedAt.Equal(*lastGood.CachedAt) {
+		t.Errorf("CachedAt changed on failed sync: got %v, want %v", reloaded.CachedAt, lastGood.CachedAt)
+	}
+}
+
+func TestBootstrap_IdentityKeyedIdempotency(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+
+	root := t.TempDir()
+	// Two project files in different catalog paths representing the SAME project id
+	writeBootstrapFile(t, filepath.Join(root, "projects"), "clockwork_path_a.yaml", `id: clockwork
+name: Clockwork Project
+repo_root: /repos/clockwork
+tracking_root: /tracking/clockwork
+`)
+	writeBootstrapFile(t, filepath.Join(root, "projects"), "clockwork_path_b.yaml", `id: clockwork
+name: Clockwork Project Renamed
+repo_root: /repos/clockwork
+tracking_root: /tracking/clockwork
+`)
+
+	report, err := registry.BootstrapFromCatalog(ctx, svc, root, false)
+	if err != nil {
+		t.Fatalf("BootstrapFromCatalog: %v", err)
+	}
+
+	// Exactly 1 project should be imported, 1 skipped because of matching external ID
+	if report.Imported != 1 {
+		t.Errorf("report.Imported = %d; want 1", report.Imported)
+	}
+	if report.Skipped != 1 {
+		t.Errorf("report.Skipped = %d; want 1", report.Skipped)
+	}
+
+	projects, err := svc.Search(ctx, registry.KindProject, registry.Filter{Status: registry.StatusAny})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("projects count = %d; want exactly 1 project row", len(projects))
+	}
+
+	// Look up by external ID resolves to this single row
+	lookedUp, err := svc.LookupBy(ctx, registry.KindProject, "clockwork", "tether")
+	if err != nil {
+		t.Fatalf("LookupBy: %v", err)
+	}
+	if lookedUp.URN != projects[0].URN {
+		t.Errorf("LookupBy URN = %q; want %q", lookedUp.URN, projects[0].URN)
 	}
 }

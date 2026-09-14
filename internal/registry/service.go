@@ -1109,13 +1109,18 @@ func (s *Service) UpdateSelf(ctx context.Context, urn string, patch UpdatePatch)
 	}
 	touchMeta := func(field string, defaultClass FieldClass) {
 		class := defaultClass
-		if existingMeta, ok := meta[field]; ok && existingMeta.Class != "" {
-			class = existingMeta.Class
+		var cachedAt *time.Time
+		if existingMeta, ok := meta[field]; ok {
+			if existingMeta.Class != "" {
+				class = existingMeta.Class
+			}
+			cachedAt = existingMeta.CachedAt
 		}
 		meta[field] = FieldMeta{
 			Class:         class,
 			LastUpdatedBy: patch.LastUpdatedBy,
 			UpdatedAt:     now,
+			CachedAt:      cachedAt,
 		}
 	}
 
@@ -1323,12 +1328,13 @@ func (s *Service) Sync(ctx context.Context, urn string) (Profile, error) {
 		return Profile{}, fmt.Errorf("registry: sync %q: %w", urn, err)
 	}
 
-	patch := buildSyncPatch(parsed)
+	syncTime := time.Now().UTC()
+	patch := buildSyncPatch(existing, parsed, syncTime)
 	if _, err := s.UpdateSelf(ctx, urn, patch); err != nil {
 		return Profile{}, fmt.Errorf("registry: sync %q: update_self: %w", urn, err)
 	}
 
-	if err := s.storage.BumpCachedAt(ctx, urn, time.Now().UTC()); err != nil {
+	if err := s.storage.BumpCachedAt(ctx, urn, syncTime); err != nil {
 		return Profile{}, fmt.Errorf("registry: sync %q: bump cached_at: %w", urn, err)
 	}
 
@@ -1382,62 +1388,64 @@ func parseSyncPayload(payload []byte) (Profile, error) {
 	return p, nil
 }
 
-// buildSyncPatch translates a parsed Profile into a full-REPLACE
-// UpdatePatch. Scalar fields with empty values are omitted from the patch
-// (avoids unintentionally clearing columns on a sparse payload); array
-// fields are always wrapped in ArrayModeReplace, though len(Value)==0
-// hits the UpdateSelf no-op path (see Sync godoc for the nuance).
+// buildSyncPatch translates a parsed Profile into an UpdatePatch affecting
+// ONLY derived fields. Authored fields (description, tags, guidelines,
+// entry_points, title, role, avatar, capabilities, skills, links) are NEVER
+// touched by Sync (CW-20260912-0075 / CW-20260912-0095).
 //
-// LastUpdatedBy is hard-coded to "system:sync" — v060-02's token-based
-// identity supersedes this placeholder.
-func buildSyncPatch(p Profile) UpdatePatch {
-	patch := UpdatePatch{LastUpdatedBy: "system:sync"}
-	if p.DisplayName != "" {
+// For each derived field present in parsed, the patch updates the column and
+// stamps FieldMetadata[field] with FieldClassDerived, LastUpdatedBy="system:sync",
+// and CachedAt=&syncTime.
+func buildSyncPatch(existing Profile, p Profile, syncTime time.Time) UpdatePatch {
+	patch := UpdatePatch{
+		LastUpdatedBy: "system:sync",
+		FieldMetadata: make(map[string]FieldMeta),
+	}
+
+	stampDerived := func(field string) {
+		patch.FieldMetadata[field] = FieldMeta{
+			Class:         FieldClassDerived,
+			LastUpdatedBy: "system:sync",
+			UpdatedAt:     syncTime,
+			CachedAt:      &syncTime,
+		}
+	}
+
+	if p.DisplayName != "" && existing.FieldClassFor("display_name") == FieldClassDerived {
 		v := p.DisplayName
 		patch.DisplayName = &v
+		stampDerived("display_name")
 	}
-	if p.Title != "" {
-		v := p.Title
-		patch.Title = &v
-	}
-	if p.Role != "" {
-		v := p.Role
-		patch.Role = &v
-	}
-	if p.Description != "" {
-		v := p.Description
-		patch.Description = &v
-	}
-	if p.Avatar != "" {
-		v := p.Avatar
-		patch.Avatar = &v
-	}
-	if p.Project != "" {
+	if p.Project != "" && existing.FieldClassFor("project") == FieldClassDerived {
 		v := p.Project
 		patch.Project = &v
+		stampDerived("project")
 	}
-	if p.Status != "" {
+	if p.Status != "" && existing.FieldClassFor("status") == FieldClassDerived {
 		v := p.Status
 		patch.Status = &v
+		stampDerived("status")
 	}
-	if p.HealthStatus != "" {
+	if p.HealthStatus != "" && existing.FieldClassFor("health_status") == FieldClassDerived {
 		v := p.HealthStatus
 		patch.HealthStatus = &v
+		stampDerived("health_status")
 	}
-	if p.HostAddress != "" {
+	if p.HostAddress != "" && existing.FieldClassFor("host_address") == FieldClassDerived {
 		v := p.HostAddress
 		patch.HostAddress = &v
+		stampDerived("host_address")
 	}
-	if p.LastSeenAt != nil {
+	if p.LastSeenAt != nil && existing.FieldClassFor("last_seen_at") == FieldClassDerived {
 		t := *p.LastSeenAt
 		patch.LastSeenAt = &t
+		stampDerived("last_seen_at")
 	}
-	if len(p.KindMeta) > 0 {
+	if len(p.KindMeta) > 0 && existing.FieldClassFor("kind_meta") == FieldClassDerived {
 		patch.KindMeta = p.KindMeta
+		stampDerived("kind_meta")
 	}
-	patch.Capabilities = &ArrayPatch[string]{Mode: ArrayModeReplace, Value: p.Capabilities}
-	patch.Skills = &ArrayPatch[Skill]{Mode: ArrayModeReplace, Value: p.Skills}
-	patch.Links = &ArrayPatch[Link]{Mode: ArrayModeReplace, Value: p.Links}
+
 	return patch
 }
 

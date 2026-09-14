@@ -948,6 +948,7 @@ func TestService_Sync_FileResolverHappyPath(t *testing.T) {
 	target := filepath.Join(root, "agent.json")
 	body := []byte(`{
 		"display_name": "Synced Alpha",
+		"project": "synced-project",
 		"role": "implementer-after-sync",
 		"title": "Engineer",
 		"capabilities": ["go", "rust"],
@@ -980,17 +981,21 @@ func TestService_Sync_FileResolverHappyPath(t *testing.T) {
 	if got.DisplayName != "Synced Alpha" {
 		t.Errorf("DisplayName = %q, want %q", got.DisplayName, "Synced Alpha")
 	}
-	if got.Role != "implementer-after-sync" {
-		t.Errorf("Role = %q, want %q", got.Role, "implementer-after-sync")
+	if got.Project != "synced-project" {
+		t.Errorf("Project = %q, want %q", got.Project, "synced-project")
 	}
-	if got.Title != "Engineer" {
-		t.Errorf("Title = %q, want %q", got.Title, "Engineer")
+	// Authored fields must NOT be overwritten by Sync (CW-20260912-0095)
+	if got.Role != "pre-sync" {
+		t.Errorf("Role = %q, want %q", got.Role, "pre-sync")
 	}
-	if !stringSetEqual(got.Capabilities, []string{"go", "rust"}) {
-		t.Errorf("Capabilities = %v, want [go rust]", got.Capabilities)
+	if got.Title != "" {
+		t.Errorf("Title = %q, want empty", got.Title)
 	}
-	if len(got.Links) != 1 || got.Links[0].Kind != "repo" {
-		t.Errorf("Links = %v, want one repo link", got.Links)
+	if len(got.Capabilities) != 0 {
+		t.Errorf("Capabilities = %v, want empty", got.Capabilities)
+	}
+	if len(got.Links) != 0 {
+		t.Errorf("Links = %v, want empty", got.Links)
 	}
 	if got.LastUpdatedBy != "system:sync" {
 		t.Errorf("LastUpdatedBy = %q, want system:sync", got.LastUpdatedBy)
@@ -1001,6 +1006,9 @@ func TestService_Sync_FileResolverHappyPath(t *testing.T) {
 	if before != nil && !got.CachedAt.After(*before) {
 		t.Errorf("CachedAt not bumped: before=%v after=%v", *before, *got.CachedAt)
 	}
+	if meta, ok := got.FieldMetaFor("display_name"); !ok || meta.CachedAt == nil {
+		t.Errorf("FieldMetadata[display_name].CachedAt = nil; want stamped time")
+	}
 }
 
 func TestService_Sync_CLIResolverHappyPath(t *testing.T) {
@@ -1009,11 +1017,12 @@ func TestService_Sync_CLIResolverHappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Single-token printf payload (no quoting v1).
-	payload := `{"display_name":"CLI-Synced","title":"FromCLI"}`
+	payload := `{"display_name":"CLI-Synced","project":"CLI-Proj","title":"FromCLI"}`
 	cmd := "cli://printf " + payload
 
 	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
 		DisplayName: "PreCLI",
+		Title:       "AuthoredTitle",
 		Callback:    &registry.Callback{Scheme: "cli", Target: cmd},
 	})
 	if err != nil {
@@ -1027,8 +1036,12 @@ func TestService_Sync_CLIResolverHappyPath(t *testing.T) {
 	if got.DisplayName != "CLI-Synced" {
 		t.Errorf("DisplayName = %q, want CLI-Synced", got.DisplayName)
 	}
-	if got.Title != "FromCLI" {
-		t.Errorf("Title = %q, want FromCLI", got.Title)
+	if got.Project != "CLI-Proj" {
+		t.Errorf("Project = %q, want CLI-Proj", got.Project)
+	}
+	// Authored fields must NOT be overwritten by Sync
+	if got.Title != "AuthoredTitle" {
+		t.Errorf("Title = %q, want AuthoredTitle", got.Title)
 	}
 }
 
@@ -1094,7 +1107,7 @@ func TestService_Sync_MalformedJSONPayload(t *testing.T) {
 func TestService_Sync_YAMLPayload(t *testing.T) {
 	root := canonTempDir(t)
 	target := filepath.Join(root, "agent.yaml")
-	body := []byte("display_name: YAML Alpha\nrole: yamler\ntitle: YAMLWriter\n")
+	body := []byte("display_name: YAML Alpha\nproject: YAMLProject\nrole: yamler\ntitle: YAMLWriter\n")
 	if err := os.WriteFile(target, body, 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -1103,6 +1116,7 @@ func TestService_Sync_YAMLPayload(t *testing.T) {
 
 	reg, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
 		DisplayName: "Before",
+		Role:        "authored-role",
 		Callback:    &registry.Callback{Scheme: "file", Target: "file://" + target},
 	})
 	if err != nil {
@@ -1116,11 +1130,15 @@ func TestService_Sync_YAMLPayload(t *testing.T) {
 	if got.DisplayName != "YAML Alpha" {
 		t.Errorf("DisplayName = %q, want YAML Alpha", got.DisplayName)
 	}
-	if got.Role != "yamler" {
-		t.Errorf("Role = %q, want yamler", got.Role)
+	if got.Project != "YAMLProject" {
+		t.Errorf("Project = %q, want YAMLProject", got.Project)
 	}
-	if got.Title != "YAMLWriter" {
-		t.Errorf("Title = %q, want YAMLWriter", got.Title)
+	// Authored fields must NOT be overwritten by Sync
+	if got.Role != "authored-role" {
+		t.Errorf("Role = %q, want authored-role", got.Role)
+	}
+	if got.Title != "" {
+		t.Errorf("Title = %q, want empty", got.Title)
 	}
 }
 

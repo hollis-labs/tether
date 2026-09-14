@@ -548,6 +548,7 @@ func TestRegistry_Sync_FileCallbackRefreshes(t *testing.T) {
 	fxPath := filepath.Join(tmp, "agent.yaml")
 	if err := os.WriteFile(fxPath, []byte(`{
   "display_name": "Refreshed Name",
+  "project": "synced-project",
   "role": "synced-role",
   "capabilities": ["after-sync"]
 }`), 0o600); err != nil {
@@ -578,7 +579,7 @@ func TestRegistry_Sync_FileCallbackRefreshes(t *testing.T) {
 		t.Fatalf("decode register: %v", err)
 	}
 
-	// Sync should overwrite the thin profile from the fixture.
+	// Sync should update derived fields but NEVER touch authored fields (CW-20260912-0095).
 	resp, body = r.do(http.MethodPost, itemURL("agents", seeded.URN)+"/sync", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("sync status = %d: %s", resp.StatusCode, body)
@@ -590,14 +591,81 @@ func TestRegistry_Sync_FileCallbackRefreshes(t *testing.T) {
 	if refreshed.DisplayName != "Refreshed Name" {
 		t.Errorf("DisplayName = %q, want Refreshed Name", refreshed.DisplayName)
 	}
-	if refreshed.Role != "synced-role" {
-		t.Errorf("Role = %q, want synced-role", refreshed.Role)
+	if refreshed.Project != "synced-project" {
+		t.Errorf("Project = %q, want synced-project", refreshed.Project)
 	}
-	if len(refreshed.Capabilities) != 1 || refreshed.Capabilities[0] != "after-sync" {
-		t.Errorf("Capabilities = %v, want [after-sync]", refreshed.Capabilities)
+	if refreshed.Role != "pre" {
+		t.Errorf("Role = %q, want pre (authored field must not be overwritten)", refreshed.Role)
+	}
+	if len(refreshed.Capabilities) != 0 {
+		t.Errorf("Capabilities = %v, want empty (authored field must not be overwritten)", refreshed.Capabilities)
 	}
 	if refreshed.CachedAt == nil {
 		t.Errorf("CachedAt nil after sync; bump expected")
+	}
+}
+
+func TestRegistry_Sync_FailureReportsBadGatewayAndLeavesLastGood(t *testing.T) {
+	tmp := t.TempDir()
+	fxPath := filepath.Join(tmp, "corrupt_agent.json")
+	if err := os.WriteFile(fxPath, []byte(`{INVALID JSON`), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	resolver, err := registry.NewFileResolver(tmp)
+	if err != nil {
+		t.Fatalf("file resolver: %v", err)
+	}
+
+	r := newRegServer(t, registry.WithResolver(resolver))
+
+	// Seed agent with initial values
+	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
+		DisplayName:   "Last Good Name",
+		Description:   "Preserved description",
+		Role:          "specialist",
+		LastUpdatedBy: "tester",
+		Callback: &registry.Callback{
+			Scheme: "file",
+			Target: "file://" + fxPath,
+		},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", resp.StatusCode, body)
+	}
+	var seeded registry.Profile
+	if err := json.Unmarshal(body, &seeded); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+
+	// Sync fails due to invalid JSON payload -> 502 Bad Gateway
+	resp, body = r.do(http.MethodPost, itemURL("agents", seeded.URN)+"/sync", nil)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("sync status = %d, want 502: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"code":"internal_error"`) {
+		t.Errorf("expected internal_error in error body: %s", body)
+	}
+
+	// Reading the profile shows last-good values are completely intact
+	resp, body = r.do(http.MethodGet, itemURL("agents", seeded.URN), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var current registry.Profile
+	if err := json.Unmarshal(body, &current); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if current.DisplayName != "Last Good Name" {
+		t.Errorf("DisplayName = %q, want Last Good Name", current.DisplayName)
+	}
+	if current.Description != "Preserved description" {
+		t.Errorf("Description = %q, want Preserved description", current.Description)
+	}
+	if current.Role != "specialist" {
+		t.Errorf("Role = %q, want specialist", current.Role)
+	}
+	if current.CachedAt != nil {
+		t.Errorf("CachedAt = %v, want nil (sync never succeeded)", current.CachedAt)
 	}
 }
 

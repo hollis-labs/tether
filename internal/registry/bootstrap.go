@@ -232,9 +232,60 @@ func importFile(
 		return
 	}
 
-	existing, lookupErr := svc.storage.FindByCallbackTarget(ctx, profile.Callback.Target)
-	switch {
-	case lookupErr == nil:
+	var primaryExtID string
+	for _, ext := range profile.ExternalIDs {
+		if ext.Substrate == "tether" && ext.ExternalID != "" {
+			primaryExtID = ext.ExternalID
+			break
+		}
+	}
+
+	var existing Profile
+	var foundExisting bool
+
+	// 1. Identity-keyed lookup via external ID (CW-20260912-0052 / CW-20260912-0095).
+	if primaryExtID != "" {
+		if row, err := svc.LookupBy(ctx, kind, primaryExtID, "tether"); err == nil {
+			existing = row
+			foundExisting = true
+		} else if !errors.Is(err, ErrNotFound) {
+			report.Errors = append(report.Errors, BootstrapError{
+				Path:   path,
+				Reason: fmt.Sprintf("lookup by external id: %v", err),
+			})
+			return
+		} else {
+			// Cross-substrate match: see if another substrate registered this same external ID
+			if target, err := svc.LookupBy(ctx, kind, primaryExtID, ""); err == nil {
+				if target.Owner == "" || target.Owner == "tether" || target.Owner == "cerberus" {
+					if attachErr := svc.AttachExternalID(ctx, target.URN, "tether", primaryExtID); attachErr == nil {
+						existing = target
+						foundExisting = true
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Fall back to FindByCallbackTarget if not found by external ID.
+	if !foundExisting {
+		cbProfile, err := svc.storage.FindByCallbackTarget(ctx, profile.Callback.Target)
+		if err == nil {
+			existing = cbProfile
+			foundExisting = true
+			if primaryExtID != "" {
+				_ = svc.AttachExternalID(ctx, existing.URN, "tether", primaryExtID)
+			}
+		} else if !errors.Is(err, ErrNotFound) {
+			report.Errors = append(report.Errors, BootstrapError{
+				Path:   path,
+				Reason: fmt.Sprintf("lookup by callback: %v", err),
+			})
+			return
+		}
+	}
+
+	if foundExisting {
 		// Existing row.
 		if !force {
 			report.Skipped++
@@ -266,26 +317,17 @@ func importFile(
 		}
 		report.Refreshed++
 		return
+	}
 
-	case errors.Is(lookupErr, ErrNotFound):
-		// New row → Register.
-		if _, err := svc.Register(ctx, kind, profile); err != nil {
-			report.Errors = append(report.Errors, BootstrapError{
-				Path:   path,
-				Reason: fmt.Sprintf("register %s: %v", kind, err),
-			})
-			return
-		}
-		report.Imported++
-		return
-
-	default:
+	// New row → Register.
+	if _, err := svc.Register(ctx, kind, profile); err != nil {
 		report.Errors = append(report.Errors, BootstrapError{
 			Path:   path,
-			Reason: fmt.Sprintf("lookup by callback: %v", lookupErr),
+			Reason: fmt.Sprintf("register %s: %v", kind, err),
 		})
 		return
 	}
+	report.Imported++
 }
 
 // agentProfileFromFile parses path as a config.Agent YAML and translates
@@ -333,6 +375,23 @@ func agentProfileFromFile(absPath string) (Profile, error) {
 		return Profile{}, fmt.Errorf("abs path: %w", err)
 	}
 
+	externalID := strings.TrimSpace(a.ID)
+	if externalID == "" {
+		externalID = strings.TrimSpace(a.Name)
+	}
+	if externalID == "" {
+		externalID = strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
+	}
+
+	var extIDs []ExternalID
+	if externalID != "" {
+		extIDs = []ExternalID{{
+			Substrate:  "tether",
+			ExternalID: externalID,
+			AttachedAt: time.Now().UTC(),
+		}}
+	}
+
 	return Profile{
 		Owner:         "tether",
 		DisplayName:   display,
@@ -341,6 +400,7 @@ func agentProfileFromFile(absPath string) (Profile, error) {
 		KindMeta:      kindMeta,
 		Callback:      &Callback{Scheme: "file", Target: "file://" + abs},
 		LastUpdatedBy: bootstrapLastUpdatedBy,
+		ExternalIDs:   extIDs,
 	}, nil
 }
 
@@ -376,12 +436,30 @@ func projectProfileFromFile(absPath string) (Profile, error) {
 		return Profile{}, fmt.Errorf("abs path: %w", err)
 	}
 
+	externalID := strings.TrimSpace(p.ID)
+	if externalID == "" {
+		externalID = strings.TrimSpace(p.Name)
+	}
+	if externalID == "" {
+		externalID = strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
+	}
+
+	var extIDs []ExternalID
+	if externalID != "" {
+		extIDs = []ExternalID{{
+			Substrate:  "tether",
+			ExternalID: externalID,
+			AttachedAt: time.Now().UTC(),
+		}}
+	}
+
 	return Profile{
 		Owner:         "tether",
 		DisplayName:   display,
 		KindMeta:      kindMeta,
 		Callback:      &Callback{Scheme: "file", Target: "file://" + abs},
 		LastUpdatedBy: bootstrapLastUpdatedBy,
+		ExternalIDs:   extIDs,
 	}, nil
 }
 

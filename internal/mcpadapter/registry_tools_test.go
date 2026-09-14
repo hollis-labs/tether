@@ -491,6 +491,7 @@ func TestRegistryTools_Sync_FileCallback(t *testing.T) {
 	fixturePath := filepath.Join(root, "agent.json")
 	updatedProfile := map[string]any{
 		"display_name": "Refreshed",
+		"project":      "synced-project",
 		"role":         "synced-role",
 		"capabilities": []string{"freshly-synced"},
 	}
@@ -513,6 +514,7 @@ func TestRegistryTools_Sync_FileCallback(t *testing.T) {
 		"kind": "agent",
 		"profile": map[string]any{
 			"display_name": "Original",
+			"role":         "original-role",
 			"callback": map[string]any{
 				"scheme": "file",
 				"target": "file://" + fixturePath,
@@ -537,12 +539,16 @@ func TestRegistryTools_Sync_FileCallback(t *testing.T) {
 	if got, _ := profile["display_name"].(string); got != "Refreshed" {
 		t.Errorf("display_name = %q, want Refreshed", got)
 	}
-	if got, _ := profile["role"].(string); got != "synced-role" {
-		t.Errorf("role = %q, want synced-role", got)
+	if got, _ := profile["project"].(string); got != "synced-project" {
+		t.Errorf("project = %q, want synced-project", got)
+	}
+	// Authored fields must NOT be overwritten by Sync (CW-20260912-0095)
+	if got, _ := profile["role"].(string); got != "original-role" {
+		t.Errorf("role = %q, want original-role (authored field must not be overwritten)", got)
 	}
 	caps, _ := profile["capabilities"].([]any)
-	if len(caps) != 1 {
-		t.Errorf("capabilities = %v, want 1 entry", caps)
+	if len(caps) != 0 {
+		t.Errorf("capabilities = %v, want empty (authored field must not be overwritten)", caps)
 	}
 	// cached_at should now be populated.
 	cachedAt, _ := profile["cached_at"].(string)
