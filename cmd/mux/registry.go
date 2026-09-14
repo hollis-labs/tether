@@ -287,6 +287,7 @@ var (
 	searchCapability string
 	searchSkillName  string
 	searchStatus     string
+	searchTag        string
 	searchJSON       bool
 )
 
@@ -317,6 +318,7 @@ Output:
 			Capability: searchCapability,
 			SkillName:  searchSkillName,
 			Status:     searchStatus,
+			Tag:        searchTag,
 		}
 		rc, err := registryClient()
 		if err != nil {
@@ -1014,6 +1016,7 @@ func resetRegistryFlags() {
 	searchCapability = ""
 	searchSkillName = ""
 	searchStatus = ""
+	searchTag = ""
 	searchJSON = false
 	updateSelfFile = ""
 	mergeDryRun = false
@@ -1069,6 +1072,7 @@ func init() {
 	registrySearchCmd.Flags().StringVar(&searchCapability, "capability", "", "filter by capability membership")
 	registrySearchCmd.Flags().StringVar(&searchSkillName, "skill-name", "", "filter by skill name membership")
 	registrySearchCmd.Flags().StringVar(&searchStatus, "status", "", "filter by status ('active' (default) or 'deprecated')")
+	registrySearchCmd.Flags().StringVar(&searchTag, "tag", "", "filter by tag")
 	registrySearchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit raw JSON array instead of the line-per-row rendering")
 
 	registryUpdateSelfCmd.Flags().StringVar(&updateSelfFile, "file", "", "path to a YAML or JSON UpdatePatch document")

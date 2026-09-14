@@ -212,6 +212,9 @@ func (rc *RegistryClient) Search(ctx context.Context, kind registry.Kind, f regi
 	if f.Status != "" {
 		q.Set("status", f.Status)
 	}
+	if f.Tag != "" {
+		q.Set("tag", f.Tag)
+	}
 	path := "/registry/" + seg
 	if len(q) > 0 {
 		path += "?" + q.Encode()

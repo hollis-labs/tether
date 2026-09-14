@@ -53,22 +53,26 @@ const defaultMuxInstanceID = "agent-mux"
 // created_at, updated_at) are intentionally excluded — updated_at is
 // always bumped automatically; the others are write-once on insert.
 var updateProfileFieldAllowlist = map[string]struct{}{
-	"owner":           {},
-	"display_name":    {},
-	"title":           {},
-	"role":            {},
-	"description":     {},
-	"avatar":          {},
-	"project":         {},
-	"status":          {},
-	"callback_json":   {},
-	"cached_at":       {},
-	"health_status":   {},
-	"last_seen_at":    {},
-	"host_address":    {},
-	"merged_into":     {},
-	"kind_meta_json":  {},
-	"last_updated_by": {},
+	"owner":               {},
+	"display_name":        {},
+	"title":               {},
+	"role":                {},
+	"description":         {},
+	"avatar":              {},
+	"project":             {},
+	"status":              {},
+	"callback_json":       {},
+	"cached_at":           {},
+	"health_status":       {},
+	"last_seen_at":        {},
+	"host_address":        {},
+	"merged_into":         {},
+	"kind_meta_json":      {},
+	"last_updated_by":     {},
+	"tags_json":           {},
+	"guidelines":          {},
+	"entry_points_json":   {},
+	"field_metadata_json": {},
 }
 
 // Storage is a thin database/sql wrapper that owns the four registry_*
@@ -123,6 +127,30 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 	if len(p.KindMeta) > 0 {
 		kindMetaJSON = sql.NullString{String: string(p.KindMeta), Valid: true}
 	}
+	var tagsJSON sql.NullString
+	if len(p.Tags) > 0 {
+		b, err := json.Marshal(p.Tags)
+		if err != nil {
+			return fmt.Errorf("registry: marshal tags: %w", err)
+		}
+		tagsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var entryPointsJSON sql.NullString
+	if len(p.EntryPoints) > 0 {
+		b, err := json.Marshal(p.EntryPoints)
+		if err != nil {
+			return fmt.Errorf("registry: marshal entry_points: %w", err)
+		}
+		entryPointsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var fieldMetadataJSON sql.NullString
+	if len(p.FieldMetadata) > 0 {
+		b, err := json.Marshal(p.FieldMetadata)
+		if err != nil {
+			return fmt.Errorf("registry: marshal field_metadata: %w", err)
+		}
+		fieldMetadataJSON = sql.NullString{String: string(b), Valid: true}
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -135,14 +163,16 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		     tags_json, guidelines, entry_points_json, field_metadata_json,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
 		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
+		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON,
 		formatTime(p.CreatedAt), formatTime(p.UpdatedAt),
 	); err != nil {
 		return fmt.Errorf("registry: insert entry: %w", err)
@@ -262,6 +292,7 @@ func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Prof
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		        tags_json, guidelines, entry_points_json, field_metadata_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE callback_json IS NOT NULL
@@ -693,11 +724,16 @@ func (s *Storage) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, e
 		where += " AND urn IN (SELECT urn FROM registry_skills WHERE name = ?)"
 		args = append(args, f.SkillName)
 	}
+	if f.Tag != "" {
+		where += " AND tags_json IS NOT NULL AND urn IN (SELECT e_sub.urn FROM registry_entries e_sub, json_each(e_sub.tags_json) WHERE json_each.value = ?)"
+		args = append(args, f.Tag)
+	}
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		        tags_json, guidelines, entry_points_json, field_metadata_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE `+where+`
@@ -797,6 +833,7 @@ func (s *Storage) selectEntry(ctx context.Context, urn string) (Profile, error) 
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		        tags_json, guidelines, entry_points_json, field_metadata_json,
 		        created_at, updated_at
 		   FROM registry_entries WHERE urn = ?`, urn)
 	p, err := scanEntryRow(row.Scan)
@@ -1006,18 +1043,20 @@ type scanFn func(dest ...any) error
 
 func scanEntryRow(scan scanFn) (Profile, error) {
 	var (
-		p                                                                                                      Profile
-		kindStr, status                                                                                        string
-		owner, title, role, description, avatar, project, hostAddress, healthStatus, mergedInto, lastUpdatedBy sql.NullString
-		callbackJSON, kindMetaJSON                                                                             sql.NullString
-		cachedAt, lastSeenAt                                                                                   sql.NullString
-		createdAt, updatedAt                                                                                   string
+		p                                                                                                                  Profile
+		kindStr, status                                                                                                    string
+		owner, title, role, description, avatar, project, hostAddress, healthStatus, mergedInto, lastUpdatedBy, guidelines sql.NullString
+		callbackJSON, kindMetaJSON, tagsJSON, entryPointsJSON, fieldMetadataJSON                                           sql.NullString
+		cachedAt, lastSeenAt                                                                                               sql.NullString
+		createdAt, updatedAt                                                                                               string
 	)
 	if err := scan(
 		&p.URN, &kindStr, &owner, &p.MuxInstanceID, &p.DisplayName,
 		&title, &role, &description, &avatar, &project, &status,
 		&callbackJSON, &cachedAt, &healthStatus, &lastSeenAt, &hostAddress, &mergedInto,
-		&kindMetaJSON, &lastUpdatedBy, &createdAt, &updatedAt,
+		&kindMetaJSON, &lastUpdatedBy,
+		&tagsJSON, &guidelines, &entryPointsJSON, &fieldMetadataJSON,
+		&createdAt, &updatedAt,
 	); err != nil {
 		return Profile{}, err
 	}
@@ -1033,6 +1072,7 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 	p.HostAddress = hostAddress.String
 	p.MergedInto = mergedInto.String
 	p.LastUpdatedBy = lastUpdatedBy.String
+	p.Guidelines = guidelines.String
 
 	if callbackJSON.Valid && callbackJSON.String != "" {
 		var cb Callback
@@ -1043,6 +1083,27 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 	}
 	if kindMetaJSON.Valid && kindMetaJSON.String != "" {
 		p.KindMeta = json.RawMessage(kindMetaJSON.String)
+	}
+	if tagsJSON.Valid && tagsJSON.String != "" {
+		var tags []string
+		if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err != nil {
+			return Profile{}, fmt.Errorf("registry: unmarshal tags: %w", err)
+		}
+		p.Tags = tags
+	}
+	if entryPointsJSON.Valid && entryPointsJSON.String != "" {
+		var ep []string
+		if err := json.Unmarshal([]byte(entryPointsJSON.String), &ep); err != nil {
+			return Profile{}, fmt.Errorf("registry: unmarshal entry_points: %w", err)
+		}
+		p.EntryPoints = ep
+	}
+	if fieldMetadataJSON.Valid && fieldMetadataJSON.String != "" {
+		var meta map[string]FieldMeta
+		if err := json.Unmarshal([]byte(fieldMetadataJSON.String), &meta); err != nil {
+			return Profile{}, fmt.Errorf("registry: unmarshal field_metadata: %w", err)
+		}
+		p.FieldMetadata = meta
 	}
 	if cachedAt.Valid && cachedAt.String != "" {
 		t := parseTime(cachedAt.String)
@@ -1172,6 +1233,30 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 	if len(p.KindMeta) > 0 {
 		kindMetaJSON = sql.NullString{String: string(p.KindMeta), Valid: true}
 	}
+	var tagsJSON sql.NullString
+	if len(p.Tags) > 0 {
+		b, err := json.Marshal(p.Tags)
+		if err != nil {
+			return fmt.Errorf("registry: marshal group tags: %w", err)
+		}
+		tagsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var entryPointsJSON sql.NullString
+	if len(p.EntryPoints) > 0 {
+		b, err := json.Marshal(p.EntryPoints)
+		if err != nil {
+			return fmt.Errorf("registry: marshal group entry_points: %w", err)
+		}
+		entryPointsJSON = sql.NullString{String: string(b), Valid: true}
+	}
+	var fieldMetadataJSON sql.NullString
+	if len(p.FieldMetadata) > 0 {
+		b, err := json.Marshal(p.FieldMetadata)
+		if err != nil {
+			return fmt.Errorf("registry: marshal group field_metadata: %w", err)
+		}
+		fieldMetadataJSON = sql.NullString{String: string(b), Valid: true}
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -1184,14 +1269,16 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		     tags_json, guidelines, entry_points_json, field_metadata_json,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
 		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
+		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON,
 		formatTime(now), formatTime(p.UpdatedAt),
 	); err != nil {
 		return fmt.Errorf("registry: insert group entry: %w", err)
@@ -1288,7 +1375,9 @@ func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]
 		`SELECT e.urn, e.kind, e.owner, e.mux_instance_id, e.display_name, e.title, e.role,
 		        e.description, e.avatar, e.project, e.status, e.callback_json,
 		        e.cached_at, e.health_status, e.last_seen_at, e.host_address, e.merged_into,
-		        e.kind_meta_json, e.last_updated_by, e.created_at, e.updated_at
+		        e.kind_meta_json, e.last_updated_by,
+		        e.tags_json, e.guidelines, e.entry_points_json, e.field_metadata_json,
+		        e.created_at, e.updated_at
 		   FROM registry_entries e
 		   JOIN group_members m ON m.grp_urn = e.urn
 		  WHERE m.member_urn = ?
@@ -1432,6 +1521,7 @@ func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
+		        tags_json, guidelines, entry_points_json, field_metadata_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE display_name = ?

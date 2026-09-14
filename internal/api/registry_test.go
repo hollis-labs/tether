@@ -36,6 +36,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
@@ -1000,5 +1001,297 @@ func TestRegistry_EmptyKindSegment(t *testing.T) {
 	resp, _ := r.do(http.MethodGet, "/registry/", nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestRegistry_CorrelationFields_HTTP(t *testing.T) {
+	r := newRegServer(t)
+
+	// 1. Create a project with tags, guidelines, entry_points
+	createBody := map[string]any{
+		"display_name": "API Correlation Project",
+		"description":  "Demonstrating HTTP correlation fields",
+		"tags":         []string{"api", "http", "tether"},
+		"guidelines":   "Always check status code before reading body.",
+		"entry_points": []string{"internal/api/server.go"},
+	}
+	resp, body := r.do(http.MethodPost, "/registry/projects", createBody)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create project: %d: %s", resp.StatusCode, body)
+	}
+
+	var created struct {
+		URN           string                        `json:"urn"`
+		Tags          []string                      `json:"tags"`
+		Guidelines    string                        `json:"guidelines"`
+		EntryPoints   []string                      `json:"entry_points"`
+		FieldMetadata map[string]registry.FieldMeta `json:"field_metadata"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal created: %v", err)
+	}
+	if len(created.Tags) != 3 || created.Tags[0] != "api" {
+		t.Errorf("created.Tags = %v; want [api http tether]", created.Tags)
+	}
+	if created.Guidelines != "Always check status code before reading body." {
+		t.Errorf("created.Guidelines = %q", created.Guidelines)
+	}
+	if len(created.EntryPoints) != 1 || created.EntryPoints[0] != "internal/api/server.go" {
+		t.Errorf("created.EntryPoints = %v", created.EntryPoints)
+	}
+	if meta, ok := created.FieldMetadata["guidelines"]; !ok || meta.Class != registry.FieldClassAuthored {
+		t.Errorf("guidelines FieldMetadata = %+v; want authored", meta)
+	}
+
+	// 2. Search with ?tag=tether
+	resp, body = r.do(http.MethodGet, "/registry/projects?tag=tether", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search ?tag=tether: %d: %s", resp.StatusCode, body)
+	}
+	var searchRes struct {
+		Projects []struct {
+			URN string `json:"urn"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(body, &searchRes); err != nil {
+		t.Fatalf("unmarshal search: %v", err)
+	}
+	if len(searchRes.Projects) != 1 || searchRes.Projects[0].URN != created.URN {
+		t.Errorf("search ?tag=tether returned %v; want [%s]", searchRes.Projects, created.URN)
+	}
+
+	// 3. Search with ?tag=missing
+	resp, body = r.do(http.MethodGet, "/registry/projects?tag=missing", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search ?tag=missing: %d: %s", resp.StatusCode, body)
+	}
+	searchRes.Projects = nil
+	if err := json.Unmarshal(body, &searchRes); err != nil {
+		t.Fatalf("unmarshal search: %v", err)
+	}
+	if len(searchRes.Projects) != 0 {
+		t.Errorf("search ?tag=missing returned %v; want empty", searchRes.Projects)
+	}
+
+	// 4. PATCH guidelines and tags
+	patchBody := map[string]any{
+		"guidelines":      "Updated HTTP guidelines.",
+		"tags":            map[string]any{"mode": "append", "value": []string{"v2"}},
+		"last_updated_by": "tester:http",
+	}
+	resp, body = r.do(http.MethodPatch, "/registry/projects/"+url.PathEscape(created.URN), patchBody)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch project: %d: %s", resp.StatusCode, body)
+	}
+	var patched struct {
+		Guidelines    string                        `json:"guidelines"`
+		Tags          []string                      `json:"tags"`
+		FieldMetadata map[string]registry.FieldMeta `json:"field_metadata"`
+	}
+	if err := json.Unmarshal(body, &patched); err != nil {
+		t.Fatalf("unmarshal patch: %v", err)
+	}
+	if patched.Guidelines != "Updated HTTP guidelines." {
+		t.Errorf("patched.Guidelines = %q", patched.Guidelines)
+	}
+	if len(patched.Tags) != 4 {
+		t.Errorf("patched.Tags = %v; want 4 tags", patched.Tags)
+	}
+	if meta, ok := patched.FieldMetadata["guidelines"]; !ok || meta.LastUpdatedBy != "tester:http" {
+		t.Errorf("patched guidelines meta = %+v; want tester:http", meta)
+	}
+}
+
+func TestRedactFieldMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	input := map[string]registry.FieldMeta{
+		"callback":     {Class: registry.FieldClassDerived, LastUpdatedBy: "sys", UpdatedAt: now},
+		"host_address": {Class: registry.FieldClassDerived, LastUpdatedBy: "sys", UpdatedAt: now},
+		"kind_meta":    {Class: registry.FieldClassDerived, LastUpdatedBy: "sys", UpdatedAt: now},
+		"external_ids": {Class: registry.FieldClassDerived, LastUpdatedBy: "sys", UpdatedAt: now},
+		"display_name": {Class: registry.FieldClassDerived, LastUpdatedBy: "user", UpdatedAt: now},
+		"tags":         {Class: registry.FieldClassAuthored, LastUpdatedBy: "user", UpdatedAt: now},
+		"guidelines":   {Class: registry.FieldClassAuthored, LastUpdatedBy: "user", UpdatedAt: now},
+	}
+
+	// 1. Default (no includes) — all 4 sensitive keys stripped
+	defaultMeta := redactFieldMetadata(input, includeFields{})
+	for _, secretKey := range []string{"callback", "host_address", "kind_meta", "external_ids"} {
+		if _, ok := defaultMeta[secretKey]; ok {
+			t.Errorf("defaultMeta unexpectedly contains %q", secretKey)
+		}
+	}
+	for _, publicKey := range []string{"display_name", "tags", "guidelines"} {
+		if _, ok := defaultMeta[publicKey]; !ok {
+			t.Errorf("defaultMeta missing public key %q", publicKey)
+		}
+	}
+
+	// 2. Selective include: callback only
+	incCb := redactFieldMetadata(input, includeFields{callback: true})
+	if _, ok := incCb["callback"]; !ok {
+		t.Errorf("incCb missing callback")
+	}
+	for _, secretKey := range []string{"host_address", "kind_meta", "external_ids"} {
+		if _, ok := incCb[secretKey]; ok {
+			t.Errorf("incCb unexpectedly contains %q", secretKey)
+		}
+	}
+
+	// 3. Selective include: host_address only
+	incHost := redactFieldMetadata(input, includeFields{hostAddress: true})
+	if _, ok := incHost["host_address"]; !ok {
+		t.Errorf("incHost missing host_address")
+	}
+	if _, ok := incHost["callback"]; ok {
+		t.Errorf("incHost unexpectedly contains callback")
+	}
+
+	// 4. Selective include: kind_meta only
+	incMeta := redactFieldMetadata(input, includeFields{kindMeta: true})
+	if _, ok := incMeta["kind_meta"]; !ok {
+		t.Errorf("incMeta missing kind_meta")
+	}
+	if _, ok := incMeta["callback"]; ok {
+		t.Errorf("incMeta unexpectedly contains callback")
+	}
+
+	// 5. Selective include: external_ids only
+	incExt := redactFieldMetadata(input, includeFields{externalIDs: true})
+	if _, ok := incExt["external_ids"]; !ok {
+		t.Errorf("incExt missing external_ids")
+	}
+	if _, ok := incExt["callback"]; ok {
+		t.Errorf("incExt unexpectedly contains callback")
+	}
+
+	// 6. All includes
+	allMeta := redactFieldMetadata(input, includeFields{callback: true, hostAddress: true, kindMeta: true, externalIDs: true})
+	if len(allMeta) != len(input) {
+		t.Errorf("allMeta len = %d; want %d", len(allMeta), len(input))
+	}
+
+	// 7. Nil input returns nil
+	if got := redactFieldMetadata(nil, includeFields{}); got != nil {
+		t.Errorf("redactFieldMetadata(nil) = %v; want nil", got)
+	}
+}
+
+func TestRegistry_Redaction_FieldMetadata(t *testing.T) {
+	r := newRegServer(t)
+
+	// Register a project with callback, host_address, kind_meta, and tags
+	createBody := map[string]any{
+		"display_name":    "Secretive Project",
+		"description":     "Project with private operational metadata",
+		"callback":        map[string]any{"scheme": "cli", "target": "/usr/local/bin/run --token=supersecret"},
+		"host_address":    "10.0.0.88",
+		"kind_meta":       map[string]any{"api_token": "shh-secret"},
+		"tags":            []string{"internal", "confidential"},
+		"guidelines":      "Keep operational coordinates secret.",
+		"last_updated_by": "tester:sec",
+	}
+
+	resp, body := r.do(http.MethodPost, "/registry/projects", createBody)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create project: %d: %s", resp.StatusCode, body)
+	}
+
+	var created struct {
+		URN string `json:"urn"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal created: %v", err)
+	}
+
+	// Confirm that internally, the row carries a "callback" entry in field_metadata
+	internalProfile, err := r.svc.Lookup(context.Background(), created.URN)
+	if err != nil {
+		t.Fatalf("lookup internal profile: %v", err)
+	}
+	if cbMeta, ok := internalProfile.FieldMetadata["callback"]; !ok {
+		t.Fatalf("internal profile missing field_metadata.callback entry: %+v", internalProfile.FieldMetadata)
+	} else if cbMeta.Class != registry.FieldClassDerived {
+		t.Errorf("internal field_metadata.callback class = %q; want derived", cbMeta.Class)
+	}
+
+	// 1. Default GET /registry/projects/{urn} must redact callback and field_metadata.callback
+	respDef, bodyDef := r.do(http.MethodGet, itemURL("projects", created.URN), nil)
+	if respDef.StatusCode != http.StatusOK {
+		t.Fatalf("default lookup: %d: %s", respDef.StatusCode, bodyDef)
+	}
+
+	// Check string level: no "callback", "host_address", "kind_meta" keys or secret tokens
+	assertNoLeakedRegistryFields(t, bodyDef)
+
+	var defaultProfile struct {
+		FieldMetadata map[string]registry.FieldMeta `json:"field_metadata"`
+	}
+	if err := json.Unmarshal(bodyDef, &defaultProfile); err != nil {
+		t.Fatalf("unmarshal default profile: %v", err)
+	}
+	for _, sensitive := range []string{"callback", "host_address", "kind_meta", "external_ids"} {
+		if _, ok := defaultProfile.FieldMetadata[sensitive]; ok {
+			t.Errorf("default GET leaked field_metadata[%q]: %+v", sensitive, defaultProfile.FieldMetadata)
+		}
+	}
+	for _, public := range []string{"display_name", "tags", "guidelines", "description"} {
+		if _, ok := defaultProfile.FieldMetadata[public]; !ok {
+			t.Errorf("default GET unexpectedly stripped public field_metadata[%q]", public)
+		}
+	}
+
+	// 2. GET with ?include=callback reveals callback in top-level AND field_metadata.callback,
+	// while keeping host_address and kind_meta redacted.
+	respInc, bodyInc := r.do(http.MethodGet, itemURL("projects", created.URN)+"?include=callback", nil)
+	if respInc.StatusCode != http.StatusOK {
+		t.Fatalf("include=callback lookup: %d: %s", respInc.StatusCode, bodyInc)
+	}
+	var incProfile struct {
+		Callback      *registry.Callback            `json:"callback"`
+		HostAddress   string                        `json:"host_address"`
+		FieldMetadata map[string]registry.FieldMeta `json:"field_metadata"`
+	}
+	if err := json.Unmarshal(bodyInc, &incProfile); err != nil {
+		t.Fatalf("unmarshal include profile: %v", err)
+	}
+	if incProfile.Callback == nil || incProfile.Callback.Target != "/usr/local/bin/run --token=supersecret" {
+		t.Errorf("include=callback did not return expected callback: %+v", incProfile.Callback)
+	}
+	if incProfile.HostAddress != "" {
+		t.Errorf("include=callback leaked host_address: %q", incProfile.HostAddress)
+	}
+	if metaCb, ok := incProfile.FieldMetadata["callback"]; !ok {
+		t.Errorf("include=callback did not expose field_metadata.callback")
+	} else if metaCb.Class != registry.FieldClassDerived {
+		t.Errorf("field_metadata.callback class = %q; want derived", metaCb.Class)
+	}
+	if _, ok := incProfile.FieldMetadata["host_address"]; ok {
+		t.Errorf("include=callback leaked field_metadata.host_address")
+	}
+	if _, ok := incProfile.FieldMetadata["kind_meta"]; ok {
+		t.Errorf("include=callback leaked field_metadata.kind_meta")
+	}
+
+	// 3. GET with ?full=true reveals all sensitive fields in top-level AND field_metadata.
+	respFull, bodyFull := r.do(http.MethodGet, itemURL("projects", created.URN)+"?full=true", nil)
+	if respFull.StatusCode != http.StatusOK {
+		t.Fatalf("full=true lookup: %d: %s", respFull.StatusCode, bodyFull)
+	}
+	var fullProfile struct {
+		Callback      *registry.Callback            `json:"callback"`
+		HostAddress   string                        `json:"host_address"`
+		FieldMetadata map[string]registry.FieldMeta `json:"field_metadata"`
+	}
+	if err := json.Unmarshal(bodyFull, &fullProfile); err != nil {
+		t.Fatalf("unmarshal full profile: %v", err)
+	}
+	if fullProfile.Callback == nil || fullProfile.HostAddress == "" {
+		t.Errorf("full=true did not return callback or host_address")
+	}
+	for _, sensitive := range []string{"callback", "host_address", "kind_meta"} {
+		if _, ok := fullProfile.FieldMetadata[sensitive]; !ok {
+			t.Errorf("full=true did not expose field_metadata[%q]", sensitive)
+		}
 	}
 }

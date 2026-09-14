@@ -68,6 +68,7 @@ type RegistryService interface {
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
 	BackfillOwnership(ctx context.Context) (int, error)
+	BackfillFieldMetadata(ctx context.Context) (int, error)
 	BootstrapFromCerberus(ctx context.Context, cerberusHome string, force bool, writeBack bool) (registry.BootstrapReport, error)
 	// RuntimeBinding methods (T07, messaging vNext): the published-local
 	// bridge registration surface. See bindings.go.
@@ -296,6 +297,7 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 		Capability: q.Get("capability"),
 		SkillName:  q.Get("skill_name"),
 		Status:     q.Get("status"),
+		Tag:        q.Get("tag"),
 	}
 	out, err := s.Registry.Search(r.Context(), kind, f)
 	if err != nil {
@@ -352,27 +354,61 @@ func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request, ur
 //   - ?include=callback,kind_meta,host_address,external_ids: selectively includes the
 //     requested fields.
 type redactedProfile struct {
-	URN           string           `json:"urn"`
-	Kind          registry.Kind    `json:"kind"`
-	Owner         string           `json:"owner,omitempty"`
-	MuxInstanceID string           `json:"mux_instance_id"`
-	DisplayName   string           `json:"display_name"`
-	Title         string           `json:"title,omitempty"`
-	Role          string           `json:"role,omitempty"`
-	Description   string           `json:"description,omitempty"`
-	Avatar        string           `json:"avatar,omitempty"`
-	Project       string           `json:"project,omitempty"`
-	Status        registry.Status  `json:"status"`
-	CachedAt      *time.Time       `json:"cached_at,omitempty"`
-	HealthStatus  string           `json:"health_status,omitempty"`
-	LastSeenAt    *time.Time       `json:"last_seen_at,omitempty"`
-	MergedInto    string           `json:"merged_into,omitempty"`
-	LastUpdatedBy string           `json:"last_updated_by,omitempty"`
-	Capabilities  []string         `json:"capabilities,omitempty"`
-	Skills        []registry.Skill `json:"skills,omitempty"`
-	Links         []registry.Link  `json:"links,omitempty"`
-	CreatedAt     time.Time        `json:"created_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
+	URN           string                        `json:"urn"`
+	Kind          registry.Kind                 `json:"kind"`
+	Owner         string                        `json:"owner,omitempty"`
+	MuxInstanceID string                        `json:"mux_instance_id"`
+	DisplayName   string                        `json:"display_name"`
+	Title         string                        `json:"title,omitempty"`
+	Role          string                        `json:"role,omitempty"`
+	Description   string                        `json:"description,omitempty"`
+	Avatar        string                        `json:"avatar,omitempty"`
+	Project       string                        `json:"project,omitempty"`
+	Status        registry.Status               `json:"status"`
+	CachedAt      *time.Time                    `json:"cached_at,omitempty"`
+	HealthStatus  string                        `json:"health_status,omitempty"`
+	LastSeenAt    *time.Time                    `json:"last_seen_at,omitempty"`
+	MergedInto    string                        `json:"merged_into,omitempty"`
+	LastUpdatedBy string                        `json:"last_updated_by,omitempty"`
+	Capabilities  []string                      `json:"capabilities,omitempty"`
+	Skills        []registry.Skill              `json:"skills,omitempty"`
+	Links         []registry.Link               `json:"links,omitempty"`
+	Tags          []string                      `json:"tags,omitempty"`
+	Guidelines    string                        `json:"guidelines,omitempty"`
+	EntryPoints   []string                      `json:"entry_points,omitempty"`
+	FieldMetadata map[string]registry.FieldMeta `json:"field_metadata,omitempty"`
+	CreatedAt     time.Time                     `json:"created_at"`
+	UpdatedAt     time.Time                     `json:"updated_at"`
+}
+
+func redactFieldMetadata(fm map[string]registry.FieldMeta, f includeFields) map[string]registry.FieldMeta {
+	if fm == nil {
+		return nil
+	}
+	out := make(map[string]registry.FieldMeta, len(fm))
+	for k, v := range fm {
+		switch k {
+		case "callback":
+			if f.callback {
+				out[k] = v
+			}
+		case "host_address":
+			if f.hostAddress {
+				out[k] = v
+			}
+		case "kind_meta":
+			if f.kindMeta {
+				out[k] = v
+			}
+		case "external_ids":
+			if f.externalIDs {
+				out[k] = v
+			}
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func redactProfile(p registry.Profile) redactedProfile {
@@ -384,7 +420,9 @@ func redactProfile(p registry.Profile) redactedProfile {
 		LastSeenAt: p.LastSeenAt, MergedInto: p.MergedInto,
 		LastUpdatedBy: p.LastUpdatedBy, Capabilities: p.Capabilities,
 		Skills: p.Skills, Links: p.Links,
-		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		Tags: p.Tags, Guidelines: p.Guidelines, EntryPoints: p.EntryPoints,
+		FieldMetadata: redactFieldMetadata(p.FieldMetadata, includeFields{}),
+		CreatedAt:     p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 }
 
@@ -459,6 +497,7 @@ func projectProfile(p registry.Profile, f includeFields) any {
 	proj := projectedProfile{
 		redactedProfile: redactProfile(p),
 	}
+	proj.FieldMetadata = redactFieldMetadata(p.FieldMetadata, f)
 	if f.callback {
 		proj.Callback = p.Callback
 	}
@@ -573,12 +612,18 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 			if _, bErr := s.Registry.BackfillOwnership(r.Context()); bErr != nil && err == nil {
 				err = bErr
 			}
+			if _, fmErr := s.Registry.BackfillFieldMetadata(r.Context()); fmErr != nil && err == nil {
+				err = fmErr
+			}
 		}
 	case "cerberus":
 		report, err = s.Registry.BootstrapFromCerberus(r.Context(), "", force, writeBack)
 		if err == nil {
 			if _, bErr := s.Registry.BackfillOwnership(r.Context()); bErr != nil {
 				err = bErr
+			}
+			if _, fmErr := s.Registry.BackfillFieldMetadata(r.Context()); fmErr != nil {
+				err = fmErr
 			}
 		}
 	default:

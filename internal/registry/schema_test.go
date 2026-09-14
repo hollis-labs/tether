@@ -218,6 +218,33 @@ func TestMigration0016_postSwapInsertableForAgent(t *testing.T) {
 	}
 }
 
+// TestMigration0028_correlationFields verifies that migration 0028 adds the
+// tags_json, guidelines, entry_points_json, and field_metadata_json columns
+// to registry_entries.
+func TestMigration0028_correlationFields(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('registry_entries') WHERE name IN ('tags_json','guidelines','entry_points_json','field_metadata_json') ORDER BY name`)
+	if err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, n)
+	}
+	want := []string{"entry_points_json", "field_metadata_json", "guidelines", "tags_json"}
+	if !sliceEqual(got, want) {
+		t.Fatalf("correlation columns = %v; want %v", got, want)
+	}
+}
+
 // TestMigration0015_defaultsAndNulls confirms the schema's defaults +
 // nullable columns behave as declared.
 func TestMigration0015_defaultsAndNulls(t *testing.T) {

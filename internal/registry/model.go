@@ -31,36 +31,136 @@ const (
 	StatusArchived Status = "archived"
 )
 
+// FieldClass represents whether a field is deterministically recreatable
+// by machine (derived) or authored intent (authored). Settled in CW-20260912-0075 /
+// CW-20260912-0094: the split is determinism ("can a machine recreate it"), not
+// importance.
+type FieldClass string
+
+const (
+	FieldClassDerived  FieldClass = "derived"
+	FieldClassAuthored FieldClass = "authored"
+)
+
+// FieldMeta records the classification, provenance, and freshness of a field.
+// Every field on a project entry carries who set it and when; derived fields
+// additionally carry cached_at for sync freshness tracking.
+type FieldMeta struct {
+	Class         FieldClass `json:"class"`
+	LastUpdatedBy string     `json:"last_updated_by,omitempty"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	CachedAt      *time.Time `json:"cached_at,omitempty"`
+}
+
+// AuthoredFields projects the authored fields of a profile.
+type AuthoredFields struct {
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Guidelines  string   `json:"guidelines,omitempty"`
+	EntryPoints []string `json:"entry_points,omitempty"`
+}
+
+// DerivedFields projects the machine-recreatable fields of a profile.
+type DerivedFields struct {
+	URN          string       `json:"urn"`
+	Kind         Kind         `json:"kind"`
+	Owner        string       `json:"owner,omitempty"`
+	DisplayName  string       `json:"display_name,omitempty"`
+	Project      string       `json:"project,omitempty"`
+	Status       Status       `json:"status"`
+	ExternalIDs  []ExternalID `json:"external_ids,omitempty"`
+	CachedAt     *time.Time   `json:"cached_at,omitempty"`
+	HealthStatus string       `json:"health_status,omitempty"`
+}
+
 // Profile is the public-identity projection of a registry row. Profile is
 // BOTH the storage-layer row mirror and the HTTP/MCP API envelope — the
 // two stores share this shape. The owning substrate's operational config
 // lives behind Callback, not in Profile (D1 two-store model).
 type Profile struct {
-	URN           string          `json:"urn"`
-	Kind          Kind            `json:"kind"`
-	Owner         string          `json:"owner,omitempty"`
-	MuxInstanceID string          `json:"mux_instance_id"`
-	DisplayName   string          `json:"display_name"`
-	Title         string          `json:"title,omitempty"`
-	Role          string          `json:"role,omitempty"`
-	Description   string          `json:"description,omitempty"`
-	Avatar        string          `json:"avatar,omitempty"`
-	Project       string          `json:"project,omitempty"`
-	Status        Status          `json:"status"`
-	Callback      *Callback       `json:"callback,omitempty"`
-	CachedAt      *time.Time      `json:"cached_at,omitempty"`
-	HealthStatus  string          `json:"health_status,omitempty"`
-	LastSeenAt    *time.Time      `json:"last_seen_at,omitempty"`
-	HostAddress   string          `json:"host_address,omitempty"`
-	MergedInto    string          `json:"merged_into,omitempty"`
-	KindMeta      json.RawMessage `json:"kind_meta,omitempty"`
-	LastUpdatedBy string          `json:"last_updated_by,omitempty"`
-	ExternalIDs   []ExternalID    `json:"external_ids,omitempty"`
-	Capabilities  []string        `json:"capabilities,omitempty"`
-	Skills        []Skill         `json:"skills,omitempty"`
-	Links         []Link          `json:"links,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	URN           string               `json:"urn"`
+	Kind          Kind                 `json:"kind"`
+	Owner         string               `json:"owner,omitempty"`
+	MuxInstanceID string               `json:"mux_instance_id"`
+	DisplayName   string               `json:"display_name"`
+	Title         string               `json:"title,omitempty"`
+	Role          string               `json:"role,omitempty"`
+	Description   string               `json:"description,omitempty"`
+	Avatar        string               `json:"avatar,omitempty"`
+	Project       string               `json:"project,omitempty"`
+	Status        Status               `json:"status"`
+	Callback      *Callback            `json:"callback,omitempty"`
+	CachedAt      *time.Time           `json:"cached_at,omitempty"`
+	HealthStatus  string               `json:"health_status,omitempty"`
+	LastSeenAt    *time.Time           `json:"last_seen_at,omitempty"`
+	HostAddress   string               `json:"host_address,omitempty"`
+	MergedInto    string               `json:"merged_into,omitempty"`
+	KindMeta      json.RawMessage      `json:"kind_meta,omitempty"`
+	LastUpdatedBy string               `json:"last_updated_by,omitempty"`
+	Tags          []string             `json:"tags,omitempty"`
+	Guidelines    string               `json:"guidelines,omitempty"`
+	EntryPoints   []string             `json:"entry_points,omitempty"`
+	FieldMetadata map[string]FieldMeta `json:"field_metadata,omitempty"`
+	ExternalIDs   []ExternalID         `json:"external_ids,omitempty"`
+	Capabilities  []string             `json:"capabilities,omitempty"`
+	Skills        []Skill              `json:"skills,omitempty"`
+	Links         []Link               `json:"links,omitempty"`
+	CreatedAt     time.Time            `json:"created_at"`
+	UpdatedAt     time.Time            `json:"updated_at"`
+}
+
+// Authored returns the authored projection of this profile.
+func (p Profile) Authored() AuthoredFields {
+	return AuthoredFields{
+		Description: p.Description,
+		Tags:        p.Tags,
+		Guidelines:  p.Guidelines,
+		EntryPoints: p.EntryPoints,
+	}
+}
+
+// Derived returns the derived projection of this profile.
+func (p Profile) Derived() DerivedFields {
+	return DerivedFields{
+		URN:          p.URN,
+		Kind:         p.Kind,
+		Owner:        p.Owner,
+		DisplayName:  p.DisplayName,
+		Project:      p.Project,
+		Status:       p.Status,
+		ExternalIDs:  p.ExternalIDs,
+		CachedAt:     p.CachedAt,
+		HealthStatus: p.HealthStatus,
+	}
+}
+
+// FieldClassFor returns the FieldClass for fieldName. If recorded in
+// FieldMetadata, that class is returned. Otherwise it falls back to
+// DefaultFieldClass.
+func (p Profile) FieldClassFor(fieldName string) FieldClass {
+	if meta, ok := p.FieldMetadata[fieldName]; ok && meta.Class != "" {
+		return meta.Class
+	}
+	return DefaultFieldClass(fieldName)
+}
+
+// FieldMetaFor returns the FieldMeta recorded for fieldName, if present.
+func (p Profile) FieldMetaFor(fieldName string) (FieldMeta, bool) {
+	if p.FieldMetadata == nil {
+		return FieldMeta{}, false
+	}
+	meta, ok := p.FieldMetadata[fieldName]
+	return meta, ok
+}
+
+// DefaultFieldClass returns the default FieldClass for a known field.
+func DefaultFieldClass(fieldName string) FieldClass {
+	switch fieldName {
+	case "description", "tags", "guidelines", "entry_points", "title", "role", "avatar", "capabilities", "skills", "links":
+		return FieldClassAuthored
+	default:
+		return FieldClassDerived
+	}
 }
 
 // ExternalID ties one substrate-local identifier to a registry URN. A single
@@ -137,6 +237,7 @@ type Filter struct {
 	Capability string
 	SkillName  string
 	Status     string
+	Tag        string
 }
 
 // UpdatePatch is the input shape for Service.UpdateSelf. Scalar pointer
@@ -145,22 +246,26 @@ type Filter struct {
 // ArrayPatch carries the merge mode. KindMeta is replace-on-present (no
 // shallow merge in v1). LastUpdatedBy is required.
 type UpdatePatch struct {
-	Owner         *string             `json:"owner,omitempty"`
-	DisplayName   *string             `json:"display_name,omitempty"`
-	Title         *string             `json:"title,omitempty"`
-	Role          *string             `json:"role,omitempty"`
-	Description   *string             `json:"description,omitempty"`
-	Avatar        *string             `json:"avatar,omitempty"`
-	Project       *string             `json:"project,omitempty"`
-	Status        *Status             `json:"status,omitempty"`
-	HealthStatus  *string             `json:"health_status,omitempty"` // D15
-	LastSeenAt    *time.Time          `json:"last_seen_at,omitempty"`  // D15
-	HostAddress   *string             `json:"host_address,omitempty"`  // D15
-	KindMeta      json.RawMessage     `json:"kind_meta,omitempty"`
-	LastUpdatedBy string              `json:"last_updated_by"` // required
-	Capabilities  *ArrayPatch[string] `json:"capabilities,omitempty"`
-	Skills        *ArrayPatch[Skill]  `json:"skills,omitempty"`
-	Links         *ArrayPatch[Link]   `json:"links,omitempty"`
+	Owner         *string              `json:"owner,omitempty"`
+	DisplayName   *string              `json:"display_name,omitempty"`
+	Title         *string              `json:"title,omitempty"`
+	Role          *string              `json:"role,omitempty"`
+	Description   *string              `json:"description,omitempty"`
+	Avatar        *string              `json:"avatar,omitempty"`
+	Project       *string              `json:"project,omitempty"`
+	Status        *Status              `json:"status,omitempty"`
+	HealthStatus  *string              `json:"health_status,omitempty"` // D15
+	LastSeenAt    *time.Time           `json:"last_seen_at,omitempty"`  // D15
+	HostAddress   *string              `json:"host_address,omitempty"`  // D15
+	KindMeta      json.RawMessage      `json:"kind_meta,omitempty"`
+	LastUpdatedBy string               `json:"last_updated_by"` // required
+	Tags          *ArrayPatch[string]  `json:"tags,omitempty"`
+	Guidelines    *string              `json:"guidelines,omitempty"`
+	EntryPoints   *ArrayPatch[string]  `json:"entry_points,omitempty"`
+	FieldMetadata map[string]FieldMeta `json:"field_metadata,omitempty"`
+	Capabilities  *ArrayPatch[string]  `json:"capabilities,omitempty"`
+	Skills        *ArrayPatch[Skill]   `json:"skills,omitempty"`
+	Links         *ArrayPatch[Link]    `json:"links,omitempty"`
 }
 
 // MemberRole is the role of a member inside a group (v060-05 D8).

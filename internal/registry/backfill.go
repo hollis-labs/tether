@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -186,4 +187,44 @@ func inferOwner(row Profile) string {
 		return "tether"
 	}
 	return ""
+}
+
+// BackfillFieldMetadata inspects rows with empty field_metadata_json and
+// synthesizes baseline classification, provenance, and freshness for all present fields.
+// Safe to re-run; rows with populated field_metadata_json are skipped.
+func BackfillFieldMetadata(ctx context.Context, svc *Service) (int, error) {
+	if svc == nil {
+		return 0, fmt.Errorf("registry: backfill field metadata: service required")
+	}
+	var backfilled int
+	for _, kind := range []Kind{KindAgent, KindProject} {
+		rows, err := svc.Search(ctx, kind, Filter{Status: StatusAny})
+		if err != nil {
+			return backfilled, err
+		}
+		for _, row := range rows {
+			if len(row.FieldMetadata) > 0 {
+				continue
+			}
+			meta := SynthesizeFieldMetadata(row)
+			if len(meta) == 0 {
+				continue
+			}
+			b, err := json.Marshal(meta)
+			if err != nil {
+				return backfilled, fmt.Errorf("registry: backfill field metadata for %s: %w", row.URN, err)
+			}
+			if err := svc.storage.UpdateProfileFields(ctx, row.URN, map[string]any{
+				"field_metadata_json": string(b),
+			}); err != nil {
+				return backfilled, fmt.Errorf("registry: backfill field metadata for %s: %w", row.URN, err)
+			}
+			backfilled++
+		}
+	}
+	return backfilled, nil
+}
+
+func (s *Service) BackfillFieldMetadata(ctx context.Context) (int, error) {
+	return BackfillFieldMetadata(ctx, s)
 }

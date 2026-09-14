@@ -328,6 +328,9 @@ func (s *Service) Register(ctx context.Context, kind Kind, p Profile) (Profile, 
 		// Placeholder per sprint spec: token-based identity is v060-02.
 		p.LastUpdatedBy = "system:register"
 	}
+	if len(p.FieldMetadata) == 0 {
+		p.FieldMetadata = SynthesizeFieldMetadata(p)
+	}
 
 	if err := s.storage.InsertProfile(ctx, p); err != nil {
 		return Profile{}, fmt.Errorf("registry: register: insert: %w", err)
@@ -372,6 +375,9 @@ func (s *Service) registerGroup(ctx context.Context, p Profile) (Profile, error)
 	p.Kind = KindGroup
 	if p.Owner == "" {
 		p.Owner = creator
+	}
+	if len(p.FieldMetadata) == 0 {
+		p.FieldMetadata = SynthesizeFieldMetadata(p)
 	}
 
 	if err := s.storage.InsertGroupWithOwner(ctx, p, creator); err != nil {
@@ -936,10 +942,26 @@ func (s *Service) Merge(ctx context.Context, urnSrc, urnDst string) (Profile, er
 			Mode:  ArrayModeAppend,
 			Value: src.Links,
 		},
+		Tags: &ArrayPatch[string]{
+			Mode:  ArrayModeAppend,
+			Value: src.Tags,
+		},
+		EntryPoints: &ArrayPatch[string]{
+			Mode:  ArrayModeAppend,
+			Value: src.EntryPoints,
+		},
 	}
 	if (dst.Owner == "" || dst.Owner == "tether") && src.Owner != "" {
 		v := src.Owner
 		patch.Owner = &v
+	}
+	if dst.Guidelines == "" && src.Guidelines != "" {
+		v := src.Guidelines
+		patch.Guidelines = &v
+	}
+	if dst.Description == "" && src.Description != "" {
+		v := src.Description
+		patch.Description = &v
 	}
 	if mergedMeta, ok := mergeKindMeta(dst.KindMeta, src.KindMeta); ok {
 		patch.KindMeta = mergedMeta
@@ -1072,42 +1094,67 @@ func (s *Service) UpdateSelf(ctx context.Context, urn string, patch UpdatePatch)
 	if patch.LastUpdatedBy == "" {
 		return Profile{}, fmt.Errorf("registry: update_self: %w: last_updated_by required on UpdateSelf", ErrInvalidRequest)
 	}
-	// Existence check up front so ErrNotFound surfaces cleanly instead of
-	// being inferred from a downstream "rows affected = 0".
-	if _, err := s.storage.GetProfile(ctx, urn); err != nil {
+	existing, err := s.storage.GetProfile(ctx, urn)
+	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Profile{}, err
 		}
 		return Profile{}, fmt.Errorf("registry: update_self: pre-check: %w", err)
 	}
 
+	now := time.Now().UTC()
+	meta := make(map[string]FieldMeta)
+	for k, v := range existing.FieldMetadata {
+		meta[k] = v
+	}
+	touchMeta := func(field string, defaultClass FieldClass) {
+		class := defaultClass
+		if existingMeta, ok := meta[field]; ok && existingMeta.Class != "" {
+			class = existingMeta.Class
+		}
+		meta[field] = FieldMeta{
+			Class:         class,
+			LastUpdatedBy: patch.LastUpdatedBy,
+			UpdatedAt:     now,
+		}
+	}
+
 	fields := map[string]any{}
 	if patch.Owner != nil {
 		fields["owner"] = *patch.Owner
+		touchMeta("owner", FieldClassDerived)
 	}
 	if patch.DisplayName != nil {
 		fields["display_name"] = *patch.DisplayName
+		touchMeta("display_name", FieldClassDerived)
 	}
 	if patch.Title != nil {
 		fields["title"] = *patch.Title
+		touchMeta("title", FieldClassAuthored)
 	}
 	if patch.Role != nil {
 		fields["role"] = *patch.Role
+		touchMeta("role", FieldClassAuthored)
 	}
 	if patch.Description != nil {
 		fields["description"] = *patch.Description
+		touchMeta("description", FieldClassAuthored)
 	}
 	if patch.Avatar != nil {
 		fields["avatar"] = *patch.Avatar
+		touchMeta("avatar", FieldClassAuthored)
 	}
 	if patch.Project != nil {
 		fields["project"] = *patch.Project
+		touchMeta("project", FieldClassDerived)
 	}
 	if patch.Status != nil {
 		fields["status"] = string(*patch.Status)
+		touchMeta("status", FieldClassDerived)
 	}
 	if patch.HealthStatus != nil {
 		fields["health_status"] = *patch.HealthStatus
+		touchMeta("health_status", FieldClassDerived)
 	}
 	if patch.LastSeenAt != nil {
 		// Match storage.go's nullIfTimePtr formatting so a zero time clears
@@ -1118,13 +1165,58 @@ func (s *Service) UpdateSelf(ctx context.Context, urn string, patch UpdatePatch)
 		} else {
 			fields["last_seen_at"] = patch.LastSeenAt.UTC().Format(time.RFC3339Nano)
 		}
+		touchMeta("last_seen_at", FieldClassDerived)
 	}
 	if patch.HostAddress != nil {
 		fields["host_address"] = *patch.HostAddress
+		touchMeta("host_address", FieldClassDerived)
 	}
 	if len(patch.KindMeta) > 0 {
 		fields["kind_meta_json"] = string(patch.KindMeta)
+		touchMeta("kind_meta", FieldClassDerived)
 	}
+	if patch.Guidelines != nil {
+		fields["guidelines"] = *patch.Guidelines
+		touchMeta("guidelines", FieldClassAuthored)
+	}
+	if patch.Tags != nil {
+		newTags := applyStringArrayPatch(existing.Tags, *patch.Tags)
+		b, err := json.Marshal(newTags)
+		if err != nil {
+			return Profile{}, fmt.Errorf("registry: update_self: marshal tags: %w", err)
+		}
+		fields["tags_json"] = string(b)
+		touchMeta("tags", FieldClassAuthored)
+	}
+	if patch.EntryPoints != nil {
+		newEP := applyStringArrayPatch(existing.EntryPoints, *patch.EntryPoints)
+		b, err := json.Marshal(newEP)
+		if err != nil {
+			return Profile{}, fmt.Errorf("registry: update_self: marshal entry_points: %w", err)
+		}
+		fields["entry_points_json"] = string(b)
+		touchMeta("entry_points", FieldClassAuthored)
+	}
+	if patch.Capabilities != nil && len(patch.Capabilities.Value) > 0 {
+		touchMeta("capabilities", FieldClassAuthored)
+	}
+	if patch.Skills != nil && len(patch.Skills.Value) > 0 {
+		touchMeta("skills", FieldClassAuthored)
+	}
+	if patch.Links != nil && len(patch.Links.Value) > 0 {
+		touchMeta("links", FieldClassAuthored)
+	}
+	for k, v := range patch.FieldMetadata {
+		meta[k] = v
+	}
+	if len(meta) > 0 {
+		b, err := json.Marshal(meta)
+		if err != nil {
+			return Profile{}, fmt.Errorf("registry: update_self: marshal field_metadata: %w", err)
+		}
+		fields["field_metadata_json"] = string(b)
+	}
+
 	// last_updated_by is always written so the row reflects the originator
 	// of this update — even when the patch carries no other scalar changes.
 	fields["last_updated_by"] = patch.LastUpdatedBy
@@ -1401,4 +1493,120 @@ func wrapPatch(field, mode string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("registry: update_self: %s %s: %w", field, mode, err)
+}
+
+func applyStringArrayPatch(current []string, patch ArrayPatch[string]) []string {
+	switch patch.Mode {
+	case ArrayModeReplace:
+		return append([]string(nil), patch.Value...)
+	case ArrayModeAppend:
+		existing := make(map[string]struct{}, len(current))
+		out := append([]string(nil), current...)
+		for _, s := range current {
+			existing[s] = struct{}{}
+		}
+		for _, v := range patch.Value {
+			if _, ok := existing[v]; !ok {
+				out = append(out, v)
+				existing[v] = struct{}{}
+			}
+		}
+		return out
+	case ArrayModeRemove:
+		toRemove := make(map[string]struct{}, len(patch.Value))
+		for _, v := range patch.Value {
+			toRemove[v] = struct{}{}
+		}
+		out := make([]string, 0, len(current))
+		for _, v := range current {
+			if _, ok := toRemove[v]; !ok {
+				out = append(out, v)
+			}
+		}
+		return out
+	default:
+		return current
+	}
+}
+
+// SynthesizeFieldMetadata constructs a baseline FieldMetadata map for profile p,
+// attributing populated fields to p.LastUpdatedBy and timestamps.
+func SynthesizeFieldMetadata(p Profile) map[string]FieldMeta {
+	meta := make(map[string]FieldMeta)
+	now := p.UpdatedAt
+	if now.IsZero() {
+		now = p.CreatedAt
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	updater := p.LastUpdatedBy
+	if updater == "" {
+		updater = "system:bootstrap"
+	}
+
+	if p.URN != "" {
+		meta["urn"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: p.CreatedAt}
+	}
+	if p.Kind != "" {
+		meta["kind"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: p.CreatedAt}
+	}
+	if p.DisplayName != "" {
+		meta["display_name"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Owner != "" {
+		meta["owner"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Title != "" {
+		meta["title"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Role != "" {
+		meta["role"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Description != "" {
+		meta["description"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Avatar != "" {
+		meta["avatar"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Project != "" {
+		meta["project"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Status != "" {
+		meta["status"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.Tags) > 0 {
+		meta["tags"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.Guidelines != "" {
+		meta["guidelines"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.EntryPoints) > 0 {
+		meta["entry_points"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.ExternalIDs) > 0 {
+		meta["external_ids"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now, CachedAt: p.CachedAt}
+	}
+	if p.Callback != nil {
+		meta["callback"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now, CachedAt: p.CachedAt}
+	}
+	if p.HostAddress != "" {
+		meta["host_address"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.KindMeta) > 0 {
+		meta["kind_meta"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if p.HealthStatus != "" {
+		meta["health_status"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.Capabilities) > 0 {
+		meta["capabilities"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.Skills) > 0 {
+		meta["skills"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.Links) > 0 {
+		meta["links"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	return meta
 }

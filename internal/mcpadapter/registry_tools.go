@@ -152,19 +152,20 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("capability", mcp.Description("Filter to rows that carry this capability string.")),
 		mcp.WithString("skill_name", mcp.Description("Filter to rows that carry a skill with this name.")),
 		mcp.WithString("status", mcp.Description("Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all.")),
+		mcp.WithString("tag", mcp.Description("Filter to rows that carry this tag string in tags.")),
 	), Reads("registry search"), a.handleRegistrySearch)
 
 	a.addTool(s, mcp.NewTool("tether_registry_update_self",
 		mcp.WithDescription(
 			"Partial-merge update of a registry row. Returns the refreshed Profile. "+
 				"Scalar fields (display_name, title, role, description, avatar, project, status, "+
-				"health_status, host_address, last_seen_at, kind_meta) update column-wise — only "+
+				"health_status, host_address, last_seen_at, kind_meta, guidelines) update column-wise — only "+
 				"fields present in the patch are touched. "+
-				"Array fields (capabilities, skills, links) accept TWO wire shapes:\n"+
+				"Array fields (capabilities, skills, links, tags, entry_points) accept TWO wire shapes:\n"+
 				"  (1) Shorthand `[...]` — equivalent to {mode:'replace', value:[...]}.\n"+
 				"  (2) Explicit `{mode: 'replace'|'append'|'remove', value: [...]}`.\n"+
 				"Empty value is always a no-op (existing arrays are not cleared). "+
-				"Remove matches: capabilities by string equality; skills by name; links by (kind, target) tuple. "+
+				"Remove matches: capabilities, tags, and entry_points by string equality; skills by name; links by (kind, target) tuple. "+
 				"last_updated_by is required on every patch — caller-supplied identity string, becomes auth-bound in v060-02. "+
 				"Requires the registry.write scope.",
 		),
@@ -321,6 +322,7 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, req mcp.CallToolRequ
 		Capability: str(req, "capability"),
 		SkillName:  str(req, "skill_name"),
 		Status:     str(req, "status"),
+		Tag:        str(req, "tag"),
 	}
 	if a.client == nil {
 		return toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with mux mcp"), nil
