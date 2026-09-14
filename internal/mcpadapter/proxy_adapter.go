@@ -242,6 +242,19 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// Plain router — no middleware; observation is handled server-side above.
 	plainRouter := NewProxyRouter(registry)
 	plainRouter.pool = pool
+	plainRouter.SetLogger(a.logger())
+	if a.svc != nil && a.svc.Store != nil {
+		plainRouter.SetWorkstreamResolver(func(ctx context.Context, sessionID string) (string, error) {
+			row, err := a.svc.Store.GetSession(sessionID)
+			if err != nil {
+				return "", err
+			}
+			if row.WorkstreamID.Valid {
+				return row.WorkstreamID.String, nil
+			}
+			return "", nil
+		})
+	}
 
 	if opts.Only && len(opts.ServerFilter) == 0 {
 		return fmt.Errorf("curated proxy --only requires a non-empty server filter")
@@ -690,6 +703,17 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 			forwarded := mcp.CallToolRequest{}
 			forwarded.Params.Name = toolName
 			forwarded.Params.Arguments = args
+			if req.Params.Meta != nil {
+				meta := *req.Params.Meta
+				if req.Params.Meta.AdditionalFields != nil {
+					fields := make(map[string]any, len(req.Params.Meta.AdditionalFields))
+					for k, v := range req.Params.Meta.AdditionalFields {
+						fields[k] = v
+					}
+					meta.AdditionalFields = fields
+				}
+				forwarded.Params.Meta = &meta
+			}
 
 			return router.Handle(handlerCtx, forwarded)
 		},

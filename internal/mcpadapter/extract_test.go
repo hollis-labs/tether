@@ -290,11 +290,11 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 	if string(forwarded) != string(before) {
 		t.Errorf("extraction altered the forwarded arguments:\n  before %s\n  after  %s\nThat is CW-20260912-0024's direction, not this task's.", before, forwarded)
 	}
-	// _meta may carry trace context (CW-20260907-0026) but nothing
-	// extraction-shaped.
+	// _meta may carry trace context (CW-20260907-0026) or provenance
+	// (CW-20260913-0011) but nothing extraction-shaped.
 	if forwardedMeta != nil {
 		for k := range forwardedMeta.AdditionalFields {
-			if k != "_traceparent" && k != "_tracestate" {
+			if k != "_traceparent" && k != "_tracestate" && k != ProvenanceMetaKey {
 				t.Errorf("extraction added %q to _meta on the forwarded call", k)
 			}
 		}

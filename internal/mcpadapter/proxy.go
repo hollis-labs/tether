@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel/attribute"
@@ -24,9 +25,11 @@ type ToolCallMiddleware interface {
 // upstream client via the ToolRegistry. Native tools must not reach this
 // router — they are dispatched by the MCP server handler before calling Handle.
 type ProxyRouter struct {
-	pool       *ClientPool
-	registry   *ToolRegistry
-	middleware []ToolCallMiddleware
+	pool               *ClientPool
+	registry           *ToolRegistry
+	middleware         []ToolCallMiddleware
+	workstreamResolver WorkstreamResolver
+	logger             *slog.Logger
 }
 
 // NewProxyRouter creates a router backed by the given registry with no middleware.
@@ -98,6 +101,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 		}
+		tReq = r.applyProvenanceMeta(tCtx, tReq)
 		// Trace context rides in params._meta, never in params.arguments --
 		// an upstream with additionalProperties:false at its schema root
 		// correctly rejects an argument it did not declare. See trace_meta.go.
