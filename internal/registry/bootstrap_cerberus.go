@@ -96,6 +96,13 @@ func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome strin
 		target, err := svc.LookupBy(ctx, KindProject, entry.Owner, "")
 		switch {
 		case err == nil:
+			if target.Owner != "" && target.Owner != "cerberus" && target.Owner != "tether" {
+				report.Errors = append(report.Errors, BootstrapError{
+					Path:   entry.Path,
+					Reason: fmt.Sprintf("owner conflict: project %q is owned by %q, not cerberus", target.URN, target.Owner),
+				})
+				continue
+			}
 			if err := svc.AttachExternalID(ctx, target.URN, "cerberus", entry.Owner); err != nil {
 				report.Errors = append(report.Errors, BootstrapError{Path: entry.Path, Reason: err.Error()})
 				continue
@@ -122,6 +129,7 @@ func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome strin
 			continue
 		}
 		created, err := svc.Register(ctx, KindProject, Profile{
+			Owner:       "cerberus",
 			DisplayName: project.Project.Name,
 			Callback: &Callback{
 				Scheme: "file",
@@ -160,6 +168,7 @@ func refreshCerberusProfile(ctx context.Context, svc *Service, urn, displayName 
 	}
 	cb, _ := json.Marshal(&Callback{Scheme: "file", Target: "file://" + entry.Path})
 	fields := map[string]any{
+		"owner":           "cerberus",
 		"display_name":    displayName,
 		"callback_json":   string(cb),
 		"kind_meta_json":  string(meta),

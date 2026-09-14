@@ -370,6 +370,9 @@ func (s *Service) registerGroup(ctx context.Context, p Profile) (Profile, error)
 
 	p.URN = minted
 	p.Kind = KindGroup
+	if p.Owner == "" {
+		p.Owner = creator
+	}
 
 	if err := s.storage.InsertGroupWithOwner(ctx, p, creator); err != nil {
 		return Profile{}, fmt.Errorf("registry: register group: %w", err)
@@ -899,6 +902,14 @@ func (s *Service) Merge(ctx context.Context, urnSrc, urnDst string) (Profile, er
 		return Profile{}, fmt.Errorf("registry: merge: %w: kind mismatch %q != %q", ErrInvalidRequest, src.Kind, dst.Kind)
 	}
 
+	// Owner provenance & dedupe rules (CW-20260912-0052):
+	// The minter owns the row. External callers win over Tether store default.
+	// If both src and dst have distinct external owners, conflicts escalate rather than
+	// silently resolving by recency.
+	if src.Owner != "" && dst.Owner != "" && src.Owner != dst.Owner && src.Owner != "tether" && dst.Owner != "tether" {
+		return Profile{}, fmt.Errorf("registry: merge: %w: owner conflict: cannot merge %q (owner %q) into %q (owner %q)", ErrInvalidRequest, urnSrc, src.Owner, urnDst, dst.Owner)
+	}
+
 	for _, ext := range src.ExternalIDs {
 		if _, ok := dst.ExternalIDFor(ext.Substrate); ok {
 			continue
@@ -925,6 +936,10 @@ func (s *Service) Merge(ctx context.Context, urnSrc, urnDst string) (Profile, er
 			Mode:  ArrayModeAppend,
 			Value: src.Links,
 		},
+	}
+	if (dst.Owner == "" || dst.Owner == "tether") && src.Owner != "" {
+		v := src.Owner
+		patch.Owner = &v
 	}
 	if mergedMeta, ok := mergeKindMeta(dst.KindMeta, src.KindMeta); ok {
 		patch.KindMeta = mergedMeta
@@ -1067,6 +1082,9 @@ func (s *Service) UpdateSelf(ctx context.Context, urn string, patch UpdatePatch)
 	}
 
 	fields := map[string]any{}
+	if patch.Owner != nil {
+		fields["owner"] = *patch.Owner
+	}
 	if patch.DisplayName != nil {
 		fields["display_name"] = *patch.DisplayName
 	}

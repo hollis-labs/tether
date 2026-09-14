@@ -111,3 +111,79 @@ func loadYAMLFile(path string, out any) error {
 	}
 	return yaml.Unmarshal(b, out)
 }
+
+// BackfillOwnership inspects rows with empty owner and infers owner
+// from callback target, external IDs, and kind_meta.
+// Safe to re-run; rows with non-empty owner are skipped.
+func BackfillOwnership(ctx context.Context, svc *Service) (int, error) {
+	if svc == nil {
+		return 0, fmt.Errorf("registry: backfill ownership: service required")
+	}
+	var backfilled int
+	for _, kind := range []Kind{KindAgent, KindProject} {
+		rows, err := svc.Search(ctx, kind, Filter{Status: StatusAny})
+		if err != nil {
+			return backfilled, err
+		}
+		for _, row := range rows {
+			if row.Owner != "" {
+				continue
+			}
+			inferred := inferOwner(row)
+			if inferred == "" {
+				continue
+			}
+			if err := svc.storage.UpdateProfileFields(ctx, row.URN, map[string]any{"owner": inferred}); err != nil {
+				return backfilled, fmt.Errorf("registry: backfill ownership for %s: %w", row.URN, err)
+			}
+			backfilled++
+		}
+	}
+	return backfilled, nil
+}
+
+func (s *Service) BackfillOwnership(ctx context.Context) (int, error) {
+	return BackfillOwnership(ctx, s)
+}
+
+func inferOwner(row Profile) string {
+	// 1. Callback target signal (strongest provenance signal)
+	if row.Callback != nil && row.Callback.Target != "" {
+		target := strings.ToLower(row.Callback.Target)
+		if strings.Contains(target, ".cerberus/") || strings.Contains(target, "/cerberus/") {
+			return "cerberus"
+		}
+		if strings.Contains(target, ".tether/") || strings.Contains(target, "/tether/") {
+			return "tether"
+		}
+	}
+	// 2. Substrate external IDs
+	hasCerberus := false
+	hasTether := false
+	for _, ext := range row.ExternalIDs {
+		switch ext.Substrate {
+		case "cerberus":
+			hasCerberus = true
+		case "tether":
+			hasTether = true
+		}
+	}
+	if hasCerberus && !hasTether {
+		return "cerberus"
+	}
+	if hasTether && !hasCerberus {
+		return "tether"
+	}
+	// 3. KindMeta
+	if len(row.KindMeta) > 0 {
+		metaStr := strings.ToLower(string(row.KindMeta))
+		if strings.Contains(metaStr, `"cerberus"`) {
+			return "cerberus"
+		}
+	}
+	// 4. Default for Tether-hosted store entries if they have a file callback
+	if hasTether || (row.Callback != nil && row.Callback.Scheme == "file") {
+		return "tether"
+	}
+	return ""
+}

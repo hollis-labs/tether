@@ -111,6 +111,41 @@ func (rc *RegistryClient) Lookup(ctx context.Context, urn string) (registry.Prof
 	return out, nil
 }
 
+// LookupFull GETs /registry/{kind}/{urn}?full=true returning the unredacted Profile.
+func (rc *RegistryClient) LookupFull(ctx context.Context, urn string) (registry.Profile, error) {
+	return rc.LookupWithInclude(ctx, urn, "all")
+}
+
+// LookupWithInclude GETs /registry/{kind}/{urn}?include=... returning a Profile with
+// the requested sensitive fields included.
+func (rc *RegistryClient) LookupWithInclude(ctx context.Context, urn string, include ...string) (registry.Profile, error) {
+	seg, err := kindSegmentFromURN(urn)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	path := "/registry/" + seg + "/" + url.PathEscape(urn)
+	if len(include) > 0 {
+		path += "?include=" + url.QueryEscape(strings.Join(include, ","))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.Profile{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.Profile{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.Profile{}, readRegistryError(resp)
+	}
+	var out registry.Profile
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.Profile{}, fmt.Errorf("decode lookup response: %w", err)
+	}
+	return out, nil
+}
+
 // LookupBy resolves a substrate-local identifier to one registry profile.
 func (rc *RegistryClient) LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error) {
 	seg, err := pluralSegment(kind)

@@ -334,6 +334,7 @@ func agentProfileFromFile(absPath string) (Profile, error) {
 	}
 
 	return Profile{
+		Owner:         "tether",
 		DisplayName:   display,
 		Role:          role,
 		Capabilities:  append([]string(nil), a.Skills...), // copy so the slice isn't aliased to the YAML decode
@@ -376,6 +377,7 @@ func projectProfileFromFile(absPath string) (Profile, error) {
 	}
 
 	return Profile{
+		Owner:         "tether",
 		DisplayName:   display,
 		KindMeta:      kindMeta,
 		Callback:      &Callback{Scheme: "file", Target: "file://" + abs},
@@ -390,6 +392,10 @@ func projectProfileFromFile(absPath string) (Profile, error) {
 // "callback Sync fired").
 func buildBootstrapPatch(p Profile) UpdatePatch {
 	patch := UpdatePatch{LastUpdatedBy: bootstrapLastUpdatedBy}
+	if p.Owner != "" {
+		v := p.Owner
+		patch.Owner = &v
+	}
 	if p.DisplayName != "" {
 		v := p.DisplayName
 		patch.DisplayName = &v

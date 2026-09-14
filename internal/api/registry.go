@@ -67,6 +67,7 @@ type RegistryService interface {
 	Sync(ctx context.Context, urn string) (registry.Profile, error)
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
+	BackfillOwnership(ctx context.Context) (int, error)
 	BootstrapFromCerberus(ctx context.Context, cerberusHome string, force bool, writeBack bool) (registry.BootstrapReport, error)
 	// RuntimeBinding methods (T07, messaging vNext): the published-local
 	// bridge registration surface. See bindings.go.
@@ -263,7 +264,8 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, out)
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusCreated, projectProfile(out, inc))
 }
 
 // handleRegistrySearch services GET /registry/{kind}. Filter fields are
@@ -271,12 +273,11 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 // `{"<kind-plural>": []}` (non-null slice, matches the catalog
 // convention in catalog.go).
 //
-// Responses are redacted (see redactProfile) -- Search is genuinely
-// public discovery: unlike whoami's targeted, self-asserted ?as= lookup,
-// it requires no identity assertion at all and lets any same-host caller
-// browse every registered row.
+// Responses are redacted by default (see redactProfile). Callers who
+// require sensitive fields can pass ?full=true or ?include=...
 func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, kind registry.Kind) {
 	q := r.URL.Query()
+	inc := parseIncludes(r)
 	if externalID := q.Get("external_id"); externalID != "" {
 		out, err := s.Registry.LookupBy(r.Context(), kind, externalID, q.Get("substrate"))
 		if err != nil {
@@ -284,7 +285,7 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			singularForKind(kind): redactProfile(out),
+			singularForKind(kind): projectProfile(out, inc),
 		})
 		return
 	}
@@ -303,10 +304,8 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 	}
 	// Single-key envelope keyed on the plural form — `{"agents": [...]}`
 	// or `{"projects": [...]}` — matching the catalog list pattern.
-	// redactProfiles always returns a non-nil slice, preserving the
-	// non-null-empty-result convention even when out is nil.
 	writeJSON(w, http.StatusOK, map[string]any{
-		pluralForKind(kind): redactProfiles(out),
+		pluralForKind(kind): projectProfiles(out, inc),
 	})
 }
 
@@ -318,51 +317,44 @@ func (s *Server) handleRegistrySearch(w http.ResponseWriter, r *http.Request, ki
 // the row. The kind in the path is a routing convenience, not an
 // authorization check.
 //
-// Response is redacted (see redactProfile) for the same "public
-// discovery" reason as Search — Lookup takes no ?as= and performs no
-// ownership check, so any URN is fetchable by any same-host caller.
+// Response is redacted by default (see redactProfile). Callers who
+// require sensitive fields can pass ?full=true or ?include=...
 func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request, urn string) {
 	out, err := s.Registry.Lookup(r.Context(), urn)
 	if err != nil {
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, redactProfile(out))
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
-// redactedProfile is the wire shape Search and Lookup ("public discovery"
-// -- unscoped browsing, no identity assertion) return in place of the
-// full registry.Profile. T09 acceptance #3 ("privacy tests redact
-// secrets/private native metadata on public discovery") targets exactly
-// four fields this type drops: Callback (a scheme+target pointer that is
-// frequently a filesystem path -- T02's own acceptance criteria calls
-// this out by name: "leaking provider IDs, paths and secrets"),
-// HostAddress (an internal network address), KindMeta (arbitrary
-// per-kind operational JSON -- the "private native metadata" the
-// acceptance text names), and ExternalIDs (the "provider IDs" T02
-// prohibits leaking). Fields are dropped entirely rather than replaced
-// with placeholders: a caller who legitimately needs them has a route
-// that provides them at full fidelity -- whoami's targeted ?as= query
-// (architecture explicitly wants self-discovery to return "identity
-// mappings... and host"), or Register/UpdateSelf/Sync/Deregister/Merge,
-// none of which this redaction touches.
+// redactedProfile is the wire shape returned by default across both read routes
+// (Search, Lookup, LookupBy) and write routes (Register, UpdateSelf, Deregister,
+// Sync, Merge).
 //
-// Caveat (found in this task's own review, not fixed here -- out of
-// T09's scope fence): those write-path routes are described above as
-// "the row's own owner acting on their own data," but nothing in this
-// codebase actually verifies that -- same-host, self-asserted, no-auth-v1
-// (ADR 0045) means any caller who knows a URN can PATCH/DELETE/Sync it
-// and get the full unredacted Profile back, not just the row's true
-// owner. That gap is pre-existing (not introduced by this redaction) and
-// matches the declared trust model, but it means Search/Lookup redaction
-// alone is a much narrower privacy improvement in practice than
-// "redacted on public discovery" implies -- the same fields remain one
-// PATCH away for anyone who already has the URN. Left as a follow-up
-// (an ownership/ADR question, not a routine fix) rather than expanded
-// here.
+// Bidirectional Redaction Policy (CW-20260912-0053):
+// T09 acceptance #3 ("privacy tests redact secrets/private native metadata on public
+// discovery") targets exactly four fields this type drops: Callback (a scheme+target
+// pointer that is frequently a filesystem path or command line containing tokens),
+// HostAddress (an internal network address), KindMeta (arbitrary per-kind operational
+// JSON / private native metadata), and ExternalIDs (substrate provider IDs).
+//
+// Under ADR 0045's same-host trust model, any local caller can invoke write routes as
+// well as read routes. If write routes returned the full unredacted Profile while read
+// routes hid it, any caller could bypass redaction simply by sending a minimal PATCH
+// or POST /sync. To preserve privacy consistently, redaction applies bidirectionally:
+// neither reads nor writes leak these four fields by default.
+//
+// Legitimate Access: Callers who legitimately require these fields (e.g., operators,
+// audit tools, and dedupe jobs) can request them via query parameters:
+//   - ?full=true: returns the full unredacted Profile.
+//   - ?include=callback,kind_meta,host_address,external_ids: selectively includes the
+//     requested fields.
 type redactedProfile struct {
 	URN           string           `json:"urn"`
 	Kind          registry.Kind    `json:"kind"`
+	Owner         string           `json:"owner,omitempty"`
 	MuxInstanceID string           `json:"mux_instance_id"`
 	DisplayName   string           `json:"display_name"`
 	Title         string           `json:"title,omitempty"`
@@ -385,7 +377,7 @@ type redactedProfile struct {
 
 func redactProfile(p registry.Profile) redactedProfile {
 	return redactedProfile{
-		URN: p.URN, Kind: p.Kind, MuxInstanceID: p.MuxInstanceID,
+		URN: p.URN, Kind: p.Kind, Owner: p.Owner, MuxInstanceID: p.MuxInstanceID,
 		DisplayName: p.DisplayName, Title: p.Title, Role: p.Role,
 		Description: p.Description, Avatar: p.Avatar, Project: p.Project,
 		Status: p.Status, CachedAt: p.CachedAt, HealthStatus: p.HealthStatus,
@@ -407,6 +399,98 @@ func redactProfiles(ps []registry.Profile) []redactedProfile {
 	return out
 }
 
+type includeFields struct {
+	callback    bool
+	hostAddress bool
+	kindMeta    bool
+	externalIDs bool
+}
+
+func parseIncludes(r *http.Request) includeFields {
+	q := r.URL.Query()
+	if q.Get("full") == "true" {
+		return includeFields{callback: true, hostAddress: true, kindMeta: true, externalIDs: true}
+	}
+	inc := q.Get("include")
+	if inc == "" {
+		return includeFields{}
+	}
+	var f includeFields
+	for _, part := range strings.Split(inc, ",") {
+		switch strings.TrimSpace(strings.ToLower(part)) {
+		case "*", "all":
+			return includeFields{callback: true, hostAddress: true, kindMeta: true, externalIDs: true}
+		case "callback":
+			f.callback = true
+		case "host_address", "hostaddress":
+			f.hostAddress = true
+		case "kind_meta", "kindmeta":
+			f.kindMeta = true
+		case "external_ids", "externalids":
+			f.externalIDs = true
+		}
+	}
+	return f
+}
+
+func (f includeFields) any() bool {
+	return f.callback || f.hostAddress || f.kindMeta || f.externalIDs
+}
+
+func (f includeFields) all() bool {
+	return f.callback && f.hostAddress && f.kindMeta && f.externalIDs
+}
+
+type projectedProfile struct {
+	redactedProfile
+	Callback    *registry.Callback    `json:"callback,omitempty"`
+	HostAddress string                `json:"host_address,omitempty"`
+	KindMeta    json.RawMessage       `json:"kind_meta,omitempty"`
+	ExternalIDs []registry.ExternalID `json:"external_ids,omitempty"`
+}
+
+func projectProfile(p registry.Profile, f includeFields) any {
+	if !f.any() {
+		return redactProfile(p)
+	}
+	if f.all() {
+		return p
+	}
+	proj := projectedProfile{
+		redactedProfile: redactProfile(p),
+	}
+	if f.callback {
+		proj.Callback = p.Callback
+	}
+	if f.hostAddress {
+		proj.HostAddress = p.HostAddress
+	}
+	if f.kindMeta {
+		proj.KindMeta = p.KindMeta
+	}
+	if f.externalIDs {
+		proj.ExternalIDs = p.ExternalIDs
+	}
+	return proj
+}
+
+func projectProfiles(ps []registry.Profile, f includeFields) any {
+	if !f.any() {
+		return redactProfiles(ps)
+	}
+	if f.all() {
+		if ps == nil {
+			return []registry.Profile{}
+		}
+		return ps
+	}
+	out := make([]projectedProfile, len(ps))
+	for i, p := range ps {
+		out[i] = projectProfile(p, f).(projectedProfile)
+	}
+	return out
+}
+
 // handleRegistryUpdate services PATCH /registry/{kind}/{urn}. Body is
 // an UpdatePatch (see registry.UpdatePatch godoc for the partial-merge
 // semantics). LastUpdatedBy is required at the service layer; missing
@@ -423,7 +507,8 @@ func (s *Server) handleRegistryUpdate(w http.ResponseWriter, r *http.Request, ur
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
 // handleRegistryDeregister services DELETE /registry/{kind}/{urn}.
@@ -435,7 +520,8 @@ func (s *Server) handleRegistryDeregister(w http.ResponseWriter, r *http.Request
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
 // handleRegistryBootstrap services POST /registry/bootstrap. Re-runs the
@@ -484,9 +570,17 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 			var attached int
 			attached, err = s.Registry.BackfillTetherExternalIDs(r.Context(), s.RegistryCatalogRoot)
 			report.Attached += attached
+			if _, bErr := s.Registry.BackfillOwnership(r.Context()); bErr != nil && err == nil {
+				err = bErr
+			}
 		}
 	case "cerberus":
 		report, err = s.Registry.BootstrapFromCerberus(r.Context(), "", force, writeBack)
+		if err == nil {
+			if _, bErr := s.Registry.BackfillOwnership(r.Context()); bErr != nil {
+				err = bErr
+			}
+		}
 	default:
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "unsupported bootstrap substrate "+substrate)
 		return
@@ -504,7 +598,7 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 //   - 204 No Content when the row has no callback configured
 //     (registry.ErrNoCallback) — callers treat this as a successful
 //     no-op (nothing to refresh).
-//   - 200 + refreshed Profile otherwise.
+//   - 200 + refreshed Profile otherwise (redacted by default; ?full=true / ?include= supported).
 //
 // All resolver / payload errors (ErrPayloadInvalid, ErrPayloadTooLarge,
 // ErrPathOutsideRoot) surface as 502 Bad Gateway with an internal_error
@@ -520,7 +614,8 @@ func (s *Server) handleRegistrySync(w http.ResponseWriter, r *http.Request, urn 
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
 func (s *Server) handleRegistryMerge(w http.ResponseWriter, r *http.Request, urn string) {
@@ -534,7 +629,8 @@ func (s *Server) handleRegistryMerge(w http.ResponseWriter, r *http.Request, urn
 		writeRegistryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	inc := parseIncludes(r)
+	writeJSON(w, http.StatusOK, projectProfile(out, inc))
 }
 
 // writeRegistryError centralizes the service-error → HTTP-envelope

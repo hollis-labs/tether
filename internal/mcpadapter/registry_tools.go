@@ -106,12 +106,16 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 
 	a.addTool(s, mcp.NewTool("tether_registry_lookup",
 		mcp.WithDescription(
-			"Look up a registry profile by URN. Returns the full Profile or not_found. "+
+			"Look up a registry profile by URN. Returns the redacted Profile by default or not_found. "+
 				"Soft-deleted (status='deprecated') rows are returned by direct lookup — they "+
-				"are excluded only from default Search results. Read-only; no scope required.",
+				"are excluded only from default Search results. Read-only by default; passing "+
+				"include requires the registry.write scope.",
 		),
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
+		),
+		mcp.WithString("include",
+			mcp.Description("Optional comma-separated fields to include (e.g. 'callback', 'kind_meta', 'host_address', 'external_ids') or 'all'. Requires registry.write scope."),
 		),
 	), Reads("registry profile lookup"), a.handleRegistryLookup)
 
@@ -248,7 +252,8 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRe
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
-// handleRegistryLookup services tether_registry_lookup. Read-only; no scope.
+// handleRegistryLookup services tether_registry_lookup. Read-only by default;
+// passing include requires the registry.write scope.
 func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	urn := str(req, "urn")
 	if urn == "" {
@@ -257,7 +262,21 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequ
 	if a.client == nil {
 		return toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp"), nil
 	}
-	out, err := a.client.Registry().Lookup(ctx, urn)
+	include := str(req, "include")
+	if include != "" {
+		if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+			return errRes, nil
+		}
+	}
+	var (
+		out registry.Profile
+		err error
+	)
+	if include != "" {
+		out, err = a.client.Registry().LookupWithInclude(ctx, urn, include)
+	} else {
+		out, err = a.client.Registry().Lookup(ctx, urn)
+	}
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return daemonUnreachableError(err), nil

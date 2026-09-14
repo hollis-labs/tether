@@ -96,6 +96,9 @@ func (s *Storage) RegisterWithExternalKey(ctx context.Context, p Profile, substr
 	if p.MuxInstanceID == "" {
 		p.MuxInstanceID = defaultMuxInstanceID
 	}
+	if p.Owner == "" && substrate != "" {
+		p.Owner = substrate
+	}
 	p = p.WithExternalID(ExternalID{Substrate: substrate, ExternalID: externalID, AttachedAt: now})
 
 	var callbackJSON sql.NullString
@@ -113,12 +116,12 @@ func (s *Storage) RegisterWithExternalKey(ctx context.Context, p Profile, substr
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO registry_entries
-		    (urn, kind, mux_instance_id, display_name, title, role, description,
+		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.URN, string(p.Kind), p.MuxInstanceID, p.DisplayName,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),

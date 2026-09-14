@@ -38,6 +38,7 @@ const (
 type Profile struct {
 	URN           string          `json:"urn"`
 	Kind          Kind            `json:"kind"`
+	Owner         string          `json:"owner,omitempty"`
 	MuxInstanceID string          `json:"mux_instance_id"`
 	DisplayName   string          `json:"display_name"`
 	Title         string          `json:"title,omitempty"`
@@ -144,6 +145,7 @@ type Filter struct {
 // ArrayPatch carries the merge mode. KindMeta is replace-on-present (no
 // shallow merge in v1). LastUpdatedBy is required.
 type UpdatePatch struct {
+	Owner         *string             `json:"owner,omitempty"`
 	DisplayName   *string             `json:"display_name,omitempty"`
 	Title         *string             `json:"title,omitempty"`
 	Role          *string             `json:"role,omitempty"`

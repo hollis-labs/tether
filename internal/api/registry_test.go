@@ -500,6 +500,7 @@ func TestRegistry_Merge_Happy(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
 	}
+	assertNoLeakedRegistryFields(t, body)
 	var merged registry.Profile
 	if err := json.Unmarshal(body, &merged); err != nil {
 		t.Fatalf("decode merged: %v", err)
@@ -507,8 +508,13 @@ func TestRegistry_Merge_Happy(t *testing.T) {
 	if merged.URN != dst.URN {
 		t.Fatalf("merged urn = %q, want %q", merged.URN, dst.URN)
 	}
-	if len(merged.ExternalIDs) == 0 {
-		t.Fatalf("merged external_ids empty")
+
+	exts, err := r.svc.LookupExternalIDsForURN(context.Background(), dst.URN)
+	if err != nil {
+		t.Fatalf("LookupExternalIDsForURN: %v", err)
+	}
+	if len(exts) == 0 {
+		t.Fatalf("merged external_ids empty in storage")
 	}
 
 	srcAfter, err := r.svc.Lookup(context.Background(), src.URN)
@@ -633,12 +639,9 @@ func TestRegistry_Lookup_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *tes
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode register: %v", err)
 	}
-	// Register's own response is the caller acting on their own
-	// just-submitted data, not browsing someone else's -- full fidelity
-	// is correct there and is NOT what this test is about.
-	if created.Callback == nil || len(created.KindMeta) == 0 {
-		t.Fatalf("register response unexpectedly redacted: %+v", created)
-	}
+	// Under bidirectional redaction (CW-20260912-0053), Register's default response
+	// is redacted to prevent using writes as an un-audited leak vector.
+	assertNoLeakedRegistryFields(t, body)
 
 	hostAddr := "10.0.0.7:9999"
 	if _, err := r.svc.UpdateSelf(context.Background(), created.URN, registry.UpdatePatch{
@@ -662,6 +665,31 @@ func TestRegistry_Lookup_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *tes
 	}
 	if got.DisplayName != "Secretive" {
 		t.Errorf("display_name = %q, want the public field preserved", got.DisplayName)
+	}
+
+	// Legitimate read path: ?full=true returns the unredacted profile.
+	respFull, bodyFull := r.do(http.MethodGet, itemURL("agents", created.URN)+"?full=true", nil)
+	if respFull.StatusCode != http.StatusOK {
+		t.Fatalf("lookup with full=true: status = %d: %s", respFull.StatusCode, bodyFull)
+	}
+	var gotFull registry.Profile
+	if err := json.Unmarshal(bodyFull, &gotFull); err != nil {
+		t.Fatalf("decode lookup full: %v", err)
+	}
+	if gotFull.Callback == nil || gotFull.HostAddress != hostAddr || len(gotFull.ExternalIDs) == 0 {
+		t.Errorf("lookup with full=true did not expose sensitive fields: %+v", gotFull)
+	}
+
+	// Legitimate read path: ?include=callback selectively exposes callback only.
+	respInc, bodyInc := r.do(http.MethodGet, itemURL("agents", created.URN)+"?include=callback", nil)
+	if respInc.StatusCode != http.StatusOK {
+		t.Fatalf("lookup with include=callback: status = %d: %s", respInc.StatusCode, bodyInc)
+	}
+	if !bytes.Contains(bodyInc, []byte(`"callback"`)) {
+		t.Errorf("expected callback in response: %s", bodyInc)
+	}
+	if bytes.Contains(bodyInc, []byte(`"host_address"`)) || bytes.Contains(bodyInc, []byte(`"kind_meta"`)) || bytes.Contains(bodyInc, []byte(`"external_ids"`)) {
+		t.Errorf("expected other sensitive fields to stay omitted: %s", bodyInc)
 	}
 }
 
@@ -772,6 +800,196 @@ func decodeSearchAgents(t *testing.T, body []byte) []registry.Profile {
 		t.Fatalf("decode search: %v: %s", err, body)
 	}
 	return env.Agents
+}
+
+func TestRegistry_WriteRoutes_RedactedByDefault(t *testing.T) {
+	fxDir := t.TempDir()
+	fxPath := filepath.Join(fxDir, "agent.json")
+	if err := os.WriteFile(fxPath, []byte(`{"display_name":"Synced Agent","role":"synced"}`), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	resolver, err := registry.NewFileResolver(fxDir)
+	if err != nil {
+		t.Fatalf("file resolver: %v", err)
+	}
+
+	r := newRegServer(t, registry.WithResolver(resolver))
+	ctx := context.Background()
+
+	// 1. POST /registry/agents (Register)
+	hostAddr := "192.168.1.50:8080"
+	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
+		DisplayName:   "Writable Agent",
+		LastUpdatedBy: "tester",
+		HostAddress:   hostAddr,
+		Callback:      &registry.Callback{Scheme: "file", Target: "file://" + fxPath},
+		KindMeta:      json.RawMessage(`{"secret_config":"dont-leak"}`),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	var p1 registry.Profile
+	if err := json.Unmarshal(body, &p1); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	if p1.URN == "" {
+		t.Fatal("empty URN in register response")
+	}
+
+	if err := r.svc.AttachExternalID(ctx, p1.URN, "cerberus", "ext-secret-id"); err != nil {
+		t.Fatalf("AttachExternalID: %v", err)
+	}
+
+	// 2. PATCH /registry/agents/{urn} (Update)
+	newTitle := "Updated Title"
+	resp, body = r.do(http.MethodPatch, itemURL("agents", p1.URN), registry.UpdatePatch{
+		Title:         &newTitle,
+		LastUpdatedBy: "tester",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch: %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	// 3. POST /registry/agents/{urn}/sync (Sync)
+	resp, body = r.do(http.MethodPost, itemURL("agents", p1.URN)+"/sync", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sync: %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	// 4. POST /registry/projects/{urn}/merge (Merge)
+	src := registerWithCapabilities(t, r, "projects", "Proj Src", "", "tether", nil)
+	dst := registerWithCapabilities(t, r, "projects", "Proj Dst", "", "tether", nil)
+	if err := r.svc.AttachExternalID(ctx, src.URN, "cerberus", "secret-merge-ext-id"); err != nil {
+		t.Fatalf("AttachExternalID src: %v", err)
+	}
+	resp, body = r.do(http.MethodPost, itemURL("projects", src.URN)+"/merge", map[string]string{"into": dst.URN})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("merge: %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	// 5. DELETE /registry/agents/{urn} (Deregister)
+	resp, body = r.do(http.MethodDelete, itemURL("agents", p1.URN), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete: %d: %s", resp.StatusCode, body)
+	}
+	assertNoLeakedRegistryFields(t, body)
+
+	// 6. Write route with ?full=true exposes all fields
+	resp, body = r.do(http.MethodPost, "/registry/agents?full=true", registry.Profile{
+		DisplayName:   "Full Writer",
+		LastUpdatedBy: "tester",
+		HostAddress:   hostAddr,
+		Callback:      &registry.Callback{Scheme: "file", Target: "file://" + fxPath},
+		KindMeta:      json.RawMessage(`{"secret_config":"dont-leak"}`),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register with full: %d: %s", resp.StatusCode, body)
+	}
+	var fullCreated registry.Profile
+	if err := json.Unmarshal(body, &fullCreated); err != nil {
+		t.Fatalf("decode full register: %v", err)
+	}
+	if fullCreated.Callback == nil || fullCreated.HostAddress != hostAddr || len(fullCreated.KindMeta) == 0 {
+		t.Fatalf("register with ?full=true expected unredacted fields, got: %+v", fullCreated)
+	}
+}
+
+func TestRegistry_OwnerProvenance(t *testing.T) {
+	r := newRegServer(t)
+
+	// 1. Register with Owner
+	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
+		DisplayName:   "Cerberus Agent",
+		Owner:         "cerberus",
+		LastUpdatedBy: "tester",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", resp.StatusCode, body)
+	}
+	var created registry.Profile
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	if created.Owner != "cerberus" {
+		t.Errorf("Owner = %q, want cerberus", created.Owner)
+	}
+
+	// 2. Lookup preserves Owner in response
+	resp, body = r.do(http.MethodGet, itemURL("agents", created.URN), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("lookup status = %d: %s", resp.StatusCode, body)
+	}
+	var lookedUp registry.Profile
+	if err := json.Unmarshal(body, &lookedUp); err != nil {
+		t.Fatalf("decode lookup: %v", err)
+	}
+	if lookedUp.Owner != "cerberus" {
+		t.Errorf("lookup Owner = %q, want cerberus", lookedUp.Owner)
+	}
+
+	// 3. Search includes Owner
+	resp, body = r.do(http.MethodGet, "/registry/agents", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search status = %d: %s", resp.StatusCode, body)
+	}
+	agents := decodeSearchAgents(t, body)
+	found := false
+	for _, a := range agents {
+		if a.URN == created.URN {
+			found = true
+			if a.Owner != "cerberus" {
+				t.Errorf("search Owner = %q, want cerberus", a.Owner)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("created agent not found in search")
+	}
+
+	// 4. Merge owner rules:
+	// 4a. External callers win over Tether store default:
+	//     src (cerberus) merged into dst (tether) -> dst becomes owned by cerberus
+	srcCerb := registerWithCapabilities(t, r, "projects", "Cerberus Project", "", "tether", nil)
+	dstTether := registerWithCapabilities(t, r, "projects", "Tether Project", "", "tether", nil)
+	ownerCerb := "cerberus"
+	ownerTether := "tether"
+	if _, err := r.svc.UpdateSelf(context.Background(), srcCerb.URN, registry.UpdatePatch{Owner: &ownerCerb, LastUpdatedBy: "tester"}); err != nil {
+		t.Fatalf("set srcCerb owner: %v", err)
+	}
+	if _, err := r.svc.UpdateSelf(context.Background(), dstTether.URN, registry.UpdatePatch{Owner: &ownerTether, LastUpdatedBy: "tester"}); err != nil {
+		t.Fatalf("set dstTether owner: %v", err)
+	}
+
+	resp, body = r.do(http.MethodPost, itemURL("projects", srcCerb.URN)+"/merge", map[string]string{"into": dstTether.URN})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("merge cerberus into tether: %d: %s", resp.StatusCode, body)
+	}
+	dstAfter, err := r.svc.Lookup(context.Background(), dstTether.URN)
+	if err != nil {
+		t.Fatalf("lookup dstAfter: %v", err)
+	}
+	if dstAfter.Owner != "cerberus" {
+		t.Errorf("merged dst owner = %q, want cerberus (external minter wins over tether store default)", dstAfter.Owner)
+	}
+
+	// 4b. Owner conflict: two distinct external minters (e.g. loom vs cerberus) -> conflict!
+	srcLoom := registerWithCapabilities(t, r, "projects", "Loom Project", "", "tether", nil)
+	ownerLoom := "loom"
+	if _, err := r.svc.UpdateSelf(context.Background(), srcLoom.URN, registry.UpdatePatch{Owner: &ownerLoom, LastUpdatedBy: "tester"}); err != nil {
+		t.Fatalf("set srcLoom owner: %v", err)
+	}
+	resp, body = r.do(http.MethodPost, itemURL("projects", srcLoom.URN)+"/merge", map[string]string{"into": dstTether.URN})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("merge loom into cerberus: expected 400 owner conflict, got %d: %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte("owner conflict")) {
+		t.Errorf("expected owner conflict message in response: %s", body)
+	}
 }
 
 // Sanity check that the route uses the older not-found behavior for an
