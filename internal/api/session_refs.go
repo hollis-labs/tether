@@ -26,14 +26,15 @@ type SessionRefStore interface {
 
 // SessionRefDTO is the wire shape for one ref.
 type SessionRefDTO struct {
-	ID        int64  `json:"id"`
-	SessionID string `json:"session_id"`
-	Kind      string `json:"kind"`
-	RefID     string `json:"ref_id"`
-	URI       string `json:"uri,omitempty"`
-	Relation  string `json:"relation"`
-	Source    string `json:"source"`
-	At        string `json:"at"`
+	ID           int64  `json:"id"`
+	SessionID    string `json:"session_id"`
+	Kind         string `json:"kind"`
+	RefID        string `json:"ref_id"`
+	URI          string `json:"uri,omitempty"`
+	Relation     string `json:"relation"`
+	Source       string `json:"source"`
+	At           string `json:"at"`
+	ParentItemID string `json:"parent_item_id,omitempty"`
 }
 
 // SessionRefListResponse is the collection response for a ref listing.
@@ -48,11 +49,12 @@ type SessionRefListResponse struct {
 // destroy the only distinction the column exists to carry. Callers get "api"
 // or "agent"; only the proxy writes "proxy", from inside the proxy.
 type SessionRefAttachRequest struct {
-	Kind     string `json:"kind"`
-	RefID    string `json:"ref_id"`
-	URI      string `json:"uri,omitempty"`
-	Relation string `json:"relation,omitempty"`
-	Source   string `json:"source,omitempty"`
+	Kind         string `json:"kind"`
+	RefID        string `json:"ref_id"`
+	URI          string `json:"uri,omitempty"`
+	Relation     string `json:"relation,omitempty"`
+	Source       string `json:"source,omitempty"`
+	ParentItemID string `json:"parent_item_id,omitempty"`
 }
 
 // SessionRefAttachResponse reports what the write did. Both flags false is a
@@ -70,8 +72,15 @@ type SessionRefAttachResponse struct {
 
 func sessionRefToDTO(r store.SessionRefRow) SessionRefDTO {
 	return SessionRefDTO{
-		ID: r.ID, SessionID: r.SessionID, Kind: r.Kind, RefID: r.RefID,
-		URI: r.URI, Relation: r.Relation, Source: r.Source, At: r.At,
+		ID:           r.ID,
+		SessionID:    r.SessionID,
+		Kind:         r.Kind,
+		RefID:        r.RefID,
+		URI:          r.URI,
+		Relation:     r.Relation,
+		Source:       r.Source,
+		At:           r.At,
+		ParentItemID: r.ParentItemID,
 	}
 }
 
@@ -141,8 +150,13 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 	// store.AttachSessionRef. Making it verifiable is deferred hardening,
 	// tracked at CW-20260912-0100, and deliberately not attempted here.
 	row := store.SessionRefRow{
-		SessionID: sessionID, Kind: req.Kind, RefID: req.RefID,
-		URI: req.URI, Relation: req.Relation, Source: source,
+		SessionID:    sessionID,
+		Kind:         req.Kind,
+		RefID:        req.RefID,
+		URI:          req.URI,
+		Relation:     req.Relation,
+		Source:       source,
+		ParentItemID: req.ParentItemID,
 	}
 	res, err := s.SessionRefs.AttachSessionRef(row)
 	if err != nil {

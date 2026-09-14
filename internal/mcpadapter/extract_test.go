@@ -1,10 +1,11 @@
 package mcpadapter
 
-// CW-20260912-0061 (S3).
+// CW-20260912-0061 (S3), CW-20260914-0003 (Slice 2).
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,20 +15,32 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-type recordedRef struct{ sessionID, kind, refID, relation, source string }
+type recordedRef struct{ sessionID, kind, refID, uri, relation, source, parentItemID string }
 
 type recordingAttacher struct{ got []recordedRef }
 
-func (r *recordingAttacher) AttachSessionRef(_ context.Context, sessionID, kind, refID, relation, source string) error {
-	r.got = append(r.got, recordedRef{sessionID, kind, refID, relation, source})
+func (r *recordingAttacher) AttachSessionRef(_ context.Context, sessionID, kind, refID, uri, relation, source, parentItemID string) error {
+	r.got = append(r.got, recordedRef{sessionID, kind, refID, uri, relation, source, parentItemID})
 	return nil
+}
+
+type mockRefResolver struct {
+	resolveFunc func(ctx context.Context, selector map[string]any) (*ResolvedRef, error)
+}
+
+func (m *mockRefResolver) ResolveRef(ctx context.Context, selector map[string]any) (*ResolvedRef, error) {
+	if m.resolveFunc != nil {
+		return m.resolveFunc(ctx, selector)
+	}
+	return nil, errors.New("mock resolver: not configured")
 }
 
 func TestExtractRefs_MatchesTheAllowlistOnly(t *testing.T) {
 	args := map[string]any{
-		"id":       "CW-20260912-0061",
+		"id": "CW-20260912-0061",
+		"to": "msg://agent/agent-mux/agt_7qrvwg79ad",
+		// In Slice 2, arbitrary ULID shapes in arguments are NOT guessed as revisions:
 		"revision": "01M2B9SRHB4VZ3NE8VFR91XVVF",
-		"to":       "msg://agent/agent-mux/agt_7qrvwg79ad",
 		// Everything below must be ignored — this is the privacy line.
 		"body":     "a long prose payload that mentions nothing structured",
 		"token":    "sk-live-abcdef0123456789",
@@ -43,9 +56,8 @@ func TestExtractRefs_MatchesTheAllowlistOnly(t *testing.T) {
 		kinds[r.Kind] = r.RefID
 	}
 	want := map[string]string{
-		refKindTorqueTask:        "CW-20260912-0061",
-		refKindTesseractRevision: "01M2B9SRHB4VZ3NE8VFR91XVVF",
-		refKindMessagingURN:      "msg://agent/agent-mux/agt_7qrvwg79ad",
+		refKindTorqueTask:   "CW-20260912-0061",
+		refKindMessagingURN: "msg://agent/agent-mux/agt_7qrvwg79ad",
 	}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Errorf("extracted %v, want %v", kinds, want)
@@ -54,7 +66,7 @@ func TestExtractRefs_MatchesTheAllowlistOnly(t *testing.T) {
 	// is the assertion the whole privacy argument rests on, so it is checked
 	// against the serialized refs rather than by inspecting fields.
 	blob, _ := json.Marshal(got.refs)
-	for _, secret := range []string{"sk-live", "hunter2", "long prose"} {
+	for _, secret := range []string{"sk-live", "hunter2", "long prose", "01M2B9SRHB4VZ3NE8VFR91XVVF"} {
 		if strings.Contains(string(blob), secret) {
 			t.Errorf("non-matching argument value %q leaked into extracted refs: %s", secret, blob)
 		}
@@ -115,7 +127,6 @@ func TestRelationForTool(t *testing.T) {
 		"torque_task_update":     relationUpdated,
 		"torque_task_transition": relationUpdated,
 		"torque_task_get":        relationRead,
-		"tesseract_recall":       relationRead,
 		"something_unheard_of":   relationReferenced,
 	}
 	for tool, want := range cases {
@@ -142,6 +153,10 @@ func TestExtractRefs_Deduplicates(t *testing.T) {
 // addProxyTools registered, so extraction is exercised where it actually
 // hangs rather than through a reconstruction of the wiring.
 func runProxiedCall(t *testing.T, a *Adapter, args map[string]any, upstreamErrors bool) {
+	runProxiedToolCall(t, a, "torque_task_get", args, `{"ok": true}`, upstreamErrors)
+}
+
+func runProxiedToolCall(t *testing.T, a *Adapter, toolName string, args map[string]any, responseText string, upstreamErrors bool) {
 	t.Helper()
 
 	mc := &mockClient{
@@ -149,11 +164,11 @@ func runProxiedCall(t *testing.T, a *Adapter, args map[string]any, upstreamError
 			if upstreamErrors {
 				return mcp.NewToolResultError("upstream said no"), nil
 			}
-			return mcp.NewToolResultText("ok"), nil
+			return mcp.NewToolResultText(responseText), nil
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("torque", mc, []mcp.Tool{makeTool("torque_task_get")})
+	reg.Register("upstream", mc, []mcp.Tool{makeTool(toolName)})
 
 	s := mcpserver.NewMCPServer("t", "0.0.1", mcpserver.WithToolCapabilities(true))
 	idx := NewDiscoveryIndex()
@@ -162,7 +177,7 @@ func runProxiedCall(t *testing.T, a *Adapter, args map[string]any, upstreamError
 		adapter: a, server: s, registry: reg,
 		router: NewProxyRouter(reg), index: idx, firehose: true,
 	}
-	live.addProxyTools(makeTool("torque_task_get"))
+	live.addProxyTools(makeTool(toolName))
 
 	c, err := mcpclient.NewInProcessClient(s)
 	if err != nil {
@@ -174,7 +189,7 @@ func runProxiedCall(t *testing.T, a *Adapter, args map[string]any, upstreamError
 		t.Fatalf("Initialize: %v", err)
 	}
 	req := mcp.CallToolRequest{}
-	req.Params.Name = "torque_task_get"
+	req.Params.Name = toolName
 	req.Params.Arguments = args
 	if _, err := c.CallTool(ctx, req); err != nil {
 		t.Fatalf("CallTool: %v", err)
@@ -216,8 +231,8 @@ func TestProxiedCall_FailedCallLeavesNoRef(t *testing.T) {
 	}
 }
 
-// Off by default. This is the first thing in the proxy to capture argument
-// VALUES rather than shapes, so it stays opt-in until watched on real traffic.
+// Off by default. This captures argument/response VALUES rather than shapes,
+// so it stays opt-in until watched on real traffic.
 func TestProxiedCall_DisabledByDefault(t *testing.T) {
 	a, attacher := newExtractingAdapter("sess-1", false)
 	runProxiedCall(t, a, map[string]any{"id": "CW-20260912-0061"}, false)
@@ -236,6 +251,203 @@ func TestProxiedCall_NoSessionMeansNoRefs(t *testing.T) {
 
 	if len(attacher.got) != 0 {
 		t.Errorf("extraction ran with no session: %+v", attacher.got)
+	}
+}
+
+// CW-20260914-0003: A response naming item_id (no revision_id) is captured as
+// tesseract_item, not guessed as a revision.
+func TestProxiedCall_ExtractsItemFromResponse(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	resp := `{"status":"created","item_id":"01M2ITEM000000000000000000","version_token":"v1"}`
+	runProxiedToolCall(t, a, "workspace_write", map[string]any{"summary": "draft"}, resp, false)
+
+	if len(attacher.got) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(attacher.got), attacher.got)
+	}
+	ref := attacher.got[0]
+	if ref.kind != refKindTesseractItem {
+		t.Errorf("kind = %q, want %q", ref.kind, refKindTesseractItem)
+	}
+	if ref.refID != "01M2ITEM000000000000000000" {
+		t.Errorf("refID = %q, want %q", ref.refID, "01M2ITEM000000000000000000")
+	}
+	if ref.relation != relationCreated {
+		t.Errorf("relation = %q, want %q", ref.relation, relationCreated)
+	}
+	if ref.uri != "tesseract://item/01M2ITEM000000000000000000" {
+		t.Errorf("uri = %q, want tesseract://item/...", ref.uri)
+	}
+}
+
+// CW-20260914-0003: A response naming an exact revision_id is captured as
+// tesseract_revision with its parent item_id available as derived evidence.
+func TestProxiedCall_ExtractsRevisionFromResponse(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	resp := `{"status":"created","revision_id":"01M2REV0000000000000000000","item_id":"01M2ITEM000000000000000000"}`
+	runProxiedToolCall(t, a, "memory_write", map[string]any{"summary": "saved note"}, resp, false)
+
+	if len(attacher.got) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(attacher.got), attacher.got)
+	}
+	ref := attacher.got[0]
+	if ref.kind != refKindTesseractRevision {
+		t.Errorf("kind = %q, want %q", ref.kind, refKindTesseractRevision)
+	}
+	if ref.refID != "01M2REV0000000000000000000" {
+		t.Errorf("refID = %q, want %q", ref.refID, "01M2REV0000000000000000000")
+	}
+	if ref.relation != relationCreated {
+		t.Errorf("relation = %q, want %q", ref.relation, relationCreated)
+	}
+	if ref.uri != "tesseract://revision/01M2REV0000000000000000000" {
+		t.Errorf("uri = %q, want tesseract://revision/...", ref.uri)
+	}
+	if ref.parentItemID != "01M2ITEM000000000000000000" {
+		t.Errorf("parentItemID = %q, want 01M2ITEM000000000000000000", ref.parentItemID)
+	}
+}
+
+// CW-20260914-0003: workspace_write returning status:"replayed" produces no
+// new creation claim in session_refs.
+func TestProxiedCall_WorkspaceWriteReplay_ProducesNoCreationClaim(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	resp := `{"status":"replayed","item_id":"01M2ITEM000000000000000000","availability":"live"}`
+	runProxiedToolCall(t, a, "workspace_write", map[string]any{"summary": "draft", "idempotency_key": "k1"}, resp, false)
+
+	if len(attacher.got) != 0 {
+		t.Errorf("workspace_write replayed must produce no creation ref, got: %+v", attacher.got)
+	}
+}
+
+// CW-20260914-0003: A key-only capture (no typed ID in response) is resolved
+// via tesseract_ref_resolve at capture time and bound to the returned typed ref.
+func TestProxiedCall_KeyOnlyCapture_ResolverBinding(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	a.SetRefResolver(&mockRefResolver{
+		resolveFunc: func(_ context.Context, selector map[string]any) (*ResolvedRef, error) {
+			if selector["namespace"] == "project/foo/knowledge" && selector["key"] == "overview" {
+				var res ResolvedRef
+				res.Status = "resolved"
+				res.Ref.Kind = refKindTesseractItem
+				res.Ref.RefID = "01M2BOUND0000000000000000"
+				res.Ref.URI = "tesseract://item/01M2BOUND0000000000000000"
+				res.ItemID = "01M2BOUND0000000000000000"
+				return &res, nil
+			}
+			return nil, errors.New("not found")
+		},
+	})
+
+	// Upstream returns generic content with no item_id or revision_id
+	resp := `{"body":"Architecture overview"}`
+	runProxiedToolCall(t, a, "knowledge_get", map[string]any{
+		"namespace": "project/foo/knowledge",
+		"key":       "overview",
+	}, resp, false)
+
+	if len(attacher.got) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(attacher.got), attacher.got)
+	}
+	ref := attacher.got[0]
+	if ref.kind != refKindTesseractItem || ref.refID != "01M2BOUND0000000000000000" {
+		t.Errorf("key capture was not bound to resolver typed ref: %+v", ref)
+	}
+	if ref.relation != relationRead {
+		t.Errorf("relation = %q, want %q", ref.relation, relationRead)
+	}
+	if ref.parentItemID != "01M2BOUND0000000000000000" {
+		t.Errorf("parentItemID = %q, want 01M2BOUND0000000000000000", ref.parentItemID)
+	}
+}
+
+// CW-20260914-0003: Resolver failure must not turn an already-successful content
+// operation into a failure: keep the unresolved capture with a diagnostic.
+func TestProxiedCall_KeyOnlyCapture_ResolverFailure_PreservesUnresolvedCapture(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	a.SetRefResolver(&mockRefResolver{
+		resolveFunc: func(_ context.Context, _ map[string]any) (*ResolvedRef, error) {
+			return nil, errors.New("resolver network timeout")
+		},
+	})
+
+	resp := `{"body":"Some body"}`
+	runProxiedToolCall(t, a, "knowledge_get", map[string]any{
+		"namespace": "project/foo/knowledge",
+		"key":       "unresolved_doc",
+	}, resp, false)
+
+	if len(attacher.got) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(attacher.got), attacher.got)
+	}
+	ref := attacher.got[0]
+	if ref.kind != refKindTesseractKey || ref.refID != "project/foo/knowledge:unresolved_doc" {
+		t.Errorf("unexpected ref for failed resolver: %+v, want preserved tesseract_key", ref)
+	}
+	if ref.relation != relationRead {
+		t.Errorf("relation = %q, want %q", ref.relation, relationRead)
+	}
+}
+
+// CW-20260914-0003: Resolver / search previews (tesseract_recall, tesseract_ref_resolve)
+// never count as content use and must NOT be attributed as read!
+func TestProxiedCall_RecallPreviews_NeverCountAsRead(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+	recallResp := `{"results":[{"revision":{"revision_id":"01M2REV0000000000000000000","item_id":"01M2ITEM000000000000000000"}}]}`
+	runProxiedToolCall(t, a, "tesseract_recall", map[string]any{"query": "search query"}, recallResp, false)
+
+	if len(attacher.got) != 0 {
+		t.Errorf("tesseract_recall previews must not be attributed as read, got: %+v", attacher.got)
+	}
+
+	resolveResp := `{"status":"resolved","ref":{"kind":"tesseract_item","ref_id":"01M2ITEM000000000000000000"}}`
+	runProxiedToolCall(t, a, "tesseract_ref_resolve", map[string]any{"item_id": "01M2ITEM000000000000000000"}, resolveResp, false)
+
+	if len(attacher.got) != 0 {
+		t.Errorf("tesseract_ref_resolve previews must not be attributed as read, got: %+v", attacher.got)
+	}
+}
+
+// CW-20260914-0003: mux_call forwards and extracts refs with source=proxy.
+func TestProxiedCall_MuxCall_ExtractsRefs(t *testing.T) {
+	a, attacher := newExtractingAdapter("sess-1", true)
+
+	mc := &mockClient{
+		callToolFunc: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(`{"status":"created","item_id":"01M2ITEM000000000000000000"}`), nil
+		},
+	}
+	reg := NewToolRegistry()
+	reg.Register("upstream", mc, []mcp.Tool{makeTool("workspace_write")})
+
+	s := mcpserver.NewMCPServer("t", "0.0.1", mcpserver.WithToolCapabilities(true))
+	router := NewProxyRouter(reg)
+	a.registerCallTool(s, router)
+
+	c, err := mcpclient.NewInProcessClient(s)
+	if err != nil {
+		t.Fatalf("NewInProcessClient: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	ctx := context.Background()
+	if _, err := c.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "mux_call"
+	req.Params.Arguments = map[string]any{
+		"tool_name": "workspace_write",
+		"arguments": map[string]any{"summary": "dispatched draft"},
+	}
+	if _, err := c.CallTool(ctx, req); err != nil {
+		t.Fatalf("CallTool mux_call: %v", err)
+	}
+
+	if len(attacher.got) != 1 {
+		t.Fatalf("mux_call did not extract ref: %+v", attacher.got)
+	}
+	ref := attacher.got[0]
+	if ref.kind != refKindTesseractItem || ref.refID != "01M2ITEM000000000000000000" || ref.source != "proxy" {
+		t.Errorf("mux_call extracted unexpected ref: %+v", ref)
 	}
 }
 

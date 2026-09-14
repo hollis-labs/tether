@@ -540,14 +540,40 @@ func resolveCmd(ctx context.Context, src SlotSource) (string, error) {
 }
 
 // vantaRecallBrief is the shape of a single item in a Vanta GET /v1/recall
-// response when format=brief. Only the fields we render are declared.
+// response when format=brief. Supports both legacy flat responses and the
+// modern item/revision union shape (alignment handoff §7).
 type vantaRecallBrief struct {
+	// Legacy flat fields
 	MemoryKey  string   `json:"memory_key"`
 	Domain     string   `json:"domain"`
 	Tags       []string `json:"tags"`
 	Confidence float64  `json:"confidence"`
 	Summary    string   `json:"summary"`
 	CreatedAt  string   `json:"created_at"`
+
+	// Item/Revision union shape (CW-20260914-0003, alignment handoff §7)
+	Revision *struct {
+		RevisionID string `json:"revision_id"`
+		ItemID     string `json:"item_id"`
+		MemoryID   string `json:"memory_id"`
+		Domain     string `json:"domain"`
+		MemoryKey  string `json:"memory_key"`
+		Key        string `json:"key"`
+		Summary    string `json:"summary"`
+		Payload    struct {
+			Summary string `json:"summary"`
+		} `json:"payload"`
+	} `json:"revision"`
+	Item *struct {
+		ItemID    string `json:"item_id"`
+		Domain    string `json:"domain"`
+		Namespace string `json:"namespace"`
+		Key       string `json:"key"`
+		Summary   string `json:"summary"`
+		Payload   struct {
+			Summary string `json:"summary"`
+		} `json:"payload"`
+	} `json:"item"`
 }
 
 type vantaRecallResponse struct {
@@ -556,6 +582,9 @@ type vantaRecallResponse struct {
 		Namespace string `json:"namespace"`
 		Returned  int    `json:"returned"`
 	} `json:"meta"`
+	Manifest struct {
+		ResultsReturned int `json:"results_returned"`
+	} `json:"manifest"`
 }
 
 // formatVantaRecall converts a Vanta GET /v1/recall JSON response into a
@@ -565,16 +594,47 @@ func formatVantaRecall(body string) string {
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		return body // not parseable — return raw
 	}
-	if resp.Meta.Returned == 0 {
+	if len(resp.Results) == 0 {
 		return "" // empty result = omit the section
 	}
 	var sb strings.Builder
 	for _, item := range resp.Results {
-		key := item.MemoryKey
-		if key == "" {
-			key = item.Domain
+		var key, summary string
+		switch {
+		case item.Revision != nil:
+			key = item.Revision.Key
+			if key == "" {
+				key = item.Revision.MemoryKey
+			}
+			if key == "" {
+				key = item.Revision.Domain
+			}
+			summary = item.Revision.Summary
+			if summary == "" {
+				summary = item.Revision.Payload.Summary
+			}
+		case item.Item != nil:
+			key = item.Item.Key
+			if key == "" {
+				key = item.Item.ItemID
+			}
+			if key == "" {
+				key = item.Item.Domain
+			}
+			summary = item.Item.Summary
+			if summary == "" {
+				summary = item.Item.Payload.Summary
+			}
+		default:
+			key = item.MemoryKey
+			if key == "" {
+				key = item.Domain
+			}
+			summary = item.Summary
 		}
-		fmt.Fprintf(&sb, "- **%s** — %s\n", key, item.Summary)
+		if key != "" || summary != "" {
+			fmt.Fprintf(&sb, "- **%s** — %s\n", key, summary)
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

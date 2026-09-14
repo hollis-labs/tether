@@ -30,6 +30,7 @@ const (
 	KindGitPR             = "git_pr"
 	KindTesseractItem     = "tesseract_item"
 	KindTesseractRevision = "tesseract_revision"
+	KindTesseractKey      = "tesseract_key"
 	KindCerberusDeploy    = "cerberus_deploy"
 	KindADR               = "adr"
 	KindURL               = "url"
@@ -40,8 +41,8 @@ const (
 // themselves and so a drift audit has something to compare against.
 var KnownRefKinds = map[string]bool{
 	KindTorqueTask: true, KindGitCommit: true, KindGitPR: true,
-	KindTesseractItem: true, KindTesseractRevision: true, KindCerberusDeploy: true,
-	KindADR: true, KindURL: true,
+	KindTesseractItem: true, KindTesseractRevision: true, KindTesseractKey: true,
+	KindCerberusDeploy: true, KindADR: true, KindURL: true,
 }
 
 // IsKnownRefKind reports whether kind is one of the canonical kinds. A false
@@ -91,6 +92,25 @@ type SessionRefRow struct {
 	Relation  string
 	Source    string
 	At        string
+
+	// Derived canonical binding and parent membership (CW-20260914-0003).
+	// Preserves original claims/timestamps exactly as captured, providing
+	// derived normalization and parent membership as additional fields.
+	ParentItemID   string
+	CanonicalKind  string
+	CanonicalRefID string
+}
+
+// CanonicalRef returns the effective identity for deduplication across direct item
+// captures and revision/key captures of the same item.
+func (r SessionRefRow) CanonicalRef() (kind, refID string) {
+	if r.CanonicalKind != "" && r.CanonicalRefID != "" {
+		return r.CanonicalKind, r.CanonicalRefID
+	}
+	if (r.Kind == KindTesseractRevision || r.Kind == KindTesseractKey) && r.ParentItemID != "" {
+		return KindTesseractItem, r.ParentItemID
+	}
+	return r.Kind, r.RefID
 }
 
 // AttachRefResult reports what a write actually did. A repeat is a success in
@@ -172,17 +192,18 @@ func (s *Store) AttachSessionRef(ref SessionRefRow) (AttachRefResult, error) {
 	}
 
 	var existingSource string
+	var existingParent sql.NullString
 	err := s.db.QueryRow(
-		`SELECT source FROM session_refs WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
+		`SELECT source, parent_item_id FROM session_refs WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
 		ref.SessionID, ref.Kind, ref.RefID, ref.Relation,
-	).Scan(&existingSource)
+	).Scan(&existingSource, &existingParent)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := s.db.Exec(
-			`INSERT INTO session_refs (session_id, kind, ref_id, uri, relation, source, at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			ref.SessionID, ref.Kind, ref.RefID, nullIfEmpty(ref.URI), ref.Relation, ref.Source, ref.At,
+			`INSERT INTO session_refs (session_id, kind, ref_id, uri, relation, source, at, parent_item_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			ref.SessionID, ref.Kind, ref.RefID, nullIfEmpty(ref.URI), ref.Relation, ref.Source, ref.At, nullIfEmpty(ref.ParentItemID),
 		); err != nil {
 			return fail(err)
 		}
@@ -193,31 +214,26 @@ func (s *Store) AttachSessionRef(ref SessionRefRow) (AttachRefResult, error) {
 
 	case ref.Source == SourceProxy && existingSource != SourceProxy:
 		// Better evidence for the same fact. Only source moves; at stays.
-		//
-		// THIS IS THE ONE PLACE `source` HAS A MECHANICAL EFFECT rather than a
-		// documentary one, which makes it the place a reader is most likely to
-		// infer an authority the value does not carry. It does not carry one.
-		// SourceProxy means the proxy OBSERVED this call; it does not mean the
-		// identifier was validated, that the caller was entitled to it, or
-		// that anything checked. Nothing verifies the claim — the attach
-		// endpoint has no guard on source and could not enforce one under ADR
-		// 0045's same-host trust model.
-		//
-		// So "better evidence" is a statement about PROVENANCE, not
-		// verification: an observation closer to the call site outranks a
-		// self-report about it. Upgrading is still right — it stops a digest
-		// understating what it holds — but a consumer must never read the
-		// resulting SourceProxy row as verified.
+		// ParentItemID is populated if previously unset.
 		if _, err := s.db.Exec(
-			`UPDATE session_refs SET source=? WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
-			SourceProxy, ref.SessionID, ref.Kind, ref.RefID, ref.Relation,
+			`UPDATE session_refs SET source=?, parent_item_id=COALESCE(parent_item_id, ?) WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
+			SourceProxy, nullIfEmpty(ref.ParentItemID), ref.SessionID, ref.Kind, ref.RefID, ref.Relation,
 		); err != nil {
 			return fail(err)
 		}
 		return AttachRefResult{Upgraded: true}, nil
 
 	default:
-		// Already recorded, and this write is no stronger. No-op, not an error.
+		// Already recorded, and this write is no stronger.
+		// If parent_item_id was unset and incoming provides one, populate it.
+		if !existingParent.Valid && ref.ParentItemID != "" {
+			if _, err := s.db.Exec(
+				`UPDATE session_refs SET parent_item_id=? WHERE session_id=? AND kind=? AND ref_id=? AND relation=?`,
+				ref.ParentItemID, ref.SessionID, ref.Kind, ref.RefID, ref.Relation,
+			); err != nil {
+				return fail(err)
+			}
+		}
 		return AttachRefResult{}, nil
 	}
 }
@@ -256,7 +272,7 @@ func (o ListSessionRefsOptions) limit() int {
 	return o.Limit
 }
 
-const sessionRefColumns = `r.id, r.session_id, r.kind, r.ref_id, r.uri, r.relation, r.source, r.at`
+const sessionRefColumns = `r.id, r.session_id, r.kind, r.ref_id, r.uri, r.relation, r.source, r.at, r.parent_item_id`
 
 // sessionRefFilter is the constant predicate shared by both listings.
 const sessionRefFilter = `
@@ -272,11 +288,12 @@ func scanSessionRefs(rows *sql.Rows) ([]SessionRefRow, error) {
 	var out []SessionRefRow
 	for rows.Next() {
 		var r SessionRefRow
-		var uri sql.NullString
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.Kind, &r.RefID, &uri, &r.Relation, &r.Source, &r.At); err != nil {
+		var uri, parentItemID sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Kind, &r.RefID, &uri, &r.Relation, &r.Source, &r.At, &parentItemID); err != nil {
 			return nil, fmt.Errorf("scan session ref: %w", err)
 		}
 		r.URI = uri.String
+		r.ParentItemID = parentItemID.String
 		out = append(out, r)
 	}
 	return out, rows.Err()

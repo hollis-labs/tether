@@ -351,7 +351,17 @@ func groupRefs(refs []SessionRefRow) (leftBehind, touched []DigestKindGroup) {
 	byKind := map[string]*buckets{}
 	order := []string{}
 
+	// Dedup across direct captures and resolved key captures for the same session,
+	// so the same logical object and relation are not double-counted.
+	seen := make(map[string]bool)
 	for _, r := range refs {
+		effKind, effRefID := r.CanonicalRef()
+		dedupKey := r.SessionID + "\x00" + effKind + "\x00" + effRefID + "\x00" + r.Relation
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+
 		b, ok := byKind[r.Kind]
 		if !ok {
 			b = &buckets{}
@@ -405,14 +415,23 @@ func groupRefs(refs []SessionRefRow) (leftBehind, touched []DigestKindGroup) {
 
 func digestTotals(refs []SessionRefRow) DigestTotals {
 	t := DigestTotals{
-		Refs:       len(refs),
 		ByRelation: map[string]int{},
 		BySource:   map[string]int{},
 	}
+	seen := make(map[string]bool)
+	count := 0
 	for _, r := range refs {
+		effKind, effRefID := r.CanonicalRef()
+		dedupKey := r.SessionID + "\x00" + effKind + "\x00" + effRefID + "\x00" + r.Relation
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+		count++
 		t.ByRelation[r.Relation]++
 		t.BySource[r.Source]++
 	}
+	t.Refs = count
 	return t
 }
 
@@ -467,4 +486,44 @@ func (s *Store) WorkstreamsForRef(kind, refID string) ([]WorkstreamRow, error) {
 	}
 	defer func() { _ = rows.Close() }()
 	return scanWorkstreams(rows, fmt.Sprintf("workstreams for ref %s/%s", kind, refID))
+}
+
+// WorkstreamsForItem answers the reverse question with item-wide scope: which
+// workstreams contain a session that touched this item itself, OR any of its
+// authoritatively connected revisions.
+//
+// An item-wide query is an explicit, separate query rather than silently
+// broadening WorkstreamsForRef, so exact-key scope is preserved as-is.
+// Only revisions verified by the caller (via authoritative parent membership
+// from the resolver) should be passed in connectedRevisionIDs.
+func (s *Store) WorkstreamsForItem(itemID string, connectedRevisionIDs ...string) ([]WorkstreamRow, error) {
+	if itemID == "" {
+		return nil, fmt.Errorf("workstreams for item: item_id is required")
+	}
+	if len(connectedRevisionIDs) == 0 {
+		return s.WorkstreamsForRef(KindTesseractItem, itemID)
+	}
+
+	placeholders := strings.Repeat(", ?", len(connectedRevisionIDs)-1)
+	//nolint:gosec // G201: placeholder count is derived from len(connectedRevisionIDs)
+	query := fmt.Sprintf(`SELECT DISTINCT w.id, w.name, w.workflow_id, w.status, w.created_at, w.updated_at
+		 FROM session_refs r
+		 JOIN sessions s ON s.id = r.session_id
+		 JOIN workstreams w ON w.id = s.workstream_id
+		 WHERE (r.kind = ? AND r.ref_id = ?)
+		    OR (r.kind = ? AND r.ref_id IN (?%s))
+		 ORDER BY w.created_at DESC`, placeholders)
+
+	args := make([]any, 0, 3+len(connectedRevisionIDs))
+	args = append(args, KindTesseractItem, itemID, KindTesseractRevision)
+	for _, rev := range connectedRevisionIDs {
+		args = append(args, rev)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("workstreams for item %s: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanWorkstreams(rows, fmt.Sprintf("workstreams for item %s", itemID))
 }

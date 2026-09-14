@@ -511,6 +511,55 @@ func TestGenerate_HTTPSlot_RelativeRecallURLUsesBootBase(t *testing.T) {
 	}
 }
 
+func TestGenerate_HTTPSlot_RecallUnionShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"manifest": {"results_returned": 2},
+			"results": [
+				{
+					"revision": {
+						"revision_id": "01M2REV0000000000000000001",
+						"key": "rev_doc",
+						"summary": "Revision summary."
+					}
+				},
+				{
+					"item": {
+						"item_id": "01M2ITEM0000000000000000002",
+						"key": "workspace_doc",
+						"summary": "Workspace item summary."
+					}
+				}
+			]
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := bootgen.Profile{
+		ID: "test.http.union",
+		Slots: map[string]bootgen.SlotSource{
+			"memory": {
+				Type:           "http",
+				URL:            srv.URL,
+				ResponseFormat: "tesseract_recall",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := bootgen.Generate(context.Background(), p, t.TempDir(), &buf); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "**rev_doc** — Revision summary.") {
+		t.Errorf("missing formatted revision hit in output:\n%s", out)
+	}
+	if !strings.Contains(out, "**workspace_doc** — Workspace item summary.") {
+		t.Errorf("missing formatted workspace item hit in output:\n%s", out)
+	}
+}
+
 func writeBootgenSkillFixture(t *testing.T, root, id, body string) {
 	t.Helper()
 	path := filepath.Join(root, "skills", id+".md")

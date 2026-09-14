@@ -153,3 +153,29 @@ func TestAttachSessionRef_ResponseReportsInserted(t *testing.T) {
 		t.Errorf("response = %+v, want inserted with source=agent", out)
 	}
 }
+
+func TestAttachSessionRef_PreservesParentItemID(t *testing.T) {
+	refs := &recordingRefStore{}
+	h := NewHandler(Deps{Service: &fakeLaunchService{}, SessionRefs: refs})
+
+	resp, _ := postRef(t, h, `{"kind":"tesseract_revision","ref_id":"01M2REV1","parent_item_id":"01M2ITEM1","source":"proxy"}`)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(refs.got) != 1 {
+		t.Fatalf("store saw %d writes, want 1", len(refs.got))
+	}
+	if refs.got[0].ParentItemID != "01M2ITEM1" {
+		t.Errorf("store saw parent_item_id = %q, want 01M2ITEM1", refs.got[0].ParentItemID)
+	}
+
+	var out SessionRefAttachResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Ref.ParentItemID != "01M2ITEM1" {
+		t.Errorf("response parent_item_id = %q, want 01M2ITEM1", out.Ref.ParentItemID)
+	}
+}

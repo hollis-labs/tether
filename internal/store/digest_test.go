@@ -334,3 +334,131 @@ func TestWorkstreamsForRef_ReturnsEveryMatch(t *testing.T) {
 		t.Fatalf("matched %d, want 2: a container-less session must not produce an empty workstream entry", len(got))
 	}
 }
+
+// CW-20260914-0003: WorkstreamsForItem performs an explicit item-wide query
+// connecting an item and its verified revisions, without broadening the exact-ref query.
+func TestWorkstreamsForItem_ItemWideScope(t *testing.T) {
+	db := openWorkstreamStore(t)
+
+	// Workstream 1 touches the item directly
+	mustCreateSession(t, db, SessionRow{ID: "s-1", Intent: "fresh", State: "completed"})
+	ws1, err := db.CreateWorkstream(WorkstreamRow{Name: "WS1"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+	if err := db.AssignSessionWorkstream("s-1", ws1.ID); err != nil {
+		t.Fatalf("AssignSessionWorkstream: %v", err)
+	}
+	mustAttach(t, db, SessionRefRow{
+		SessionID: "s-1", Kind: KindTesseractItem, RefID: "01M2ITEM000000000000000000",
+		Relation: RelationUpdated, Source: SourceProxy, At: "2026-09-14T01:00:00Z",
+	})
+
+	// Workstream 2 touches revision R1 of that item
+	mustCreateSession(t, db, SessionRow{ID: "s-2", Intent: "fresh", State: "completed"})
+	ws2, err := db.CreateWorkstream(WorkstreamRow{Name: "WS2"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+	if err := db.AssignSessionWorkstream("s-2", ws2.ID); err != nil {
+		t.Fatalf("AssignSessionWorkstream: %v", err)
+	}
+	mustAttach(t, db, SessionRefRow{
+		SessionID: "s-2", Kind: KindTesseractRevision, RefID: "01M2REV0000000000000000001",
+		Relation: RelationCreated, Source: SourceProxy, At: "2026-09-14T02:00:00Z",
+	})
+
+	// Exact ref lookup on item returns ONLY WS1
+	exactItem, err := db.WorkstreamsForRef(KindTesseractItem, "01M2ITEM000000000000000000")
+	if err != nil {
+		t.Fatalf("WorkstreamsForRef: %v", err)
+	}
+	if len(exactItem) != 1 || exactItem[0].ID != ws1.ID {
+		t.Fatalf("exact item lookup must return only WS1: %+v", exactItem)
+	}
+
+	// Exact ref lookup on revision returns ONLY WS2
+	exactRev, err := db.WorkstreamsForRef(KindTesseractRevision, "01M2REV0000000000000000001")
+	if err != nil {
+		t.Fatalf("WorkstreamsForRef: %v", err)
+	}
+	if len(exactRev) != 1 || exactRev[0].ID != ws2.ID {
+		t.Fatalf("exact revision lookup must return only WS2: %+v", exactRev)
+	}
+
+	// Explicit item-wide lookup with authoritative revision returns BOTH WS1 and WS2
+	itemWide, err := db.WorkstreamsForItem("01M2ITEM000000000000000000", "01M2REV0000000000000000001")
+	if err != nil {
+		t.Fatalf("WorkstreamsForItem: %v", err)
+	}
+	if len(itemWide) != 2 {
+		t.Fatalf("item-wide lookup must return both WS1 and WS2: %+v", itemWide)
+	}
+}
+
+// CW-20260914-0003: Review dedup logic against typed item/revision semantics —
+// the same item can show up via both a direct item_id capture and a revision capture with parent_item_id;
+// verify deduplication through the real database write -> digest read pipeline.
+func TestDigest_DedupResolvedKeyAndItem(t *testing.T) {
+	db := openWorkstreamStore(t)
+	mustCreateSession(t, db, SessionRow{ID: "sess-1", Intent: "fresh", State: "completed"})
+
+	// 1. Direct item_id capture
+	mustAttach(t, db, SessionRefRow{
+		SessionID: "sess-1",
+		Kind:      KindTesseractItem,
+		RefID:     "01M2ITEM000000000000000000",
+		Relation:  RelationCreated,
+		Source:    SourceProxy,
+		At:        "2026-09-14T01:00:00Z",
+	})
+
+	// 2. Revision capture belonging to the same parent item
+	mustAttach(t, db, SessionRefRow{
+		SessionID:    "sess-1",
+		Kind:         KindTesseractRevision,
+		RefID:        "01M2REV0000000000000000001",
+		Relation:     RelationCreated,
+		Source:       SourceProxy,
+		At:           "2026-09-14T01:05:00Z",
+		ParentItemID: "01M2ITEM000000000000000000",
+	})
+
+	// Verify both rows exist in DB and parent_item_id was persisted
+	rows, err := db.ListSessionRefs("sess-1", ListSessionRefsOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRefs: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 distinct rows in DB, got %d", len(rows))
+	}
+	var foundParent bool
+	for _, r := range rows {
+		if r.Kind == KindTesseractRevision && r.ParentItemID == "01M2ITEM000000000000000000" {
+			foundParent = true
+		}
+	}
+	if !foundParent {
+		t.Fatalf("revision row in DB did not persist ParentItemID: %+v", rows)
+	}
+
+	// Real SessionDigest call over DB rows
+	d, err := db.SessionDigest("sess-1", DigestOptions{})
+	if err != nil {
+		t.Fatalf("SessionDigest: %v", err)
+	}
+
+	// Should be deduped to 1 in totals and groups because they share canonical identity
+	if d.Totals.Refs != 1 {
+		t.Errorf("d.Totals.Refs = %d, want 1 (deduped canonical item and revision)", d.Totals.Refs)
+	}
+	if d.Totals.ByRelation[RelationCreated] != 1 {
+		t.Errorf("created total = %d, want 1", d.Totals.ByRelation[RelationCreated])
+	}
+	if len(d.LeftBehind) != 1 {
+		t.Fatalf("leftBehind groups = %d, want 1", len(d.LeftBehind))
+	}
+	if len(d.LeftBehind[0].Created) != 1 {
+		t.Errorf("leftBehind[0].Created = %d, want 1 (deduped)", len(d.LeftBehind[0].Created))
+	}
+}

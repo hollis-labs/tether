@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -133,12 +134,15 @@ func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
 				defer span.End()
 
 				res, err := sanitized(handlerCtx, req)
-				// S3 extraction reads the OUTBOUND arguments into Tether's
+				// Typed extraction reads the outbound call and result into Tether's
 				// own store. It runs after the call so it can gate on
 				// success, and it never touches req -- adding anything to the
 				// forwarded call is CW-20260912-0024, the opposite direction
 				// through this same seam. See extract.go.
-				c.adapter.recordRefs(handlerCtx, req, err == nil && (res == nil || !res.IsError))
+				if c.adapter.resolver == nil && c.router != nil {
+					c.adapter.resolver = &routerRefResolver{router: c.router}
+				}
+				c.adapter.recordRefs(handlerCtx, req, res, err)
 				return res, err
 			},
 		})
@@ -715,7 +719,12 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 				forwarded.Params.Meta = &meta
 			}
 
-			return router.Handle(handlerCtx, forwarded)
+			if a.resolver == nil && router != nil {
+				a.resolver = &routerRefResolver{router: router}
+			}
+			res, err := router.Handle(handlerCtx, forwarded)
+			a.recordRefs(handlerCtx, forwarded, res, err)
+			return res, err
 		},
 	)
 }
@@ -874,4 +883,39 @@ func toolNames(defs []mcp.Tool) []string {
 		out = append(out, def.Name)
 	}
 	return out
+}
+
+// routerRefResolver implements RefResolver by dispatching to tesseract_ref_resolve
+// via the ProxyRouter.
+type routerRefResolver struct {
+	router *ProxyRouter
+}
+
+func (r *routerRefResolver) ResolveRef(ctx context.Context, selector map[string]any) (*ResolvedRef, error) {
+	if r.router == nil {
+		return nil, errors.New("no proxy router available for ref resolution")
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "tesseract_ref_resolve"
+	req.Params.Arguments = selector
+	res, err := r.router.Handle(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("tesseract_ref_resolve: %w", err)
+	}
+	if res == nil || res.IsError {
+		return nil, errors.New("tesseract_ref_resolve returned tool error")
+	}
+	m := parseResultMap(res)
+	if m == nil {
+		return nil, errors.New("tesseract_ref_resolve returned empty or non-JSON result")
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	var out ResolvedRef
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal resolved ref: %w", err)
+	}
+	return &out, nil
 }

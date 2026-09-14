@@ -342,6 +342,7 @@ func TestSessionRefs_SchemaHasNoContentColumn(t *testing.T) {
 	want := map[string]bool{
 		"id": true, "session_id": true, "kind": true, "ref_id": true,
 		"uri": true, "relation": true, "source": true, "at": true,
+		"parent_item_id": true,
 	}
 	got := map[string]bool{}
 	for rows.Next() {
@@ -361,5 +362,54 @@ func TestSessionRefs_SchemaHasNoContentColumn(t *testing.T) {
 		if !got[name] {
 			t.Errorf("missing column %q", name)
 		}
+	}
+}
+
+// CW-20260914-0003: parent_item_id is written to the database, read back via ListSessionRefs,
+// and preserved across repeats.
+func TestAttachSessionRef_PreservesAndReadsParentItemID(t *testing.T) {
+	db := openWorkstreamStore(t)
+	mustCreateSession(t, db, SessionRow{ID: "s", State: "running", Intent: "fresh"})
+
+	ref := SessionRefRow{
+		SessionID:    "s",
+		Kind:         KindTesseractRevision,
+		RefID:        "01M2REV0000000000000000001",
+		Relation:     RelationCreated,
+		Source:       SourceProxy,
+		ParentItemID: "01M2ITEM000000000000000000",
+	}
+	res, err := db.AttachSessionRef(ref)
+	if err != nil {
+		t.Fatalf("first attach: %v", err)
+	}
+	if !res.Inserted {
+		t.Error("first attach reported Inserted=false")
+	}
+
+	got, err := db.ListSessionRefs("s", ListSessionRefsOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRefs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1", len(got))
+	}
+	if got[0].ParentItemID != "01M2ITEM000000000000000000" {
+		t.Fatalf("ParentItemID = %q, want 01M2ITEM000000000000000000", got[0].ParentItemID)
+	}
+
+	// Repeat without parent_item_id should not erase the previously persisted parent_item_id
+	repeatRef := ref
+	repeatRef.ParentItemID = ""
+	if _, err := db.AttachSessionRef(repeatRef); err != nil {
+		t.Fatalf("second attach: %v", err)
+	}
+
+	got, err = db.ListSessionRefs("s", ListSessionRefsOptions{})
+	if err != nil {
+		t.Fatalf("ListSessionRefs after repeat: %v", err)
+	}
+	if got[0].ParentItemID != "01M2ITEM000000000000000000" {
+		t.Fatalf("ParentItemID was cleared on repeat: %q", got[0].ParentItemID)
 	}
 }

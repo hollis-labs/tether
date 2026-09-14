@@ -79,11 +79,12 @@ func (a *Adapter) handleWorkstreamAttach(ctx context.Context, req mcp.CallToolRe
 	// asserting party, so the honest value is "agent" and letting the caller
 	// name it would erase the only distinction the column carries.
 	out, err := a.client.AttachSessionRef(ctx, sessionID, api.SessionRefAttachRequest{
-		Kind:     kind,
-		RefID:    refID,
-		URI:      str(req, "uri"),
-		Relation: str(req, "relation"),
-		Source:   "agent",
+		Kind:         kind,
+		RefID:        refID,
+		URI:          str(req, "uri"),
+		Relation:     str(req, "relation"),
+		Source:       "agent",
+		ParentItemID: str(req, "parent_item_id"),
 	})
 	if err != nil {
 		return workstreamErr(err), nil

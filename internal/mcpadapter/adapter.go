@@ -101,6 +101,10 @@ type Adapter struct {
 	// reaches the daemon over HTTP, so with no client there is nowhere to
 	// write.
 	refs refAttacher
+
+	// resolver is the seam for resolving key-only captures to typed refs via
+	// tesseract_ref_resolve (CW-20260914-0003).
+	resolver RefResolver
 }
 
 // New constructs an Adapter wrapping svc. token and scopes gate mutating
@@ -373,6 +377,9 @@ func (a *Adapter) withSessionID(ctx context.Context) context.Context {
 // the constructors because extraction is opt-in and only the `mux mcp` command
 // has the daemon client to supply.
 func (a *Adapter) SetRefAttacher(r refAttacher) { a.refs = r }
+
+// SetRefResolver wires the resolver for key-only ref captures.
+func (a *Adapter) SetRefResolver(r RefResolver) { a.resolver = r }
 
 // logger returns the adapter's logger or slog's default, matching addTool.
 func (a *Adapter) logger() *slog.Logger {
