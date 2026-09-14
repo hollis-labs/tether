@@ -64,6 +64,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -109,21 +110,23 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 			"Look up a registry profile by URN. Returns the redacted Profile by default or not_found. "+
 				"Soft-deleted (status='deprecated') rows are returned by direct lookup — they "+
 				"are excluded only from default Search results. Read-only by default; passing "+
-				"include requires the registry.write scope.",
+				"sensitive operational fields ('callback', 'kind_meta', 'host_address', 'all') in include "+
+				"requires the registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
 		),
 		mcp.WithString("urn", mcp.Required(),
 			mcp.Description("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
 		),
 		mcp.WithString("include",
-			mcp.Description("Optional comma-separated fields to include (e.g. 'callback', 'kind_meta', 'host_address', 'external_ids') or 'all'. Requires registry.write scope."),
+			mcp.Description("Optional comma-separated fields to include (e.g. 'external_ids', 'callback', 'kind_meta', 'host_address') or 'all'. Sensitive operational fields require registry.write scope."),
 		),
 	), Reads("registry profile lookup"), a.handleRegistryLookup)
 
 	a.addTool(s, mcp.NewTool("tether_registry_lookup_by",
 		mcp.WithDescription(
 			"Resolve a substrate-local external ID to one registry profile. Returns 0 or 1 row; "+
-				"use this when you know a local ID like a Tether catalog slug or Cerberus owner and "+
-				"want the canonical registry URN. Read-only; no scope required.",
+				"use this when you know a local ID like a Tether catalog slug, Torque project ID, or Cerberus owner and "+
+				"want the canonical registry URN. Read-only; passing sensitive operational fields in include "+
+				"requires registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
 		),
 		mcp.WithString("kind", mcp.Required(),
 			mcp.Description("Entity kind to resolve: 'agent', 'project', or 'group'."),
@@ -132,7 +135,8 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 		mcp.WithString("external_id", mcp.Required(),
 			mcp.Description("Substrate-local identifier to resolve."),
 		),
-		mcp.WithString("substrate", mcp.Description("Optional substrate scope such as 'tether' or 'cerberus'.")),
+		mcp.WithString("substrate", mcp.Description("Optional substrate scope such as 'tether', 'torque', or 'cerberus'.")),
+		mcp.WithString("include", mcp.Description("Optional comma-separated fields to include (e.g. 'external_ids'). Sensitive operational fields require registry.write scope.")),
 	), Reads("registry lookup by external id"), a.handleRegistryLookupBy)
 
 	a.addTool(s, mcp.NewTool("tether_registry_search",
@@ -253,8 +257,29 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRe
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
+// requiresRegistryWriteScope reports whether the given include parameter
+// requests sensitive operational fields (callback, host_address, kind_meta,
+// or all/*). Requests for external_ids alone are cross-system correlation
+// identifiers and do not require elevated write scope.
+func requiresRegistryWriteScope(include string) bool {
+	if include == "" {
+		return false
+	}
+	parts := strings.Split(include, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(strings.ToLower(part))
+		switch trimmed {
+		case "external_ids", "externalids", "":
+			continue
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // handleRegistryLookup services tether_registry_lookup. Read-only by default;
-// passing include requires the registry.write scope.
+// passing sensitive operational fields in include requires the registry.write scope.
 func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	urn := str(req, "urn")
 	if urn == "" {
@@ -264,7 +289,7 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequ
 		return toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp"), nil
 	}
 	include := str(req, "include")
-	if include != "" {
+	if requiresRegistryWriteScope(include) {
 		if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
 			return errRes, nil
 		}
@@ -299,7 +324,21 @@ func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRe
 	if a.client == nil {
 		return toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with mux mcp"), nil
 	}
-	out, err := a.client.Registry().LookupBy(ctx, kind, externalID, str(req, "substrate"))
+	include := str(req, "include")
+	if requiresRegistryWriteScope(include) {
+		if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
+			return errRes, nil
+		}
+	}
+	var (
+		out registry.Profile
+		err error
+	)
+	if include != "" {
+		out, err = a.client.Registry().LookupByWithInclude(ctx, kind, externalID, str(req, "substrate"), include)
+	} else {
+		out, err = a.client.Registry().LookupBy(ctx, kind, externalID, str(req, "substrate"))
+	}
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return daemonUnreachableError(err), nil

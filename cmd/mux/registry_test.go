@@ -288,6 +288,113 @@ func TestRegistry_Lookup_NotFound_Exit1(t *testing.T) {
 	assertExitCode(t, err, 1)
 }
 
+func TestRegistry_Lookup_WithIncludeAndFull(t *testing.T) {
+	f := newFixture(t)
+	proj, err := f.svc.Register(context.Background(), registry.KindProject, registry.Profile{
+		DisplayName: "CLI Project",
+		Callback: &registry.Callback{
+			Scheme: "cli",
+			Target: "mux describe --json",
+		},
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "torque", ExternalID: "PRJ-CLI-01"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Default lookup: no external_ids, no callback
+	outDef := captureRegistryStdout(t, func() {
+		if err := registryLookupCmd.RunE(registryLookupCmd, []string{proj.URN}); err != nil {
+			t.Fatalf("lookup: %v", err)
+		}
+	})
+	if strings.Contains(outDef, "PRJ-CLI-01") {
+		t.Errorf("default lookup leaked external_id: %s", outDef)
+	}
+	if strings.Contains(outDef, "callback:") {
+		t.Errorf("default lookup leaked callback: %s", outDef)
+	}
+
+	// Lookup with --include external_ids
+	lookupInclude = "external_ids"
+	outInc := captureRegistryStdout(t, func() {
+		if err := registryLookupCmd.RunE(registryLookupCmd, []string{proj.URN}); err != nil {
+			t.Fatalf("lookup include: %v", err)
+		}
+	})
+	resetRegistryFlags()
+	if !strings.Contains(outInc, "PRJ-CLI-01") {
+		t.Errorf("lookup with include=external_ids missing external_id: %s", outInc)
+	}
+	if strings.Contains(outInc, "callback:") {
+		t.Errorf("lookup with include=external_ids leaked callback: %s", outInc)
+	}
+
+	// Lookup with --full
+	lookupFull = true
+	outFull := captureRegistryStdout(t, func() {
+		if err := registryLookupCmd.RunE(registryLookupCmd, []string{proj.URN}); err != nil {
+			t.Fatalf("lookup full: %v", err)
+		}
+	})
+	resetRegistryFlags()
+	if !strings.Contains(outFull, "PRJ-CLI-01") {
+		t.Errorf("full lookup missing external_id: %s", outFull)
+	}
+	if !strings.Contains(outFull, "callback:") {
+		t.Errorf("full lookup missing callback: %s", outFull)
+	}
+}
+
+func TestRegistry_LookupBy_TorqueSubstrate(t *testing.T) {
+	f := newFixture(t)
+	proj, err := f.svc.Register(context.Background(), registry.KindProject, registry.Profile{
+		DisplayName: "Torque Project CLI",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "torque", ExternalID: "PRJ-CLI-777"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// 1. Resolve via lookup-by
+	lookupByKind = "project"
+	lookupByExternalID = "PRJ-CLI-777"
+	lookupBySubstrate = "torque"
+	lookupInclude = "external_ids"
+
+	out := captureRegistryStdout(t, func() {
+		if err := registryLookupByCmd.RunE(registryLookupByCmd, nil); err != nil {
+			t.Fatalf("lookup-by: %v", err)
+		}
+	})
+	resetRegistryFlags()
+
+	if !strings.Contains(out, "Torque Project CLI") {
+		t.Errorf("lookup-by missing display name: %s", out)
+	}
+	if !strings.Contains(out, proj.URN) {
+		t.Errorf("lookup-by missing URN: %s", out)
+	}
+	if !strings.Contains(out, "PRJ-CLI-777") {
+		t.Errorf("lookup-by with include missing external id: %s", out)
+	}
+
+	// 2. Lookup-by missing external ID returns exit code 1
+	lookupByKind = "project"
+	lookupByExternalID = "PRJ-CLI-NONEXISTENT"
+	lookupBySubstrate = "torque"
+	errMissing := registryLookupByCmd.RunE(registryLookupByCmd, nil)
+	resetRegistryFlags()
+	if errMissing == nil {
+		t.Fatal("expected error for missing external ID")
+	}
+	assertExitCode(t, errMissing, 1)
+}
+
 // ─── Search ────────────────────────────────────────────────────────────────
 
 func TestRegistry_Search_FiltersByRole(t *testing.T) {

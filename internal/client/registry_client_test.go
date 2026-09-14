@@ -160,6 +160,69 @@ func TestRegistryClient_LookupBy_Happy(t *testing.T) {
 	}
 }
 
+func TestRegistryClient_LookupByWithInclude_Happy(t *testing.T) {
+	want := registry.Profile{
+		URN:         "msg://project/project-mux/prj_torque01",
+		Kind:        registry.KindProject,
+		DisplayName: "Torque Project",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "torque", ExternalID: "PRJ-999"},
+		},
+	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry/projects" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("external_id") != "PRJ-999" {
+			t.Errorf("external_id = %q", r.URL.Query().Get("external_id"))
+		}
+		if r.URL.Query().Get("substrate") != "torque" {
+			t.Errorf("substrate = %q", r.URL.Query().Get("substrate"))
+		}
+		if r.URL.Query().Get("include") != "external_ids" {
+			t.Errorf("include = %q, want external_ids", r.URL.Query().Get("include"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"project": want})
+	})
+	c := newRegistryClient(t, h)
+	got, err := c.Registry().LookupByWithInclude(context.Background(), registry.KindProject, "PRJ-999", "torque", "external_ids")
+	if err != nil {
+		t.Fatalf("LookupByWithInclude: %v", err)
+	}
+	if got.URN != want.URN {
+		t.Errorf("URN = %q, want %q", got.URN, want.URN)
+	}
+	if len(got.ExternalIDs) != 1 || got.ExternalIDs[0].ExternalID != "PRJ-999" {
+		t.Errorf("got ExternalIDs = %+v, want PRJ-999", got.ExternalIDs)
+	}
+}
+
+func TestRegistryClient_LookupByFull_Happy(t *testing.T) {
+	want := registry.Profile{
+		URN:         "msg://project/project-mux/prj_torque02",
+		Kind:        registry.KindProject,
+		DisplayName: "Full Torque Project",
+		Callback: &registry.Callback{
+			Scheme: "cli",
+			Target: "echo full",
+		},
+	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("full") != "true" {
+			t.Errorf("full = %q, want true", r.URL.Query().Get("full"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"project": want})
+	})
+	c := newRegistryClient(t, h)
+	got, err := c.Registry().LookupByFull(context.Background(), registry.KindProject, "PRJ-FULL", "torque")
+	if err != nil {
+		t.Fatalf("LookupByFull: %v", err)
+	}
+	if got.Callback == nil || got.Callback.Target != "echo full" {
+		t.Errorf("got Callback = %+v, want echo full", got.Callback)
+	}
+}
+
 func TestRegistryClient_Lookup_UnknownURNPrefix(t *testing.T) {
 	// Without a URN prefix the client can't infer the kind segment, so
 	// it surfaces a local error before issuing the HTTP request.

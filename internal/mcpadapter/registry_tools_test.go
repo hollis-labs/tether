@@ -592,3 +592,171 @@ func TestRegistryTools_NilGuard(t *testing.T) {
 		t.Errorf("code = %v, want internal_error", code)
 	}
 }
+
+// ─── C3: Onboarding, Torque substrate, and scope gating ─────────────────────────
+
+func TestRegistryTools_Lookup_ExternalIDsAllowedWithoutWriteScope(t *testing.T) {
+	ctx := context.Background()
+	// Create adapter with write scope to seed data.
+	aWrite, svc := newRegistryAdapter(t)
+
+	// Register project with an external ID and callback.
+	proj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Correlated Project",
+		Callback: &registry.Callback{
+			Scheme: "cli",
+			Target: "echo ok",
+		},
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "torque", ExternalID: "PRJ-0042"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Create adapter with NO scopes (read-only).
+	srv := httptest.NewServer(api.NewHandler(api.Deps{Registry: svc}))
+	t.Cleanup(srv.Close)
+	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+	aRead := NewWithDaemon(&app.Service{Registry: svc}, dc, "test-token", nil)
+
+	// 1. Lookup with include="external_ids" succeeds WITHOUT write scope.
+	res := callRegistryTool(t, aRead, "tether_registry_lookup", map[string]any{
+		"urn":     proj.URN,
+		"include": "external_ids",
+	})
+	if res.IsError {
+		t.Fatalf("expected include=external_ids to succeed without write scope: %s", textOf(res))
+	}
+	body := parseToolJSON(t, res)
+	pMap, _ := body["profile"].(map[string]any)
+	exts, _ := pMap["external_ids"].([]any)
+	if len(exts) != 1 {
+		t.Fatalf("external_ids count = %d, want 1; map = %+v", len(exts), pMap)
+	}
+	firstExt, _ := exts[0].(map[string]any)
+	if got := firstExt["substrate"]; got != "torque" {
+		t.Errorf("substrate = %v, want torque", got)
+	}
+	if got := firstExt["external_id"]; got != "PRJ-0042" {
+		t.Errorf("external_id = %v, want PRJ-0042", got)
+	}
+
+	// 2. Lookup with include="callback" FAILS without write scope.
+	resDenied := callRegistryTool(t, aRead, "tether_registry_lookup", map[string]any{
+		"urn":     proj.URN,
+		"include": "callback",
+	})
+	if !resDenied.IsError {
+		t.Fatal("expected include=callback to fail without write scope")
+	}
+
+	// 3. LookupBy with substrate="torque" and include="external_ids" succeeds without write scope.
+	resLookupBy := callRegistryTool(t, aRead, "tether_registry_lookup_by", map[string]any{
+		"kind":        "project",
+		"external_id": "PRJ-0042",
+		"substrate":   "torque",
+		"include":     "external_ids",
+	})
+	if resLookupBy.IsError {
+		t.Fatalf("expected lookup-by with include=external_ids to succeed: %s", textOf(resLookupBy))
+	}
+	bodyLookupBy := parseToolJSON(t, resLookupBy)
+	pMapBy, _ := bodyLookupBy["profile"].(map[string]any)
+	if got := pMapBy["urn"]; got != proj.URN {
+		t.Errorf("lookup-by URN = %v, want %s", got, proj.URN)
+	}
+	extsBy, _ := pMapBy["external_ids"].([]any)
+	if len(extsBy) != 1 {
+		t.Fatalf("lookup-by external_ids count = %d, want 1", len(extsBy))
+	}
+
+	// 4. LookupBy with include="callback" FAILS without write scope.
+	resLookupByDenied := callRegistryTool(t, aRead, "tether_registry_lookup_by", map[string]any{
+		"kind":        "project",
+		"external_id": "PRJ-0042",
+		"substrate":   "torque",
+		"include":     "callback",
+	})
+	if !resLookupByDenied.IsError {
+		t.Fatal("expected lookup-by include=callback to fail without write scope")
+	}
+	_ = aWrite
+}
+
+func TestRegistryTools_LookupBy_TorqueSubstrateAndPartialCoverage(t *testing.T) {
+	ctx := context.Background()
+	a, svc := newRegistryAdapter(t)
+
+	// Seed Project A: tether only (partial coverage: missing torque).
+	projA, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Project Alpha",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "tether", ExternalID: "alpha"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register A: %v", err)
+	}
+
+	// Seed Project B: tether + torque.
+	projB, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Project Beta",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "tether", ExternalID: "beta"},
+			{Substrate: "torque", ExternalID: "PRJ-BETA"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register B: %v", err)
+	}
+
+	// 1. Reverse lookup on torque resolves Project B.
+	resB := callRegistryTool(t, a, "tether_registry_lookup_by", map[string]any{
+		"kind":        "project",
+		"external_id": "PRJ-BETA",
+		"substrate":   "torque",
+	})
+	if resB.IsError {
+		t.Fatalf("lookup-by PRJ-BETA: %s", textOf(resB))
+	}
+	bodyB := parseToolJSON(t, resB)
+	pMapB, _ := bodyB["profile"].(map[string]any)
+	if got := pMapB["urn"]; got != projB.URN {
+		t.Errorf("URN = %v, want %s", got, projB.URN)
+	}
+
+	// 2. Reverse lookup for unattached torque ID on Project A returns not_found cleanly.
+	resMissing := callRegistryTool(t, a, "tether_registry_lookup_by", map[string]any{
+		"kind":        "project",
+		"external_id": "PRJ-ALPHA",
+		"substrate":   "torque",
+	})
+	if !resMissing.IsError {
+		t.Fatal("expected not_found for unattached torque external_id")
+	}
+	if code := parseToolJSON(t, resMissing)["code"]; code != "not_found" {
+		t.Errorf("code = %v, want not_found", code)
+	}
+
+	// 3. Project A lookup with include="external_ids" returns an ordinary answer
+	// omitting torque (never an error or missing-data sentinel).
+	resA := callRegistryTool(t, a, "tether_registry_lookup", map[string]any{
+		"urn":     projA.URN,
+		"include": "external_ids",
+	})
+	if resA.IsError {
+		t.Fatalf("lookup A: %s", textOf(resA))
+	}
+	bodyA := parseToolJSON(t, resA)
+	pMapA, _ := bodyA["profile"].(map[string]any)
+	extsA, _ := pMapA["external_ids"].([]any)
+	if len(extsA) != 1 {
+		t.Fatalf("external_ids count = %d, want 1", len(extsA))
+	}
+	ext0, _ := extsA[0].(map[string]any)
+	if ext0["substrate"] != "tether" {
+		t.Errorf("substrate = %v, want tether", ext0["substrate"])
+	}
+}

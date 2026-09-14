@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -636,5 +637,165 @@ tracking_root: /tracking/clockwork
 	}
 	if lookedUp.URN != projects[0].URN {
 		t.Errorf("LookupBy URN = %q; want %q", lookedUp.URN, projects[0].URN)
+	}
+}
+
+func TestSharedProject_C3_ServiceOnboardingTorqueAndPartialCoverage(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+
+	// 1. Onboarding: Register project with torque and tether external IDs
+	proj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Tether Shared Project",
+		Description: "Federated cross-app control plane",
+		Guidelines:  "Follow AGENTS.md conventions",
+		Tags:        []string{"control-plane", "federation"},
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "tether", ExternalID: "tether-core"},
+			{Substrate: "torque", ExternalID: "PRJ-TETHER-100"},
+		},
+		Callback: &registry.Callback{
+			Scheme: "cli",
+			Target: "mux describe --json",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// 2. Resolve: Verify AttachedAt is defaulted and valid, and external IDs are returned
+	loaded, err := svc.Lookup(ctx, proj.URN)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(loaded.ExternalIDs) != 2 {
+		t.Fatalf("ExternalIDs count = %d, want 2", len(loaded.ExternalIDs))
+	}
+	for _, ext := range loaded.ExternalIDs {
+		if ext.AttachedAt.IsZero() || ext.AttachedAt.Year() <= 1 {
+			t.Errorf("substrate %s attached_at is zero/invalid: %v", ext.Substrate, ext.AttachedAt)
+		}
+	}
+
+	extsDirect, err := svc.LookupExternalIDsForURN(ctx, proj.URN)
+	if err != nil {
+		t.Fatalf("LookupExternalIDsForURN: %v", err)
+	}
+	if len(extsDirect) != 2 {
+		t.Fatalf("LookupExternalIDsForURN count = %d, want 2", len(extsDirect))
+	}
+
+	// 3. Reverse: Look up by torque external ID
+	byTorque, err := svc.LookupBy(ctx, registry.KindProject, "PRJ-TETHER-100", "torque")
+	if err != nil {
+		t.Fatalf("LookupBy torque: %v", err)
+	}
+	if byTorque.URN != proj.URN {
+		t.Errorf("LookupBy torque URN = %q, want %q", byTorque.URN, proj.URN)
+	}
+
+	// 4. Reverse: Look up by tether external ID
+	byTether, err := svc.LookupBy(ctx, registry.KindProject, "tether-core", "tether")
+	if err != nil {
+		t.Fatalf("LookupBy tether: %v", err)
+	}
+	if byTether.URN != proj.URN {
+		t.Errorf("LookupBy tether URN = %q, want %q", byTether.URN, proj.URN)
+	}
+
+	// 5. Partial-coverage discipline:
+	// A project with only cerberus substrate ID is completely valid and complete.
+	partProj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Cerberus Only Project",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "cerberus", ExternalID: "cerb-only"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register partial: %v", err)
+	}
+
+	partLoaded, err := svc.Lookup(ctx, partProj.URN)
+	if err != nil {
+		t.Fatalf("Lookup partial: %v", err)
+	}
+	if len(partLoaded.ExternalIDs) != 1 || partLoaded.ExternalIDs[0].Substrate != "cerberus" {
+		t.Errorf("partial ExternalIDs = %+v, want only cerberus", partLoaded.ExternalIDs)
+	}
+
+	// Reverse lookup on torque for missing ID returns ErrNotFound cleanly
+	_, errNotFound := svc.LookupBy(ctx, registry.KindProject, "PRJ-NONEXISTENT", "torque")
+	if !errors.Is(errNotFound, registry.ErrNotFound) {
+		t.Errorf("LookupBy missing ID error = %v, want ErrNotFound", errNotFound)
+	}
+
+	// 6. Idempotent key registration with existing key returns existing row
+	idempOut, created, err := svc.RegisterIdempotent(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Tether Shared Project Re-attempt",
+	}, "torque", "PRJ-TETHER-100")
+	if err != nil {
+		t.Fatalf("RegisterIdempotent: %v", err)
+	}
+	if created {
+		t.Error("expected created=false on repeat idempotent registration")
+	}
+	if idempOut.URN != proj.URN {
+		t.Errorf("RegisterIdempotent URN = %q, want %q", idempOut.URN, proj.URN)
+	}
+
+	// 7. Offboarding terminal state (Deregister):
+	dereg, err := svc.Deregister(ctx, partProj.URN)
+	if err != nil {
+		t.Fatalf("Deregister: %v", err)
+	}
+	if dereg.Status != registry.StatusDeprecated {
+		t.Errorf("dereg status = %q, want deprecated", dereg.Status)
+	}
+
+	// Default search excludes deprecated rows
+	activeRows, err := svc.Search(ctx, registry.KindProject, registry.Filter{})
+	if err != nil {
+		t.Fatalf("Search active: %v", err)
+	}
+	for _, row := range activeRows {
+		if row.URN == partProj.URN {
+			t.Errorf("default search included deprecated row %s", partProj.URN)
+		}
+	}
+
+	// Deprecated row is still directly resolvable by URN
+	deregLoaded, err := svc.Lookup(ctx, partProj.URN)
+	if err != nil {
+		t.Fatalf("Lookup deprecated: %v", err)
+	}
+	if deregLoaded.Status != registry.StatusDeprecated {
+		t.Errorf("Lookup deprecated status = %q, want deprecated", deregLoaded.Status)
+	}
+
+	// 8. Offboarding terminal state (Merge):
+	dupProj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Duplicate Tether",
+		ExternalIDs: []registry.ExternalID{
+			{Substrate: "cerberus", ExternalID: "PRJ-DUP-CERBERUS"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register duplicate: %v", err)
+	}
+	mergedDst, err := svc.Merge(ctx, dupProj.URN, proj.URN)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if mergedDst.URN != proj.URN {
+		t.Errorf("Merge dst URN = %q, want %q", mergedDst.URN, proj.URN)
+	}
+
+	// PRJ-DUP-CERBERUS now resolves to proj.URN
+	byMergedCerb, err := svc.LookupBy(ctx, registry.KindProject, "PRJ-DUP-CERBERUS", "cerberus")
+	if err != nil {
+		t.Fatalf("LookupBy merged cerberus: %v", err)
+	}
+	if byMergedCerb.URN != proj.URN {
+		t.Errorf("LookupBy merged cerberus URN = %q, want %q", byMergedCerb.URN, proj.URN)
 	}
 }

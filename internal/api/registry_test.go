@@ -1363,3 +1363,258 @@ func TestRegistry_Redaction_FieldMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistry_C3_OnboardingLookupAndTorqueSubstrate(t *testing.T) {
+	r := newRegServer(t)
+
+	// 1. Onboarding: Register a project with torque, tether, and cerberus external IDs.
+	regBody := map[string]any{
+		"display_name": "Tether Control Plane",
+		"description":  "Local agent session control plane",
+		"external_ids": []map[string]any{
+			{"substrate": "tether", "external_id": "tether"},
+			{"substrate": "torque", "external_id": "PRJ-TETHER-01"},
+			{"substrate": "cerberus", "external_id": "tether-runtime"},
+		},
+		"guidelines": "Always verify with make check",
+		"tags":       []string{"runtime", "daemon"},
+		"callback": map[string]any{
+			"scheme": "cli",
+			"target": "mux describe --json",
+		},
+	}
+	resp, body := r.do(http.MethodPost, "/registry/projects", regBody)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", resp.StatusCode, body)
+	}
+	var created registry.Profile
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal created profile: %v", err)
+	}
+	if created.URN == "" {
+		t.Fatal("expected non-empty URN minted")
+	}
+
+	// 2. Resolve query:
+	// 2a. Default GET redacts external_ids
+	respDef, bodyDef := r.do(http.MethodGet, itemURL("projects", created.URN), nil)
+	if respDef.StatusCode != http.StatusOK {
+		t.Fatalf("default lookup status = %d: %s", respDef.StatusCode, bodyDef)
+	}
+	var defProfile registry.Profile
+	if err := json.Unmarshal(bodyDef, &defProfile); err != nil {
+		t.Fatalf("unmarshal default profile: %v", err)
+	}
+	if len(defProfile.ExternalIDs) != 0 {
+		t.Errorf("default GET leaked external_ids: %+v", defProfile.ExternalIDs)
+	}
+
+	// 2b. GET with ?include=external_ids reveals all attached external IDs
+	respInc, bodyInc := r.do(http.MethodGet, itemURL("projects", created.URN)+"?include=external_ids", nil)
+	if respInc.StatusCode != http.StatusOK {
+		t.Fatalf("include=external_ids lookup status = %d: %s", respInc.StatusCode, bodyInc)
+	}
+	var incProfile registry.Profile
+	if err := json.Unmarshal(bodyInc, &incProfile); err != nil {
+		t.Fatalf("unmarshal include profile: %v", err)
+	}
+	if len(incProfile.ExternalIDs) != 3 {
+		t.Fatalf("external_ids count = %d, want 3; got %+v", len(incProfile.ExternalIDs), incProfile.ExternalIDs)
+	}
+	extMap := map[string]string{}
+	for _, ext := range incProfile.ExternalIDs {
+		extMap[ext.Substrate] = ext.ExternalID
+	}
+	if extMap["torque"] != "PRJ-TETHER-01" {
+		t.Errorf("torque external_id = %q, want PRJ-TETHER-01", extMap["torque"])
+	}
+	if extMap["tether"] != "tether" {
+		t.Errorf("tether external_id = %q, want tether", extMap["tether"])
+	}
+	if extMap["cerberus"] != "tether-runtime" {
+		t.Errorf("cerberus external_id = %q, want tether-runtime", extMap["cerberus"])
+	}
+
+	// 3. Reverse query (HTTP):
+	// Given substrate "torque" and external_id "PRJ-TETHER-01", resolve to project
+	respRev, bodyRev := r.do(http.MethodGet, "/registry/projects?external_id=PRJ-TETHER-01&substrate=torque", nil)
+	if respRev.StatusCode != http.StatusOK {
+		t.Fatalf("reverse lookup status = %d: %s", respRev.StatusCode, bodyRev)
+	}
+	var revEnv map[string]registry.Profile
+	if err := json.Unmarshal(bodyRev, &revEnv); err != nil {
+		t.Fatalf("unmarshal reverse lookup: %v", err)
+	}
+	revProj, ok := revEnv["project"]
+	if !ok {
+		t.Fatalf("reverse lookup envelope missing 'project' key: %s", bodyRev)
+	}
+	if revProj.URN != created.URN {
+		t.Errorf("reverse lookup URN = %q, want %q", revProj.URN, created.URN)
+	}
+	if revProj.DisplayName != "Tether Control Plane" {
+		t.Errorf("reverse lookup display_name = %q, want Tether Control Plane", revProj.DisplayName)
+	}
+
+	// 4. Reverse query with selective include and full via HTTP:
+	// 4a. Reverse lookup with ?include=external_ids reveals external_ids
+	respRevInc, bodyRevInc := r.do(http.MethodGet, "/registry/projects?external_id=PRJ-TETHER-01&substrate=torque&include=external_ids", nil)
+	if respRevInc.StatusCode != http.StatusOK {
+		t.Fatalf("reverse lookup include status = %d: %s", respRevInc.StatusCode, bodyRevInc)
+	}
+	var revIncEnv map[string]registry.Profile
+	if err := json.Unmarshal(bodyRevInc, &revIncEnv); err != nil {
+		t.Fatalf("unmarshal reverse include: %v", err)
+	}
+	if len(revIncEnv["project"].ExternalIDs) != 3 {
+		t.Errorf("reverse include external_ids count = %d, want 3", len(revIncEnv["project"].ExternalIDs))
+	}
+
+	// 4b. Reverse lookup with ?full=true reveals callback and external_ids
+	respRevFull, bodyRevFull := r.do(http.MethodGet, "/registry/projects?external_id=PRJ-TETHER-01&substrate=torque&full=true", nil)
+	if respRevFull.StatusCode != http.StatusOK {
+		t.Fatalf("reverse lookup full status = %d: %s", respRevFull.StatusCode, bodyRevFull)
+	}
+	var revFullEnv map[string]registry.Profile
+	if err := json.Unmarshal(bodyRevFull, &revFullEnv); err != nil {
+		t.Fatalf("unmarshal reverse full: %v", err)
+	}
+	revFullProj := revFullEnv["project"]
+	if revFullProj.Callback == nil || revFullProj.Callback.Target != "mux describe --json" {
+		t.Errorf("reverse full did not return callback: %+v", revFullProj.Callback)
+	}
+	if len(revFullProj.ExternalIDs) != 3 {
+		t.Errorf("reverse full external_ids count = %d, want 3", len(revFullProj.ExternalIDs))
+	}
+
+	// 5. Partial-coverage discipline:
+	// Register Project Partial with only tether substrate ID (no torque)
+	respPart, bodyPart := r.do(http.MethodPost, "/registry/projects", map[string]any{
+		"display_name": "Partial Coverage Project",
+		"external_ids": []map[string]any{
+			{"substrate": "tether", "external_id": "partial-prj"},
+		},
+	})
+	if respPart.StatusCode != http.StatusCreated {
+		t.Fatalf("register partial status = %d: %s", respPart.StatusCode, bodyPart)
+	}
+	var partialProj registry.Profile
+	if err := json.Unmarshal(bodyPart, &partialProj); err != nil {
+		t.Fatalf("unmarshal partial profile: %v", err)
+	}
+
+	// 5a. Querying with ?include=external_ids returns an ordinary answer with 1 external ID,
+	// omitting torque without error.
+	respPartInc, bodyPartInc := r.do(http.MethodGet, itemURL("projects", partialProj.URN)+"?include=external_ids", nil)
+	if respPartInc.StatusCode != http.StatusOK {
+		t.Fatalf("partial include status = %d: %s", respPartInc.StatusCode, bodyPartInc)
+	}
+	var partialInc registry.Profile
+	if err := json.Unmarshal(bodyPartInc, &partialInc); err != nil {
+		t.Fatalf("unmarshal partial include: %v", err)
+	}
+	if len(partialInc.ExternalIDs) != 1 || partialInc.ExternalIDs[0].Substrate != "tether" {
+		t.Errorf("partial external_ids = %+v, want only tether", partialInc.ExternalIDs)
+	}
+
+	// 5b. Reverse lookup on torque for non-existent ID returns 404 Not Found cleanly as an ordinary response
+	respMissing, bodyMissing := r.do(http.MethodGet, "/registry/projects?external_id=PRJ-NONEXISTENT&substrate=torque", nil)
+	if respMissing.StatusCode != http.StatusNotFound {
+		t.Errorf("reverse lookup for missing torque ID status = %d, want 404; body=%s", respMissing.StatusCode, bodyMissing)
+	}
+
+	// 6. Offboarding Terminal States:
+	// 6a. Deregister soft-deletes to status="deprecated". Row remains resolvable by URN.
+	respDel, bodyDel := r.do(http.MethodDelete, itemURL("projects", partialProj.URN), nil)
+	if respDel.StatusCode != http.StatusOK {
+		t.Fatalf("deregister status = %d: %s", respDel.StatusCode, bodyDel)
+	}
+	var deregProfile registry.Profile
+	if err := json.Unmarshal(bodyDel, &deregProfile); err != nil {
+		t.Fatalf("unmarshal deregister profile: %v", err)
+	}
+	if deregProfile.Status != registry.StatusDeprecated {
+		t.Errorf("deregister status = %q, want deprecated", deregProfile.Status)
+	}
+
+	// Direct URN lookup returns the deprecated profile
+	respDeregLook, bodyDeregLook := r.do(http.MethodGet, itemURL("projects", partialProj.URN), nil)
+	if respDeregLook.StatusCode != http.StatusOK {
+		t.Fatalf("direct lookup of deprecated status = %d: %s", respDeregLook.StatusCode, bodyDeregLook)
+	}
+	var checkDereg registry.Profile
+	if err := json.Unmarshal(bodyDeregLook, &checkDereg); err != nil {
+		t.Fatalf("unmarshal deprecated check: %v", err)
+	}
+	if checkDereg.Status != registry.StatusDeprecated {
+		t.Errorf("status = %q, want deprecated", checkDereg.Status)
+	}
+
+	// 6b. Merge: duplicate project gets merged into destination.
+	// Register duplicate project Dup
+	respDup, bodyDup := r.do(http.MethodPost, "/registry/projects", map[string]any{
+		"display_name": "Duplicate Project",
+		"external_ids": []map[string]any{
+			{"substrate": "torque", "external_id": "PRJ-DUP-99"},
+		},
+	})
+	if respDup.StatusCode != http.StatusCreated {
+		t.Fatalf("register dup status = %d: %s", respDup.StatusCode, bodyDup)
+	}
+	var dupProj registry.Profile
+	if err := json.Unmarshal(bodyDup, &dupProj); err != nil {
+		t.Fatalf("unmarshal dup: %v", err)
+	}
+
+	// Target project Dest
+	respDest, bodyDest := r.do(http.MethodPost, "/registry/projects", map[string]any{
+		"display_name": "Canonical Destination Project",
+		"external_ids": []map[string]any{
+			{"substrate": "tether", "external_id": "canonical-dest"},
+		},
+	})
+	if respDest.StatusCode != http.StatusCreated {
+		t.Fatalf("register dest status = %d: %s", respDest.StatusCode, bodyDest)
+	}
+	var destProj registry.Profile
+	if err := json.Unmarshal(bodyDest, &destProj); err != nil {
+		t.Fatalf("unmarshal dest: %v", err)
+	}
+
+	// Merge Dup into Dest
+	respMerge, bodyMerge := r.do(http.MethodPost, itemURL("projects", dupProj.URN)+"/merge", map[string]any{
+		"into": destProj.URN,
+	})
+	if respMerge.StatusCode != http.StatusOK {
+		t.Fatalf("merge status = %d: %s", respMerge.StatusCode, bodyMerge)
+	}
+
+	// Verify Dup is now deprecated with merged_into pointing to Dest
+	respDupAfter, bodyDupAfter := r.do(http.MethodGet, itemURL("projects", dupProj.URN), nil)
+	if respDupAfter.StatusCode != http.StatusOK {
+		t.Fatalf("lookup dup after merge: %d: %s", respDupAfter.StatusCode, bodyDupAfter)
+	}
+	var dupAfter registry.Profile
+	if err := json.Unmarshal(bodyDupAfter, &dupAfter); err != nil {
+		t.Fatalf("unmarshal dupAfter: %v", err)
+	}
+	if dupAfter.Status != registry.StatusMerged {
+		t.Errorf("dup status = %q, want merged", dupAfter.Status)
+	}
+	if dupAfter.MergedInto != destProj.URN {
+		t.Errorf("dup merged_into = %q, want %q", dupAfter.MergedInto, destProj.URN)
+	}
+
+	// Reverse lookup on "PRJ-DUP-99" (substrate torque) now resolves to Dest
+	respRevMerged, bodyRevMerged := r.do(http.MethodGet, "/registry/projects?external_id=PRJ-DUP-99&substrate=torque", nil)
+	if respRevMerged.StatusCode != http.StatusOK {
+		t.Fatalf("reverse lookup after merge status = %d: %s", respRevMerged.StatusCode, bodyRevMerged)
+	}
+	var revMergedEnv map[string]registry.Profile
+	if err := json.Unmarshal(bodyRevMerged, &revMergedEnv); err != nil {
+		t.Fatalf("unmarshal revMergedEnv: %v", err)
+	}
+	if revMergedEnv["project"].URN != destProj.URN {
+		t.Errorf("reverse lookup after merge resolved to %q, want %q", revMergedEnv["project"].URN, destProj.URN)
+	}
+}

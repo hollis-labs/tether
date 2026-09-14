@@ -106,6 +106,7 @@ var subClientWrites = map[string]bool{
 	// Reads.
 	"ListMessages": false, "Mentions": false, "ListMembers": false,
 	"ListForMember": false, "Lookup": false, "LookupWithInclude": false, "LookupFull": false, "Search": false, "LookupBy": false,
+	"LookupByWithInclude": false, "LookupByFull": false,
 	"Current": false, "List": false, "Resolve": false, "Revisions": false,
 	"ListForTarget": false, "ResolveSingle": false, "ListRevisions": false,
 	// Writes.

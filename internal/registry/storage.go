@@ -202,10 +202,17 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 		}
 	}
 	for _, ext := range p.ExternalIDs {
+		attachedAt := ext.AttachedAt
+		if attachedAt.IsZero() {
+			attachedAt = p.CreatedAt
+			if attachedAt.IsZero() {
+				attachedAt = time.Now().UTC()
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO registry_external_ids (urn, substrate, external_id, attached_at)
 			 VALUES (?, ?, ?, ?)`,
-			p.URN, ext.Substrate, ext.ExternalID, formatTime(ext.AttachedAt)); err != nil {
+			p.URN, ext.Substrate, ext.ExternalID, formatTime(attachedAt)); err != nil {
 			return fmt.Errorf("registry: insert external_id (%s,%s): %w", ext.Substrate, ext.ExternalID, err)
 		}
 	}

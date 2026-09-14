@@ -148,6 +148,18 @@ func (rc *RegistryClient) LookupWithInclude(ctx context.Context, urn string, inc
 
 // LookupBy resolves a substrate-local identifier to one registry profile.
 func (rc *RegistryClient) LookupBy(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error) {
+	return rc.LookupByWithInclude(ctx, kind, externalID, substrate)
+}
+
+// LookupByFull resolves a substrate-local identifier returning the unredacted Profile.
+func (rc *RegistryClient) LookupByFull(ctx context.Context, kind registry.Kind, externalID, substrate string) (registry.Profile, error) {
+	return rc.LookupByWithInclude(ctx, kind, externalID, substrate, "all")
+}
+
+// LookupByWithInclude resolves a substrate-local identifier to one registry profile with
+// selectively included fields (e.g. "external_ids", "callback", "host_address", "kind_meta",
+// or "all").
+func (rc *RegistryClient) LookupByWithInclude(ctx context.Context, kind registry.Kind, externalID, substrate string, include ...string) (registry.Profile, error) {
 	seg, err := pluralSegment(kind)
 	if err != nil {
 		return registry.Profile{}, err
@@ -156,6 +168,11 @@ func (rc *RegistryClient) LookupBy(ctx context.Context, kind registry.Kind, exte
 	q.Set("external_id", externalID)
 	if substrate != "" {
 		q.Set("substrate", substrate)
+	}
+	if len(include) == 1 && include[0] == "all" {
+		q.Set("full", "true")
+	} else if len(include) > 0 {
+		q.Set("include", strings.Join(include, ","))
 	}
 	path := "/registry/" + seg + "?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rc.c.baseURL+path, nil)

@@ -217,7 +217,11 @@ Output:
 
 // ─── lookup ─────────────────────────────────────────────────────────────────
 
-var lookupJSON bool
+var (
+	lookupJSON    bool
+	lookupFull    bool
+	lookupInclude string
+)
 var (
 	lookupByKind       string
 	lookupByExternalID string
@@ -234,7 +238,14 @@ var registryLookupCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := rc.Lookup(cmdCtx(cmd), urn)
+		var out registry.Profile
+		if lookupFull {
+			out, err = rc.LookupFull(cmdCtx(cmd), urn)
+		} else if lookupInclude != "" {
+			out, err = rc.LookupWithInclude(cmdCtx(cmd), urn, strings.Split(lookupInclude, ",")...)
+		} else {
+			out, err = rc.Lookup(cmdCtx(cmd), urn)
+		}
 		if err != nil {
 			if errors.Is(err, registry.ErrNotFound) {
 				fmt.Fprintf(os.Stderr, "registry: not found: %s\n", urn)
@@ -265,8 +276,19 @@ var registryLookupByCmd = &cobra.Command{
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := rc.LookupBy(cmdCtx(cmd), kind, lookupByExternalID, lookupBySubstrate)
+		var out registry.Profile
+		if lookupFull {
+			out, err = rc.LookupByFull(cmdCtx(cmd), kind, lookupByExternalID, lookupBySubstrate)
+		} else if lookupInclude != "" {
+			out, err = rc.LookupByWithInclude(cmdCtx(cmd), kind, lookupByExternalID, lookupBySubstrate, strings.Split(lookupInclude, ",")...)
+		} else {
+			out, err = rc.LookupBy(cmdCtx(cmd), kind, lookupByExternalID, lookupBySubstrate)
+		}
 		if err != nil {
+			if errors.Is(err, registry.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "registry: not found: %s\n", lookupByExternalID)
+				return &exitErr{code: 1, err: err}
+			}
 			return classifyErr(err)
 		}
 		if lookupJSON {
@@ -1006,6 +1028,8 @@ func resetRegistryFlags() {
 	registerFile = ""
 	registerPrintURN = false
 	lookupJSON = false
+	lookupFull = false
+	lookupInclude = ""
 	lookupByKind = ""
 	lookupByExternalID = ""
 	lookupBySubstrate = ""
@@ -1060,10 +1084,14 @@ func init() {
 	registryRegisterCmd.Flags().BoolVar(&registerPrintURN, "print-urn-only", false, "emit only the minted URN on stdout (pipeable)")
 
 	registryLookupCmd.Flags().BoolVar(&lookupJSON, "json", false, "emit raw JSON instead of the pretty rendering")
+	registryLookupCmd.Flags().BoolVar(&lookupFull, "full", false, "include all sensitive/metadata fields (unredacted)")
+	registryLookupCmd.Flags().StringVar(&lookupInclude, "include", "", "comma-separated fields to include (e.g. 'external_ids', 'callback')")
 	registryLookupByCmd.Flags().StringVar(&lookupByKind, "kind", "", "registry kind ('agent', 'project', or 'group')")
 	registryLookupByCmd.Flags().StringVar(&lookupByExternalID, "external-id", "", "substrate-local identifier to resolve")
-	registryLookupByCmd.Flags().StringVar(&lookupBySubstrate, "substrate", "", "optional substrate scope ('tether', 'cerberus', etc.)")
+	registryLookupByCmd.Flags().StringVar(&lookupBySubstrate, "substrate", "", "optional substrate scope ('tether', 'cerberus', 'torque', etc.)")
 	registryLookupByCmd.Flags().BoolVar(&lookupJSON, "json", false, "emit raw JSON instead of the pretty rendering")
+	registryLookupByCmd.Flags().BoolVar(&lookupFull, "full", false, "include all sensitive/metadata fields (unredacted)")
+	registryLookupByCmd.Flags().StringVar(&lookupInclude, "include", "", "comma-separated fields to include (e.g. 'external_ids', 'callback')")
 
 	registrySearchCmd.Flags().StringVar(&searchKind, "kind", "", "registry kind ('agent' or 'project')")
 	registrySearchCmd.Flags().StringVar(&searchRole, "role", "", "filter by role")

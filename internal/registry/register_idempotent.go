@@ -158,10 +158,17 @@ func (s *Storage) RegisterWithExternalKey(ctx context.Context, p Profile, substr
 		return "", false, fmt.Errorf("registry: register with external key: insert entry: %w", err)
 	}
 	for _, ext := range p.ExternalIDs {
+		attachedAt := ext.AttachedAt
+		if attachedAt.IsZero() {
+			attachedAt = p.CreatedAt
+			if attachedAt.IsZero() {
+				attachedAt = now
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO registry_external_ids (urn, substrate, external_id, attached_at)
 			 VALUES (?, ?, ?, ?)`,
-			p.URN, ext.Substrate, ext.ExternalID, formatTime(ext.AttachedAt)); err != nil {
+			p.URN, ext.Substrate, ext.ExternalID, formatTime(attachedAt)); err != nil {
 			return "", false, fmt.Errorf("registry: register with external key: insert external_id (%s,%s): %w", ext.Substrate, ext.ExternalID, err)
 		}
 	}
