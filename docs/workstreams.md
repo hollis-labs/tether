@@ -227,15 +227,19 @@ $ mux workstreams digest --for-ref torque_task:CW-20260911-0039
 ## Where the content lives
 
 Tether stores **no** note bodies, scratch or todo text. It resolves where those
-belong in Tesseract and records the returned revision id as a ref:
+belong in Tesseract workspace and records the returned item or revision id as a ref:
 
 ```
-GET /sessions/{id}/workstream-namespace?user=<id>&type=notes
-  -> user/<id>/session/ws_<workstream-id>/memory/notes
+GET /sessions/{id}/workstream-namespace?project=<proj>&owner=<owner>&tail=scratch
+  -> {"namespace": "project/<proj>/workspace/scratch", "workstream_id": "<workstream-id>"}
 ```
 
-The `{sid}` segment carries a **workstream** id with a `ws_` prefix, because
-Tesseract's grammar has no workstream segment yet (`CW-20260912-0111`). The
-prefix is not cosmetic: a bare id there would fail *silently* — correlate it
-against `sessions.id`, get no rows, and no-rows is indistinguishable from a
-session that touched nothing. `ws_` fails *loudly*.
+Workstream ID is an **attribute**, never a namespace partition (Chrispian's
+ruling, CW-20260912-0062). Contained material belongs in Tesseract's declared
+workspace domain:
+- Project-owned scratch: `project/<declared-project-id>/workspace/scratch`
+- Tether's own cross-project scratch: `app/tether/workspace/scratch`
+
+Content is written directly to Tesseract with `workstream_id` attached as an
+attribute, and the returned identity attached to Tether via `kind=tesseract_item`
+or `kind=tesseract_revision`.

@@ -28,6 +28,7 @@ const (
 	KindTorqueTask        = "torque_task"
 	KindGitCommit         = "git_commit"
 	KindGitPR             = "git_pr"
+	KindTesseractItem     = "tesseract_item"
 	KindTesseractRevision = "tesseract_revision"
 	KindCerberusDeploy    = "cerberus_deploy"
 	KindADR               = "adr"
@@ -39,7 +40,7 @@ const (
 // themselves and so a drift audit has something to compare against.
 var KnownRefKinds = map[string]bool{
 	KindTorqueTask: true, KindGitCommit: true, KindGitPR: true,
-	KindTesseractRevision: true, KindCerberusDeploy: true,
+	KindTesseractItem: true, KindTesseractRevision: true, KindCerberusDeploy: true,
 	KindADR: true, KindURL: true,
 }
 

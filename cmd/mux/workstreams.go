@@ -12,12 +12,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/client"
 )
 
 var (
 	workstreamName       string
 	workstreamWorkflowID string
 	workstreamStatus     string
+	workstreamProject    string
+	workstreamOwner      string
+	workstreamTail       string
 	workstreamUser       string
 	workstreamMemoryType string
 	workstreamJSON       bool
@@ -155,27 +159,31 @@ container too.`,
 
 var workstreamNamespaceCmd = &cobra.Command{
 	Use:   "namespace <session-id>",
-	Short: "Where this session's workstream-scoped scratch belongs in Tesseract",
-	Long: `Resolve the Tesseract namespace for a session's workstream-scoped content.
+	Short: "Where this session's workstream-scoped scratch belongs in Tesseract workspace",
+	Long: `Resolve the Tesseract workspace target for a session's workstream-scoped scratch.
 
 Tether returns the location and stores none of the content — write it to
-Tesseract yourself, then attach the returned revision id with
-` + "`mux sessions refs attach`" + `.
+Tesseract yourself (with workstream_id as an attribute), then attach the
+returned item or revision id with ` + "`mux sessions refs attach`" + `.
 
-The namespace keys on the WORKSTREAM, not the session, which is what makes a
-note written before a compaction readable after one. The id in the session
-segment carries a ws_ prefix and is a workstream id: it will never match a
-session id, deliberately, because a bare id there would fail silently instead.`,
+Workstream ID is an attribute, never a namespace path partition. Contained material
+lives in Tesseract's workspace domain: project-owned scratch under
+project/<project-id>/workspace/scratch or Tether's cross-project scratch under
+app/tether/workspace/scratch.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if workstreamUser == "" {
-			return validationErr("workstreams namespace: --user is required; Tether does not own the Tesseract user identity")
-		}
 		c, err := registryClientFactory()
 		if err != nil {
 			return classifyErr(err)
 		}
-		out, err := c.SessionWorkstreamNamespace(cmdCtx(cmd), args[0], workstreamUser, workstreamMemoryType)
+		opts := client.SessionWorkstreamNamespaceOptions{
+			Project: workstreamProject,
+			Owner:   workstreamOwner,
+			Tail:    workstreamTail,
+			User:    workstreamUser,
+			Type:    workstreamMemoryType,
+		}
+		out, err := c.SessionWorkstreamNamespace(cmdCtx(cmd), args[0], opts)
 		if err != nil {
 			return classifyErr(err)
 		}
@@ -213,8 +221,11 @@ func init() {
 	workstreamEnsureCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "workflow id used only if a workstream is created")
 	workstreamEnsureCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
-	workstreamNamespaceCmd.Flags().StringVar(&workstreamUser, "user", "", "Tesseract user id (required)")
-	workstreamNamespaceCmd.Flags().StringVar(&workstreamMemoryType, "type", "", "Tesseract memory type; defaults to notes")
+	workstreamNamespaceCmd.Flags().StringVar(&workstreamProject, "project", "", "declared project identifier (defaults to session's project_id)")
+	workstreamNamespaceCmd.Flags().StringVar(&workstreamOwner, "owner", "", "explicit scope head (e.g. app/tether)")
+	workstreamNamespaceCmd.Flags().StringVar(&workstreamTail, "tail", "scratch", "workspace tail segment (defaults to scratch)")
+	workstreamNamespaceCmd.Flags().StringVar(&workstreamUser, "user", "", "optional legacy Tesseract user id")
+	workstreamNamespaceCmd.Flags().StringVar(&workstreamMemoryType, "type", "", "optional legacy memory type")
 	workstreamNamespaceCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
 	workstreamsCmd.AddCommand(workstreamCreateCmd, workstreamGetCmd, workstreamListCmd, workstreamAssignCmd, workstreamEnsureCmd, workstreamNamespaceCmd)

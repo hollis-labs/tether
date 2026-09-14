@@ -1502,16 +1502,39 @@ func (c *Client) ListWorkstreamRefs(ctx context.Context, workstreamID, kind, rel
 	return res.Refs, nil
 }
 
+// SessionWorkstreamNamespaceOptions configures optional placement overrides for SessionWorkstreamNamespace.
+type SessionWorkstreamNamespaceOptions struct {
+	Project string
+	Owner   string
+	Tail    string
+	// Legacy fields retained for source compatibility
+	User string
+	Type string
+}
+
 // SessionWorkstreamNamespace asks the daemon where a session's workstream-scoped
-// contained content belongs in Tesseract. Tether returns the location and
-// stores no content; the caller writes to Tesseract itself.
-func (c *Client) SessionWorkstreamNamespace(ctx context.Context, sessionID, userID, memoryType string) (api.WorkstreamNamespaceResponse, error) {
+// contained content belongs in Tesseract workspace. Tether returns the location and
+// stores no content; the caller writes to Tesseract itself, passing workstream_id
+// as an attribute.
+func (c *Client) SessionWorkstreamNamespace(ctx context.Context, sessionID string, opts ...SessionWorkstreamNamespaceOptions) (api.WorkstreamNamespaceResponse, error) {
 	params := url.Values{}
-	if userID != "" {
-		params.Set("user", userID)
-	}
-	if memoryType != "" {
-		params.Set("type", memoryType)
+	if len(opts) > 0 {
+		opt := opts[0]
+		if opt.Project != "" {
+			params.Set("project", opt.Project)
+		}
+		if opt.Owner != "" {
+			params.Set("owner", opt.Owner)
+		}
+		if opt.Tail != "" {
+			params.Set("tail", opt.Tail)
+		}
+		if opt.User != "" {
+			params.Set("user", opt.User)
+		}
+		if opt.Type != "" {
+			params.Set("type", opt.Type)
+		}
 	}
 	path := "/sessions/" + url.PathEscape(sessionID) + "/workstream-namespace"
 	if len(params) > 0 {

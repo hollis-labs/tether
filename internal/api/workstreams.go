@@ -23,7 +23,7 @@ type WorkstreamStore interface {
 	ListWorkstreams(opts store.ListWorkstreamsOptions) ([]store.WorkstreamRow, error)
 	AssignSessionWorkstream(sessionID, workstreamID string) error
 	EnsureSessionWorkstream(sessionID string, seed store.WorkstreamRow) (store.WorkstreamRow, error)
-	SessionWorkstreamNamespace(userID, sessionID, memoryType string) (store.WorkstreamNamespace, error)
+	SessionWorkstreamNamespace(sessionID string, opts ...store.WorkstreamTargetOptions) (store.WorkstreamNamespace, error)
 }
 
 // WorkstreamDTO is the wire shape for a workstream.
@@ -289,23 +289,34 @@ type WorkstreamNamespaceResponse struct {
 }
 
 // handleSessionWorkstreamNamespace services
-// GET /sessions/{id}/workstream-namespace?user=&type=.
+// GET /sessions/{id}/workstream-namespace?project=&owner=&tail=&type=&user=.
 //
-// Tether returns WHERE contained content belongs and stores none of it: the
-// caller writes to Tesseract itself. That split is not incidental — Tesseract's
-// actor rule refuses an app write to a user/* namespace, so a Tether-side write
-// could not succeed even if the design wanted one.
+// Tether returns WHERE contained content belongs in Tesseract workspace and stores
+// none of it: the caller writes to Tesseract itself, attaching workstream_id
+// as an attribute.
 func (s *Server) handleSessionWorkstreamNamespace(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if s.Workstreams == nil {
 		writeError(w, http.StatusNotFound, CodeNotFound, "workstreams are not enabled on this server")
 		return
 	}
-	userID := r.URL.Query().Get("user")
-	memoryType := r.URL.Query().Get("type")
-	if memoryType == "" {
-		memoryType = "notes"
+	q := r.URL.Query()
+	project := q.Get("project")
+	owner := q.Get("owner")
+	tail := q.Get("tail")
+	if tail == "" {
+		tail = q.Get("type")
 	}
-	res, err := s.Workstreams.SessionWorkstreamNamespace(userID, sessionID, memoryType)
+	if tail == "" {
+		tail = "scratch"
+	}
+
+	opts := store.WorkstreamTargetOptions{
+		Project: project,
+		Owner:   owner,
+		Tail:    tail,
+	}
+
+	res, err := s.Workstreams.SessionWorkstreamNamespace(sessionID, opts)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrWorkstreamNotFound), errors.Is(err, store.ErrSessionNotFound), errors.Is(err, store.ErrNotAWorkstream):

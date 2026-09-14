@@ -1468,7 +1468,7 @@ empty digest does and does not mean, is in
 | `GET` | `/sessions/{id}/refs` | This session's refs. |
 | `POST` | `/sessions/{id}/refs` | Attach a ref. Idempotent on `(session, kind, ref_id, relation)`. |
 | `GET` | `/sessions/{id}/digest` | Assembled digest for this session alone. |
-| `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's content belongs in Tesseract. `?user=` required, `?type=` defaults to `notes`. |
+| `GET` | `/sessions/{id}/workstream-namespace` | Where the workstream's scratch belongs in Tesseract workspace. `?project=` (defaults to session's project_id), `?owner=`, `?tail=` (defaults to `scratch`). |
 
 Digest filters, shared by both grains: `kind`, `relation`, `source`, `since`
 (RFC3339 **UTC**), `limit`.

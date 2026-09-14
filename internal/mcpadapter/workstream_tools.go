@@ -69,20 +69,20 @@ func (a *Adapter) registerWorkstreamTools(s *server.MCPServer) {
 
 	a.addTool(s, mcp.NewTool("tether_workstream_namespace",
 		mcp.WithDescription(
-			"Resolve where a session's workstream-scoped scratch, notes and todos belong "+
-				"in Tesseract. Write the content to Tesseract yourself and attach the "+
-				"returned revision id with tether_workstream_attach — Tether stores the "+
-				"location, never the content.\n\n"+
-				"The namespace keys on the WORKSTREAM, not the session, which is what makes "+
-				"a note written before a compaction readable after one: a compaction creates "+
-				"a new session row, and anything keyed on a session id is orphaned by it.\n\n"+
-				"The id in the session segment is prefixed ws_ and is a workstream id, NOT a "+
-				"session id. Do not try to correlate it against a session — it will never "+
-				"match, which is the point: a bare id there would fail silently instead.",
+			"Resolve where a session's workstream-scoped scratch belongs in Tesseract workspace. "+
+				"Write the content to Tesseract yourself (with workstream_id as an attribute) "+
+				"and attach the returned item or revision id with tether_workstream_attach — "+
+				"Tether stores the location and references, never the content.\n\n"+
+				"Workstream ID is an attribute, never a namespace path segment. Material lives in "+
+				"Tesseract's workspace domain: project-owned scratch under project/<project-id>/workspace/scratch "+
+				"or Tether's cross-project scratch under app/tether/workspace/scratch.",
 		),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("The session asking. Its workstream is resolved for you.")),
-		mcp.WithString("user", mcp.Required(), mcp.Description("Tesseract user id; Tether does not own that identity and will not invent one.")),
-		mcp.WithString("type", mcp.Description("Tesseract memory type: notes, todos, decisions, ... Defaults to notes. Passed through unvalidated — the vocabulary is Tesseract's.")),
+		mcp.WithString("project", mcp.Description("Declared project identifier (e.g. tether). Defaults to the session's declared project_id.")),
+		mcp.WithString("owner", mcp.Description("Explicit scope head (e.g. app/tether).")),
+		mcp.WithString("tail", mcp.Description("Workspace segment (defaults to scratch).")),
+		mcp.WithString("user", mcp.Description("Optional legacy Tesseract user id.")),
+		mcp.WithString("type", mcp.Description("Optional legacy memory type, mapped to tail if provided.")),
 	), Reads("store.SessionWorkstreamNamespace resolves and deliberately does not auto-create a workstream"), a.handleWorkstreamNamespace)
 
 	a.addTool(s, mcp.NewTool("tether_workstream_digest",
@@ -184,14 +184,17 @@ func (a *Adapter) handleWorkstreamNamespace(ctx context.Context, req mcp.CallToo
 	if sessionID == "" {
 		return toolError("invalid_request", "session_id is required"), nil
 	}
-	user := str(req, "user")
-	if user == "" {
-		return toolError("invalid_request", "user is required: Tether does not own the Tesseract user identity"), nil
-	}
 	if errRes := a.workstreamClientReady(); errRes != nil {
 		return errRes, nil
 	}
-	out, err := a.client.SessionWorkstreamNamespace(ctx, sessionID, user, str(req, "type"))
+	opts := client.SessionWorkstreamNamespaceOptions{
+		Project: str(req, "project"),
+		Owner:   str(req, "owner"),
+		Tail:    str(req, "tail"),
+		User:    str(req, "user"),
+		Type:    str(req, "type"),
+	}
+	out, err := a.client.SessionWorkstreamNamespace(ctx, sessionID, opts)
 	if err != nil {
 		return workstreamErr(err), nil
 	}
