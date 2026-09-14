@@ -270,11 +270,13 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// that gets stamped come from the same call, so nothing here can write a
 	// stamp that disagrees with the flags actually planted -- see MuxMCPPlan.
 	//
-	// extractRefs is false because nothing can turn it on yet
-	// (CW-20260912-0112); the resulting "none" is the honest record that this
-	// session's proxy was not asked to record refs, which S5's digest renders
-	// instead of showing an unexplained empty proxy column.
-	mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, false)
+	// extractRefs comes from the resolved launch plan (CW-20260912-0112),
+	// falling back to catalog config if unpopulated on an older plan.
+	extractRefs := plan.ExtractRefs
+	if !extractRefs && s.Catalog != nil {
+		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
+	}
+	mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs)
 	prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 		MuxCommand: muxCommandPath(),
 		MuxArgs:    mcpPlan.Args,

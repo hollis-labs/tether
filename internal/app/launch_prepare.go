@@ -58,12 +58,10 @@ type MuxMCPPlan struct {
 // attribution is better than a fabricated one. It also reports
 // RefAttributionUnlaunched, so a caller that DOES have a row to stamp records
 // that this session's proxy can never attribute a call to it.
-//
-// extractRefs is currently false at every call site and there is no config
-// seam that would make it true (CW-20260912-0112). The parameter exists anyway
-// rather than being hardcoded, because the point of this function is that the
-// flag and the stamp are decided in one place: when the seam lands it changes
-// one argument, not two files that have to agree.
+// extractRefs enables proxy-side identifier extraction (--extract-refs).
+// Configured via catalog settings (CW-20260912-0112) and passed here from
+// LaunchSession. The flag and the attribution stamp are decided together:
+// the argv and the stamp cannot disagree.
 func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool) MuxMCPPlan {
 	args := []string{
 		"--catalog", catalogRoot,

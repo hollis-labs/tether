@@ -401,3 +401,92 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+func TestResolve_ExtractRefs(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	base := func() *config.Catalog {
+		return &config.Catalog{
+			Projects: map[string]config.Project{
+				"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
+			},
+			Agents: map[string]config.Agent{
+				"a": {ID: "a"},
+			},
+			Providers: map[string]config.Provider{
+				"p": {ID: "p", Command: "echo"},
+			},
+			Launches: map[string]config.Launch{
+				"l": {ID: "l", Project: "proj", Agent: "a", Provider: "p"},
+			},
+		}
+	}
+
+	t.Run("default is false", func(t *testing.T) {
+		cat := base()
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.ExtractRefs {
+			t.Errorf("plan.ExtractRefs = true, want false by default")
+		}
+	})
+
+	t.Run("global default true", func(t *testing.T) {
+		cat := base()
+		cat.Global.Catalog.Defaults.ExtractRefs = true
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !plan.ExtractRefs {
+			t.Errorf("plan.ExtractRefs = false, want true from global default")
+		}
+	})
+
+	t.Run("project true overrides global false", func(t *testing.T) {
+		cat := base()
+		proj := cat.Projects["proj"]
+		proj.MCP.ExtractRefs = boolPtr(true)
+		cat.Projects["proj"] = proj
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !plan.ExtractRefs {
+			t.Errorf("plan.ExtractRefs = false, want true from project")
+		}
+	})
+
+	t.Run("launch true overrides project false", func(t *testing.T) {
+		cat := base()
+		proj := cat.Projects["proj"]
+		proj.MCP.ExtractRefs = boolPtr(false)
+		cat.Projects["proj"] = proj
+		l := cat.Launches["l"]
+		l.MCP.ExtractRefs = boolPtr(true)
+		cat.Launches["l"] = l
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !plan.ExtractRefs {
+			t.Errorf("plan.ExtractRefs = false, want true from launch")
+		}
+	})
+
+	t.Run("launch false overrides global true", func(t *testing.T) {
+		cat := base()
+		cat.Global.Catalog.Defaults.ExtractRefs = true
+		l := cat.Launches["l"]
+		l.MCP.ExtractRefs = boolPtr(false)
+		cat.Launches["l"] = l
+		plan, err := Resolve(cat, Input{LaunchID: "l"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if plan.ExtractRefs {
+			t.Errorf("plan.ExtractRefs = true, want false from launch override")
+		}
+	})
+}

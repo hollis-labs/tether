@@ -119,6 +119,8 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		}
 	}
 
+	extractRefs := config.EffectiveExtractRefs(cat.Global, proj, l)
+
 	return &Plan{
 		LaunchID:       l.ID,
 		ProjectID:      proj.ID,
@@ -127,6 +129,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		ProviderBrand:  prov.ProviderBrand(),
 		RuntimeKind:    prov.EffectiveRuntimeKind(),
 		PermissionMode: permMode,
+		ExtractRefs:    extractRefs,
 		RepoRoot:       config.Expand(proj.RepoRoot),
 		WriteHome:      writeHome,
 		WorkspaceMode:  workspaceMode,

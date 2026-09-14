@@ -145,14 +145,21 @@ type Defaults struct {
 	// (specresolve.DefaultSpecsRoot). The TETHER_LAUNCH_SPECS_ROOT env var
 	// overrides this. Path expansion (~) is applied.
 	LaunchSpecsRoot string `yaml:"launch_specs_root"`
+	// ExtractRefs is the fleet-wide default for proxy-side identifier extraction
+	// (sets --extract-refs on the planted `mux mcp` server). Empty/false resolves
+	// to false (off by default). Can be overridden per-project or per-launch via
+	// mcp.extract_refs.
+	ExtractRefs bool `yaml:"extract_refs,omitempty"`
 }
 
 // MCPConfig holds per-project or per-launch MCP proxy settings that are
 // injected into agent sessions at launch time. Servers lists the upstream MCP
 // server IDs to expose as native tools (sets MUX_MCP_SERVERS). Empty means
 // MUX_MCP_SERVERS is not injected; the proxy defaults to exposing all servers.
+// ExtractRefs enables proxy-side identifier extraction (--extract-refs).
 type MCPConfig struct {
-	Servers []string `yaml:"servers" json:"servers,omitempty"`
+	Servers     []string `yaml:"servers" json:"servers,omitempty"`
+	ExtractRefs *bool    `yaml:"extract_refs,omitempty" json:"extract_refs,omitempty"`
 }
 
 type Project struct {
