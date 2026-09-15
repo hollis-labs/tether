@@ -763,6 +763,11 @@ func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
 	return res.Agents, nil
 }
 
+// ListLaunchProfiles fetches the full launch profile catalog via GET /catalog/agents.
+func (c *Client) ListLaunchProfiles(ctx context.Context) ([]config.LaunchProfile, error) {
+	return c.ListAgents(ctx)
+}
+
 // ListProviders fetches the full provider catalog via GET /catalog/providers.
 func (c *Client) ListProviders(ctx context.Context) ([]config.Provider, error) {
 	var res api.ListProvidersResponse

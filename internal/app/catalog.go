@@ -23,6 +23,11 @@ func (s *Service) ListAgents() []config.Agent {
 	return out
 }
 
+// ListLaunchProfiles returns a flat slice of the catalog launch profiles in iteration order.
+func (s *Service) ListLaunchProfiles() []config.LaunchProfile {
+	return s.ListAgents()
+}
+
 // ListProviders returns a flat slice of the catalog providers in iteration order.
 func (s *Service) ListProviders() []config.Provider {
 	out := make([]config.Provider, 0, len(s.Catalog.Providers))

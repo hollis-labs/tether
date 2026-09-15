@@ -31,7 +31,7 @@ func ValidPermissionMode(m string) bool {
 // a launched agent. Precedence: the agent's permissions.permission_mode
 // overrides the global defaults.permission_mode; an empty result falls
 // back to PermissionModeDefault.
-func EffectivePermissionMode(global Global, agent Agent) string {
+func EffectivePermissionMode(global Global, agent LaunchProfile) string {
 	if m := agent.Permissions.PermissionMode; m != "" {
 		return m
 	}

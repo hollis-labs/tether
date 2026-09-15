@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 // ErrExists is returned by Create when an agent file already exists at the
@@ -77,7 +78,7 @@ func Create(layerRoot, id string, p Params) (string, error) {
 	if name == "" {
 		name = id
 	}
-	a := config.Agent{
+	a := launchprofile.LaunchProfile{
 		ID:           id,
 		Name:         name,
 		Roles:        p.Roles,
@@ -101,17 +102,17 @@ func Create(layerRoot, id string, p Params) (string, error) {
 //     the existing list untouched. This is how a caller clears a list.
 //
 // The file is rewritten in canonical YAML form: comments and any keys not
-// modeled by config.Agent are NOT preserved. Agent files that carry
+// modeled by launchprofile.LaunchProfile are NOT preserved. Agent files that carry
 // hand-authored comments or forward-compatible unknown fields should be
 // edited by hand rather than through Update.
-func Update(path string, p Params) (config.Agent, error) {
+func Update(path string, p Params) (launchprofile.LaunchProfile, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: catalog-sourced path
 	if err != nil {
-		return config.Agent{}, err
+		return launchprofile.LaunchProfile{}, err
 	}
-	var a config.Agent
+	var a launchprofile.LaunchProfile
 	if err := yaml.Unmarshal(data, &a); err != nil {
-		return config.Agent{}, fmt.Errorf("parse %s: %w", path, err)
+		return launchprofile.LaunchProfile{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if p.Name != "" {
 		a.Name = p.Name
@@ -129,12 +130,12 @@ func Update(path string, p Params) (config.Agent, error) {
 		a.AgentPrompt = p.AgentPrompt
 	}
 	if err := writeAgent(path, a); err != nil {
-		return config.Agent{}, err
+		return launchprofile.LaunchProfile{}, err
 	}
 	return a, nil
 }
 
-func writeAgent(path string, a config.Agent) error {
+func writeAgent(path string, a launchprofile.LaunchProfile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}

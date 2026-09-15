@@ -27,7 +27,9 @@ type WorkspaceSpec struct {
 	SessionRoot  string `yaml:"session_root" json:"session_root,omitempty"`
 }
 
-type Agent struct {
+// LaunchProfile captures the stable launch configuration for an agent:
+// role, skills, persona prompts, permissions, and provider overrides.
+type LaunchProfile struct {
 	ID            string           `yaml:"id" json:"id"`
 	Name          string           `yaml:"name" json:"name"`
 	Roles         []string         `yaml:"roles" json:"roles,omitempty"`
@@ -48,6 +50,9 @@ type Agent struct {
 	// the agent uses provider defaults verbatim.
 	ProviderOverrides map[string]ProviderOverride `yaml:"provider_overrides" json:"provider_overrides,omitempty"`
 }
+
+// Agent is a backward-compatible alias for LaunchProfile.
+type Agent = LaunchProfile
 
 type AgentPermissions struct {
 	Network        bool   `yaml:"network" json:"network"`

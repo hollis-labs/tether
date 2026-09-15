@@ -161,8 +161,10 @@ type (
 	Project = launchprofile.Project
 	// WorkspaceSpec is relocated to internal/launchprofile.
 	WorkspaceSpec = launchprofile.WorkspaceSpec
-	// Agent is relocated to internal/launchprofile.
-	Agent = launchprofile.Agent
+	// LaunchProfile is relocated to internal/launchprofile.
+	LaunchProfile = launchprofile.LaunchProfile
+	// Agent is a backward-compatible alias for LaunchProfile.
+	Agent = LaunchProfile
 	// AgentPermissions is relocated to internal/launchprofile.
 	AgentPermissions = launchprofile.AgentPermissions
 	// ProviderOverride is relocated to internal/launchprofile.
@@ -270,7 +272,7 @@ type InjectedFile struct {
 type Catalog struct {
 	Global          Global
 	Projects        map[string]Project
-	Agents          map[string]Agent
+	Agents          map[string]LaunchProfile
 	Providers       map[string]Provider
 	Launches        map[string]Launch
 	SandboxProfiles map[string]sandbox.Profile
