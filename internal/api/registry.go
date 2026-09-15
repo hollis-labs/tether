@@ -66,6 +66,7 @@ type RegistryService interface {
 	Deregister(ctx context.Context, urn string) (registry.Profile, error)
 	Sync(ctx context.Context, urn string) (registry.Profile, error)
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
+	ReonboardProjects(ctx context.Context, catalogRoot string) (registry.ReonboardReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
 	BackfillOwnership(ctx context.Context) (int, error)
 	BackfillFieldMetadata(ctx context.Context) (int, error)
@@ -133,6 +134,7 @@ func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
+	mux.HandleFunc("/registry/reonboard", s.handleRegistryReonboard)
 	mux.HandleFunc("/registry/bindings", s.handleBindingsCollection)
 	mux.HandleFunc("/registry/bindings/", s.handleBindingsItem)
 	mux.HandleFunc("/registry/", s.handleRegistry)
@@ -641,6 +643,22 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "unsupported bootstrap substrate "+substrate)
 		return
 	}
+	if err != nil {
+		writeRegistryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// handleRegistryReonboard services POST /registry/reonboard (CW-20260914-0044).
+// Re-onboards existing project rows explicitly under the new contract.
+func (s *Server) handleRegistryReonboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+			"method not allowed on /registry/reonboard")
+		return
+	}
+	report, err := s.Registry.ReonboardProjects(r.Context(), s.RegistryCatalogRoot)
 	if err != nil {
 		writeRegistryError(w, err)
 		return

@@ -37,6 +37,7 @@ PATCH  /registry/projects/{urn}                         # UpdateSelf (partial up
 DELETE /registry/projects/{urn}                         # Deregister (soft-delete)
 POST   /registry/projects/{urn}/sync                    # Sync (callback refresh)
 POST   /registry/projects/{urn}/merge                   # Merge (consolidate into destination)
+POST   /registry/reonboard                              # Reonboard legacy project rows
 
 tether_registry_register       kind="project" profile={...}
 tether_registry_lookup         urn= [include=]
@@ -55,6 +56,7 @@ mux registry update-self       --file patch.json
 mux registry deregister        <urn>
 mux registry sync              <urn>
 mux registry merge             <src_urn> <dst_urn>
+mux registry reonboard
 ```
 
 ---
@@ -316,6 +318,22 @@ mux registry lookup-by --kind project --external-id PRJ-TETHER-01 --substrate to
   }
 }
 ```
+
+### 4. Re-onboarding Existing Project Rows (CW-20260914-0044)
+
+Existing project rows originally seeded by passive catalog bootstrap importers are explicitly migrated to the modern contract via:
+- **HTTP**: `POST /registry/reonboard`
+- **Go Client**: `client.Registry().Reonboard(ctx)`
+- **CLI**: `mux registry reonboard`
+
+The re-onboarding operation:
+1. Scans catalog project definitions (if configured) and updates or registers project profiles under the new contract.
+2. Sweeps all existing database project rows carrying legacy bootstrap status (`LastUpdatedBy == "system:bootstrap"` or `"system:merge"`), unpopulated props bags, or legacy `kind_meta` data.
+3. Migrates `repo_root` and `tracking_root` from `kind_meta` into open, authored `props`.
+4. Populates `tesseract_namespace` under `props["tesseract_namespace"]` (`user/chrispian/knowledge/<slug>`).
+5. Attaches `substrate="tether"` external IDs.
+6. Sets `LastUpdatedBy = "operator:re-onboard"`.
+7. Preserves authored provenance in `field_metadata` asserting `FieldClassAuthored` for `props`.
 
 ---
 

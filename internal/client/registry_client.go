@@ -462,6 +462,29 @@ func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool, substrate s
 	return out, nil
 }
 
+// Reonboard POSTs /registry/reonboard (CW-20260914-0044).
+// Re-onboards existing project rows explicitly under the new contract.
+func (rc *RegistryClient) Reonboard(ctx context.Context) (registry.ReonboardReport, error) {
+	path := "/registry/reonboard"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.ReonboardReport{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.ReonboardReport{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.ReonboardReport{}, readRegistryError(resp)
+	}
+	var out registry.ReonboardReport
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.ReonboardReport{}, fmt.Errorf("decode reonboard response: %w", err)
+	}
+	return out, nil
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 // pluralSegment translates a registry.Kind to its URL segment. Mirrors

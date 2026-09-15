@@ -530,6 +530,34 @@ output; one bad file does not abort the rest of the bootstrap.`,
 	},
 }
 
+// ─── reonboard ───────────────────────────────────────────────────────────────
+
+var registryReonboardCmd = &cobra.Command{
+	Use:   "reonboard",
+	Short: "Re-onboard existing project rows explicitly under the new contract",
+	Long: `Re-onboards project rows in the federation directory under the modern contract
+(CW-20260914-0044). Migrates rows away from legacy bootstrap status and moves
+kind_meta fields (repo_root, tracking_root) into authored props, ensures
+tesseract_namespace is set, attaches substrate="tether" external IDs, and
+stamps LastUpdatedBy with "operator:re-onboard".`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		report, err := rc.Reonboard(cmdCtx(cmd))
+		if err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("processed: %d\nupdated:   %d\ncreated:   %d\nerrors:    %d\n",
+			report.TotalProcessed, report.Updated, report.Created, len(report.Errors))
+		for _, e := range report.Errors {
+			fmt.Printf("  error: %s\n", e)
+		}
+		return nil
+	},
+}
+
 // ─── sync ───────────────────────────────────────────────────────────────────
 
 var registrySyncCmd = &cobra.Command{
@@ -1168,6 +1196,7 @@ func init() {
 		registryDeregisterCmd,
 		registrySyncCmd,
 		registryBootstrapCmd,
+		registryReonboardCmd,
 	)
 	rootCmd.AddCommand(registryCmd)
 }
