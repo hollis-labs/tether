@@ -43,7 +43,6 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
-	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -159,36 +158,10 @@ var daemonRunCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		// Bootstrap the federation directory before the listener binds so the
-		// daemon publishes a deduped, substrate-attributed /registry surface at
-		// startup-complete.
-		if svc.Registry != nil && svc.CatalogRoot != "" {
-			report, err := svc.Registry.BootstrapFromCatalog(ctx, svc.CatalogRoot, false)
-			if err != nil {
-				log.Printf("registry bootstrap (tether catalog): %v", err)
-			} else {
-				log.Printf("registry bootstrap (tether catalog): imported=%d attached=%d skipped=%d refreshed=%d errors=%d",
-					report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
-				for _, e := range report.Errors {
-					log.Printf("registry bootstrap error: %s: %s", e.Path, e.Reason)
-				}
-			}
-			if attached, err := registry.BackfillTetherExternalIDs(ctx, svc.Registry, svc.CatalogRoot); err != nil {
-				log.Printf("registry bootstrap (tether external-id backfill): %v", err)
-			} else {
-				log.Printf("registry bootstrap (tether external-id backfill): attached=%d", attached)
-			}
-			report, err = registry.BootstrapFromCerberus(ctx, svc.Registry, "", false, false)
-			if err != nil {
-				log.Printf("registry bootstrap (cerberus): %v", err)
-			} else {
-				log.Printf("registry bootstrap (cerberus): imported=%d attached=%d skipped=%d refreshed=%d errors=%d",
-					report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
-				for _, e := range report.Errors {
-					log.Printf("registry bootstrap error: %s: %s", e.Path, e.Reason)
-				}
-			}
-		}
+		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
+		// Catalog files retain their launch configuration role (repo root, workspace mode,
+		// MCP visibility) via internal/launchresolve. Shared registry rows are managed
+		// explicitly via the onboarding contract (OnboardProject / Reonboard).
 
 		// Install the v060-05 mention parser on the registry service.
 		// Parser dispatches notice envelopes to the messaging-store on

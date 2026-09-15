@@ -124,6 +124,9 @@ const bootstrapLastUpdatedBy = "system:bootstrap"
 // Returns a fatal error only when something outside the per-file scan
 // fails irrecoverably — currently never, but the signature stays open
 // for future composition (audit hooks, batch-tx wrappers).
+//
+// Deprecated: Per CW-20260914-0043, passive bootstrap importers are retired
+// as registry identity sources. Use ReonboardProjects or OnboardProject instead.
 func BootstrapFromCatalog(ctx context.Context, svc *Service, catalogRoot string, force bool) (BootstrapReport, error) {
 	if svc == nil {
 		return BootstrapReport{}, errors.New("registry: bootstrap: service required")
@@ -254,16 +257,6 @@ func importFile(
 				Reason: fmt.Sprintf("lookup by external id: %v", err),
 			})
 			return
-		} else {
-			// Cross-substrate match: see if another substrate registered this same external ID
-			if target, err := svc.LookupBy(ctx, kind, primaryExtID, ""); err == nil {
-				if target.Owner == "" || target.Owner == "tether" || target.Owner == "cerberus" {
-					if attachErr := svc.AttachExternalID(ctx, target.URN, "tether", primaryExtID); attachErr == nil {
-						existing = target
-						foundExisting = true
-					}
-				}
-			}
 		}
 	}
 

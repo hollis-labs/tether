@@ -387,8 +387,8 @@ Substrates are free-form strings (`"torque"`, `"tether"`, `"cerberus"`, `"github
 2. **Post-Onboarding**: Register an entry for the new substrate key and call `Merge(newURN, targetURN)`. The destination absorbs the external ID.
 3. **Storage Rule**: `(urn, substrate)` is unique. A project may have at most one external ID per substrate.
 
-### Explicit Mapping, Not Heuristic Inference (`CW-20260914-0022`)
-Tether intentionally does **not** scrape Torque or guess cross-substrate IDs by coincidental string matching. Mappings must be explicitly asserted by `agent-setup` onboarding or by operators.
+### Explicit Mapping, Not Heuristic Inference (`CW-20260914-0022`, `CW-20260914-0043`)
+Tether intentionally does **not** scrape Torque or guess cross-substrate IDs by coincidental string matching. With the retirement of passive startup bootstrap importers (`CW-20260914-0043`), accidental cross-app string matching and duplicate generation are completely eliminated. Mappings must be explicitly asserted by `agent-setup` onboarding or by operators.
 
 ---
 

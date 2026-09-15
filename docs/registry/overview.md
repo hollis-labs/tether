@@ -158,17 +158,11 @@ The `links.kind` column is free-form text (D16) — substrates can invent kinds 
 | `connector_for` | service/resource | connector URN |
 | `requires_secret` | service/resource/connector | opaque secret reference |
 
-## Bootstrap importer
+## Bootstrap importer (Retired per CW-20260914-0043)
 
-The daemon auto-runs `BootstrapFromCatalog(force=false)` at startup to land `~/.tether/catalog/{agents,projects}/*.yaml` files as registry rows. Idempotent — re-runs skip existing rows (matched by `callback.target`).
+Historically, the daemon auto-ran `BootstrapFromCatalog(force=false)` at startup to land `~/.tether/catalog/{agents,projects}/*.yaml` files as registry rows.
 
-Operators apply catalog drift via:
-
-```bash
-mux registry bootstrap --force
-```
-
-The `--force` flag re-applies the YAML's current content to existing rows via `UpdateSelf` and bumps `cached_at`.
+**Retirement (`CW-20260914-0043`):** The passive-scan startup role has been retired. Catalog YAMLs strictly power session launch configuration (`repo_root`, workspace mode, MCP visibility) via `internal/launchresolve`. Shared registry project identity is managed explicitly via the onboarding contract (`OnboardProject` / `ReonboardProjects` / `mux registry reonboard`). The `bootstrap` CLI command and endpoint are preserved as deprecated forwarders.
 
 ### Importer-scope discipline
 

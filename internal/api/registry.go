@@ -597,6 +597,11 @@ func (s *Server) handleRegistryDeregister(w http.ResponseWriter, r *http.Request
 // 503 with internal_error: the daemon "can run" but has nothing to
 // import. A test wiring an empty catalog should set RegistryCatalogRoot
 // to a temp dir, not leave it blank.
+// handleRegistryBootstrap services POST /registry/bootstrap.
+//
+// DEPRECATED (CW-20260914-0043): The passive catalog/cerberus bootstrap importers have
+// been retired from daemon startup. This endpoint is preserved for on-demand legacy imports.
+// Use POST /registry/reonboard or OnboardProject for the modern contract.
 func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,

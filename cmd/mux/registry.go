@@ -498,20 +498,10 @@ var (
 
 var registryBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
-	Short: "Re-run the catalog bootstrap importer (use --force after editing catalog YAMLs)",
-	Long: `Re-imports ~/.tether/catalog/{agents,projects}/*.yaml into the
-federation directory.
-
-Idempotent: existing rows (matched by callback.target) are skipped on
-re-run unless --force is passed. With --force, the existing row is
-patched with the YAML's current thin profile and cached_at is bumped.
-
-This command runs through the daemon's existing service (no separate
-process). The daemon's auto-bootstrap on startup is non-forced; use this
-to apply catalog drift after editing a YAML.
-
-Per-file failures (malformed YAML, etc.) are reported as part of the
-output; one bad file does not abort the rest of the bootstrap.`,
+	Short: "Re-run the catalog bootstrap importer (deprecated: repointed to reonboard)",
+	Long: `[DEPRECATED per CW-20260914-0043] Passive catalog bootstrap has been retired.
+This command forwards to the modern reonboard contract (ReonboardProjects),
+migrating existing project rows into the new contract. Use 'mux registry reonboard' directly.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rc, err := registryClient()
 		if err != nil {

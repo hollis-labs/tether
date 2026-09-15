@@ -36,6 +36,9 @@ type cerberusProjectFile struct {
 // BootstrapFromCerberus imports Cerberus registry index entries into the local
 // registry, attaching substrate='cerberus' to overlapping rows instead of
 // registering duplicates.
+//
+// Deprecated: Per CW-20260914-0043, passive bootstrap importers are retired
+// as registry identity sources. Use ReonboardProjects or explicit onboarding instead.
 func BootstrapFromCerberus(ctx context.Context, svc *Service, cerberusHome string, force bool, writeBack bool) (BootstrapReport, error) {
 	if svc == nil {
 		return BootstrapReport{}, errors.New("registry: cerberus bootstrap: service required")
