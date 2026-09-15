@@ -82,6 +82,30 @@ func (rc *RegistryClient) Register(ctx context.Context, kind registry.Kind, p re
 	return out, nil
 }
 
+// OnboardProjectParams defines the input parameters for Step 1 of the composable
+// onboarding sequence (CW-20260914-0041).
+type OnboardProjectParams struct {
+	DisplayName string                `json:"display_name"`
+	Description string                `json:"description,omitempty"`
+	Callback    *registry.Callback    `json:"callback,omitempty"`
+	Owner       string                `json:"owner,omitempty"`
+	Props       map[string]string     `json:"props,omitempty"`
+	ExternalIDs []registry.ExternalID `json:"external_ids,omitempty"`
+}
+
+// OnboardProject executes Step 1 (mint canonical identity) of the composable
+// onboarding sequence, registering a new project and returning its minted Profile.
+func (rc *RegistryClient) OnboardProject(ctx context.Context, params OnboardProjectParams) (registry.Profile, error) {
+	return rc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: params.DisplayName,
+		Description: params.Description,
+		Callback:    params.Callback,
+		Owner:       params.Owner,
+		Props:       params.Props,
+		ExternalIDs: params.ExternalIDs,
+	})
+}
+
 // Lookup GETs /registry/{kind}/{urn}. The kind is derived from the URN
 // prefix so callers don't need to repeat it; this matches the MCP
 // surface where lookup-by-urn is the natural shape. 404 returns a

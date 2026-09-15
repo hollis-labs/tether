@@ -72,6 +72,48 @@ func TestRegistryClient_Register_Happy(t *testing.T) {
 	}
 }
 
+func TestRegistryClient_OnboardProject(t *testing.T) {
+	want := registry.Profile{
+		URN:         "msg://project/project-mux/prj_proj00001",
+		Kind:        registry.KindProject,
+		DisplayName: "Onboarded Project",
+		Description: "A newly onboarded project",
+		Status:      registry.StatusActive,
+		Props: map[string]string{
+			"docs_url": "https://docs.example.com",
+		},
+	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/registry/projects" {
+			t.Errorf("path = %q, want /registry/projects", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(want)
+	})
+	c := newRegistryClient(t, h)
+
+	got, err := c.Registry().OnboardProject(context.Background(), OnboardProjectParams{
+		DisplayName: "Onboarded Project",
+		Description: "A newly onboarded project",
+		Props: map[string]string{
+			"docs_url": "https://docs.example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("OnboardProject: %v", err)
+	}
+	if got.URN != want.URN {
+		t.Errorf("URN = %q, want %q", got.URN, want.URN)
+	}
+	if got.Props["docs_url"] != "https://docs.example.com" {
+		t.Errorf("docs_url = %q", got.Props["docs_url"])
+	}
+}
+
 func TestRegistryClient_Register_Error500(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

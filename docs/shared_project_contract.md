@@ -61,13 +61,18 @@ mux registry merge             <src_urn> <dst_urn>
 
 ## Core Operations
 
-### 1. Onboarding (Register)
+### 1. Composable Onboarding Sequence
 
-When a project is onboarded, `agent-setup` creates its canonical registry profile.
-The caller provides authored fields and known substrate IDs. Tether mints a unique
-canonical URN (`msg://project/project-mux/prj_xxxxxxxxxx`).
+The onboarding contract is designed as a sequence of composable, independent steps rather than one monolithic call.
+Tether provides the contract, persistence plumbing, and HTTP/MCP/Go client surface; `agent-setup` owns the
+orchestration workflow that guides human or agent decisions (per `CW-20260912-0096` and `CW-20260914-0041`).
 
-#### Request (HTTP)
+#### Step 1: Mint Canonical Identity (MVP Core Path)
+The bare-minimum entry point: register the project with its display name, optional description, optional owner,
+and optional derivation pointer/callback. This mints a canonical URN (`msg://project/project-mux/prj_...`) in `status: active`.
+Everything else can be layered on incrementally.
+
+##### Request (HTTP)
 ```http
 POST /registry/projects HTTP/1.1
 Content-Type: application/json
@@ -75,18 +80,6 @@ Content-Type: application/json
 {
   "display_name": "Tether Control Plane",
   "description": "Local agent session control plane daemon and CLI",
-  "guidelines": "Always verify with `make check` before closing tasks.",
-  "tags": ["runtime", "control-plane", "go"],
-  "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
-  "props": {
-    "docs_url": "https://tether.example.com",
-    "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
-  },
-  "external_ids": [
-    {"substrate": "tether", "external_id": "tether"},
-    {"substrate": "torque", "external_id": "PRJ-TETHER-01"},
-    {"substrate": "cerberus", "external_id": "tether-runtime"}
-  ],
   "callback": {
     "scheme": "cli",
     "target": "mux describe --json"
@@ -94,7 +87,19 @@ Content-Type: application/json
 }
 ```
 
-#### Response
+##### Request (Go Client)
+```go
+profile, err := client.Registry().OnboardProject(ctx, client.OnboardProjectParams{
+    DisplayName: "Tether Control Plane",
+    Description: "Local agent session control plane daemon and CLI",
+    Callback: &registry.Callback{
+        Scheme: "cli",
+        Target: "mux describe --json",
+    },
+})
+```
+
+##### Response
 ```http
 HTTP/1.1 201 Created
 Content-Type: application/json
@@ -104,16 +109,74 @@ Content-Type: application/json
   "kind": "project",
   "display_name": "Tether Control Plane",
   "description": "Local agent session control plane daemon and CLI",
-  "guidelines": "Always verify with `make check` before closing tasks.",
-  "tags": ["runtime", "control-plane", "go"],
-  "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
+  "status": "active",
+  "created_at": "2026-09-14T16:00:00Z",
+  "updated_at": "2026-09-14T16:00:00Z"
+}
+```
+
+#### Step 2: Attach Authored Metadata & Props
+Layer on project facts using the open, flat `props` bag (e.g. `docs_url`, `project_root`, `primary_agent`),
+guidelines, tags, or entry points via `PATCH /registry/projects/{urn}` (`UpdateSelf`).
+Authored fields are protected against sync clobbering.
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
   "props": {
     "docs_url": "https://tether.example.com",
     "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
   },
-  "status": "active",
-  "created_at": "2026-09-14T16:00:00Z",
-  "updated_at": "2026-09-14T16:00:00Z"
+  "tags": ["runtime", "control-plane", "go"],
+  "guidelines": "Always verify with `make check` before closing tasks."
+}
+```
+
+#### Step 3: Attach Substrate External Identifiers
+Link external substrate IDs (e.g. Torque `PRJ-xxxx`, Cerberus site name, GitHub repo).
+Substrate IDs can be supplied either during initial registration or subsequently via deduplicating `Merge`:
+
+```http
+POST /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_tmp/merge HTTP/1.1
+Content-Type: application/json
+
+{
+  "into": "msg://project/project-mux/prj_01m2gtwv16"
+}
+```
+Enforces 1:1 mapping per substrate (`(urn, substrate)` uniqueness) and enables reverse lookup (`LookupBy`).
+
+#### Step 4: Attach Tesseract Knowledge Namespace
+Record the project's Tesseract namespace (e.g. `user/chrispian/knowledge/tether`) via `props["tesseract_namespace"]`
+or `links`. Tether sessions and CLI agents use this to recall architectural decisions, investigations, and skills:
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
+  "props": {
+    "tesseract_namespace": "user/chrispian/knowledge/tether"
+  }
+}
+```
+
+#### Step 5: Record Tooling & Auth Preferences (Placeholder / Opt-in)
+Record project-level tool opt-ins or policy preferences (e.g. enabled MCP servers, allowed LLM models).
+The actual authorization boundary is enforced at session launch; this step records the project preference
+declaratively in `props` without requiring immediate auth implementation:
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
+  "props": {
+    "mcp_opt_in": "torque,mux,tesseract",
+    "llm_policy": "claude-3-5-sonnet"
+  }
 }
 ```
 
