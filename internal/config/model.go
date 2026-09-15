@@ -157,8 +157,10 @@ type Defaults struct {
 type (
 	// MCPConfig is relocated to internal/launchprofile.
 	MCPConfig = launchprofile.MCPConfig
-	// Project is relocated to internal/launchprofile.
-	Project = launchprofile.Project
+	// LaunchContext is relocated to internal/launchprofile.
+	LaunchContext = launchprofile.LaunchContext
+	// Project is a backward-compatible alias for LaunchContext.
+	Project = LaunchContext
 	// WorkspaceSpec is relocated to internal/launchprofile.
 	WorkspaceSpec = launchprofile.WorkspaceSpec
 	// LaunchProfile is relocated to internal/launchprofile.
@@ -271,7 +273,7 @@ type InjectedFile struct {
 
 type Catalog struct {
 	Global          Global
-	Projects        map[string]Project
+	Projects        map[string]LaunchContext
 	Agents          map[string]LaunchProfile
 	Providers       map[string]Provider
 	Launches        map[string]Launch

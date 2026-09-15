@@ -10,7 +10,10 @@ type MCPConfig struct {
 	ExtractRefs *bool    `yaml:"extract_refs,omitempty" json:"extract_refs,omitempty"`
 }
 
-type Project struct {
+// LaunchContext captures launch-time environment context: repository root,
+// tracking root, workspace defaults, and MCP proxy settings. Distinct from
+// registry.Project (identity object).
+type LaunchContext struct {
 	ID            string        `yaml:"id" json:"id"`
 	Name          string        `yaml:"name" json:"name"`
 	RepoRoot      string        `yaml:"repo_root" json:"repo_root"`
@@ -20,6 +23,9 @@ type Project struct {
 	Workspace     WorkspaceSpec `yaml:"workspace" json:"workspace"`
 	MCP           MCPConfig     `yaml:"mcp" json:"mcp,omitempty"`
 }
+
+// Project is a backward-compatible alias for LaunchContext.
+type Project = LaunchContext
 
 type WorkspaceSpec struct {
 	DefaultMode  string `yaml:"default_mode" json:"default_mode"`

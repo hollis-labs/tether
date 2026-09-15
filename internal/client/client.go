@@ -754,6 +754,11 @@ func (c *Client) ListProjects(ctx context.Context) ([]config.Project, error) {
 	return res.Projects, nil
 }
 
+// ListLaunchContexts fetches the full launch context catalog via GET /catalog/projects.
+func (c *Client) ListLaunchContexts(ctx context.Context) ([]config.LaunchContext, error) {
+	return c.ListProjects(ctx)
+}
+
 // ListAgents fetches the full agent catalog via GET /catalog/agents.
 func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
 	var res api.ListAgentsResponse

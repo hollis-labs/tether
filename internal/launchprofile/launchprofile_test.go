@@ -42,3 +42,23 @@ func TestLaunchProfile(t *testing.T) {
 		t.Errorf("expected ID and Name to match, got ID=%q Name=%q", a.ID, a.Name)
 	}
 }
+
+func TestLaunchContext(t *testing.T) {
+	lc := launchprofile.LaunchContext{
+		ID:       "test-context",
+		Name:     "Test Context",
+		RepoRoot: "/repo/root",
+	}
+	if lc.ID != "test-context" || lc.Name != "Test Context" || lc.RepoRoot != "/repo/root" {
+		t.Errorf("expected fields to match, got ID=%q Name=%q RepoRoot=%q", lc.ID, lc.Name, lc.RepoRoot)
+	}
+
+	p := launchprofile.Project{
+		ID:       "test-project",
+		Name:     "Test Project",
+		RepoRoot: "/project/root",
+	}
+	if p.ID != "test-project" || p.Name != "Test Project" || p.RepoRoot != "/project/root" {
+		t.Errorf("expected fields to match, got ID=%q Name=%q RepoRoot=%q", p.ID, p.Name, p.RepoRoot)
+	}
+}

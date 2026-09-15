@@ -14,6 +14,11 @@ func (s *Service) ListProjects() []config.Project {
 	return out
 }
 
+// ListLaunchContexts returns a flat slice of the catalog launch contexts in iteration order.
+func (s *Service) ListLaunchContexts() []config.LaunchContext {
+	return s.ListProjects()
+}
+
 // ListAgents returns a flat slice of the catalog agents in iteration order.
 func (s *Service) ListAgents() []config.Agent {
 	out := make([]config.Agent, 0, len(s.Catalog.Agents))

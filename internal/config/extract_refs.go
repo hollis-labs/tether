@@ -8,7 +8,7 @@ package config
 //  2. proj.MCP.ExtractRefs (if explicitly set)
 //  3. global.Catalog.Defaults.ExtractRefs (fleet-wide default)
 //  4. false (off by default)
-func EffectiveExtractRefs(global Global, proj Project, launch Launch) bool {
+func EffectiveExtractRefs(global Global, proj LaunchContext, launch Launch) bool {
 	if launch.MCP.ExtractRefs != nil {
 		return *launch.MCP.ExtractRefs
 	}
