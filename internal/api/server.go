@@ -57,6 +57,10 @@ type Deps struct {
 	// Catalog/Broker convention.
 	Registry RegistryService
 
+	// Settings, when non-nil, enables the /settings/onboarding routes
+	// for Global > Project > User configuration cascade (CW-20260914-0042).
+	Settings SettingsService
+
 	// RegistryCatalogRoot is the catalog root passed to the bootstrap
 	// importer when handling `POST /registry/bootstrap`. Empty disables
 	// the endpoint (returns 503), matching the rest of the package's
@@ -140,6 +144,7 @@ type Server struct {
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
 	Registry            RegistryService
+	Settings            SettingsService
 	RegistryCatalogRoot string
 	Groups              GroupsService
 	LogsDir             string
@@ -171,6 +176,7 @@ func NewHandler(deps Deps) http.Handler {
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
 		Registry:            deps.Registry,
+		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		Groups:              deps.Groups,
 		LogsDir:             deps.LogsDir,
@@ -192,6 +198,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerMessageRoutes(mux)
 	s.registerProxyEventRoutes(mux)
 	s.registerRegistryRoutes(mux)
+	s.registerSettingsRoutes(mux)
 	s.registerGroupRoutes(mux)
 	s.registerWhoamiRoutes(mux)
 	s.registerSessionBootstrapRoutes(mux)

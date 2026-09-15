@@ -27,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/settings"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
 	"github.com/hollis-labs/tether/internal/store"
@@ -63,6 +64,10 @@ type Service struct {
 	// remote daemon for session ops). MCP / HTTP / CLI surfaces that
 	// depend on it must nil-guard before dispatching.
 	Registry *registry.Service
+
+	// Settings is the Global > Project > User settings cascade service
+	// (CW-20260914-0042) for onboarding and deployment configuration.
+	Settings *settings.Service
 
 	factories map[string]RuntimeFactory
 
@@ -166,6 +171,9 @@ func New(catalogRoot string) (*Service, error) {
 			fedRouter.LocalAuthority(), len(fedRouter.Authorities()), fedRouter.Authorities())
 	}
 
+	setStorage := settings.NewStorage(db.DB())
+	setSvc := settings.NewService(setStorage)
+
 	return &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
@@ -175,6 +183,7 @@ func New(catalogRoot string) (*Service, error) {
 		Broker:      brk,
 		Federation:  fedRouter,
 		Registry:    regSvc,
+		Settings:    setSvc,
 		factories:   factories,
 	}, nil
 }

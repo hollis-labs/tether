@@ -184,6 +184,39 @@ Content-Type: application/json
 
 ---
 
+### Onboarding Settings Cascade (Global > Project > User)
+
+Not every deployment, project, or user shares the same onboarding expectations (such as required props,
+whether MCP opt-in is offered, or default LLM policies). Tether provides a dedicated settings store in `state.db`
+and a closest-wins resolution cascade (`internal/settings`, `CW-20260914-0042`):
+
+- **User tier** (`scope: "user"`, `scope_id: "<user_urn>"`): Closest to the actor; overrides project and global settings where specified.
+- **Project tier** (`scope: "project"`, `scope_id: "<project_urn>"`): Local to the project; overrides deployment global defaults.
+- **Global tier** (`scope: "global"`, `scope_id: ""`): Fleet-wide default configuration.
+- **Code-level fallback**: Defaults applied when no tier specifies a value.
+
+#### Resolution Endpoint
+```http
+GET /settings/onboarding?project=msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01&user=msg%3A%2F%2Fagent%2Fagent-mux%2Fusr_01 HTTP/1.1
+```
+##### Response
+```json
+{
+  "required_props": ["docs_url", "project_root"],
+  "mcp_opt_in_offered": true,
+  "default_llm_policy": "claude-3-5-sonnet",
+  "custom": {
+    "env": "production"
+  }
+}
+```
+
+#### Scoped CRUD Endpoints
+- `GET /settings/onboarding/{scope}?scope_id={id}`
+- `PUT /settings/onboarding/{scope}?scope_id={id}`
+
+---
+
 ### 2. Resolve (Given Project, Get All App IDs)
 
 Callers use direct URN lookup with `include=external_ids` to resolve a project's IDs
