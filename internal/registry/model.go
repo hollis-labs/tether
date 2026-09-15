@@ -54,10 +54,11 @@ type FieldMeta struct {
 
 // AuthoredFields projects the authored fields of a profile.
 type AuthoredFields struct {
-	Description string   `json:"description,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Guidelines  string   `json:"guidelines,omitempty"`
-	EntryPoints []string `json:"entry_points,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	Guidelines  string            `json:"guidelines,omitempty"`
+	EntryPoints []string          `json:"entry_points,omitempty"`
+	Props       map[string]string `json:"props,omitempty"`
 }
 
 // DerivedFields projects the machine-recreatable fields of a profile.
@@ -100,6 +101,7 @@ type Profile struct {
 	Tags          []string             `json:"tags,omitempty"`
 	Guidelines    string               `json:"guidelines,omitempty"`
 	EntryPoints   []string             `json:"entry_points,omitempty"`
+	Props         map[string]string    `json:"props,omitempty"`
 	FieldMetadata map[string]FieldMeta `json:"field_metadata,omitempty"`
 	ExternalIDs   []ExternalID         `json:"external_ids,omitempty"`
 	Capabilities  []string             `json:"capabilities,omitempty"`
@@ -116,6 +118,7 @@ func (p Profile) Authored() AuthoredFields {
 		Tags:        p.Tags,
 		Guidelines:  p.Guidelines,
 		EntryPoints: p.EntryPoints,
+		Props:       p.Props,
 	}
 }
 
@@ -156,7 +159,7 @@ func (p Profile) FieldMetaFor(fieldName string) (FieldMeta, bool) {
 // DefaultFieldClass returns the default FieldClass for a known field.
 func DefaultFieldClass(fieldName string) FieldClass {
 	switch fieldName {
-	case "description", "tags", "guidelines", "entry_points", "title", "role", "avatar", "capabilities", "skills", "links":
+	case "description", "tags", "guidelines", "entry_points", "title", "role", "avatar", "capabilities", "skills", "links", "props":
 		return FieldClassAuthored
 	default:
 		return FieldClassDerived
@@ -262,6 +265,7 @@ type UpdatePatch struct {
 	Tags          *ArrayPatch[string]  `json:"tags,omitempty"`
 	Guidelines    *string              `json:"guidelines,omitempty"`
 	EntryPoints   *ArrayPatch[string]  `json:"entry_points,omitempty"`
+	Props         map[string]string    `json:"props,omitempty"`
 	FieldMetadata map[string]FieldMeta `json:"field_metadata,omitempty"`
 	Capabilities  *ArrayPatch[string]  `json:"capabilities,omitempty"`
 	Skills        *ArrayPatch[Skill]   `json:"skills,omitempty"`

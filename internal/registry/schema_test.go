@@ -245,6 +245,23 @@ func TestMigration0028_correlationFields(t *testing.T) {
 	}
 }
 
+// TestMigration0029_props verifies that migration 0029 adds the props_json column
+// to registry_entries.
+func TestMigration0029_props(t *testing.T) {
+	db := openInMemory(t)
+	if _, err := store.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('registry_entries') WHERE name = 'props_json'`)
+	if err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatalf("props_json column not found on registry_entries")
+	}
+}
+
 // TestMigration0015_defaultsAndNulls confirms the schema's defaults +
 // nullable columns behave as declared.
 func TestMigration0015_defaultsAndNulls(t *testing.T) {

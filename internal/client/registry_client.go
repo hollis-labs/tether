@@ -82,6 +82,30 @@ func (rc *RegistryClient) Register(ctx context.Context, kind registry.Kind, p re
 	return out, nil
 }
 
+// OnboardProjectParams defines the input parameters for Step 1 of the composable
+// onboarding sequence (CW-20260914-0041).
+type OnboardProjectParams struct {
+	DisplayName string                `json:"display_name"`
+	Description string                `json:"description,omitempty"`
+	Callback    *registry.Callback    `json:"callback,omitempty"`
+	Owner       string                `json:"owner,omitempty"`
+	Props       map[string]string     `json:"props,omitempty"`
+	ExternalIDs []registry.ExternalID `json:"external_ids,omitempty"`
+}
+
+// OnboardProject executes Step 1 (mint canonical identity) of the composable
+// onboarding sequence, registering a new project and returning its minted Profile.
+func (rc *RegistryClient) OnboardProject(ctx context.Context, params OnboardProjectParams) (registry.Profile, error) {
+	return rc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: params.DisplayName,
+		Description: params.Description,
+		Callback:    params.Callback,
+		Owner:       params.Owner,
+		Props:       params.Props,
+		ExternalIDs: params.ExternalIDs,
+	})
+}
+
 // Lookup GETs /registry/{kind}/{urn}. The kind is derived from the URN
 // prefix so callers don't need to repeat it; this matches the MCP
 // surface where lookup-by-urn is the natural shape. 404 returns a
@@ -434,6 +458,29 @@ func (rc *RegistryClient) Bootstrap(ctx context.Context, force bool, substrate s
 	var out registry.BootstrapReport
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return registry.BootstrapReport{}, fmt.Errorf("decode bootstrap response: %w", err)
+	}
+	return out, nil
+}
+
+// Reonboard POSTs /registry/reonboard (CW-20260914-0044).
+// Re-onboards existing project rows explicitly under the new contract.
+func (rc *RegistryClient) Reonboard(ctx context.Context) (registry.ReonboardReport, error) {
+	path := "/registry/reonboard"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rc.c.baseURL+path, nil)
+	if err != nil {
+		return registry.ReonboardReport{}, err
+	}
+	resp, err := rc.c.http.Do(req)
+	if err != nil {
+		return registry.ReonboardReport{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return registry.ReonboardReport{}, readRegistryError(resp)
+	}
+	var out registry.ReonboardReport
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return registry.ReonboardReport{}, fmt.Errorf("decode reonboard response: %w", err)
 	}
 	return out, nil
 }

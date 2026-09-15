@@ -40,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -497,20 +498,10 @@ var (
 
 var registryBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
-	Short: "Re-run the catalog bootstrap importer (use --force after editing catalog YAMLs)",
-	Long: `Re-imports ~/.tether/catalog/{agents,projects}/*.yaml into the
-federation directory.
-
-Idempotent: existing rows (matched by callback.target) are skipped on
-re-run unless --force is passed. With --force, the existing row is
-patched with the YAML's current thin profile and cached_at is bumped.
-
-This command runs through the daemon's existing service (no separate
-process). The daemon's auto-bootstrap on startup is non-forced; use this
-to apply catalog drift after editing a YAML.
-
-Per-file failures (malformed YAML, etc.) are reported as part of the
-output; one bad file does not abort the rest of the bootstrap.`,
+	Short: "Re-run the catalog bootstrap importer (deprecated: repointed to reonboard)",
+	Long: `[DEPRECATED per CW-20260914-0043] Passive catalog bootstrap has been retired.
+This command forwards to the modern reonboard contract (ReonboardProjects),
+migrating existing project rows into the new contract. Use 'mux registry reonboard' directly.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rc, err := registryClient()
 		if err != nil {
@@ -524,6 +515,34 @@ output; one bad file does not abort the rest of the bootstrap.`,
 			report.Imported, report.Attached, report.Skipped, report.Refreshed, len(report.Errors))
 		for _, e := range report.Errors {
 			fmt.Printf("  error %s: %s\n", e.Path, e.Reason)
+		}
+		return nil
+	},
+}
+
+// ─── reonboard ───────────────────────────────────────────────────────────────
+
+var registryReonboardCmd = &cobra.Command{
+	Use:   "reonboard",
+	Short: "Re-onboard existing project rows explicitly under the new contract",
+	Long: `Re-onboards project rows in the federation directory under the modern contract
+(CW-20260914-0044). Migrates rows away from legacy bootstrap status and moves
+kind_meta fields (repo_root, tracking_root) into authored props, ensures
+tesseract_namespace is set, attaches substrate="tether" external IDs, and
+stamps LastUpdatedBy with "operator:re-onboard".`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rc, err := registryClient()
+		if err != nil {
+			return classifyErr(err)
+		}
+		report, err := rc.Reonboard(cmdCtx(cmd))
+		if err != nil {
+			return classifyErr(err)
+		}
+		fmt.Printf("processed: %d\nupdated:   %d\ncreated:   %d\nerrors:    %d\n",
+			report.TotalProcessed, report.Updated, report.Created, len(report.Errors))
+		for _, e := range report.Errors {
+			fmt.Printf("  error: %s\n", e)
 		}
 		return nil
 	},
@@ -906,6 +925,26 @@ func printProfile(p registry.Profile) {
 			fmt.Printf("    target:      %s\n", l.Target)
 		}
 	}
+	if len(p.Tags) > 0 {
+		fmt.Printf("tags:            [%s]\n", strings.Join(p.Tags, ", "))
+	}
+	if p.Guidelines != "" {
+		fmt.Printf("guidelines:      %s\n", p.Guidelines)
+	}
+	if len(p.EntryPoints) > 0 {
+		fmt.Printf("entry_points:    [%s]\n", strings.Join(p.EntryPoints, ", "))
+	}
+	if len(p.Props) > 0 {
+		fmt.Println("props:")
+		keys := make([]string, 0, len(p.Props))
+		for k := range p.Props {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("  %s: %s\n", k, p.Props[k])
+		}
+	}
 	if len(p.KindMeta) > 0 {
 		// The raw json.RawMessage is already canonical JSON; print
 		// inline so structured kind-meta stays compact rather than
@@ -1147,6 +1186,7 @@ func init() {
 		registryDeregisterCmd,
 		registrySyncCmd,
 		registryBootstrapCmd,
+		registryReonboardCmd,
 	)
 	rootCmd.AddCommand(registryCmd)
 }

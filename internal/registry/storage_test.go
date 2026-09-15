@@ -821,6 +821,38 @@ func TestStorage_Search_EmptyResult(t *testing.T) {
 	}
 }
 
+func TestStorage_InsertGroupWithOwner_PreservesProps(t *testing.T) {
+	st := newStorage(t)
+	ctx := context.Background()
+
+	const ownerURN = "msg://agent/agent-mux/agt_owner123"
+	insertMinimal(t, st, ownerURN)
+
+	const groupURN = "msg://group/agent-mux/grp_props123"
+	grp := registry.Profile{
+		URN:         groupURN,
+		Kind:        registry.KindGroup,
+		DisplayName: "Group With Props",
+		Props: map[string]string{
+			"team":    "platform",
+			"purpose": "shared project alignment",
+		},
+	}
+
+	if err := st.InsertGroupWithOwner(ctx, grp, ownerURN); err != nil {
+		t.Fatalf("InsertGroupWithOwner: %v", err)
+	}
+
+	got, err := st.GetProfile(ctx, groupURN)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+
+	if got.Props["team"] != "platform" || got.Props["purpose"] != "shared project alignment" {
+		t.Errorf("Props = %v; want team=platform, purpose='shared project alignment'", got.Props)
+	}
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────────
 
 // insertMinimal inserts a stripped-down agent profile for tests that don't

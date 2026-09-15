@@ -963,6 +963,16 @@ func (s *Service) Merge(ctx context.Context, urnSrc, urnDst string) (Profile, er
 		v := src.Description
 		patch.Description = &v
 	}
+	if len(src.Props) > 0 {
+		mergedProps := make(map[string]string)
+		for k, v := range src.Props {
+			mergedProps[k] = v
+		}
+		for k, v := range dst.Props {
+			mergedProps[k] = v // dst wins conflicts
+		}
+		patch.Props = mergedProps
+	}
 	if mergedMeta, ok := mergeKindMeta(dst.KindMeta, src.KindMeta); ok {
 		patch.KindMeta = mergedMeta
 	}
@@ -1201,6 +1211,29 @@ func (s *Service) UpdateSelf(ctx context.Context, urn string, patch UpdatePatch)
 		}
 		fields["entry_points_json"] = string(b)
 		touchMeta("entry_points", FieldClassAuthored)
+	}
+	if patch.Props != nil {
+		newProps := make(map[string]string, len(existing.Props)+len(patch.Props))
+		for k, v := range existing.Props {
+			newProps[k] = v
+		}
+		for k, v := range patch.Props {
+			if v == "" {
+				delete(newProps, k)
+			} else {
+				newProps[k] = v
+			}
+		}
+		if len(newProps) > 0 {
+			b, err := json.Marshal(newProps)
+			if err != nil {
+				return Profile{}, fmt.Errorf("registry: update_self: marshal props: %w", err)
+			}
+			fields["props_json"] = string(b)
+		} else {
+			fields["props_json"] = nil
+		}
+		touchMeta("props", FieldClassAuthored)
 	}
 	if patch.Capabilities != nil && len(patch.Capabilities.Value) > 0 {
 		touchMeta("capabilities", FieldClassAuthored)
@@ -1591,6 +1624,9 @@ func SynthesizeFieldMetadata(p Profile) map[string]FieldMeta {
 	}
 	if len(p.EntryPoints) > 0 {
 		meta["entry_points"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
+	}
+	if len(p.Props) > 0 {
+		meta["props"] = FieldMeta{Class: FieldClassAuthored, LastUpdatedBy: updater, UpdatedAt: now}
 	}
 	if len(p.ExternalIDs) > 0 {
 		meta["external_ids"] = FieldMeta{Class: FieldClassDerived, LastUpdatedBy: updater, UpdatedAt: now, CachedAt: p.CachedAt}

@@ -49,10 +49,12 @@ var apiTopLevelPaths = []string{
 	"/messages/subscribe", "/messages/thread/",
 	"/proxy/events",
 	"/registry/", "/registry/bindings", "/registry/bindings/", "/registry/bootstrap",
+	"/registry/reonboard",
 	"/registry/scoped-bindings", "/registry/scoped-bindings/resolve",
 	"/registry/scoped-bindings/revisions",
 	"/session-groups", "/session-groups/",
 	"/sessions", "/sessions/", "/sessions/bootstrap",
+	"/settings/onboarding", "/settings/onboarding/",
 	"/whoami",
 	"/workstreams", "/workstreams/",
 }

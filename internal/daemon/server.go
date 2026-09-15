@@ -82,6 +82,9 @@ type Server struct {
 	// endpoints are mounted. Populated by app.Service.Registry at daemon
 	// startup.
 	Registry api.RegistryService
+	// Settings is optional; when set, /settings/* onboarding cascade endpoints
+	// are mounted (CW-20260914-0042).
+	Settings api.SettingsService
 	// RegistryCatalogRoot is the catalog root the registry bootstrap
 	// importer scans for `POST /registry/bootstrap`. Forwarded into
 	// api.Deps; empty disables the endpoint.
@@ -330,6 +333,7 @@ func (s *Server) Handler() http.Handler {
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
+			Settings:            s.Settings,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			Groups:              s.Groups,
 			LogsDir:             s.LogsDir,
@@ -497,6 +501,9 @@ func (s *Server) apiMounts() []apiMount {
 		// without a separate entry per subpath.
 		{"/registry/", s.Registry != nil},
 		{"/whoami", s.Registry != nil},
+
+		{"/settings/onboarding", s.Settings != nil},
+		{"/settings/onboarding/", s.Settings != nil},
 
 		{"/groups", s.Groups != nil},
 		{"/groups/", s.Groups != nil},

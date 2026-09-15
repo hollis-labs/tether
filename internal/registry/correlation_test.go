@@ -799,3 +799,91 @@ func TestSharedProject_C3_ServiceOnboardingTorqueAndPartialCoverage(t *testing.T
 		t.Errorf("LookupBy merged cerberus URN = %q, want %q", byMergedCerb.URN, proj.URN)
 	}
 }
+
+func TestProfile_Props(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	// 1. Register with props
+	proj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Props Project",
+		Description: "A project with open props",
+		Props: map[string]string{
+			"docs_url":      "https://docs.example.com",
+			"project_root":  "/Users/chrispian/dev/project",
+			"primary_agent": "msg://agent/agent-mux/agt_main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register with props: %v", err)
+	}
+	if len(proj.Props) != 3 {
+		t.Fatalf("len(proj.Props) = %d; want 3", len(proj.Props))
+	}
+	if proj.Props["docs_url"] != "https://docs.example.com" {
+		t.Errorf("proj.Props[docs_url] = %q", proj.Props["docs_url"])
+	}
+
+	// Verify FieldMetadata for props
+	if meta, ok := proj.FieldMetadata["props"]; !ok {
+		t.Fatalf("missing field_metadata for props")
+	} else if meta.Class != registry.FieldClassAuthored {
+		t.Errorf("field_metadata[props].Class = %q; want %q", meta.Class, registry.FieldClassAuthored)
+	}
+
+	// 2. Lookup preserves props
+	loaded, err := svc.Lookup(ctx, proj.URN)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if loaded.Props["project_root"] != "/Users/chrispian/dev/project" {
+		t.Errorf("loaded.Props[project_root] = %q", loaded.Props["project_root"])
+	}
+
+	// 3. UpdateSelf with Props: add new key, modify key, delete key with empty string
+	updated, err := svc.UpdateSelf(ctx, proj.URN, registry.UpdatePatch{
+		LastUpdatedBy: "author:test",
+		Props: map[string]string{
+			"inbox":        "msg://agent/agent-mux/agt_inbox",
+			"docs_url":     "https://docs.example.com/v2",
+			"project_root": "", // delete
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateSelf: %v", err)
+	}
+	if _, ok := updated.Props["project_root"]; ok {
+		t.Errorf("project_root was not deleted from Props")
+	}
+	if updated.Props["docs_url"] != "https://docs.example.com/v2" {
+		t.Errorf("updated docs_url = %q; want https://docs.example.com/v2", updated.Props["docs_url"])
+	}
+	if updated.Props["inbox"] != "msg://agent/agent-mux/agt_inbox" {
+		t.Errorf("updated inbox = %q", updated.Props["inbox"])
+	}
+	if updated.Props["primary_agent"] != "msg://agent/agent-mux/agt_main" {
+		t.Errorf("untouched primary_agent = %q", updated.Props["primary_agent"])
+	}
+
+	// 4. Merge preserves destination props and unions source props
+	srcProj, err := svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "Source Project",
+		Props: map[string]string{
+			"docs_url":  "https://source.example.com", // should NOT overwrite destination docs_url
+			"help_file": "HELP.md",                    // should be unioned into destination
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register source: %v", err)
+	}
+	merged, err := svc.Merge(ctx, srcProj.URN, proj.URN)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if merged.Props["docs_url"] != "https://docs.example.com/v2" {
+		t.Errorf("merged docs_url = %q; want destination value https://docs.example.com/v2", merged.Props["docs_url"])
+	}
+	if merged.Props["help_file"] != "HELP.md" {
+		t.Errorf("merged help_file = %q; want HELP.md from source", merged.Props["help_file"])
+	}
+}

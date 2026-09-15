@@ -66,6 +66,7 @@ type RegistryService interface {
 	Deregister(ctx context.Context, urn string) (registry.Profile, error)
 	Sync(ctx context.Context, urn string) (registry.Profile, error)
 	BootstrapFromCatalog(ctx context.Context, catalogRoot string, force bool) (registry.BootstrapReport, error)
+	ReonboardProjects(ctx context.Context, catalogRoot string) (registry.ReonboardReport, error)
 	BackfillTetherExternalIDs(ctx context.Context, catalogRoot string) (int, error)
 	BackfillOwnership(ctx context.Context) (int, error)
 	BackfillFieldMetadata(ctx context.Context) (int, error)
@@ -133,6 +134,7 @@ func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
+	mux.HandleFunc("/registry/reonboard", s.handleRegistryReonboard)
 	mux.HandleFunc("/registry/bindings", s.handleBindingsCollection)
 	mux.HandleFunc("/registry/bindings/", s.handleBindingsItem)
 	mux.HandleFunc("/registry/", s.handleRegistry)
@@ -376,6 +378,7 @@ type redactedProfile struct {
 	Tags          []string                      `json:"tags,omitempty"`
 	Guidelines    string                        `json:"guidelines,omitempty"`
 	EntryPoints   []string                      `json:"entry_points,omitempty"`
+	Props         map[string]string             `json:"props,omitempty"`
 	FieldMetadata map[string]registry.FieldMeta `json:"field_metadata,omitempty"`
 	CreatedAt     time.Time                     `json:"created_at"`
 	UpdatedAt     time.Time                     `json:"updated_at"`
@@ -411,6 +414,15 @@ func redactFieldMetadata(fm map[string]registry.FieldMeta, f includeFields) map[
 	return out
 }
 
+// redactProfile returns the public projection of p.
+//
+// Privacy/Scope Boundary (CW-20260912-0053 / CW-20260914-0038 / CW-20260914-0039):
+// Four fields are omitted from default responses and require explicit opt-in:
+//   - Sensitive operational fields: callback, host_address, kind_meta (require registry.write scope)
+//   - Correlation identifiers: external_ids (accessible with standard read scope via ?include=external_ids)
+//
+// All authored metadata fields, including the open authored props bag, description, tags,
+// guidelines, and entry_points, are visible by default.
 func redactProfile(p registry.Profile) redactedProfile {
 	return redactedProfile{
 		URN: p.URN, Kind: p.Kind, Owner: p.Owner, MuxInstanceID: p.MuxInstanceID,
@@ -421,6 +433,7 @@ func redactProfile(p registry.Profile) redactedProfile {
 		LastUpdatedBy: p.LastUpdatedBy, Capabilities: p.Capabilities,
 		Skills: p.Skills, Links: p.Links,
 		Tags: p.Tags, Guidelines: p.Guidelines, EntryPoints: p.EntryPoints,
+		Props:         p.Props,
 		FieldMetadata: redactFieldMetadata(p.FieldMetadata, includeFields{}),
 		CreatedAt:     p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
@@ -584,6 +597,11 @@ func (s *Server) handleRegistryDeregister(w http.ResponseWriter, r *http.Request
 // 503 with internal_error: the daemon "can run" but has nothing to
 // import. A test wiring an empty catalog should set RegistryCatalogRoot
 // to a temp dir, not leave it blank.
+// handleRegistryBootstrap services POST /registry/bootstrap.
+//
+// DEPRECATED (CW-20260914-0043): The passive catalog/cerberus bootstrap importers have
+// been retired from daemon startup. This endpoint is preserved for on-demand legacy imports.
+// Use POST /registry/reonboard or OnboardProject for the modern contract.
 func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
@@ -630,6 +648,22 @@ func (s *Server) handleRegistryBootstrap(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "unsupported bootstrap substrate "+substrate)
 		return
 	}
+	if err != nil {
+		writeRegistryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// handleRegistryReonboard services POST /registry/reonboard (CW-20260914-0044).
+// Re-onboards existing project rows explicitly under the new contract.
+func (s *Server) handleRegistryReonboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+			"method not allowed on /registry/reonboard")
+		return
+	}
+	report, err := s.Registry.ReonboardProjects(r.Context(), s.RegistryCatalogRoot)
 	if err != nil {
 		writeRegistryError(w, err)
 		return

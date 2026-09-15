@@ -37,6 +37,7 @@ PATCH  /registry/projects/{urn}                         # UpdateSelf (partial up
 DELETE /registry/projects/{urn}                         # Deregister (soft-delete)
 POST   /registry/projects/{urn}/sync                    # Sync (callback refresh)
 POST   /registry/projects/{urn}/merge                   # Merge (consolidate into destination)
+POST   /registry/reonboard                              # Reonboard legacy project rows
 
 tether_registry_register       kind="project" profile={...}
 tether_registry_lookup         urn= [include=]
@@ -55,19 +56,25 @@ mux registry update-self       --file patch.json
 mux registry deregister        <urn>
 mux registry sync              <urn>
 mux registry merge             <src_urn> <dst_urn>
+mux registry reonboard
 ```
 
 ---
 
 ## Core Operations
 
-### 1. Onboarding (Register)
+### 1. Composable Onboarding Sequence
 
-When a project is onboarded, `agent-setup` creates its canonical registry profile.
-The caller provides authored fields and known substrate IDs. Tether mints a unique
-canonical URN (`msg://project/project-mux/prj_xxxxxxxxxx`).
+The onboarding contract is designed as a sequence of composable, independent steps rather than one monolithic call.
+Tether provides the contract, persistence plumbing, and HTTP/MCP/Go client surface; `agent-setup` owns the
+orchestration workflow that guides human or agent decisions (per `CW-20260912-0096` and `CW-20260914-0041`).
 
-#### Request (HTTP)
+#### Step 1: Mint Canonical Identity (MVP Core Path)
+The bare-minimum entry point: register the project with its display name, optional description, optional owner,
+and optional derivation pointer/callback. This mints a canonical URN (`msg://project/project-mux/prj_...`) in `status: active`.
+Everything else can be layered on incrementally.
+
+##### Request (HTTP)
 ```http
 POST /registry/projects HTTP/1.1
 Content-Type: application/json
@@ -75,14 +82,6 @@ Content-Type: application/json
 {
   "display_name": "Tether Control Plane",
   "description": "Local agent session control plane daemon and CLI",
-  "guidelines": "Always verify with `make check` before closing tasks.",
-  "tags": ["runtime", "control-plane", "go"],
-  "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
-  "external_ids": [
-    {"substrate": "tether", "external_id": "tether"},
-    {"substrate": "torque", "external_id": "PRJ-TETHER-01"},
-    {"substrate": "cerberus", "external_id": "tether-runtime"}
-  ],
   "callback": {
     "scheme": "cli",
     "target": "mux describe --json"
@@ -90,7 +89,19 @@ Content-Type: application/json
 }
 ```
 
-#### Response
+##### Request (Go Client)
+```go
+profile, err := client.Registry().OnboardProject(ctx, client.OnboardProjectParams{
+    DisplayName: "Tether Control Plane",
+    Description: "Local agent session control plane daemon and CLI",
+    Callback: &registry.Callback{
+        Scheme: "cli",
+        Target: "mux describe --json",
+    },
+})
+```
+
+##### Response
 ```http
 HTTP/1.1 201 Created
 Content-Type: application/json
@@ -100,16 +111,111 @@ Content-Type: application/json
   "kind": "project",
   "display_name": "Tether Control Plane",
   "description": "Local agent session control plane daemon and CLI",
-  "guidelines": "Always verify with `make check` before closing tasks.",
-  "tags": ["runtime", "control-plane", "go"],
-  "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
   "status": "active",
   "created_at": "2026-09-14T16:00:00Z",
   "updated_at": "2026-09-14T16:00:00Z"
 }
 ```
 
+#### Step 2: Attach Authored Metadata & Props
+Layer on project facts using the open, flat `props` bag (e.g. `docs_url`, `project_root`, `primary_agent`),
+guidelines, tags, or entry points via `PATCH /registry/projects/{urn}` (`UpdateSelf`).
+Authored fields are protected against sync clobbering.
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
+  "props": {
+    "docs_url": "https://tether.example.com",
+    "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
+  },
+  "tags": ["runtime", "control-plane", "go"],
+  "guidelines": "Always verify with `make check` before closing tasks."
+}
+```
+
+#### Step 3: Attach Substrate External Identifiers
+Link external substrate IDs (e.g. Torque `PRJ-xxxx`, Cerberus site name, GitHub repo).
+Substrate IDs can be supplied either during initial registration or subsequently via deduplicating `Merge`:
+
+```http
+POST /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_tmp/merge HTTP/1.1
+Content-Type: application/json
+
+{
+  "into": "msg://project/project-mux/prj_01m2gtwv16"
+}
+```
+Enforces 1:1 mapping per substrate (`(urn, substrate)` uniqueness) and enables reverse lookup (`LookupBy`).
+
+#### Step 4: Attach Tesseract Knowledge Namespace
+Record the project's Tesseract namespace (e.g. `user/chrispian/knowledge/tether`) via `props["tesseract_namespace"]`
+or `links`. Tether sessions and CLI agents use this to recall architectural decisions, investigations, and skills:
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
+  "props": {
+    "tesseract_namespace": "user/chrispian/knowledge/tether"
+  }
+}
+```
+
+#### Step 5: Record Tooling & Auth Preferences (Placeholder / Opt-in)
+Record project-level tool opt-ins or policy preferences (e.g. enabled MCP servers, allowed LLM models).
+The actual authorization boundary is enforced at session launch; this step records the project preference
+declaratively in `props` without requiring immediate auth implementation:
+
+```http
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+Content-Type: application/json
+
+{
+  "props": {
+    "mcp_opt_in": "torque,mux,tesseract",
+    "llm_policy": "claude-3-5-sonnet"
+  }
+}
+```
+
 *(Note: Sensitive operational fields and external IDs are omitted from default responses by the bidirectional redaction policy; see [Redaction & Scope Policy](#redaction--scope-policy).)*
+
+---
+
+### Onboarding Settings Cascade (Global > Project > User)
+
+Not every deployment, project, or user shares the same onboarding expectations (such as required props,
+whether MCP opt-in is offered, or default LLM policies). Tether provides a dedicated settings store in `state.db`
+and a closest-wins resolution cascade (`internal/settings`, `CW-20260914-0042`):
+
+- **User tier** (`scope: "user"`, `scope_id: "<user_urn>"`): Closest to the actor; overrides project and global settings where specified.
+- **Project tier** (`scope: "project"`, `scope_id: "<project_urn>"`): Local to the project; overrides deployment global defaults.
+- **Global tier** (`scope: "global"`, `scope_id: ""`): Fleet-wide default configuration.
+- **Code-level fallback**: Defaults applied when no tier specifies a value.
+
+#### Resolution Endpoint
+```http
+GET /settings/onboarding?project=msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01&user=msg%3A%2F%2Fagent%2Fagent-mux%2Fusr_01 HTTP/1.1
+```
+##### Response
+```json
+{
+  "required_props": ["docs_url", "project_root"],
+  "mcp_opt_in_offered": true,
+  "default_llm_policy": "claude-3-5-sonnet",
+  "custom": {
+    "env": "production"
+  }
+}
+```
+
+#### Scoped CRUD Endpoints
+- `GET /settings/onboarding/{scope}?scope_id={id}`
+- `PUT /settings/onboarding/{scope}?scope_id={id}`
 
 ---
 
@@ -213,6 +319,22 @@ mux registry lookup-by --kind project --external-id PRJ-TETHER-01 --substrate to
 }
 ```
 
+### 4. Re-onboarding Existing Project Rows (CW-20260914-0044)
+
+Existing project rows originally seeded by passive catalog bootstrap importers are explicitly migrated to the modern contract via:
+- **HTTP**: `POST /registry/reonboard`
+- **Go Client**: `client.Registry().Reonboard(ctx)`
+- **CLI**: `mux registry reonboard`
+
+The re-onboarding operation:
+1. Scans catalog project definitions (if configured) and updates or registers project profiles under the new contract.
+2. Sweeps all existing database project rows carrying legacy bootstrap status (`LastUpdatedBy == "system:bootstrap"` or `"system:merge"`), unpopulated props bags, or legacy `kind_meta` data.
+3. Migrates `repo_root` and `tracking_root` from `kind_meta` into open, authored `props`.
+4. Populates `tesseract_namespace` under `props["tesseract_namespace"]` (`user/chrispian/knowledge/<slug>`).
+5. Attaches `substrate="tether"` external IDs.
+6. Sets `LastUpdatedBy = "operator:re-onboard"`.
+7. Preserves authored provenance in `field_metadata` asserting `FieldClassAuthored` for `props`.
+
 ---
 
 ## Derived vs. Authored Field Split
@@ -221,7 +343,7 @@ Project profiles maintain a strict separation between authored metadata and deri
 
 | Classification | Fields | Source & Mutation Rules |
 |---|---|---|
-| **Authored** | `description`, `guidelines`, `tags`, `entry_points`, `capabilities`, `skills`, `links`, `title`, `role`, `avatar` | Hand-authored during onboarding or updated via `UpdateSelf`. **Protected against Sync clobbering**: Sync never overwrites authored fields. |
+| **Authored** | `props`, `description`, `guidelines`, `tags`, `entry_points`, `capabilities`, `skills`, `links`, `title`, `role`, `avatar` | Hand-authored during onboarding or updated via `UpdateSelf`. **Protected against Sync clobbering**: Sync never overwrites authored fields. `props` is a flat, open string-to-string map for arbitrary project facts (e.g. `docs_url`, `project_root`, `help_file`, `inbox`, `primary_agent`). |
 | **Derived** | `display_name`, `project`, `status`, `health_status`, `host_address`, `last_seen_at`, `kind_meta` | Populated and refreshed automatically by callback resolvers during `Sync`. |
 
 ### Field Metadata & Provenance
@@ -265,8 +387,8 @@ Substrates are free-form strings (`"torque"`, `"tether"`, `"cerberus"`, `"github
 2. **Post-Onboarding**: Register an entry for the new substrate key and call `Merge(newURN, targetURN)`. The destination absorbs the external ID.
 3. **Storage Rule**: `(urn, substrate)` is unique. A project may have at most one external ID per substrate.
 
-### Explicit Mapping, Not Heuristic Inference (`CW-20260914-0022`)
-Tether intentionally does **not** scrape Torque or guess cross-substrate IDs by coincidental string matching. Mappings must be explicitly asserted by `agent-setup` onboarding or by operators.
+### Explicit Mapping, Not Heuristic Inference (`CW-20260914-0022`, `CW-20260914-0043`)
+Tether intentionally does **not** scrape Torque or guess cross-substrate IDs by coincidental string matching. With the retirement of passive startup bootstrap importers (`CW-20260914-0043`), accidental cross-app string matching and duplicate generation are completely eliminated. Mappings must be explicitly asserted by `agent-setup` onboarding or by operators.
 
 ---
 
@@ -283,15 +405,16 @@ Not every project exists on every substrate:
 
 ## Redaction & Scope Policy
 
-Under `CW-20260912-0053` and `CW-20260912-0096`, Tether enforces privacy on discovery while keeping cross-app correlation lightweight:
+Under `CW-20260912-0053`, `CW-20260912-0096`, `CW-20260914-0038`, and `CW-20260914-0039`:
 
-### Sensitive vs. Correlation Fields
-- **Sensitive Operational Fields**: `callback` (contains commands/paths/tokens), `host_address` (internal IP), `kind_meta` (native private metadata).
-- **Correlation Identifiers**: `external_ids` (public substrate mappings like `PRJ-001`).
+### Visible vs. Gated Fields
+- **Visible by Default**: All authored metadata — including the open `props` bag, `description`, `tags`, `guidelines`, and `entry_points` — is visible by default in all queries (Register, Lookup, Search). Projects publishing their own props want them seen without friction.
+- **Correlation Identifiers**: `external_ids` (substrate mappings like `PRJ-001`). Omitted from default search/item responses to keep discovery lightweight, but accessible with standard read scope via `?include=external_ids` / `include="external_ids"`.
+- **Sensitive Operational Fields**: `callback` (internal command/file path), `host_address` (internal IP/interface), `kind_meta` (native private daemon metadata). Omitted by default and strictly require `registry.write` scope.
 
 ### Access Rules Across Surfaces
-1. **Default Queries**: Drop `callback`, `host_address`, `kind_meta`, and `external_ids` from public search and default item lookups.
-2. **HTTP Surface**: Local UDS / loopback callers can selectively include fields via `?include=external_ids` or `?full=true`.
+1. **Default Queries**: Returns public profile with authored fields (including `props`), dropping `callback`, `host_address`, `kind_meta`, and `external_ids`.
+2. **HTTP Surface**: Callers can selectively include fields via `?include=external_ids` (read scope) or `?full=true` / sensitive includes (write scope).
 3. **CLI Surface**: `mux registry lookup` and `mux registry lookup-by` accept `--include <fields>` and `--full`.
 4. **MCP Surface**:
    - Including `external_ids` is **accessible with read scope** (no elevated scope required).
