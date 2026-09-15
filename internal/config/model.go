@@ -1,6 +1,9 @@
 package config
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/hollis-labs/go-apppaths/paths"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
@@ -284,4 +287,50 @@ type Catalog struct {
 	// explicit catalog value, when set, always wins — see
 	// ResolveStateDB / ResolveWorkspaceRoot / ResolveTempRoot.
 	Paths paths.Layout
+}
+
+var _ launchprofile.Source = (*Catalog)(nil)
+
+// GetProfile satisfies launchprofile.Source by retrieving a launch profile from the catalog.
+// If id matches a legacy launch entry in Launches, it resolves the agent profile and inherits
+// the launch's provider.
+func (c *Catalog) GetProfile(_ context.Context, id string) (*launchprofile.LaunchProfile, error) {
+	if c == nil {
+		return nil, launchprofile.ErrProfileNotFound
+	}
+	if l, ok := c.Launches[id]; ok {
+		agent, aok := c.Agents[l.Agent]
+		if !aok {
+			agent = launchprofile.LaunchProfile{ID: l.Agent}
+		}
+		p := agent
+		if l.Provider != "" {
+			p.Provider = l.Provider
+		}
+		return &p, nil
+	}
+	if a, ok := c.Agents[id]; ok {
+		cp := a
+		return &cp, nil
+	}
+	return nil, fmt.Errorf("%w: %q", launchprofile.ErrProfileNotFound, id)
+}
+
+// GetContext satisfies launchprofile.Source by retrieving a launch context from the catalog.
+// If id matches a legacy launch entry in Launches, it resolves the associated project context.
+func (c *Catalog) GetContext(_ context.Context, id string) (*launchprofile.LaunchContext, error) {
+	if c == nil {
+		return nil, launchprofile.ErrContextNotFound
+	}
+	if l, ok := c.Launches[id]; ok {
+		if proj, pok := c.Projects[l.Project]; pok {
+			cp := proj
+			return &cp, nil
+		}
+	}
+	if p, ok := c.Projects[id]; ok {
+		cp := p
+		return &cp, nil
+	}
+	return nil, fmt.Errorf("%w: %q", launchprofile.ErrContextNotFound, id)
 }

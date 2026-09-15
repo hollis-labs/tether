@@ -44,6 +44,35 @@ type LaunchProfile struct {
 	BootFragments []string         `yaml:"boot_fragments" json:"boot_fragments,omitempty"`
 	Permissions   AgentPermissions `yaml:"permissions" json:"permissions"`
 
+	// Extends is the ID of an ancestor profile this one inherits from via cascade.
+	// Empty at the root of an inheritance chain.
+	Extends string `yaml:"extends,omitempty" json:"extends,omitempty"`
+
+	// Abstract marks a profile intended only for extension, not direct launching.
+	Abstract bool `yaml:"abstract,omitempty" json:"abstract,omitempty"`
+
+	// Description is human-readable documentation for this profile.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
+	// Provider identifies the default execution harness (e.g. "claude-code", "codex").
+	// Can be overridden at launch time.
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+
+	// Model specifies the preferred model identifier (e.g. "claude-3-7-sonnet-20250219").
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+
+	// Prompts lists named prompt templates or commands associated with this profile.
+	Prompts []string `yaml:"prompts,omitempty" json:"prompts,omitempty"`
+
+	// Env holds profile-level environment variables to inject.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+
+	// Spec carries open manifest configurations (e.g. settings, tools).
+	Spec map[string]any `yaml:"spec,omitempty" json:"spec,omitempty"`
+
+	// Body holds inline markdown / instructions concatenated during cascade resolution.
+	Body string `yaml:"body,omitempty" json:"body,omitempty"`
+
 	// SystemPrompt and AgentPrompt are the agent's persona payload (v005-08).
 	// Each may be an inline string (anything containing whitespace, `:`, or
 	// starting with text other than a path) or a file path; resolution happens
