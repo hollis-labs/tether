@@ -10,6 +10,8 @@ choose, or re-running live provider smoke tests.
   Opencode, with working catalog examples and limitations.
 - [Boot prompt generation](bootgen.md) - boot profiles, generated boot prompts,
   and the supported `boot` / `boot-exec` paths.
+- [Compositional launch resolution](composition.md) - inheritance cascade (`extends`),
+  launch-time input composition, precedence rules, and deterministic snapshotting.
 - [Smoke results](smoke-results.md) - the latest live smoke run against local
   Claude, Codex, and Opencode binaries.
 

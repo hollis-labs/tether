@@ -31,7 +31,7 @@ func Load(catalogRoot string) (*Catalog, error) {
 
 	roots := cat.Global.Catalog.Roots
 	if err := loadDir(resolveRoot(catalogRoot, roots.Projects, "projects"), func(path string) error {
-		var p Project
+		var p LaunchContext
 		if err := loadYAML(path, &p); err != nil {
 			return err
 		}
@@ -41,7 +41,7 @@ func Load(catalogRoot string) (*Catalog, error) {
 		return nil, err
 	}
 	if err := loadDir(resolveRoot(catalogRoot, roots.Agents, "agents"), func(path string) error {
-		var a Agent
+		var a LaunchProfile
 		if err := loadYAML(path, &a); err != nil {
 			return err
 		}

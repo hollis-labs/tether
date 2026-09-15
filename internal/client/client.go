@@ -754,6 +754,11 @@ func (c *Client) ListProjects(ctx context.Context) ([]config.Project, error) {
 	return res.Projects, nil
 }
 
+// ListLaunchContexts fetches the full launch context catalog via GET /catalog/projects.
+func (c *Client) ListLaunchContexts(ctx context.Context) ([]config.LaunchContext, error) {
+	return c.ListProjects(ctx)
+}
+
 // ListAgents fetches the full agent catalog via GET /catalog/agents.
 func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
 	var res api.ListAgentsResponse
@@ -761,6 +766,11 @@ func (c *Client) ListAgents(ctx context.Context) ([]config.Agent, error) {
 		return nil, err
 	}
 	return res.Agents, nil
+}
+
+// ListLaunchProfiles fetches the full launch profile catalog via GET /catalog/agents.
+func (c *Client) ListLaunchProfiles(ctx context.Context) ([]config.LaunchProfile, error) {
+	return c.ListAgents(ctx)
 }
 
 // ListProviders fetches the full provider catalog via GET /catalog/providers.

@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 func TestParseScope(t *testing.T) {
@@ -70,7 +71,7 @@ func TestCreate_WritesFileAndRejectsDuplicate(t *testing.T) {
 		t.Errorf("path = %q, want %q", path, want)
 	}
 
-	var a config.Agent
+	var a launchprofile.LaunchProfile
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read written file: %v", err)
@@ -107,7 +108,7 @@ func TestCreate_NameDefaultsToID(t *testing.T) {
 	if _, err := Create(root, "builder", Params{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	var a config.Agent
+	var a launchprofile.LaunchProfile
 	data, _ := os.ReadFile(filepath.Join(root, "agents", "builder.yaml"))
 	_ = yaml.Unmarshal(data, &a)
 	if a.Name != "builder" {
@@ -150,7 +151,7 @@ func TestUpdate_PatchesProvidedFieldsOnly(t *testing.T) {
 	}
 
 	// Re-read from disk to confirm the patch persisted.
-	var onDisk config.Agent
+	var onDisk launchprofile.LaunchProfile
 	data, _ := os.ReadFile(path)
 	_ = yaml.Unmarshal(data, &onDisk)
 	if onDisk.Name != "Renamed Auditor" || onDisk.SystemPrompt != "original prompt" {

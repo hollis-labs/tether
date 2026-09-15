@@ -59,7 +59,7 @@ func DefaultLayers(systemRoot, workingDir string) []LayerSpec {
 // LayeredAgent wraps an Agent with its origin metadata so callers (notably
 // `mux agents list`) can display which layer the entry came from.
 type LayeredAgent struct {
-	Agent Agent
+	Agent LaunchProfile
 	Layer Layer
 	Path  string
 }

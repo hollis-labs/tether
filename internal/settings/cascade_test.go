@@ -43,10 +43,11 @@ func TestResolveEffectiveOnboarding_Precedence(t *testing.T) {
 		},
 	}
 
-	// 1. All tiers present: User wins on scalar and slices, maps overlay.
+	// 1. All tiers present: User wins on scalar, collections accumulate (RequiredProps union, maps overlay).
 	eff := ResolveEffectiveOnboarding(global, project, user)
-	if !reflect.DeepEqual(eff.RequiredProps, []string{"docs_url", "custom_user_prop"}) {
-		t.Errorf("RequiredProps = %v, want user's props", eff.RequiredProps)
+	wantAllProps := []string{"docs_url", "owner", "project_root", "custom_user_prop"}
+	if !reflect.DeepEqual(eff.RequiredProps, wantAllProps) {
+		t.Errorf("RequiredProps = %v, want %v (union of global, project, user)", eff.RequiredProps, wantAllProps)
 	}
 	if eff.MCPOptInOffered == nil || *eff.MCPOptInOffered != false {
 		t.Errorf("MCPOptInOffered = %v, want false (user)", eff.MCPOptInOffered)
@@ -63,10 +64,11 @@ func TestResolveEffectiveOnboarding_Precedence(t *testing.T) {
 		t.Errorf("Custom = %v, want %v", eff.Custom, wantCustom)
 	}
 
-	// 2. User omitted: Project wins.
+	// 2. User omitted: Project wins on scalar, collections accumulate (global + project).
 	effProj := ResolveEffectiveOnboarding(global, project, nil)
-	if !reflect.DeepEqual(effProj.RequiredProps, []string{"docs_url", "project_root"}) {
-		t.Errorf("RequiredProps = %v, want project's props", effProj.RequiredProps)
+	wantProjProps := []string{"docs_url", "owner", "project_root"}
+	if !reflect.DeepEqual(effProj.RequiredProps, wantProjProps) {
+		t.Errorf("RequiredProps = %v, want %v (union of global, project)", effProj.RequiredProps, wantProjProps)
 	}
 	if effProj.MCPOptInOffered == nil || *effProj.MCPOptInOffered != true {
 		t.Errorf("MCPOptInOffered = %v, want true (project)", effProj.MCPOptInOffered)
@@ -132,5 +134,71 @@ func TestEffectiveValue(t *testing.T) {
 	empty := stringPtr("")
 	if got := EffectiveValue(global, empty, empty, fallback); got != "global-val" {
 		t.Errorf("got %q, want global-val (empty strings fall through)", got)
+	}
+}
+
+func TestResolveEffectiveOnboarding_RequiredPropsUnion(t *testing.T) {
+	tests := []struct {
+		name    string
+		global  *OnboardingSettings
+		project *OnboardingSettings
+		user    *OnboardingSettings
+		want    []string
+	}{
+		{
+			name: "closer scope cannot drop global mandated props",
+			global: &OnboardingSettings{
+				RequiredProps: []string{"prop_a", "prop_b"},
+			},
+			project: &OnboardingSettings{
+				RequiredProps: []string{"prop_b"}, // tries to specify only prop_b
+			},
+			user: &OnboardingSettings{
+				RequiredProps: []string{"prop_c"},
+			},
+			want: []string{"prop_a", "prop_b", "prop_c"},
+		},
+		{
+			name: "empty slice in project/user does not wipe out global props",
+			global: &OnboardingSettings{
+				RequiredProps: []string{"prop_mandated"},
+			},
+			project: &OnboardingSettings{
+				RequiredProps: []string{},
+			},
+			user: &OnboardingSettings{
+				RequiredProps: []string{},
+			},
+			want: []string{"prop_mandated"},
+		},
+		{
+			name: "duplicate props across scopes preserve first occurrence order",
+			global: &OnboardingSettings{
+				RequiredProps: []string{"prop_x", "prop_y"},
+			},
+			project: &OnboardingSettings{
+				RequiredProps: []string{"prop_y", "prop_z", "prop_x"},
+			},
+			user: &OnboardingSettings{
+				RequiredProps: []string{"prop_w", "prop_z"},
+			},
+			want: []string{"prop_x", "prop_y", "prop_z", "prop_w"},
+		},
+		{
+			name:    "nil scopes produce empty non-nil slice",
+			global:  nil,
+			project: nil,
+			user:    nil,
+			want:    []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			eff := ResolveEffectiveOnboarding(tc.global, tc.project, tc.user)
+			if !reflect.DeepEqual(eff.RequiredProps, tc.want) {
+				t.Errorf("got %v, want %v", eff.RequiredProps, tc.want)
+			}
+		})
 	}
 }

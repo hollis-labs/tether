@@ -1,30 +1,38 @@
 package settings
 
-// ResolveEffectiveOnboarding resolves the effective onboarding settings using the
-// closest-wins precedence cascade:
-//  1. User settings (if specified and non-empty)
-//  2. Project settings (if specified and non-empty)
-//  3. Global settings (if specified and non-empty)
-//  4. Code-level fallbacks
+// ResolveEffectiveOnboarding resolves the effective onboarding settings across the
+// Global > Project > User cascade, splitting resolution rules by kind rather than by field:
 //
-// This reuses the exact closest-wins resolution pattern proven in
-// internal/config/extract_refs.go (EffectiveExtractRefs) and
-// internal/config/permission.go (EffectivePermissionMode).
+//   - Scalars (MCPOptInOffered, DefaultLLMPolicy): closest-wins override.
+//     Precedence: User > Project > Global > code-level fallbacks.
+//
+//   - Collections (RequiredProps, Custom): accumulate across scopes.
+//     RequiredProps forms a union (Global ∪ Project ∪ User) — closer scopes can only add
+//     requirements, never remove one mandated by a farther scope.
+//     Custom maps overlay key-by-key from Global -> Project -> User.
 func ResolveEffectiveOnboarding(global, project, user *OnboardingSettings) OnboardingSettings {
 	var effective OnboardingSettings
 
-	// 1. RequiredProps: closest non-nil slice wins.
-	if user != nil && user.RequiredProps != nil {
-		effective.RequiredProps = make([]string, len(user.RequiredProps))
-		copy(effective.RequiredProps, user.RequiredProps)
-	} else if project != nil && project.RequiredProps != nil {
-		effective.RequiredProps = make([]string, len(project.RequiredProps))
-		copy(effective.RequiredProps, project.RequiredProps)
-	} else if global != nil && global.RequiredProps != nil {
-		effective.RequiredProps = make([]string, len(global.RequiredProps))
-		copy(effective.RequiredProps, global.RequiredProps)
-	} else {
-		effective.RequiredProps = []string{}
+	// 1. RequiredProps: collection accumulation (global ∪ project ∪ user).
+	// Closer scopes can add requirements, never remove one mandated by a farther scope.
+	seenProps := make(map[string]struct{})
+	effective.RequiredProps = []string{}
+	addProps := func(props []string) {
+		for _, p := range props {
+			if _, ok := seenProps[p]; !ok {
+				seenProps[p] = struct{}{}
+				effective.RequiredProps = append(effective.RequiredProps, p)
+			}
+		}
+	}
+	if global != nil {
+		addProps(global.RequiredProps)
+	}
+	if project != nil {
+		addProps(project.RequiredProps)
+	}
+	if user != nil {
+		addProps(user.RequiredProps)
 	}
 
 	// 2. MCPOptInOffered: closest non-nil *bool wins.
