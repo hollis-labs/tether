@@ -1280,6 +1280,14 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 		}
 		fieldMetadataJSON = sql.NullString{String: string(b), Valid: true}
 	}
+	var propsJSON sql.NullString
+	if len(p.Props) > 0 {
+		b, err := json.Marshal(p.Props)
+		if err != nil {
+			return fmt.Errorf("registry: marshal group props: %w", err)
+		}
+		propsJSON = sql.NullString{String: string(b), Valid: true}
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -1292,16 +1300,16 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		     tags_json, guidelines, entry_points_json, field_metadata_json,
+		     tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
 		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
-		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON,
+		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON, propsJSON,
 		formatTime(now), formatTime(p.UpdatedAt),
 	); err != nil {
 		return fmt.Errorf("registry: insert group entry: %w", err)

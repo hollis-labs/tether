@@ -91,6 +91,9 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 	if legacyRow.LastUpdatedBy != "operator:re-onboard" {
 		t.Errorf("legacy LastUpdatedBy = %q, want operator:re-onboard", legacyRow.LastUpdatedBy)
 	}
+	if len(legacyRow.KindMeta) != 0 {
+		t.Errorf("legacy KindMeta = %s, want nil/empty", string(legacyRow.KindMeta))
+	}
 	if legacyRow.Props["repo_root"] != "/Users/chrispian/dev/hollis-labs/apps/legacy" {
 		t.Errorf("legacy Props[repo_root] = %q", legacyRow.Props["repo_root"])
 	}
@@ -99,5 +102,55 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 	}
 	if legacyRow.FieldMetadata["props"].Class != registry.FieldClassAuthored {
 		t.Errorf("legacy FieldMetadata[props].Class = %q, want authored", legacyRow.FieldMetadata["props"].Class)
+	}
+	// Verify upgradeProjectRow attached substrate="tether" external ID
+	legacyByExt, err := svc.LookupBy(ctx, registry.KindProject, "legacy-project", "tether")
+	if err != nil {
+		t.Fatalf("lookup legacy row by external ID: %v", err)
+	}
+	if legacyByExt.URN != legacyProfile.URN {
+		t.Errorf("legacyByExt.URN = %q, want %q", legacyByExt.URN, legacyProfile.URN)
+	}
+
+	// 6. Verify idempotency on second run
+	report2, err := svc.ReonboardProjects(ctx, catDir)
+	if err != nil {
+		t.Fatalf("ReonboardProjects 2nd run: %v", err)
+	}
+	if report2.Created != 0 {
+		t.Errorf("2nd run Created = %d, want 0", report2.Created)
+	}
+	if report2.Updated != 0 {
+		t.Errorf("2nd run Updated = %d, want 0", report2.Updated)
+	}
+
+	// 7. Verify updating existing file re-onboards via tether external ID lookup
+	tetherYAMLUpdated := `
+id: tether
+name: Tether Control Plane Updated
+repo_root: /Users/chrispian/dev/hollis-labs/apps/tether-v2
+`
+	if err := os.WriteFile(filepath.Join(projDir, "tether.yaml"), []byte(tetherYAMLUpdated), 0o644); err != nil {
+		t.Fatalf("write updated tether.yaml: %v", err)
+	}
+	report3, err := svc.ReonboardProjects(ctx, catDir)
+	if err != nil {
+		t.Fatalf("ReonboardProjects 3rd run: %v", err)
+	}
+	if report3.Created != 0 {
+		t.Errorf("3rd run Created = %d, want 0", report3.Created)
+	}
+	if report3.Updated != 1 {
+		t.Errorf("3rd run Updated = %d, want 1", report3.Updated)
+	}
+	tetherUpdated, err := svc.LookupBy(ctx, registry.KindProject, "tether", "tether")
+	if err != nil {
+		t.Fatalf("lookup updated tether: %v", err)
+	}
+	if tetherUpdated.DisplayName != "Tether Control Plane Updated" {
+		t.Errorf("DisplayName = %q, want 'Tether Control Plane Updated'", tetherUpdated.DisplayName)
+	}
+	if tetherUpdated.Props["repo_root"] != "/Users/chrispian/dev/hollis-labs/apps/tether-v2" {
+		t.Errorf("Props[repo_root] = %q, want .../tether-v2", tetherUpdated.Props["repo_root"])
 	}
 }

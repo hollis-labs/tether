@@ -61,10 +61,10 @@ func ReonboardProjects(ctx context.Context, svc *Service, catalogRoot string) (R
 	}
 
 	for _, row := range existingRows {
-		needsUpgrade := row.LastUpdatedBy == "system:bootstrap" ||
+		needsUpgrade := (row.LastUpdatedBy == "system:bootstrap" ||
 			row.LastUpdatedBy == "system:merge" ||
 			len(row.Props) == 0 ||
-			len(row.KindMeta) > 0
+			len(row.KindMeta) > 0) && row.LastUpdatedBy != "operator:re-onboard"
 
 		if !needsUpgrade {
 			continue
@@ -114,18 +114,32 @@ func reonboardCatalogFile(ctx context.Context, svc *Service, path string, report
 	props["tesseract_namespace"] = "user/chrispian/knowledge/" + slug
 
 	// Check if already registered by external_id (tether: slug)
-	existing, err := svc.LookupBy(ctx, KindProject, "tether", slug)
+	existing, err := svc.LookupBy(ctx, KindProject, slug, "tether")
 	if err == nil {
 		// Existing row found: update it
-		return updateRowToContract(ctx, svc, existing, name, props, slug)
+		updated, err := updateRowToContract(ctx, svc, existing, name, props, slug)
+		if err != nil {
+			return err
+		}
+		if updated {
+			report.Updated++
+		}
+		return nil
 	}
 
-	// Try lookup by callback target
+	// Try lookup by callback target (ensure kind matches project)
 	abs, _ := filepath.Abs(path)
 	target := "file://" + abs
 	existing, err = svc.storage.FindByCallbackTarget(ctx, target)
-	if err == nil {
-		return updateRowToContract(ctx, svc, existing, name, props, slug)
+	if err == nil && existing.Kind == KindProject {
+		updated, err := updateRowToContract(ctx, svc, existing, name, props, slug)
+		if err != nil {
+			return err
+		}
+		if updated {
+			report.Updated++
+		}
+		return nil
 	}
 
 	// Not found: register fresh under new contract
@@ -149,30 +163,58 @@ func reonboardCatalogFile(ctx context.Context, svc *Service, path string, report
 	return nil
 }
 
-func updateRowToContract(ctx context.Context, svc *Service, row Profile, name string, props map[string]string, slug string) error {
+func updateRowToContract(ctx context.Context, svc *Service, row Profile, name string, props map[string]string, slug string) (bool, error) {
+	needsUpdate := false
+
 	mergedProps := make(map[string]string)
 	for k, v := range row.Props {
 		mergedProps[k] = v
 	}
 	for k, v := range props {
+		if row.Props[k] != v {
+			needsUpdate = true
+		}
 		mergedProps[k] = v
+	}
+
+	fields := make(map[string]any)
+
+	if len(row.KindMeta) > 0 {
+		fields["kind_meta_json"] = nil
+		row.KindMeta = nil
+		needsUpdate = true
+	}
+	if name != "" && row.DisplayName != name {
+		fields["display_name"] = name
+		needsUpdate = true
+	}
+	if row.Owner == "" {
+		fields["owner"] = "tether"
+		needsUpdate = true
+	}
+	if row.LastUpdatedBy != "operator:re-onboard" {
+		needsUpdate = true
+	}
+
+	hasTetherExt := false
+	if ext, ok := row.ExternalIDFor("tether"); ok && ext.ExternalID == slug {
+		hasTetherExt = true
+	}
+	if slug != "" && !hasTetherExt {
+		needsUpdate = true
+	}
+
+	if !needsUpdate {
+		return false, nil
 	}
 
 	propsJSON, err := json.Marshal(mergedProps)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	fields := map[string]any{
-		"props_json":      string(propsJSON),
-		"last_updated_by": "operator:re-onboard",
-	}
-	if name != "" && row.DisplayName != name {
-		fields["display_name"] = name
-	}
-	if row.Owner == "" {
-		fields["owner"] = "tether"
-	}
+	fields["props_json"] = string(propsJSON)
+	fields["last_updated_by"] = "operator:re-onboard"
 
 	// Synthesize updated field metadata with authored classification for props
 	row.Props = mergedProps
@@ -182,13 +224,15 @@ func updateRowToContract(ctx context.Context, svc *Service, row Profile, name st
 	fields["field_metadata_json"] = string(metaJSON)
 
 	if err := svc.storage.UpdateProfileFields(ctx, row.URN, fields); err != nil {
-		return err
+		return false, err
 	}
 
-	if slug != "" {
-		_ = svc.AttachExternalID(ctx, row.URN, "tether", slug)
+	if slug != "" && !hasTetherExt {
+		if err := svc.AttachExternalID(ctx, row.URN, "tether", slug); err != nil {
+			return false, fmt.Errorf("attach external id %s to %s: %w", slug, row.URN, err)
+		}
 	}
-	return nil
+	return true, nil
 }
 
 func upgradeProjectRow(ctx context.Context, svc *Service, row Profile) error {
@@ -210,16 +254,17 @@ func upgradeProjectRow(ctx context.Context, svc *Service, row Profile) error {
 		}
 	}
 
+	slug := ""
+	if ext, ok := row.ExternalIDFor("tether"); ok {
+		slug = ext.ExternalID
+	} else if row.Project != "" {
+		slug = row.Project
+	} else {
+		slug = strings.ToLower(strings.ReplaceAll(row.DisplayName, " ", "-"))
+	}
+
 	// Ensure tesseract_namespace is populated
 	if props["tesseract_namespace"] == "" {
-		slug := ""
-		if ext, ok := row.ExternalIDFor("tether"); ok {
-			slug = ext.ExternalID
-		} else if row.Project != "" {
-			slug = row.Project
-		} else {
-			slug = strings.ToLower(strings.ReplaceAll(row.DisplayName, " ", "-"))
-		}
 		props["tesseract_namespace"] = "user/chrispian/knowledge/" + slug
 	}
 
@@ -232,6 +277,10 @@ func upgradeProjectRow(ctx context.Context, svc *Service, row Profile) error {
 		"props_json":      string(propsJSON),
 		"last_updated_by": "operator:re-onboard",
 	}
+	if len(row.KindMeta) > 0 {
+		fields["kind_meta_json"] = nil
+		row.KindMeta = nil
+	}
 	if row.Owner == "" {
 		fields["owner"] = "tether"
 	}
@@ -242,5 +291,16 @@ func upgradeProjectRow(ctx context.Context, svc *Service, row Profile) error {
 	metaJSON, _ := json.Marshal(meta)
 	fields["field_metadata_json"] = string(metaJSON)
 
-	return svc.storage.UpdateProfileFields(ctx, row.URN, fields)
+	if err := svc.storage.UpdateProfileFields(ctx, row.URN, fields); err != nil {
+		return err
+	}
+
+	if slug != "" {
+		if _, ok := row.ExternalIDFor("tether"); !ok {
+			if err := svc.AttachExternalID(ctx, row.URN, "tether", slug); err != nil {
+				return fmt.Errorf("attach tether external id %s to %s: %w", slug, row.URN, err)
+			}
+		}
+	}
+	return nil
 }
