@@ -78,6 +78,10 @@ Content-Type: application/json
   "guidelines": "Always verify with `make check` before closing tasks.",
   "tags": ["runtime", "control-plane", "go"],
   "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
+  "props": {
+    "docs_url": "https://tether.example.com",
+    "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
+  },
   "external_ids": [
     {"substrate": "tether", "external_id": "tether"},
     {"substrate": "torque", "external_id": "PRJ-TETHER-01"},
@@ -103,6 +107,10 @@ Content-Type: application/json
   "guidelines": "Always verify with `make check` before closing tasks.",
   "tags": ["runtime", "control-plane", "go"],
   "entry_points": ["cmd/mux/main.go", "internal/app/service.go"],
+  "props": {
+    "docs_url": "https://tether.example.com",
+    "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
+  },
   "status": "active",
   "created_at": "2026-09-14T16:00:00Z",
   "updated_at": "2026-09-14T16:00:00Z"
@@ -221,7 +229,7 @@ Project profiles maintain a strict separation between authored metadata and deri
 
 | Classification | Fields | Source & Mutation Rules |
 |---|---|---|
-| **Authored** | `description`, `guidelines`, `tags`, `entry_points`, `capabilities`, `skills`, `links`, `title`, `role`, `avatar` | Hand-authored during onboarding or updated via `UpdateSelf`. **Protected against Sync clobbering**: Sync never overwrites authored fields. |
+| **Authored** | `props`, `description`, `guidelines`, `tags`, `entry_points`, `capabilities`, `skills`, `links`, `title`, `role`, `avatar` | Hand-authored during onboarding or updated via `UpdateSelf`. **Protected against Sync clobbering**: Sync never overwrites authored fields. `props` is a flat, open string-to-string map for arbitrary project facts (e.g. `docs_url`, `project_root`, `help_file`, `inbox`, `primary_agent`). |
 | **Derived** | `display_name`, `project`, `status`, `health_status`, `host_address`, `last_seen_at`, `kind_meta` | Populated and refreshed automatically by callback resolvers during `Sync`. |
 
 ### Field Metadata & Provenance
@@ -283,15 +291,16 @@ Not every project exists on every substrate:
 
 ## Redaction & Scope Policy
 
-Under `CW-20260912-0053` and `CW-20260912-0096`, Tether enforces privacy on discovery while keeping cross-app correlation lightweight:
+Under `CW-20260912-0053`, `CW-20260912-0096`, `CW-20260914-0038`, and `CW-20260914-0039`:
 
-### Sensitive vs. Correlation Fields
-- **Sensitive Operational Fields**: `callback` (contains commands/paths/tokens), `host_address` (internal IP), `kind_meta` (native private metadata).
-- **Correlation Identifiers**: `external_ids` (public substrate mappings like `PRJ-001`).
+### Visible vs. Gated Fields
+- **Visible by Default**: All authored metadata — including the open `props` bag, `description`, `tags`, `guidelines`, and `entry_points` — is visible by default in all queries (Register, Lookup, Search). Projects publishing their own props want them seen without friction.
+- **Correlation Identifiers**: `external_ids` (substrate mappings like `PRJ-001`). Omitted from default search/item responses to keep discovery lightweight, but accessible with standard read scope via `?include=external_ids` / `include="external_ids"`.
+- **Sensitive Operational Fields**: `callback` (internal command/file path), `host_address` (internal IP/interface), `kind_meta` (native private daemon metadata). Omitted by default and strictly require `registry.write` scope.
 
 ### Access Rules Across Surfaces
-1. **Default Queries**: Drop `callback`, `host_address`, `kind_meta`, and `external_ids` from public search and default item lookups.
-2. **HTTP Surface**: Local UDS / loopback callers can selectively include fields via `?include=external_ids` or `?full=true`.
+1. **Default Queries**: Returns public profile with authored fields (including `props`), dropping `callback`, `host_address`, `kind_meta`, and `external_ids`.
+2. **HTTP Surface**: Callers can selectively include fields via `?include=external_ids` (read scope) or `?full=true` / sensitive includes (write scope).
 3. **CLI Surface**: `mux registry lookup` and `mux registry lookup-by` accept `--include <fields>` and `--full`.
 4. **MCP Surface**:
    - Including `external_ids` is **accessible with read scope** (no elevated scope required).

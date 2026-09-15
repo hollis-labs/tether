@@ -760,3 +760,76 @@ func TestRegistryTools_LookupBy_TorqueSubstrateAndPartialCoverage(t *testing.T) 
 		t.Errorf("substrate = %v, want tether", ext0["substrate"])
 	}
 }
+
+func TestRegistryTools_Props(t *testing.T) {
+	a, svc := newRegistryAdapter(t)
+
+	// 1. Register with props
+	regRes := callRegistryTool(t, a, "tether_registry_register", map[string]any{
+		"kind": "project",
+		"profile": map[string]any{
+			"display_name": "MCP Props Project",
+			"description":  "Props via MCP",
+			"props": map[string]string{
+				"docs_url": "https://mcp.example.com",
+				"inbox":    "msg://agent/agent-mux/inbox",
+			},
+		},
+	})
+	if regRes.IsError {
+		t.Fatalf("register failed: %s", textOf(regRes))
+	}
+	body := parseToolJSON(t, regRes)
+	pMap, _ := body["profile"].(map[string]any)
+	urn, _ := pMap["urn"].(string)
+	propsMap, _ := pMap["props"].(map[string]any)
+	if propsMap["docs_url"] != "https://mcp.example.com" {
+		t.Errorf("props[docs_url] = %v; want https://mcp.example.com", propsMap["docs_url"])
+	}
+
+	// 2. Default lookup (read scope only) returns props (visible by default)
+	srv := httptest.NewServer(api.NewHandler(api.Deps{Registry: svc}))
+	t.Cleanup(srv.Close)
+	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
+	readAdapter := NewWithDaemon(&app.Service{Registry: svc}, dc, "test-token", nil)
+
+	lookRes := callRegistryTool(t, readAdapter, "tether_registry_lookup", map[string]any{
+		"urn": urn,
+	})
+	if lookRes.IsError {
+		t.Fatalf("lookup failed: %s", textOf(lookRes))
+	}
+	lookBody := parseToolJSON(t, lookRes)
+	lookPMap, _ := lookBody["profile"].(map[string]any)
+	lookProps, _ := lookPMap["props"].(map[string]any)
+	if lookProps["inbox"] != "msg://agent/agent-mux/inbox" {
+		t.Errorf("lookProps[inbox] = %v; want msg://agent/agent-mux/inbox", lookProps["inbox"])
+	}
+
+	// 3. Update self modifies props
+	upRes := callRegistryTool(t, a, "tether_registry_update_self", map[string]any{
+		"urn": urn,
+		"patch": map[string]any{
+			"last_updated_by": "test:operator",
+			"props": map[string]string{
+				"docs_url": "", // delete
+				"repo":     "https://github.com/example/repo",
+			},
+		},
+	})
+	if upRes.IsError {
+		t.Fatalf("update_self failed: %s", textOf(upRes))
+	}
+	upBody := parseToolJSON(t, upRes)
+	upPMap, _ := upBody["profile"].(map[string]any)
+	upProps, _ := upPMap["props"].(map[string]any)
+	if _, ok := upProps["docs_url"]; ok {
+		t.Errorf("docs_url was not deleted from props")
+	}
+	if upProps["repo"] != "https://github.com/example/repo" {
+		t.Errorf("upProps[repo] = %v; want https://github.com/example/repo", upProps["repo"])
+	}
+	if upProps["inbox"] != "msg://agent/agent-mux/inbox" {
+		t.Errorf("upProps[inbox] = %v; want preserved", upProps["inbox"])
+	}
+}

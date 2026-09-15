@@ -968,6 +968,29 @@ func TestRegistryScopedBindings_Resolve_NotFound_Exit1(t *testing.T) {
 	assertExitCode(t, err, 1)
 }
 
+func TestRegistryLookup_PropsPrinted(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	proj, err := f.svc.Register(ctx, registry.KindProject, registry.Profile{
+		DisplayName: "CLI Props Project",
+		Props: map[string]string{
+			"docs_url": "https://cli.example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	out := captureRegistryStdout(t, func() {
+		if err := registryLookupCmd.RunE(registryLookupCmd, []string{proj.URN}); err != nil {
+			t.Fatalf("lookup: %v", err)
+		}
+	})
+	if !strings.Contains(out, "props:") || !strings.Contains(out, "docs_url: https://cli.example.com") {
+		t.Fatalf("lookup output missing props: %s", out)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 // assertExitCode walks an error chain to find an exitErr and verifies

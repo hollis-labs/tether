@@ -1618,3 +1618,89 @@ func TestRegistry_C3_OnboardingLookupAndTorqueSubstrate(t *testing.T) {
 		t.Errorf("reverse lookup after merge resolved to %q, want %q", revMergedEnv["project"].URN, destProj.URN)
 	}
 }
+
+func TestRegistry_Props_HTTP(t *testing.T) {
+	r := newRegServer(t)
+
+	// 1. Register with props
+	regBody := map[string]any{
+		"display_name": "Props HTTP Project",
+		"description":  "Testing props visible by default over HTTP",
+		"props": map[string]string{
+			"docs_url":     "https://props.example.com",
+			"project_root": "/Users/chrispian/dev/props",
+		},
+	}
+	resp, body := r.do(http.MethodPost, "/registry/projects", regBody)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", resp.StatusCode, body)
+	}
+	var created registry.Profile
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("unmarshal created: %v", err)
+	}
+	if len(created.Props) != 2 || created.Props["docs_url"] != "https://props.example.com" {
+		t.Fatalf("created.Props = %v; want 2 props", created.Props)
+	}
+
+	// 2. Default GET returns props (visible by default)
+	respGet, bodyGet := r.do(http.MethodGet, itemURL("projects", created.URN), nil)
+	if respGet.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d: %s", respGet.StatusCode, bodyGet)
+	}
+	var loaded registry.Profile
+	if err := json.Unmarshal(bodyGet, &loaded); err != nil {
+		t.Fatalf("unmarshal loaded: %v", err)
+	}
+	if len(loaded.Props) != 2 || loaded.Props["project_root"] != "/Users/chrispian/dev/props" {
+		t.Fatalf("loaded.Props = %v; want visible by default", loaded.Props)
+	}
+
+	// 3. Search returns props (visible by default)
+	respSearch, bodySearch := r.do(http.MethodGet, "/registry/projects", nil)
+	if respSearch.StatusCode != http.StatusOK {
+		t.Fatalf("search status = %d: %s", respSearch.StatusCode, bodySearch)
+	}
+	var searchEnv map[string][]registry.Profile
+	if err := json.Unmarshal(bodySearch, &searchEnv); err != nil {
+		t.Fatalf("unmarshal search: %v", err)
+	}
+	found := false
+	for _, p := range searchEnv["projects"] {
+		if p.URN == created.URN {
+			found = true
+			if len(p.Props) != 2 {
+				t.Errorf("search result props = %v; want 2 entries", p.Props)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("created project %s not found in search", created.URN)
+	}
+
+	// 4. PATCH update props
+	patchBody := map[string]any{
+		"last_updated_by": "operator:test",
+		"props": map[string]string{
+			"inbox":    "msg://agent/agent-mux/inbox",
+			"docs_url": "", // delete
+		},
+	}
+	respPatch, bodyPatch := r.do(http.MethodPatch, itemURL("projects", created.URN), patchBody)
+	if respPatch.StatusCode != http.StatusOK {
+		t.Fatalf("patch status = %d: %s", respPatch.StatusCode, bodyPatch)
+	}
+	var patched registry.Profile
+	if err := json.Unmarshal(bodyPatch, &patched); err != nil {
+		t.Fatalf("unmarshal patched: %v", err)
+	}
+	if _, ok := patched.Props["docs_url"]; ok {
+		t.Errorf("docs_url was not deleted")
+	}
+	if patched.Props["inbox"] != "msg://agent/agent-mux/inbox" {
+		t.Errorf("inbox = %q", patched.Props["inbox"])
+	}
+	if patched.Props["project_root"] != "/Users/chrispian/dev/props" {
+		t.Errorf("project_root = %q", patched.Props["project_root"])
+	}
+}

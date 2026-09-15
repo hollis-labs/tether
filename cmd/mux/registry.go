@@ -40,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -904,6 +905,26 @@ func printProfile(p registry.Profile) {
 		for _, l := range p.Links {
 			fmt.Printf("  - kind:        %s\n", l.Kind)
 			fmt.Printf("    target:      %s\n", l.Target)
+		}
+	}
+	if len(p.Tags) > 0 {
+		fmt.Printf("tags:            [%s]\n", strings.Join(p.Tags, ", "))
+	}
+	if p.Guidelines != "" {
+		fmt.Printf("guidelines:      %s\n", p.Guidelines)
+	}
+	if len(p.EntryPoints) > 0 {
+		fmt.Printf("entry_points:    [%s]\n", strings.Join(p.EntryPoints, ", "))
+	}
+	if len(p.Props) > 0 {
+		fmt.Println("props:")
+		keys := make([]string, 0, len(p.Props))
+		for k := range p.Props {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("  %s: %s\n", k, p.Props[k])
 		}
 	}
 	if len(p.KindMeta) > 0 {

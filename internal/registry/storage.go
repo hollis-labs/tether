@@ -73,6 +73,7 @@ var updateProfileFieldAllowlist = map[string]struct{}{
 	"guidelines":          {},
 	"entry_points_json":   {},
 	"field_metadata_json": {},
+	"props_json":          {},
 }
 
 // Storage is a thin database/sql wrapper that owns the four registry_*
@@ -151,6 +152,14 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 		}
 		fieldMetadataJSON = sql.NullString{String: string(b), Valid: true}
 	}
+	var propsJSON sql.NullString
+	if len(p.Props) > 0 {
+		b, err := json.Marshal(p.Props)
+		if err != nil {
+			return fmt.Errorf("registry: marshal props: %w", err)
+		}
+		propsJSON = sql.NullString{String: string(b), Valid: true}
+	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -163,16 +172,16 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		     tags_json, guidelines, entry_points_json, field_metadata_json,
+		     tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
 		nullIfTimePtr(p.LastSeenAt), nullIfEmpty(p.HostAddress), nullIfEmpty(p.MergedInto),
 		kindMetaJSON, nullIfEmpty(p.LastUpdatedBy),
-		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON,
+		tagsJSON, nullIfEmpty(p.Guidelines), entryPointsJSON, fieldMetadataJSON, propsJSON,
 		formatTime(p.CreatedAt), formatTime(p.UpdatedAt),
 	); err != nil {
 		return fmt.Errorf("registry: insert entry: %w", err)
@@ -299,7 +308,7 @@ func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Prof
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		        tags_json, guidelines, entry_points_json, field_metadata_json,
+		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE callback_json IS NOT NULL
@@ -740,7 +749,7 @@ func (s *Storage) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, e
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		        tags_json, guidelines, entry_points_json, field_metadata_json,
+		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE `+where+`
@@ -840,7 +849,7 @@ func (s *Storage) selectEntry(ctx context.Context, urn string) (Profile, error) 
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		        tags_json, guidelines, entry_points_json, field_metadata_json,
+		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		        created_at, updated_at
 		   FROM registry_entries WHERE urn = ?`, urn)
 	p, err := scanEntryRow(row.Scan)
@@ -1053,7 +1062,7 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 		p                                                                                                                  Profile
 		kindStr, status                                                                                                    string
 		owner, title, role, description, avatar, project, hostAddress, healthStatus, mergedInto, lastUpdatedBy, guidelines sql.NullString
-		callbackJSON, kindMetaJSON, tagsJSON, entryPointsJSON, fieldMetadataJSON                                           sql.NullString
+		callbackJSON, kindMetaJSON, tagsJSON, entryPointsJSON, fieldMetadataJSON, propsJSON                                sql.NullString
 		cachedAt, lastSeenAt                                                                                               sql.NullString
 		createdAt, updatedAt                                                                                               string
 	)
@@ -1062,7 +1071,7 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 		&title, &role, &description, &avatar, &project, &status,
 		&callbackJSON, &cachedAt, &healthStatus, &lastSeenAt, &hostAddress, &mergedInto,
 		&kindMetaJSON, &lastUpdatedBy,
-		&tagsJSON, &guidelines, &entryPointsJSON, &fieldMetadataJSON,
+		&tagsJSON, &guidelines, &entryPointsJSON, &fieldMetadataJSON, &propsJSON,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return Profile{}, err
@@ -1111,6 +1120,13 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 			return Profile{}, fmt.Errorf("registry: unmarshal field_metadata: %w", err)
 		}
 		p.FieldMetadata = meta
+	}
+	if propsJSON.Valid && propsJSON.String != "" {
+		var props map[string]string
+		if err := json.Unmarshal([]byte(propsJSON.String), &props); err != nil {
+			return Profile{}, fmt.Errorf("registry: unmarshal props: %w", err)
+		}
+		p.Props = props
 	}
 	if cachedAt.Valid && cachedAt.String != "" {
 		t := parseTime(cachedAt.String)
@@ -1383,7 +1399,7 @@ func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]
 		        e.description, e.avatar, e.project, e.status, e.callback_json,
 		        e.cached_at, e.health_status, e.last_seen_at, e.host_address, e.merged_into,
 		        e.kind_meta_json, e.last_updated_by,
-		        e.tags_json, e.guidelines, e.entry_points_json, e.field_metadata_json,
+		        e.tags_json, e.guidelines, e.entry_points_json, e.field_metadata_json, e.props_json,
 		        e.created_at, e.updated_at
 		   FROM registry_entries e
 		   JOIN group_members m ON m.grp_urn = e.urn
@@ -1528,7 +1544,7 @@ func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile
 		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
-		        tags_json, guidelines, entry_points_json, field_metadata_json,
+		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		        created_at, updated_at
 		   FROM registry_entries
 		  WHERE display_name = ?

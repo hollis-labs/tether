@@ -376,6 +376,7 @@ type redactedProfile struct {
 	Tags          []string                      `json:"tags,omitempty"`
 	Guidelines    string                        `json:"guidelines,omitempty"`
 	EntryPoints   []string                      `json:"entry_points,omitempty"`
+	Props         map[string]string             `json:"props,omitempty"`
 	FieldMetadata map[string]registry.FieldMeta `json:"field_metadata,omitempty"`
 	CreatedAt     time.Time                     `json:"created_at"`
 	UpdatedAt     time.Time                     `json:"updated_at"`
@@ -411,6 +412,15 @@ func redactFieldMetadata(fm map[string]registry.FieldMeta, f includeFields) map[
 	return out
 }
 
+// redactProfile returns the public projection of p.
+//
+// Privacy/Scope Boundary (CW-20260912-0053 / CW-20260914-0038 / CW-20260914-0039):
+// Four fields are omitted from default responses and require explicit opt-in:
+//   - Sensitive operational fields: callback, host_address, kind_meta (require registry.write scope)
+//   - Correlation identifiers: external_ids (accessible with standard read scope via ?include=external_ids)
+//
+// All authored metadata fields, including the open authored props bag, description, tags,
+// guidelines, and entry_points, are visible by default.
 func redactProfile(p registry.Profile) redactedProfile {
 	return redactedProfile{
 		URN: p.URN, Kind: p.Kind, Owner: p.Owner, MuxInstanceID: p.MuxInstanceID,
@@ -421,6 +431,7 @@ func redactProfile(p registry.Profile) redactedProfile {
 		LastUpdatedBy: p.LastUpdatedBy, Capabilities: p.Capabilities,
 		Skills: p.Skills, Links: p.Links,
 		Tags: p.Tags, Guidelines: p.Guidelines, EntryPoints: p.EntryPoints,
+		Props:         p.Props,
 		FieldMetadata: redactFieldMetadata(p.FieldMetadata, includeFields{}),
 		CreatedAt:     p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
