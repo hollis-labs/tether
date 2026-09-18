@@ -84,7 +84,7 @@ func TestRuntimeObservationWireAndRecovery(t *testing.T) {
 	pool := NewClientPool([]config.MCPServerEntry{entry}, NewToolRegistry())
 	pool.runtime.Build.Version = "review-build"
 	pool.runtime.Build.Commit = "embedded-before-replacement"
-	pool.policy.delays = []time.Duration{10 * time.Millisecond}
+	pool.policy.Delays = []time.Duration{10 * time.Millisecond}
 	defer pool.Shutdown()
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatal(err)

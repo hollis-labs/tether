@@ -6,12 +6,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"sort"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/hollis-labs/go-mcp/supervise"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -27,16 +25,9 @@ type stdioUpstream struct {
 	lost   chan struct{}
 	stdin  io.WriteCloser
 	stdout *os.File
-	stderr stderrTail
-	exit   UpstreamExit // published by closing done
+	stderr supervise.Tail
+	exit   supervise.Exit // published by closing done
 	launch LaunchObservation
-}
-
-type UpstreamExit struct {
-	Kind   string    `json:"kind"` // clean, error, signal
-	Code   int       `json:"code"`
-	Signal string    `json:"signal,omitempty"`
-	At     time.Time `json:"at"`
 }
 
 // eofReader must satisfy io.ReadCloser, not just io.Reader: mcpsdk.IOTransport
@@ -57,111 +48,6 @@ func (r *eofReader) Read(b []byte) (int, error) {
 		r.once.Do(func() { close(r.lost) })
 	}
 	return n, err
-}
-
-const stderrTailBytes = 8192
-
-// Drain continuously so an upstream cannot block on a full stderr pipe.
-// Raw diagnostics stay bounded in this process; only explicit status reads
-// expose the tail, with catalog-supplied values redacted.
-type stderrTail struct {
-	mu      sync.Mutex
-	data    []byte
-	secrets []string
-}
-
-func (b *stderrTail) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	n := len(p)
-	if len(p) >= stderrTailBytes {
-		b.data = append(b.data[:0], p[len(p)-stderrTailBytes:]...)
-	} else {
-		b.data = append(b.data, p...)
-		if len(b.data) > stderrTailBytes {
-			b.data = append(b.data[:0], b.data[len(b.data)-stderrTailBytes:]...)
-		}
-	}
-	return n, nil
-}
-
-func (b *stderrTail) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	s := redactStderr(string(b.data), b.secrets)
-	if len(s) > stderrTailBytes {
-		s = s[len(s)-stderrTailBytes:]
-	}
-	return s
-}
-
-type redactionRange struct {
-	start int
-	end   int
-}
-
-// redactStderr identifies every match against the same immutable snapshot.
-// Applying one configured value must not alter the bytes another value needs
-// to match, because catalog environment map iteration has no stable order.
-func redactStderr(original string, secrets []string) string {
-	ranges := make([]redactionRange, 0, len(secrets))
-	for _, secret := range secrets {
-		if secret == "" {
-			continue
-		}
-		for from := 0; from < len(original); {
-			offset := strings.Index(original[from:], secret)
-			if offset < 0 {
-				break
-			}
-			start := from + offset
-			ranges = append(ranges, redactionRange{start: start, end: start + len(secret)})
-			from = start + 1 // retain overlapping matches
-		}
-		// The retained window may begin partway through a configured value.
-		for n := min(len(secret)-1, len(original)); n > 0; n-- {
-			if strings.HasPrefix(original, secret[len(secret)-n:]) {
-				ranges = append(ranges, redactionRange{end: n})
-				break
-			}
-		}
-		// A snapshot may be read between arbitrary stderr writes. Cover the
-		// longest unfinished value prefix at the live end before publishing it.
-		for n := min(len(secret)-1, len(original)); n > 0; n-- {
-			if strings.HasSuffix(original, secret[:n]) {
-				ranges = append(ranges, redactionRange{start: len(original) - n, end: len(original)})
-				break
-			}
-		}
-	}
-	if len(ranges) == 0 {
-		return original
-	}
-	sort.Slice(ranges, func(i, j int) bool {
-		if ranges[i].start != ranges[j].start {
-			return ranges[i].start < ranges[j].start
-		}
-		return ranges[i].end < ranges[j].end
-	})
-	merged := ranges[:1]
-	for _, next := range ranges[1:] {
-		last := &merged[len(merged)-1]
-		if next.start <= last.end {
-			last.end = max(last.end, next.end)
-			continue
-		}
-		merged = append(merged, next)
-	}
-	var out strings.Builder
-	out.Grow(len(original))
-	cursor := 0
-	for _, match := range merged {
-		out.WriteString(original[cursor:match.start])
-		out.WriteString("[redacted]")
-		cursor = match.end
-	}
-	out.WriteString(original[cursor:])
-	return out.String()
 }
 
 // spawnStdioUpstream starts the upstream process and wires its pipes for the
@@ -188,7 +74,7 @@ func spawnStdioUpstream(entry config.MCPServerEntry) (*stdioUpstream, *mcpsdk.IO
 	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
 	u.launch = observeLaunch(u.cmd, entry)
 	u.cmd.Env = os.Environ()
-	u.stderr.secrets = stderrRedactionValues(entry)
+	u.stderr.Secrets = stderrRedactionValues(entry)
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
 	}
@@ -236,18 +122,11 @@ func (u *stdioUpstream) abandon() {
 
 // watchExit starts the goroutine that observes process exit once a
 // ClientSession has been established (u.ClientSession must already be set).
-// It publishes UpstreamExit and closes done for every exit, clean or not.
+// It publishes an Exit and closes done for every exit, clean or not.
 func (u *stdioUpstream) watchExit() {
 	go func() {
 		_ = u.cmd.Wait()
-		u.exit = UpstreamExit{Kind: "error", Code: u.cmd.ProcessState.ExitCode(), At: time.Now().UTC()}
-		if u.cmd.ProcessState.Success() {
-			u.exit.Kind = "clean"
-		}
-		if status, ok := u.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-			u.exit.Kind = "signal"
-			u.exit.Signal = status.Signal().String()
-		}
+		u.exit = supervise.ClassifyExit(u.cmd.ProcessState, time.Now().UTC())
 		_ = u.Close() // releases in-flight calls, even if a descendant holds stdout
 		close(u.done)
 	}()

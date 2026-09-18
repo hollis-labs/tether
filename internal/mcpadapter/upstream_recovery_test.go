@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/go-mcp/supervise"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -168,7 +169,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			dir := t.TempDir()
 			registry := NewToolRegistry()
 			pool := NewClientPool([]config.MCPServerEntry{fixtureEntry(t, dir, "alpha"), fixtureEntry(t, dir, "beta")}, registry)
-			pool.policy.delays = []time.Duration{150 * time.Millisecond, 300 * time.Millisecond}
+			pool.policy.Delays = []time.Duration{150 * time.Millisecond, 300 * time.Millisecond}
 			if err := pool.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +235,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 				t.Fatal("missing exit details")
 			}
 			want := map[string]string{"0": "clean", "23": "error", "signal": "signal"}[kind]
-			if s.LastExit.Kind != want {
+			if string(s.LastExit.Kind) != want {
 				t.Fatalf("exit: %+v", s.LastExit)
 			}
 			if kind == "23" && s.LastExit.Code != 23 {
@@ -283,7 +284,7 @@ func TestUpstreamRecovery_CrashLoopBoundAndShutdown(t *testing.T) {
 	entry := fixtureEntry(t, dir, "alpha")
 	entry.Env["TETHER_UPSTREAM_STARTUP_FAIL"] = "1"
 	pool := NewClientPool([]config.MCPServerEntry{entry, fixtureEntry(t, dir, "beta")}, NewToolRegistry())
-	pool.policy.delays = []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 80 * time.Millisecond}
+	pool.policy.Delays = []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 80 * time.Millisecond}
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +315,7 @@ func TestUpstreamRecovery_CrashLoopBoundAndShutdown(t *testing.T) {
 func TestUpstreamRecovery_StdoutCloseDoesNotSpawnOverLiveProcess(t *testing.T) {
 	dir := t.TempDir()
 	pool := NewClientPool([]config.MCPServerEntry{fixtureEntry(t, dir, "alpha")}, NewToolRegistry())
-	pool.policy.delays = []time.Duration{20 * time.Millisecond}
+	pool.policy.Delays = []time.Duration{20 * time.Millisecond}
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -334,8 +335,8 @@ func TestUpstreamRecovery_StdoutCloseDoesNotSpawnOverLiveProcess(t *testing.T) {
 func TestUpstreamRecovery_StableBudgetResetAndCancelBackoff(t *testing.T) {
 	dir := t.TempDir()
 	pool := NewClientPool([]config.MCPServerEntry{fixtureEntry(t, dir, "alpha")}, NewToolRegistry())
-	pool.policy.delays = []time.Duration{150 * time.Millisecond}
-	pool.policy.stableFor = 200 * time.Millisecond
+	pool.policy.Delays = []time.Duration{150 * time.Millisecond}
+	pool.policy.StableFor = 200 * time.Millisecond
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -389,27 +390,27 @@ func TestUpstreamRecovery_OldRefreshCannotReplaceRecoveredClient(t *testing.T) {
 func TestUpstreamStderr_BoundedAcrossWritesAndRedacted(t *testing.T) {
 	const secret = "fake-review-token-0123456789"
 	for _, secrets := range [][]string{{"1", secret}, {secret, "1"}} {
-		tail := stderrTail{secrets: secrets}
+		tail := supervise.Tail{Secrets: secrets}
 		prefix := secret[:len(secret)-1]
-		_, _ = tail.Write([]byte(strings.Repeat("x", stderrTailBytes) + "connector authorization error: " + prefix))
+		_, _ = tail.Write([]byte(strings.Repeat("x", supervise.DefaultTailBytes) + "connector authorization error: " + prefix))
 
 		betweenWrites := tail.String()
-		if len(betweenWrites) > stderrTailBytes || strings.Contains(betweenWrites, prefix) || !strings.HasSuffix(betweenWrites, "[redacted]") {
+		if len(betweenWrites) > supervise.DefaultTailBytes || strings.Contains(betweenWrites, prefix) || !strings.HasSuffix(betweenWrites, "[redacted]") {
 			t.Fatalf("intermediate stderr snapshot exposed credential prefix for values %q: length=%d tail=%q", secrets, len(betweenWrites), betweenWrites[len(betweenWrites)-64:])
 		}
 
 		_, _ = tail.Write([]byte(secret[len(secret)-1:] + " diagnostic"))
 		complete := tail.String()
-		if len(complete) > stderrTailBytes || strings.Contains(complete, secret) || !strings.HasSuffix(complete, "[redacted] diagnostic") {
+		if len(complete) > supervise.DefaultTailBytes || strings.Contains(complete, secret) || !strings.HasSuffix(complete, "[redacted] diagnostic") {
 			t.Fatalf("completed stderr snapshot exposed credential for values %q: length=%d tail=%q", secrets, len(complete), complete[len(complete)-64:])
 		}
 	}
 
 	// Also cover a retained window beginning partway through a credential.
-	tail := stderrTail{secrets: []string{"1", secret}}
-	_, _ = tail.Write([]byte("discarded-prefix" + secret + strings.Repeat("y", stderrTailBytes-len(secret)+1)))
+	tail := supervise.Tail{Secrets: []string{"1", secret}}
+	_, _ = tail.Write([]byte("discarded-prefix" + secret + strings.Repeat("y", supervise.DefaultTailBytes-len(secret)+1)))
 	truncated := tail.String()
-	if len(truncated) > stderrTailBytes || strings.HasPrefix(truncated, secret[1:]) {
+	if len(truncated) > supervise.DefaultTailBytes || strings.HasPrefix(truncated, secret[1:]) {
 		t.Fatalf("truncated stderr snapshot exposed credential suffix: length=%d head=%q", len(truncated), truncated[:64])
 	}
 }
@@ -430,7 +431,7 @@ func TestUpstreamStderr_RedactsResolvedArgumentSecretsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := stderrRedactionValues(entries[0])
-	if got := redactStderr("argument resolved-argument-secret; ordinary mcp", values); got != "argument [redacted]; ordinary mcp" {
+	if got := supervise.Redact("argument resolved-argument-secret; ordinary mcp", values); got != "argument [redacted]; ordinary mcp" {
 		t.Fatalf("stderr redaction = %q", got)
 	}
 }

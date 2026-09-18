@@ -143,7 +143,7 @@ func (p *ClientPool) recoveryObservation(s *clientStatus) RecoveryObservation {
 	o := RecoveryObservation{Mechanism: "none", Reservation: "none"}
 	if s.entry.Transport == "stdio" {
 		o.Mechanism = "stdio-exit-bounded-retry"
-		o.AttemptLimit = len(p.policy.delays)
+		o.AttemptLimit = p.policy.Limit()
 		o.AttemptsUsed = s.restarts
 		o.AttemptsRemaining = max(0, o.AttemptLimit-o.AttemptsUsed)
 	}
