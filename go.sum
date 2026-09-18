@@ -68,8 +68,8 @@ github.com/hollis-labs/go-llm-contracts v0.3.0 h1:qVKulEixvxf5iJmUMzDfRoL00gfS6/
 github.com/hollis-labs/go-llm-contracts v0.3.0/go.mod h1:VIbzjZk7U+NCYuHdfa++ZwcaYI09om5xVxYTGd6cuw8=
 github.com/hollis-labs/go-llm-types v0.3.0 h1:QR4RX0F1zX0fYBh7sDVxnsFxmQ/vjlvc7bC6FWx+8s0=
 github.com/hollis-labs/go-llm-types v0.3.0/go.mod h1:BP8FMqmTWvi2vQ7dNybTGJ+FFzXS4gMMhAjyTHlNq84=
-github.com/hollis-labs/go-mcp v0.4.3 h1:i43GZhA/NLoPCCsFGiMAHuntKRW1QQhWu/d6K1pNYiI=
-github.com/hollis-labs/go-mcp v0.4.3/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
+github.com/hollis-labs/go-mcp v0.5.0 h1:Cnghde1W444SExW0H3VIykOD3kpWPkWvxYOoon0Tvo8=
+github.com/hollis-labs/go-mcp v0.5.0/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
 github.com/hollis-labs/go-messaging v0.5.2 h1:sMVnZRE1BAm/AN+36Zri5Bdd4SzF+EmCqULL627ztXA=
 github.com/hollis-labs/go-messaging v0.5.2/go.mod h1:hSEDlxOWkgZQAxlqFDfKvQ1hSHNZ8zrwee+0rAKuvXc=
 github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM7xcGqKMmk=

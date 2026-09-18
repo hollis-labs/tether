@@ -90,3 +90,56 @@ func TestConnectTransports(t *testing.T) {
 		}
 	})
 }
+
+// TestRemoteClient_CallToolPreservesMeta locks in the reason remoteClient
+// bypasses go-mcp/client's own CallTool wrapper: that wrapper has no _meta
+// parameter, and proxy.go's provenance/trace-context injection depends on
+// _meta reaching the upstream on every forwarded call. Regressing this would
+// not fail loudly -- the call would still succeed, just silently carrying no
+// provenance or trace context -- so it needs its own direct assertion rather
+// than resting on TestConnectTransports' "did it connect" coverage.
+func TestRemoteClient_CallToolPreservesMeta(t *testing.T) {
+	var gotMeta map[string]any
+	upstream := gomcp.NewServer("upstream", "test")
+	upstream.RegisterTool(gomcp.Tool{
+		Name:         "echo_meta",
+		Description:  "captures the call's protocol _meta",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+			gotMeta = gomcp.MetaFromContext(ctx)
+			return "ok", nil
+		},
+	})
+	srv := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil))
+	defer srv.Close()
+
+	pool := NewClientPool(nil, NewToolRegistry())
+	client, err := pool.connect(context.Background(), config.MCPServerEntry{
+		ID:        "meta-probe",
+		Transport: "http",
+		URL:       srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	res, err := client.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "echo_meta",
+		Meta: mcpsdk.Meta{"tether.provenance": map[string]any{"session_id": "sess-1"}},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("echo_meta returned an error result: %+v", res)
+	}
+	if gotMeta == nil {
+		t.Fatal("upstream received no _meta; remoteClient.CallTool dropped it")
+	}
+	prov, _ := gotMeta["tether.provenance"].(map[string]any)
+	if prov["session_id"] != "sess-1" {
+		t.Errorf("_meta reached upstream as %v, want tether.provenance.session_id=sess-1", gotMeta)
+	}
+}

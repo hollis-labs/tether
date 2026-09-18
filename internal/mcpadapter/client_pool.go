@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/go-mcp/compat"
+	gomcpclient "github.com/hollis-labs/go-mcp/client"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -86,6 +85,20 @@ type ClientPool struct {
 	cancel             context.CancelFunc
 	workers            sync.WaitGroup
 	policy             recoveryPolicy
+
+	// remoteClients holds sse/http upstream connections, built lazily (see
+	// remoteClientPool) so it picks up p.runtime.Build.Version as set by
+	// RunWithProxyOpts, which happens after NewClientPool returns. stdio
+	// stays on spawnStdioUpstream/mcpsdk.Client directly: go-mcp/client's
+	// reactive dial-on-first-use model has no equivalent for the proactive
+	// crash-loop backoff, stderr capture, and exit tracking this pool's own
+	// supervise loop does for a local subprocess, and stdio is exactly the
+	// transport go-mcp/client's own doc singles out Tether as already ahead
+	// on. sse/http is the opposite case: Tether's own connect() had no
+	// automatic reconnection there at all ("remote reconnection policy is
+	// outside this change", below) -- go-mcp/client's lazy health-probed
+	// reconnect is a real, uncomplicated gain for exactly that gap.
+	remoteClients *gomcpclient.Pool
 }
 
 type recoveryPolicy struct {
@@ -351,56 +364,86 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		u.ClientSession = cs
 		u.watchExit()
 		return u, nil
-	case "sse":
+	case "sse", "http":
+		// go-mcp/client (v0.5.0+) owns dial/reconnect/health-probe for these
+		// two transports -- see the remoteClients field doc. It has no
+		// ToolListChangedHandler equivalent (dialSDK always passes nil
+		// ClientOptions), so unlike stdio, a notification-driven refresh from
+		// an sse/http upstream is not wired here; mux_catalog_refresh and the
+		// periodic paths remain the way those two transports pick up a
+		// changed tool list. Worth a go-mcp follow-up if a remote upstream
+		// that relies on the notification shows up.
 		if entry.URL == "" {
-			return nil, fmt.Errorf("sse transport requires url")
+			return nil, fmt.Errorf("%s transport requires url", entry.Transport)
 		}
-		cs, err := mcpsdk.NewClient(impl, opts).Connect(handshakeCtx, compat.NewSSEClientTransport(entry.URL, bearerHTTPClient(entry.Token)), nil)
+		pool := p.remoteClientPool()
+		cfg := gomcpclient.ServerConfig{Transport: entry.Transport, URL: entry.URL}
+		if entry.Token != "" {
+			cfg.Headers = map[string]string{"Authorization": "Bearer " + entry.Token}
+		}
+		if err := pool.Register(entry.ID, cfg); err != nil {
+			return nil, fmt.Errorf("register %s upstream %q: %w", entry.Transport, entry.ID, err)
+		}
+		gc, err := pool.Get(entry.ID)
 		if err != nil {
-			return nil, fmt.Errorf("start sse transport: %w", err)
+			return nil, err
 		}
-		return cs, nil
-	case "http":
-		// Streamable HTTP. Each request is an ordinary POST, so there is no
-		// long-lived stream to lose when the upstream restarts — which is the
-		// property "sse" lacks and the reason this case exists.
-		if entry.URL == "" {
-			return nil, fmt.Errorf("http transport requires url")
+		// Ping forces the dial+handshake now, synchronously, matching every
+		// other case's contract: connect() returning nil error means the
+		// handshake already succeeded, not merely that a config was
+		// recorded for a later lazy dial.
+		if err := gc.Ping(handshakeCtx); err != nil {
+			return nil, fmt.Errorf("start %s transport: %w", entry.Transport, err)
 		}
-		cs, err := mcpsdk.NewClient(impl, opts).Connect(handshakeCtx, &mcpsdk.StreamableClientTransport{
-			Endpoint:   entry.URL,
-			HTTPClient: bearerHTTPClient(entry.Token),
-		}, nil)
-		if err != nil {
-			return nil, fmt.Errorf("start http transport: %w", err)
-		}
-		return cs, nil
+		return &remoteClient{gc: gc}, nil
 	default:
 		return nil, fmt.Errorf("unknown transport %q (want stdio, sse, or http)", entry.Transport)
 	}
 }
 
-// bearerHTTPClient returns an *http.Client that injects an Authorization:
-// Bearer header on every request when token is non-empty, for the
-// sse/http transports' optional per-entry token -- mcpsdk's client
-// transports take an *http.Client, not a headers map, so this is the seam
-// for it. Returns nil (the SDK's own default) when token is empty.
-func bearerHTTPClient(token string) *http.Client {
-	if token == "" {
-		return nil
+// remoteClientPool lazily constructs p.remoteClients on first use, so its
+// identity picks up p.runtime.Build.Version as RunWithProxyOpts sets it
+// (after NewClientPool has already returned).
+func (p *ClientPool) remoteClientPool() *gomcpclient.Pool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.remoteClients == nil {
+		p.remoteClients = gomcpclient.NewPool(gomcpclient.WithIdentity("agent-mux-proxy", p.runtime.Build.Version))
 	}
-	return &http.Client{Transport: &bearerRoundTripper{token: token, base: http.DefaultTransport}}
+	return p.remoteClients
 }
 
-type bearerRoundTripper struct {
-	token string
-	base  http.RoundTripper
+// remoteClient adapts a go-mcp/client.Client (dial-on-first-use, retry-once,
+// lazy health-probed reconnect for sse/http) to this package's upstreamClient
+// interface.
+//
+// CallTool goes through the raw SDK session (Client.SDKSession) rather than
+// go-mcp/client's own CallTool wrapper: that wrapper has no way to set
+// _meta, and proxy.go's provenance/trace-context injection depends on
+// setting Meta on every forwarded call. Ping first so the underlying
+// Client's own dial-if-needed and lazy-probe-triggered reconnect run before
+// SDKSession is read -- SDKSession returns nil when no connection is open.
+type remoteClient struct {
+	gc *gomcpclient.Client
 }
 
-func (t *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	cloned := req.Clone(req.Context())
-	cloned.Header.Set("Authorization", "Bearer "+t.token)
-	return t.base.RoundTrip(cloned)
+func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+	if err := r.gc.Ping(ctx); err != nil {
+		return nil, err
+	}
+	sess := r.gc.SDKSession()
+	if sess == nil {
+		return nil, fmt.Errorf("go-mcp/client: no session open after a successful ping")
+	}
+	return sess.CallTool(ctx, params)
+}
+
+func (r *remoteClient) ListTools(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
+	return r.gc.ListTools(ctx)
+}
+
+func (r *remoteClient) Close() error {
+	return r.gc.Close()
 }
 
 func (p *ClientPool) RefreshServer(ctx context.Context, id string) (ToolRefreshResult, error) {
