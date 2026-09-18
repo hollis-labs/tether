@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gomcpclient "github.com/hollis-labs/go-mcp/client"
+	"github.com/hollis-labs/go-mcp/supervise"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -41,7 +42,7 @@ type clientStatus struct {
 	state      string
 	restarts   int
 	nextRetry  time.Time
-	lastExit   *UpstreamExit
+	lastExit   *supervise.Exit
 	stderr     string
 	exhausted  bool
 	lastLaunch *LaunchObservation
@@ -101,16 +102,18 @@ type ClientPool struct {
 	remoteClients *gomcpclient.Pool
 }
 
+// recoveryPolicy wraps go-mcp/supervise's Policy (backoff schedule +
+// stable-for reset window) with handshakeTimeout, a Tether-local knob the
+// shared package has no opinion on.
 type recoveryPolicy struct {
-	delays           []time.Duration
-	stableFor        time.Duration
+	supervise.Policy
 	handshakeTimeout time.Duration
 }
 
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
 	return &ClientPool{runtime: processObservation, entries: entries, registry: registry,
 		statuses: make(map[string]*clientStatus), refreshing: make(map[upstreamClient]bool),
-		policy: recoveryPolicy{delays: []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}, stableFor: time.Minute, handshakeTimeout: 10 * time.Second}}
+		policy: recoveryPolicy{Policy: supervise.DefaultPolicy(), handshakeTimeout: 10 * time.Second}}
 }
 
 func (p *ClientPool) SetConnectFunc(fn func(context.Context, config.MCPServerEntry) (upstreamClient, error)) {
@@ -195,7 +198,7 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 			if leaf, ok := client.(*stdioUpstream); ok {
 				// A transport loss alone is insufficient authority to spawn another
 				// process. Report it immediately, then wait for the owner process to exit.
-				stable := time.NewTimer(p.policy.stableFor)
+				stable := time.NewTimer(p.policy.StableFor)
 				var stableC <-chan time.Time
 				if err == nil {
 					stableC = stable.C
@@ -241,18 +244,18 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 			return
 		}
 		p.mu.Lock()
-		if entry.Transport != "stdio" || s.restarts >= len(p.policy.delays) {
+		delay, ok := p.policy.Next(s.restarts)
+		if entry.Transport != "stdio" || !ok {
 			s.state = "failed"
 			s.nextRetry = time.Time{}
 			if entry.Transport == "stdio" {
 				s.exhausted = true
-				s.err = fmt.Errorf("restart limit reached (%d); correct the upstream and start a new proxy: %w", len(p.policy.delays), s.err)
+				s.err = fmt.Errorf("restart limit reached (%d); correct the upstream and start a new proxy: %w", p.policy.Limit(), s.err)
 			}
 			p.mu.Unlock()
-			slog.Error("mcp-proxy: upstream recovery stopped", "server", entry.ID, "restart_limit", len(p.policy.delays))
+			slog.Error("mcp-proxy: upstream recovery stopped", "server", entry.ID, "restart_limit", p.policy.Limit())
 			return
 		}
-		delay := p.policy.delays[s.restarts]
 		s.state = "reconnecting"
 		s.nextRetry = time.Now().UTC().Add(delay)
 		p.mu.Unlock()
@@ -505,7 +508,7 @@ type ServerStatus struct {
 	RestartAttempts   int                 `json:"restart_attempts"`
 	RestartLimit      int                 `json:"restart_limit"`
 	NextRetryAt       *time.Time          `json:"next_retry_at,omitempty"`
-	LastExit          *UpstreamExit       `json:"last_exit,omitempty"`
+	LastExit          *supervise.Exit     `json:"last_exit,omitempty"`
 	StderrTail        string              `json:"stderr_tail,omitempty"`
 	RecoveryExhausted bool                `json:"recovery_exhausted"`
 	LastLaunch        *LaunchObservation  `json:"last_launch,omitempty"`
@@ -525,7 +528,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 			ss.LastLaunch = &launch
 		}
 		if s.entry.Transport == "stdio" {
-			ss.RestartLimit = len(p.policy.delays)
+			ss.RestartLimit = p.policy.Limit()
 		}
 		if s.err != nil {
 			ss.Error = s.err.Error()
