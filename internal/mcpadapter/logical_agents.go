@@ -18,9 +18,9 @@ func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_logical_agent_resume",
 		Description: "Resume a logical agent: starts a new session using its most recent checkpoint as the boot context. Requires session.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"logical_agent_id": strProp("Logical agent ID"),
-		}, "logical_agent_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("logical_agent_id", "Logical agent ID", true),
+		),
 		Handler: a.handleLogicalAgentResume,
 	}, Writes())
 }

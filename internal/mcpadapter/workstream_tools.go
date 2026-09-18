@@ -29,29 +29,29 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"automatically, so a container attached here survives a compaction, which " +
 			"creates a new session row and orphans anything keyed on session_id. " +
 			"Requires the session.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"name":        strProp("Optional human label."),
-			"workflow_id": strProp("Optional correlation id for a workflow owned by another system. Free-form; Tether records it and never resolves it."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("name", "Optional human label.", false),
+			gomcp.StringProp("workflow_id", "Optional correlation id for a workflow owned by another system. Free-form; Tether records it and never resolves it.", false),
+		),
 		Handler: a.handleWorkstreamCreate,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_workstream_get",
 		Description: "Fetch one workstream by id.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"id": strProp("Workstream id."),
-		}, "id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("id", "Workstream id.", true),
+		),
 		Handler: a.handleWorkstreamGet,
 	}, Reads("store.GetWorkstream: single SELECT"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_workstream_list",
 		Description: "List workstreams, newest first.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"status":      strProp("Filter by status: active or closed."),
-			"workflow_id": strProp("Filter by workflow correlation id."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("status", "Filter by status: active or closed.", false),
+			gomcp.StringProp("workflow_id", "Filter by workflow correlation id.", false),
+		),
 		Handler: a.handleWorkstreamList,
 	}, Reads("store.ListWorkstreams: SELECT"))
 
@@ -59,10 +59,10 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 		Name: "tether_workstream_assign",
 		Description: "Assign a session to a workstream, or clear it by passing an empty " +
 			"workstream_id. Requires the session.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id":    strProp("Session to stamp."),
-			"workstream_id": strProp("Workstream to assign; empty clears the association."),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session to stamp.", true),
+			gomcp.StringProp("workstream_id", "Workstream to assign; empty clears the association.", false),
+		),
 		Handler: a.handleWorkstreamAssign,
 	}, Writes())
 
@@ -72,11 +72,11 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"lineage when it has none. This is the one-call path for a session that " +
 			"needs a container without ceremony. Idempotent: a second call returns the " +
 			"same workstream. Requires the session.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id":  strProp("Session that needs a container."),
-			"name":        strProp("Optional label, used only when one is created."),
-			"workflow_id": strProp("Optional workflow correlation id, used only when one is created."),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session that needs a container.", true),
+			gomcp.StringProp("name", "Optional label, used only when one is created.", false),
+			gomcp.StringProp("workflow_id", "Optional workflow correlation id, used only when one is created.", false),
+		),
 		Handler: a.handleWorkstreamEnsure,
 	}, Writes())
 
@@ -89,14 +89,14 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"Workstream ID is an attribute, never a namespace path segment. Material lives in " +
 			"Tesseract's workspace domain: project-owned scratch under project/<project-id>/workspace/scratch " +
 			"or Tether's cross-project scratch under app/tether/workspace/scratch.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("The session asking. Its workstream is resolved for you."),
-			"project":    strProp("Declared project identifier (e.g. tether). Defaults to the session's declared project_id."),
-			"owner":      strProp("Explicit scope head (e.g. app/tether)."),
-			"tail":       strProp("Workspace segment (defaults to scratch)."),
-			"user":       strProp("Optional legacy Tesseract user id."),
-			"type":       strProp("Optional legacy memory type, mapped to tail if provided."),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "The session asking. Its workstream is resolved for you.", true),
+			gomcp.StringProp("project", "Declared project identifier (e.g. tether). Defaults to the session's declared project_id.", false),
+			gomcp.StringProp("owner", "Explicit scope head (e.g. app/tether).", false),
+			gomcp.StringProp("tail", "Workspace segment (defaults to scratch).", false),
+			gomcp.StringProp("user", "Optional legacy Tesseract user id.", false),
+			gomcp.StringProp("type", "Optional legacy memory type, mapped to tail if provided.", false),
+		),
 		Handler: a.handleWorkstreamNamespace,
 	}, Reads("store.SessionWorkstreamNamespace resolves and deliberately does not auto-create a workstream"))
 
@@ -116,15 +116,15 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"When that is zero, an empty source=proxy column is a fact about " +
 			"configuration and says nothing about what the agent did. coverage.truncated " +
 			"says whether the ref list was cut at the limit.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id":    strProp("Session to digest. Its own refs only; the response carries its workstream so you can escalate to the roll-up."),
-			"workstream_id": strProp("Workstream to digest. Rolls up every session in the container -- the grain that survives a compaction."),
-			"kind":          strProp("Filter to one ref kind: torque_task, tesseract_revision, git_commit, ..."),
-			"relation":      strProp("Filter to one relation: created, updated, read, referenced."),
-			"source":        strProp("Filter to one source: proxy (observed by the proxy), api, or agent (self-asserted). proxy means OBSERVED, never validated."),
-			"since":         strProp("RFC3339 UTC lower bound on a ref's timestamp. Ask what was in flight rather than everything ever."),
-			"limit":         numProp("Maximum refs to return; the response reports whether it truncated."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session to digest. Its own refs only; the response carries its workstream so you can escalate to the roll-up.", false),
+			gomcp.StringProp("workstream_id", "Workstream to digest. Rolls up every session in the container -- the grain that survives a compaction.", false),
+			gomcp.StringProp("kind", "Filter to one ref kind: torque_task, tesseract_revision, git_commit, ...", false),
+			gomcp.StringProp("relation", "Filter to one relation: created, updated, read, referenced.", false),
+			gomcp.StringProp("source", "Filter to one source: proxy (observed by the proxy), api, or agent (self-asserted). proxy means OBSERVED, never validated.", false),
+			gomcp.StringProp("since", "RFC3339 UTC lower bound on a ref's timestamp. Ask what was in flight rather than everything ever.", false),
+			gomcp.NumberProp("limit", "Maximum refs to return; the response reports whether it truncated.", false),
+		),
 		Handler: a.handleWorkstreamDigest,
 	}, Reads("store.SessionDigest / WorkstreamDigest: SELECT only"))
 
@@ -137,9 +137,9 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 			"RETURNS ALL MATCHES AND NEVER PICKS ONE. Two separate efforts touching the " +
 			"same task is ordinary, so a single answer would look authoritative and be " +
 			"wrong whenever the ambiguity is real.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"ref": strProp("Selector as <kind>:<ref_id>, for example torque_task:CW-20260912-0063. Split on the FIRST colon only, so a ref_id containing colons (msg://...) is preserved."),
-		}, "ref"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("ref", "Selector as <kind>:<ref_id>, for example torque_task:CW-20260912-0063. Split on the FIRST colon only, so a ref_id containing colons (msg://...) is preserved.", true),
+		),
 		Handler: a.handleWorkstreamsForRef,
 	}, Reads("store.WorkstreamsForRef: one SELECT DISTINCT"))
 }

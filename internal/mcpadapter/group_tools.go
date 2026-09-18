@@ -61,13 +61,13 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 			"capabilities (topic tags) are optional. The creator URN is supplied via " +
 			"'creator_urn' (auth surrogate for v060-05; v060-03 token auth will replace). " +
 			"Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"display_name": strProp("Human-readable group name."),
-			"creator_urn":  strProp("Caller URN; must exist as an active agent/project registry row. Becomes the owner."),
-			"description":  strProp("Free-form description of the group's purpose."),
-			"role":         strProp("Group category (free-form), e.g. 'design-room' / 'incident-bridge' / 'project-coord'."),
-			"capabilities": arrProp("Topic tags for discovery via tether_registry_search.", nil),
-		}, "display_name", "creator_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("display_name", "Human-readable group name.", true),
+			gomcp.StringProp("creator_urn", "Caller URN; must exist as an active agent/project registry row. Becomes the owner.", true),
+			gomcp.StringProp("description", "Free-form description of the group's purpose.", false),
+			gomcp.StringProp("role", "Group category (free-form), e.g. 'design-room' / 'incident-bridge' / 'project-coord'.", false),
+			gomcp.ArrayProp("capabilities", "Topic tags for discovery via tether_registry_search.", false, nil),
+		),
 		Handler: a.handleGroupCreate,
 	}, Writes())
 
@@ -76,9 +76,9 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Description: "Look up a group by URN. Returns the full Profile. The 'urn' must be a " +
 			"group URN (msg://group/...); agent URNs return not_found. Archived " +
 			"groups are still returned (callers may need their metadata). Read-only.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn": strProp("Full group URN, e.g. msg://group/agent-mux/grp_xxxxxxxxxx."),
-		}, "urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full group URN, e.g. msg://group/agent-mux/grp_xxxxxxxxxx.", true),
+		),
 		Handler: a.handleGroupLookup,
 	}, Reads("group profile lookup"))
 
@@ -86,9 +86,9 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Name: "tether_group_list_for_member",
 		Description: "List the groups a member belongs to. Returns active + archived groups " +
 			"(archived ones are still visible to former members). Read-only.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"member_urn": strProp("Full URN of the member whose group list we're fetching."),
-		}, "member_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("member_urn", "Full URN of the member whose group list we're fetching.", true),
+		),
 		Handler: a.handleGroupListForMember,
 	}, Reads("groups-for-member listing"))
 
@@ -97,10 +97,10 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Description: "Soft-delete a group (sets status='archived'). The group becomes read-only " +
 			"— members can still read history, but no new messages are accepted. " +
 			"Only the owner or a moderator can archive. Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn": strProp("Full group URN to archive."),
-			"by":  strProp("Caller URN (must be the group's owner or a moderator)."),
-		}, "urn", "by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full group URN to archive.", true),
+			gomcp.StringProp("by", "Caller URN (must be the group's owner or a moderator).", true),
+		),
 		Handler: a.handleGroupArchive,
 	}, Destroys("archives the group one-way; there is no unarchive tool"))
 
@@ -109,12 +109,12 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Description: "Add a member to a group. Only owners and moderators can invite. The " +
 			"member URN must exist in the registry. Role defaults to 'member' if " +
 			"unset. Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn":  strProp("Full group URN."),
-			"member_urn": strProp("Full URN of the member being invited (must exist in registry)."),
-			"by":         strProp("Caller URN (must be owner or moderator)."),
-			"role":       strEnumProp("Role at invite time: 'member' (default) | 'moderator'.", "member", "moderator"),
-		}, "group_urn", "member_urn", "by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("member_urn", "Full URN of the member being invited (must exist in registry).", true),
+			gomcp.StringProp("by", "Caller URN (must be owner or moderator).", true),
+			gomcp.StringEnumProp("role", "Role at invite time: 'member' (default) | 'moderator'.", false, "member", "moderator"),
+		),
 		Handler: a.handleGroupInvite,
 	}, Writes())
 
@@ -124,11 +124,11 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 			"group's owner cannot be removed by this tool — the owner must use " +
 			"tether_group_leave after transferring ownership via tether_group_set_role. " +
 			"Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn":  strProp("Full group URN."),
-			"member_urn": strProp("Full URN of the member being kicked."),
-			"by":         strProp("Caller URN (must be owner or moderator)."),
-		}, "group_urn", "member_urn", "by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("member_urn", "Full URN of the member being kicked.", true),
+			gomcp.StringProp("by", "Caller URN (must be owner or moderator).", true),
+		),
 		Handler: a.handleGroupKick,
 	}, Destroys("removes a member; their access and unread position are gone"))
 
@@ -138,10 +138,10 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 			"member must already hold owner or moderator role — otherwise the leave " +
 			"is refused with cannot_leave_without_owner_transfer (forbidden). Use " +
 			"tether_group_set_role to promote first. Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn":  strProp("Full group URN."),
-			"member_urn": strProp("Caller URN (the leaver — must equal the caller's own identity)."),
-		}, "group_urn", "member_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("member_urn", "Caller URN (the leaver — must equal the caller's own identity).", true),
+		),
 		Handler: a.handleGroupLeave,
 	}, Destroys("removes the caller from the group; rejoining needs a new invite"))
 
@@ -150,12 +150,12 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Description: "Change a member's role within a group. Promotion to 'owner' is owner-only " +
 			"(transfers ownership). Moderators can promote to 'moderator' but not to " +
 			"'owner'. Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn":  strProp("Full group URN."),
-			"member_urn": strProp("Full URN of the member whose role is changing."),
-			"role":       strEnumProp("New role: 'member' | 'moderator' | 'owner'.", "member", "moderator", "owner"),
-			"by":         strProp("Caller URN (must be owner or moderator; only owner can promote to owner)."),
-		}, "group_urn", "member_urn", "role", "by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("member_urn", "Full URN of the member whose role is changing.", true),
+			gomcp.StringEnumProp("role", "New role: 'member' | 'moderator' | 'owner'.", true, "member", "moderator", "owner"),
+			gomcp.StringProp("by", "Caller URN (must be owner or moderator; only owner can promote to owner).", true),
+		),
 		Handler: a.handleGroupSetRole,
 	}, Writes())
 
@@ -163,9 +163,9 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Name: "tether_group_list_members",
 		Description: "List the members of a group, ordered by joined_at. Display names are " +
 			"hydrated from the registry. Read-only.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn": strProp("Full group URN."),
-		}, "group_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+		),
 		Handler: a.handleGroupListMembers,
 	}, Reads("member listing"))
 
@@ -197,14 +197,14 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 			"for documentation, examples, and quoted snippets.\n" +
 			"\n" +
 			"Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn":    strProp("Full group URN to post into."),
-			"from_urn":     strProp("Caller URN (must be a member of the group)."),
-			"kind":         strProp("Envelope kind. Defaults to 'message'. Other valid values match the messaging-store kind vocabulary."),
-			"thread_id":    strProp("Optional thread id — groups subdivide into threads via this field (no hierarchical URN)."),
-			"content_type": strProp("MIME-ish content type for the payload (e.g. 'text/plain', 'application/json')."),
-			"payload":      objProp("Envelope payload as a JSON object. The daemon-side mention parser scans this for '@' tokens."),
-		}, "group_urn", "from_urn", "payload"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN to post into.", true),
+			gomcp.StringProp("from_urn", "Caller URN (must be a member of the group).", true),
+			gomcp.StringProp("kind", "Envelope kind. Defaults to 'message'. Other valid values match the messaging-store kind vocabulary.", false),
+			gomcp.StringProp("thread_id", "Optional thread id — groups subdivide into threads via this field (no hierarchical URN).", false),
+			gomcp.StringProp("content_type", "MIME-ish content type for the payload (e.g. 'text/plain', 'application/json').", false),
+			gomcp.ObjectProp("payload", "Envelope payload as a JSON object. The daemon-side mention parser scans this for '@' tokens.", true),
+		),
 		Handler: a.handleGroupPost,
 	}, Writes())
 
@@ -214,13 +214,13 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 			"call tether_group_mark_read after acknowledging the batch. Default " +
 			"since_seq is the caller's last_read_seq (0 → from cursor). " +
 			"thread_id filters to one sub-conversation. Read-only.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn": strProp("Full group URN."),
-			"as":        strProp("Caller URN (must be a member; identity surrogate per v060-05)."),
-			"since_seq": numProp("Lower bound on group_seq (exclusive). 0 → use caller's last_read_seq."),
-			"thread_id": strProp("Optional thread id filter."),
-			"limit":     numProp("Max messages to return. Server default: 100."),
-		}, "group_urn", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("as", "Caller URN (must be a member; identity surrogate per v060-05).", true),
+			gomcp.NumberProp("since_seq", "Lower bound on group_seq (exclusive). 0 → use caller's last_read_seq.", false),
+			gomcp.StringProp("thread_id", "Optional thread id filter.", false),
+			gomcp.NumberProp("limit", "Max messages to return. Server default: 100.", false),
+		),
 		Handler: a.handleGroupRead,
 	}, Reads("registry.ListGroupMessages is a pure read; MarkRead is a separate explicit call"))
 
@@ -228,11 +228,11 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Name: "tether_group_mark_read",
 		Description: "Bump the caller's read cursor for a group. Idempotent / monotonic — " +
 			"smaller up_to_seq is silently a no-op. Requires the groups.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"group_urn": strProp("Full group URN."),
-			"as":        strProp("Caller URN."),
-			"up_to_seq": numProp("New cursor value — last_read_seq becomes max(last_read_seq, up_to_seq)."),
-		}, "group_urn", "as", "up_to_seq"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("group_urn", "Full group URN.", true),
+			gomcp.StringProp("as", "Caller URN.", true),
+			gomcp.NumberProp("up_to_seq", "New cursor value — last_read_seq becomes max(last_read_seq, up_to_seq).", true),
+		),
 		Handler: a.handleGroupMarkRead,
 	}, Writes())
 
@@ -240,11 +240,11 @@ func (a *Adapter) registerGroupTools(s *gomcp.Server) {
 		Name: "tether_group_mentions",
 		Description: "List the caller's own mention notices across all groups. Filters by " +
 			"timestamp (since) and limit. Read-only.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"as":    strProp("Caller URN — the member whose mentions are being read."),
-			"since": strProp("RFC3339 timestamp; mentions emitted after this are returned. Empty → no lower bound."),
-			"limit": numProp("Max mentions to return. Server default: 50."),
-		}, "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("as", "Caller URN — the member whose mentions are being read.", true),
+			gomcp.StringProp("since", "RFC3339 timestamp; mentions emitted after this are returned. Empty → no lower bound.", false),
+			gomcp.NumberProp("limit", "Max mentions to return. Server default: 50.", false),
+		),
 		Handler: a.handleGroupMentions,
 	}, Reads("registry.GetMyMentions: query only"))
 }

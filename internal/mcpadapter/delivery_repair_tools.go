@@ -27,9 +27,9 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 		Description: "Show the structured delivery trace for a message: who sent to whom, why a " +
 			"binding resolved, which host accepted, which turn was submitted, and why " +
 			"retry/expiry occurred. Read-only; no scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID."),
-		}, "message_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID.", true),
+		),
 		Handler: a.handleMessageTraceTool,
 	}, Reads("GET /messages/{id}/trace"))
 
@@ -40,11 +40,11 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 			"message_id may be a literal delivery id to address one specific group-fanout " +
 			"recipient's delivery (use mux_message_trace or an operator's own inspection " +
 			"to find it). Requires the delivery.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id":           strProp("Message ID, or a literal delivery id for a group-fanout recipient."),
-			"authorized_by":        strProp("URN recorded as provenance for this repair (self-asserted, ADR 0045)."),
-			"new_deadline_seconds": numProp("New delivery deadline in seconds from now; 0 or omitted means no deadline."),
-		}, "message_id", "authorized_by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID, or a literal delivery id for a group-fanout recipient.", true),
+			gomcp.StringProp("authorized_by", "URN recorded as provenance for this repair (self-asserted, ADR 0045).", true),
+			gomcp.NumberProp("new_deadline_seconds", "New delivery deadline in seconds from now; 0 or omitted means no deadline.", false),
+		),
 		Handler: a.handleMessageRedriveTool,
 	}, Writes())
 
@@ -55,9 +55,9 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 			"(a pending, leased, retry_scheduled or dead-lettered delivery is never " +
 			"eligible; see mux_message_purge's description for why dead-lettered is " +
 			"excluded). No scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"older_than_hours": numProp("Lookback window in hours; 0 or omitted uses the daemon's default."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.NumberProp("older_than_hours", "Lookback window in hours; 0 or omitted uses the daemon's default.", false),
+		),
 		Handler: a.handleMessageRetentionCandidatesTool,
 	}, Reads("GET /messages/retention/candidates: reports, deletes nothing"))
 
@@ -70,10 +70,10 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 			"and would resend an empty message if purged first. Idempotent: purging " +
 			"an already-purged message reports purged=false, not an error. Requires " +
 			"the delivery.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id":    strProp("Message ID."),
-			"authorized_by": strProp("URN recorded as provenance for this purge (self-asserted, ADR 0045)."),
-		}, "message_id", "authorized_by"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID.", true),
+			gomcp.StringProp("authorized_by", "URN recorded as provenance for this purge (self-asserted, ADR 0045).", true),
+		),
 		Handler: a.handleMessagePurgeTool,
 	}, Destroys("permanently deletes messages; irreversible"))
 }

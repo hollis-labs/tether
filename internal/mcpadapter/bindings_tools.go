@@ -28,51 +28,51 @@ func (a *Adapter) registerBindingsTools(s *gomcp.Server) {
 			"visibility='published-local'; capabilities must be exactly [\"pull-only\"]. " +
 			"Refuses (conflict) to supersede a binding Tether itself manages " +
 			"(private-local/tether-hosted). Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"target_urn":   strProp("msg:// target URN (session or agent)."),
-			"session_id":   strProp("Self-asserted session id the caller is leasing on behalf of."),
-			"host_id":      strProp("Identifier for the external host/bridge process."),
-			"attempt_id":   strProp("Identifier for this specific lease attempt."),
-			"capabilities": arrProp(`Must be exactly ["pull-only"].`, nil),
-			"ttl_seconds":  numProp("Lease duration in seconds; 0 or omitted means no expiry."),
-		}, "target_urn", "session_id", "host_id", "attempt_id", "capabilities"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("target_urn", "msg:// target URN (session or agent).", true),
+			gomcp.StringProp("session_id", "Self-asserted session id the caller is leasing on behalf of.", true),
+			gomcp.StringProp("host_id", "Identifier for the external host/bridge process.", true),
+			gomcp.StringProp("attempt_id", "Identifier for this specific lease attempt.", true),
+			gomcp.ArrayProp("capabilities", `Must be exactly ["pull-only"].`, true, nil),
+			gomcp.NumberProp("ttl_seconds", "Lease duration in seconds; 0 or omitted means no expiry.", false),
+		),
 		Handler: a.handleBindingLease,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_registry_binding_renew",
 		Description: "Extend an existing binding's lease. Fails (conflict) if a newer generation now exists for the same target. Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"binding_id":  strProp("Binding id returned by a prior lease."),
-			"ttl_seconds": numProp("New lease duration in seconds; 0 or omitted means no expiry."),
-		}, "binding_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("binding_id", "Binding id returned by a prior lease.", true),
+			gomcp.NumberProp("ttl_seconds", "New lease duration in seconds; 0 or omitted means no expiry.", false),
+		),
 		Handler: a.handleBindingRenew,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_registry_binding_revoke",
 		Description: "Relinquish a binding lease. Idempotent. Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"binding_id": strProp("Binding id to revoke."),
-		}, "binding_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("binding_id", "Binding id to revoke.", true),
+		),
 		Handler: a.handleBindingRevoke,
 	}, Destroys("revokes the lease; the holder stops receiving without being told"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_registry_binding_current",
 		Description: "Get the authoritative current binding for a target -- the highest-generation, non-revoked, non-expired binding. Read-only; no scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"target_urn": strProp("msg:// target URN."),
-		}, "target_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("target_urn", "msg:// target URN.", true),
+		),
 		Handler: a.handleBindingCurrent,
 	}, Reads("current binding lookup"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_registry_binding_list",
 		Description: "List every binding ever leased for a target, newest generation first (audit view). Read-only; no scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"target_urn": strProp("msg:// target URN."),
-		}, "target_urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("target_urn", "msg:// target URN.", true),
+		),
 		Handler: a.handleBindingList,
 	}, Reads("binding listing"))
 }

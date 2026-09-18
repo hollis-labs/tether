@@ -19,103 +19,103 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_list",
 		Description: "List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"state":  strProp("Filter by session state: created, running, stopped, failed"),
-			"cursor": strProp("RFC3339 pagination cursor — returns sessions older than this timestamp"),
-			"limit":  numProp("Max results (default 50, max 200)"),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("state", "Filter by session state: created, running, stopped, failed", false),
+			gomcp.StringProp("cursor", "RFC3339 pagination cursor — returns sessions older than this timestamp", false),
+			gomcp.NumberProp("limit", "Max results (default 50, max 200)", false),
+		),
 		Handler: a.handleSessionList,
 	}, Reads("GET /sessions; svc.ListSessions + AttachedClients"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_get",
 		Description: "Get a single agent session by ID.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: a.handleSessionGet,
 	}, Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_create",
 		Description: "Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"launch_id":     strProp("Launch profile ID from the catalog (see mux_catalog_list_launches)"),
-			"boot_prompt":   strProp("Optional boot prompt override; replaces catalog static boot fragments verbatim"),
-			"agent_file":    strProp("v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent."),
-			"agent_inline":  strProp("v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order."),
-			"boot_profile":  strProp("v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers)."),
-			"override":      strProp("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map)."),
-			"prompt_append": strProp("Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt."),
-			"injection":     strProp("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead."),
-		}, "launch_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("launch_id", "Launch profile ID from the catalog (see mux_catalog_list_launches)", true),
+			gomcp.StringProp("boot_prompt", "Optional boot prompt override; replaces catalog static boot fragments verbatim", false),
+			gomcp.StringProp("agent_file", "v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent.", false),
+			gomcp.StringProp("agent_inline", "v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order.", false),
+			gomcp.StringProp("boot_profile", "v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers).", false),
+			gomcp.StringProp("override", "v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).", false),
+			gomcp.StringProp("prompt_append", "Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.", false),
+			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
+		),
 		Handler: a.handleSessionCreate,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_launch",
 		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID returned by mux_session_create"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID returned by mux_session_create", true),
+		),
 		Handler: a.handleSessionLaunch,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_stop",
 		Description: "Send a stop signal to a running session.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: a.handleSessionStop,
 	}, Destroys("terminates the running process; a stopped session cannot be relaunched, only resumed into a new one"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_wait",
 		Description: "Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: a.handleSessionWait,
 	}, Reads("GET /sessions/{id}/wait blocks on a state change it does not cause"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_send_input",
 		Description: "Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-			"input":      strProp("Text to send to the session (a newline is NOT appended automatically)"),
-		}, "session_id", "input"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+			gomcp.StringProp("input", "Text to send to the session (a newline is NOT appended automatically)", true),
+		),
 		Handler: a.handleSessionSendInput,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_send_turn",
 		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-			"text":       strProp("User-facing message body. Framing is applied per the session's caps."),
-		}, "session_id", "text"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+			gomcp.StringProp("text", "User-facing message body. Framing is applied per the session's caps.", true),
+		),
 		Handler: a.handleSessionSendTurn,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_resize",
 		Description: "Resize the PTY terminal for a running session.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-			"rows":       numProp("Terminal rows (must be > 0)"),
-			"cols":       numProp("Terminal columns (must be > 0)"),
-		}, "session_id", "rows", "cols"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+			gomcp.NumberProp("rows", "Terminal rows (must be > 0)", true),
+			gomcp.NumberProp("cols", "Terminal columns (must be > 0)", true),
+		),
 		Handler: a.handleSessionResize,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_health",
 		Description: "Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: a.handleSessionHealth,
 	}, Reads("svc.RuntimeHealth: live snapshot, no state change"))
 }

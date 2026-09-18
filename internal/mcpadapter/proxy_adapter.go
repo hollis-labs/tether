@@ -470,12 +470,12 @@ func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nat
 			"  mux_discover(intent=\"create a task\")\n" +
 			"  mux_discover(category=\"memory\")\n" +
 			"  mux_discover(intent=\"list sessions\", limit=20)",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"intent":   strProp("Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')"),
-			"category": strProp("Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')"),
-			"tags":     strProp("Comma-separated additional tag filters (AND semantics)"),
-			"limit":    strProp("Max tools to return (default 10, max 50)"),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("intent", "Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')", false),
+			gomcp.StringProp("category", "Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')", false),
+			gomcp.StringProp("tags", "Comma-separated additional tag filters (AND semantics)", false),
+			gomcp.StringProp("limit", "Max tools to return (default 10, max 50)", false),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			intent := str(args, "intent")
 			category := str(args, "category")
@@ -545,12 +545,12 @@ func (a *Adapter) registerSemanticDiscoverTool(s *gomcp.Server, idx *DiscoveryIn
 		Name: "mux_discover_tools",
 		Description: "Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. " +
 			"Use this before mux_discover when you need tool selection help without full schemas.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"intent":   strProp("Free-text description of the task you want to accomplish"),
-			"category": strProp("Optional exact category/tag filter such as tasks, automation, memory, or services"),
-			"tags":     strProp("Comma-separated additional tag filters (AND semantics)"),
-			"limit":    strProp("Max recommendations to return (default 8, max 20)"),
-		}, "intent"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("intent", "Free-text description of the task you want to accomplish", true),
+			gomcp.StringProp("category", "Optional exact category/tag filter such as tasks, automation, memory, or services", false),
+			gomcp.StringProp("tags", "Comma-separated additional tag filters (AND semantics)", false),
+			gomcp.StringProp("limit", "Max recommendations to return (default 8, max 20)", false),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			intent := str(args, "intent")
 			category := str(args, "category")
@@ -714,10 +714,10 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, router *ProxyRouter) {
 			"Arguments must match the tool's input schema exactly.\n\n" +
 			"Example:\n" +
 			"  mux_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"tool_name": strProp("The exact tool name to call (as returned by mux_discover)"),
-			"arguments": objProp("Arguments object matching the tool's input schema"),
-		}, "tool_name"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("tool_name", "The exact tool name to call (as returned by mux_discover)", true),
+			gomcp.ObjectProp("arguments", "Arguments object matching the tool's input schema", false),
+		),
 		Annotations: Writes().OpenWorld().annotations().sdk(),
 	}, a.rawProxyHandler("mux_call", func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 		toolName := str(args, "tool_name")
@@ -838,9 +838,9 @@ func (a *Adapter) registerCatalogRefreshTool(s *gomcp.Server, pool *ClientPool) 
 		Name: "mux_catalog_refresh",
 		Description: "Refresh one upstream MCP server's tools/list cache in the running mux process, or all upstreams when no server is specified. " +
 			"Use this when an upstream added or removed tools and you want mux to rescan immediately without restarting.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"server": strProp("Optional upstream server ID to refresh. Empty refreshes every connected upstream."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("server", "Optional upstream server ID to refresh. Empty refreshes every connected upstream.", false),
+		),
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			serverID := strings.TrimSpace(str(args, "server"))
 

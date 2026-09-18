@@ -20,9 +20,9 @@ func (a *Adapter) registerWhoamiTools(s *gomcp.Server) {
 			"currently owning delivery), if any, for the claimed URN. An unregistered " +
 			"or never-bound identity is not an error -- every field is independently " +
 			"best-effort.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"as": strProp("msg:// URN to look up (self-asserted, no verification)."),
-		}, "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("as", "msg:// URN to look up (self-asserted, no verification).", true),
+		),
 		Handler: a.handleWhoami,
 	}, Reads("resolves the caller identity; asserts nothing"))
 }

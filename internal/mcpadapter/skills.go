@@ -22,23 +22,23 @@ func (a *Adapter) registerSkillTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_skill_broker",
 		Description: "Return ranked skill recommendations for a specific task, role, project, or trigger set. This is the progressive-discovery companion to mux_skill_list: it returns metadata, reasons, and ranking, then the caller uses mux_skill_get for the chosen skill body.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"query":    strProp("Free-text task or intent, for example 'refactor handler' or 'capture findings'"),
-			"role":     strProp("Optional requester role signal, for example 'backend'"),
-			"project":  strProp("Optional project signal, for example 'nanite'"),
-			"task_id":  strProp("Optional Torque task id for forward-compatible enrichment; v1 does not dereference it in-process"),
-			"triggers": strProp("Optional comma-separated preferred trigger terms, for example 'refactor,cleanup'"),
-			"layers":   strProp("Optional comma-separated layer filter, for example 'project,user'"),
-			"limit":    numProp("Optional max results, default 5, max 20"),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("query", "Free-text task or intent, for example 'refactor handler' or 'capture findings'", false),
+			gomcp.StringProp("role", "Optional requester role signal, for example 'backend'", false),
+			gomcp.StringProp("project", "Optional project signal, for example 'nanite'", false),
+			gomcp.StringProp("task_id", "Optional Torque task id for forward-compatible enrichment; v1 does not dereference it in-process", false),
+			gomcp.StringProp("triggers", "Optional comma-separated preferred trigger terms, for example 'refactor,cleanup'", false),
+			gomcp.StringProp("layers", "Optional comma-separated layer filter, for example 'project,user'", false),
+			gomcp.NumberProp("limit", "Optional max results, default 5, max 20", false),
+		),
 		Handler: a.handleSkillBroker,
 	}, Reads("skills.BrokerLayered reads the catalog and cwd; selection only"))
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_skill_get",
 		Description: "Load a Tether skill by id and return its instructions. Use when a boot prompt lists a skill pointer like `/refactor-go`; pass `refactor-go` as skill_id, then follow the returned body.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"skill_id": strProp("Skill id from the boot prompt, with or without the leading slash"),
-		}, "skill_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("skill_id", "Skill id from the boot prompt, with or without the leading slash", true),
+		),
 		Handler: a.handleSkill,
 	}, Reads("skill catalog file read"))
 }

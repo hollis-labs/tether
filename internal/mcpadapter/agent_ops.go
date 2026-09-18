@@ -29,39 +29,39 @@ func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_agent_show",
 		Description: "Show one agent's full resolved definition, including which discovery layer it came from and its file path. Read-only; no scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"id": strProp("Agent ID"),
-		}, "id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("id", "Agent ID", true),
+		),
 		Handler: a.handleAgentShow,
 	}, Reads("catalog agent lookup"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_agent_create",
 		Description: "Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase).",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"id":            strProp("Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended."),
-			"scope":         strProp("Discovery layer: project (default) | user | system."),
-			"project":       strProp("Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/."),
-			"name":          strProp("Human-readable name (defaults to id)."),
-			"roles":         strProp("Comma-separated role list (optional)."),
-			"skills":        strProp("Comma-separated skill ID list (optional)."),
-			"system_prompt": strProp("Agent system prompt (optional)."),
-			"agent_prompt":  strProp("Agent persona prompt (optional)."),
-		}, "id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("id", "Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended.", true),
+			gomcp.StringProp("scope", "Discovery layer: project (default) | user | system.", false),
+			gomcp.StringProp("project", "Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/.", false),
+			gomcp.StringProp("name", "Human-readable name (defaults to id).", false),
+			gomcp.StringProp("roles", "Comma-separated role list (optional).", false),
+			gomcp.StringProp("skills", "Comma-separated skill ID list (optional).", false),
+			gomcp.StringProp("system_prompt", "Agent system prompt (optional).", false),
+			gomcp.StringProp("agent_prompt", "Agent persona prompt (optional).", false),
+		),
 		Handler: a.handleAgentCreate,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_agent_edit",
 		Description: "Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"id":            strProp("Agent ID to edit."),
-			"name":          strProp("New human-readable name (optional)."),
-			"roles":         strProp("Comma-separated role list — replaces existing roles; empty string clears them (optional)."),
-			"skills":        strProp("Comma-separated skill ID list — replaces existing skills; empty string clears them (optional)."),
-			"system_prompt": strProp("New system prompt (optional)."),
-			"agent_prompt":  strProp("New persona prompt (optional)."),
-		}, "id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("id", "Agent ID to edit.", true),
+			gomcp.StringProp("name", "New human-readable name (optional).", false),
+			gomcp.StringProp("roles", "Comma-separated role list — replaces existing roles; empty string clears them (optional).", false),
+			gomcp.StringProp("skills", "Comma-separated skill ID list — replaces existing skills; empty string clears them (optional).", false),
+			gomcp.StringProp("system_prompt", "New system prompt (optional).", false),
+			gomcp.StringProp("agent_prompt", "New persona prompt (optional).", false),
+		),
 		Handler: a.handleAgentEdit,
 	}, Writes())
 }

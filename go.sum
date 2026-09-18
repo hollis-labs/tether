@@ -72,6 +72,8 @@ github.com/hollis-labs/go-mcp v0.5.0 h1:Cnghde1W444SExW0H3VIykOD3kpWPkWvxYOoon0T
 github.com/hollis-labs/go-mcp v0.5.0/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
 github.com/hollis-labs/go-mcp v0.6.0 h1:zHNmefgE2j6QJkN09L2W8JJwqBIhQvfvqCCpLS0oN4M=
 github.com/hollis-labs/go-mcp v0.6.0/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
+github.com/hollis-labs/go-mcp v0.7.0 h1:Ul2Ct8DLwYfH2Hd9lkUhb05kXZYU++W5CKhD8uERM3A=
+github.com/hollis-labs/go-mcp v0.7.0/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
 github.com/hollis-labs/go-messaging v0.5.2 h1:sMVnZRE1BAm/AN+36Zri5Bdd4SzF+EmCqULL627ztXA=
 github.com/hollis-labs/go-messaging v0.5.2/go.mod h1:hSEDlxOWkgZQAxlqFDfKvQ1hSHNZ8zrwee+0rAKuvXc=
 github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM7xcGqKMmk=

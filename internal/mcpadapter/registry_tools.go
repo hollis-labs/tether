@@ -94,10 +94,10 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"skills (each {name, learned_at RFC3339, optional via, level}), links (each " +
 			"{kind, target}), kind_meta, host_address, health_status. " +
 			"Returns the canonical Profile with the minted URN. Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"kind":    strEnumProp("Entity kind: 'agent' or 'project'.", "agent", "project"),
-			"profile": objProp("Profile JSON to register. See tool description for the field shape."),
-		}, "kind", "profile"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringEnumProp("kind", "Entity kind: 'agent' or 'project'.", true, "agent", "project"),
+			gomcp.ObjectProp("profile", "Profile JSON to register. See tool description for the field shape.", true),
+		),
 		Handler: a.handleRegistryRegister,
 	}, Writes())
 
@@ -108,10 +108,10 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"are excluded only from default Search results. Read-only by default; passing " +
 			"sensitive operational fields ('callback', 'kind_meta', 'host_address', 'all') in include " +
 			"requires the registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn":     strProp("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
-			"include": strProp("Optional comma-separated fields to include (e.g. 'external_ids', 'callback', 'kind_meta', 'host_address') or 'all'. Sensitive operational fields require registry.write scope."),
-		}, "urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx.", true),
+			gomcp.StringProp("include", "Optional comma-separated fields to include (e.g. 'external_ids', 'callback', 'kind_meta', 'host_address') or 'all'. Sensitive operational fields require registry.write scope.", false),
+		),
 		Handler: a.handleRegistryLookup,
 	}, Reads("registry profile lookup"))
 
@@ -121,12 +121,12 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"use this when you know a local ID like a Tether catalog slug, Torque project ID, or Cerberus owner and " +
 			"want the canonical registry URN. Read-only; passing sensitive operational fields in include " +
 			"requires registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"kind":        strEnumProp("Entity kind to resolve: 'agent', 'project', or 'group'.", "agent", "project", "group"),
-			"external_id": strProp("Substrate-local identifier to resolve."),
-			"substrate":   strProp("Optional substrate scope such as 'tether', 'torque', or 'cerberus'."),
-			"include":     strProp("Optional comma-separated fields to include (e.g. 'external_ids'). Sensitive operational fields require registry.write scope."),
-		}, "kind", "external_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringEnumProp("kind", "Entity kind to resolve: 'agent', 'project', or 'group'.", true, "agent", "project", "group"),
+			gomcp.StringProp("external_id", "Substrate-local identifier to resolve.", true),
+			gomcp.StringProp("substrate", "Optional substrate scope such as 'tether', 'torque', or 'cerberus'.", false),
+			gomcp.StringProp("include", "Optional comma-separated fields to include (e.g. 'external_ids'). Sensitive operational fields require registry.write scope.", false),
+		),
 		Handler: a.handleRegistryLookupBy,
 	}, Reads("registry lookup by external id"))
 
@@ -136,16 +136,16 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"alphabetical on display_name. Default excludes status='deprecated'; pass " +
 			"status='deprecated' to return only deprecated rows, or status='*' to return " +
 			"all statuses. Read-only; no scope required.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"kind":       strEnumProp("Entity kind to search: 'agent' or 'project'.", "agent", "project"),
-			"role":       strProp("Filter on role (exact match)."),
-			"title":      strProp("Filter on title (exact match)."),
-			"project":    strProp("Filter on project (exact match)."),
-			"capability": strProp("Filter to rows that carry this capability string."),
-			"skill_name": strProp("Filter to rows that carry a skill with this name."),
-			"status":     strProp("Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all."),
-			"tag":        strProp("Filter to rows that carry this tag string in tags."),
-		}, "kind"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringEnumProp("kind", "Entity kind to search: 'agent' or 'project'.", true, "agent", "project"),
+			gomcp.StringProp("role", "Filter on role (exact match).", false),
+			gomcp.StringProp("title", "Filter on title (exact match).", false),
+			gomcp.StringProp("project", "Filter on project (exact match).", false),
+			gomcp.StringProp("capability", "Filter to rows that carry this capability string.", false),
+			gomcp.StringProp("skill_name", "Filter to rows that carry a skill with this name.", false),
+			gomcp.StringProp("status", "Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all.", false),
+			gomcp.StringProp("tag", "Filter to rows that carry this tag string in tags.", false),
+		),
 		Handler: a.handleRegistrySearch,
 	}, Reads("registry search"))
 
@@ -162,10 +162,10 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"Remove matches: capabilities, tags, and entry_points by string equality; skills by name; links by (kind, target) tuple. " +
 			"last_updated_by is required on every patch — caller-supplied identity string, becomes auth-bound in v060-02. " +
 			"Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn":   strProp("Full URN of the row to update."),
-			"patch": objProp("UpdatePatch JSON. See tool description for partial-merge semantics."),
-		}, "urn", "patch"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full URN of the row to update.", true),
+			gomcp.ObjectProp("patch", "UpdatePatch JSON. See tool description for partial-merge semantics.", true),
+		),
 		Handler: a.handleRegistryUpdateSelf,
 	}, Writes())
 
@@ -174,9 +174,9 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 		Description: "Soft-delete a registry row. Status flips to 'deprecated'. The row remains visible " +
 			"via direct URN lookup (so callers can audit deprecated entries); default Search " +
 			"excludes it. Returns the deprecated Profile. Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn": strProp("Full URN of the row to soft-delete."),
-		}, "urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full URN of the row to soft-delete.", true),
+		),
 		Handler: a.handleRegistryDeregister,
 	}, Destroys("removes the identity and its bindings; anything addressing it stops resolving"))
 
@@ -185,10 +185,10 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 		Description: "Merge a source profile into a destination profile: the source's external-ID mappings " +
 			"are reattached to the destination and the source row is soft-deleted (status='deprecated'). " +
 			"Returns the canonical destination Profile. Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn":  strProp("Source URN to merge away."),
-			"into": strProp("Destination URN the source's identity mappings are reattached to."),
-		}, "urn", "into"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Source URN to merge away.", true),
+			gomcp.StringProp("into", "Destination URN the source's identity mappings are reattached to.", true),
+		),
 		Handler: a.handleRegistryMerge,
 	}, Writes())
 
@@ -200,9 +200,9 @@ func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
 			"Raw payload is NEVER stored (substrate ops-store files often contain plaintext secrets); " +
 			"only the thin-profile columns + capabilities/skills/links arrays + cached_at are updated. " +
 			"Requires the registry.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"urn": strProp("Full URN of the row to sync."),
-		}, "urn"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("urn", "Full URN of the row to sync.", true),
+		),
 		Handler: a.handleRegistrySync,
 	}, Writes())
 }
