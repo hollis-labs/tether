@@ -5,8 +5,7 @@ import (
 	"errors"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	messaging "github.com/hollis-labs/go-messaging"
 
@@ -16,86 +15,126 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-func (a *Adapter) registerSessionTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("mux_session_list",
-		mcp.WithDescription("List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit."),
-		mcp.WithString("state", mcp.Description("Filter by session state: created, running, stopped, failed")),
-		mcp.WithString("cursor", mcp.Description("RFC3339 pagination cursor — returns sessions older than this timestamp")),
-		mcp.WithNumber("limit", mcp.Description("Max results (default 50, max 200)")),
-	), Reads("GET /sessions; svc.ListSessions + AttachedClients"), a.handleSessionList)
+func (a *Adapter) registerSessionTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_list",
+		Description: "List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"state":  strProp("Filter by session state: created, running, stopped, failed"),
+			"cursor": strProp("RFC3339 pagination cursor — returns sessions older than this timestamp"),
+			"limit":  numProp("Max results (default 50, max 200)"),
+		}),
+		Handler: a.handleSessionList,
+	}, Reads("GET /sessions; svc.ListSessions + AttachedClients"))
 
-	a.addTool(s, mcp.NewTool("mux_session_get",
-		mcp.WithDescription("Get a single agent session by ID."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"), a.handleSessionGet)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_get",
+		Description: "Get a single agent session by ID.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: a.handleSessionGet,
+	}, Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"))
 
-	a.addTool(s, mcp.NewTool("mux_session_create",
-		mcp.WithDescription("Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile."),
-		mcp.WithString("launch_id", mcp.Required(), mcp.Description("Launch profile ID from the catalog (see mux_catalog_list_launches)")),
-		mcp.WithString("boot_prompt", mcp.Description("Optional boot prompt override; replaces catalog static boot fragments verbatim")),
-		mcp.WithString("agent_file", mcp.Description("v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent.")),
-		mcp.WithString("agent_inline", mcp.Description("v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order.")),
-		mcp.WithString("boot_profile", mcp.Description("v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers).")),
-		mcp.WithString("override", mcp.Description("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).")),
-		mcp.WithString("prompt_append", mcp.Description("Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.")),
-		mcp.WithString("injection", mcp.Description("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.")),
-	), Writes(), a.handleSessionCreate)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_create",
+		Description: "Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"launch_id":     strProp("Launch profile ID from the catalog (see mux_catalog_list_launches)"),
+			"boot_prompt":   strProp("Optional boot prompt override; replaces catalog static boot fragments verbatim"),
+			"agent_file":    strProp("v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent."),
+			"agent_inline":  strProp("v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order."),
+			"boot_profile":  strProp("v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers)."),
+			"override":      strProp("v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map)."),
+			"prompt_append": strProp("Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt."),
+			"injection":     strProp("Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead."),
+		}, "launch_id"),
+		Handler: a.handleSessionCreate,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_session_launch",
-		mcp.WithDescription("Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID returned by mux_session_create")),
-	), Writes(), a.handleSessionLaunch)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_launch",
+		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID returned by mux_session_create"),
+		}, "session_id"),
+		Handler: a.handleSessionLaunch,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_session_stop",
-		mcp.WithDescription("Send a stop signal to a running session."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), Destroys("terminates the running process; a stopped session cannot be relaunched, only resumed into a new one"), a.handleSessionStop)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_stop",
+		Description: "Send a stop signal to a running session.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: a.handleSessionStop,
+	}, Destroys("terminates the running process; a stopped session cannot be relaunched, only resumed into a new one"))
 
-	a.addTool(s, mcp.NewTool("mux_session_wait",
-		mcp.WithDescription("Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), Reads("GET /sessions/{id}/wait blocks on a state change it does not cause"), a.handleSessionWait)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_wait",
+		Description: "Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: a.handleSessionWait,
+	}, Reads("GET /sessions/{id}/wait blocks on a state change it does not cause"))
 
-	a.addTool(s, mcp.NewTool("mux_session_send_input",
-		mcp.WithDescription("Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-		mcp.WithString("input", mcp.Required(), mcp.Description("Text to send to the session (a newline is NOT appended automatically)")),
-	), Writes(), a.handleSessionSendInput)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_send_input",
+		Description: "Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+			"input":      strProp("Text to send to the session (a newline is NOT appended automatically)"),
+		}, "session_id", "input"),
+		Handler: a.handleSessionSendInput,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_session_send_turn",
-		mcp.WithDescription("Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-		mcp.WithString("text", mcp.Required(), mcp.Description("User-facing message body. Framing is applied per the session's caps.")),
-	), Writes(), a.handleSessionSendTurn)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_send_turn",
+		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+			"text":       strProp("User-facing message body. Framing is applied per the session's caps."),
+		}, "session_id", "text"),
+		Handler: a.handleSessionSendTurn,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_session_resize",
-		mcp.WithDescription("Resize the PTY terminal for a running session."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-		mcp.WithNumber("rows", mcp.Required(), mcp.Description("Terminal rows (must be > 0)")),
-		mcp.WithNumber("cols", mcp.Required(), mcp.Description("Terminal columns (must be > 0)")),
-	), Writes(), a.handleSessionResize)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_resize",
+		Description: "Resize the PTY terminal for a running session.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+			"rows":       numProp("Terminal rows (must be > 0)"),
+			"cols":       numProp("Terminal columns (must be > 0)"),
+		}, "session_id", "rows", "cols"),
+		Handler: a.handleSessionResize,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_session_health",
-		mcp.WithDescription("Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running."),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session UUID")),
-	), Reads("svc.RuntimeHealth: live snapshot, no state change"), a.handleSessionHealth)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_health",
+		Description: "Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: a.handleSessionHealth,
+	}, Reads("svc.RuntimeHealth: live snapshot, no state change"))
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleSessionList(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := intArg(req, "limit", 50)
+func (a *Adapter) handleSessionList(_ context.Context, args map[string]any) (any, error) {
+	limit := intArg(args, "limit", 50)
 	if limit > 200 {
 		limit = 200
 	}
 	opts := store.ListSessionsOptions{
-		State:  str(req, "state"),
-		Cursor: str(req, "cursor"),
+		State:  str(args, "state"),
+		Cursor: str(args, "cursor"),
 		Limit:  limit,
 	}
 	rows, err := a.svc.ListSessions(opts)
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	dtos := make([]api.SessionDTO, 0, len(rows))
 	for _, r := range rows {
@@ -114,38 +153,38 @@ func (a *Adapter) handleSessionList(_ context.Context, req mcp.CallToolRequest) 
 	return toolJSON(out), nil
 }
 
-func (a *Adapter) handleSessionGet(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := str(req, "session_id")
+func (a *Adapter) handleSessionGet(_ context.Context, args map[string]any) (any, error) {
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
 	row, err := a.svc.GetSession(id)
 	if err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not found: "+id), nil
+			return nil, toolError("not_found", "session not found: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	dto := api.SessionRowToDTO(*row)
 	dto.AttachedClients = a.svc.AttachedClients(id)
 	return toolJSON(map[string]any{"ok": true, "session": dto}), nil
 }
 
-func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	launchID := str(req, "launch_id")
+	launchID := str(args, "launch_id")
 	if launchID == "" {
-		return toolError("invalid_request", "launch_id required"), nil
+		return nil, toolError("invalid_request", "launch_id required")
 	}
-	bootPrompt := str(req, "boot_prompt")
-	agentFile := str(req, "agent_file")
-	agentInline := str(req, "agent_inline")
-	bootProfile := str(req, "boot_profile")
-	override := str(req, "override")
-	promptAppend := str(req, "prompt_append")
-	injection := str(req, "injection")
+	bootPrompt := str(args, "boot_prompt")
+	agentFile := str(args, "agent_file")
+	agentInline := str(args, "agent_inline")
+	bootProfile := str(args, "boot_profile")
+	override := str(args, "override")
+	promptAppend := str(args, "prompt_append")
+	injection := str(args, "injection")
 
 	if a.client != nil {
 		// Daemon-routed path (production "mux mcp"): the daemon owns session
@@ -172,9 +211,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 		}
 		if err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return toolError("internal_error", err.Error()), nil
+			return nil, toolError("internal_error", err.Error())
 		}
 		return toolJSON(map[string]any{
 			"ok":               true,
@@ -207,7 +246,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 		res, err = a.svc.CreateSession(launchID)
 	}
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	wsPath := ""
 	logPath := ""
@@ -226,21 +265,21 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req mcp.CallToolReque
 	}), nil
 }
 
-func (a *Adapter) handleSessionLaunch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "session_id")
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
 	if a.client != nil {
 		res, err := a.client.LaunchSession(ctx, id)
 		if err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{
 			"ok":               true,
@@ -255,12 +294,12 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, req mcp.CallToolReque
 	res, err := a.svc.LaunchSession(id)
 	if err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not found: "+id), nil
+			return nil, toolError("not_found", "session not found: "+id)
 		}
 		if isConflict(err) {
-			return toolError("conflict", err.Error()), nil
+			return nil, toolError("conflict", err.Error())
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	wsPath := ""
 	logPath := ""
@@ -279,166 +318,166 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, req mcp.CallToolReque
 	}), nil
 }
 
-func (a *Adapter) handleSessionStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionStop(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "session_id")
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
 	if a.client != nil {
 		if err := a.client.StopSession(ctx, id); err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id}), nil
 	}
 	if err := a.svc.StopSession(id); err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not running: "+id), nil
+			return nil, toolError("not_found", "session not running: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id}), nil
 }
 
-func (a *Adapter) handleSessionWait(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := str(req, "session_id")
+func (a *Adapter) handleSessionWait(ctx context.Context, args map[string]any) (any, error) {
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
 	if a.client != nil {
 		code, err := a.client.WaitSession(ctx, id)
 		if err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
 	}
 	code, err := a.svc.WaitSession(ctx, id)
 	if err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not running: "+id), nil
+			return nil, toolError("not_found", "session not running: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "exit_code": code}), nil
 }
 
-func (a *Adapter) handleSessionSendInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionSendInput(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "session_id")
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
-	input := str(req, "input")
+	input := str(args, "input")
 	if input == "" {
-		return toolError("invalid_request", "input required"), nil
+		return nil, toolError("invalid_request", "input required")
 	}
 	if a.client != nil {
 		if err := a.client.SendInput(ctx, id, []byte(input)); err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
 	}
 	if err := a.svc.SendInput(id, []byte(input)); err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not found: "+id), nil
+			return nil, toolError("not_found", "session not found: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
 }
 
-func (a *Adapter) handleSessionSendTurn(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionSendTurn(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "session_id")
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
-	text := str(req, "text")
+	text := str(args, "text")
 	if text == "" {
-		return toolError("invalid_request", "text required"), nil
+		return nil, toolError("invalid_request", "text required")
 	}
 	if a.client != nil {
 		if err := a.client.SendTurn(ctx, id, text); err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
 	}
 	if err := a.svc.SendTurn(ctx, id, text); err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not found: "+id), nil
+			return nil, toolError("not_found", "session not found: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(text)}), nil
 }
 
-func (a *Adapter) handleSessionResize(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeSessionWrite); denied != nil {
-		return denied, nil
+func (a *Adapter) handleSessionResize(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeSessionWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "session_id")
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
-	rowsInt := intArg(req, "rows", 0)
-	colsInt := intArg(req, "cols", 0)
+	rowsInt := intArg(args, "rows", 0)
+	colsInt := intArg(args, "cols", 0)
 	if rowsInt <= 0 || colsInt <= 0 || rowsInt > 65535 || colsInt > 65535 {
-		return toolError("invalid_request", "rows and cols must be between 1 and 65535"), nil
+		return nil, toolError("invalid_request", "rows and cols must be between 1 and 65535")
 	}
 	rows := uint16(rowsInt) //nolint:gosec // range validated above
 	cols := uint16(colsInt) //nolint:gosec // range validated above
 	if a.client != nil {
 		if err := a.client.ResizeSession(ctx, id, rows, cols); err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return classifyClientErr(err, id), nil
+			return nil, classifyClientErr(err, id)
 		}
 		return toolJSON(map[string]any{"ok": true, "session_id": id, "rows": rows, "cols": cols}), nil
 	}
 	if err := a.svc.ResizeSession(id, rows, cols); err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not running: "+id), nil
+			return nil, toolError("not_found", "session not running: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "rows": rows, "cols": cols}), nil
 }
 
-func (a *Adapter) handleSessionHealth(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := str(req, "session_id")
+func (a *Adapter) handleSessionHealth(_ context.Context, args map[string]any) (any, error) {
+	id := str(args, "session_id")
 	if id == "" {
-		return toolError("invalid_request", "session_id required"), nil
+		return nil, toolError("invalid_request", "session_id required")
 	}
 	// Verify the session exists in the store.
 	if _, err := a.svc.GetSession(id); err != nil {
 		if isNotFound(err) {
-			return toolError("not_found", "session not found: "+id), nil
+			return nil, toolError("not_found", "session not found: "+id)
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	// Fetch live runtime health from the manager.
 	result, ok := a.svc.RuntimeHealth(id)
 	if !ok {
-		return toolError("conflict", "session is not currently running; no live health available"), nil
+		return nil, toolError("conflict", "session is not currently running; no live health available")
 	}
 	caps := result.Caps
 	data := map[string]any{

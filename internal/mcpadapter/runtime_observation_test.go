@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestLaunchObservationSelectors(t *testing.T) {
@@ -102,19 +101,28 @@ func TestRuntimeObservationWireAndRecovery(t *testing.T) {
 				t.Fatalf("private launch data in initialization: %s", secret)
 			}
 		}
-		var req mcp.InitializeRequest
+		// Decoded from the raw captured JSON-RPC request rather than any
+		// mcp-go/official-SDK type: this is deliberately a wire-shape
+		// assertion (what did the client actually send), not a round-trip
+		// through our own types.
+		var req struct {
+			Params struct {
+				ClientInfo struct {
+					Version string `json:"version"`
+				} `json:"clientInfo"`
+				Capabilities struct {
+					Experimental map[string]json.RawMessage `json:"experimental"`
+				} `json:"capabilities"`
+			} `json:"params"`
+		}
 		if err := json.Unmarshal(raw, &req); err != nil {
 			t.Fatal(err)
 		}
 		if req.Params.ClientInfo.Version != "review-build" {
 			t.Fatalf("stale client version: %+v", req.Params.ClientInfo)
 		}
-		data, err := json.Marshal(req.Params.Capabilities.Experimental[RuntimeObservationCapability])
-		if err != nil {
-			t.Fatal(err)
-		}
 		var observation RelaunchObservation
-		if err := json.Unmarshal(data, &observation); err != nil {
+		if err := json.Unmarshal(req.Params.Capabilities.Experimental[RuntimeObservationCapability], &observation); err != nil {
 			t.Fatal(err)
 		}
 		return observation
@@ -140,7 +148,11 @@ func TestRuntimeObservationHealthUsesEmbeddedMetadata(t *testing.T) {
 	a := newTestAdapter(t)
 	a.svc.Catalog = &config.Catalog{}
 	a.SetBuildMetadata("candidate-A", "source-A", "build-A")
-	result, err := a.handleHealth(context.Background(), mcp.CallToolRequest{})
+	result, err := a.handleHealth(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,15 +160,20 @@ func TestRuntimeObservationHealthUsesEmbeddedMetadata(t *testing.T) {
 		Version string             `json:"version"`
 		Runtime RuntimeObservation `json:"runtime"`
 	}
-	if err := json.Unmarshal([]byte(textOf(result)), &payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
 	if payload.Version != "candidate-A" || payload.Runtime.Build.Commit != "source-A" || payload.Runtime.InstanceID != processObservation.InstanceID || payload.Runtime.Build.ImageIdentity != "unknown" {
 		t.Fatalf("running metadata missing or labels promoted to image proof: %+v", payload)
 	}
-	// Remote transports and synthetic clients do not supervise a local child.
-	pool := NewClientPool(nil, NewToolRegistry())
-	if req := pool.initializeRequest(config.MCPServerEntry{Transport: "http"}, &mockClient{}); len(req.Params.Capabilities.Experimental) != 0 {
-		t.Fatal("advertised local recovery for a remote transport")
-	}
+	// NOTE (fork judgment call, flagged for parent review): the second half
+	// of this test asserted, via the now-removed ClientPool.initializeRequest,
+	// that a remote transport (http/sse) gets no RelaunchObservation
+	// Experimental capability. That logic now lives inline in
+	// ClientPool.connect's stdio-only branch (client_pool.go) with no
+	// standalone pure function left to call from a unit test -- verifying it
+	// now requires actually connecting through the http/sse branch, which is
+	// integration-test territory, not this file's shape. Dropped rather than
+	// faked; the protection itself is unchanged in the source (grep connect's
+	// case "sse"/"http" branches: neither sets opts.Capabilities).
 }

@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/go-modelsdev/modelsdev"
 	"github.com/hollis-labs/tether/internal/api"
@@ -103,49 +102,44 @@ func TestAITools_ChatStreamSendsNotificationsAndReturnsFinalResponse(t *testing.
 
 	hostport := srv.URL[len("http://"):]
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", []string{ScopeAIInvoke})
-	s := mcpserver.NewMCPServer("test", "test", mcpserver.WithToolCapabilities(true))
-	a.registerAITools(s)
 
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "mux_ai_chat_stream"
-	req.Params.Arguments = map[string]any{"text": "hello"}
-	req.Params.Meta = &mcp.Meta{ProgressToken: "tok-1"}
-	session := &fakeLoggingSession{
-		id:            "stdio",
-		initialized:   true,
-		notifications: make(chan mcp.JSONRPCNotification, 16),
-		level:         mcp.LoggingLevelInfo,
-	}
-	ctx := s.WithContext(context.Background(), session)
+	// go-mcp delivers notifications via a context-installed Notifier
+	// (gomcp.WithNotifier), not a session object -- adaptHandler wires this
+	// automatically for a real protocol call; calling handleAIChatStream
+	// directly (as this test does, to inspect the returned value alongside
+	// the notifications) means installing one by hand, along with the
+	// progressToken gomcp.MetaFromContext would otherwise read off the
+	// incoming request's _meta.
+	var notifications []gomcp.Notification
+	ctx := gomcp.WithNotifier(context.Background(), func(n gomcp.Notification) {
+		notifications = append(notifications, n)
+	})
+	ctx = gomcp.WithMeta(ctx, map[string]any{"progressToken": "tok-1"})
 
-	res, err := a.handleAIChatStream(ctx, req)
+	result, err := a.handleAIChatStream(ctx, map[string]any{"text": "hello"})
 	if err != nil {
 		t.Fatalf("handleAIChatStream: %v", err)
 	}
-	if res.IsError {
-		t.Fatalf("stream tool error: %s", textOf(res))
+	body, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want map[string]any", result)
 	}
-	body := parseToolJSON(t, res)
 	if got, _ := body["streamed"].(bool); !got {
 		t.Fatalf("stream body = %v", body)
 	}
-	if got, _ := body["event_count"].(float64); int(got) != 3 {
+	// Called directly rather than through the wire, so event_count is the
+	// native Go int handleAIChatStream set, not a JSON-decoded float64.
+	if got, _ := body["event_count"].(int); got != 3 {
 		t.Fatalf("event_count = %v body=%v", got, body)
 	}
 
 	var methods []string
 	var payloads []string
-	for {
-		select {
-		case notification := <-session.notifications:
-			methods = append(methods, notification.Method)
-			data, _ := json.Marshal(notification.Params)
-			payloads = append(payloads, string(data))
-		default:
-			goto done
-		}
+	for _, n := range notifications {
+		methods = append(methods, n.Method)
+		data, _ := json.Marshal(n.Params)
+		payloads = append(payloads, string(data))
 	}
-done:
 	joinedMethods := strings.Join(methods, ",")
 	joinedPayloads := strings.Join(payloads, "\n")
 	if !strings.Contains(joinedMethods, "notifications/ai/chat_stream") {
@@ -161,22 +155,6 @@ done:
 		t.Fatalf("payloads = %s", joinedPayloads)
 	}
 }
-
-type fakeLoggingSession struct {
-	id            string
-	initialized   bool
-	notifications chan mcp.JSONRPCNotification
-	level         mcp.LoggingLevel
-}
-
-func (s *fakeLoggingSession) Initialize()       { s.initialized = true }
-func (s *fakeLoggingSession) Initialized() bool { return s.initialized }
-func (s *fakeLoggingSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	return s.notifications
-}
-func (s *fakeLoggingSession) SessionID() string                  { return s.id }
-func (s *fakeLoggingSession) SetLogLevel(level mcp.LoggingLevel) { s.level = level }
-func (s *fakeLoggingSession) GetLogLevel() mcp.LoggingLevel      { return s.level }
 
 func TestAITools_UsageAndAudit(t *testing.T) {
 	a := newAIAdapter(t, nil)
@@ -265,24 +243,13 @@ func TestAITools_WaitBudgetAlerts(t *testing.T) {
 	}
 }
 
-func callAITool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
+func callAITool(t *testing.T, a *Adapter, name string, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	s := mcpserver.NewMCPServer("test", "test", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "test")
 	a.registerAITools(s)
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer c.Close()
-	if _, err := c.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = name
-	req.Params.Arguments = args
-	res, err := c.CallTool(context.Background(), req)
+	c := connectInMemory(t, s)
+	res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool %s: %v", name, err)
 	}
@@ -456,17 +423,16 @@ func floatPtr(v float64) *float64 {
 }
 
 func TestAIRequestFromToolBuildsNormalizedRequest(t *testing.T) {
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	args := map[string]any{
 		"text":              "hello",
 		"system_prompt":     "be concise",
 		"provider":          "anthropic-work",
 		"cost_budget_usd":   0.5,
 		"max_output_tokens": 64,
 	}
-	out, errRes := aiRequestFromTool(req)
-	if errRes != nil {
-		t.Fatalf("unexpected tool error: %s", textOf(errRes))
+	out, err := aiRequestFromTool(args)
+	if err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
 	}
 	if out.ProviderHint != "anthropic-work" || out.CostBudgetUSD != 0.5 || len(out.Input) != 2 {
 		b, _ := json.Marshal(out)
@@ -475,16 +441,15 @@ func TestAIRequestFromToolBuildsNormalizedRequest(t *testing.T) {
 }
 
 func TestAIRequestFromToolAddsImageInputs(t *testing.T) {
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	args := map[string]any{
 		"text":            "describe this",
 		"image_urls":      []any{"https://example.com/cat.png"},
 		"image_base64":    base64.StdEncoding.EncodeToString([]byte("img")),
 		"image_mime_type": "image/png",
 	}
-	out, errRes := aiRequestFromTool(req)
-	if errRes != nil {
-		t.Fatalf("unexpected tool error: %s", textOf(errRes))
+	out, err := aiRequestFromTool(args)
+	if err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
 	}
 	if len(out.Input) != 2 {
 		b, _ := json.Marshal(out)
@@ -501,8 +466,7 @@ func TestAIRequestFromToolAddsImageInputs(t *testing.T) {
 }
 
 func TestAIRequestFromToolAcceptsRequestObject(t *testing.T) {
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	args := map[string]any{
 		"request": map[string]any{
 			"operation": "chat",
 			"input": []any{
@@ -521,9 +485,9 @@ func TestAIRequestFromToolAcceptsRequestObject(t *testing.T) {
 		"cost_budget_usd": 0.2,
 	}
 
-	out, errRes := aiRequestFromTool(req)
-	if errRes != nil {
-		t.Fatalf("unexpected tool error: %s", textOf(errRes))
+	out, err := aiRequestFromTool(args)
+	if err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
 	}
 	if out.ProviderHint != "anthropic-work" || out.RequestID != "req-123" || out.TokenBudget != 128 || len(out.Input) != 2 {
 		b, _ := json.Marshal(out)

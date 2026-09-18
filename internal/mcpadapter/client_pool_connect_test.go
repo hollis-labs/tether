@@ -2,8 +2,13 @@ package mcpadapter
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -12,18 +17,28 @@ import (
 // only place entry.Transport is interpreted — every other read is pass-through
 // into status reporting — so an unhandled transport surfaces here or nowhere.
 //
-// The http cases construct a real streamable client but never reach the
-// network: NewStreamableHttpClient does not dial, and Start opens no connection
-// unless continuous listening is enabled.
+// Unlike mark3labs' two-phase NewStreamableHttpClient+Start (construct, then
+// separately dial), the official SDK's Client.Connect performs the full
+// connect+handshake as one synchronous call -- so, unlike before, the http
+// cases need a real listener to connect to, not just a URL.
 func TestConnectTransports(t *testing.T) {
-	pool := &ClientPool{}
+	pool := NewClientPool(nil, NewToolRegistry())
 	ctx := context.Background()
 
-	t.Run("http builds a client without dialing", func(t *testing.T) {
+	newUpstream := func() *httptest.Server {
+		upstream := gomcp.NewServer("upstream", "test")
+		registerTestTool(upstream, "probe")
+		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil)
+		return httptest.NewServer(handler)
+	}
+
+	t.Run("http connects to a real listener", func(t *testing.T) {
+		srv := newUpstream()
+		defer srv.Close()
 		c, err := pool.connect(ctx, config.MCPServerEntry{
 			ID:        "tangent",
 			Transport: "http",
-			URL:       "http://127.0.0.1:7842/mcp",
+			URL:       srv.URL,
 		})
 		if err != nil {
 			t.Fatalf("connect: %v", err)
@@ -37,10 +52,12 @@ func TestConnectTransports(t *testing.T) {
 	})
 
 	t.Run("http with a bearer token", func(t *testing.T) {
+		srv := newUpstream()
+		defer srv.Close()
 		c, err := pool.connect(ctx, config.MCPServerEntry{
 			ID:        "tangent",
 			Transport: "http",
-			URL:       "http://127.0.0.1:7842/mcp",
+			URL:       srv.URL,
 			Token:     "tok",
 		})
 		if err != nil {

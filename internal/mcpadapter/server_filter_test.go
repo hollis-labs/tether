@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // flatToolNames applies the identical ServerFilter logic from RunWithProxyOpts
@@ -38,9 +38,9 @@ func flatToolNames(registry *ToolRegistry, serverFilter []string) []string {
 func TestServerFilter_Firehose(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
-	reg.Register("beta", mc, []mcp.Tool{makeTool("beta_tool_x")})
-	reg.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
+	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	got := flatToolNames(reg, nil)
 
@@ -62,9 +62,9 @@ func TestServerFilter_Firehose(t *testing.T) {
 func TestServerFilter_SingleServer(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
-	reg.Register("beta", mc, []mcp.Tool{makeTool("beta_tool_x")})
-	reg.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
+	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	got := flatToolNames(reg, []string{"alpha"})
 
@@ -92,10 +92,10 @@ func TestServerFilter_SingleServer(t *testing.T) {
 func TestServerFilter_MultiServer(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a")})
-	reg.Register("beta", mc, []mcp.Tool{makeTool("beta_tool_x")})
-	reg.Register("gamma", mc, []mcp.Tool{makeTool("gamma_tool_z")})
-	reg.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
+	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
+	reg.Register("gamma", mc, []*mcpsdk.Tool{makeTool("gamma_tool_z")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	got := flatToolNames(reg, []string{"alpha", "beta"})
 
@@ -124,8 +124,8 @@ func TestServerFilter_MultiServer(t *testing.T) {
 func TestServerFilter_UnknownServerInFilter(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a")})
-	reg.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	got := flatToolNames(reg, []string{"alpha", "nonexistent"})
 
@@ -144,8 +144,8 @@ func TestServerFilter_UnknownServerInFilter(t *testing.T) {
 func TestServerFilter_NativeToolsExcluded(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a")})
-	reg.RegisterNative([]mcp.Tool{
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
+	reg.RegisterNative([]*mcpsdk.Tool{
 		makeTool("mux_health"),
 		makeTool("mux_discover"),
 		makeTool("mux_call"),

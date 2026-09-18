@@ -4,8 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -62,49 +61,37 @@ type ProxyEventQuerier interface {
 // but mux_events_tool_calls now reads from the durable proxy_events table
 // (ADR 0024 §4).
 //
-// The handler is wrapped with the go-mcp-sanitize middleware via Adapter.addTool
-// so coverage stays uniform across every MCP tool the adapter exposes.
-func (a *Adapter) registerToolCallEventsTool(s *server.MCPServer, proxyStore ProxyEventQuerier) {
-	a.addTool(s,
-		mcp.NewTool("mux_events_tool_calls",
-			mcp.WithDescription(
-				"Query recent proxied tool call events recorded by agent-mux. "+
-					"Returns up to `limit` events (default 50, max 500), newest last. "+
-					"Available only in --proxy mode.",
-			),
-			mcp.WithString("server",
-				mcp.Description("Filter by upstream server ID (exact match, e.g. 'hadron')"),
-			),
-			mcp.WithString("tool_name",
-				mcp.Description("Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)"),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Filter by mux session ID (exact match)"),
-			),
-			mcp.WithString("limit",
-				mcp.Description("Max events to return (default 50, max 500) — pass as a number or numeric string"),
-			),
-			mcp.WithString("since",
-				mcp.Description("RFC3339 lower-bound timestamp; excludes events at or before this time"),
-			),
-			mcp.WithBoolean("errors_only",
-				mcp.Description("When true, return only events where the tool call failed"),
-			),
-		),
-		Reads("proxy_events query"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// Sanitize protection applies via the global receiving middleware installed
+// in Adapter.newBareServer, so coverage stays uniform across every MCP tool
+// the adapter exposes regardless of registration path.
+func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEventQuerier) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_events_tool_calls",
+		Description: "Query recent proxied tool call events recorded by agent-mux. " +
+			"Returns up to `limit` events (default 50, max 500), newest last. " +
+			"Available only in --proxy mode.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"server":      strProp("Filter by upstream server ID (exact match, e.g. 'hadron')"),
+			"tool_name":   strProp("Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)"),
+			"session_id":  strProp("Filter by mux session ID (exact match)"),
+			"limit":       strProp("Max events to return (default 50, max 500) — pass as a number or numeric string"),
+			"since":       strProp("RFC3339 lower-bound timestamp; excludes events at or before this time"),
+			"errors_only": boolProp("When true, return only events where the tool call failed"),
+		}),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			f := store.ProxyEventFilter{}
 
-			if v := str(req, "server"); v != "" {
+			if v := str(args, "server"); v != "" {
 				f.ServerID = v
 			}
-			if v := str(req, "tool_name"); v != "" {
+			if v := str(args, "tool_name"); v != "" {
 				f.ToolName = v
 			}
-			if v := str(req, "session_id"); v != "" {
+			if v := str(args, "session_id"); v != "" {
 				f.SessionID = v
 			}
 
-			limit := intArg(req, "limit", 50)
+			limit := intArg(args, "limit", 50)
 			if limit > 500 {
 				limit = 500
 			}
@@ -113,24 +100,22 @@ func (a *Adapter) registerToolCallEventsTool(s *server.MCPServer, proxyStore Pro
 			}
 			f.Limit = limit
 
-			if since := str(req, "since"); since != "" {
+			if since := str(args, "since"); since != "" {
 				t, parsedErr := time.Parse(time.RFC3339, since)
 				if parsedErr != nil {
-					// toolError returns a non-nil *CallToolResult with IsError:true;
-					// the nil is the Go error return — correct MCP pattern.
-					return toolError("invalid_request", //nolint:nilerr
-						"since must be an RFC3339 timestamp: "+parsedErr.Error()), nil
+					return nil, toolError("invalid_request",
+						"since must be an RFC3339 timestamp: "+parsedErr.Error())
 				}
 				f.Since = t
 			}
 
-			if b, ok := req.GetArguments()["errors_only"].(bool); ok {
+			if b, ok := args["errors_only"].(bool); ok {
 				f.ErrorsOnly = b
 			}
 
 			results, err := proxyStore.QueryProxyEvents(f)
 			if err != nil {
-				return toolError("internal_error", "query proxy events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
+				return nil, toolError("internal_error", "query proxy events: "+err.Error())
 			}
 			return toolJSON(map[string]any{
 				"ok":     true,
@@ -138,5 +123,5 @@ func (a *Adapter) registerToolCallEventsTool(s *server.MCPServer, proxyStore Pro
 				"count":  len(results),
 			}), nil
 		},
-	)
+	}, Reads("proxy_events query"))
 }

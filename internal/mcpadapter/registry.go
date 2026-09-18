@@ -7,16 +7,15 @@ import (
 	"sort"
 	"sync"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // RegisteredTool associates a tool definition with its upstream source.
 // Client is nil for native mux tools.
 type RegisteredTool struct {
-	Definition mcp.Tool
+	Definition *mcpsdk.Tool
 	ServerID   string // upstream server ID; empty string = native tool
-	Client     mcpclient.MCPClient
+	Client     upstreamClient
 }
 
 // ToolRegistry holds the merged tool set: native mux tools plus all proxied
@@ -28,8 +27,8 @@ type ToolRegistry struct {
 
 // ToolDelta describes the net effect of replacing one upstream server's tool set.
 type ToolDelta struct {
-	Added   []mcp.Tool
-	Updated []mcp.Tool
+	Added   []*mcpsdk.Tool
+	Updated []*mcpsdk.Tool
 	Removed []string
 }
 
@@ -39,7 +38,7 @@ func NewToolRegistry() *ToolRegistry {
 }
 
 // RegisterNative bulk-registers native mux tools (serverID = "", client = nil).
-func (r *ToolRegistry) RegisterNative(tools []mcp.Tool) {
+func (r *ToolRegistry) RegisterNative(tools []*mcpsdk.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, t := range tools {
@@ -50,13 +49,13 @@ func (r *ToolRegistry) RegisterNative(tools []mcp.Tool) {
 // Register bulk-registers tools from one upstream server. On name collision
 // with an already-registered tool it logs a warning and stores the new entry
 // under "<serverID>__<toolName>" to preserve both.
-func (r *ToolRegistry) Register(serverID string, client mcpclient.MCPClient, tools []mcp.Tool) {
+func (r *ToolRegistry) Register(serverID string, client upstreamClient, tools []*mcpsdk.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.registerLocked(serverID, client, tools)
 }
 
-func (r *ToolRegistry) registerLocked(serverID string, client mcpclient.MCPClient, tools []mcp.Tool) {
+func (r *ToolRegistry) registerLocked(serverID string, client upstreamClient, tools []*mcpsdk.Tool) {
 	for _, t := range tools {
 		key, def := r.disambiguateLocked(serverID, t)
 		r.tools[key] = RegisteredTool{
@@ -67,7 +66,11 @@ func (r *ToolRegistry) registerLocked(serverID string, client mcpclient.MCPClien
 	}
 }
 
-func (r *ToolRegistry) disambiguateLocked(serverID string, t mcp.Tool) (string, mcp.Tool) {
+// disambiguateLocked returns t unchanged (and its own Name as the key) unless
+// a different tool already owns that key, in which case it returns a shallow
+// copy of t renamed to "<serverID>__<toolName>" -- t is a pointer into the
+// caller's ListToolsResult and must never be mutated in place.
+func (r *ToolRegistry) disambiguateLocked(serverID string, t *mcpsdk.Tool) (string, *mcpsdk.Tool) {
 	key := t.Name
 	if existing, exists := r.tools[key]; exists {
 		slog.Warn("mcp-proxy: tool name collision",
@@ -78,9 +81,9 @@ func (r *ToolRegistry) disambiguateLocked(serverID string, t mcp.Tool) (string, 
 		)
 		// Disambiguate the incoming tool; keep the existing one at its original key.
 		key = fmt.Sprintf("%s__%s", serverID, t.Name)
-		disambig := t
+		disambig := *t
 		disambig.Name = key
-		t = disambig
+		t = &disambig
 	}
 	return key, t
 }
@@ -95,10 +98,10 @@ func (r *ToolRegistry) Lookup(name string) (RegisteredTool, bool) {
 
 // AllDefinitions returns all tool definitions sorted by name, suitable for
 // returning in a tools/list response.
-func (r *ToolRegistry) AllDefinitions() []mcp.Tool {
+func (r *ToolRegistry) AllDefinitions() []*mcpsdk.Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	defs := make([]mcp.Tool, 0, len(r.tools))
+	defs := make([]*mcpsdk.Tool, 0, len(r.tools))
 	for _, rt := range r.tools {
 		defs = append(defs, rt.Definition)
 	}
@@ -119,7 +122,7 @@ func (r *ToolRegistry) RemoveServer(serverID string) {
 
 // ReplaceServer atomically swaps one upstream server's registered tool set and
 // returns the added, updated, and removed tool names/definitions.
-func (r *ToolRegistry) ReplaceServer(serverID string, client mcpclient.MCPClient, tools []mcp.Tool) ToolDelta {
+func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, tools []*mcpsdk.Tool) ToolDelta {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -131,7 +134,7 @@ func (r *ToolRegistry) ReplaceServer(serverID string, client mcpclient.MCPClient
 		}
 	}
 
-	newDefs := make(map[string]mcp.Tool, len(tools))
+	newDefs := make(map[string]*mcpsdk.Tool, len(tools))
 	for _, t := range tools {
 		key, def := r.disambiguateLocked(serverID, t)
 		r.tools[key] = RegisteredTool{
@@ -143,8 +146,8 @@ func (r *ToolRegistry) ReplaceServer(serverID string, client mcpclient.MCPClient
 	}
 
 	delta := ToolDelta{
-		Added:   make([]mcp.Tool, 0),
-		Updated: make([]mcp.Tool, 0),
+		Added:   make([]*mcpsdk.Tool, 0),
+		Updated: make([]*mcpsdk.Tool, 0),
 		Removed: make([]string, 0),
 	}
 	for key, def := range newDefs {

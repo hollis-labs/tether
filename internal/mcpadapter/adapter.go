@@ -36,10 +36,11 @@ import (
 	"log/slog"
 	"strings"
 
-	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
+	"github.com/hollis-labs/go-mcp/budget"
+	"github.com/hollis-labs/go-mcp/sanitize"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	hotel "github.com/hollis-labs/go-otel"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -67,7 +68,7 @@ type Adapter struct {
 	upstreams *ClientPool        // set before proxy handlers start
 	svc       *app.Service
 	client    *client.Client // optional; when set, session-mutating tools route through the daemon
-	mcp       *server.MCPServer
+	mcp       *gomcp.Server
 	token     string
 	scopes    map[string]struct{}
 
@@ -147,25 +148,44 @@ func NewWithDaemon(svc *app.Service, dc *client.Client, token string, scopes []s
 // Run starts the MCP stdio server. It blocks until ctx is canceled or
 // the stdio transport closes.
 func (a *Adapter) Run(ctx context.Context) error {
-	s := server.NewMCPServer(
-		"agent-mux",
-		a.runtime.Build.Version,
-		server.WithToolCapabilities(true),
-		server.WithExperimental(map[string]any{RuntimeObservationCapability: a.runtime}),
-	)
-	a.registerTools(s)
-	ctxFunc := func(_ context.Context) context.Context { return ctx }
-	return server.ServeStdio(s, server.WithStdioContextFunc(ctxFunc))
+	s := a.newServer()
+	return s.Run(ctx)
 }
 
-// addTool wraps every MCP tool handler with the go-mcp-sanitize middleware,
-// which auto-cleans malformed agent tool-call XML in free-text params before
-// the handler runs. Clean calls are silent; cleaned calls emit one warn-level
-// slog line via a.Logger (see github.com/hollis-labs/go-mcp-sanitize).
-//
-// All registerXxx helpers must call a.addTool(s, tool, handler) instead of
-// s.AddTool(tool, handler) directly so the protection stays uniform across
-// every tool surface registered by the adapter.
+// newBareServer builds a go-mcp server advertising the RuntimeObservation
+// experimental capability, with the sanitize middleware installed once at
+// the transport-dispatch layer (rather than per-tool, as mark3labs
+// required) -- and nothing else registered. Shared by newServer (the plain
+// stdio path) and RunWithProxyOpts (proxy_adapter.go), which each register a
+// different tool set on top of it.
+func (a *Adapter) newBareServer() *gomcp.Server {
+	s := gomcp.NewServer(
+		"agent-mux",
+		a.runtime.Build.Version,
+		gomcp.WithCapabilities(&mcpsdk.ServerCapabilities{
+			Experimental: map[string]any{RuntimeObservationCapability: a.runtime},
+		}),
+	)
+	s.SDKServer().AddReceivingMiddleware(sanitize.Middleware(a.logger()))
+	return s
+}
+
+// newServer builds a fully-configured go-mcp server with every native tool
+// registered.
+func (a *Adapter) newServer() *gomcp.Server {
+	s := a.newBareServer()
+	a.registerTools(s)
+	return s
+}
+
+// addTool registers t on s after stamping its required annotation hints from
+// b and wrapping its handler with session/trace-context attachment and a
+// tool-call span. Every registerXxx helper must go through addTool instead of
+// s.RegisterTool directly so that coverage stays uniform across every tool
+// surface the adapter exposes -- sanitize protection itself is now installed
+// once, globally, in newServer (see go-mcp's sanitize.Middleware, which runs
+// as a receiving middleware over every tools/call request rather than a
+// per-tool wrapper).
 //
 // b is REQUIRED and has no usable zero value: a tool cannot be registered
 // without stating what it does. See behavior.go for why, and for the precise
@@ -174,52 +194,55 @@ func (a *Adapter) Run(ctx context.Context) error {
 //
 // An unset Behavior panics rather than registering. That is deliberate: every
 // tool registers at process start, so the failure is immediate, total and
-// deterministic in every run and every test -- it cannot ship. Publishing a
-// zero-valued Behavior would advertise readOnly=false, destructive=false, the
-// most permissive tuple of all, which is the opposite of the cautious default
-// this work is replacing.
-func (a *Adapter) addTool(s *server.MCPServer, t mcp.Tool, b Behavior, h server.ToolHandlerFunc) {
+// deterministic in every run and every test -- it cannot ship.
+func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	if !b.valid() {
 		panic("mcpadapter: tool " + t.Name + " registered with an unset Behavior; use Reads, Writes or Destroys")
 	}
-	b.annotations()(&t)
-	logger := a.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	handler := mcpsanitize.Middleware(logger)(h)
-	s.AddTool(t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ann := b.annotations()
+	name := t.Name
+	inner := t.Handler
+	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
 		ctx = a.withSessionID(ctx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
-		ctx, span := hotel.ToolCallSpan(ctx, t.Name)
+		ctx, span := hotel.ToolCallSpan(ctx, name)
 		defer span.End()
-		return handler(ctx, req)
-	})
+		return inner(ctx, args)
+	}
+	t.ReadOnlyHint = ann.readOnly
+	t.DestructiveHint = ann.destructive
+	t.IdempotentHint = ann.idempotent
+	t.OpenWorldHint = ann.openWorld
+	s.RegisterTool(t)
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-// toolJSON serializes v as a JSON text tool result.
-func toolJSON(v any) *mcp.CallToolResult {
-	b, _ := json.Marshal(v)
-	return mcp.NewToolResultText(string(b))
+// toolJSON marks v as a tool's JSON result. Under go-mcp's ToolHandler
+// contract a non-string return value already becomes the JSON result
+// (StructuredContent, mirrored as text) with no wrapping required; this stays
+// as a documenting identity so call sites still read "this is the JSON
+// result" rather than an unmarked map/struct literal.
+func toolJSON(v any) any {
+	return v
 }
 
-// toolError returns an MCP error result (IsError=true) with a structured JSON body.
-// Using NewToolResultError ensures middleware and clients that check result.IsError
-// correctly identify failures — NewToolResultText with ok:"false" was wrong.
-func toolError(code, message string) *mcp.CallToolResult {
-	b, _ := json.Marshal(map[string]any{"ok": false, "code": code, "message": message})
-	return mcp.NewToolResultError(string(b))
+// toolError returns a *budget.ToolError, which go-mcp reports as error
+// content with IsError=true and the full structured shape (code, field,
+// retryable, next step, help tool) preserved in StructuredContent -- the
+// same correctness toolError's callers relied on NewToolResultError for
+// before this package carried its own error type.
+func toolError(code, message string) *budget.ToolError {
+	return budget.NewToolError(code, message)
 }
 
 // daemonUnreachableError is the canonical tool-error response when a
 // session-mutating tool routes through the daemon but the daemon is not
 // running or otherwise unreachable. Code "daemon_unavailable" matches
 // ADR 0010's typed error envelope conventions; the message is actionable.
-func daemonUnreachableError(err error) *mcp.CallToolResult {
+func daemonUnreachableError(err error) *budget.ToolError {
 	return toolError("daemon_unavailable",
 		"muxd daemon is not reachable; start it with `mux daemon up` ("+err.Error()+")")
 }
@@ -237,7 +260,7 @@ func isDaemonUnreachable(err error) bool {
 // conflict / internal_error). The daemon already classifies via ADR 0010 typed
 // envelopes; we string-sniff the wrapped form ("daemon NNN (code): msg")
 // to recover the code without reaching into internal/api here.
-func classifyClientErr(err error, id string) *mcp.CallToolResult {
+func classifyClientErr(err error, id string) *budget.ToolError {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "(invalid_request)"), strings.Contains(msg, " 400 "):
@@ -255,8 +278,8 @@ func classifyClientErr(err error, id string) *mcp.CallToolResult {
 }
 
 // checkScope verifies that the token is set and the named scope is present.
-// Returns a non-nil error result when the check fails.
-func (a *Adapter) checkScope(scope string) *mcp.CallToolResult {
+// Returns a non-nil error when the check fails.
+func (a *Adapter) checkScope(scope string) error {
 	if a.token == "" {
 		return toolError("auth_required", "no token configured; pass --token to enable mutating tools")
 	}
@@ -266,18 +289,18 @@ func (a *Adapter) checkScope(scope string) *mcp.CallToolResult {
 	return nil
 }
 
-// str extracts a string argument from a CallToolRequest, returning "" if
-// the key is absent or not a string.
-func str(req mcp.CallToolRequest, key string) string {
-	v, _ := req.GetArguments()[key].(string)
+// str extracts a string argument from a tool call's decoded arguments,
+// returning "" if the key is absent or not a string.
+func str(args map[string]any, key string) string {
+	v, _ := args[key].(string)
 	return strings.TrimSpace(v)
 }
 
 // intArg extracts an integer argument. JSON numbers arrive as float64 from
 // well-behaved callers, but LLM clients frequently emit numeric strings (e.g.
 // "50"). Both forms are handled; unknown types fall back to def.
-func intArg(req mcp.CallToolRequest, key string, def int) int {
-	switch v := req.GetArguments()[key].(type) {
+func intArg(args map[string]any, key string, def int) int {
+	switch v := args[key].(type) {
 	case float64:
 		return int(v)
 	case int:
@@ -303,8 +326,8 @@ func intArg(req mcp.CallToolRequest, key string, def int) int {
 
 // floatArg extracts a floating-point argument. Accepts JSON numbers,
 // json.Number, and numeric strings; anything else falls back to def.
-func floatArg(req mcp.CallToolRequest, key string, def float64) float64 {
-	switch v := req.GetArguments()[key].(type) {
+func floatArg(args map[string]any, key string, def float64) float64 {
+	switch v := args[key].(type) {
 	case float64:
 		return v
 	case float32:
@@ -328,8 +351,8 @@ func floatArg(req mcp.CallToolRequest, key string, def float64) float64 {
 	}
 }
 
-func strSliceArg(req mcp.CallToolRequest, key string) []string {
-	raw, ok := req.GetArguments()[key]
+func strSliceArg(args map[string]any, key string) []string {
+	raw, ok := args[key]
 	if !ok || raw == nil {
 		return nil
 	}
@@ -387,4 +410,51 @@ func (a *Adapter) logger() *slog.Logger {
 		return a.Logger
 	}
 	return slog.Default()
+}
+
+// ─── schema property builders ──────────────────────────────────────────────
+//
+// Small JSON-Schema property builders, paired with gomcp.ObjectSchema/
+// EmptyObjectSchema, replacing the mcp.WithString/WithNumber/WithBoolean
+// builder functions mark3labs' mcp.NewTool used to provide.
+
+func strProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+
+// strEnumProp is strProp restricted to an enumerated set of values.
+func strEnumProp(desc string, values ...string) map[string]any {
+	return map[string]any{"type": "string", "description": desc, "enum": values}
+}
+
+func numProp(desc string) map[string]any {
+	return map[string]any{"type": "number", "description": desc}
+}
+
+func boolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
+
+// arrProp declares an array property. items is the item schema (e.g.
+// map[string]any{"type": "string"} for strArrProp); nil leaves item type
+// unconstrained, matching mark3labs' mcp.WithArray with no WithXxxItems.
+func arrProp(desc string, items map[string]any) map[string]any {
+	p := map[string]any{"type": "array", "description": desc}
+	if items != nil {
+		p["items"] = items
+	}
+	return p
+}
+
+// strArrProp declares an array of strings, matching mark3labs'
+// mcp.WithArray(name, ..., mcp.WithStringItems()).
+func strArrProp(desc string) map[string]any {
+	return arrProp(desc, map[string]any{"type": "string"})
+}
+
+// objProp declares a free-form (untyped-properties) object property, matching
+// mark3labs' mcp.WithObject(name, mcp.Description(desc)) with no nested
+// property schema declared.
+func objProp(desc string) map[string]any {
+	return map[string]any{"type": "object", "description": desc}
 }

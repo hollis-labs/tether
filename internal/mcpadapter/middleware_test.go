@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -17,29 +17,29 @@ type recordingMiddleware struct {
 	called *[]int
 }
 
-func (m *recordingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest, next ToolCallHandler) (*mcp.CallToolResult, error) {
+func (m *recordingMiddleware) Handle(ctx context.Context, call ToolCall, next ToolCallHandler) (*mcpsdk.CallToolResult, error) {
 	*m.called = append(*m.called, m.id)
-	return next(ctx, req)
+	return next(ctx, call)
 }
 
 // shortCircuitMiddleware never calls next.
 type shortCircuitMiddleware struct {
-	result *mcp.CallToolResult
+	result *mcpsdk.CallToolResult
 }
 
-func (m *shortCircuitMiddleware) Handle(_ context.Context, _ mcp.CallToolRequest, _ ToolCallHandler) (*mcp.CallToolResult, error) {
+func (m *shortCircuitMiddleware) Handle(_ context.Context, _ ToolCall, _ ToolCallHandler) (*mcpsdk.CallToolResult, error) {
 	return m.result, nil
 }
 
 // errorMiddleware always returns an error.
 type errorMiddleware struct{}
 
-func (m *errorMiddleware) Handle(_ context.Context, _ mcp.CallToolRequest, _ ToolCallHandler) (*mcp.CallToolResult, error) {
+func (m *errorMiddleware) Handle(_ context.Context, _ ToolCall, _ ToolCallHandler) (*mcpsdk.CallToolResult, error) {
 	return nil, errors.New("middleware error")
 }
 
-func terminalOK(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("terminal"), nil
+func terminalOK(_ context.Context, _ ToolCall) (*mcpsdk.CallToolResult, error) {
+	return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "terminal"}}}, nil
 }
 
 // ─── chain tests ──────────────────────────────────────────────────────────────
@@ -96,12 +96,12 @@ func TestBuildMiddlewareChain_Order(t *testing.T) {
 func TestBuildMiddlewareChain_ShortCircuit(t *testing.T) {
 	// Short-circuit middleware must prevent terminal from being called.
 	terminalCalled := false
-	terminal := ToolCallHandler(func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	terminal := ToolCallHandler(func(_ context.Context, _ ToolCall) (*mcpsdk.CallToolResult, error) {
 		terminalCalled = true
-		return mcp.NewToolResultText("terminal"), nil
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "terminal"}}}, nil
 	})
 
-	mw := &shortCircuitMiddleware{result: mcp.NewToolResultText("short-circuited")}
+	mw := &shortCircuitMiddleware{result: &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "short-circuited"}}}}
 	chain := buildMiddlewareChain(terminal, []ToolCallMiddleware{mw})
 	result, err := chain(context.Background(), callReq("tool"))
 	if err != nil {

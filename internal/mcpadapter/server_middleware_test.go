@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/events"
 )
 
 // TestServerLevelMiddlewareFires verifies that registering LoggingMiddleware
-// via s.Use() causes tool_call_end events to be published to the bus when
-// any tool — native or proxied — is invoked through the MCP server.
+// as a receiving middleware (proxyLoggingMiddleware, the replacement for
+// mark3labs' s.Use()) causes tool_call_end events to be published to the bus
+// when any tool — native or proxied — is invoked through the MCP server.
 //
 // This is the critical integration test for the TUI Activity feed: if this
 // test passes, events will flow to the daemon and appear in the feed.
@@ -32,40 +32,26 @@ func TestServerLevelMiddlewareFires(t *testing.T) {
 	}
 	defer unsub()
 
-	// Build an MCP server and register LoggingMiddleware via s.Use().
+	// Build an MCP server and register LoggingMiddleware as a receiving
+	// middleware, exactly as RunWithProxyOpts wires it.
 	lm := NewLoggingMiddleware(bus)
-	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
-	s.Use(func(next mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
-		return func(hCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return lm.Handle(hCtx, req, ToolCallHandler(next))
-		}
-	})
+	s := gomcp.NewServer("test", "0.0.1")
+	s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware([]ToolCallMiddleware{lm}))
 
 	// Register a simple native tool.
-	s.AddTool(
-		mcp.NewTool("native_test_tool", mcp.WithDescription("test native tool")),
-		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultText("native-ok"), nil
-		},
-	)
+	s.RegisterTool(gomcp.Tool{
+		Name:         "native_test_tool",
+		Description:  "test native tool",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      func(context.Context, map[string]any) (any, error) { return "native-ok", nil },
+		ReadOnlyHint: true,
+	})
 
-	// Use the in-process client to call the tool — this exercises the full
-	// server dispatch path including s.Use() middleware.
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer c.Close()
+	// Use an in-memory client to call the tool — this exercises the full
+	// server dispatch path including the receiving middleware.
+	c := connectInMemory(t, s)
 
-	if _, err := c.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "native_test_tool"
-	req.Params.Arguments = map[string]any{}
-
-	result, callErr := c.CallTool(ctx, req)
+	result, callErr := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: "native_test_tool", Arguments: map[string]any{}})
 	if callErr != nil {
 		t.Fatalf("CallTool: %v", callErr)
 	}
@@ -101,7 +87,7 @@ collect:
 	}
 
 	if !found {
-		t.Fatal("no tool_call_end event received — s.Use() middleware is not firing for native tools")
+		t.Fatal("no tool_call_end event received — the receiving middleware is not firing for native tools")
 	}
 	if got.ToolName != "native_test_tool" {
 		t.Errorf("ToolName = %q, want native_test_tool", got.ToolName)

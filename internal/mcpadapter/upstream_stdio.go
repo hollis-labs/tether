@@ -1,7 +1,6 @@
 package mcpadapter
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -23,10 +21,11 @@ import (
 // A replacement is never started until Wait confirms the old process exited.
 // Closing a connection sends EOF, never a signal to a live upstream.
 type stdioUpstream struct {
-	*mcpclient.Client
+	*mcpsdk.ClientSession
 	cmd    *exec.Cmd
 	done   chan struct{}
 	lost   chan struct{}
+	stdin  io.WriteCloser
 	stdout *os.File
 	stderr stderrTail
 	exit   UpstreamExit // published by closing done
@@ -40,14 +39,17 @@ type UpstreamExit struct {
 	At     time.Time `json:"at"`
 }
 
+// eofReader must satisfy io.ReadCloser, not just io.Reader: mcpsdk.IOTransport
+// requires a ReadCloser, so Close is promoted from the embedded stdout handle
+// rather than added by hand here.
 type eofReader struct {
-	io.Reader
+	io.ReadCloser
 	once sync.Once
 	lost chan struct{}
 }
 
 func (r *eofReader) Read(b []byte) (int, error) {
-	n, err := r.Reader.Read(b)
+	n, err := r.ReadCloser.Read(b)
 	if errors.Is(err, os.ErrClosed) {
 		err = io.EOF
 	}
@@ -162,12 +164,25 @@ func redactStderr(original string, secrets []string) string {
 	return out.String()
 }
 
-func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioUpstream, error) {
+// spawnStdioUpstream starts the upstream process and wires its pipes for the
+// process-supervision observability client_pool.go's recovery loop depends on
+// (separate lost-vs-exited signals, bounded redacted stderr tail, exit
+// code/signal capture), returning a *stdioUpstream with no ClientSession yet
+// and the mcpsdk.Transport to connect it over.
+//
+// The MCP client itself is deliberately NOT constructed here: it needs a
+// RelaunchObservation built from u.launch (see ClientPool.connect), which is
+// only known once the process has actually started -- and go-mcp's
+// ClientOptions.Capabilities can only be supplied at Client construction,
+// before Connect. Splitting spawn from connect lets the caller build that
+// payload from the now-known u.launch and hand it to mcpsdk.NewClient itself.
+//
+// This also means: NOT mcpsdk.CommandTransport, which owns Cmd construction
+// itself and exposes no hook to intercept reads for "lost" detection or to
+// attach our own Stderr/WaitDelay configuration.
+func spawnStdioUpstream(entry config.MCPServerEntry) (*stdioUpstream, *mcpsdk.IOTransport, error) {
 	if entry.Command == "" {
-		return nil, fmt.Errorf("stdio transport requires command")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("stdio transport requires command")
 	}
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
 	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
@@ -182,27 +197,47 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 	u.cmd.WaitDelay = time.Second
 	stdin, err := u.cmd.StdinPipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		_ = stdin.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	u.stdout = stdout
+	u.stdin = stdin
 	u.cmd.Stdout = writer
 	if err := u.cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
 		_ = writer.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	u.launch.PID = u.cmd.Process.Pid
 	_ = writer.Close()
-	t := transport.NewIO(&eofReader{Reader: stdout, lost: u.lost}, stdin, nil)
-	u.Client = mcpclient.NewClient(t)
-	// NewIO.Start does not spawn or dial and cannot fail.
-	_ = t.Start(ctx)
+	transport := &mcpsdk.IOTransport{
+		Reader: &eofReader{ReadCloser: stdout, lost: u.lost},
+		Writer: stdin,
+	}
+	return u, transport, nil
+}
+
+// abandon is called when the handshake over an already-spawned process fails
+// (timeout, garbage response, ...): no session was ever established, so
+// there is nothing for watchExit's exit-tracking to race against or to
+// release. It closes stdin (the transport's normal shutdown signal -- see
+// pipeRWC.Close in the official SDK's CommandTransport) and reaps the
+// process so a child that never notices EOF does not leak as a zombie.
+func (u *stdioUpstream) abandon() {
+	_ = u.stdin.Close()
+	_ = u.stdout.Close()
+	go func() { _ = u.cmd.Wait() }()
+}
+
+// watchExit starts the goroutine that observes process exit once a
+// ClientSession has been established (u.ClientSession must already be set).
+// It publishes UpstreamExit and closes done for every exit, clean or not.
+func (u *stdioUpstream) watchExit() {
 	go func() {
 		_ = u.cmd.Wait()
 		u.exit = UpstreamExit{Kind: "error", Code: u.cmd.ProcessState.ExitCode(), At: time.Now().UTC()}
@@ -216,7 +251,6 @@ func newStdioUpstream(ctx context.Context, entry config.MCPServerEntry) (*stdioU
 		_ = u.Close() // releases in-flight calls, even if a descendant holds stdout
 		close(u.done)
 	}()
-	return u, nil
 }
 
 func stderrRedactionValues(entry config.MCPServerEntry) []string {
@@ -229,7 +263,7 @@ func stderrRedactionValues(entry config.MCPServerEntry) []string {
 }
 
 func (u *stdioUpstream) Close() error {
-	err := u.Client.Close()
+	err := u.ClientSession.Close()
 	_ = u.stdout.Close()
 	return err
 }

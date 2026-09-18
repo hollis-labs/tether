@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // buildTestRegistry returns a ToolRegistry populated with a small set of
@@ -13,19 +13,19 @@ import (
 func buildTestRegistry() *ToolRegistry {
 	r := NewToolRegistry()
 
-	clockworkTools := []mcp.Tool{
+	clockworkTools := []*mcpsdk.Tool{
 		{Name: "clockwork_task_create", Description: "Create a new task in the task tracker"},
 		{Name: "clockwork_task_list", Description: "List tasks with optional status filters"},
 		{Name: "clockwork_sprint_create", Description: "Create a sprint for task cohort management"},
 	}
-	hadronTools := []mcp.Tool{
+	hadronTools := []*mcpsdk.Tool{
 		{Name: "hadron_run_enqueue", Description: "Enqueue a blueprint automation run"},
 		{Name: "hadron_blueprints_list", Description: "List available automation blueprints"},
 	}
 
 	// Use a nil client — discovery only needs the registry metadata.
-	r.Register("clockwork", (mcpclient.MCPClient)(nil), clockworkTools)
-	r.Register("hadron", (mcpclient.MCPClient)(nil), hadronTools)
+	r.Register("clockwork", nil, clockworkTools)
+	r.Register("hadron", nil, hadronTools)
 	return r
 }
 
@@ -149,11 +149,12 @@ func TestDiscoveryIndex_Search_TotalMatchesAndTruncation(t *testing.T) {
 
 func TestDiscoveryIndex_SearchResult_HasInputSchema(t *testing.T) {
 	reg := NewToolRegistry()
-	tool := mcp.NewTool("my_tool",
-		mcp.WithDescription("A test tool"),
-		mcp.WithString("arg1", mcp.Description("first arg")),
-	)
-	reg.Register("myserver", (mcpclient.MCPClient)(nil), []mcp.Tool{tool})
+	tool := &mcpsdk.Tool{
+		Name:        "my_tool",
+		Description: "A test tool",
+		InputSchema: gomcp.ObjectSchema(map[string]any{"arg1": strProp("first arg")}),
+	}
+	reg.Register("myserver", nil, []*mcpsdk.Tool{tool})
 
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
@@ -175,11 +176,11 @@ func TestDiscoveryIndex_SearchResult_HasInputSchema(t *testing.T) {
 func TestDiscoveryIndex_NoNativeTools(t *testing.T) {
 	reg := NewToolRegistry()
 	// Register a native tool (no serverID).
-	reg.RegisterNative([]mcp.Tool{
+	reg.RegisterNative([]*mcpsdk.Tool{
 		{Name: "mux_health", Description: "Health check"},
 	})
 	// Register one upstream tool.
-	reg.Register("clockwork", (mcpclient.MCPClient)(nil), []mcp.Tool{
+	reg.Register("clockwork", nil, []*mcpsdk.Tool{
 		{Name: "clockwork_task_create", Description: "Create task"},
 	})
 

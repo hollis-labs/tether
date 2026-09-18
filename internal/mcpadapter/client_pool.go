@@ -5,20 +5,38 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/go-mcp/compat"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/hollis-labs/tether/internal/config"
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// upstreamClient is the narrow contract client_pool.go depends on for an
+// upstream MCP connection -- satisfied directly by *mcpsdk.ClientSession
+// (returned by (*mcpsdk.Client).Connect for the sse/http transports) and by
+// *stdioUpstream (which embeds one). Declared narrowly, mirroring Hadron's
+// internal_caller.go externalClient, so tests can substitute a fake.
+//
+// go-mcp has no client package of its own -- it is server-only by design
+// (CW-20260918-0013 tracks a possible future shared one, informed by this
+// pool as one of its two reference consumers) -- so this drives the official
+// SDK's Client/ClientSession directly, per the same "port it directly, don't
+// block on a shared package" direction Hadron's port followed.
+type upstreamClient interface {
+	CallTool(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error)
+	ListTools(ctx context.Context, params *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error)
+	Close() error
+}
 
 type clientStatus struct {
 	entry      config.MCPServerEntry
-	client     mcpclient.MCPClient
+	client     upstreamClient
 	toolCount  int
 	err        error
 	state      string
@@ -62,8 +80,8 @@ type ClientPool struct {
 	mu                 sync.Mutex
 	catalogMu          sync.Mutex // serialize registry changes and their publication
 	statuses           map[string]*clientStatus
-	refreshing         map[mcpclient.MCPClient]bool
-	connectFn          func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error)
+	refreshing         map[upstreamClient]bool
+	connectFn          func(context.Context, config.MCPServerEntry) (upstreamClient, error)
 	toolRefreshHandler func(ToolRefreshResult)
 	cancel             context.CancelFunc
 	workers            sync.WaitGroup
@@ -78,11 +96,11 @@ type recoveryPolicy struct {
 
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
 	return &ClientPool{runtime: processObservation, entries: entries, registry: registry,
-		statuses: make(map[string]*clientStatus), refreshing: make(map[mcpclient.MCPClient]bool),
+		statuses: make(map[string]*clientStatus), refreshing: make(map[upstreamClient]bool),
 		policy: recoveryPolicy{delays: []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}, stableFor: time.Minute, handshakeTimeout: 10 * time.Second}}
 }
 
-func (p *ClientPool) SetConnectFunc(fn func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error)) {
+func (p *ClientPool) SetConnectFunc(fn func(context.Context, config.MCPServerEntry) (upstreamClient, error)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.connectFn = fn
@@ -124,6 +142,14 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		s.nextRetry = time.Time{}
 		s.client = nil
 		p.mu.Unlock()
+		// connect (via p.connect) performs the full spawn/dial-and-handshake
+		// in one call -- the official SDK's Client.Connect does the
+		// initialize round trip internally, unlike mark3labs' separate
+		// NewXxxClient + explicit Initialize -- bounded by its own internal
+		// handshakeTimeout window. The notification handler for
+		// tools/list_changed is wired inside p.connect too, since
+		// ClientOptions.ToolListChangedHandler must be supplied before
+		// Connect rather than registered afterward.
 		client, err := p.connect(ctx, entry)
 		if err == nil {
 			p.mu.Lock()
@@ -133,21 +159,11 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 				s.lastLaunch = &launch
 			}
 			p.mu.Unlock()
-			client.OnNotification(func(n mcp.JSONRPCNotification) {
-				if n.Method == mcp.MethodNotificationToolsListChanged {
-					go func() { _, _ = p.refreshServer(ctx, entry.ID, client, "notification") }()
-				}
-			})
-			initCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
-			var result *mcp.ListToolsResult
-			_, err = client.Initialize(initCtx, p.initializeRequest(entry, client))
+			listCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
+			var result *mcpsdk.ListToolsResult
+			result, err = client.ListTools(listCtx, &mcpsdk.ListToolsParams{})
 			if err != nil {
-				err = fmt.Errorf("initialize: %w", err)
-			} else {
-				result, err = client.ListTools(initCtx, mcp.ListToolsRequest{})
-				if err != nil {
-					err = fmt.Errorf("list tools: %w", err)
-				}
+				err = fmt.Errorf("list tools: %w", err)
 			}
 			cancel()
 			if err == nil {
@@ -246,7 +262,7 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 
 // publish rejects results from old connections and canceled operations. A
 // successful handshake replaces the client even when tool schemas are equal.
-func (p *ClientPool) publish(ctx context.Context, id string, client mcpclient.MCPClient, tools []mcp.Tool, notify bool) (ToolRefreshResult, error) {
+func (p *ClientPool) publish(ctx context.Context, id string, client upstreamClient, tools []*mcpsdk.Tool, notify bool) (ToolRefreshResult, error) {
 	p.catalogMu.Lock()
 	defer p.catalogMu.Unlock()
 	p.mu.Lock()
@@ -278,7 +294,7 @@ func (p *ClientPool) publish(ctx context.Context, id string, client mcpclient.MC
 	return refresh, nil
 }
 
-func (p *ClientPool) fail(id string, client mcpclient.MCPClient, err error) {
+func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if s := p.statuses[id]; s != nil && s.client == client && s.state != "reconnecting" && !s.exhausted {
@@ -288,9 +304,13 @@ func (p *ClientPool) fail(id string, client mcpclient.MCPClient, err error) {
 	}
 }
 
-// connect creates (and starts) the appropriate MCP client for the entry.
-// ctx is threaded through so SSE startup cancels promptly on shutdown.
-func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
+// connect creates (and connects) the appropriate MCP client for the entry.
+// ctx is the long-lived supervise ctx: it is threaded into the
+// tools/list_changed notification handler (fired well after this call
+// returns, so it must survive past this call's own handshake deadline) and
+// used, bounded by its own internal handshakeTimeout window, for the
+// connect+initialize handshake itself.
+func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (upstreamClient, error) {
 	p.mu.Lock()
 	connectFn := p.connectFn
 	p.mu.Unlock()
@@ -298,29 +318,48 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		return connectFn(ctx, entry)
 	}
 
+	impl := &mcpsdk.Implementation{Name: "agent-mux-proxy", Version: p.runtime.Build.Version}
+	opts := &mcpsdk.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
+			go func() { _, _ = p.RefreshServer(ctx, entry.ID) }()
+		},
+	}
+
+	handshakeCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
+	defer cancel()
+
 	switch entry.Transport {
 	case "stdio":
-		return newStdioUpstream(ctx, entry)
+		u, upTransport, err := spawnStdioUpstream(entry)
+		if err != nil {
+			return nil, err
+		}
+		// The RelaunchObservation is Tether announcing its own launch/recovery
+		// context TO the upstream during the handshake -- it needs u.launch,
+		// only known now that the process has actually spawned, so it is
+		// built here rather than passed into spawnStdioUpstream.
+		p.mu.Lock()
+		observation := RelaunchObservation{SchemaVersion: 1, Mode: "observation-only", Owner: p.runtime, Launch: u.launch, Recovery: p.recoveryObservation(p.statuses[entry.ID])}
+		p.mu.Unlock()
+		opts.Capabilities = &mcpsdk.ClientCapabilities{Experimental: map[string]any{RuntimeObservationCapability: observation}}
+
+		cs, err := mcpsdk.NewClient(impl, opts).Connect(handshakeCtx, upTransport, nil)
+		if err != nil {
+			u.abandon()
+			return nil, fmt.Errorf("connect mcp stdio upstream %q: %w", entry.Command, err)
+		}
+		u.ClientSession = cs
+		u.watchExit()
+		return u, nil
 	case "sse":
 		if entry.URL == "" {
 			return nil, fmt.Errorf("sse transport requires url")
 		}
-		opts := []transport.ClientOption{}
-		if entry.Token != "" {
-			opts = append(opts, mcpclient.WithHeaders(map[string]string{
-				"Authorization": "Bearer " + entry.Token,
-			}))
-		}
-		c, err := mcpclient.NewSSEMCPClient(entry.URL, opts...)
+		cs, err := mcpsdk.NewClient(impl, opts).Connect(handshakeCtx, compat.NewSSEClientTransport(entry.URL, bearerHTTPClient(entry.Token)), nil)
 		if err != nil {
-			return nil, err
-		}
-		// SSE transport requires an explicit Start call (unlike stdio which
-		// auto-starts in NewStdioMCPClient).
-		if err := c.Start(ctx); err != nil {
 			return nil, fmt.Errorf("start sse transport: %w", err)
 		}
-		return c, nil
+		return cs, nil
 	case "http":
 		// Streamable HTTP. Each request is an ordinary POST, so there is no
 		// long-lived stream to lose when the upstream restarts — which is the
@@ -328,28 +367,40 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		if entry.URL == "" {
 			return nil, fmt.Errorf("http transport requires url")
 		}
-		opts := []transport.StreamableHTTPCOption{}
-		if entry.Token != "" {
-			// transport.WithHTTPHeaders, not mcpclient.WithHeaders: the latter
-			// returns a transport.ClientOption, which is SSE-only.
-			opts = append(opts, transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + entry.Token,
-			}))
-		}
-		c, err := mcpclient.NewStreamableHttpClient(entry.URL, opts...)
+		cs, err := mcpsdk.NewClient(impl, opts).Connect(handshakeCtx, &mcpsdk.StreamableClientTransport{
+			Endpoint:   entry.URL,
+			HTTPClient: bearerHTTPClient(entry.Token),
+		}, nil)
 		if err != nil {
-			return nil, err
-		}
-		// Start opens no connection for this transport, but it is what installs
-		// the transport's notification handler — without it the OnNotification
-		// hook in startOne never sees tools/list_changed.
-		if err := c.Start(ctx); err != nil {
 			return nil, fmt.Errorf("start http transport: %w", err)
 		}
-		return c, nil
+		return cs, nil
 	default:
 		return nil, fmt.Errorf("unknown transport %q (want stdio, sse, or http)", entry.Transport)
 	}
+}
+
+// bearerHTTPClient returns an *http.Client that injects an Authorization:
+// Bearer header on every request when token is non-empty, for the
+// sse/http transports' optional per-entry token -- mcpsdk's client
+// transports take an *http.Client, not a headers map, so this is the seam
+// for it. Returns nil (the SDK's own default) when token is empty.
+func bearerHTTPClient(token string) *http.Client {
+	if token == "" {
+		return nil
+	}
+	return &http.Client{Transport: &bearerRoundTripper{token: token, base: http.DefaultTransport}}
+}
+
+type bearerRoundTripper struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	cloned := req.Clone(req.Context())
+	cloned.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(cloned)
 }
 
 func (p *ClientPool) RefreshServer(ctx context.Context, id string) (ToolRefreshResult, error) {
@@ -451,7 +502,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 	return out
 }
 
-func (p *ClientPool) refreshServer(ctx context.Context, id string, client mcpclient.MCPClient, source string) (ToolRefreshResult, error) {
+func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstreamClient, source string) (ToolRefreshResult, error) {
 	callerCtx := ctx
 	p.mu.Lock()
 	if p.refreshing[client] {
@@ -463,7 +514,7 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client mcpcli
 	defer func() { p.mu.Lock(); delete(p.refreshing, client); p.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
 	defer cancel()
-	result, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+	result, err := client.ListTools(ctx, &mcpsdk.ListToolsParams{})
 	if err != nil {
 		callerErr := callerCtx.Err()
 		if callerErr == nil || !errors.Is(err, callerErr) {

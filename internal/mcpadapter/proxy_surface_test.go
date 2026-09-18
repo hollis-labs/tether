@@ -1,11 +1,12 @@
 package mcpadapter
 
 import (
+	"context"
 	"sort"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool) []string {
@@ -13,10 +14,10 @@ func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool
 
 	reg := NewToolRegistry()
 	mc := &mockClient{}
-	reg.Register("alpha", mc, []mcp.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
-	reg.Register("beta", mc, []mcp.Tool{makeTool("beta_tool_x")})
+	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
+	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
 
-	s := server.NewMCPServer("test", "test", server.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "test")
 	a := &Adapter{}
 	if !only {
 		a.registerTools(s)
@@ -40,7 +41,7 @@ func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool
 		firehose: firehose,
 	}
 
-	var proxied []mcp.Tool
+	var proxied []*mcpsdk.Tool
 	for _, def := range reg.AllDefinitions() {
 		rt, ok := reg.Lookup(def.Name)
 		if !ok || rt.ServerID == "" {
@@ -63,9 +64,18 @@ func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool
 		a.registerCatalogRefreshTool(s, NewClientPool(nil, reg))
 	}
 
-	names := make([]string, 0, len(s.ListTools()))
-	for name := range s.ListTools() {
-		names = append(names, name)
+	// s.ToolDefinitions() only reflects go-mcp's own RegisterTool bookkeeping,
+	// which addProxyTools deliberately bypasses (see its doc comment) -- so
+	// the full wire-visible surface, regardless of registration path, is read
+	// back through a real ListTools call instead.
+	c := connectInMemory(t, s)
+	resp, err := c.ListTools(context.Background(), &mcpsdk.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := make([]string, 0, len(resp.Tools))
+	for _, tl := range resp.Tools {
+		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
 	return names

@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/config"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // RuntimeObservationCapability is an experimental, observation-only wire
@@ -149,15 +148,4 @@ func (p *ClientPool) recoveryObservation(s *clientStatus) RecoveryObservation {
 		o.AttemptsRemaining = max(0, o.AttemptLimit-o.AttemptsUsed)
 	}
 	return o
-}
-
-func (p *ClientPool) initializeRequest(entry config.MCPServerEntry, client any) mcp.InitializeRequest {
-	params := mcp.InitializeParams{ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION, ClientInfo: mcp.Implementation{Name: "agent-mux-proxy", Version: p.runtime.Build.Version}}
-	if leaf, ok := client.(*stdioUpstream); ok {
-		p.mu.Lock()
-		observation := RelaunchObservation{SchemaVersion: 1, Mode: "observation-only", Owner: p.runtime, Launch: leaf.launch, Recovery: p.recoveryObservation(p.statuses[entry.ID])}
-		p.mu.Unlock()
-		params.Capabilities.Experimental = map[string]any{RuntimeObservationCapability: observation}
-	}
-	return mcp.InitializeRequest{Params: params}
 }

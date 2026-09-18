@@ -9,11 +9,36 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/config"
 )
+
+// callHandler invokes h directly through a throwaway go-mcp server and an
+// in-memory client, so the call goes through the same any/error ->
+// CallToolResult wrapping (StructuredContent, text mirror, IsError,
+// budget.ToolError handling) a real tool call gets, rather than
+// reimplementing that logic in the test. Bare handlers no longer return
+// *mcpsdk.CallToolResult directly under go-mcp's ToolHandler contract.
+func callHandler(t *testing.T, h gomcp.ToolHandler, args map[string]any) *mcpsdk.CallToolResult {
+	t.Helper()
+	s := gomcp.NewServer("test", "0.0.1")
+	s.RegisterTool(gomcp.Tool{
+		Name:         "under_test",
+		Description:  "under test",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      h,
+		ReadOnlyHint: true,
+	})
+	c := connectInMemory(t, s)
+	res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "under_test", Arguments: args})
+	if err != nil {
+		t.Fatalf("CallTool under_test: %v", err)
+	}
+	return res
+}
 
 func TestCatalogReadsRefreshAfterValidEdit(t *testing.T) {
 	root := newCatalogReadFixture(t, "old")
@@ -34,10 +59,7 @@ func TestCatalogReadsRefreshAfterValidEdit(t *testing.T) {
 		t.Fatal("MCP read mutated the service startup catalog")
 	}
 
-	health, err := a.handleHealth(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("health: %v", err)
-	}
+	health := callHandler(t, a.handleHealth, nil)
 	body := parseToolJSON(t, health)
 	if got := body["ok"]; got != true {
 		t.Fatalf("health ok = %v, want true", got)
@@ -54,10 +76,7 @@ func TestCatalogReadReportsMalformedEditAndRecovers(t *testing.T) {
 	a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
 
 	writeFile(t, filepath.Join(root, "launches", "good.yaml"), "id: [\n")
-	result, err := a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("list launches: %v", err)
-	}
+	result := callHandler(t, a.handleListLaunches, nil)
 	if !result.IsError {
 		t.Fatal("malformed catalog read did not return an MCP tool error")
 	}
@@ -66,10 +85,7 @@ func TestCatalogReadReportsMalformedEditAndRecovers(t *testing.T) {
 		t.Fatalf("error code = %v, want catalog_reload_failed", got)
 	}
 
-	health, err := a.handleHealth(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("health during malformed edit: %v", err)
-	}
+	health := callHandler(t, a.handleHealth, nil)
 	healthBody := parseToolJSON(t, health)
 	if got := healthBody["ok"]; got != false {
 		t.Fatalf("health ok = %v, want false", got)
@@ -124,7 +140,7 @@ func TestCatalogReloadErrorsDoNotExposeConfigurationValues(t *testing.T) {
 			handlers := []struct {
 				name   string
 				health bool
-				call   func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+				call   gomcp.ToolHandler
 			}{
 				{name: "health", health: true, call: a.handleHealth},
 				{name: "projects", call: a.handleListProjects},
@@ -133,10 +149,7 @@ func TestCatalogReloadErrorsDoNotExposeConfigurationValues(t *testing.T) {
 				{name: "launches", call: a.handleListLaunches},
 			}
 			for _, handler := range handlers {
-				result, callErr := handler.call(context.Background(), mcp.CallToolRequest{})
-				if callErr != nil {
-					t.Fatalf("%s: %v", handler.name, callErr)
-				}
+				result := callHandler(t, handler.call, nil)
 				wire := textOf(result)
 				if strings.Contains(wire, marker) {
 					t.Errorf("%s exposed configuration value: %s", handler.name, wire)
@@ -163,9 +176,9 @@ func TestCatalogReloadErrorsDoNotExposeConfigurationValues(t *testing.T) {
 			}
 
 			writeFile(t, filepath.Join(root, "global.yaml"), "version: 0.1.0\n")
-			result, callErr := a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
-			if callErr != nil || result.IsError {
-				t.Fatalf("next-read recovery failed: err=%v result=%s", callErr, textOf(result))
+			result := callHandler(t, a.handleListLaunches, nil)
+			if result.IsError {
+				t.Fatalf("next-read recovery failed: result=%s", textOf(result))
 			}
 		})
 	}
@@ -180,10 +193,7 @@ func TestCatalogReadRejectsIncompleteRecordsAndReferences(t *testing.T) {
 	a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
 
 	writeFile(t, filepath.Join(root, "projects", "good.yaml"), "name: missing id\n")
-	result, err := a.handleListProjects(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("missing id read: %v", err)
-	}
+	result := callHandler(t, a.handleListProjects, nil)
 	if !result.IsError {
 		t.Fatalf("missing id result = %s, want tool error", textOf(result))
 	}
@@ -192,10 +202,7 @@ func TestCatalogReadRejectsIncompleteRecordsAndReferences(t *testing.T) {
 
 	writeCatalogGeneration(t, root, "valid")
 	writeFile(t, filepath.Join(root, "launches", "valid.yaml"), "id: valid-launch\nproject: valid-project\nagent: valid-agent\nprovider: missing-provider\n")
-	result, err = a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("missing reference read: %v", err)
-	}
+	result = callHandler(t, a.handleListLaunches, nil)
 	if !result.IsError {
 		t.Fatalf("missing reference result = %s, want tool error", textOf(result))
 	}
@@ -214,6 +221,22 @@ func TestCatalogReadsAreSafeConcurrently(t *testing.T) {
 	}
 	a := New(&app.Service{CatalogRoot: root, Catalog: initial}, "", nil)
 
+	// One server/session shared across every reader goroutine below -- this
+	// also exercises concurrent CallTool dispatch through a single MCP
+	// session, a reasonable superset of what the direct-handler-call version
+	// of this test covered. callHandler itself is not used here: it calls
+	// t.Fatalf on a transport error, which is unsafe from a non-test
+	// goroutine, so failures are instead collected on errCh as before.
+	s := gomcp.NewServer("test", "0.0.1")
+	s.RegisterTool(gomcp.Tool{
+		Name:         "under_test",
+		Description:  "under test",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      a.handleListLaunches,
+		ReadOnlyHint: true,
+	})
+	c := connectInMemory(t, s)
+
 	const readers = 12
 	const readsPerReader = 10
 	errCh := make(chan error, readers*readsPerReader)
@@ -223,7 +246,7 @@ func TestCatalogReadsAreSafeConcurrently(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < readsPerReader; j++ {
-				result, callErr := a.handleListLaunches(context.Background(), mcp.CallToolRequest{})
+				result, callErr := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "under_test"})
 				if callErr != nil {
 					errCh <- callErr
 					continue
@@ -299,7 +322,7 @@ func assertCatalogReadIDs(t *testing.T, a *Adapter, generation string) {
 		name    string
 		key     string
 		wantID  string
-		handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+		handler gomcp.ToolHandler
 	}{
 		{name: "projects", key: "projects", wantID: generation + "-project", handler: a.handleListProjects},
 		{name: "agents", key: "agents", wantID: generation + "-agent", handler: a.handleListAgents},
@@ -308,10 +331,7 @@ func assertCatalogReadIDs(t *testing.T, a *Adapter, generation string) {
 	}
 	for _, check := range checks {
 		t.Run(check.name+"_"+generation, func(t *testing.T) {
-			result, err := check.handler(context.Background(), mcp.CallToolRequest{})
-			if err != nil {
-				t.Fatalf("call: %v", err)
-			}
+			result := callHandler(t, check.handler, nil)
 			if result.IsError {
 				t.Fatalf("tool error: %s", textOf(result))
 			}

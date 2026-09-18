@@ -45,7 +45,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // RefKind mirrors store.SessionRefRow.Kind without importing the store: this
@@ -119,7 +119,7 @@ type scanResult struct {
 }
 
 // parseResultMap extracts the top-level structured JSON map from a CallToolResult.
-func parseResultMap(res *mcp.CallToolResult) map[string]any {
+func parseResultMap(res *mcpsdk.CallToolResult) map[string]any {
 	if res == nil {
 		return nil
 	}
@@ -127,7 +127,7 @@ func parseResultMap(res *mcp.CallToolResult) map[string]any {
 		return m
 	}
 	for _, c := range res.Content {
-		if tc, ok := mcp.AsTextContent(c); ok && tc != nil {
+		if tc, ok := c.(*mcpsdk.TextContent); ok && tc != nil {
 			var m map[string]any
 			if err := json.Unmarshal([]byte(tc.Text), &m); err == nil && len(m) > 0 {
 				return m
@@ -152,7 +152,7 @@ func strVal(m map[string]any, key string) string {
 }
 
 // extractCallRefs extracts identifiers from a completed tool call (request + response).
-func (a *Adapter) extractCallRefs(ctx context.Context, toolName string, args map[string]any, res *mcp.CallToolResult) scanResult {
+func (a *Adapter) extractCallRefs(ctx context.Context, toolName string, args map[string]any, res *mcpsdk.CallToolResult) scanResult {
 	lowerName := strings.ToLower(toolName)
 
 	// Gating: recall and resolver previews never count as content use.
@@ -434,20 +434,20 @@ func (a *Adapter) extractionEnabled() bool {
 //
 // Failures to attach are logged and dropped. Correlation is a side effect of a
 // proxied call; it must never fail the call it describes.
-func (a *Adapter) recordRefs(ctx context.Context, req mcp.CallToolRequest, res *mcp.CallToolResult, callErr error) {
+func (a *Adapter) recordRefs(ctx context.Context, toolName string, args map[string]any, res *mcpsdk.CallToolResult, callErr error) {
 	if !a.extractionEnabled() || callErr != nil || (res != nil && res.IsError) {
 		return
 	}
-	extracted := a.extractCallRefs(ctx, req.Params.Name, req.GetArguments(), res)
+	extracted := a.extractCallRefs(ctx, toolName, args, res)
 	if extracted.refused {
 		a.logger().Warn("session ref extraction skipped: argument scan exceeded its limit",
-			"tool", req.Params.Name, "max_values", maxScanValues, "max_depth", maxScanDepth)
+			"tool", toolName, "max_values", maxScanValues, "max_depth", maxScanDepth)
 		return
 	}
 	for _, ref := range extracted.refs {
 		if err := a.refs.AttachSessionRef(ctx, a.SessionID, ref.Kind, ref.RefID, ref.URI, ref.Relation, "proxy", ref.ParentItemID); err != nil {
 			a.logger().Warn("attach session ref failed",
-				"tool", req.Params.Name, "kind", ref.Kind, "error", err)
+				"tool", toolName, "kind", ref.Kind, "error", err)
 		}
 	}
 }

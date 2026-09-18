@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // buildMiddlewareChain composes a slice of middleware around a terminal handler,
@@ -29,8 +29,8 @@ func buildMiddlewareChain(handler ToolCallHandler, mws []ToolCallMiddleware) Too
 		// Capture loop variables explicitly.
 		mwCopy := mw
 		innerCopy := inner
-		handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mwCopy.Handle(ctx, req, innerCopy)
+		handler = func(ctx context.Context, call ToolCall) (*mcpsdk.CallToolResult, error) {
+			return mwCopy.Handle(ctx, call, innerCopy)
 		}
 	}
 	return handler

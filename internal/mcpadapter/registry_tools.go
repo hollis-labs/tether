@@ -66,8 +66,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/registry"
 )
@@ -83,142 +82,129 @@ const ScopeRegistryWrite = "registry.write"
 // surface (T08). Read tools (lookup, lookup_by, search) are
 // unauthenticated; write tools (register, update_self, deregister, sync,
 // merge) require the registry.write scope.
-func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("tether_registry_register",
-		mcp.WithDescription(
-			"Register a new agent or project profile in the federation directory. "+
-				"Server mints the URN (Stripe-style opaque id, e.g. agt_xxxxxxxxxx / prj_xxxxxxxxxx); "+
-				"callers MUST NOT supply the urn field — doing so returns invalid_request. "+
-				"The kind argument selects the entity kind. The profile argument is a JSON object "+
-				"matching registry.Profile: required fields are display_name; optional fields "+
-				"include title, role, description, avatar, project, status, callback, capabilities, "+
-				"skills (each {name, learned_at RFC3339, optional via, level}), links (each "+
-				"{kind, target}), kind_meta, host_address, health_status. "+
-				"Returns the canonical Profile with the minted URN. Requires the registry.write scope.",
-		),
-		mcp.WithString("kind", mcp.Required(),
-			mcp.Description("Entity kind: 'agent' or 'project'."),
-			mcp.Enum("agent", "project"),
-		),
-		mcp.WithObject("profile", mcp.Required(),
-			mcp.Description("Profile JSON to register. See tool description for the field shape."),
-		),
-	), Writes(), a.handleRegistryRegister)
+func (a *Adapter) registerRegistryTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_register",
+		Description: "Register a new agent or project profile in the federation directory. " +
+			"Server mints the URN (Stripe-style opaque id, e.g. agt_xxxxxxxxxx / prj_xxxxxxxxxx); " +
+			"callers MUST NOT supply the urn field — doing so returns invalid_request. " +
+			"The kind argument selects the entity kind. The profile argument is a JSON object " +
+			"matching registry.Profile: required fields are display_name; optional fields " +
+			"include title, role, description, avatar, project, status, callback, capabilities, " +
+			"skills (each {name, learned_at RFC3339, optional via, level}), links (each " +
+			"{kind, target}), kind_meta, host_address, health_status. " +
+			"Returns the canonical Profile with the minted URN. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"kind":    strEnumProp("Entity kind: 'agent' or 'project'.", "agent", "project"),
+			"profile": objProp("Profile JSON to register. See tool description for the field shape."),
+		}, "kind", "profile"),
+		Handler: a.handleRegistryRegister,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_lookup",
-		mcp.WithDescription(
-			"Look up a registry profile by URN. Returns the redacted Profile by default or not_found. "+
-				"Soft-deleted (status='deprecated') rows are returned by direct lookup — they "+
-				"are excluded only from default Search results. Read-only by default; passing "+
-				"sensitive operational fields ('callback', 'kind_meta', 'host_address', 'all') in include "+
-				"requires the registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
-		),
-		mcp.WithString("urn", mcp.Required(),
-			mcp.Description("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
-		),
-		mcp.WithString("include",
-			mcp.Description("Optional comma-separated fields to include (e.g. 'external_ids', 'callback', 'kind_meta', 'host_address') or 'all'. Sensitive operational fields require registry.write scope."),
-		),
-	), Reads("registry profile lookup"), a.handleRegistryLookup)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_lookup",
+		Description: "Look up a registry profile by URN. Returns the redacted Profile by default or not_found. " +
+			"Soft-deleted (status='deprecated') rows are returned by direct lookup — they " +
+			"are excluded only from default Search results. Read-only by default; passing " +
+			"sensitive operational fields ('callback', 'kind_meta', 'host_address', 'all') in include " +
+			"requires the registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"urn":     strProp("Full URN as minted by Register, e.g. msg://agent/agent-mux/agt_xxxxxxxxxx."),
+			"include": strProp("Optional comma-separated fields to include (e.g. 'external_ids', 'callback', 'kind_meta', 'host_address') or 'all'. Sensitive operational fields require registry.write scope."),
+		}, "urn"),
+		Handler: a.handleRegistryLookup,
+	}, Reads("registry profile lookup"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_lookup_by",
-		mcp.WithDescription(
-			"Resolve a substrate-local external ID to one registry profile. Returns 0 or 1 row; "+
-				"use this when you know a local ID like a Tether catalog slug, Torque project ID, or Cerberus owner and "+
-				"want the canonical registry URN. Read-only; passing sensitive operational fields in include "+
-				"requires registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
-		),
-		mcp.WithString("kind", mcp.Required(),
-			mcp.Description("Entity kind to resolve: 'agent', 'project', or 'group'."),
-			mcp.Enum("agent", "project", "group"),
-		),
-		mcp.WithString("external_id", mcp.Required(),
-			mcp.Description("Substrate-local identifier to resolve."),
-		),
-		mcp.WithString("substrate", mcp.Description("Optional substrate scope such as 'tether', 'torque', or 'cerberus'.")),
-		mcp.WithString("include", mcp.Description("Optional comma-separated fields to include (e.g. 'external_ids'). Sensitive operational fields require registry.write scope.")),
-	), Reads("registry lookup by external id"), a.handleRegistryLookupBy)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_lookup_by",
+		Description: "Resolve a substrate-local external ID to one registry profile. Returns 0 or 1 row; " +
+			"use this when you know a local ID like a Tether catalog slug, Torque project ID, or Cerberus owner and " +
+			"want the canonical registry URN. Read-only; passing sensitive operational fields in include " +
+			"requires registry.write scope, while correlation identifiers ('external_ids') are accessible with read scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"kind":        strEnumProp("Entity kind to resolve: 'agent', 'project', or 'group'.", "agent", "project", "group"),
+			"external_id": strProp("Substrate-local identifier to resolve."),
+			"substrate":   strProp("Optional substrate scope such as 'tether', 'torque', or 'cerberus'."),
+			"include":     strProp("Optional comma-separated fields to include (e.g. 'external_ids'). Sensitive operational fields require registry.write scope."),
+		}, "kind", "external_id"),
+		Handler: a.handleRegistryLookupBy,
+	}, Reads("registry lookup by external id"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_search",
-		mcp.WithDescription(
-			"Search the registry by filter. All filters combine with AND. Result ordering is "+
-				"alphabetical on display_name. Default excludes status='deprecated'; pass "+
-				"status='deprecated' to return only deprecated rows, or status='*' to return "+
-				"all statuses. Read-only; no scope required.",
-		),
-		mcp.WithString("kind", mcp.Required(),
-			mcp.Description("Entity kind to search: 'agent' or 'project'."),
-			mcp.Enum("agent", "project"),
-		),
-		mcp.WithString("role", mcp.Description("Filter on role (exact match).")),
-		mcp.WithString("title", mcp.Description("Filter on title (exact match).")),
-		mcp.WithString("project", mcp.Description("Filter on project (exact match).")),
-		mcp.WithString("capability", mcp.Description("Filter to rows that carry this capability string.")),
-		mcp.WithString("skill_name", mcp.Description("Filter to rows that carry a skill with this name.")),
-		mcp.WithString("status", mcp.Description("Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all.")),
-		mcp.WithString("tag", mcp.Description("Filter to rows that carry this tag string in tags.")),
-	), Reads("registry search"), a.handleRegistrySearch)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_search",
+		Description: "Search the registry by filter. All filters combine with AND. Result ordering is " +
+			"alphabetical on display_name. Default excludes status='deprecated'; pass " +
+			"status='deprecated' to return only deprecated rows, or status='*' to return " +
+			"all statuses. Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"kind":       strEnumProp("Entity kind to search: 'agent' or 'project'.", "agent", "project"),
+			"role":       strProp("Filter on role (exact match)."),
+			"title":      strProp("Filter on title (exact match)."),
+			"project":    strProp("Filter on project (exact match)."),
+			"capability": strProp("Filter to rows that carry this capability string."),
+			"skill_name": strProp("Filter to rows that carry a skill with this name."),
+			"status":     strProp("Filter on status. Empty → active only; 'deprecated' → deprecated only; '*' → all."),
+			"tag":        strProp("Filter to rows that carry this tag string in tags."),
+		}, "kind"),
+		Handler: a.handleRegistrySearch,
+	}, Reads("registry search"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_update_self",
-		mcp.WithDescription(
-			"Partial-merge update of a registry row. Returns the refreshed Profile. "+
-				"Scalar fields (display_name, title, role, description, avatar, project, status, "+
-				"health_status, host_address, last_seen_at, kind_meta, guidelines) update column-wise — only "+
-				"fields present in the patch are touched. "+
-				"Array fields (capabilities, skills, links, tags, entry_points) accept TWO wire shapes:\n"+
-				"  (1) Shorthand `[...]` — equivalent to {mode:'replace', value:[...]}.\n"+
-				"  (2) Explicit `{mode: 'replace'|'append'|'remove', value: [...]}`.\n"+
-				"Empty value is always a no-op (existing arrays are not cleared). "+
-				"Remove matches: capabilities, tags, and entry_points by string equality; skills by name; links by (kind, target) tuple. "+
-				"last_updated_by is required on every patch — caller-supplied identity string, becomes auth-bound in v060-02. "+
-				"Requires the registry.write scope.",
-		),
-		mcp.WithString("urn", mcp.Required(),
-			mcp.Description("Full URN of the row to update."),
-		),
-		mcp.WithObject("patch", mcp.Required(),
-			mcp.Description("UpdatePatch JSON. See tool description for partial-merge semantics."),
-		),
-	), Writes(), a.handleRegistryUpdateSelf)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_update_self",
+		Description: "Partial-merge update of a registry row. Returns the refreshed Profile. " +
+			"Scalar fields (display_name, title, role, description, avatar, project, status, " +
+			"health_status, host_address, last_seen_at, kind_meta, guidelines) update column-wise — only " +
+			"fields present in the patch are touched. " +
+			"Array fields (capabilities, skills, links, tags, entry_points) accept TWO wire shapes:\n" +
+			"  (1) Shorthand `[...]` — equivalent to {mode:'replace', value:[...]}.\n" +
+			"  (2) Explicit `{mode: 'replace'|'append'|'remove', value: [...]}`.\n" +
+			"Empty value is always a no-op (existing arrays are not cleared). " +
+			"Remove matches: capabilities, tags, and entry_points by string equality; skills by name; links by (kind, target) tuple. " +
+			"last_updated_by is required on every patch — caller-supplied identity string, becomes auth-bound in v060-02. " +
+			"Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"urn":   strProp("Full URN of the row to update."),
+			"patch": objProp("UpdatePatch JSON. See tool description for partial-merge semantics."),
+		}, "urn", "patch"),
+		Handler: a.handleRegistryUpdateSelf,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_deregister",
-		mcp.WithDescription(
-			"Soft-delete a registry row. Status flips to 'deprecated'. The row remains visible "+
-				"via direct URN lookup (so callers can audit deprecated entries); default Search "+
-				"excludes it. Returns the deprecated Profile. Requires the registry.write scope.",
-		),
-		mcp.WithString("urn", mcp.Required(),
-			mcp.Description("Full URN of the row to soft-delete."),
-		),
-	), Destroys("removes the identity and its bindings; anything addressing it stops resolving"), a.handleRegistryDeregister)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_deregister",
+		Description: "Soft-delete a registry row. Status flips to 'deprecated'. The row remains visible " +
+			"via direct URN lookup (so callers can audit deprecated entries); default Search " +
+			"excludes it. Returns the deprecated Profile. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"urn": strProp("Full URN of the row to soft-delete."),
+		}, "urn"),
+		Handler: a.handleRegistryDeregister,
+	}, Destroys("removes the identity and its bindings; anything addressing it stops resolving"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_merge",
-		mcp.WithDescription(
-			"Merge a source profile into a destination profile: the source's external-ID mappings "+
-				"are reattached to the destination and the source row is soft-deleted (status='deprecated'). "+
-				"Returns the canonical destination Profile. Requires the registry.write scope.",
-		),
-		mcp.WithString("urn", mcp.Required(),
-			mcp.Description("Source URN to merge away."),
-		),
-		mcp.WithString("into", mcp.Required(),
-			mcp.Description("Destination URN the source's identity mappings are reattached to."),
-		),
-	), Writes(), a.handleRegistryMerge)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_merge",
+		Description: "Merge a source profile into a destination profile: the source's external-ID mappings " +
+			"are reattached to the destination and the source row is soft-deleted (status='deprecated'). " +
+			"Returns the canonical destination Profile. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"urn":  strProp("Source URN to merge away."),
+			"into": strProp("Destination URN the source's identity mappings are reattached to."),
+		}, "urn", "into"),
+		Handler: a.handleRegistryMerge,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_sync",
-		mcp.WithDescription(
-			"Refresh thin-profile columns from the row's callback URI. Returns one of two success shapes:\n"+
-				"  - {ok:true, synced:false} when the row has no callback configured (no-op state).\n"+
-				"  - {ok:true, synced:true, profile:<refreshed>} when the callback was invoked successfully.\n"+
-				"Raw payload is NEVER stored (substrate ops-store files often contain plaintext secrets); "+
-				"only the thin-profile columns + capabilities/skills/links arrays + cached_at are updated. "+
-				"Requires the registry.write scope.",
-		),
-		mcp.WithString("urn", mcp.Required(),
-			mcp.Description("Full URN of the row to sync."),
-		),
-	), Writes(), a.handleRegistrySync)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_sync",
+		Description: "Refresh thin-profile columns from the row's callback URI. Returns one of two success shapes:\n" +
+			"  - {ok:true, synced:false} when the row has no callback configured (no-op state).\n" +
+			"  - {ok:true, synced:true, profile:<refreshed>} when the callback was invoked successfully.\n" +
+			"Raw payload is NEVER stored (substrate ops-store files often contain plaintext secrets); " +
+			"only the thin-profile columns + capabilities/skills/links arrays + cached_at are updated. " +
+			"Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"urn": strProp("Full URN of the row to sync."),
+		}, "urn"),
+		Handler: a.handleRegistrySync,
+	}, Writes())
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
@@ -229,30 +215,30 @@ func (a *Adapter) registerRegistryTools(s *server.MCPServer) {
 // load-bearing for the ArrayPatch shorthand handling on capabilities/skills/
 // links — though Profile uses plain []T, not ArrayPatch[T]). The map → JSON
 // → struct round-trip also normalizes the time.Time fields.
-func (a *Adapter) handleRegistryRegister(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistryRegister(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
 
-	kind, errRes := requireKind(req)
-	if errRes != nil {
-		return errRes, nil
+	kind, err := requireKind(args)
+	if err != nil {
+		return nil, err
 	}
 
-	profile, errRes := decodeProfileArg(req, "profile")
-	if errRes != nil {
-		return errRes, nil
+	profile, err := decodeProfileArg(args, "profile")
+	if err != nil {
+		return nil, err
 	}
 
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Registry().Register(ctx, kind, profile)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
@@ -280,18 +266,18 @@ func requiresRegistryWriteScope(include string) bool {
 
 // handleRegistryLookup services tether_registry_lookup. Read-only by default;
 // passing sensitive operational fields in include requires the registry.write scope.
-func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	urn := str(req, "urn")
+func (a *Adapter) handleRegistryLookup(ctx context.Context, args map[string]any) (any, error) {
+	urn := str(args, "urn")
 	if urn == "" {
-		return toolError("invalid_request", "urn is required"), nil
+		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp")
 	}
-	include := str(req, "include")
+	include := str(args, "include")
 	if requiresRegistryWriteScope(include) {
-		if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-			return errRes, nil
+		if err := a.checkScope(ScopeRegistryWrite); err != nil {
+			return nil, err
 		}
 	}
 	var (
@@ -305,73 +291,70 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, req mcp.CallToolRequ
 	}
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
-func (a *Adapter) handleRegistryLookupBy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	kind, errRes := requireKind(req)
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistryLookupBy(ctx context.Context, args map[string]any) (any, error) {
+	kind, err := requireKind(args)
+	if err != nil {
+		return nil, err
 	}
-	externalID := str(req, "external_id")
+	externalID := str(args, "external_id")
 	if externalID == "" {
-		return toolError("invalid_request", "external_id is required"), nil
+		return nil, toolError("invalid_request", "external_id is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with mux mcp")
 	}
-	include := str(req, "include")
+	include := str(args, "include")
 	if requiresRegistryWriteScope(include) {
-		if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-			return errRes, nil
+		if err := a.checkScope(ScopeRegistryWrite); err != nil {
+			return nil, err
 		}
 	}
-	var (
-		out registry.Profile
-		err error
-	)
+	var out registry.Profile
 	if include != "" {
-		out, err = a.client.Registry().LookupByWithInclude(ctx, kind, externalID, str(req, "substrate"), include)
+		out, err = a.client.Registry().LookupByWithInclude(ctx, kind, externalID, str(args, "substrate"), include)
 	} else {
-		out, err = a.client.Registry().LookupBy(ctx, kind, externalID, str(req, "substrate"))
+		out, err = a.client.Registry().LookupBy(ctx, kind, externalID, str(args, "substrate"))
 	}
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 // handleRegistrySearch services tether_registry_search. Read-only; no scope.
-func (a *Adapter) handleRegistrySearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	kind, errRes := requireKind(req)
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistrySearch(ctx context.Context, args map[string]any) (any, error) {
+	kind, err := requireKind(args)
+	if err != nil {
+		return nil, err
 	}
 	f := registry.Filter{
-		Role:       str(req, "role"),
-		Title:      str(req, "title"),
-		Project:    str(req, "project"),
-		Capability: str(req, "capability"),
-		SkillName:  str(req, "skill_name"),
-		Status:     str(req, "status"),
-		Tag:        str(req, "tag"),
+		Role:       str(args, "role"),
+		Title:      str(args, "title"),
+		Project:    str(args, "project"),
+		Capability: str(args, "capability"),
+		SkillName:  str(args, "skill_name"),
+		Status:     str(args, "status"),
+		Tag:        str(args, "tag"),
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Registry().Search(ctx, kind, f)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	if out == nil {
 		out = []registry.Profile{}
@@ -383,72 +366,72 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, req mcp.CallToolRequ
 // argument arrives as a JSON object; re-marshal → unmarshal-into-UpdatePatch
 // is load-bearing because registry.ArrayPatch.UnmarshalJSON handles the
 // shorthand `[...]` vs explicit {mode,value} dispatch.
-func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	urn := str(req, "urn")
+	urn := str(args, "urn")
 	if urn == "" {
-		return toolError("invalid_request", "urn is required"), nil
+		return nil, toolError("invalid_request", "urn is required")
 	}
-	patch, errRes := decodePatchArg(req, "patch")
-	if errRes != nil {
-		return errRes, nil
+	patch, err := decodePatchArg(args, "patch")
+	if err != nil {
+		return nil, err
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Registry().UpdateSelf(ctx, urn, patch)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 // handleRegistryDeregister services tether_registry_deregister.
-func (a *Adapter) handleRegistryDeregister(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistryDeregister(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	urn := str(req, "urn")
+	urn := str(args, "urn")
 	if urn == "" {
-		return toolError("invalid_request", "urn is required"), nil
+		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_deregister requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_deregister requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Registry().Deregister(ctx, urn)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
 
 // handleRegistryMerge services tether_registry_merge.
-func (a *Adapter) handleRegistryMerge(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistryMerge(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	urn := str(req, "urn")
-	into := str(req, "into")
+	urn := str(args, "urn")
+	into := str(args, "into")
 	if urn == "" || into == "" {
-		return toolError("invalid_request", "urn and into are required"), nil
+		return nil, toolError("invalid_request", "urn and into are required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_merge requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_merge requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Registry().Merge(ctx, urn, into)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "profile": out}), nil
 }
@@ -459,23 +442,23 @@ func (a *Adapter) handleRegistryMerge(ctx context.Context, req mcp.CallToolReque
 // RegistryClient.Sync surfaces that as its own synced=false return value
 // (HTTP 204) rather than a registry.ErrNoCallback sentinel, since the
 // sentinel doesn't cross the wire.
-func (a *Adapter) handleRegistrySync(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleRegistrySync(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	urn := str(req, "urn")
+	urn := str(args, "urn")
 	if urn == "" {
-		return toolError("invalid_request", "urn is required"), nil
+		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_sync requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_sync requires daemon routing; start MCP with mux mcp")
 	}
 	out, synced, err := a.client.Registry().Sync(ctx, urn)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	if !synced {
 		return toolJSON(map[string]any{"ok": true, "synced": false}), nil
@@ -488,8 +471,8 @@ func (a *Adapter) handleRegistrySync(ctx context.Context, req mcp.CallToolReques
 // requireKind reads the kind argument and validates it against the v060-01
 // vocabulary (agent + project). Service.Register/Search also validates,
 // but checking here lets the error message name the argument explicitly.
-func requireKind(req mcp.CallToolRequest) (registry.Kind, *mcp.CallToolResult) {
-	raw := str(req, "kind")
+func requireKind(args map[string]any) (registry.Kind, error) {
+	raw := str(args, "kind")
 	switch raw {
 	case "agent":
 		return registry.KindAgent, nil
@@ -510,8 +493,8 @@ func requireKind(req mcp.CallToolRequest) (registry.Kind, *mcp.CallToolResult) {
 // because Profile's time.Time fields and Status enum normalize through
 // the standard json package — and any future Profile UnmarshalJSON
 // customization will apply automatically.
-func decodeProfileArg(req mcp.CallToolRequest, key string) (registry.Profile, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[key]
+func decodeProfileArg(args map[string]any, key string) (registry.Profile, error) {
+	raw, ok := args[key]
 	if !ok {
 		return registry.Profile{}, toolError("invalid_request", fmt.Sprintf("%s is required", key))
 	}
@@ -533,8 +516,8 @@ func decodeProfileArg(req mcp.CallToolRequest, key string) (registry.Profile, *m
 // decodePatchArg pulls the object argument named key and decodes it into a
 // registry.UpdatePatch. The JSON round-trip is load-bearing for the
 // ArrayPatch shorthand-vs-explicit dispatch (registry.ArrayPatch.UnmarshalJSON).
-func decodePatchArg(req mcp.CallToolRequest, key string) (registry.UpdatePatch, *mcp.CallToolResult) {
-	raw, ok := req.GetArguments()[key]
+func decodePatchArg(args map[string]any, key string) (registry.UpdatePatch, error) {
+	raw, ok := args[key]
 	if !ok {
 		return registry.UpdatePatch{}, toolError("invalid_request", fmt.Sprintf("%s is required", key))
 	}
@@ -556,7 +539,7 @@ func decodePatchArg(req mcp.CallToolRequest, key string) (registry.UpdatePatch, 
 // mapRegistryErr converts a registry service error to an MCP tool-error
 // envelope. ErrNoCallback is NOT handled here — Sync's handler treats it
 // as a success result. See package comment for the full mapping table.
-func mapRegistryErr(err error) *mcp.CallToolResult {
+func mapRegistryErr(err error) error {
 	switch {
 	case errors.Is(err, registry.ErrNotFound):
 		return toolError("not_found", err.Error())

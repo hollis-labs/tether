@@ -10,10 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpsanitize "github.com/hollis-labs/go-mcp-sanitize"
 	hotel "github.com/hollis-labs/go-otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -21,10 +20,38 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 )
 
+// rawProxyHandler wraps fn -- a dispatch from decoded arguments/meta to a raw
+// upstream result -- as an official-SDK mcpsdk.ToolHandler, applying the same
+// session-ID attachment and trace-span wrapping addTool gives every native
+// tool. It is the shared foundation for every tool registered directly
+// against the SDK server (bypassing go-mcp's RegisterTool) because it must
+// relay an upstream's *mcpsdk.CallToolResult verbatim -- addProxyTools and
+// registerCallTool (mux_call), the two paths that forward to a ProxyRouter.
+func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error)) mcpsdk.ToolHandler {
+	return func(handlerCtx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		var args map[string]any
+		if len(req.Params.Arguments) > 0 {
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				return errorResult("invalid arguments: " + err.Error()), nil
+			}
+		}
+		meta := map[string]any(req.Params.Meta)
+
+		handlerCtx = a.withSessionID(handlerCtx)
+		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() {
+			handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
+		}
+		handlerCtx, span := hotel.ToolCallSpan(handlerCtx, spanName)
+		defer span.End()
+
+		return fn(handlerCtx, args, meta)
+	}
+}
+
 type liveProxyCatalog struct {
 	mu         sync.Mutex
 	adapter    *Adapter
-	server     *server.MCPServer
+	server     *gomcp.Server
 	registry   *ToolRegistry
 	router     *ProxyRouter
 	index      *DiscoveryIndex
@@ -39,7 +66,7 @@ func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
 
 	c.index.Build(c.registry, c.serverTags)
 	if len(refresh.Delta.Removed) > 0 {
-		c.server.DeleteTools(c.filterNativeToolNames(refresh.ServerID, refresh.Delta.Removed)...)
+		c.server.SDKServer().RemoveTools(c.filterNativeToolNames(refresh.ServerID, refresh.Delta.Removed)...)
 	}
 
 	updatedNames := make([]string, 0, len(refresh.Delta.Updated))
@@ -47,20 +74,20 @@ func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
 		updatedNames = append(updatedNames, def.Name)
 	}
 	if len(updatedNames) > 0 {
-		c.server.DeleteTools(c.filterNativeToolNames(refresh.ServerID, updatedNames)...)
+		c.server.SDKServer().RemoveTools(c.filterNativeToolNames(refresh.ServerID, updatedNames)...)
 	}
 
 	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Added)...)
 	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Updated)...)
 }
 
-func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []mcp.Tool) []mcp.Tool {
+func (c *liveProxyCatalog) filterNativeTools(serverID string, defs []*mcpsdk.Tool) []*mcpsdk.Tool {
 	if !c.firehose {
 		if _, ok := c.allowed[serverID]; !ok {
 			return nil
 		}
 	}
-	out := make([]mcp.Tool, 0, len(defs))
+	out := make([]*mcpsdk.Tool, 0, len(defs))
 	out = append(out, defs...)
 	return out
 }
@@ -76,78 +103,72 @@ func (c *liveProxyCatalog) filterNativeToolNames(serverID string, names []string
 	return out
 }
 
-func (c *liveProxyCatalog) addProxyTools(defs ...mcp.Tool) {
+// addProxyTools registers defs directly against the underlying official-SDK
+// server (c.server.SDKServer().AddTool), NOT through go-mcp's
+// RegisterTool/ToolHandler wrapper. A proxied tool's result is arbitrary,
+// upstream-declared content (images, multiple content blocks, an upstream's
+// own IsError) that must reach the caller byte-for-byte; go-mcp's simplified
+// ToolHandler contract (any, error) has no way to say "use exactly this
+// pre-built CallToolResult" -- returning one through it would get
+// re-marshaled as opaque StructuredContent instead of passed through as
+// protocol-level content. def is already a *mcpsdk.Tool (from the registry,
+// populated verbatim from the upstream's own tools/list response), including
+// whatever annotations that upstream declared or omitted, so it registers
+// unchanged -- there is no annotation derivation to do here.
+//
+// Sanitize protection still applies: it is a global receiving middleware
+// (see Adapter.newServer / RunWithProxyOpts), not a per-tool wrapper, so it
+// runs ahead of every tools/call dispatch regardless of which registration
+// path a tool came through.
+func (c *liveProxyCatalog) addProxyTools(defs ...*mcpsdk.Tool) {
 	if len(defs) == 0 {
 		return
 	}
-	logger := c.adapter.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	tools := make([]server.ServerTool, 0, len(defs))
+	sdk := c.server.SDKServer()
 	for _, def := range defs {
 		def := def
-		sanitized := mcpsanitize.Middleware(logger)(func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return c.router.Handle(handlerCtx, req)
-		})
-		tools = append(tools, server.ServerTool{
-			Tool: def,
-			// Span creation mirrors addTool (adapter.go) deliberately: until
-			// CW-20260912-0068 this was the ONLY registration path in the
-			// package that did not create one, so every call every session
-			// made to Torque, Tesseract and Cerberus through `mux mcp --proxy`
-			// was absent from tracing.
-			//
-			// Note what is NOT changed to fix that: proxy.go's InjectMCP call
-			// on the forwarded request. It was already there and already
-			// running on every proxied call — InjectMCP returns its params
-			// untouched when the span context is invalid, and with no span
-			// upstream the context never was valid. So the propagation was an
-			// active code path with nothing to say, and creating the span here
-			// is what gives it something. Injection starts working without the
-			// injection line changing.
-			//
-			// The wrapper sits OUTSIDE the sanitize middleware, matching
-			// addTool's ordering, so the span covers sanitization as well as
-			// the upstream call and the context reaching the terminal handler
-			// carries it.
-			//
-			// IF YOU ARE HERE BECAUSE TRACE CONTEXT IS STILL NOT REACHING AN
-			// UPSTREAM: check that a real TracerProvider is installed before
-			// suspecting this code. OpenTelemetry's default global provider is
-			// a no-op, and its spans carry an INVALID span context — so
-			// ToolCallSpan below succeeds, returns a span, and InjectMCP then
-			// correctly writes nothing. The symptom is byte-identical to the
-			// bug this block fixed: the upstream receives its arguments with
-			// no _traceparent, exactly as it did before the span existed.
-			//
-			// cmd/mux/main.go calls internalotel.Init, so the daemon is fine.
-			// That is precisely why this bites somewhere else — a test, a
-			// short-lived tool, an embedding of this package — and looks
-			// impossible when it does.
-			Handler: func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				handlerCtx = c.adapter.withSessionID(handlerCtx)
-				if sc := trace.SpanContextFromContext(extractTraceContext(req)); sc.IsValid() {
-					handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
-				}
-				handlerCtx, span := hotel.ToolCallSpan(handlerCtx, def.Name)
-				defer span.End()
-
-				res, err := sanitized(handlerCtx, req)
-				// Typed extraction reads the outbound call and result into Tether's
-				// own store. It runs after the call so it can gate on
-				// success, and it never touches req -- adding anything to the
-				// forwarded call is CW-20260912-0024, the opposite direction
-				// through this same seam. See extract.go.
-				if c.adapter.resolver == nil && c.router != nil {
-					c.adapter.resolver = &routerRefResolver{router: c.router}
-				}
-				c.adapter.recordRefs(handlerCtx, req, res, err)
-				return res, err
-			},
-		})
+		// Span creation mirrors addTool (adapter.go) deliberately: until
+		// CW-20260912-0068 this was the ONLY registration path in the
+		// package that did not create one, so every call every session
+		// made to Torque, Tesseract and Cerberus through `mux mcp --proxy`
+		// was absent from tracing.
+		//
+		// Note what is NOT changed to fix that: proxy.go's InjectMCP call
+		// on the forwarded request. It was already there and already
+		// running on every proxied call — InjectMCP returns its params
+		// untouched when the span context is invalid, and with no span
+		// upstream the context never was valid. So the propagation was an
+		// active code path with nothing to say, and creating the span here
+		// is what gives it something. Injection starts working without the
+		// injection line changing.
+		//
+		// IF YOU ARE HERE BECAUSE TRACE CONTEXT IS STILL NOT REACHING AN
+		// UPSTREAM: check that a real TracerProvider is installed before
+		// suspecting this code. OpenTelemetry's default global provider is
+		// a no-op, and its spans carry an INVALID span context — so
+		// ToolCallSpan below succeeds, returns a span, and InjectMCP then
+		// correctly writes nothing. The symptom is byte-identical to the
+		// bug this block fixed: the upstream receives its arguments with
+		// no _traceparent, exactly as it did before the span existed.
+		//
+		// cmd/mux/main.go calls internalotel.Init, so the daemon is fine.
+		// That is precisely why this bites somewhere else — a test, a
+		// short-lived tool, an embedding of this package — and looks
+		// impossible when it does.
+		sdk.AddTool(def, c.adapter.rawProxyHandler(def.Name, func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+			res, err := c.router.Handle(handlerCtx, ToolCall{ToolName: def.Name, Args: args, Meta: meta})
+			// Typed extraction reads the outbound call and result into Tether's
+			// own store. It runs after the call so it can gate on
+			// success, and it never touches req -- adding anything to the
+			// forwarded call is CW-20260912-0024, the opposite direction
+			// through this same seam. See extract.go.
+			if c.adapter.resolver == nil && c.router != nil {
+				c.adapter.resolver = &routerRefResolver{router: c.router}
+			}
+			c.adapter.recordRefs(handlerCtx, def.Name, args, res, err)
+			return res, err
+		}))
 	}
-	c.server.AddTools(tools...)
 }
 
 // ProxyOptions configures RunWithProxyOpts behavior for Phase 2+.
@@ -191,6 +212,48 @@ type ProxyOptions struct {
 	Only bool
 }
 
+// proxyLoggingMiddleware wraps mws (the ToolCallMiddleware chain, e.g.
+// LoggingMiddleware) as a server-level [mcpsdk.Middleware], the raw-SDK
+// receiving-middleware hook go-mcp's own sanitize.Middleware also uses (see
+// Adapter.newBareServer). Installing it here rather than per-tool is what
+// makes it observe EVERY tools/call dispatch uniformly -- native tools
+// registered through go-mcp's RegisterTool and proxy tools registered
+// directly against the SDK server (addProxyTools) alike -- mirroring
+// mark3labs' s.Use, which sat above per-tool handlers the same way.
+func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
+	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			call, ok := req.(*mcpsdk.CallToolRequest)
+			if !ok {
+				return next(ctx, method, req)
+			}
+			var args map[string]any
+			if len(call.Params.Arguments) > 0 {
+				if err := json.Unmarshal(call.Params.Arguments, &args); err != nil {
+					return next(ctx, method, req)
+				}
+			}
+			terminal := ToolCallHandler(func(tCtx context.Context, _ ToolCall) (*mcpsdk.CallToolResult, error) {
+				res, err := next(tCtx, method, req)
+				if err != nil {
+					return nil, err
+				}
+				result, ok := res.(*mcpsdk.CallToolResult)
+				if !ok {
+					return nil, fmt.Errorf("mcp-proxy: unexpected result type %T for tools/call", res)
+				}
+				return result, nil
+			})
+			chain := buildMiddlewareChain(terminal, mws)
+			result, err := chain(ctx, ToolCall{ToolName: call.Params.Name, Args: args, Meta: map[string]any(call.Params.Meta)})
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+}
+
 // RunWithProxyOpts is identical to Run but additionally:
 //  1. Loads MCPServerEntry definitions from <catalogDir>/mcp-servers/
 //  2. Starts a ClientPool (spawning stdio subprocesses / SSE connections)
@@ -221,26 +284,19 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}
 
-	s := server.NewMCPServer(
-		"agent-mux",
-		a.runtime.Build.Version,
-		server.WithToolCapabilities(true),
-		server.WithExperimental(map[string]any{RuntimeObservationCapability: a.runtime}),
-	)
+	s := a.newBareServer()
 
-	// Register LoggingMiddleware as a server-level tool handler middleware so
-	// that ALL tool calls — native mux tools and proxied upstream tools alike —
-	// emit tool_call_start / tool_call_end events. This covers native tools
+	// Register LoggingMiddleware as a server-level receiving middleware (over
+	// every tools/call dispatch, regardless of registration path) so that ALL
+	// tool calls — native mux tools and proxied upstream tools alike — emit
+	// tool_call_start / tool_call_end events. This covers native tools
 	// (mux_health, mux_session_list, mux_message_*, etc.) which previously
 	// bypassed the ProxyRouter and were never recorded.
 	//
 	// Because the server-level middleware now observes every call, we build a
 	// plain router (no middleware) for upstream dispatch to avoid double-logging.
 	if len(mws) > 0 {
-		s.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-			chain := buildMiddlewareChain(ToolCallHandler(next), mws)
-			return server.ToolHandlerFunc(chain)
-		})
+		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws))
 	}
 
 	// Plain router — no middleware; observation is handled server-side above.
@@ -334,7 +390,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 				"upstream_tools", len(registry.AllDefinitions()))
 		}
 
-		proxied := make([]mcp.Tool, 0)
+		proxied := make([]*mcpsdk.Tool, 0)
 		for _, def := range registry.AllDefinitions() {
 			rt, ok := registry.Lookup(def.Name)
 			if !ok || rt.ServerID == "" {
@@ -378,8 +434,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		a.registerToolCallEventsTool(s, &toolCallEventStoreQuerier{store: opts.EventStore})
 	}
 
-	ctxFunc := func(_ context.Context) context.Context { return ctx }
-	return server.ServeStdio(s, server.WithStdioContextFunc(ctxFunc))
+	return s.Run(ctx)
 }
 
 // registerDiscoverTool registers mux_discover on s. It lets the LLM search the
@@ -391,7 +446,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 // server's tools are native and nativeServers is ignored. The discover handler
 // uses these to mark each result with native: bool so the LLM knows whether
 // to call the tool directly or wrap it in mux_call.
-func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
+func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
 	isNative := func(serverID string) bool {
 		if firehose {
 			return true
@@ -400,41 +455,32 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 		return ok
 	}
 
-	a.addTool(s,
-		mcp.NewTool("mux_discover",
-			mcp.WithDescription(
-				"Search the upstream tool catalog by intent, category, or tags. "+
-					"Returns matching tool names, descriptions, input schemas, and a `native` flag.\n\n"+
-					"How to use the result:\n"+
-					"  • If a result has `native: true`, the tool is already in your tool list — "+
-					"call it directly by its `tool_name` (do NOT wrap it in mux_call).\n"+
-					"  • If a result has `native: false`, the tool is reachable only via "+
-					"mux_call(tool_name, arguments).\n"+
-					"  • If the response includes `truncated: true`, narrow your query (more "+
-					"specific intent/category/tags) or raise `limit` (max 50).\n\n"+
-					"Examples:\n"+
-					"  mux_discover(intent=\"create a task\")\n"+
-					"  mux_discover(category=\"memory\")\n"+
-					"  mux_discover(intent=\"list sessions\", limit=20)",
-			),
-			mcp.WithString("intent",
-				mcp.Description("Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')"),
-			),
-			mcp.WithString("category",
-				mcp.Description("Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')"),
-			),
-			mcp.WithString("tags",
-				mcp.Description("Comma-separated additional tag filters (AND semantics)"),
-			),
-			mcp.WithString("limit",
-				mcp.Description("Max tools to return (default 10, max 50)"),
-			),
-		),
-		Reads("searches the merged tool catalog").OpenWorld(), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			intent := str(req, "intent")
-			category := str(req, "category")
-			tagsRaw := str(req, "tags")
-			limit := intArg(req, "limit", 10)
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_discover",
+		Description: "Search the upstream tool catalog by intent, category, or tags. " +
+			"Returns matching tool names, descriptions, input schemas, and a `native` flag.\n\n" +
+			"How to use the result:\n" +
+			"  • If a result has `native: true`, the tool is already in your tool list — " +
+			"call it directly by its `tool_name` (do NOT wrap it in mux_call).\n" +
+			"  • If a result has `native: false`, the tool is reachable only via " +
+			"mux_call(tool_name, arguments).\n" +
+			"  • If the response includes `truncated: true`, narrow your query (more " +
+			"specific intent/category/tags) or raise `limit` (max 50).\n\n" +
+			"Examples:\n" +
+			"  mux_discover(intent=\"create a task\")\n" +
+			"  mux_discover(category=\"memory\")\n" +
+			"  mux_discover(intent=\"list sessions\", limit=20)",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"intent":   strProp("Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')"),
+			"category": strProp("Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')"),
+			"tags":     strProp("Comma-separated additional tag filters (AND semantics)"),
+			"limit":    strProp("Max tools to return (default 10, max 50)"),
+		}),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
+			intent := str(args, "intent")
+			category := str(args, "category")
+			tagsRaw := str(args, "tags")
+			limit := intArg(args, "limit", 10)
 
 			var extraTags []string
 			for _, t := range strings.Split(tagsRaw, ",") {
@@ -479,14 +525,14 @@ func (a *Adapter) registerDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex,
 			addAvailability(payload, statuses)
 			return toolJSON(payload), nil
 		},
-	)
+	}, Reads("searches the merged tool catalog").OpenWorld())
 }
 
 // registerSemanticDiscoverTool registers mux_discover_tools. It is the
 // low-token, task-shaped companion to mux_discover: ranked recommendations are
 // grouped by server and point callers to schema/detail refs instead of inlining
 // full input schemas.
-func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
+func (a *Adapter) registerSemanticDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
 	isNative := func(serverID string) bool {
 		if firehose {
 			return true
@@ -495,31 +541,21 @@ func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *Discove
 		return ok
 	}
 
-	a.addTool(s,
-		mcp.NewTool("mux_discover_tools",
-			mcp.WithDescription(
-				"Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. "+
-					"Use this before mux_discover when you need tool selection help without full schemas.",
-			),
-			mcp.WithString("intent",
-				mcp.Required(),
-				mcp.Description("Free-text description of the task you want to accomplish"),
-			),
-			mcp.WithString("category",
-				mcp.Description("Optional exact category/tag filter such as tasks, automation, memory, or services"),
-			),
-			mcp.WithString("tags",
-				mcp.Description("Comma-separated additional tag filters (AND semantics)"),
-			),
-			mcp.WithString("limit",
-				mcp.Description("Max recommendations to return (default 8, max 20)"),
-			),
-		),
-		Reads("searches the merged tool catalog").OpenWorld(), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			intent := str(req, "intent")
-			category := str(req, "category")
-			tagsRaw := str(req, "tags")
-			limit := intArg(req, "limit", 8)
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_discover_tools",
+		Description: "Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. " +
+			"Use this before mux_discover when you need tool selection help without full schemas.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"intent":   strProp("Free-text description of the task you want to accomplish"),
+			"category": strProp("Optional exact category/tag filter such as tasks, automation, memory, or services"),
+			"tags":     strProp("Comma-separated additional tag filters (AND semantics)"),
+			"limit":    strProp("Max recommendations to return (default 8, max 20)"),
+		}, "intent"),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
+			intent := str(args, "intent")
+			category := str(args, "category")
+			tagsRaw := str(args, "tags")
+			limit := intArg(args, "limit", 8)
 			if limit <= 0 {
 				limit = 8
 			}
@@ -541,7 +577,7 @@ func (a *Adapter) registerSemanticDiscoverTool(s *server.MCPServer, idx *Discove
 			addAvailability(payload, statuses)
 			return toolJSON(payload), nil
 		},
-	)
+	}, Reads("searches the merged tool catalog").OpenWorld())
 }
 
 func semanticDiscoveryPayload(intent string, results []SearchResult, totalMatches int, isNative func(string) bool) map[string]any {
@@ -657,76 +693,58 @@ func recommendationWhy(intent string, r SearchResult) string {
 
 // registerCallTool registers mux_call on s. It accepts a tool name and
 // arguments object, looks the tool up in the registry, and forwards it
-// through the ProxyRouter. Observation/logging happens at the server
-// middleware layer (via s.Use()), not inside the router — all proxied calls
+// through the ProxyRouter.
+//
+// Registered directly against the SDK server, like addProxyTools, and for
+// the identical reason: the upstream's *mcpsdk.CallToolResult must reach the
+// caller verbatim, which go-mcp's own (any, error) ToolHandler contract
+// cannot represent. Observation/logging happens at the server middleware
+// layer (proxyLoggingMiddleware), not inside the router — all proxied calls
 // flow here so they are recorded in the event store.
-func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
-	a.addTool(s,
-		mcp.NewTool("mux_call",
-			mcp.WithDescription(
-				"Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. "+
-					"If the tool you need already appears in your tool list (e.g. memory_recall, "+
-					"clockwork_task_create), call it directly — do NOT wrap it in mux_call.\n\n"+
-					"Use mux_call only when:\n"+
-					"  • A tool's `native: false` flag was returned by mux_discover, OR\n"+
-					"  • You need a tool from a server outside the current --servers filter.\n\n"+
-					"Run mux_discover first if you don't know the exact tool name or input schema. "+
-					"Arguments must match the tool's input schema exactly.\n\n"+
-					"Example:\n"+
-					"  mux_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
-			),
-			mcp.WithString("tool_name",
-				mcp.Required(),
-				mcp.Description("The exact tool name to call (as returned by mux_discover)"),
-			),
-			mcp.WithObject("arguments",
-				mcp.Description("Arguments object matching the tool's input schema"),
-			),
-		),
-		Writes().OpenWorld(), func(handlerCtx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			toolName := str(req, "tool_name")
-			if toolName == "" {
-				return toolError("invalid_request", "tool_name is required"), nil
-			}
+func (a *Adapter) registerCallTool(s *gomcp.Server, router *ProxyRouter) {
+	s.SDKServer().AddTool(&mcpsdk.Tool{
+		Name: "mux_call",
+		Description: "Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. " +
+			"If the tool you need already appears in your tool list (e.g. memory_recall, " +
+			"clockwork_task_create), call it directly — do NOT wrap it in mux_call.\n\n" +
+			"Use mux_call only when:\n" +
+			"  • A tool's `native: false` flag was returned by mux_discover, OR\n" +
+			"  • You need a tool from a server outside the current --servers filter.\n\n" +
+			"Run mux_discover first if you don't know the exact tool name or input schema. " +
+			"Arguments must match the tool's input schema exactly.\n\n" +
+			"Example:\n" +
+			"  mux_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"tool_name": strProp("The exact tool name to call (as returned by mux_discover)"),
+			"arguments": objProp("Arguments object matching the tool's input schema"),
+		}, "tool_name"),
+		Annotations: Writes().OpenWorld().annotations().sdk(),
+	}, a.rawProxyHandler("mux_call", func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+		toolName := str(args, "tool_name")
+		if toolName == "" {
+			return errorResult("tool_name is required"), nil
+		}
 
-			// Extract the arguments sub-object.
-			var args map[string]any
-			if raw, ok := req.GetArguments()["arguments"]; ok {
-				switch v := raw.(type) {
-				case map[string]any:
-					args = v
-				default:
-					return toolError("invalid_request", "arguments must be a JSON object"), nil
-				}
+		// Extract the arguments sub-object.
+		var innerArgs map[string]any
+		if raw, ok := args["arguments"]; ok {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return errorResult("arguments must be a JSON object"), nil
 			}
-			if args == nil {
-				args = map[string]any{}
-			}
+			innerArgs = m
+		}
+		if innerArgs == nil {
+			innerArgs = map[string]any{}
+		}
 
-			// Build a forwarding CallToolRequest under the target tool name.
-			forwarded := mcp.CallToolRequest{}
-			forwarded.Params.Name = toolName
-			forwarded.Params.Arguments = args
-			if req.Params.Meta != nil {
-				meta := *req.Params.Meta
-				if req.Params.Meta.AdditionalFields != nil {
-					fields := make(map[string]any, len(req.Params.Meta.AdditionalFields))
-					for k, v := range req.Params.Meta.AdditionalFields {
-						fields[k] = v
-					}
-					meta.AdditionalFields = fields
-				}
-				forwarded.Params.Meta = &meta
-			}
-
-			if a.resolver == nil && router != nil {
-				a.resolver = &routerRefResolver{router: router}
-			}
-			res, err := router.Handle(handlerCtx, forwarded)
-			a.recordRefs(handlerCtx, forwarded, res, err)
-			return res, err
-		},
-	)
+		if a.resolver == nil && router != nil {
+			a.resolver = &routerRefResolver{router: router}
+		}
+		res, err := router.Handle(handlerCtx, ToolCall{ToolName: toolName, Args: innerArgs, Meta: meta})
+		a.recordRefs(handlerCtx, toolName, innerArgs, res, err)
+		return res, err
+	}))
 }
 
 // registerMCPServersTool adds the mux_catalog_list_mcp_servers native tool to s.
@@ -736,7 +754,7 @@ func (a *Adapter) registerCallTool(s *server.MCPServer, router *ProxyRouter) {
 // at startup. firehose=true means every server is native. Each server entry in
 // the response carries `surface: "native_flat"` (call tools directly) or
 // `surface: "proxy_only"` (only reachable via mux_discover/mux_call).
-func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, allEntries []config.MCPServerEntry, nativeServers map[string]struct{}, firehose bool) {
+func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allEntries []config.MCPServerEntry, nativeServers map[string]struct{}, firehose bool) {
 	// Build a set of IDs that are enabled (present in pool).
 	enabledIDs := make(map[string]struct{})
 	for _, e := range allEntries {
@@ -758,19 +776,16 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 		return "proxy_only"
 	}
 
-	a.addTool(s,
-		mcp.NewTool(
-			"mux_catalog_list_mcp_servers",
-			mcp.WithDescription(
-				"List all upstream MCP servers configured in the agent-mux catalog.\n\n"+
-					"Each server reports `surface`:\n"+
-					"  • \"native_flat\" — this server's tools are in your tool list; call them directly.\n"+
-					"  • \"proxy_only\"  — this server's tools are reachable only via mux_discover + mux_call.\n"+
-					"  • \"disabled\"    — server is configured but not connected.\n\n"+
-					"Use mux_discover to search the catalog by intent/category when you don't know a tool name.",
-			),
-		),
-		Reads("configured upstream listing"), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_catalog_list_mcp_servers",
+		Description: "List all upstream MCP servers configured in the agent-mux catalog.\n\n" +
+			"Each server reports `surface`:\n" +
+			"  • \"native_flat\" — this server's tools are in your tool list; call them directly.\n" +
+			"  • \"proxy_only\"  — this server's tools are reachable only via mux_discover + mux_call.\n" +
+			"  • \"disabled\"    — server is configured but not connected.\n\n" +
+			"Use mux_discover to search the catalog by intent/category when you don't know a tool name.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler: func(_ context.Context, _ map[string]any) (any, error) {
 			live := pool.StatusSummary()
 			liveByID := make(map[string]ServerStatus, len(live))
 			for _, s := range live {
@@ -815,23 +830,19 @@ func (a *Adapter) registerMCPServersTool(s *server.MCPServer, pool *ClientPool, 
 				"hint":     "Servers with surface=native_flat have their tools in your tool list — call them directly. Use mux_discover + mux_call for proxy_only servers.",
 			}), nil
 		},
-	)
+	}, Reads("configured upstream listing"))
 }
 
-func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPool) {
-	a.addTool(s,
-		mcp.NewTool(
-			"mux_catalog_refresh",
-			mcp.WithDescription(
-				"Refresh one upstream MCP server's tools/list cache in the running mux process, or all upstreams when no server is specified. "+
-					"Use this when an upstream added or removed tools and you want mux to rescan immediately without restarting.",
-			),
-			mcp.WithString("server",
-				mcp.Description("Optional upstream server ID to refresh. Empty refreshes every connected upstream."),
-			),
-		),
-		Writes().OpenWorld(), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			serverID := strings.TrimSpace(str(req, "server"))
+func (a *Adapter) registerCatalogRefreshTool(s *gomcp.Server, pool *ClientPool) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_catalog_refresh",
+		Description: "Refresh one upstream MCP server's tools/list cache in the running mux process, or all upstreams when no server is specified. " +
+			"Use this when an upstream added or removed tools and you want mux to rescan immediately without restarting.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"server": strProp("Optional upstream server ID to refresh. Empty refreshes every connected upstream."),
+		}),
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			serverID := strings.TrimSpace(str(args, "server"))
 
 			var (
 				results []ToolRefreshResult
@@ -846,7 +857,7 @@ func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPo
 			}
 			var partialErr *RefreshAllError
 			if err != nil && !errors.As(err, &partialErr) {
-				return toolError("refresh_failed", err.Error()), nil
+				return nil, toolError("refresh_failed", err.Error())
 			}
 
 			items := make([]map[string]any, 0, len(results))
@@ -874,10 +885,10 @@ func (a *Adapter) registerCatalogRefreshTool(s *server.MCPServer, pool *ClientPo
 			}
 			return toolJSON(body), nil
 		},
-	)
+	}, Writes().OpenWorld())
 }
 
-func toolNames(defs []mcp.Tool) []string {
+func toolNames(defs []*mcpsdk.Tool) []string {
 	out := make([]string, 0, len(defs))
 	for _, def := range defs {
 		out = append(out, def.Name)
@@ -895,10 +906,7 @@ func (r *routerRefResolver) ResolveRef(ctx context.Context, selector map[string]
 	if r.router == nil {
 		return nil, errors.New("no proxy router available for ref resolution")
 	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "tesseract_ref_resolve"
-	req.Params.Arguments = selector
-	res, err := r.router.Handle(ctx, req)
+	res, err := r.router.Handle(ctx, ToolCall{ToolName: "tesseract_ref_resolve", Args: selector})
 	if err != nil {
 		return nil, fmt.Errorf("tesseract_ref_resolve: %w", err)
 	}

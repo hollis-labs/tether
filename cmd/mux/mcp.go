@@ -133,7 +133,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		adapter.ExtractRefs = true
 		adapter.SetRefAttacher(refAttacherClient{c: client.New(listenAddr)})
 	}
-	// Route the go-mcp-sanitize middleware's warn telemetry to stderr so the
+	// Route go-mcp's sanitize middleware's warn telemetry to stderr so the
 	// stdio MCP protocol stream on stdout stays clean.
 	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if mcpProxy {

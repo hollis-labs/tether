@@ -12,8 +12,7 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/registry"
 )
@@ -21,145 +20,163 @@ import (
 // registerBindingsTools wires the tether_registry_binding_* native tools
 // onto s. lease/renew/revoke require registry.write; current/list are
 // read-only (same-host UDS trust, matching the rest of this package).
-func (a *Adapter) registerBindingsTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("tether_registry_binding_lease",
-		mcp.WithDescription(
-			"Lease a published-local (pull-only) RuntimeBinding for a target URN -- the "+
-				"external bridge registration surface T07 defines. Always mints "+
-				"visibility='published-local'; capabilities must be exactly [\"pull-only\"]. "+
-				"Refuses (conflict) to supersede a binding Tether itself manages "+
-				"(private-local/tether-hosted). Requires the registry.write scope.",
-		),
-		mcp.WithString("target_urn", mcp.Required(), mcp.Description("msg:// target URN (session or agent).")),
-		mcp.WithString("session_id", mcp.Required(), mcp.Description("Self-asserted session id the caller is leasing on behalf of.")),
-		mcp.WithString("host_id", mcp.Required(), mcp.Description("Identifier for the external host/bridge process.")),
-		mcp.WithString("attempt_id", mcp.Required(), mcp.Description("Identifier for this specific lease attempt.")),
-		mcp.WithArray("capabilities", mcp.Required(), mcp.Description(`Must be exactly ["pull-only"].`)),
-		mcp.WithNumber("ttl_seconds", mcp.Description("Lease duration in seconds; 0 or omitted means no expiry.")),
-	), Writes(), a.handleBindingLease)
+func (a *Adapter) registerBindingsTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_binding_lease",
+		Description: "Lease a published-local (pull-only) RuntimeBinding for a target URN -- the " +
+			"external bridge registration surface T07 defines. Always mints " +
+			"visibility='published-local'; capabilities must be exactly [\"pull-only\"]. " +
+			"Refuses (conflict) to supersede a binding Tether itself manages " +
+			"(private-local/tether-hosted). Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"target_urn":   strProp("msg:// target URN (session or agent)."),
+			"session_id":   strProp("Self-asserted session id the caller is leasing on behalf of."),
+			"host_id":      strProp("Identifier for the external host/bridge process."),
+			"attempt_id":   strProp("Identifier for this specific lease attempt."),
+			"capabilities": arrProp(`Must be exactly ["pull-only"].`, nil),
+			"ttl_seconds":  numProp("Lease duration in seconds; 0 or omitted means no expiry."),
+		}, "target_urn", "session_id", "host_id", "attempt_id", "capabilities"),
+		Handler: a.handleBindingLease,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_binding_renew",
-		mcp.WithDescription("Extend an existing binding's lease. Fails (conflict) if a newer generation now exists for the same target. Requires the registry.write scope."),
-		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding id returned by a prior lease.")),
-		mcp.WithNumber("ttl_seconds", mcp.Description("New lease duration in seconds; 0 or omitted means no expiry.")),
-	), Writes(), a.handleBindingRenew)
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_registry_binding_renew",
+		Description: "Extend an existing binding's lease. Fails (conflict) if a newer generation now exists for the same target. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"binding_id":  strProp("Binding id returned by a prior lease."),
+			"ttl_seconds": numProp("New lease duration in seconds; 0 or omitted means no expiry."),
+		}, "binding_id"),
+		Handler: a.handleBindingRenew,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_binding_revoke",
-		mcp.WithDescription("Relinquish a binding lease. Idempotent. Requires the registry.write scope."),
-		mcp.WithString("binding_id", mcp.Required(), mcp.Description("Binding id to revoke.")),
-	), Destroys("revokes the lease; the holder stops receiving without being told"), a.handleBindingRevoke)
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_registry_binding_revoke",
+		Description: "Relinquish a binding lease. Idempotent. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"binding_id": strProp("Binding id to revoke."),
+		}, "binding_id"),
+		Handler: a.handleBindingRevoke,
+	}, Destroys("revokes the lease; the holder stops receiving without being told"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_binding_current",
-		mcp.WithDescription("Get the authoritative current binding for a target -- the highest-generation, non-revoked, non-expired binding. Read-only; no scope required."),
-		mcp.WithString("target_urn", mcp.Required(), mcp.Description("msg:// target URN.")),
-	), Reads("current binding lookup"), a.handleBindingCurrent)
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_registry_binding_current",
+		Description: "Get the authoritative current binding for a target -- the highest-generation, non-revoked, non-expired binding. Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"target_urn": strProp("msg:// target URN."),
+		}, "target_urn"),
+		Handler: a.handleBindingCurrent,
+	}, Reads("current binding lookup"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_binding_list",
-		mcp.WithDescription("List every binding ever leased for a target, newest generation first (audit view). Read-only; no scope required."),
-		mcp.WithString("target_urn", mcp.Required(), mcp.Description("msg:// target URN.")),
-	), Reads("binding listing"), a.handleBindingList)
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_registry_binding_list",
+		Description: "List every binding ever leased for a target, newest generation first (audit view). Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"target_urn": strProp("msg:// target URN."),
+		}, "target_urn"),
+		Handler: a.handleBindingList,
+	}, Reads("binding listing"))
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleBindingLease(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleBindingLease(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	targetURN := str(req, "target_urn")
-	sessionID := str(req, "session_id")
-	hostID := str(req, "host_id")
-	attemptID := str(req, "attempt_id")
+	targetURN := str(args, "target_urn")
+	sessionID := str(args, "session_id")
+	hostID := str(args, "host_id")
+	attemptID := str(args, "attempt_id")
 	if targetURN == "" || sessionID == "" || hostID == "" || attemptID == "" {
-		return toolError("invalid_request", "target_urn, session_id, host_id, and attempt_id are required"), nil
+		return nil, toolError("invalid_request", "target_urn, session_id, host_id, and attempt_id are required")
 	}
-	caps := stringSliceArg(req, "capabilities")
+	caps := stringSliceArg(args, "capabilities")
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_binding_lease requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_binding_lease requires daemon routing; start MCP with mux mcp")
 	}
-	out, err := a.client.Bindings().Lease(ctx, targetURN, sessionID, hostID, attemptID, caps, intArg(req, "ttl_seconds", 0))
+	out, err := a.client.Bindings().Lease(ctx, targetURN, sessionID, hostID, attemptID, caps, intArg(args, "ttl_seconds", 0))
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
 }
 
-func (a *Adapter) handleBindingRenew(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleBindingRenew(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	bindingID := str(req, "binding_id")
+	bindingID := str(args, "binding_id")
 	if bindingID == "" {
-		return toolError("invalid_request", "binding_id is required"), nil
+		return nil, toolError("invalid_request", "binding_id is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_binding_renew requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_binding_renew requires daemon routing; start MCP with mux mcp")
 	}
-	out, err := a.client.Bindings().Renew(ctx, bindingID, intArg(req, "ttl_seconds", 0))
+	out, err := a.client.Bindings().Renew(ctx, bindingID, intArg(args, "ttl_seconds", 0))
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
 }
 
-func (a *Adapter) handleBindingRevoke(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleBindingRevoke(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	bindingID := str(req, "binding_id")
+	bindingID := str(args, "binding_id")
 	if bindingID == "" {
-		return toolError("invalid_request", "binding_id is required"), nil
+		return nil, toolError("invalid_request", "binding_id is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_binding_revoke requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_binding_revoke requires daemon routing; start MCP with mux mcp")
 	}
 	if err := a.client.Bindings().Revoke(ctx, bindingID); err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding_id": bindingID}), nil
 }
 
-func (a *Adapter) handleBindingCurrent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	targetURN := str(req, "target_urn")
+func (a *Adapter) handleBindingCurrent(ctx context.Context, args map[string]any) (any, error) {
+	targetURN := str(args, "target_urn")
 	if targetURN == "" {
-		return toolError("invalid_request", "target_urn is required"), nil
+		return nil, toolError("invalid_request", "target_urn is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_binding_current requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_binding_current requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Bindings().Current(ctx, targetURN)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
 }
 
-func (a *Adapter) handleBindingList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	targetURN := str(req, "target_urn")
+func (a *Adapter) handleBindingList(ctx context.Context, args map[string]any) (any, error) {
+	targetURN := str(args, "target_urn")
 	if targetURN == "" {
-		return toolError("invalid_request", "target_urn is required"), nil
+		return nil, toolError("invalid_request", "target_urn is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_binding_list requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_binding_list requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Bindings().ListForTarget(ctx, targetURN)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	if out == nil {
 		out = []registry.RuntimeBinding{}

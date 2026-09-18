@@ -1,10 +1,10 @@
 package mcpadapter
 
-import "github.com/mark3labs/mcp-go/server"
+import gomcp "github.com/hollis-labs/go-mcp/server"
 
 // registerTools wires every MCP tool onto s. Tools are grouped by domain;
 // each group is registered in its own file.
-func (a *Adapter) registerTools(s *server.MCPServer) {
+func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.mcp = s
 	a.registerHealthTools(s)
 	a.registerCatalogTools(s)

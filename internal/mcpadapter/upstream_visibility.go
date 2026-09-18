@@ -1,10 +1,6 @@
 package mcpadapter
 
-import (
-	"fmt"
-
-	mcpclient "github.com/mark3labs/mcp-go/client"
-)
+import "fmt"
 
 func unavailableServers(statuses []ServerStatus) []ServerStatus {
 	out := make([]ServerStatus, 0)
@@ -43,7 +39,7 @@ func addAvailability(payload map[string]any, statuses []ServerStatus) {
 	}
 }
 
-func (p *ClientPool) unavailableError(id string, client mcpclient.MCPClient) error {
+func (p *ClientPool) unavailableError(id string, client upstreamClient) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	s := p.statuses[id]

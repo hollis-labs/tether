@@ -49,7 +49,7 @@ package mcpadapter
 // cautious default is indistinguishable from an assessed one, so docs/mcp.md
 // says which of the four carry judgment. Tracked separately.
 
-import "github.com/mark3labs/mcp-go/mcp"
+import mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 type behaviorKind uint8
 
@@ -114,15 +114,40 @@ func (b Behavior) IsReadOnly() bool { return b.kind == behaviorReads }
 // valid reports whether the Behavior was constructed rather than zero-valued.
 func (b Behavior) valid() bool { return b.kind != behaviorUnset }
 
+// toolAnnotations is the go-mcp-shaped view of a Behavior: the four required
+// hint fields go-mcp's server.Tool demands at registration.
+type toolAnnotations struct {
+	readOnly    bool
+	destructive bool
+	idempotent  bool
+	openWorld   bool
+}
+
 // annotations converts the behavior into the MCP hints.
 //
-// idempotentHint is intentionally absent; see the file comment.
-func (b Behavior) annotations() mcp.ToolOption {
-	readOnly := b.kind == behaviorReads
-	destructive := b.kind == behaviorDestroys
-	return func(t *mcp.Tool) {
-		t.Annotations.ReadOnlyHint = &readOnly
-		t.Annotations.DestructiveHint = &destructive
-		t.Annotations.OpenWorldHint = &b.openWorld
+// idempotentHint is intentionally absent (stays false, its cautious zero
+// value); see the file comment.
+func (b Behavior) annotations() toolAnnotations {
+	return toolAnnotations{
+		readOnly:    b.kind == behaviorReads,
+		destructive: b.kind == behaviorDestroys,
+		openWorld:   b.openWorld,
+	}
+}
+
+// sdk converts to the official SDK's own *mcpsdk.ToolAnnotations shape, for
+// the handful of tools (mux_call) registered directly against the SDK server
+// rather than through go-mcp's RegisterTool -- which already does this
+// conversion internally for every tool addTool registers. DestructiveHint
+// and OpenWorldHint are always explicit pointers, never left nil: the SDK
+// defaults an absent hint to true, which is exactly the silent-assumption
+// go-mcp's own required-annotation contract exists to rule out.
+func (a toolAnnotations) sdk() *mcpsdk.ToolAnnotations {
+	destructive, openWorld := a.destructive, a.openWorld
+	return &mcpsdk.ToolAnnotations{
+		ReadOnlyHint:    a.readOnly,
+		DestructiveHint: &destructive,
+		IdempotentHint:  a.idempotent,
+		OpenWorldHint:   &openWorld,
 	}
 }
