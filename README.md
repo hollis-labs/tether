@@ -1,29 +1,90 @@
 # Tether
 
-Local-first agent session control plane. Tether owns session lifecycle,
-process/PTY management, sandboxed execution, checkpoint/resume, brokered
-messaging, and event streams for CLI-backed agents such as Claude Code,
-Codex, Kiro, and Opencode.
+Tether is the local-first agent session control plane. A per-user daemon
+(`muxd`) owns session lifecycle, process/PTY management, sandboxed execution,
+checkpoint/resume, brokered messaging, and event streams for CLI-backed
+agents such as Claude Code, Codex, Kiro, and OpenCode. Clients reach it over
+a Unix-domain socket through the `mux` CLI, the HTTP API, the MCP stdio
+adapter, the ACP surface, or `go-tether-client`.
 
-## What It Is
+> **Pre-release.** Tether is under active internal development and already
+> runs as the daily session/messaging substrate for the Hollis Labs agent
+> fleet — it is not experimental idle code. It has no public release, no
+> tagged binaries, and no outside consumers yet, and interfaces still change
+> without notice. Built in the open, documented as it stands today.
 
-Tether runs as a per-user daemon (`muxd`) on your machine. Every agent
-session, launch, attach, stop, and checkpoint goes through the daemon.
-Clients access it over a Unix-domain socket via the `mux` CLI, the HTTP API,
-the MCP adapter, the ACP surface, or the Go client library.
+## What it is today
+
+- **Session control plane.** Every launch, attach, stop, and checkpoint for a
+  CLI agent goes through `muxd`; clients never manage the process directly.
+- **Brokered messaging.** Durable mail (`mux messages send`) and
+  notify+wake (`mux messages notify`) between agents and humans, plus typed
+  envelope delivery through `/broker/*`.
+- **Event streams.** Durable event history and an SSE bus (`/events*`,
+  `mux events watch`) for daemon and session activity.
+- **MCP adapter, both directions.** `mux mcp` exposes the runtime as MCP
+  tools over stdio for any MCP client (Claude Desktop, Claude Code, Cursor);
+  Tether is also the MCP connection this assistant is running on right now —
+  every `torque_*`, `tesseract_*`, `tangent_*`, `cerberus_*`, and `loom_*`
+  tool call in this session arrives over one `mux` MCP endpoint.
+- **AI gateway.** A typed, multi-provider chat/embeddings surface
+  (Anthropic, Gemini, OpenAI, OpenAI-compatible) with routing rules, request
+  budgets, and durable usage accounting — reachable over HTTP, CLI, or MCP.
+- **Sysop GUI.** `tether_sysop`, bundled in every build, gives a local
+  operations view over sessions, MCP, AI routing, activity, and the registry.
+
+## Where it sits in the stack
 
 ```
-mux (CLI) / MCP client / HTTP / go-tether-client
-           │
-           ▼
-   muxd  (unix socket)
-   ├─ /sessions/*      session lifecycle + attach + events
-   ├─ /logical-agents/* checkpoint list + resume
-   ├─ /messages/*      cross-agent messaging (go-messaging)
-   ├─ /broker/*        typed envelope delivery
-   ├─ /catalog/*       read-only catalog projection
-   └─ /events*         durable history + SSE event bus
+   you / agents / other apps      Claude Code, Codex, OpenCode, Torque,
+         │                        Tesseract, Nanite — anything with an
+         ▼                        MCP client or the mux CLI/HTTP API
+   ┌───────────┐
+   │  muxd     │   session lifecycle, messaging, events, AI gateway,
+   │ (Tether)  │   sandboxing — the substrate, not the orchestrator
+   └───────────┘
+         │
+   launched sessions      the actual coding-agent processes Tether
+                           supervises (PTY, checkpoint, recovery)
 ```
+
+Tether doesn't decide what a task means or what an agent should do next —
+that's Torque's and each agent's job. It owns getting a session running,
+keeping it addressable, and moving messages and events between whatever is
+attached.
+
+## Examples
+
+**Daily driver.** Chrispian launches and attaches to CLI agent sessions
+through `mux sessions launch` / `mux sessions attach`, and this Claude Code
+session itself is reached through Tether's MCP adapter.
+
+**Composition.** An agent running under Tether calls out to Torque and
+Tesseract as ordinary MCP tools over the same connection, sends durable mail
+to another agent via `mux messages send`, and gets notified back through
+`mux messages notify` when a reply lands — no polling, no direct
+process-to-process coupling.
+
+**Cross-host.** `docs/messaging-federation.md` covers routing messages to a
+peer Tether daemon on another host, for agents that aren't all running on
+the same machine.
+
+## Roadmap
+
+- **Platform reshape to a directory-registry substrate.** Moving from
+  precomputed per-project/agent/provider launch files to a live directory
+  service that consumers register capabilities with (agent sources, skill
+  sources, MCP servers, execution templates) and a parameterized launch
+  engine (`go-agent-launch`) that resolves them at call time. Ships alongside
+  the current catalog system so existing launches keep working during the
+  migration.
+- **Boot Assembly Spec.** Replacing static `launches/` and `boot-profiles/`
+  files with a single parameterized artifact per agent, resolved against
+  live inputs instead of a frozen file per project × agent × provider tuple.
+- **Foundation completion for downstream consumers.** Hardening
+  provider/session contracts, message routing, and agent/skill/boot
+  specification so Nanite and other systems can build on Tether as an
+  opt-in substrate rather than a bespoke integration.
 
 ## License & Branding
 
