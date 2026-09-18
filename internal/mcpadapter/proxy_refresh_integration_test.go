@@ -5,9 +5,8 @@ import (
 	"testing"
 	"time"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -15,17 +14,20 @@ import (
 func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	ctx := context.Background()
 
-	upstream := server.NewMCPServer("clockwork", "0.0.1", server.WithToolCapabilities(true))
-	upstream.AddTool(mcp.NewTool("clockwork_alpha", mcp.WithDescription("alpha tool")), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("alpha"), nil
+	upstream := gomcp.NewServer("clockwork", "0.0.1")
+	upstream.RegisterTool(gomcp.Tool{
+		Name:         "clockwork_alpha",
+		Description:  "alpha tool",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      func(context.Context, map[string]any) (any, error) { return "alpha", nil },
+		ReadOnlyHint: true,
 	})
 
-	upstreamClient, err := mcpclient.NewInProcessClient(upstream)
+	upstreamServerTransport, upstreamClientTransport := mcpsdk.NewInMemoryTransports()
+	go func() { _ = upstream.SDKServer().Run(context.Background(), upstreamServerTransport) }()
+	upstreamSession, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "test"}, nil).Connect(ctx, upstreamClientTransport, nil)
 	if err != nil {
-		t.Fatalf("NewInProcessClient(upstream): %v", err)
-	}
-	if err := upstreamClient.Start(ctx); err != nil {
-		t.Fatalf("upstreamClient.Start: %v", err)
+		t.Fatalf("connect upstream in-memory client: %v", err)
 	}
 
 	registry := NewToolRegistry()
@@ -35,13 +37,13 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 		Command:   "ignored-in-test",
 		Tags:      []string{"tasks"},
 	}}, registry)
-	pool.SetConnectFunc(func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error) {
-		return upstreamClient, nil
+	pool.SetConnectFunc(func(context.Context, config.MCPServerEntry) (upstreamClient, error) {
+		return upstreamSession, nil
 	})
 	defer pool.Shutdown()
 
 	adapter := newTestAdapter(t)
-	local := server.NewMCPServer("agent-mux", "test", server.WithToolCapabilities(true))
+	local := gomcp.NewServer("agent-mux", "test")
 	adapter.registerTools(local)
 
 	idx := NewDiscoveryIndex()
@@ -69,28 +71,19 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	adapter.registerCallTool(local, router)
 	adapter.registerCatalogRefreshTool(local, pool)
 
-	downstream, err := mcpclient.NewInProcessClient(local)
-	if err != nil {
-		t.Fatalf("NewInProcessClient(local): %v", err)
-	}
-	defer downstream.Close()
-	if err := downstream.Start(ctx); err != nil {
-		t.Fatalf("downstream.Start: %v", err)
-	}
-
-	if _, err := downstream.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("downstream.Initialize: %v", err)
-	}
+	downstream := connectInMemory(t, local)
 
 	assertToolPresent(ctx, t, downstream, "clockwork_alpha")
 
-	upstream.AddTool(mcp.NewTool("clockwork_beta", mcp.WithDescription("beta tool for inbox ordering")), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("beta"), nil
+	upstream.RegisterTool(gomcp.Tool{
+		Name:         "clockwork_beta",
+		Description:  "beta tool for inbox ordering",
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      func(context.Context, map[string]any) (any, error) { return "beta", nil },
+		ReadOnlyHint: true,
 	})
 
-	refreshRes, err := downstream.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "mux_catalog_refresh"},
-	})
+	refreshRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{Name: "mux_catalog_refresh"})
 	if err != nil {
 		t.Fatalf("CallTool(mux_catalog_refresh): %v", err)
 	}
@@ -100,9 +93,7 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	}
 	waitForTool(ctx, t, downstream, "clockwork_beta")
 
-	res, err := downstream.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "clockwork_beta"},
-	})
+	res, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{Name: "clockwork_beta"})
 	if err != nil {
 		t.Fatalf("CallTool(clockwork_beta): %v", err)
 	}
@@ -110,11 +101,9 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 		t.Fatalf("clockwork_beta result = %q, want %q", got, "beta")
 	}
 
-	discoverRes, err := downstream.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      "mux_discover",
-			Arguments: map[string]any{"intent": "beta inbox ordering"},
-		},
+	discoverRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "mux_discover",
+		Arguments: map[string]any{"intent": "beta inbox ordering"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(mux_discover): %v", err)
@@ -126,11 +115,11 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	}
 }
 
-func waitForTool(ctx context.Context, t *testing.T, client mcpclient.MCPClient, toolName string) {
+func waitForTool(ctx context.Context, t *testing.T, client *mcpsdk.ClientSession, toolName string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		resp, err := client.ListTools(ctx, &mcpsdk.ListToolsParams{})
 		if err == nil {
 			for _, tool := range resp.Tools {
 				if tool.Name == toolName {
@@ -143,9 +132,9 @@ func waitForTool(ctx context.Context, t *testing.T, client mcpclient.MCPClient, 
 	t.Fatalf("timed out waiting for tool %q", toolName)
 }
 
-func assertToolPresent(ctx context.Context, t *testing.T, client mcpclient.MCPClient, toolName string) {
+func assertToolPresent(ctx context.Context, t *testing.T, client *mcpsdk.ClientSession, toolName string) {
 	t.Helper()
-	resp, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+	resp, err := client.ListTools(ctx, &mcpsdk.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}

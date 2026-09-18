@@ -166,24 +166,46 @@ func parseRegistrations(t *testing.T) ([]registration, map[string]*ast.FuncDecl)
 					return true
 				}
 				sel, ok := ce.Fun.(*ast.SelectorExpr)
-				if !ok || sel.Sel.Name != "addTool" || len(ce.Args) < 4 {
+				// a.addTool(s, gomcp.Tool{Name: ..., Handler: ...}, Behavior) --
+				// the tool name and handler are fields of the second argument's
+				// composite literal, not separate positional arguments as they
+				// were under mark3labs' a.addTool(s, mcp.NewTool(name, ...),
+				// Behavior, handler).
+				if !ok || sel.Sel.Name != "addTool" || len(ce.Args) != 3 {
+					return true
+				}
+				lit, ok := ce.Args[1].(*ast.CompositeLit)
+				if !ok {
 					return true
 				}
 				r := registration{pos: fset.Position(ce.Pos()).String()}
-				ast.Inspect(ce.Args[1], func(m ast.Node) bool {
-					lit, ok := m.(*ast.BasicLit)
-					if ok && lit.Kind == token.STRING && r.tool == "" {
-						if v, err := strconv.Unquote(lit.Value); err == nil &&
-							(strings.HasPrefix(v, "mux_") || strings.HasPrefix(v, "tether_")) {
-							r.tool = v
+				for _, elt := range lit.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := kv.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					switch key.Name {
+					case "Name":
+						if bl, ok := kv.Value.(*ast.BasicLit); ok && bl.Kind == token.STRING {
+							if v, err := strconv.Unquote(bl.Value); err == nil &&
+								(strings.HasPrefix(v, "mux_") || strings.HasPrefix(v, "tether_")) {
+								r.tool = v
+							}
+						}
+					case "Handler":
+						if h, ok := kv.Value.(*ast.SelectorExpr); ok {
+							r.handler = h.Sel.Name
 						}
 					}
-					return true
-				})
-				r.readOnly = rootCallName(ce.Args[len(ce.Args)-2]) == "Reads"
-				if h, ok := ce.Args[len(ce.Args)-1].(*ast.SelectorExpr); ok {
-					r.handler = h.Sel.Name
 				}
+				if r.tool == "" {
+					return true
+				}
+				r.readOnly = rootCallName(ce.Args[2]) == "Reads"
 				regs = append(regs, r)
 				return true
 			})

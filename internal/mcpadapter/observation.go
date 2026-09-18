@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/events"
@@ -27,7 +26,7 @@ import (
 // All tools are read-only and require no auth scope. They are always
 // registered (not proxy-mode-only) because the underlying tables are populated
 // in both modes.
-func (a *Adapter) registerObservationTools(s *server.MCPServer) {
+func (a *Adapter) registerObservationTools(s *gomcp.Server) {
 	a.registerSessionEventsTool(s)
 	a.registerSessionCheckpointsTool(s)
 	a.registerSessionAttachmentsTool(s)
@@ -38,31 +37,23 @@ func (a *Adapter) registerObservationTools(s *server.MCPServer) {
 
 // ─── mux_session_events ───────────────────────────────────────────────────────
 
-func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_session_events",
-			mcp.WithDescription(
-				"List historical lifecycle events for a session. "+
-					"Returns events in descending seq order (newest first).",
-			),
-			mcp.WithString("session_id",
-				mcp.Required(),
-				mcp.Description("Session UUID"),
-			),
-			mcp.WithNumber("limit",
-				mcp.Description("Max events to return (default 100, max 1000)"),
-			),
-			mcp.WithNumber("cursor",
-				mcp.Description("Pagination cursor: smallest seq from previous page; omit on first page"),
-			),
-		),
-		Reads("GET /sessions/{id}/events"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			sessionID := str(req, "session_id")
+func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_session_events",
+		Description: "List historical lifecycle events for a session. " +
+			"Returns events in descending seq order (newest first).",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+			"limit":      numProp("Max events to return (default 100, max 1000)"),
+			"cursor":     numProp("Pagination cursor: smallest seq from previous page; omit on first page"),
+		}, "session_id"),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
+			sessionID := str(args, "session_id")
 			if sessionID == "" {
-				return toolError("invalid_request", "session_id required"), nil
+				return nil, toolError("invalid_request", "session_id required")
 			}
 
-			limit := intArg(req, "limit", 100)
+			limit := intArg(args, "limit", 100)
 			if limit <= 0 {
 				limit = 100
 			}
@@ -71,7 +62,7 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 			}
 
 			var cursor int64
-			if raw, ok := req.GetArguments()["cursor"]; ok {
+			if raw, ok := args["cursor"]; ok {
 				switch v := raw.(type) {
 				case float64:
 					cursor = int64(v)
@@ -82,7 +73,7 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 
 			evs, err := a.svc.Store.ListEventsBySession(sessionID, limit, cursor)
 			if err != nil {
-				return toolError("internal_error", "list events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
+				return nil, toolError("internal_error", "list events: "+err.Error())
 			}
 
 			// Build DTO slice to expose consistent field names over the wire.
@@ -118,40 +109,36 @@ func (a *Adapter) registerSessionEventsTool(s *server.MCPServer) {
 			}
 			return toolJSON(result), nil
 		},
-	)
+	}, Reads("GET /sessions/{id}/events"))
 }
 
 // ─── mux_session_checkpoints ─────────────────────────────────────────────────
 
-func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_session_checkpoints",
-			mcp.WithDescription(
-				"List checkpoints for a session (via its logical agent). "+
-					"Returns newest first.",
-			),
-			mcp.WithString("session_id",
-				mcp.Required(),
-				mcp.Description("Session UUID"),
-			),
-		),
-		Reads("GET /sessions/{id}/checkpoints"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			sessionID := str(req, "session_id")
+func (a *Adapter) registerSessionCheckpointsTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_session_checkpoints",
+		Description: "List checkpoints for a session (via its logical agent). " +
+			"Returns newest first.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
+			sessionID := str(args, "session_id")
 			if sessionID == "" {
-				return toolError("invalid_request", "session_id required"), nil
+				return nil, toolError("invalid_request", "session_id required")
 			}
 
 			row, err := a.svc.Store.GetSession(sessionID)
 			if err != nil {
 				if isNotFound(err) {
-					return toolError("not_found", "session not found: "+sessionID), nil
+					return nil, toolError("not_found", "session not found: "+sessionID)
 				}
-				return toolError("internal_error", err.Error()), nil
+				return nil, toolError("internal_error", err.Error())
 			}
 
 			cps, err := a.svc.Store.ListCheckpointsByLogicalAgent(row.LogicalAgentID)
 			if err != nil {
-				return toolError("internal_error", "list checkpoints: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
+				return nil, toolError("internal_error", "list checkpoints: "+err.Error())
 			}
 
 			return toolJSON(map[string]any{
@@ -160,31 +147,27 @@ func (a *Adapter) registerSessionCheckpointsTool(s *server.MCPServer) {
 				"count":       len(cps),
 			}), nil
 		},
-	)
+	}, Reads("GET /sessions/{id}/checkpoints"))
 }
 
 // ─── mux_session_attachments ─────────────────────────────────────────────────
 
-func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_session_attachments",
-			mcp.WithDescription(
-				"List client attach/detach records for a session.",
-			),
-			mcp.WithString("session_id",
-				mcp.Required(),
-				mcp.Description("Session UUID"),
-			),
-		),
-		Reads("GET /sessions/{id}/attachments"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			sessionID := str(req, "session_id")
+func (a *Adapter) registerSessionAttachmentsTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_session_attachments",
+		Description: "List client attach/detach records for a session.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id": strProp("Session UUID"),
+		}, "session_id"),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
+			sessionID := str(args, "session_id")
 			if sessionID == "" {
-				return toolError("invalid_request", "session_id required"), nil
+				return nil, toolError("invalid_request", "session_id required")
 			}
 
 			rows, err := a.svc.Store.ListClientAttachments(sessionID)
 			if err != nil {
-				return toolError("internal_error", "list attachments: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
+				return nil, toolError("internal_error", "list attachments: "+err.Error())
 			}
 
 			type attachmentDTO struct {
@@ -215,45 +198,32 @@ func (a *Adapter) registerSessionAttachmentsTool(s *server.MCPServer) {
 				"count":       len(out),
 			}), nil
 		},
-	)
+	}, Reads("GET /sessions/{id}/attachments"))
 }
 
 // ─── mux_proxy_events ────────────────────────────────────────────────────────
 
-func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_proxy_events",
-			mcp.WithDescription(
-				"Query durable proxy/tool call events from the SQLite store. "+
-					"Supports filtering by session, server, tool, errors-only, and since cursor.",
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Filter by mux session ID (exact match)"),
-			),
-			mcp.WithString("server",
-				mcp.Description("Filter by upstream server ID (exact match, e.g. 'hadron')"),
-			),
-			mcp.WithString("tool_name",
-				mcp.Description("Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)"),
-			),
-			mcp.WithBoolean("errors_only",
-				mcp.Description("When true, return only events where the tool call failed"),
-			),
-			mcp.WithNumber("limit",
-				mcp.Description("Max events to return (default 100, max 500)"),
-			),
-			mcp.WithString("since",
-				mcp.Description("RFC3339 lower-bound timestamp; excludes events at or before this time"),
-			),
-		),
-		Reads("GET /proxy/events"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_proxy_events",
+		Description: "Query durable proxy/tool call events from the SQLite store. " +
+			"Supports filtering by session, server, tool, errors-only, and since cursor.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"session_id":  strProp("Filter by mux session ID (exact match)"),
+			"server":      strProp("Filter by upstream server ID (exact match, e.g. 'hadron')"),
+			"tool_name":   strProp("Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)"),
+			"errors_only": boolProp("When true, return only events where the tool call failed"),
+			"limit":       numProp("Max events to return (default 100, max 500)"),
+			"since":       strProp("RFC3339 lower-bound timestamp; excludes events at or before this time"),
+		}),
+		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			f := store.ProxyEventFilter{
-				SessionID: str(req, "session_id"),
-				ServerID:  str(req, "server"),
-				ToolName:  str(req, "tool_name"),
+				SessionID: str(args, "session_id"),
+				ServerID:  str(args, "server"),
+				ToolName:  str(args, "tool_name"),
 			}
 
-			limit := intArg(req, "limit", 100)
+			limit := intArg(args, "limit", 100)
 			if limit <= 0 {
 				limit = 100
 			}
@@ -262,22 +232,22 @@ func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
 			}
 			f.Limit = limit
 
-			if b, ok := req.GetArguments()["errors_only"].(bool); ok {
+			if b, ok := args["errors_only"].(bool); ok {
 				f.ErrorsOnly = b
 			}
 
-			if since := str(req, "since"); since != "" {
+			if since := str(args, "since"); since != "" {
 				t, parseErr := time.Parse(time.RFC3339, since)
 				if parseErr != nil {
-					return toolError("invalid_request", //nolint:nilerr
-						"since must be an RFC3339 timestamp: "+parseErr.Error()), nil
+					return nil, toolError("invalid_request",
+						"since must be an RFC3339 timestamp: "+parseErr.Error())
 				}
 				f.Since = t
 			}
 
 			evs, err := a.svc.Store.QueryProxyEvents(f)
 			if err != nil {
-				return toolError("internal_error", "query proxy events: "+err.Error()), nil //nolint:nilerr // MCP handler encodes err in tool response; Go error is intentionally nil
+				return nil, toolError("internal_error", "query proxy events: "+err.Error())
 			}
 
 			return toolJSON(map[string]any{
@@ -286,45 +256,32 @@ func (a *Adapter) registerProxyEventsTool(s *server.MCPServer) {
 				"count":  len(evs),
 			}), nil
 		},
-	)
+	}, Reads("GET /proxy/events"))
 }
 
 // ─── mux_events_history ──────────────────────────────────────────────────────
 
-func (a *Adapter) registerEventsHistoryTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_events_history",
-			mcp.WithDescription(
-				"Query durable daemon/session/broker event history from the shared events table. "+
-					"Returns newest first.",
-			),
-			mcp.WithString("scope",
-				mcp.Description("Optional scope allow-list as comma-separated daemon, session, broker."),
-			),
-			mcp.WithString("kind",
-				mcp.Description("Optional comma-separated event kind allow-list."),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Optional exact session id filter."),
-			),
-			mcp.WithNumber("since_seq",
-				mcp.Description("Only return events with seq greater than this value."),
-			),
-			mcp.WithNumber("cursor",
-				mcp.Description("Pagination cursor; return events with seq less than this value."),
-			),
-			mcp.WithNumber("limit",
-				mcp.Description("Max events to return (default 100, max 1000)."),
-			),
-		),
-		Reads("GET /events"), a.handleEventsHistory,
-	)
+func (a *Adapter) registerEventsHistoryTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_events_history",
+		Description: "Query durable daemon/session/broker event history from the shared events table. " +
+			"Returns newest first.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"scope":      strProp("Optional scope allow-list as comma-separated daemon, session, broker."),
+			"kind":       strProp("Optional comma-separated event kind allow-list."),
+			"session_id": strProp("Optional exact session id filter."),
+			"since_seq":  numProp("Only return events with seq greater than this value."),
+			"cursor":     numProp("Pagination cursor; return events with seq less than this value."),
+			"limit":      numProp("Max events to return (default 100, max 1000)."),
+		}),
+		Handler: a.handleEventsHistory,
+	}, Reads("GET /events"))
 }
 
-func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	scopes, errRes := decodeEventScopesAllowEmpty(req)
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) (any, error) {
+	scopes, err := decodeEventScopesAllowEmpty(args)
+	if err != nil {
+		return nil, err
 	}
 	type eventDTO struct {
 		Seq         int64  `json:"seq"`
@@ -334,11 +291,11 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 		Kind        string `json:"kind"`
 		PayloadJSON string `json:"payload_json,omitempty"`
 	}
-	kinds := splitCSVArg(req, "kind")
-	sessionID := str(req, "session_id")
-	sinceSeq := int64(intArg(req, "since_seq", 0))
-	cursor := int64(intArg(req, "cursor", 0))
-	limit := intArg(req, "limit", 100)
+	kinds := splitCSVArg(args, "kind")
+	sessionID := str(args, "session_id")
+	sinceSeq := int64(intArg(args, "since_seq", 0))
+	cursor := int64(intArg(args, "cursor", 0))
+	limit := intArg(args, "limit", 100)
 
 	var out []eventDTO
 	var nextCursor int64
@@ -352,7 +309,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 			Limit:     limit,
 		})
 		if err != nil {
-			return classifyClientErr(err, ""), nil
+			return nil, classifyClientErr(err, "")
 		}
 		nextCursor = rows.NextCursor
 		out = make([]eventDTO, 0, len(rows.Events))
@@ -376,8 +333,7 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 			Limit:     limit,
 		})
 		if err != nil {
-			//nolint:nilerr // tool errors are returned in-band as a tool result, not as a Go error
-			return toolError("internal_error", "query events: "+err.Error()), nil
+			return nil, toolError("internal_error", "query events: "+err.Error())
 		}
 		out = make([]eventDTO, 0, len(rows))
 		for _, ev := range rows {
@@ -404,52 +360,39 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, req mcp.CallToolReque
 
 // ─── mux_events_wait ─────────────────────────────────────────────────────────
 
-func (a *Adapter) registerEventsWaitTool(s *server.MCPServer) {
-	a.addTool(s,
-		mcp.NewTool("mux_events_wait",
-			mcp.WithDescription(
-				"Wait briefly for live daemon or session events from the muxd event stream. "+
-					"Useful for bounded polling-style MCP flows without maintaining a long-lived SSE connection.",
-			),
-			mcp.WithString("scope",
-				mcp.Description("Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon."),
-			),
-			mcp.WithString("kind",
-				mcp.Description("Optional event kind allow-list. Repeatable via comma-separated values."),
-			),
-			mcp.WithString("session_id",
-				mcp.Description("Optional exact session id filter."),
-			),
-			mcp.WithNumber("since_seq",
-				mcp.Description("Only return events with seq greater than this value."),
-			),
-			mcp.WithNumber("wait_ms",
-				mcp.Description("Maximum time to wait for events in milliseconds (default 5000)."),
-			),
-			mcp.WithNumber("max_events",
-				mcp.Description("Maximum matching events to return before stopping (default 1, max 100)."),
-			),
-		),
-		Reads("event stream subscription; consumes nothing"), a.handleEventsWait,
-	)
+func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "mux_events_wait",
+		Description: "Wait briefly for live daemon or session events from the muxd event stream. " +
+			"Useful for bounded polling-style MCP flows without maintaining a long-lived SSE connection.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"scope":      strProp("Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon."),
+			"kind":       strProp("Optional event kind allow-list. Repeatable via comma-separated values."),
+			"session_id": strProp("Optional exact session id filter."),
+			"since_seq":  numProp("Only return events with seq greater than this value."),
+			"wait_ms":    numProp("Maximum time to wait for events in milliseconds (default 5000)."),
+			"max_events": numProp("Maximum matching events to return before stopping (default 1, max 100)."),
+		}),
+		Handler: a.handleEventsWait,
+	}, Reads("event stream subscription; consumes nothing"))
 }
 
-func (a *Adapter) handleEventsWait(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleEventsWait(ctx context.Context, args map[string]any) (any, error) {
 	if a.client == nil {
-		return toolError("daemon_unavailable", "mux_events_wait requires muxd daemon routing; start muxd and run mux mcp against that catalog"), nil
+		return nil, toolError("daemon_unavailable", "mux_events_wait requires muxd daemon routing; start muxd and run mux mcp against that catalog")
 	}
 
-	scopes, errRes := decodeEventScopes(req)
-	if errRes != nil {
-		return errRes, nil
+	scopes, err := decodeEventScopes(args)
+	if err != nil {
+		return nil, err
 	}
-	kinds := splitCSVArg(req, "kind")
+	kinds := splitCSVArg(args, "kind")
 
-	waitMS := intArg(req, "wait_ms", 5000)
+	waitMS := intArg(args, "wait_ms", 5000)
 	if waitMS <= 0 {
 		waitMS = 5000
 	}
-	maxEvents := intArg(req, "max_events", 1)
+	maxEvents := intArg(args, "max_events", 1)
 	if maxEvents <= 0 {
 		maxEvents = 1
 	}
@@ -461,13 +404,13 @@ func (a *Adapter) handleEventsWait(ctx context.Context, req mcp.CallToolRequest)
 	defer cancel()
 
 	stream, errCh, err := a.client.StreamEvents(streamCtx, client.EventsStreamQuery{
-		SinceSeq:  int64(intArg(req, "since_seq", 0)),
+		SinceSeq:  int64(intArg(args, "since_seq", 0)),
 		Scopes:    scopes,
 		Kinds:     kinds,
-		SessionID: str(req, "session_id"),
+		SessionID: str(args, "session_id"),
 	})
 	if err != nil {
-		return classifyClientErr(err, ""), nil
+		return nil, classifyClientErr(err, "")
 	}
 
 	out := make([]map[string]any, 0, maxEvents)
@@ -494,7 +437,7 @@ func (a *Adapter) handleEventsWait(ctx context.Context, req mcp.CallToolRequest)
 			})
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				return toolError("internal_error", err.Error()), nil
+				return nil, toolError("internal_error", err.Error())
 			}
 			goto done
 		case <-streamCtx.Done():
@@ -512,8 +455,8 @@ done:
 	}), nil
 }
 
-func decodeEventScopesAllowEmpty(req mcp.CallToolRequest) ([]events.Scope, *mcp.CallToolResult) {
-	raw := splitCSVArg(req, "scope")
+func decodeEventScopesAllowEmpty(args map[string]any) ([]events.Scope, error) {
+	raw := splitCSVArg(args, "scope")
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -530,10 +473,10 @@ func decodeEventScopesAllowEmpty(req mcp.CallToolRequest) ([]events.Scope, *mcp.
 	return scopes, nil
 }
 
-func decodeEventScopes(req mcp.CallToolRequest) ([]string, *mcp.CallToolResult) {
-	typed, errRes := decodeEventScopesAllowEmpty(req)
-	if errRes != nil {
-		return nil, errRes
+func decodeEventScopes(args map[string]any) ([]string, error) {
+	typed, err := decodeEventScopesAllowEmpty(args)
+	if err != nil {
+		return nil, err
 	}
 	if len(typed) == 0 {
 		return []string{events.ScopeDaemon}, nil
@@ -543,8 +486,8 @@ func decodeEventScopes(req mcp.CallToolRequest) ([]string, *mcp.CallToolResult) 
 	return scopes, nil
 }
 
-func splitCSVArg(req mcp.CallToolRequest, key string) []string {
-	raw := str(req, key)
+func splitCSVArg(args map[string]any, key string) []string {
+	raw := str(args, key)
 	if raw == "" {
 		return nil
 	}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -51,7 +51,7 @@ func (r *ProxyRouter) SetLogger(l *slog.Logger) {
 //     session_id, and (if assigned) workstream_id.
 //   - Unrelated metadata (e.g. progressToken, trace context) and ordinary arguments
 //     are preserved untouched.
-func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, req mcp.CallToolRequest) mcp.CallToolRequest {
+func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
 	sessionID := sessionIDFromContext(ctx)
 	var prov *ProvenanceEnvelope
 
@@ -82,10 +82,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, req mcp.CallToolR
 		}
 	}
 
-	var existingFields map[string]any
-	if req.Params.Meta != nil && req.Params.Meta.AdditionalFields != nil {
-		existingFields = req.Params.Meta.AdditionalFields
-	}
+	existingFields := map[string]any(params.Meta)
 
 	if prov != nil {
 		provMap := map[string]any{
@@ -104,42 +101,32 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, req mcp.CallToolR
 		}
 		fields[ProvenanceMetaKey] = provMap
 
-		if req.Params.Meta == nil {
-			req.Params.Meta = &mcp.Meta{}
-		}
-		req.Params.Meta.AdditionalFields = fields
-		return req
+		params.Meta = mcpsdk.Meta(fields)
+		return
 	}
 
 	// Provenance is omitted. If incoming request carries ProvenanceMetaKey, strip it.
-	if existingFields != nil {
-		if _, hasProv := existingFields[ProvenanceMetaKey]; hasProv {
-			fields := make(map[string]any, len(existingFields))
-			for k, v := range existingFields {
-				if k != ProvenanceMetaKey {
-					fields[k] = v
-				}
-			}
-			if len(fields) > 0 {
-				req.Params.Meta.AdditionalFields = fields
-			} else {
-				req.Params.Meta.AdditionalFields = nil
-				if req.Params.Meta.ProgressToken == nil {
-					req.Params.Meta = nil
-				}
+	if _, hasProv := existingFields[ProvenanceMetaKey]; hasProv {
+		fields := make(map[string]any, len(existingFields))
+		for k, v := range existingFields {
+			if k != ProvenanceMetaKey {
+				fields[k] = v
 			}
 		}
+		if len(fields) > 0 {
+			params.Meta = mcpsdk.Meta(fields)
+		} else {
+			params.Meta = nil
+		}
 	}
-
-	return req
 }
 
-// ExtractProvenanceMeta reads and parses tether.provenance from req.Params.Meta, if present.
-func ExtractProvenanceMeta(req mcp.CallToolRequest) *ProvenanceEnvelope {
-	if req.Params.Meta == nil || req.Params.Meta.AdditionalFields == nil {
+// ExtractProvenanceMeta reads and parses tether.provenance from meta, if present.
+func ExtractProvenanceMeta(meta map[string]any) *ProvenanceEnvelope {
+	if meta == nil {
 		return nil
 	}
-	raw, ok := req.Params.Meta.AdditionalFields[ProvenanceMetaKey]
+	raw, ok := meta[ProvenanceMetaKey]
 	if !ok || raw == nil {
 		return nil
 	}

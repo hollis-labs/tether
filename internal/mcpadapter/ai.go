@@ -12,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
@@ -21,225 +20,224 @@ import (
 	"github.com/hollis-labs/tether/internal/llm"
 )
 
-func (a *Adapter) registerAITools(s *server.MCPServer) {
+func (a *Adapter) registerAITools(s *gomcp.Server) {
 	a.mcp = s
-	a.addTool(s,
-		mcp.NewTool("mux_ai_list_providers",
-			mcp.WithDescription("List configured AI gateway providers exposed by the running muxd daemon."),
-		),
-		Reads("configured provider listing from the catalog"), a.handleAIProviders,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_list_models",
-			mcp.WithDescription("List AI models visible through configured providers on the running muxd daemon."),
-			mcp.WithString("provider_id",
-				mcp.Description("Optional configured provider id filter"),
-			),
-		),
-		Reads("configured model listing from the catalog"), a.handleAIModels,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_list_routes",
-			mcp.WithDescription("List the configured AI planner routes exposed by the running muxd daemon."),
-		),
-		Reads("configured route listing from the catalog"), a.handleAIRoutes,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_route_preview",
-			mcp.WithDescription("Preview which provider/model the AI gateway would route a chat request to, without invoking a model."),
-			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
-			mcp.WithObject("request",
-				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
-			),
-			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
-			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
-			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
-			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
-			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
-			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
-			mcp.WithString("model", mcp.Description("Model hint")),
-			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
-			mcp.WithString("intent", mcp.Description("Intent hint")),
-			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
-			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
-			mcp.WithNumber("max_output_tokens", mcp.Description("Optional max output tokens hint")),
-			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
-			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
-			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
-		),
-		Reads("route resolution is computed and persisted nowhere"), a.handleAIRoutePreview,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_route_explain",
-			mcp.WithDescription("Explain why each configured AI route matched, failed, or was skipped for a normalized chat request."),
-			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
-			mcp.WithObject("request",
-				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
-			),
-			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
-			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
-			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
-			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
-			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
-			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
-			mcp.WithString("model", mcp.Description("Model hint")),
-			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
-			mcp.WithString("intent", mcp.Description("Intent hint")),
-			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
-			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
-			mcp.WithNumber("max_output_tokens", mcp.Description("Optional max output tokens hint")),
-			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
-			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
-			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
-		),
-		Reads("route resolution is computed and persisted nowhere"), a.handleAIRouteExplain,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_chat",
-			mcp.WithDescription("Invoke the AI gateway with a simple normalized chat request and return the final normalized response. Requires the ai.invoke scope."),
-			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
-			mcp.WithObject("request",
-				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
-			),
-			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
-			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
-			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
-			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
-			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
-			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
-			mcp.WithString("model", mcp.Description("Model hint")),
-			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
-			mcp.WithString("intent", mcp.Description("Intent hint")),
-			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
-			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
-			mcp.WithNumber("max_output_tokens", mcp.Description("Optional max output tokens hint")),
-			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
-			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
-			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
-		),
-		Writes().OpenWorld(), a.handleAIChat,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_embeddings",
-			mcp.WithDescription("Generate embedding vectors through the AI gateway. Requires the ai.invoke scope."),
-			mcp.WithString("text", mcp.Description("Input text for the shorthand embedding request form")),
-			mcp.WithObject("request",
-				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
-			),
-			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
-			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
-			mcp.WithString("model", mcp.Description("Model hint")),
-			mcp.WithString("mode", mcp.Description("Mode hint")),
-			mcp.WithString("intent", mcp.Description("Intent hint")),
-			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
-			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
-			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
-			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
-			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
-		),
-		Writes().OpenWorld(), a.handleAIEmbeddings,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_chat_stream",
-			mcp.WithDescription("Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope."),
-			mcp.WithString("text", mcp.Description("Primary user message text for the shorthand request form")),
-			mcp.WithObject("request",
-				mcp.Description("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
-			),
-			mcp.WithString("request_json", mcp.Description("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request.")),
-			mcp.WithString("system_prompt", mcp.Description("Optional system prompt")),
-			mcp.WithArray("image_urls", mcp.Description("Optional image URLs to append as user content parts"), mcp.WithStringItems()),
-			mcp.WithString("image_base64", mcp.Description("Optional inline image bytes as base64 for the shorthand request form")),
-			mcp.WithString("image_mime_type", mcp.Description("MIME type for image_base64, e.g. image/png")),
-			mcp.WithString("provider", mcp.Description("Configured provider id hint")),
-			mcp.WithString("model", mcp.Description("Model hint")),
-			mcp.WithString("mode", mcp.Description("Mode hint, such as summarize or tool-heavy")),
-			mcp.WithString("intent", mcp.Description("Intent hint")),
-			mcp.WithString("request_id", mcp.Description("Optional request correlation id")),
-			mcp.WithString("session_id", mcp.Description("Optional session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Optional caller correlation id")),
-			mcp.WithNumber("max_output_tokens", mcp.Description("Optional max output tokens hint")),
-			mcp.WithNumber("token_budget", mcp.Description("Optional token budget hint")),
-			mcp.WithNumber("cost_budget_usd", mcp.Description("Optional cost budget hint in USD")),
-			mcp.WithNumber("latency_target_ms", mcp.Description("Optional latency target in milliseconds")),
-		),
-		Writes().OpenWorld(), a.handleAIChatStream,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_usage",
-			mcp.WithDescription("Query durable AI usage aggregates recorded by the running muxd daemon."),
-			mcp.WithString("provider", mcp.Description("Filter by configured provider id")),
-			mcp.WithString("model", mcp.Description("Filter by model id")),
-			mcp.WithString("session_id", mcp.Description("Filter by session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Filter by caller correlation id")),
-			mcp.WithString("operation", mcp.Description("Filter by operation kind, default chat")),
-			mcp.WithString("since", mcp.Description("RFC3339 lower-bound timestamp")),
-		),
-		Reads("GET /ai/usage"), a.handleAIUsage,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_budgets",
-			mcp.WithDescription("List live durable AI usage budgets and current spend for routed providers/models."),
-			mcp.WithString("provider", mcp.Description("Filter by configured provider id")),
-			mcp.WithString("model", mcp.Description("Filter by model id")),
-			mcp.WithString("session_id", mcp.Description("Session id used for session-scoped budgets")),
-			mcp.WithString("caller_id", mcp.Description("Caller id used for caller-scoped budgets")),
-		),
-		Reads("GET /ai/budgets"), a.handleAIBudgets,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_audit",
-			mcp.WithDescription("Query durable sanitized AI audit events recorded by the running muxd daemon."),
-			mcp.WithString("event_type", mcp.Description("Filter by event type, e.g. chat or route_preview")),
-			mcp.WithString("provider", mcp.Description("Filter by configured provider id")),
-			mcp.WithString("model", mcp.Description("Filter by model id")),
-			mcp.WithString("session_id", mcp.Description("Filter by session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Filter by caller correlation id")),
-			mcp.WithString("since", mcp.Description("RFC3339 lower-bound timestamp")),
-			mcp.WithNumber("limit", mcp.Description("Max rows to return (default 100, max 2000)")),
-			mcp.WithBoolean("errors_only", mcp.Description("When true, only return failed events")),
-		),
-		Reads("GET /ai/audit"), a.handleAIAudit,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_budget_alerts",
-			mcp.WithDescription("Query durable AI budget_rejection audit events recorded by the running muxd daemon."),
-			mcp.WithString("provider", mcp.Description("Filter by configured provider id")),
-			mcp.WithString("model", mcp.Description("Filter by model id")),
-			mcp.WithString("session_id", mcp.Description("Filter by session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Filter by caller correlation id")),
-			mcp.WithString("since", mcp.Description("RFC3339 lower-bound timestamp")),
-			mcp.WithNumber("limit", mcp.Description("Max rows to return (default 100, max 2000)")),
-		),
-		Reads("budget alert listing"), a.handleAIBudgetAlerts,
-	)
-	a.addTool(s,
-		mcp.NewTool("mux_ai_wait_budget_alerts",
-			mcp.WithDescription("Wait briefly for live ai.budget_rejected daemon events and return any matching alerts."),
-			mcp.WithString("provider", mcp.Description("Filter by configured provider id")),
-			mcp.WithString("model", mcp.Description("Filter by model id")),
-			mcp.WithString("session_id", mcp.Description("Filter by session correlation id")),
-			mcp.WithString("caller_id", mcp.Description("Filter by caller correlation id")),
-			mcp.WithNumber("since_seq", mcp.Description("Only return events with seq greater than this value")),
-			mcp.WithNumber("wait_ms", mcp.Description("Maximum time to wait for events in milliseconds (default 5000)")),
-			mcp.WithNumber("max_events", mcp.Description("Maximum matching events to return before stopping (default 1)")),
-		),
-		Reads("blocks on an alert it does not cause"), a.handleAIWaitBudgetAlerts,
-	)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_list_providers",
+		Description: "List configured AI gateway providers exposed by the running muxd daemon.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleAIProviders,
+	}, Reads("configured provider listing from the catalog"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_list_models",
+		Description: "List AI models visible through configured providers on the running muxd daemon.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"provider_id": strProp("Optional configured provider id filter"),
+		}),
+		Handler: a.handleAIModels,
+	}, Reads("configured model listing from the catalog"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_list_routes",
+		Description: "List the configured AI planner routes exposed by the running muxd daemon.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleAIRoutes,
+	}, Reads("configured route listing from the catalog"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_route_preview",
+		Description: "Preview which provider/model the AI gateway would route a chat request to, without invoking a model.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"text":              strProp("Primary user message text for the shorthand request form"),
+			"request":           objProp("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			"request_json":      strProp("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request."),
+			"system_prompt":     strProp("Optional system prompt"),
+			"image_urls":        strArrProp("Optional image URLs to append as user content parts"),
+			"image_base64":      strProp("Optional inline image bytes as base64 for the shorthand request form"),
+			"image_mime_type":   strProp("MIME type for image_base64, e.g. image/png"),
+			"provider":          strProp("Configured provider id hint"),
+			"model":             strProp("Model hint"),
+			"mode":              strProp("Mode hint, such as summarize or tool-heavy"),
+			"intent":            strProp("Intent hint"),
+			"request_id":        strProp("Optional request correlation id"),
+			"session_id":        strProp("Optional session correlation id"),
+			"caller_id":         strProp("Optional caller correlation id"),
+			"max_output_tokens": numProp("Optional max output tokens hint"),
+			"token_budget":      numProp("Optional token budget hint"),
+			"cost_budget_usd":   numProp("Optional cost budget hint in USD"),
+			"latency_target_ms": numProp("Optional latency target in milliseconds"),
+		}),
+		Handler: a.handleAIRoutePreview,
+	}, Reads("route resolution is computed and persisted nowhere"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_route_explain",
+		Description: "Explain why each configured AI route matched, failed, or was skipped for a normalized chat request.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"text":              strProp("Primary user message text for the shorthand request form"),
+			"request":           objProp("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			"request_json":      strProp("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request."),
+			"system_prompt":     strProp("Optional system prompt"),
+			"image_urls":        strArrProp("Optional image URLs to append as user content parts"),
+			"image_base64":      strProp("Optional inline image bytes as base64 for the shorthand request form"),
+			"image_mime_type":   strProp("MIME type for image_base64, e.g. image/png"),
+			"provider":          strProp("Configured provider id hint"),
+			"model":             strProp("Model hint"),
+			"mode":              strProp("Mode hint, such as summarize or tool-heavy"),
+			"intent":            strProp("Intent hint"),
+			"request_id":        strProp("Optional request correlation id"),
+			"session_id":        strProp("Optional session correlation id"),
+			"caller_id":         strProp("Optional caller correlation id"),
+			"max_output_tokens": numProp("Optional max output tokens hint"),
+			"token_budget":      numProp("Optional token budget hint"),
+			"cost_budget_usd":   numProp("Optional cost budget hint in USD"),
+			"latency_target_ms": numProp("Optional latency target in milliseconds"),
+		}),
+		Handler: a.handleAIRouteExplain,
+	}, Reads("route resolution is computed and persisted nowhere"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_chat",
+		Description: "Invoke the AI gateway with a simple normalized chat request and return the final normalized response. Requires the ai.invoke scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"text":              strProp("Primary user message text for the shorthand request form"),
+			"request":           objProp("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			"request_json":      strProp("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request."),
+			"system_prompt":     strProp("Optional system prompt"),
+			"image_urls":        strArrProp("Optional image URLs to append as user content parts"),
+			"image_base64":      strProp("Optional inline image bytes as base64 for the shorthand request form"),
+			"image_mime_type":   strProp("MIME type for image_base64, e.g. image/png"),
+			"provider":          strProp("Configured provider id hint"),
+			"model":             strProp("Model hint"),
+			"mode":              strProp("Mode hint, such as summarize or tool-heavy"),
+			"intent":            strProp("Intent hint"),
+			"request_id":        strProp("Optional request correlation id"),
+			"session_id":        strProp("Optional session correlation id"),
+			"caller_id":         strProp("Optional caller correlation id"),
+			"max_output_tokens": numProp("Optional max output tokens hint"),
+			"token_budget":      numProp("Optional token budget hint"),
+			"cost_budget_usd":   numProp("Optional cost budget hint in USD"),
+			"latency_target_ms": numProp("Optional latency target in milliseconds"),
+		}),
+		Handler: a.handleAIChat,
+	}, Writes().OpenWorld())
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_embeddings",
+		Description: "Generate embedding vectors through the AI gateway. Requires the ai.invoke scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"text":              strProp("Input text for the shorthand embedding request form"),
+			"request":           objProp("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			"request_json":      strProp("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request."),
+			"provider":          strProp("Configured provider id hint"),
+			"model":             strProp("Model hint"),
+			"mode":              strProp("Mode hint"),
+			"intent":            strProp("Intent hint"),
+			"request_id":        strProp("Optional request correlation id"),
+			"session_id":        strProp("Optional session correlation id"),
+			"caller_id":         strProp("Optional caller correlation id"),
+			"token_budget":      numProp("Optional token budget hint"),
+			"cost_budget_usd":   numProp("Optional cost budget hint in USD"),
+			"latency_target_ms": numProp("Optional latency target in milliseconds"),
+		}),
+		Handler: a.handleAIEmbeddings,
+	}, Writes().OpenWorld())
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_chat_stream",
+		Description: "Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"text":              strProp("Primary user message text for the shorthand request form"),
+			"request":           objProp("Full normalized llm.Request object. Mutually exclusive with text and request_json."),
+			"request_json":      strProp("Full normalized llm.Request encoded as JSON. Mutually exclusive with text and request."),
+			"system_prompt":     strProp("Optional system prompt"),
+			"image_urls":        strArrProp("Optional image URLs to append as user content parts"),
+			"image_base64":      strProp("Optional inline image bytes as base64 for the shorthand request form"),
+			"image_mime_type":   strProp("MIME type for image_base64, e.g. image/png"),
+			"provider":          strProp("Configured provider id hint"),
+			"model":             strProp("Model hint"),
+			"mode":              strProp("Mode hint, such as summarize or tool-heavy"),
+			"intent":            strProp("Intent hint"),
+			"request_id":        strProp("Optional request correlation id"),
+			"session_id":        strProp("Optional session correlation id"),
+			"caller_id":         strProp("Optional caller correlation id"),
+			"max_output_tokens": numProp("Optional max output tokens hint"),
+			"token_budget":      numProp("Optional token budget hint"),
+			"cost_budget_usd":   numProp("Optional cost budget hint in USD"),
+			"latency_target_ms": numProp("Optional latency target in milliseconds"),
+		}),
+		Handler: a.handleAIChatStream,
+	}, Writes().OpenWorld())
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_usage",
+		Description: "Query durable AI usage aggregates recorded by the running muxd daemon.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"provider":   strProp("Filter by configured provider id"),
+			"model":      strProp("Filter by model id"),
+			"session_id": strProp("Filter by session correlation id"),
+			"caller_id":  strProp("Filter by caller correlation id"),
+			"operation":  strProp("Filter by operation kind, default chat"),
+			"since":      strProp("RFC3339 lower-bound timestamp"),
+		}),
+		Handler: a.handleAIUsage,
+	}, Reads("GET /ai/usage"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_budgets",
+		Description: "List live durable AI usage budgets and current spend for routed providers/models.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"provider":   strProp("Filter by configured provider id"),
+			"model":      strProp("Filter by model id"),
+			"session_id": strProp("Session id used for session-scoped budgets"),
+			"caller_id":  strProp("Caller id used for caller-scoped budgets"),
+		}),
+		Handler: a.handleAIBudgets,
+	}, Reads("GET /ai/budgets"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_audit",
+		Description: "Query durable sanitized AI audit events recorded by the running muxd daemon.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"event_type":  strProp("Filter by event type, e.g. chat or route_preview"),
+			"provider":    strProp("Filter by configured provider id"),
+			"model":       strProp("Filter by model id"),
+			"session_id":  strProp("Filter by session correlation id"),
+			"caller_id":   strProp("Filter by caller correlation id"),
+			"since":       strProp("RFC3339 lower-bound timestamp"),
+			"limit":       numProp("Max rows to return (default 100, max 2000)"),
+			"errors_only": boolProp("When true, only return failed events"),
+		}),
+		Handler: a.handleAIAudit,
+	}, Reads("GET /ai/audit"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_budget_alerts",
+		Description: "Query durable AI budget_rejection audit events recorded by the running muxd daemon.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"provider":   strProp("Filter by configured provider id"),
+			"model":      strProp("Filter by model id"),
+			"session_id": strProp("Filter by session correlation id"),
+			"caller_id":  strProp("Filter by caller correlation id"),
+			"since":      strProp("RFC3339 lower-bound timestamp"),
+			"limit":      numProp("Max rows to return (default 100, max 2000)"),
+		}),
+		Handler: a.handleAIBudgetAlerts,
+	}, Reads("budget alert listing"))
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_ai_wait_budget_alerts",
+		Description: "Wait briefly for live ai.budget_rejected daemon events and return any matching alerts.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"provider":   strProp("Filter by configured provider id"),
+			"model":      strProp("Filter by model id"),
+			"session_id": strProp("Filter by session correlation id"),
+			"caller_id":  strProp("Filter by caller correlation id"),
+			"since_seq":  numProp("Only return events with seq greater than this value"),
+			"wait_ms":    numProp("Maximum time to wait for events in milliseconds (default 5000)"),
+			"max_events": numProp("Maximum matching events to return before stopping (default 1)"),
+		}),
+		Handler: a.handleAIWaitBudgetAlerts,
+	}, Reads("blocks on an alert it does not cause"))
 }
 
-func (a *Adapter) handleAIProviders(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIProviders(ctx context.Context, _ map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIProviders(ctx)
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":        true,
@@ -248,14 +246,14 @@ func (a *Adapter) handleAIProviders(ctx context.Context, _ mcp.CallToolRequest) 
 	}), nil
 }
 
-func (a *Adapter) handleAIModels(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
-	}
-	out, err := c.AIModels(ctx, str(req, "provider_id"))
+func (a *Adapter) handleAIModels(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, err
+	}
+	out, err := c.AIModels(ctx, str(args, "provider_id"))
+	if err != nil {
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":     true,
@@ -264,14 +262,14 @@ func (a *Adapter) handleAIModels(ctx context.Context, req mcp.CallToolRequest) (
 	}), nil
 }
 
-func (a *Adapter) handleAIRoutes(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIRoutes(ctx context.Context, _ map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIRoutes(ctx)
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":     true,
@@ -280,18 +278,18 @@ func (a *Adapter) handleAIRoutes(ctx context.Context, _ mcp.CallToolRequest) (*m
 	}), nil
 }
 
-func (a *Adapter) handleAIRoutePreview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIRoutePreview(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	request, errTool := aiRequestFromTool(req)
-	if errTool != nil {
-		return errTool, nil
+	request, err := aiRequestFromTool(args)
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIPreviewRoute(ctx, api.ChatRequest{Request: request})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -299,18 +297,18 @@ func (a *Adapter) handleAIRoutePreview(ctx context.Context, req mcp.CallToolRequ
 	}), nil
 }
 
-func (a *Adapter) handleAIRouteExplain(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIRouteExplain(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	request, errTool := aiRequestFromTool(req)
-	if errTool != nil {
-		return errTool, nil
+	request, err := aiRequestFromTool(args)
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIExplainRoute(ctx, api.ChatRequest{Request: request})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":         true,
@@ -322,21 +320,21 @@ func (a *Adapter) handleAIRouteExplain(ctx context.Context, req mcp.CallToolRequ
 	}), nil
 }
 
-func (a *Adapter) handleAIChat(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeAIInvoke); denied != nil {
-		return denied, nil
+func (a *Adapter) handleAIChat(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeAIInvoke); err != nil {
+		return nil, err
 	}
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	request, errTool := aiRequestFromTool(req)
-	if errTool != nil {
-		return errTool, nil
+	request, err := aiRequestFromTool(args)
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIChat(ctx, api.ChatRequest{Request: request})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":       true,
@@ -344,21 +342,21 @@ func (a *Adapter) handleAIChat(ctx context.Context, req mcp.CallToolRequest) (*m
 	}), nil
 }
 
-func (a *Adapter) handleAIEmbeddings(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeAIInvoke); denied != nil {
-		return denied, nil
+func (a *Adapter) handleAIEmbeddings(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeAIInvoke); err != nil {
+		return nil, err
 	}
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	request, errTool := aiEmbeddingRequestFromTool(req)
-	if errTool != nil {
-		return errTool, nil
+	request, err := aiEmbeddingRequestFromTool(args)
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIEmbeddings(ctx, api.ChatRequest{Request: request})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":       true,
@@ -366,29 +364,26 @@ func (a *Adapter) handleAIEmbeddings(ctx context.Context, req mcp.CallToolReques
 	}), nil
 }
 
-func (a *Adapter) handleAIChatStream(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if denied := a.checkScope(ScopeAIInvoke); denied != nil {
-		return denied, nil
+func (a *Adapter) handleAIChatStream(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeAIInvoke); err != nil {
+		return nil, err
 	}
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	request, errTool := aiRequestFromTool(req)
-	if errTool != nil {
-		return errTool, nil
+	request, err := aiRequestFromTool(args)
+	if err != nil {
+		return nil, err
 	}
 	request.Streaming = true
 
 	stream, errCh, err := c.AIChatStream(ctx, api.ChatRequest{Request: request})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 
-	progressToken := any(nil)
-	if req.Params.Meta != nil {
-		progressToken = req.Params.Meta.ProgressToken
-	}
+	progressToken := gomcp.MetaFromContext(ctx)["progressToken"]
 
 	var (
 		eventCount int
@@ -417,17 +412,17 @@ func (a *Adapter) handleAIChatStream(ctx context.Context, req mcp.CallToolReques
 				continue
 			}
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				return toolError("internal_error", err.Error()), nil
+				return nil, toolError("internal_error", err.Error())
 			}
 		case <-ctx.Done():
-			return toolError("internal_error", ctx.Err().Error()), nil
+			return nil, toolError("internal_error", ctx.Err().Error())
 		}
 	}
 	if finalResp == nil {
 		if lastErr != "" {
-			return toolError("internal_error", lastErr), nil
+			return nil, toolError("internal_error", lastErr)
 		}
-		return toolError("internal_error", "stream completed without final response"), nil
+		return nil, toolError("internal_error", "stream completed without final response")
 	}
 	return toolJSON(map[string]any{
 		"ok":          true,
@@ -437,21 +432,21 @@ func (a *Adapter) handleAIChatStream(ctx context.Context, req mcp.CallToolReques
 	}), nil
 }
 
-func (a *Adapter) handleAIUsage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIUsage(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIUsage(ctx, client.AIUsageQuery{
-		Provider:  str(req, "provider"),
-		Model:     str(req, "model"),
-		SessionID: str(req, "session_id"),
-		CallerID:  str(req, "caller_id"),
-		Operation: str(req, "operation"),
-		Since:     str(req, "since"),
+		Provider:  str(args, "provider"),
+		Model:     str(args, "model"),
+		SessionID: str(args, "session_id"),
+		CallerID:  str(args, "caller_id"),
+		Operation: str(args, "operation"),
+		Since:     str(args, "since"),
 	})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":      true,
@@ -459,19 +454,19 @@ func (a *Adapter) handleAIUsage(ctx context.Context, req mcp.CallToolRequest) (*
 	}), nil
 }
 
-func (a *Adapter) handleAIBudgets(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIBudgets(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIBudgets(ctx, client.AIBudgetsQuery{
-		Provider:  str(req, "provider"),
-		Model:     str(req, "model"),
-		SessionID: str(req, "session_id"),
-		CallerID:  str(req, "caller_id"),
+		Provider:  str(args, "provider"),
+		Model:     str(args, "model"),
+		SessionID: str(args, "session_id"),
+		CallerID:  str(args, "caller_id"),
 	})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":      true,
@@ -480,23 +475,23 @@ func (a *Adapter) handleAIBudgets(ctx context.Context, req mcp.CallToolRequest) 
 	}), nil
 }
 
-func (a *Adapter) handleAIAudit(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIAudit(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIAudit(ctx, client.AIAuditQuery{
-		EventType:  str(req, "event_type"),
-		Provider:   str(req, "provider"),
-		Model:      str(req, "model"),
-		SessionID:  str(req, "session_id"),
-		CallerID:   str(req, "caller_id"),
-		Limit:      intArg(req, "limit", 100),
-		Since:      str(req, "since"),
-		ErrorsOnly: boolArg(req, "errors_only"),
+		EventType:  str(args, "event_type"),
+		Provider:   str(args, "provider"),
+		Model:      str(args, "model"),
+		SessionID:  str(args, "session_id"),
+		CallerID:   str(args, "caller_id"),
+		Limit:      intArg(args, "limit", 100),
+		Since:      str(args, "since"),
+		ErrorsOnly: boolArg(args, "errors_only"),
 	})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":     true,
@@ -505,22 +500,22 @@ func (a *Adapter) handleAIAudit(ctx context.Context, req mcp.CallToolRequest) (*
 	}), nil
 }
 
-func (a *Adapter) handleAIBudgetAlerts(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIBudgetAlerts(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
 	out, err := c.AIAudit(ctx, client.AIAuditQuery{
 		EventType: "budget_rejection",
-		Provider:  str(req, "provider"),
-		Model:     str(req, "model"),
-		SessionID: str(req, "session_id"),
-		CallerID:  str(req, "caller_id"),
-		Since:     str(req, "since"),
-		Limit:     intArg(req, "limit", 0),
+		Provider:  str(args, "provider"),
+		Model:     str(args, "model"),
+		SessionID: str(args, "session_id"),
+		CallerID:  str(args, "caller_id"),
+		Since:     str(args, "since"),
+		Limit:     intArg(args, "limit", 0),
 	})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":     true,
@@ -529,16 +524,16 @@ func (a *Adapter) handleAIBudgetAlerts(ctx context.Context, req mcp.CallToolRequ
 	}), nil
 }
 
-func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	c, errRes := a.requireAIClient()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, args map[string]any) (any, error) {
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
 	}
-	waitMS := intArg(req, "wait_ms", 5000)
+	waitMS := intArg(args, "wait_ms", 5000)
 	if waitMS <= 0 {
 		waitMS = 5000
 	}
-	maxEvents := intArg(req, "max_events", 1)
+	maxEvents := intArg(args, "max_events", 1)
 	if maxEvents <= 0 {
 		maxEvents = 1
 	}
@@ -546,12 +541,12 @@ func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, req mcp.CallTool
 	defer cancel()
 
 	stream, errCh, err := c.StreamEvents(streamCtx, client.EventsStreamQuery{
-		SinceSeq: int64(intArg(req, "since_seq", 0)),
+		SinceSeq: int64(intArg(args, "since_seq", 0)),
 		Scopes:   []string{events.ScopeDaemon},
 		Kinds:    []string{events.KindAIBudgetRejected},
 	})
 	if err != nil {
-		return a.classifyAIClientErr(err), nil
+		return nil, a.classifyAIClientErr(err)
 	}
 
 	var (
@@ -573,9 +568,9 @@ func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, req mcp.CallTool
 			}
 			payload, err := decodeAIBudgetAlertPayload(ev.PayloadJSON)
 			if err != nil {
-				return toolError("internal_error", err.Error()), nil
+				return nil, toolError("internal_error", err.Error())
 			}
-			if !matchesAIBudgetAlertFilters(req, payload) {
+			if !matchesAIBudgetAlertFilters(args, payload) {
 				continue
 			}
 			alerts = append(alerts, map[string]any{
@@ -590,7 +585,7 @@ func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, req mcp.CallTool
 			})
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				return toolError("internal_error", err.Error()), nil
+				return nil, toolError("internal_error", err.Error())
 			}
 			goto done
 		case <-streamCtx.Done():
@@ -609,16 +604,32 @@ done:
 	}), nil
 }
 
+// emitAIStreamNotification sends stream progress to the calling client via
+// go-mcp's context-installed Notifier (see gomcp.WithNotifier/Notify),
+// bridged by go-mcp's server package to the underlying MCP session
+// automatically for every tool call -- there is no per-client send method on
+// *gomcp.Server itself (go-mcp does not wrap session lifecycle; see
+// Adapter.newBareServer's doc comment). Notify is a safe no-op when ctx
+// carries no notifier (e.g. a direct in-process CallTool invocation in a
+// test), matching the original's `a.mcp == nil` guard.
 func (a *Adapter) emitAIStreamNotification(ctx context.Context, progressToken any, eventCount int, ev llm.StreamEvent) {
-	if a.mcp == nil {
-		return
-	}
 	payload := map[string]any{
 		"source": "mux_ai_chat_stream",
 		"event":  ev,
 	}
-	_ = a.mcp.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelInfo, "tether.ai.stream", payload))
-	_ = a.mcp.SendNotificationToClient(ctx, "notifications/ai/chat_stream", payload)
+	// notifications/message: go-mcp's session bridge reads params["level"]
+	// and forwards params["message"] verbatim as the LoggingMessageParams
+	// Data field, so the structured payload rides through as-is. The
+	// mark3labs logger-name field ("tether.ai.stream") has no equivalent in
+	// go-mcp's bridge and is dropped.
+	gomcp.Notify(ctx, gomcp.Notification{
+		Method: "notifications/message",
+		Params: map[string]any{"level": "info", "message": payload},
+	})
+	gomcp.Notify(ctx, gomcp.Notification{
+		Method: "notifications/ai/chat_stream",
+		Params: payload,
+	})
 	if progressToken != nil {
 		progress := float64(eventCount)
 		params := map[string]any{
@@ -629,7 +640,10 @@ func (a *Adapter) emitAIStreamNotification(ctx context.Context, progressToken an
 		if ev.Kind == llm.StreamEventCompleted {
 			params["message"] = "response.completed"
 		}
-		_ = a.mcp.SendNotificationToClient(ctx, "notifications/progress", params)
+		gomcp.Notify(ctx, gomcp.Notification{
+			Method: "notifications/progress",
+			Params: params,
+		})
 	}
 }
 
@@ -651,34 +665,34 @@ func decodeAIBudgetAlertPayload(raw string) (aiBudgetAlertPayload, error) {
 	return out, nil
 }
 
-func matchesAIBudgetAlertFilters(req mcp.CallToolRequest, payload aiBudgetAlertPayload) bool {
-	if v := str(req, "provider"); v != "" && payload.Provider != v {
+func matchesAIBudgetAlertFilters(args map[string]any, payload aiBudgetAlertPayload) bool {
+	if v := str(args, "provider"); v != "" && payload.Provider != v {
 		return false
 	}
-	if v := str(req, "model"); v != "" && payload.Model != v {
+	if v := str(args, "model"); v != "" && payload.Model != v {
 		return false
 	}
-	if v := str(req, "session_id"); v != "" && payload.SessionID != v {
+	if v := str(args, "session_id"); v != "" && payload.SessionID != v {
 		return false
 	}
-	if v := str(req, "caller_id"); v != "" && payload.CallerID != v {
+	if v := str(args, "caller_id"); v != "" && payload.CallerID != v {
 		return false
 	}
 	return true
 }
 
-func aiRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResult) {
-	request, errRes := decodeAIRequestOverride(req)
-	if errRes != nil {
-		return llm.Request{}, errRes
+func aiRequestFromTool(args map[string]any) (llm.Request, error) {
+	request, err := decodeAIRequestOverride(args)
+	if err != nil {
+		return llm.Request{}, err
 	}
 	if request.Operation == "" {
 		request.Operation = llm.OperationChat
 	}
-	request = applyAIRequestToolOverrides(req, request)
-	request, errRes = applyAIRequestToolImages(req, request)
-	if errRes != nil {
-		return llm.Request{}, errRes
+	request = applyAIRequestToolOverrides(args, request)
+	request, err = applyAIRequestToolImages(args, request)
+	if err != nil {
+		return llm.Request{}, err
 	}
 	if len(request.Input) == 0 {
 		return llm.Request{}, toolError("invalid_request", "request input required")
@@ -686,19 +700,19 @@ func aiRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResul
 	return request, nil
 }
 
-func aiEmbeddingRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResult) {
-	request, errRes := decodeAIRequestOverride(req)
-	if errRes != nil {
-		return llm.Request{}, errRes
+func aiEmbeddingRequestFromTool(args map[string]any) (llm.Request, error) {
+	request, err := decodeAIRequestOverride(args)
+	if err != nil {
+		return llm.Request{}, err
 	}
 	if request.Operation == "" {
 		request.Operation = llm.OperationEmbedding
 	}
-	if text := str(req, "text"); text != "" && len(request.EmbeddingInput) == 0 {
+	if text := str(args, "text"); text != "" && len(request.EmbeddingInput) == 0 {
 		request.EmbeddingInput = []string{text}
 		request.Input = nil
 	}
-	request = applyAIRequestToolOverrides(req, request)
+	request = applyAIRequestToolOverrides(args, request)
 	if request.Operation != llm.OperationEmbedding {
 		return llm.Request{}, toolError("invalid_request", "request operation must be embedding")
 	}
@@ -708,11 +722,10 @@ func aiEmbeddingRequestFromTool(req mcp.CallToolRequest) (llm.Request, *mcp.Call
 	return request, nil
 }
 
-func decodeAIRequestOverride(req mcp.CallToolRequest) (llm.Request, *mcp.CallToolResult) {
-	args := req.GetArguments()
-	text := str(req, "text")
+func decodeAIRequestOverride(args map[string]any) (llm.Request, error) {
+	text := str(args, "text")
 	rawRequest, hasRequest := args["request"]
-	requestJSON := str(req, "request_json")
+	requestJSON := str(args, "request_json")
 
 	if hasRequest && requestJSON != "" {
 		return llm.Request{}, toolError("invalid_request", "request and request_json are mutually exclusive")
@@ -738,7 +751,7 @@ func decodeAIRequestOverride(req mcp.CallToolRequest) (llm.Request, *mcp.CallToo
 		}
 		return request, nil
 	}
-	if text == "" && len(strSliceArg(req, "image_urls")) == 0 && str(req, "image_base64") == "" {
+	if text == "" && len(strSliceArg(args, "image_urls")) == 0 && str(args, "image_base64") == "" {
 		return llm.Request{}, toolError("invalid_request", "text, image_urls, image_base64, request, or request_json required")
 	}
 	request := llm.Request{Operation: llm.OperationChat}
@@ -751,41 +764,41 @@ func decodeAIRequestOverride(req mcp.CallToolRequest) (llm.Request, *mcp.CallToo
 	return request, nil
 }
 
-func applyAIRequestToolOverrides(req mcp.CallToolRequest, request llm.Request) llm.Request {
-	if v := str(req, "provider"); v != "" {
+func applyAIRequestToolOverrides(args map[string]any, request llm.Request) llm.Request {
+	if v := str(args, "provider"); v != "" {
 		request.ProviderHint = v
 	}
-	if v := str(req, "model"); v != "" {
+	if v := str(args, "model"); v != "" {
 		request.ModelHint = v
 	}
-	if v := str(req, "mode"); v != "" {
+	if v := str(args, "mode"); v != "" {
 		request.Mode = v
 	}
-	if v := str(req, "intent"); v != "" {
+	if v := str(args, "intent"); v != "" {
 		request.Intent = v
 	}
-	if v := str(req, "request_id"); v != "" {
+	if v := str(args, "request_id"); v != "" {
 		request.RequestID = v
 	}
-	if v := str(req, "session_id"); v != "" {
+	if v := str(args, "session_id"); v != "" {
 		request.SessionID = v
 	}
-	if v := str(req, "caller_id"); v != "" {
+	if v := str(args, "caller_id"); v != "" {
 		request.CallerID = v
 	}
-	if v := intArg(req, "max_output_tokens", 0); v > 0 {
+	if v := intArg(args, "max_output_tokens", 0); v > 0 {
 		request.MaxOutputTokens = v
 	}
-	if v := intArg(req, "token_budget", 0); v > 0 {
+	if v := intArg(args, "token_budget", 0); v > 0 {
 		request.TokenBudget = v
 	}
-	if v := floatArg(req, "cost_budget_usd", 0); v > 0 {
+	if v := floatArg(args, "cost_budget_usd", 0); v > 0 {
 		request.CostBudgetUSD = v
 	}
-	if v := intArg(req, "latency_target_ms", 0); v > 0 {
+	if v := intArg(args, "latency_target_ms", 0); v > 0 {
 		request.LatencyTargetMS = v
 	}
-	if systemPrompt := str(req, "system_prompt"); systemPrompt != "" {
+	if systemPrompt := str(args, "system_prompt"); systemPrompt != "" {
 		request.Input = append([]llm.Message{{
 			Role:  "system",
 			Parts: []llm.ContentPart{{Type: "text", Text: systemPrompt}},
@@ -794,17 +807,17 @@ func applyAIRequestToolOverrides(req mcp.CallToolRequest, request llm.Request) l
 	return request
 }
 
-func applyAIRequestToolImages(req mcp.CallToolRequest, request llm.Request) (llm.Request, *mcp.CallToolResult) {
-	parts := make([]llm.ContentPart, 0, len(strSliceArg(req, "image_urls"))+1)
-	for _, rawURL := range strSliceArg(req, "image_urls") {
+func applyAIRequestToolImages(args map[string]any, request llm.Request) (llm.Request, error) {
+	parts := make([]llm.ContentPart, 0, len(strSliceArg(args, "image_urls"))+1)
+	for _, rawURL := range strSliceArg(args, "image_urls") {
 		part, err := imagePartFromToolURL(rawURL)
 		if err != nil {
 			return llm.Request{}, toolError("invalid_request", err.Error())
 		}
 		parts = append(parts, part)
 	}
-	if rawBase64 := str(req, "image_base64"); rawBase64 != "" {
-		part, err := imagePartFromToolBase64(rawBase64, str(req, "image_mime_type"))
+	if rawBase64 := str(args, "image_base64"); rawBase64 != "" {
+		part, err := imagePartFromToolBase64(rawBase64, str(args, "image_mime_type"))
 		if err != nil {
 			return llm.Request{}, toolError("invalid_request", err.Error())
 		}
@@ -853,14 +866,14 @@ func imagePartFromToolBase64(rawBase64, mimeType string) (llm.ContentPart, error
 	}, nil
 }
 
-func (a *Adapter) requireAIClient() (*client.Client, *mcp.CallToolResult) {
+func (a *Adapter) requireAIClient() (*client.Client, error) {
 	if a.client == nil {
 		return nil, toolError("daemon_unavailable", "AI tools require muxd daemon routing; start muxd and run mux mcp against that catalog")
 	}
 	return a.client, nil
 }
 
-func (a *Adapter) classifyAIClientErr(err error) *mcp.CallToolResult {
+func (a *Adapter) classifyAIClientErr(err error) error {
 	if isDaemonUnreachable(err) {
 		return daemonUnreachableError(err)
 	}

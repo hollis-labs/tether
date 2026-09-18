@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // DiscoveryEntry is the index record for one upstream tool.
@@ -15,9 +15,9 @@ type DiscoveryEntry struct {
 	ServerID    string   // upstream server (e.g. "clockwork")
 	Description string   // tool description
 	Tags        []string // server-level tags from catalog (e.g. ["tasks","planning"])
-	// ToolDef is the original mcp.Tool — stored so mux_discover can return the
-	// full marshaled schema (Description, InputSchema) without re-encoding.
-	ToolDef mcp.Tool
+	// ToolDef is the original *mcpsdk.Tool — stored so mux_discover can return
+	// the full marshaled schema (Description, InputSchema) without re-encoding.
+	ToolDef *mcpsdk.Tool
 	// words is the pre-computed word set for keyword matching (lowercase).
 	words map[string]struct{}
 }

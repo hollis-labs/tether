@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	otelprop "github.com/hollis-labs/go-otel/propagation"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -41,11 +41,11 @@ func fakeRemoteContext(t *testing.T) (context.Context, string) {
 // A call carrying trace context in _meta establishes the parent span.
 func TestExtractTraceContext_ReadsMeta(t *testing.T) {
 	ctx, wantTraceID := fakeRemoteContext(t)
-	req := injectTraceContextMeta(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"input": "x"}},
-	})
+	params := &mcpsdk.CallToolParams{Name: "t", Arguments: map[string]any{"input": "x"}}
+	injectTraceContextMeta(ctx, params)
 
-	got := trace.SpanContextFromContext(extractTraceContext(req))
+	args, _ := params.Arguments.(map[string]any)
+	got := trace.SpanContextFromContext(extractTraceContext(map[string]any(params.Meta), args))
 	if !got.IsValid() {
 		t.Fatal("no span context recovered from _meta")
 	}
@@ -66,14 +66,12 @@ func TestExtractTraceContext_FallsBackToLegacyArguments(t *testing.T) {
 	ctx, wantTraceID := fakeRemoteContext(t)
 
 	// The pre-0026 shape: trace context in arguments, no _meta at all.
-	legacyArgs := map[string]any{"input": "x"}
-	legacy := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t"}}
-	legacy.Params.Arguments = otelInjectForTest(ctx, legacyArgs)
-	if _, ok := legacy.GetArguments()["_traceparent"]; !ok {
+	legacyArgs := otelInjectForTest(ctx, map[string]any{"input": "x"})
+	if _, ok := legacyArgs["_traceparent"]; !ok {
 		t.Fatal("test setup did not produce the legacy shape")
 	}
 
-	got := trace.SpanContextFromContext(extractTraceContext(legacy))
+	got := trace.SpanContextFromContext(extractTraceContext(nil, legacyArgs))
 	if !got.IsValid() {
 		t.Fatal("legacy arguments-side trace context was not recovered; a call from an older mux would silently start a new trace")
 	}
@@ -86,14 +84,13 @@ func TestExtractTraceContext_FallsBackToLegacyArguments(t *testing.T) {
 // arguments-side value does not override the authoritative one.
 func TestExtractTraceContext_MetaWinsOverArguments(t *testing.T) {
 	metaCtx, wantTraceID := fakeRemoteContext(t)
-	req := injectTraceContextMeta(metaCtx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "t"},
-	})
-	req.Params.Arguments = map[string]any{
+	params := &mcpsdk.CallToolParams{Name: "t"}
+	injectTraceContextMeta(metaCtx, params)
+	args := map[string]any{
 		"_traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
 	}
 
-	got := trace.SpanContextFromContext(extractTraceContext(req))
+	got := trace.SpanContextFromContext(extractTraceContext(map[string]any(params.Meta), args))
 	if got.TraceID().String() != wantTraceID {
 		t.Errorf("trace id = %s, want the _meta one %s", got.TraceID(), wantTraceID)
 	}
@@ -104,11 +101,10 @@ func TestExtractTraceContext_MetaWinsOverArguments(t *testing.T) {
 // location instead.
 func TestExtractTraceContext_UnrelatedMetaDoesNotShadowLegacy(t *testing.T) {
 	ctx, wantTraceID := fakeRemoteContext(t)
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t"}}
-	req.Params.Meta = &mcp.Meta{ProgressToken: "tok"}
-	req.Params.Arguments = otelInjectForTest(ctx, map[string]any{"input": "x"})
+	meta := map[string]any{"progressToken": "tok"}
+	args := otelInjectForTest(ctx, map[string]any{"input": "x"})
 
-	got := trace.SpanContextFromContext(extractTraceContext(req))
+	got := trace.SpanContextFromContext(extractTraceContext(meta, args))
 	if !got.IsValid() || got.TraceID().String() != wantTraceID {
 		t.Errorf("a _meta carrying only a progressToken shadowed the legacy value: got %v", got.TraceID())
 	}
@@ -116,10 +112,9 @@ func TestExtractTraceContext_UnrelatedMetaDoesNotShadowLegacy(t *testing.T) {
 
 // No span, no injection, and specifically no empty _meta manufactured.
 func TestInjectTraceContextMeta_NoSpanAddsNothing(t *testing.T) {
-	req := injectTraceContextMeta(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"input": "x"}},
-	})
-	if req.Params.Meta != nil {
-		t.Errorf("manufactured _meta with no active span: %+v", req.Params.Meta)
+	params := &mcpsdk.CallToolParams{Name: "t", Arguments: map[string]any{"input": "x"}}
+	injectTraceContextMeta(context.Background(), params)
+	if params.Meta != nil {
+		t.Errorf("manufactured _meta with no active span: %+v", params.Meta)
 	}
 }

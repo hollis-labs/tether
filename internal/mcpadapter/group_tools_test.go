@@ -14,9 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
@@ -49,26 +48,14 @@ func newGroupAdapter(t *testing.T) *Adapter {
 // MCP server wired with BOTH the registry and group tool sets — the
 // group tests seed agents via tether_registry_register and then drive
 // group lifecycle through tether_group_*.
-func callGroupTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
+func callGroupTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "0.0.1")
 	a.registerRegistryTools(s)
 	a.registerGroupTools(s)
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer c.Close()
-	if _, err := c.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = name
-	if args != nil {
-		req.Params.Arguments = args
-	}
-	res, err := c.CallTool(context.Background(), req)
+	c := connectInMemory(t, s)
+	res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool %s: %v", name, err)
 	}

@@ -9,8 +9,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/registry"
 )
@@ -18,105 +17,113 @@ import (
 // registerScopedBindingsTools wires the tether_registry_scoped_binding_*
 // native tools onto s. set requires registry.write; resolve/revisions
 // are read-only (same-host UDS trust, matching the rest of this package).
-func (a *Adapter) registerScopedBindingsTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_set",
-		mcp.WithDescription(
-			"Publish a new revision for a consumer-owned (scope, slot) role binding, "+
-				"e.g. scope='run-42' slot='reviewer'. Tether does not interpret scope/slot "+
-				"names or grant command authority from a binding. Requires the registry.write scope.",
-		),
-		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope, e.g. a run or team id.")),
-		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope, e.g. 'reviewer'.")),
-		mcp.WithArray("target_urns", mcp.Required(), mcp.Description("One or more target URNs for this slot.")),
-		mcp.WithString("created_by", mcp.Required(), mcp.Description("Caller URN recorded as provenance for this revision.")),
-	), Writes(), a.handleScopedBindingSet)
+func (a *Adapter) registerScopedBindingsTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_scoped_binding_set",
+		Description: "Publish a new revision for a consumer-owned (scope, slot) role binding, " +
+			"e.g. scope='run-42' slot='reviewer'. Tether does not interpret scope/slot " +
+			"names or grant command authority from a binding. Requires the registry.write scope.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"scope":       strProp("Consumer-owned scope, e.g. a run or team id."),
+			"slot":        strProp("Role/slot name within the scope, e.g. 'reviewer'."),
+			"target_urns": strArrProp("One or more target URNs for this slot."),
+			"created_by":  strProp("Caller URN recorded as provenance for this revision."),
+		}, "scope", "slot", "target_urns", "created_by"),
+		Handler: a.handleScopedBindingSet,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_resolve",
-		mcp.WithDescription(
-			"Resolve the current revision for (scope, slot). single=true resolves to "+
-				"exactly one target, erroring (conflict) on zero or multiple targets rather "+
-				"than making the caller guess. Read-only; no scope required.",
-		),
-		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope.")),
-		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope.")),
-		mcp.WithBoolean("single", mcp.Description("Resolve to exactly one target (default false: return every target).")),
-	), Reads("scoped binding resolution"), a.handleScopedBindingResolve)
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_registry_scoped_binding_resolve",
+		Description: "Resolve the current revision for (scope, slot). single=true resolves to " +
+			"exactly one target, erroring (conflict) on zero or multiple targets rather " +
+			"than making the caller guess. Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"scope":  strProp("Consumer-owned scope."),
+			"slot":   strProp("Role/slot name within the scope."),
+			"single": boolProp("Resolve to exactly one target (default false: return every target)."),
+		}, "scope", "slot"),
+		Handler: a.handleScopedBindingResolve,
+	}, Reads("scoped binding resolution"))
 
-	a.addTool(s, mcp.NewTool("tether_registry_scoped_binding_revisions",
-		mcp.WithDescription("List every revision ever published for (scope, slot), newest first. Read-only; no scope required."),
-		mcp.WithString("scope", mcp.Required(), mcp.Description("Consumer-owned scope.")),
-		mcp.WithString("slot", mcp.Required(), mcp.Description("Role/slot name within the scope.")),
-	), Reads("scoped binding revision history"), a.handleScopedBindingRevisions)
+	a.addTool(s, gomcp.Tool{
+		Name:        "tether_registry_scoped_binding_revisions",
+		Description: "List every revision ever published for (scope, slot), newest first. Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"scope": strProp("Consumer-owned scope."),
+			"slot":  strProp("Role/slot name within the scope."),
+		}, "scope", "slot"),
+		Handler: a.handleScopedBindingRevisions,
+	}, Reads("scoped binding revision history"))
 }
 
-func (a *Adapter) handleScopedBindingSet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeRegistryWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleScopedBindingSet(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeRegistryWrite); err != nil {
+		return nil, err
 	}
-	scope := str(req, "scope")
-	slot := str(req, "slot")
-	createdBy := str(req, "created_by")
-	targets := stringSliceArg(req, "target_urns")
+	scope := str(args, "scope")
+	slot := str(args, "slot")
+	createdBy := str(args, "created_by")
+	targets := stringSliceArg(args, "target_urns")
 	if scope == "" || slot == "" || createdBy == "" || len(targets) == 0 {
-		return toolError("invalid_request", "scope, slot, created_by, and at least one target_urns entry are required"), nil
+		return nil, toolError("invalid_request", "scope, slot, created_by, and at least one target_urns entry are required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_scoped_binding_set requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_set requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.ScopedBindings().Set(ctx, scope, slot, targets, nil, createdBy)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapScopedBindingErr(err), nil
+		return nil, mapScopedBindingErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
 }
 
-func (a *Adapter) handleScopedBindingResolve(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	scope := str(req, "scope")
-	slot := str(req, "slot")
+func (a *Adapter) handleScopedBindingResolve(ctx context.Context, args map[string]any) (any, error) {
+	scope := str(args, "scope")
+	slot := str(args, "slot")
 	if scope == "" || slot == "" {
-		return toolError("invalid_request", "scope and slot are required"), nil
+		return nil, toolError("invalid_request", "scope and slot are required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_scoped_binding_resolve requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_resolve requires daemon routing; start MCP with mux mcp")
 	}
-	if boolArg(req, "single") {
+	if boolArg(args, "single") {
 		target, binding, err := a.client.ScopedBindings().ResolveSingle(ctx, scope, slot)
 		if err != nil {
 			if isDaemonUnreachable(err) {
-				return daemonUnreachableError(err), nil
+				return nil, daemonUnreachableError(err)
 			}
-			return mapScopedBindingErr(err), nil
+			return nil, mapScopedBindingErr(err)
 		}
 		return toolJSON(map[string]any{"ok": true, "target_urn": target, "binding": binding}), nil
 	}
 	out, err := a.client.ScopedBindings().Resolve(ctx, scope, slot)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapScopedBindingErr(err), nil
+		return nil, mapScopedBindingErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "binding": out}), nil
 }
 
-func (a *Adapter) handleScopedBindingRevisions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	scope := str(req, "scope")
-	slot := str(req, "slot")
+func (a *Adapter) handleScopedBindingRevisions(ctx context.Context, args map[string]any) (any, error) {
+	scope := str(args, "scope")
+	slot := str(args, "slot")
 	if scope == "" || slot == "" {
-		return toolError("invalid_request", "scope and slot are required"), nil
+		return nil, toolError("invalid_request", "scope and slot are required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_registry_scoped_binding_revisions requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_revisions requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.ScopedBindings().ListRevisions(ctx, scope, slot)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapScopedBindingErr(err), nil
+		return nil, mapScopedBindingErr(err)
 	}
 	if out == nil {
 		out = []registry.ScopedBinding{}
@@ -126,7 +133,7 @@ func (a *Adapter) handleScopedBindingRevisions(ctx context.Context, req mcp.Call
 
 // mapScopedBindingErr converts a scoped-binding client error to an MCP
 // tool-error envelope.
-func mapScopedBindingErr(err error) *mcp.CallToolResult {
+func mapScopedBindingErr(err error) error {
 	switch {
 	case errors.Is(err, registry.ErrNotFound):
 		return toolError("not_found", err.Error())

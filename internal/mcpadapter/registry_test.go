@@ -3,17 +3,21 @@ package mcpadapter
 import (
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func makeTool(name string) mcp.Tool {
-	return mcp.NewTool(name, mcp.WithDescription("test tool "+name))
+// makeTool returns a placeholder tool with a valid (empty-object) input
+// schema. A real upstream's tools/list response always carries one per spec,
+// and the official SDK's raw AddTool (see addProxyTools) panics without one,
+// so a schema-less test tool would misrepresent what production ever sees.
+func makeTool(name string) *mcpsdk.Tool {
+	return &mcpsdk.Tool{Name: name, Description: "test tool " + name, InputSchema: map[string]any{"type": "object"}}
 }
 
 func TestToolRegistry_RegisterAndLookup(t *testing.T) {
 	r := NewToolRegistry()
 
-	tools := []mcp.Tool{makeTool("hadron_health"), makeTool("hadron_runs_list")}
+	tools := []*mcpsdk.Tool{makeTool("hadron_health"), makeTool("hadron_runs_list")}
 	r.Register("hadron", nil, tools)
 
 	rt, ok := r.Lookup("hadron_health")
@@ -27,7 +31,7 @@ func TestToolRegistry_RegisterAndLookup(t *testing.T) {
 
 func TestToolRegistry_RegisterNative(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	rt, ok := r.Lookup("mux_health")
 	if !ok {
@@ -45,10 +49,10 @@ func TestToolRegistry_Collision(t *testing.T) {
 	r := NewToolRegistry()
 
 	// Register a native "health" tool first.
-	r.RegisterNative([]mcp.Tool{makeTool("health")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("health")})
 
 	// Register an upstream server that also has "health".
-	r.Register("upstream-a", nil, []mcp.Tool{makeTool("health")})
+	r.Register("upstream-a", nil, []*mcpsdk.Tool{makeTool("health")})
 
 	// Original "health" must still exist and belong to native (empty serverID).
 	orig, ok := r.Lookup("health")
@@ -71,8 +75,8 @@ func TestToolRegistry_Collision(t *testing.T) {
 
 func TestToolRegistry_AllDefinitions(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]mcp.Tool{makeTool("mux_z"), makeTool("mux_a")})
-	r.Register("srv", nil, []mcp.Tool{makeTool("srv_tool")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("mux_z"), makeTool("mux_a")})
+	r.Register("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")})
 
 	defs := r.AllDefinitions()
 	if len(defs) != 3 {
@@ -90,8 +94,8 @@ func TestToolRegistry_AllDefinitions(t *testing.T) {
 
 func TestToolRegistry_RemoveServer(t *testing.T) {
 	r := NewToolRegistry()
-	r.Register("a", nil, []mcp.Tool{makeTool("a_tool1"), makeTool("a_tool2")})
-	r.Register("b", nil, []mcp.Tool{makeTool("b_tool1")})
+	r.Register("a", nil, []*mcpsdk.Tool{makeTool("a_tool1"), makeTool("a_tool2")})
+	r.Register("b", nil, []*mcpsdk.Tool{makeTool("b_tool1")})
 
 	r.RemoveServer("a")
 
@@ -112,7 +116,7 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			r.Register("srv", nil, []mcp.Tool{makeTool("srv_tool")})
+			r.Register("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")})
 		}
 		close(done)
 	}()
@@ -125,12 +129,12 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 
 func TestToolRegistry_ReplaceServer(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]mcp.Tool{makeTool("health")})
-	r.Register("clockwork", nil, []mcp.Tool{makeTool("alpha"), makeTool("health")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("health")})
+	r.Register("clockwork", nil, []*mcpsdk.Tool{makeTool("alpha"), makeTool("health")})
 
-	delta := r.ReplaceServer("clockwork", nil, []mcp.Tool{
+	delta := r.ReplaceServer("clockwork", nil, []*mcpsdk.Tool{
 		makeTool("beta"),
-		mcp.NewTool("clockwork__health", mcp.WithDescription("updated health")),
+		&mcpsdk.Tool{Name: "clockwork__health", Description: "updated health"},
 	})
 
 	if _, ok := r.Lookup("alpha"); ok {

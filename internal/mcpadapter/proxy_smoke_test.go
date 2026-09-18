@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"github.com/hollis-labs/tether/internal/config"
 )
 
@@ -82,10 +80,7 @@ func TestProxySmokeHadronHealth(t *testing.T) {
 
 	// ── Check 3: ProxyRouter forwards hadron_health and gets a real result ────
 	router := NewProxyRouter(reg)
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "hadron_health"},
-	}
-	result, err := router.Handle(ctx, req)
+	result, err := router.Handle(ctx, ToolCall{ToolName: "hadron_health"})
 	if err != nil {
 		t.Fatalf("router.Handle(hadron_health): %v", err)
 	}

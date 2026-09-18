@@ -4,106 +4,49 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// mockClient satisfies mcpclient.MCPClient for testing.
+// mockClient satisfies upstreamClient for testing. Far narrower than
+// mark3labs' mcpclient.MCPClient (which forced stub methods for prompts,
+// resources, completion, etc.) since upstreamClient only asks for the three
+// methods client_pool.go/proxy.go actually call.
 type mockClient struct {
-	callToolFunc  func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
-	listToolsFunc func(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
-
-	mu            sync.Mutex
-	notifications []func(mcp.JSONRPCNotification)
+	callToolFunc  func(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error)
+	listToolsFunc func(ctx context.Context, params *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error)
 }
 
-func (m *mockClient) Initialize(ctx context.Context, req mcp.InitializeRequest) (*mcp.InitializeResult, error) {
-	return nil, nil
-}
-func (m *mockClient) Ping(ctx context.Context) error { return nil }
-func (m *mockClient) ListResourcesByPage(ctx context.Context, req mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListResources(ctx context.Context, req mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListResourceTemplatesByPage(ctx context.Context, req mcp.ListResourceTemplatesRequest) (*mcp.ListResourceTemplatesResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListResourceTemplates(ctx context.Context, req mcp.ListResourceTemplatesRequest) (*mcp.ListResourceTemplatesResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ReadResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-	return nil, nil
-}
-func (m *mockClient) Subscribe(ctx context.Context, req mcp.SubscribeRequest) error { return nil }
-func (m *mockClient) Unsubscribe(ctx context.Context, req mcp.UnsubscribeRequest) error {
-	return nil
-}
-func (m *mockClient) ListPromptsByPage(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListPrompts(ctx context.Context, req mcp.ListPromptsRequest) (*mcp.ListPromptsResult, error) {
-	return nil, nil
-}
-func (m *mockClient) GetPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListToolsByPage(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
-	return nil, nil
-}
-func (m *mockClient) ListTools(ctx context.Context, req mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+func (m *mockClient) ListTools(ctx context.Context, params *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 	if m.listToolsFunc != nil {
-		return m.listToolsFunc(ctx, req)
+		return m.listToolsFunc(ctx, params)
 	}
-	return &mcp.ListToolsResult{}, nil
+	return &mcpsdk.ListToolsResult{}, nil
 }
-func (m *mockClient) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mockClient) CallTool(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 	if m.callToolFunc != nil {
-		return m.callToolFunc(ctx, req)
+		return m.callToolFunc(ctx, params)
 	}
-	return mcp.NewToolResultText("ok"), nil
-}
-func (m *mockClient) SetLevel(ctx context.Context, req mcp.SetLevelRequest) error { return nil }
-func (m *mockClient) Complete(ctx context.Context, req mcp.CompleteRequest) (*mcp.CompleteResult, error) {
-	return nil, nil
+	return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 }
 func (m *mockClient) Close() error { return nil }
-func (m *mockClient) OnNotification(handler func(mcp.JSONRPCNotification)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.notifications = append(m.notifications, handler)
-}
 
-func (m *mockClient) notify(notification mcp.JSONRPCNotification) {
-	m.mu.Lock()
-	handlers := append([]func(mcp.JSONRPCNotification){}, m.notifications...)
-	m.mu.Unlock()
-	for _, handler := range handlers {
-		handler(notification)
-	}
-}
+var _ upstreamClient = (*mockClient)(nil)
 
-var _ mcpclient.MCPClient = (*mockClient)(nil)
-
-func callReq(toolName string) mcp.CallToolRequest {
-	return mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: toolName},
-	}
+func callReq(toolName string) ToolCall {
+	return ToolCall{ToolName: toolName}
 }
 
 func TestProxyRouter_SuccessfulForward(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultText("upstream-result"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream-result"}}}, nil
 		},
 	}
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("upstream_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
 
 	router := NewProxyRouter(reg)
 	result, err := router.Handle(context.Background(), callReq("upstream_tool"))
@@ -131,7 +74,7 @@ func TestProxyRouter_ToolNotFound(t *testing.T) {
 func TestProxyRouter_DeadUpstream(t *testing.T) {
 	reg := NewToolRegistry()
 	// Register tool with nil client (simulates dead upstream).
-	reg.Register("dead-server", nil, []mcp.Tool{makeTool("dead_tool")})
+	reg.Register("dead-server", nil, []*mcpsdk.Tool{makeTool("dead_tool")})
 
 	router := NewProxyRouter(reg)
 	result, err := router.Handle(context.Background(), callReq("dead_tool"))
@@ -145,7 +88,7 @@ func TestProxyRouter_DeadUpstream(t *testing.T) {
 
 func TestProxyRouter_NativeTool_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	reg.RegisterNative([]mcp.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
 
 	router := NewProxyRouter(reg)
 	_, err := router.Handle(context.Background(), callReq("mux_health"))
@@ -157,11 +100,11 @@ func TestProxyRouter_NativeTool_ReturnsError(t *testing.T) {
 func TestProxyRouter_UpstreamTransportError(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		callToolFunc: func(_ context.Context, _ *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 			return nil, errors.New("connection reset")
 		},
 	}
-	reg.Register("flaky", mc, []mcp.Tool{makeTool("flaky_tool")})
+	reg.Register("flaky", mc, []*mcpsdk.Tool{makeTool("flaky_tool")})
 
 	router := NewProxyRouter(reg)
 	_, err := router.Handle(context.Background(), callReq("flaky_tool"))
@@ -173,15 +116,15 @@ func TestProxyRouter_UpstreamTransportError(t *testing.T) {
 func TestProxyRouter_InjectsTraceContextIntoUpstreamMeta(t *testing.T) {
 	reg := NewToolRegistry()
 	var gotArgs map[string]any
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotArgs = req.GetArguments()
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotArgs, _ = params.Arguments.(map[string]any)
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("upstream_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
 
 	router := NewProxyRouter(reg)
 	sc := trace.NewSpanContext(trace.SpanContextConfig{
@@ -192,11 +135,9 @@ func TestProxyRouter_InjectsTraceContextIntoUpstreamMeta(t *testing.T) {
 	})
 	ctx := trace.ContextWithSpanContext(context.Background(), sc)
 
-	result, err := router.Handle(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      "upstream_tool",
-			Arguments: map[string]any{"input": "hello"},
-		},
+	result, err := router.Handle(ctx, ToolCall{
+		ToolName: "upstream_tool",
+		Args:     map[string]any{"input": "hello"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -208,8 +149,8 @@ func TestProxyRouter_InjectsTraceContextIntoUpstreamMeta(t *testing.T) {
 	if gotMeta == nil {
 		t.Fatal("no _meta on the upstream call; trace context has nowhere to ride")
 	}
-	if tp, _ := gotMeta.AdditionalFields["_traceparent"].(string); tp == "" {
-		t.Errorf("missing _traceparent in _meta: %v", gotMeta.AdditionalFields)
+	if tp, _ := gotMeta["_traceparent"].(string); tp == "" {
+		t.Errorf("missing _traceparent in _meta: %v", gotMeta)
 	}
 
 	// The point of the whole change: nothing metadata-shaped reaches

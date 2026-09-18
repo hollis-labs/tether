@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/hollis-labs/tether/internal/config"
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // A real, disposable MCP process. Exit markers are consumed by the child;
@@ -87,11 +87,18 @@ func TestUpstreamFixture(t *testing.T) {
 					os.Exit(92)
 				}
 			}
-			result = map[string]any{"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": name, "version": "fixture"}}
+			result = map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": name, "version": "fixture"}}
 		case "tools/list":
-			defs := []mcp.Tool{mcp.NewTool(name+"_probe", mcp.WithDescription(name+" fixture probe"))}
+			defs := []map[string]any{{
+				"name":        name + "_probe",
+				"description": name + " fixture probe",
+				"inputSchema": map[string]any{"type": "object"},
+			}}
 			if _, err := os.Stat(filepath.Join(dir, name+".extra")); err == nil {
-				defs = append(defs, mcp.NewTool(name+"_extra"))
+				defs = append(defs, map[string]any{
+					"name":        name + "_extra",
+					"inputSchema": map[string]any{"type": "object"},
+				})
 			}
 			result = map[string]any{"tools": defs}
 		case "tools/call":
@@ -100,7 +107,7 @@ func TestUpstreamFixture(t *testing.T) {
 				appendEvent("side_effect")
 				select {}
 			}
-			result = mcp.NewToolResultText(strconv.Itoa(os.Getpid()))
+			result = map[string]any{"content": []map[string]any{{"type": "text", "text": strconv.Itoa(os.Getpid())}}}
 		default:
 			result = map[string]any{}
 		}
@@ -148,7 +155,7 @@ func probePID(t *testing.T, r *ProxyRouter, name string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	res, err := r.Handle(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name + "_probe"}})
+	res, err := r.Handle(ctx, ToolCall{ToolName: name + "_probe"})
 	if err != nil || res.IsError {
 		t.Fatalf("probe %s: %+v %v", name, res, err)
 	}
@@ -172,7 +179,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			adapter := newTestAdapter(t)
 			adapter.svc.Catalog = &config.Catalog{}
 			adapter.upstreams = pool
-			local := server.NewMCPServer("proxy", "test", server.WithToolCapabilities(true))
+			local := gomcp.NewServer("proxy", "test")
 			adapter.registerTools(local)
 			idx := NewDiscoveryIndex()
 			tags := map[string][]string{"alpha": {"alpha"}, "beta": {"beta"}}
@@ -183,19 +190,9 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			adapter.registerDiscoverTool(local, idx, nil, true)
 			adapter.registerSemanticDiscoverTool(local, idx, nil, true)
 			adapter.registerMCPServersTool(local, pool, pool.entries, nil, true)
-			downstream, err := mcpclient.NewInProcessClient(local)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer downstream.Close()
-			if err := downstream.Start(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := downstream.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-				t.Fatal(err)
-			}
+			downstream := connectInMemory(t, local)
 			callBody := func(name string, args map[string]any) map[string]any {
-				res, err := downstream.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: args}})
+				res, err := downstream.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -205,7 +202,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				_, err := router.Handle(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alpha_probe", Arguments: map[string]any{"hold": true}}})
+				_, err := router.Handle(ctx, ToolCall{ToolName: "alpha_probe", Args: map[string]any{"hold": true}})
 				pending <- err
 			}()
 			deadline := time.Now().Add(time.Second)
@@ -360,10 +357,10 @@ func TestUpstreamRecovery_OldRefreshCannotReplaceRecoveredClient(t *testing.T) {
 	registry := NewToolRegistry()
 	pool := NewClientPool(nil, registry)
 	entered, release := make(chan struct{}), make(chan struct{})
-	old := &mockClient{listToolsFunc: func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	old := &mockClient{listToolsFunc: func(context.Context, *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 		close(entered)
 		<-release
-		return &mcp.ListToolsResult{Tools: []mcp.Tool{makeTool("obsolete")}}, nil
+		return &mcpsdk.ListToolsResult{Tools: []*mcpsdk.Tool{makeTool("obsolete")}}, nil
 	}}
 	current := &mockClient{}
 	pool.statuses["alpha"] = &clientStatus{entry: config.MCPServerEntry{ID: "alpha"}, client: old, state: "connected"}
@@ -373,7 +370,7 @@ func TestUpstreamRecovery_OldRefreshCannotReplaceRecoveredClient(t *testing.T) {
 	pool.mu.Lock()
 	pool.statuses["alpha"].client = current
 	pool.mu.Unlock()
-	if _, err := pool.publish(context.Background(), "alpha", current, []mcp.Tool{makeTool("current")}, true); err != nil {
+	if _, err := pool.publish(context.Background(), "alpha", current, []*mcpsdk.Tool{makeTool("current")}, true); err != nil {
 		t.Fatal(err)
 	}
 	close(release)

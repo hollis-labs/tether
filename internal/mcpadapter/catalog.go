@@ -2,7 +2,6 @@ package mcpadapter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/config"
@@ -164,47 +162,79 @@ func catalogValidationLocation(err error) string {
 	}
 }
 
-func catalogReloadToolError(failure *catalogReadFailure) *mcp.CallToolResult {
-	body, _ := json.Marshal(map[string]any{
+// catalogReloadError implements budget.StructuredError so a catalog-reload
+// failure keeps its original response shape (ok/code/message/error) rather
+// than being forced through ToolError's fixed field set.
+type catalogReloadError struct {
+	failure *catalogReadFailure
+}
+
+func (e *catalogReloadError) Error() string {
+	return "catalog_reload_failed: launch catalog reload failed"
+}
+
+func (e *catalogReloadError) ToolErrorContent() any {
+	return map[string]any{
 		"ok":      false,
 		"code":    "catalog_reload_failed",
 		"message": "launch catalog reload failed",
-		"error":   failure,
-	})
-	return mcp.NewToolResultError(string(body))
+		"error":   e.failure,
+	}
 }
 
-func (a *Adapter) registerHealthTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("mux_health",
-		mcp.WithDescription("Health check for the agent-mux MCP adapter. Returns version and catalog summary."),
-	), Reads("runtime observation and validated launch catalog reload; no store or catalog write"), a.handleHealth)
+func catalogReloadToolError(failure *catalogReadFailure) error {
+	return &catalogReloadError{failure: failure}
 }
 
-func (a *Adapter) registerCatalogTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("mux_catalog_list_projects",
-		mcp.WithDescription("List all projects defined in the agent-mux catalog."),
-	), Reads("validated launch catalog reload and project listing"), a.handleListProjects)
+func (a *Adapter) registerHealthTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_health",
+		Description: "Health check for the agent-mux MCP adapter. Returns version and catalog summary.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleHealth,
+	}, Reads("runtime observation and validated launch catalog reload; no store or catalog write"))
+}
 
-	a.addTool(s, mcp.NewTool("mux_catalog_list_agents",
-		mcp.WithDescription("List all agent profiles defined in the agent-mux catalog."),
-	), Reads("validated layered launch catalog reload and agent listing"), a.handleListAgents)
+func (a *Adapter) registerCatalogTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_catalog_list_projects",
+		Description: "List all projects defined in the agent-mux catalog.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleListProjects,
+	}, Reads("validated launch catalog reload and project listing"))
 
-	a.addTool(s, mcp.NewTool("mux_catalog_list_providers",
-		mcp.WithDescription("List all provider definitions in the agent-mux catalog."),
-	), Reads("validated launch catalog reload and provider listing"), a.handleListProviders)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_catalog_list_agents",
+		Description: "List all agent profiles defined in the agent-mux catalog.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleListAgents,
+	}, Reads("validated layered launch catalog reload and agent listing"))
 
-	a.addTool(s, mcp.NewTool("mux_catalog_list_launches",
-		mcp.WithDescription("List all launch profiles in the agent-mux catalog. A launch profile combines a project, agent, and provider into a named runnable configuration."),
-	), Reads("validated layered launch catalog reload and launch listing"), a.handleListLaunches)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_catalog_list_providers",
+		Description: "List all provider definitions in the agent-mux catalog.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleListProviders,
+	}, Reads("validated launch catalog reload and provider listing"))
 
-	a.addTool(s, mcp.NewTool("mux_catalog_list_boot_profiles",
-		mcp.WithDescription("List available boot prompt profiles from the catalog boot-profiles directory."),
-	), Reads("catalog boot-profiles directory listing"), a.handleListBootProfiles)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_catalog_list_launches",
+		Description: "List all launch profiles in the agent-mux catalog. A launch profile combines a project, agent, and provider into a named runnable configuration.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleListLaunches,
+	}, Reads("validated layered launch catalog reload and launch listing"))
+
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_catalog_list_boot_profiles",
+		Description: "List available boot prompt profiles from the catalog boot-profiles directory.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleListBootProfiles,
+	}, Reads("catalog boot-profiles directory listing"))
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleHealth(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleHealth(_ context.Context, _ map[string]any) (any, error) {
 	cat, catalogRead, catalogErr := a.catalogForRead()
 	payload := map[string]any{
 		"ok":           catalogErr == nil,
@@ -229,10 +259,10 @@ func (a *Adapter) handleHealth(_ context.Context, _ mcp.CallToolRequest) (*mcp.C
 	return toolJSON(payload), nil
 }
 
-func (a *Adapter) handleListProjects(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleListProjects(_ context.Context, _ map[string]any) (any, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return catalogReloadToolError(err), nil
+		return nil, catalogReloadToolError(err)
 	}
 	projects := make([]config.Project, 0, len(cat.Projects))
 	for _, project := range cat.Projects {
@@ -247,10 +277,10 @@ func (a *Adapter) handleListProjects(_ context.Context, _ mcp.CallToolRequest) (
 	}), nil
 }
 
-func (a *Adapter) handleListAgents(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleListAgents(_ context.Context, _ map[string]any) (any, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return catalogReloadToolError(err), nil
+		return nil, catalogReloadToolError(err)
 	}
 	agents := make([]config.Agent, 0, len(cat.Agents))
 	for _, agent := range cat.Agents {
@@ -265,10 +295,10 @@ func (a *Adapter) handleListAgents(_ context.Context, _ mcp.CallToolRequest) (*m
 	}), nil
 }
 
-func (a *Adapter) handleListProviders(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleListProviders(_ context.Context, _ map[string]any) (any, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return catalogReloadToolError(err), nil
+		return nil, catalogReloadToolError(err)
 	}
 	providers := make([]config.Provider, 0, len(cat.Providers))
 	for _, provider := range cat.Providers {
@@ -283,10 +313,10 @@ func (a *Adapter) handleListProviders(_ context.Context, _ mcp.CallToolRequest) 
 	}), nil
 }
 
-func (a *Adapter) handleListLaunches(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleListLaunches(_ context.Context, _ map[string]any) (any, error) {
 	cat, catalogRead, err := a.catalogForRead()
 	if err != nil {
-		return catalogReloadToolError(err), nil
+		return nil, catalogReloadToolError(err)
 	}
 	type launchBrief struct {
 		ID       string `json:"id"`
@@ -312,11 +342,11 @@ func (a *Adapter) handleListLaunches(_ context.Context, _ mcp.CallToolRequest) (
 	}), nil
 }
 
-func (a *Adapter) handleListBootProfiles(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (a *Adapter) handleListBootProfiles(_ context.Context, _ map[string]any) (any, error) {
 	profilesDir := fmt.Sprintf("%s/boot-profiles", a.svc.CatalogRoot)
 	profiles, err := bootgen.LoadProfiles(profilesDir)
 	if err != nil {
-		return toolError("internal_error", fmt.Sprintf("load boot profiles: %v", err)), nil
+		return nil, toolError("internal_error", fmt.Sprintf("load boot profiles: %v", err))
 	}
 	type brief struct {
 		ID          string `json:"id"`

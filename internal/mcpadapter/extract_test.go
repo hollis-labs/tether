@@ -10,9 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type recordedRef struct{ sessionID, kind, refID, uri, relation, source, parentItemID string }
@@ -160,17 +159,17 @@ func runProxiedToolCall(t *testing.T, a *Adapter, toolName string, args map[stri
 	t.Helper()
 
 	mc := &mockClient{
-		callToolFunc: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		callToolFunc: func(context.Context, *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 			if upstreamErrors {
-				return mcp.NewToolResultError("upstream said no"), nil
+				return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream said no"}}, IsError: true}, nil
 			}
-			return mcp.NewToolResultText(responseText), nil
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: responseText}}}, nil
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool(toolName)})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
-	s := mcpserver.NewMCPServer("t", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("t", "0.0.1")
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
@@ -179,19 +178,9 @@ func runProxiedToolCall(t *testing.T, a *Adapter, toolName string, args map[stri
 	}
 	live.addProxyTools(makeTool(toolName))
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer func() { _ = c.Close() }()
+	c := connectInMemory(t, s)
 	ctx := context.Background()
-	if _, err := c.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = toolName
-	req.Params.Arguments = args
-	if _, err := c.CallTool(ctx, req); err != nil {
+	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: toolName, Arguments: args}); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 }
@@ -412,33 +401,26 @@ func TestProxiedCall_MuxCall_ExtractsRefs(t *testing.T) {
 	a, attacher := newExtractingAdapter("sess-1", true)
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultText(`{"status":"created","item_id":"01M2ITEM000000000000000000"}`), nil
+		callToolFunc: func(_ context.Context, _ *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: `{"status":"created","item_id":"01M2ITEM000000000000000000"}`}}}, nil
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("workspace_write")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
 
-	s := mcpserver.NewMCPServer("t", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("t", "0.0.1")
 	router := NewProxyRouter(reg)
 	a.registerCallTool(s, router)
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer func() { _ = c.Close() }()
+	c := connectInMemory(t, s)
 	ctx := context.Background()
-	if _, err := c.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "mux_call"
-	req.Params.Arguments = map[string]any{
-		"tool_name": "workspace_write",
-		"arguments": map[string]any{"summary": "dispatched draft"},
-	}
-	if _, err := c.CallTool(ctx, req); err != nil {
+	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "mux_call",
+		Arguments: map[string]any{
+			"tool_name": "workspace_write",
+			"arguments": map[string]any{"summary": "dispatched draft"},
+		},
+	}); err != nil {
 		t.Fatalf("CallTool mux_call: %v", err)
 	}
 
@@ -463,19 +445,20 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 	}
 
 	var forwarded []byte
-	var forwardedMeta *mcp.Meta
+	var forwardedMeta map[string]any
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			forwarded, _ = json.Marshal(req.GetArguments())
-			forwardedMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			forwardedArgs, _ := params.Arguments.(map[string]any)
+			forwarded, _ = json.Marshal(forwardedArgs)
+			forwardedMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("torque", mc, []mcp.Tool{makeTool("torque_task_get")})
+	reg.Register("torque", mc, []*mcpsdk.Tool{makeTool("torque_task_get")})
 
 	a, _ := newExtractingAdapter("sess-1", true)
-	s := mcpserver.NewMCPServer("t", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("t", "0.0.1")
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
@@ -484,18 +467,8 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 	}
 	live.addProxyTools(makeTool("torque_task_get"))
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer func() { _ = c.Close() }()
-	if _, err := c.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "torque_task_get"
-	req.Params.Arguments = args
-	if _, err := c.CallTool(context.Background(), req); err != nil {
+	c := connectInMemory(t, s)
+	if _, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "torque_task_get", Arguments: args}); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 
@@ -504,11 +477,9 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 	}
 	// _meta may carry trace context (CW-20260907-0026) or provenance
 	// (CW-20260913-0011) but nothing extraction-shaped.
-	if forwardedMeta != nil {
-		for k := range forwardedMeta.AdditionalFields {
-			if k != "_traceparent" && k != "_tracestate" && k != ProvenanceMetaKey {
-				t.Errorf("extraction added %q to _meta on the forwarded call", k)
-			}
+	for k := range forwardedMeta {
+		if k != "_traceparent" && k != "_tracestate" && k != ProvenanceMetaKey {
+			t.Errorf("extraction added %q to _meta on the forwarded call", k)
 		}
 	}
 }

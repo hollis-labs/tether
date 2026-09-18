@@ -9,8 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/agentops"
 	"github.com/hollis-labs/tether/internal/config"
@@ -19,45 +18,60 @@ import (
 // registerAgentOpsTools wires the agent catalog-ops surface: list/show (read,
 // no scope) and create/edit (write, gated by catalog.write). These mirror the
 // `mux agents` CLI so an agent can manage agent definitions over MCP.
-func (a *Adapter) registerAgentOpsTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("mux_agent_list",
-		mcp.WithDescription("List all agents across the system, user, and project discovery layers. Each entry is annotated with the layer it resolved from and its file path. Read-only; no scope required."),
-	), Reads("catalog agent listing"), a.handleAgentList)
+func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_agent_list",
+		Description: "List all agents across the system, user, and project discovery layers. Each entry is annotated with the layer it resolved from and its file path. Read-only; no scope required.",
+		InputSchema: gomcp.EmptyObjectSchema(),
+		Handler:     a.handleAgentList,
+	}, Reads("catalog agent listing"))
 
-	a.addTool(s, mcp.NewTool("mux_agent_show",
-		mcp.WithDescription("Show one agent's full resolved definition, including which discovery layer it came from and its file path. Read-only; no scope required."),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID")),
-	), Reads("catalog agent lookup"), a.handleAgentShow)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_agent_show",
+		Description: "Show one agent's full resolved definition, including which discovery layer it came from and its file path. Read-only; no scope required.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"id": strProp("Agent ID"),
+		}, "id"),
+		Handler: a.handleAgentShow,
+	}, Reads("catalog agent lookup"))
 
-	a.addTool(s, mcp.NewTool("mux_agent_create",
-		mcp.WithDescription("Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase)."),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended.")),
-		mcp.WithString("scope", mcp.Description("Discovery layer: project (default) | user | system.")),
-		mcp.WithString("project", mcp.Description("Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/.")),
-		mcp.WithString("name", mcp.Description("Human-readable name (defaults to id).")),
-		mcp.WithString("roles", mcp.Description("Comma-separated role list (optional).")),
-		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list (optional).")),
-		mcp.WithString("system_prompt", mcp.Description("Agent system prompt (optional).")),
-		mcp.WithString("agent_prompt", mcp.Description("Agent persona prompt (optional).")),
-	), Writes(), a.handleAgentCreate)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_agent_create",
+		Description: "Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase).",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"id":            strProp("Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended."),
+			"scope":         strProp("Discovery layer: project (default) | user | system."),
+			"project":       strProp("Catalog project ID — required when scope=project. The agent is written to that project's repo at <repo_root>/.tether/agents/."),
+			"name":          strProp("Human-readable name (defaults to id)."),
+			"roles":         strProp("Comma-separated role list (optional)."),
+			"skills":        strProp("Comma-separated skill ID list (optional)."),
+			"system_prompt": strProp("Agent system prompt (optional)."),
+			"agent_prompt":  strProp("Agent persona prompt (optional)."),
+		}, "id"),
+		Handler: a.handleAgentCreate,
+	}, Writes())
 
-	a.addTool(s, mcp.NewTool("mux_agent_edit",
-		mcp.WithDescription("Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved."),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Agent ID to edit.")),
-		mcp.WithString("name", mcp.Description("New human-readable name (optional).")),
-		mcp.WithString("roles", mcp.Description("Comma-separated role list — replaces existing roles; empty string clears them (optional).")),
-		mcp.WithString("skills", mcp.Description("Comma-separated skill ID list — replaces existing skills; empty string clears them (optional).")),
-		mcp.WithString("system_prompt", mcp.Description("New system prompt (optional).")),
-		mcp.WithString("agent_prompt", mcp.Description("New persona prompt (optional).")),
-	), Writes(), a.handleAgentEdit)
+	a.addTool(s, gomcp.Tool{
+		Name:        "mux_agent_edit",
+		Description: "Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"id":            strProp("Agent ID to edit."),
+			"name":          strProp("New human-readable name (optional)."),
+			"roles":         strProp("Comma-separated role list — replaces existing roles; empty string clears them (optional)."),
+			"skills":        strProp("Comma-separated skill ID list — replaces existing skills; empty string clears them (optional)."),
+			"system_prompt": strProp("New system prompt (optional)."),
+			"agent_prompt":  strProp("New persona prompt (optional)."),
+		}, "id"),
+		Handler: a.handleAgentEdit,
+	}, Writes())
 }
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleAgentList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	cat, errRes := a.discoverAgents()
-	if errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAgentList(_ context.Context, _ map[string]any) (any, error) {
+	cat, err := a.discoverAgents()
+	if err != nil {
+		return nil, err
 	}
 	type brief struct {
 		ID    string `json:"id"`
@@ -78,18 +92,18 @@ func (a *Adapter) handleAgentList(_ context.Context, _ mcp.CallToolRequest) (*mc
 	return toolJSON(map[string]any{"ok": true, "agents": out, "count": len(out)}), nil
 }
 
-func (a *Adapter) handleAgentShow(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id := str(req, "id")
+func (a *Adapter) handleAgentShow(_ context.Context, args map[string]any) (any, error) {
+	id := str(args, "id")
 	if id == "" {
-		return toolError("invalid_argument", "id is required"), nil
+		return nil, toolError("invalid_argument", "id is required")
 	}
-	cat, errRes := a.discoverAgents()
-	if errRes != nil {
-		return errRes, nil
+	cat, err := a.discoverAgents()
+	if err != nil {
+		return nil, err
 	}
 	la, ok := cat.Agents[id]
 	if !ok {
-		return toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id)), nil
+		return nil, toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id))
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -99,36 +113,36 @@ func (a *Adapter) handleAgentShow(_ context.Context, req mcp.CallToolRequest) (*
 	}), nil
 }
 
-func (a *Adapter) handleAgentCreate(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeCatalogWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeCatalogWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "id")
+	id := str(args, "id")
 	if !agentops.ValidID(id) {
-		return toolError("invalid_argument", "id is required and must be a single name with no path separators"), nil
+		return nil, toolError("invalid_argument", "id is required and must be a single name with no path separators")
 	}
-	layer, err := agentops.ParseScope(str(req, "scope"))
+	layer, err := agentops.ParseScope(str(args, "scope"))
 	if err != nil {
-		return toolError("invalid_argument", err.Error()), nil
+		return nil, toolError("invalid_argument", err.Error())
 	}
-	root, errRes := a.layerRoot(layer, str(req, "project"))
-	if errRes != nil {
-		return errRes, nil
+	root, err := a.layerRoot(layer, str(args, "project"))
+	if err != nil {
+		return nil, err
 	}
 	path, err := agentops.Create(root, id, agentops.Params{
-		Name:         str(req, "name"),
-		Roles:        csvArgPresent(req, "roles"),
-		Skills:       csvArgPresent(req, "skills"),
-		SystemPrompt: str(req, "system_prompt"),
-		AgentPrompt:  str(req, "agent_prompt"),
+		Name:         str(args, "name"),
+		Roles:        csvArgPresent(args, "roles"),
+		Skills:       csvArgPresent(args, "skills"),
+		SystemPrompt: str(args, "system_prompt"),
+		AgentPrompt:  str(args, "agent_prompt"),
 	})
 	if err != nil {
 		// An already-exists is a caller error (conflict); anything else
 		// (permission denied, bad layer root, write failure) is internal.
 		if errors.Is(err, agentops.ErrExists) {
-			return toolError("conflict", err.Error()), nil
+			return nil, toolError("conflict", err.Error())
 		}
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -138,31 +152,31 @@ func (a *Adapter) handleAgentCreate(_ context.Context, req mcp.CallToolRequest) 
 	}), nil
 }
 
-func (a *Adapter) handleAgentEdit(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if errRes := a.checkScope(ScopeCatalogWrite); errRes != nil {
-		return errRes, nil
+func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeCatalogWrite); err != nil {
+		return nil, err
 	}
-	id := str(req, "id")
+	id := str(args, "id")
 	if id == "" {
-		return toolError("invalid_argument", "id is required"), nil
+		return nil, toolError("invalid_argument", "id is required")
 	}
-	cat, errRes := a.discoverAgents()
-	if errRes != nil {
-		return errRes, nil
+	cat, err := a.discoverAgents()
+	if err != nil {
+		return nil, err
 	}
 	la, ok := cat.Agents[id]
 	if !ok {
-		return toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id)), nil
+		return nil, toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id))
 	}
 	updated, err := agentops.Update(la.Path, agentops.Params{
-		Name:         str(req, "name"),
-		Roles:        csvArgPresent(req, "roles"),
-		Skills:       csvArgPresent(req, "skills"),
-		SystemPrompt: str(req, "system_prompt"),
-		AgentPrompt:  str(req, "agent_prompt"),
+		Name:         str(args, "name"),
+		Roles:        csvArgPresent(args, "roles"),
+		Skills:       csvArgPresent(args, "skills"),
+		SystemPrompt: str(args, "system_prompt"),
+		AgentPrompt:  str(args, "agent_prompt"),
 	})
 	if err != nil {
-		return toolError("internal_error", err.Error()), nil
+		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -176,9 +190,9 @@ func (a *Adapter) handleAgentEdit(_ context.Context, req mcp.CallToolRequest) (*
 
 // discoverAgents runs layered agent discovery (system + user + project)
 // anchored at the catalog root and the adapter's working directory. It
-// returns an MCP error result instead of an error so handlers can return it
-// directly.
-func (a *Adapter) discoverAgents() (*config.LayeredCatalog, *mcp.CallToolResult) {
+// returns a *budget.ToolError-satisfying error instead of a bare error so
+// handlers can return it directly.
+func (a *Adapter) discoverAgents() (*config.LayeredCatalog, error) {
 	if a.svc == nil || strings.TrimSpace(a.svc.CatalogRoot) == "" {
 		return nil, toolError("internal_error", "catalog root is not configured")
 	}
@@ -192,7 +206,7 @@ func (a *Adapter) discoverAgents() (*config.LayeredCatalog, *mcp.CallToolResult)
 // layerRoot resolves the on-disk root directory for the given discovery
 // layer. For the project layer, projectID names a catalog project and the
 // agent is written into that project's repo (<repo_root>/.tether).
-func (a *Adapter) layerRoot(layer config.Layer, projectID string) (string, *mcp.CallToolResult) {
+func (a *Adapter) layerRoot(layer config.Layer, projectID string) (string, error) {
 	switch layer {
 	case config.LayerSystem:
 		return config.Expand(a.svc.CatalogRoot), nil
@@ -225,8 +239,8 @@ func (a *Adapter) layerRoot(layer config.Layer, projectID string) (string, *mcp.
 // A key that is present (even as an empty string) returns a non-nil slice,
 // so a caller can deliberately clear Roles/Skills to an empty list. Trimmed,
 // empty elements are dropped.
-func csvArgPresent(req mcp.CallToolRequest, key string) []string {
-	raw, ok := req.GetArguments()[key]
+func csvArgPresent(args map[string]any, key string) []string {
+	raw, ok := args[key]
 	if !ok {
 		return nil
 	}

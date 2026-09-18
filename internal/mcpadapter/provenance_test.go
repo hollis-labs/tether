@@ -8,28 +8,27 @@ import (
 	"sync"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // TestProvenance_DirectProxiedCallStampsEnvelope tests that a direct proxied tool call
 // stamps tether.provenance into params._meta with schema_version, session_id, and workstream_id.
 func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 	var gotArgs map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			gotArgs = req.GetArguments()
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			gotArgs, _ = params.Arguments.(map[string]any)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", mc, []mcp.Tool{makeTool("workspace_write")})
+	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
@@ -40,14 +39,12 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	})
 
 	ctx := WithSessionID(context.Background(), "sess-100")
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      "workspace_write",
-			Arguments: map[string]any{"item_id": "item-1", "summary": "draft"},
-		},
+	call := ToolCall{
+		ToolName: "workspace_write",
+		Args:     map[string]any{"item_id": "item-1", "summary": "draft"},
 	}
 
-	res, err := router.Handle(ctx, req)
+	res, err := router.Handle(ctx, call)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -58,9 +55,9 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	if gotMeta == nil {
 		t.Fatal("expected _meta on forwarded call, got nil")
 	}
-	env := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil {
-		t.Fatalf("missing tether.provenance in _meta: %v", gotMeta.AdditionalFields)
+		t.Fatalf("missing tether.provenance in _meta: %v", gotMeta)
 	}
 	if env.SchemaVersion != 1 {
 		t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
@@ -81,19 +78,19 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 // TestProvenance_MuxCallForwardingStampsEnvelope tests that forwarding through mux_call
 // stamps tether.provenance onto the upstream request.
 func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 	var gotArgs map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			gotArgs = req.GetArguments()
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			gotArgs, _ = params.Arguments.(map[string]any)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", mc, []mcp.Tool{makeTool("knowledge_write")})
+	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("knowledge_write")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
@@ -106,28 +103,20 @@ func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
 	a := New(nil, "", nil)
 	a.SessionID = "sess-mc"
 
-	s := mcpserver.NewMCPServer("test-mux", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test-mux", "0.0.1")
 	a.registerCallTool(s, router)
 
-	client, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer func() { _ = client.Close() }()
-	if _, err := client.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
+	client := connectInMemory(t, s)
 
-	callReq := mcp.CallToolRequest{}
-	callReq.Params.Name = "mux_call"
-	callReq.Params.Arguments = map[string]any{
-		"tool_name": "knowledge_write",
-		"arguments": map[string]any{
-			"key": "contract_note",
+	res, err := client.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "mux_call",
+		Arguments: map[string]any{
+			"tool_name": "knowledge_write",
+			"arguments": map[string]any{
+				"key": "contract_note",
+			},
 		},
-	}
-
-	res, err := client.CallTool(context.Background(), callReq)
+	})
 	if err != nil {
 		t.Fatalf("CallTool mux_call: %v", err)
 	}
@@ -138,9 +127,9 @@ func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
 	if gotMeta == nil {
 		t.Fatal("expected _meta on forwarded call from mux_call, got nil")
 	}
-	env := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil {
-		t.Fatalf("missing tether.provenance in _meta from mux_call: %v", gotMeta.AdditionalFields)
+		t.Fatalf("missing tether.provenance in _meta from mux_call: %v", gotMeta)
 	}
 	if env.SchemaVersion != 1 || env.SessionID != "sess-mc" || env.WorkstreamID != "ws-mc" {
 		t.Errorf("unexpected provenance envelope: %+v", env)
@@ -153,17 +142,17 @@ func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
 // TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured verifies that any
 // client-invented stamp is overwritten with authentic Tether provenance.
 func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("some_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
@@ -171,28 +160,24 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 	})
 
 	ctx := WithSessionID(context.Background(), "sess-real")
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "some_tool",
-			Meta: &mcp.Meta{
-				AdditionalFields: map[string]any{
-					ProvenanceMetaKey: map[string]any{
-						"schema_version": 999,
-						"session_id":     "sess-spoofed",
-						"workstream_id":  "ws-spoofed",
-						"verified":       true,
-					},
-				},
+	call := ToolCall{
+		ToolName: "some_tool",
+		Meta: map[string]any{
+			ProvenanceMetaKey: map[string]any{
+				"schema_version": 999,
+				"session_id":     "sess-spoofed",
+				"workstream_id":  "ws-spoofed",
+				"verified":       true,
 			},
 		},
 	}
 
-	_, err := router.Handle(ctx, req)
+	_, err := router.Handle(ctx, call)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	env := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil {
 		t.Fatal("missing provenance envelope")
 	}
@@ -206,7 +191,7 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 		t.Errorf("workstream_id = %q, want %q", env.WorkstreamID, "ws-real")
 	}
 	// Verify spoofed fields (like "verified") are not in the envelope map.
-	provMap, _ := gotMeta.AdditionalFields[ProvenanceMetaKey].(map[string]any)
+	provMap, _ := gotMeta[ProvenanceMetaKey].(map[string]any)
 	if _, ok := provMap["verified"]; ok {
 		t.Errorf("spoofed 'verified' field survived in provenance map: %v", provMap)
 	}
@@ -216,45 +201,41 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 // no session is configured (empty sessionID), any client-invented stamp is stripped
 // and no spurious _meta is forwarded if _meta is otherwise empty.
 func TestProvenance_StripsClientSuppliedStampWhenNoSessionConfigured(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("some_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 
 	// Inbound call carrying a client-invented stamp and no session in ctx.
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "some_tool",
-			Meta: &mcp.Meta{
-				AdditionalFields: map[string]any{
-					ProvenanceMetaKey: map[string]any{
-						"schema_version": 1,
-						"session_id":     "sess-spoofed",
-					},
-				},
+	call := ToolCall{
+		ToolName: "some_tool",
+		Meta: map[string]any{
+			ProvenanceMetaKey: map[string]any{
+				"schema_version": 1,
+				"session_id":     "sess-spoofed",
 			},
 		},
 	}
 
-	_, err := router.Handle(context.Background(), req)
+	_, err := router.Handle(context.Background(), call)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
 	if gotMeta != nil {
-		if _, hasProv := gotMeta.AdditionalFields[ProvenanceMetaKey]; hasProv {
-			t.Errorf("tether.provenance was forwarded when no session was configured: %v", gotMeta.AdditionalFields)
+		if _, hasProv := gotMeta[ProvenanceMetaKey]; hasProv {
+			t.Errorf("tether.provenance was forwarded when no session was configured: %v", gotMeta)
 		}
-		if len(gotMeta.AdditionalFields) == 0 && gotMeta.ProgressToken == nil {
+		if len(gotMeta) == 0 {
 			t.Errorf("manufactured empty _meta when provenance was stripped: %+v", gotMeta)
 		}
 	}
@@ -263,17 +244,17 @@ func TestProvenance_StripsClientSuppliedStampWhenNoSessionConfigured(t *testing.
 // TestProvenance_ReassignmentSnapshotPerCall verifies that if a session's workstream
 // changes mid-session, each forwarding call resolves the latest snapshot rather than caching.
 func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("some_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 
@@ -289,11 +270,11 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 	ctx := WithSessionID(context.Background(), "sess-live")
 
 	// Call 1: initial assignment.
-	_, err := router.Handle(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "some_tool"}})
+	_, err := router.Handle(ctx, ToolCall{ToolName: "some_tool"})
 	if err != nil {
 		t.Fatalf("call 1: %v", err)
 	}
-	env1 := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env1 := ExtractProvenanceMeta(gotMeta)
 	if env1.WorkstreamID != "ws-first" {
 		t.Errorf("call 1: workstream_id = %q, want %q", env1.WorkstreamID, "ws-first")
 	}
@@ -304,11 +285,11 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 	mu.Unlock()
 
 	// Call 2: reflects new snapshot.
-	_, err = router.Handle(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "some_tool"}})
+	_, err = router.Handle(ctx, ToolCall{ToolName: "some_tool"})
 	if err != nil {
 		t.Fatalf("call 2: %v", err)
 	}
-	env2 := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env2 := ExtractProvenanceMeta(gotMeta)
 	if env2.WorkstreamID != "ws-second" {
 		t.Errorf("call 2: workstream_id = %q, want %q", env2.WorkstreamID, "ws-second")
 	}
@@ -317,17 +298,17 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 // TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID verifies that a session
 // with no assigned workstream stamps schema_version and session_id but omits workstream_id.
 func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("some_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
@@ -335,12 +316,12 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 	})
 
 	ctx := WithSessionID(context.Background(), "sess-noworkstream")
-	_, err := router.Handle(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "some_tool"}})
+	_, err := router.Handle(ctx, ToolCall{ToolName: "some_tool"})
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	env := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil {
 		t.Fatal("missing provenance envelope")
 	}
@@ -351,9 +332,9 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 		t.Errorf("workstream_id = %q, want empty", env.WorkstreamID)
 	}
 
-	provMap, ok := gotMeta.AdditionalFields[ProvenanceMetaKey].(map[string]any)
+	provMap, ok := gotMeta[ProvenanceMetaKey].(map[string]any)
 	if !ok {
-		t.Fatalf("expected map[string]any in _meta: %v", gotMeta.AdditionalFields[ProvenanceMetaKey])
+		t.Fatalf("expected map[string]any in _meta: %v", gotMeta[ProvenanceMetaKey])
 	}
 	if _, ok := provMap["workstream_id"]; ok {
 		t.Errorf("workstream_id key should be omitted when empty: %v", provMap)
@@ -365,19 +346,19 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 // envelope is omitted, any client-supplied stamp is stripped, and the content call
 // is NOT failed.
 func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 	var executed bool
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 			executed = true
-			gotMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+			gotMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("content_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("content_tool")})
 
 	router := NewProxyRouter(reg)
 
@@ -390,18 +371,14 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 	})
 
 	ctx := WithSessionID(context.Background(), "sess-err")
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "content_tool",
-			Meta: &mcp.Meta{
-				AdditionalFields: map[string]any{
-					ProvenanceMetaKey: "client-stamp-to-strip",
-				},
-			},
+	call := ToolCall{
+		ToolName: "content_tool",
+		Meta: map[string]any{
+			ProvenanceMetaKey: "client-stamp-to-strip",
 		},
 	}
 
-	res, err := router.Handle(ctx, req)
+	res, err := router.Handle(ctx, call)
 	if err != nil {
 		t.Fatalf("tool call should not fail on lookup error: %v", err)
 	}
@@ -419,8 +396,8 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 
 	// Envelope must be omitted, and client stamp stripped.
 	if gotMeta != nil {
-		if _, hasProv := gotMeta.AdditionalFields[ProvenanceMetaKey]; hasProv {
-			t.Errorf("tether.provenance was not stripped after lookup failure: %v", gotMeta.AdditionalFields)
+		if _, hasProv := gotMeta[ProvenanceMetaKey]; hasProv {
+			t.Errorf("tether.provenance was not stripped after lookup failure: %v", gotMeta)
 		}
 	}
 }
@@ -428,19 +405,19 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 // TestProvenance_PreservesUnrelatedMetaAndTraceContext verifies that progress tokens,
 // custom metadata fields, and OpenTelemetry trace context are all preserved.
 func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
-	var gotMeta *mcp.Meta
+	var gotMeta map[string]any
 	var gotArgs map[string]any
 
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			gotMeta = req.Params.Meta
-			gotArgs = req.GetArguments()
-			return mcp.NewToolResultText("ok"), nil
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			gotMeta = map[string]any(params.Meta)
+			gotArgs, _ = params.Arguments.(map[string]any)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool("meta_test_tool")})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("meta_test_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
@@ -455,22 +432,18 @@ func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
 	ctx := trace.ContextWithSpanContext(context.Background(), sc)
 	ctx = WithSessionID(ctx, "sess-preserve")
 
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "meta_test_tool",
-			Meta: &mcp.Meta{
-				ProgressToken: "progress-12345",
-				AdditionalFields: map[string]any{
-					"custom_client_field": "keep-me",
-				},
-			},
-			Arguments: map[string]any{
-				"payload": "value",
-			},
+	call := ToolCall{
+		ToolName: "meta_test_tool",
+		Args: map[string]any{
+			"payload": "value",
+		},
+		Meta: map[string]any{
+			"progressToken":       "progress-12345",
+			"custom_client_field": "keep-me",
 		},
 	}
 
-	_, err := router.Handle(ctx, req)
+	_, err := router.Handle(ctx, call)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -480,24 +453,24 @@ func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
 	}
 
 	// 1. ProgressToken preserved
-	if gotMeta.ProgressToken != "progress-12345" {
-		t.Errorf("ProgressToken = %v, want progress-12345", gotMeta.ProgressToken)
+	if gotMeta["progressToken"] != "progress-12345" {
+		t.Errorf("progressToken = %v, want progress-12345", gotMeta["progressToken"])
 	}
 
 	// 2. Custom field preserved
-	if gotMeta.AdditionalFields["custom_client_field"] != "keep-me" {
-		t.Errorf("custom_client_field altered: %v", gotMeta.AdditionalFields["custom_client_field"])
+	if gotMeta["custom_client_field"] != "keep-me" {
+		t.Errorf("custom_client_field altered: %v", gotMeta["custom_client_field"])
 	}
 
 	// 3. Provenance stamped
-	env := ExtractProvenanceMeta(mcp.CallToolRequest{Params: mcp.CallToolParams{Meta: gotMeta}})
+	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil || env.SessionID != "sess-preserve" || env.WorkstreamID != "ws-preserve" {
 		t.Errorf("provenance envelope incorrect: %+v", env)
 	}
 
 	// 4. Trace context injected
-	if tp, ok := gotMeta.AdditionalFields["_traceparent"].(string); !ok || tp == "" {
-		t.Errorf("expected _traceparent in _meta, got: %v", gotMeta.AdditionalFields)
+	if tp, ok := gotMeta["_traceparent"].(string); !ok || tp == "" {
+		t.Errorf("expected _traceparent in _meta, got: %v", gotMeta)
 	}
 
 	// 5. Arguments untouched

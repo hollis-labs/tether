@@ -7,19 +7,35 @@ import (
 	"testing"
 	"time"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
 
+// registerTestTool registers a trivial read-only tool on s, for tests that
+// just need something present in tools/list.
+func registerTestTool(s *gomcp.Server, name string) {
+	s.RegisterTool(gomcp.Tool{
+		Name:         name,
+		Description:  "test tool " + name,
+		InputSchema:  gomcp.EmptyObjectSchema(),
+		Handler:      func(context.Context, map[string]any) (any, error) { return "ok", nil },
+		ReadOnlyHint: true,
+	})
+}
+
+// TestClientPool_NotificationRefreshUpdatesRegistry exercises the real
+// ToolListChangedHandler wiring end to end: connect (via SetConnectFunc, to
+// avoid a real subprocess) drives an actual mcpsdk.Client against an
+// in-memory upstream server, so registering a new tool on that upstream
+// server sends a genuine notifications/tools/list_changed the client
+// receives and reacts to -- not a manually-invoked callback list.
 func TestClientPool_NotificationRefreshUpdatesRegistry(t *testing.T) {
 	ctx := context.Background()
-	client := &mockClient{}
-	tools := []mcp.Tool{makeTool("clockwork_alpha")}
-	client.listToolsFunc = func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
-		return &mcp.ListToolsResult{Tools: append([]mcp.Tool(nil), tools...)}, nil
-	}
+
+	upstream := gomcp.NewServer("clockwork", "test")
+	registerTestTool(upstream, "clockwork_alpha")
 
 	registry := NewToolRegistry()
 	pool := NewClientPool([]config.MCPServerEntry{{
@@ -27,8 +43,14 @@ func TestClientPool_NotificationRefreshUpdatesRegistry(t *testing.T) {
 		Transport: "stdio",
 		Command:   "ignored-in-test",
 	}}, registry)
-	pool.SetConnectFunc(func(context.Context, config.MCPServerEntry) (mcpclient.MCPClient, error) {
-		return client, nil
+	pool.SetConnectFunc(func(connectCtx context.Context, entry config.MCPServerEntry) (upstreamClient, error) {
+		serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
+		go func() { _ = upstream.SDKServer().Run(context.Background(), serverTransport) }()
+		return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "test"}, &mcpsdk.ClientOptions{
+			ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
+				go func() { _, _ = pool.RefreshServer(ctx, entry.ID) }()
+			},
+		}).Connect(connectCtx, clientTransport, nil)
 	})
 
 	refreshCh := make(chan ToolRefreshResult, 1)
@@ -45,13 +67,7 @@ func TestClientPool_NotificationRefreshUpdatesRegistry(t *testing.T) {
 		t.Fatal("clockwork_alpha not registered after start")
 	}
 
-	tools = append(tools, makeTool("clockwork_beta"))
-	client.notify(mcp.JSONRPCNotification{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		Notification: mcp.Notification{
-			Method: mcp.MethodNotificationToolsListChanged,
-		},
-	})
+	registerTestTool(upstream, "clockwork_beta")
 
 	select {
 	case res := <-refreshCh:
@@ -71,12 +87,12 @@ func TestClientPool_RefreshAllReturnsPartialResults(t *testing.T) {
 	ctx := context.Background()
 
 	healthy := &mockClient{}
-	healthy.listToolsFunc = func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
-		return &mcp.ListToolsResult{Tools: []mcp.Tool{makeTool("healthy_alpha")}}, nil
+	healthy.listToolsFunc = func(context.Context, *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
+		return &mcpsdk.ListToolsResult{Tools: []*mcpsdk.Tool{makeTool("healthy_alpha")}}, nil
 	}
 
 	broken := &mockClient{}
-	broken.listToolsFunc = func(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	broken.listToolsFunc = func(context.Context, *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 		return nil, errors.New("upstream unavailable")
 	}
 
@@ -85,7 +101,7 @@ func TestClientPool_RefreshAllReturnsPartialResults(t *testing.T) {
 		{ID: "healthy", Transport: "stdio", Command: "ignored"},
 		{ID: "broken", Transport: "stdio", Command: "ignored"},
 	}, registry)
-	pool.SetConnectFunc(func(_ context.Context, entry config.MCPServerEntry) (mcpclient.MCPClient, error) {
+	pool.SetConnectFunc(func(_ context.Context, entry config.MCPServerEntry) (upstreamClient, error) {
 		if entry.ID == "healthy" {
 			return healthy, nil
 		}
@@ -125,7 +141,7 @@ func TestClientPool_RefreshCallerCancellationPreservesHealthyStatus(t *testing.T
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &mockClient{listToolsFunc: func(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+			client := &mockClient{listToolsFunc: func(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 				<-ctx.Done()
 				return nil, ctx.Err()
 			}}
@@ -145,7 +161,7 @@ func TestClientPool_RefreshCallerCancellationPreservesHealthyStatus(t *testing.T
 }
 
 func TestClientPool_RefreshInternalTimeoutMarksUpstreamFailed(t *testing.T) {
-	client := &mockClient{listToolsFunc: func(ctx context.Context, _ mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
+	client := &mockClient{listToolsFunc: func(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}}

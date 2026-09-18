@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/events"
 )
@@ -27,13 +27,13 @@ func NewLoggingMiddleware(bus events.Bus) *LoggingMiddleware {
 
 // Handle records start time, emits tool_call_start, calls next, then
 // emits tool_call_end with duration and outcome.
-func (m *LoggingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest, next ToolCallHandler) (*mcp.CallToolResult, error) {
+func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next ToolCallHandler) (*mcpsdk.CallToolResult, error) {
 	start := time.Now()
 
 	// Compute args fingerprint — key names only, never values.
 	var argsRaw json.RawMessage
-	if args := req.GetArguments(); len(args) > 0 {
-		if raw, err := json.Marshal(args); err == nil {
+	if len(call.Args) > 0 {
+		if raw, err := json.Marshal(call.Args); err == nil {
 			argsRaw = raw
 		}
 	}
@@ -52,18 +52,18 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest,
 
 	m.publish(ctx, events.EventTypeToolCallStart, events.ToolCallEvent{
 		SessionID:    sessionID,
-		ToolName:     req.Params.Name,
+		ToolName:     call.ToolName,
 		Server:       serverID,
 		ArgsSchemaFP: fp,
 		Timestamp:    start,
 	})
 
-	result, err := next(ctx, req)
+	result, err := next(ctx, call)
 
 	durMs := time.Since(start).Milliseconds()
 	ev := events.ToolCallEvent{
 		SessionID:    sessionID,
-		ToolName:     req.Params.Name,
+		ToolName:     call.ToolName,
 		Server:       serverID,
 		ArgsSchemaFP: fp,
 		DurationMs:   durMs,
@@ -75,7 +75,7 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest,
 	} else if result != nil && result.IsError {
 		// Extract error text from the first text content block, if present.
 		for _, c := range result.Content {
-			if tc, ok := c.(mcp.TextContent); ok {
+			if tc, ok := c.(*mcpsdk.TextContent); ok {
 				ev.Error = tc.Text
 				break
 			}
@@ -85,7 +85,7 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, req mcp.CallToolRequest,
 	m.publish(ctx, events.EventTypeToolCallEnd, ev)
 
 	slog.Debug("mcp-proxy: tool call completed",
-		"tool", req.Params.Name,
+		"tool", call.ToolName,
 		"server", serverID,
 		"duration_ms", durMs,
 		"ok", ev.OK,

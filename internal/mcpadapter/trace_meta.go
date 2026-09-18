@@ -15,10 +15,10 @@ package mcpadapter
 // accommodate a gateway defect; this file is the fix they are waiting on.
 
 import (
-	otelprop "github.com/hollis-labs/go-otel/propagation"
-	"github.com/mark3labs/mcp-go/mcp"
-
 	"context"
+
+	otelprop "github.com/hollis-labs/go-otel/propagation"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // traceMetaKeys are the keys go-otel's propagation helpers read and write.
@@ -26,8 +26,9 @@ import (
 // actually carried trace context, without duplicating go-otel's format.
 var traceMetaKeys = []string{"_traceparent", "_tracestate"}
 
-// injectTraceContextMeta returns req with trace context written into
-// params._meta, leaving params.arguments untouched.
+// injectTraceContextMeta writes trace context into params.Meta (a plain
+// map[string]any under the official SDK, unlike mark3labs' pointer-wrapped
+// Meta.AdditionalFields), leaving params.Arguments untouched.
 //
 // KEY NAMING. go-otel writes the literal key `_traceparent`, so this produces
 // `params._meta._traceparent`. The leading underscore was the marker for
@@ -40,25 +41,22 @@ var traceMetaKeys = []string{"_traceparent", "_tracestate"}
 // price. This is a choice, not an oversight.
 //
 // InjectMCP no-ops on an invalid span context, so a call made with no active
-// span comes back with no _meta added rather than an empty one.
-func injectTraceContextMeta(ctx context.Context, req mcp.CallToolRequest) mcp.CallToolRequest {
-	fields := map[string]any{}
-	if req.Params.Meta != nil && req.Params.Meta.AdditionalFields != nil {
-		fields = req.Params.Meta.AdditionalFields
+// span leaves params.Meta untouched rather than set to an empty map.
+func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
+	fields := map[string]any(params.Meta)
+	if fields == nil {
+		fields = map[string]any{}
 	}
 	injected := otelprop.InjectMCP(ctx, fields)
 	if len(injected) == 0 {
-		return req
+		return
 	}
-	if req.Params.Meta == nil {
-		req.Params.Meta = &mcp.Meta{}
-	}
-	req.Params.Meta.AdditionalFields = injected
-	return req
+	params.Meta = mcpsdk.Meta(injected)
 }
 
 // extractTraceContext recovers a remote span context from an inbound call,
-// reading _meta first and falling back to arguments.
+// reading _meta first (as installed into ctx by go-mcp's adaptHandler, read
+// back via gomcp.MetaFromContext) and falling back to arguments.
 //
 // THE ARGUMENTS FALLBACK IS A TRANSITION, AND IT HAS A SCHEDULED END:
 // CW-20260912-0072, which carries the condition (every deployed mux past
@@ -70,11 +68,11 @@ func injectTraceContextMeta(ctx context.Context, req mcp.CallToolRequest) mcp.Ca
 //
 // Reading arguments is safe in a way WRITING them was not: reading an
 // upstream's own key cannot make a call fail schema validation.
-func extractTraceContext(req mcp.CallToolRequest) context.Context {
-	if req.Params.Meta != nil && hasTraceKeys(req.Params.Meta.AdditionalFields) {
-		return otelprop.ExtractMCP(req.Params.Meta.AdditionalFields)
+func extractTraceContext(meta, args map[string]any) context.Context {
+	if hasTraceKeys(meta) {
+		return otelprop.ExtractMCP(meta)
 	}
-	return otelprop.ExtractMCP(req.GetArguments())
+	return otelprop.ExtractMCP(args)
 }
 
 // hasTraceKeys reports whether m carries trace context, so an empty _meta

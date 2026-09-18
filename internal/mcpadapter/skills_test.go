@@ -7,9 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestSkillTool_LoadsSkillByID(t *testing.T) {
@@ -239,18 +238,11 @@ func TestSkillTool_MissingSkillReturnsNotFound(t *testing.T) {
 
 func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 	a := newTestAdapter(t)
-	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "0.0.1")
 	a.registerTools(s)
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer c.Close()
-	if _, err := c.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	resp, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	c := connectInMemory(t, s)
+	resp, err := c.ListTools(context.Background(), &mcpsdk.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
@@ -268,27 +260,17 @@ func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 	}
 }
 
-func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcp.CallToolResult {
+func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcpsdk.CallToolResult {
 	return callSkillTool(t, a, "mux_skill_get", args)
 }
 
-func callSkillTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp.CallToolResult {
+func callSkillTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "0.0.1")
 	a.registerSkillTools(s)
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	defer c.Close()
-	if _, err := c.Initialize(context.Background(), mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = name
-	req.Params.Arguments = args
-	res, err := c.CallTool(context.Background(), req)
+	c := connectInMemory(t, s)
+	res, err := c.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}

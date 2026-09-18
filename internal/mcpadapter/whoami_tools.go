@@ -7,39 +7,40 @@ package mcpadapter
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 )
 
 // registerWhoamiTools wires tether_whoami onto s. Read-only; no scope
 // (same-host UDS trust, ADR 0045 -- as is a self-asserted claim).
-func (a *Adapter) registerWhoamiTools(s *server.MCPServer) {
-	a.addTool(s, mcp.NewTool("tether_whoami",
-		mcp.WithDescription(
-			"Self-discovery: the registered Profile (if any), attached external-id "+
-				"mappings, group memberships, and the current RuntimeBinding (host/session "+
-				"currently owning delivery), if any, for the claimed URN. An unregistered "+
-				"or never-bound identity is not an error -- every field is independently "+
-				"best-effort.",
-		),
-		mcp.WithString("as", mcp.Required(), mcp.Description("msg:// URN to look up (self-asserted, no verification).")),
-	), Reads("resolves the caller identity; asserts nothing"), a.handleWhoami)
+func (a *Adapter) registerWhoamiTools(s *gomcp.Server) {
+	a.addTool(s, gomcp.Tool{
+		Name: "tether_whoami",
+		Description: "Self-discovery: the registered Profile (if any), attached external-id " +
+			"mappings, group memberships, and the current RuntimeBinding (host/session " +
+			"currently owning delivery), if any, for the claimed URN. An unregistered " +
+			"or never-bound identity is not an error -- every field is independently " +
+			"best-effort.",
+		InputSchema: gomcp.ObjectSchema(map[string]any{
+			"as": strProp("msg:// URN to look up (self-asserted, no verification)."),
+		}, "as"),
+		Handler: a.handleWhoami,
+	}, Reads("resolves the caller identity; asserts nothing"))
 }
 
-func (a *Adapter) handleWhoami(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	as := str(req, "as")
+func (a *Adapter) handleWhoami(ctx context.Context, args map[string]any) (any, error) {
+	as := str(args, "as")
 	if as == "" {
-		return toolError("invalid_request", "as is required"), nil
+		return nil, toolError("invalid_request", "as is required")
 	}
 	if a.client == nil {
-		return toolError("internal_error", "tether_whoami requires daemon routing; start MCP with mux mcp"), nil
+		return nil, toolError("internal_error", "tether_whoami requires daemon routing; start MCP with mux mcp")
 	}
 	out, err := a.client.Whoami(ctx, as)
 	if err != nil {
 		if isDaemonUnreachable(err) {
-			return daemonUnreachableError(err), nil
+			return nil, daemonUnreachableError(err)
 		}
-		return mapRegistryErr(err), nil
+		return nil, mapRegistryErr(err)
 	}
 	return toolJSON(map[string]any{"ok": true, "whoami": out}), nil
 }

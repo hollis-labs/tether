@@ -19,9 +19,8 @@ import (
 	"context"
 	"testing"
 
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpserver "github.com/mark3labs/mcp-go/server"
+	gomcp "github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -73,25 +72,25 @@ func recordingTracer(t *testing.T) {
 // the upstream actually received for a call made through a real in-process MCP
 // client. Both sides are returned because the assertion that matters is not
 // only that trace context arrived but that it arrived in the right half.
-func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, *mcp.Meta) {
+func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, map[string]any) {
 	t.Helper()
 
 	var received map[string]any
-	var receivedMeta *mcp.Meta
+	var receivedMeta map[string]any
 	mc := &mockClient{
-		callToolFunc: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if args, ok := req.Params.Arguments.(map[string]any); ok {
+		callToolFunc: func(_ context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			if args, ok := params.Arguments.(map[string]any); ok {
 				received = args
 			}
-			receivedMeta = req.Params.Meta
-			return mcp.NewToolResultText("ok"), nil
+			receivedMeta = map[string]any(params.Meta)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []mcp.Tool{makeTool(toolName)})
+	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
-	s := mcpserver.NewMCPServer("test", "0.0.1", mcpserver.WithToolCapabilities(true))
+	s := gomcp.NewServer("test", "0.0.1")
 	idx := NewDiscoveryIndex()
 	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
@@ -104,20 +103,10 @@ func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, *mcp.Met
 	}
 	live.addProxyTools(makeTool(toolName))
 
-	c, err := mcpclient.NewInProcessClient(s)
-	if err != nil {
-		t.Fatalf("NewInProcessClient: %v", err)
-	}
-	t.Cleanup(func() { _ = c.Close() })
+	c := connectInMemory(t, s)
 
 	ctx := context.Background()
-	if _, err := c.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = toolName
-	req.Params.Arguments = map[string]any{"input": "hi"}
-	if _, err := c.CallTool(ctx, req); err != nil {
+	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: toolName, Arguments: map[string]any{"input": "hi"}}); err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if received == nil {
@@ -139,8 +128,8 @@ func TestProxiedCall_PropagatesTraceContextToUpstream(t *testing.T) {
 	if meta == nil {
 		t.Fatal("upstream received no _meta; the proxied path is still untraced")
 	}
-	if tp, _ := meta.AdditionalFields["_traceparent"].(string); tp == "" {
-		t.Fatalf("upstream _meta carried %v with no _traceparent; the proxied path is still untraced", meta.AdditionalFields)
+	if tp, _ := meta["_traceparent"].(string); tp == "" {
+		t.Fatalf("upstream _meta carried %v with no _traceparent; the proxied path is still untraced", meta)
 	}
 	if args["input"] != "hi" {
 		t.Errorf("injection disturbed the payload: %v", args)
@@ -155,7 +144,7 @@ func TestProxiedCall_NoTracerMeansNoInjection(t *testing.T) {
 	args, meta := proxiedCallCapture(t, "upstream_untraced")
 
 	if meta != nil {
-		t.Errorf("_meta manufactured with no tracer configured: %v", meta.AdditionalFields)
+		t.Errorf("_meta manufactured with no tracer configured: %v", meta)
 	}
 	if _, ok := args["_traceparent"]; ok {
 		t.Error("_traceparent injected with no tracer configured; propagation must derive from a recording span")
@@ -180,11 +169,11 @@ func TestProxyRouter_HandleCreatesNoSpanOfItsOwn(t *testing.T) {
 	var innerSpanID trace.SpanID
 	reg := NewToolRegistry()
 	reg.Register("upstream", &mockClient{
-		callToolFunc: func(inner context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		callToolFunc: func(inner context.Context, _ *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 			innerSpanID = trace.SpanContextFromContext(inner).SpanID()
-			return mcp.NewToolResultText("ok"), nil
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
-	}, []mcp.Tool{makeTool("tool_a")})
+	}, []*mcpsdk.Tool{makeTool("tool_a")})
 	router := NewProxyRouter(reg)
 
 	if _, err := router.Handle(ctx, callReq("tool_a")); err != nil {
@@ -203,7 +192,7 @@ func TestProxyRouter_RecordsUpstreamServerOnTheSpan(t *testing.T) {
 	recordingTracer(t)
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", &mockClient{}, []mcp.Tool{makeTool("tess_tool")})
+	reg.Register("tesseract", &mockClient{}, []*mcpsdk.Tool{makeTool("tess_tool")})
 	router := NewProxyRouter(reg)
 
 	ctx, span := otelStartTestSpan(t, "caller")
