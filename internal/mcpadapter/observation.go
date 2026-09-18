@@ -42,11 +42,11 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 		Name: "mux_session_events",
 		Description: "List historical lifecycle events for a session. " +
 			"Returns events in descending seq order (newest first).",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-			"limit":      numProp("Max events to return (default 100, max 1000)"),
-			"cursor":     numProp("Pagination cursor: smallest seq from previous page; omit on first page"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+			gomcp.NumberProp("limit", "Max events to return (default 100, max 1000)", false),
+			gomcp.NumberProp("cursor", "Pagination cursor: smallest seq from previous page; omit on first page", false),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
@@ -119,9 +119,9 @@ func (a *Adapter) registerSessionCheckpointsTool(s *gomcp.Server) {
 		Name: "mux_session_checkpoints",
 		Description: "List checkpoints for a session (via its logical agent). " +
 			"Returns newest first.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
@@ -156,9 +156,9 @@ func (a *Adapter) registerSessionAttachmentsTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_attachments",
 		Description: "List client attach/detach records for a session.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session UUID"),
-		}, "session_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session UUID", true),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
@@ -208,14 +208,14 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 		Name: "mux_proxy_events",
 		Description: "Query durable proxy/tool call events from the SQLite store. " +
 			"Supports filtering by session, server, tool, errors-only, and since cursor.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id":  strProp("Filter by mux session ID (exact match)"),
-			"server":      strProp("Filter by upstream server ID (exact match, e.g. 'hadron')"),
-			"tool_name":   strProp("Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)"),
-			"errors_only": boolProp("When true, return only events where the tool call failed"),
-			"limit":       numProp("Max events to return (default 100, max 500)"),
-			"since":       strProp("RFC3339 lower-bound timestamp; excludes events at or before this time"),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Filter by mux session ID (exact match)", false),
+			gomcp.StringProp("server", "Filter by upstream server ID (exact match, e.g. 'hadron')", false),
+			gomcp.StringProp("tool_name", "Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)", false),
+			gomcp.BooleanProp("errors_only", "When true, return only events where the tool call failed", false),
+			gomcp.NumberProp("limit", "Max events to return (default 100, max 500)", false),
+			gomcp.StringProp("since", "RFC3339 lower-bound timestamp; excludes events at or before this time", false),
+		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
 			f := store.ProxyEventFilter{
 				SessionID: str(args, "session_id"),
@@ -266,14 +266,14 @@ func (a *Adapter) registerEventsHistoryTool(s *gomcp.Server) {
 		Name: "mux_events_history",
 		Description: "Query durable daemon/session/broker event history from the shared events table. " +
 			"Returns newest first.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"scope":      strProp("Optional scope allow-list as comma-separated daemon, session, broker."),
-			"kind":       strProp("Optional comma-separated event kind allow-list."),
-			"session_id": strProp("Optional exact session id filter."),
-			"since_seq":  numProp("Only return events with seq greater than this value."),
-			"cursor":     numProp("Pagination cursor; return events with seq less than this value."),
-			"limit":      numProp("Max events to return (default 100, max 1000)."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("scope", "Optional scope allow-list as comma-separated daemon, session, broker.", false),
+			gomcp.StringProp("kind", "Optional comma-separated event kind allow-list.", false),
+			gomcp.StringProp("session_id", "Optional exact session id filter.", false),
+			gomcp.NumberProp("since_seq", "Only return events with seq greater than this value.", false),
+			gomcp.NumberProp("cursor", "Pagination cursor; return events with seq less than this value.", false),
+			gomcp.NumberProp("limit", "Max events to return (default 100, max 1000).", false),
+		),
 		Handler: a.handleEventsHistory,
 	}, Reads("GET /events"))
 }
@@ -365,14 +365,14 @@ func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 		Name: "mux_events_wait",
 		Description: "Wait briefly for live daemon or session events from the muxd event stream. " +
 			"Useful for bounded polling-style MCP flows without maintaining a long-lived SSE connection.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"scope":      strProp("Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon."),
-			"kind":       strProp("Optional event kind allow-list. Repeatable via comma-separated values."),
-			"session_id": strProp("Optional exact session id filter."),
-			"since_seq":  numProp("Only return events with seq greater than this value."),
-			"wait_ms":    numProp("Maximum time to wait for events in milliseconds (default 5000)."),
-			"max_events": numProp("Maximum matching events to return before stopping (default 1, max 100)."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("scope", "Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon.", false),
+			gomcp.StringProp("kind", "Optional event kind allow-list. Repeatable via comma-separated values.", false),
+			gomcp.StringProp("session_id", "Optional exact session id filter.", false),
+			gomcp.NumberProp("since_seq", "Only return events with seq greater than this value.", false),
+			gomcp.NumberProp("wait_ms", "Maximum time to wait for events in milliseconds (default 5000).", false),
+			gomcp.NumberProp("max_events", "Maximum matching events to return before stopping (default 1, max 100).", false),
+		),
 		Handler: a.handleEventsWait,
 	}, Reads("event stream subscription; consumes nothing"))
 }

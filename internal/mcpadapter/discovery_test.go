@@ -152,7 +152,7 @@ func TestDiscoveryIndex_SearchResult_HasInputSchema(t *testing.T) {
 	tool := &mcpsdk.Tool{
 		Name:        "my_tool",
 		Description: "A test tool",
-		InputSchema: gomcp.ObjectSchema(map[string]any{"arg1": strProp("first arg")}),
+		InputSchema: gomcp.InputSchema(gomcp.StringProp("arg1", "first arg", false)),
 	}
 	reg.Register("myserver", nil, []*mcpsdk.Tool{tool})
 

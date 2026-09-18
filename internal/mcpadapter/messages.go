@@ -27,128 +27,128 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_send",
 		Description: "Send a message envelope via the agent-mux messaging store. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"from":         strProp("Sender URN (e.g. msg://agent/agent-mux/orchestrator)"),
-			"to":           strProp("Recipient URN (e.g. msg://agent/agent-mux/worker)"),
-			"kind":         strProp("Message kind: request, response, notice, status_update, handoff, escalation"),
-			"payload_json": strProp("JSON payload body (optional)"),
-			"thread_id":    strProp("Thread ID for grouping related messages (optional)"),
-			"in_reply_to":  strProp("Message ID this message is in reply to (optional)"),
-		}, "from", "to", "kind"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
+			gomcp.StringProp("to", "Recipient URN (e.g. msg://agent/agent-mux/worker)", true),
+			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation", true),
+			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
+			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
+			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
+		),
 		Handler: a.handleMessageSend,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_notify",
 		Description: "Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"from":         strProp("Sender URN (e.g. msg://agent/agent-mux/orchestrator)"),
-			"to":           strProp("Recipient URN; msg://session/<authority>/<session_id> wakes that session, msg://agent/<authority>/<logical_agent_id> wakes the latest running session for that logical agent when found"),
-			"kind":         strProp("Message kind: request, response, notice, status_update, handoff, escalation (default notice)"),
-			"payload_json": strProp("JSON payload body (optional)"),
-			"thread_id":    strProp("Thread ID for grouping related messages (optional)"),
-			"in_reply_to":  strProp("Message ID this message is in reply to (optional)"),
-			"urgency":      strProp("Urgency: very-low, low, normal, high (default normal)"),
-			"session_id":   strProp("Explicit live session ID to wake (optional override)"),
-			"wake_text":    strProp("Override daemon-generated mailbox wake text (optional)"),
-			"no_wake":      boolProp("Store the message but skip wake injection"),
-		}, "from", "to"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
+			gomcp.StringProp("to", "Recipient URN; msg://session/<authority>/<session_id> wakes that session, msg://agent/<authority>/<logical_agent_id> wakes the latest running session for that logical agent when found", true),
+			gomcp.StringProp("kind", "Message kind: request, response, notice, status_update, handoff, escalation (default notice)", false),
+			gomcp.StringProp("payload_json", "JSON payload body (optional)", false),
+			gomcp.StringProp("thread_id", "Thread ID for grouping related messages (optional)", false),
+			gomcp.StringProp("in_reply_to", "Message ID this message is in reply to (optional)", false),
+			gomcp.StringProp("urgency", "Urgency: very-low, low, normal, high (default normal)", false),
+			gomcp.StringProp("session_id", "Explicit live session ID to wake (optional override)", false),
+			gomcp.StringProp("wake_text", "Override daemon-generated mailbox wake text (optional)", false),
+			gomcp.BooleanProp("no_wake", "Store the message but skip wake injection", false),
+		),
 		Handler: a.handleMessageNotify,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_get",
 		Description: "Get a message envelope by ID.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-			"as":         strProp("Sender or recipient URN claiming this read"),
-		}, "message_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+			gomcp.StringProp("as", "Sender or recipient URN claiming this read", true),
+		),
 		Handler: a.handleMessageGet,
 	}, Reads("GET /messages/{id}"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_inbox",
 		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call. For a non-destructive, repeatable listing use mux_message_list instead.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"to":        strProp("Recipient URN"),
-			"kind":      strProp("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation"),
-			"thread_id": strProp("Thread ID filter (optional)"),
-		}, "to"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("to", "Recipient URN", true),
+			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
+			gomcp.StringProp("thread_id", "Thread ID filter (optional)", false),
+		),
 		Handler: a.handleMessageInbox,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_list",
 		Description: "List a recipient's messages non-destructively. Repeatable: no delivered_at/read_at side effects. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"to":               strProp("Recipient URN"),
-			"kind":             strProp("Comma-separated kind filter: request, response, notice, status_update, handoff, escalation"),
-			"thread_id":        strProp("Thread ID filter (optional)"),
-			"include_archived": boolProp("Include archived messages (default false)"),
-			"unread_only":      boolProp("Return only unread messages (default false)"),
-			"limit":            numProp("Max results per page, clamped to [1,100] (default 100)"),
-			"offset":           numProp("Number of messages to skip for pagination (default 0)"),
-		}, "to"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("to", "Recipient URN", true),
+			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
+			gomcp.StringProp("thread_id", "Thread ID filter (optional)", false),
+			gomcp.BooleanProp("include_archived", "Include archived messages (default false)", false),
+			gomcp.BooleanProp("unread_only", "Return only unread messages (default false)", false),
+			gomcp.NumberProp("limit", "Max results per page, clamped to [1,100] (default 100)", false),
+			gomcp.NumberProp("offset", "Number of messages to skip for pagination (default 0)", false),
+		),
 		Handler: a.handleMessageList,
 	}, Reads("GET /messages/list: does NOT mark delivered, unlike inbox"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_thread",
 		Description: "List all messages in a thread by thread ID, scoped to the ones involving the claimed identity.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"thread_id": strProp("Thread ID"),
-			"as":        strProp("Sender or recipient URN claiming this read"),
-			"kind":      strProp("Comma-separated kind filter (optional)"),
-		}, "thread_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("thread_id", "Thread ID", true),
+			gomcp.StringProp("as", "Sender or recipient URN claiming this read", true),
+			gomcp.StringProp("kind", "Comma-separated kind filter (optional)", false),
+		),
 		Handler: a.handleMessageThread,
 	}, Reads("GET /messages/thread/{id}"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_consume",
 		Description: "Mark a message as consumed by the recipient. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-			"as":         strProp("Recipient URN consuming the message"),
-		}, "message_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+			gomcp.StringProp("as", "Recipient URN consuming the message", true),
+		),
 		Handler: a.handleMessageConsume,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_cancel",
 		Description: "Cancel a pending message. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-		}, "message_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+		),
 		Handler: a.handleMessageCancel,
 	}, Destroys("sets canceled_at one-way; the message can never be delivered and there is no uncancel"))
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_mark_read",
 		Description: "Mark a message as read by its recipient (idempotent). Does not consume or delete it. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-			"as":         strProp("Recipient URN marking the message read"),
-		}, "message_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+			gomcp.StringProp("as", "Recipient URN marking the message read", true),
+		),
 		Handler: a.handleMessageMarkRead,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_archive",
 		Description: "Archive (soft-delete) a message for its recipient (idempotent). Archived messages drop out of default mux_message_list results. Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-			"as":         strProp("Recipient URN archiving the message"),
-		}, "message_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+			gomcp.StringProp("as", "Recipient URN archiving the message", true),
+		),
 		Handler: a.handleMessageArchive,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_unarchive",
 		Description: "Restore an archived message for its recipient (idempotent). Requires message.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"message_id": strProp("Message ID"),
-			"as":         strProp("Recipient URN restoring the message"),
-		}, "message_id", "as"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("message_id", "Message ID", true),
+			gomcp.StringProp("as", "Recipient URN restoring the message", true),
+		),
 		Handler: a.handleMessageUnarchive,
 	}, Writes())
 }

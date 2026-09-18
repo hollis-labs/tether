@@ -28,13 +28,13 @@ func (a *Adapter) registerSessionRefTools(s *gomcp.Server) {
 			"row records what was asserted at the time. Refs attach to the session and " +
 			"roll up through its workstream, so they survive a compaction. Requires the " +
 			"session.write scope.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id": strProp("Session that touched the object."),
-			"kind":       strProp("What sort of object: torque_task, git_commit, git_pr, tesseract_revision, cerberus_deploy, adr, url."),
-			"ref_id":     strProp("The identifier, e.g. CW-20260912-0023 or 37b4dc0."),
-			"uri":        strProp("Optional resolvable locator."),
-			"relation":   strProp("created | updated | read | referenced. Defaults to referenced. This is what makes the record answer a question: reading a task and creating one are both 'touched', but only one is 'left behind'."),
-		}, "session_id", "kind", "ref_id"),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "Session that touched the object.", true),
+			gomcp.StringProp("kind", "What sort of object: torque_task, git_commit, git_pr, tesseract_revision, cerberus_deploy, adr, url.", true),
+			gomcp.StringProp("ref_id", "The identifier, e.g. CW-20260912-0023 or 37b4dc0.", true),
+			gomcp.StringProp("uri", "Optional resolvable locator.", false),
+			gomcp.StringProp("relation", "created | updated | read | referenced. Defaults to referenced. This is what makes the record answer a question: reading a task and creating one are both 'touched', but only one is 'left behind'.", false),
+		),
 		Handler: a.handleWorkstreamAttach,
 	}, Writes())
 
@@ -49,13 +49,13 @@ func (a *Adapter) registerSessionRefTools(s *gomcp.Server) {
 			"And absence is not evidence: direct MCP children, HTTP callers and the CLI " +
 			"all bypass the proxy, so a session that did real work through those paths " +
 			"produces no proxy-observed refs. That is normal, not suspicious.",
-		InputSchema: gomcp.ObjectSchema(map[string]any{
-			"session_id":    strProp("List one session's refs. Provide this or workstream_id."),
-			"workstream_id": strProp("List the whole workstream roll-up. Provide this or session_id."),
-			"kind":          strProp("Filter by kind."),
-			"relation":      strProp("Filter by relation."),
-			"source":        strProp("Filter by source: proxy, api or agent."),
-		}),
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("session_id", "List one session's refs. Provide this or workstream_id.", false),
+			gomcp.StringProp("workstream_id", "List the whole workstream roll-up. Provide this or session_id.", false),
+			gomcp.StringProp("kind", "Filter by kind.", false),
+			gomcp.StringProp("relation", "Filter by relation.", false),
+			gomcp.StringProp("source", "Filter by source: proxy, api or agent.", false),
+		),
 		Handler: a.handleSessionRefs,
 	}, Reads("store.ListSessionRefs / ListWorkstreamRefs: SELECT"))
 }
