@@ -321,8 +321,10 @@ printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |
 | [`docs/go-client-migration.md`](docs/go-client-migration.md) | Migrating apps from `go-agentmux-client` to `go-tether-client` |
 | [`docs/sandboxing.md`](docs/sandboxing.md) | Sandbox profiles (macOS + Linux) |
-| [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution workflow and code style |
+
+Architecture decision records and internal planning history moved out of the
+repo in a docs cleanup pass — see `AGENTS.md` for where.
 
 ## Catalog
 

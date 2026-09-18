@@ -21,8 +21,13 @@ meaning of the messages it delivers.
 - `internal/messaging/` owns durable participants, canonical sessions and leased
   runtime bindings.
 - `internal/store/migrations/` holds numbered SQL applied in order.
-- `docs/adr/` owns transport, provider, sandbox, MCP, registry and messaging
-  decisions. Read the relevant record before changing that behavior.
+- ADRs (transport, provider, sandbox, MCP, registry and messaging decisions)
+  moved to `~/dev/agent-os/workspaces/research/tether/adr/` in a docs cleanup
+  pass — still authoritative, read the relevant record before changing that
+  behavior. `planning/` (roadmap, sprints, specs, parked ideas, handoffs) moved
+  alongside it to `~/dev/agent-os/workspaces/research/tether/planning/`.
+  `docs/historical/` (dead TUI design, feature since removed) moved to
+  `~/dev/agent-os/archive/tether/historical/`.
 
 ## Commands
 
