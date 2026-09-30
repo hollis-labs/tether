@@ -6,8 +6,8 @@ runtime_kind: subprocess
 # path. Set an absolute path when PATH is not stable for daemon launches.
 # Example: command: /usr/local/bin/opencode
 command: opencode
-args:
-  - run
+# The runtime adapter owns the `run` subcommand and its flags.
+args: []
 bootstrap:
   mode: prepend
   prompt_prefix: ""

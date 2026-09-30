@@ -59,9 +59,15 @@ func argvLog(t *testing.T, dir string) []string {
 
 func startFake(t *testing.T, preset string) (agentsessions.Session, chan llmtypes.StreamEvent, string) {
 	t.Helper()
+	// Catalogs seeded before the adapter owned the subcommand declare
+	// `args: [run]`; New must not double it.
+	return startFakeWithArgs(t, preset, []string{"run"})
+}
+
+func startFakeWithArgs(t *testing.T, preset string, args []string) (agentsessions.Session, chan llmtypes.StreamEvent, string) {
+	t.Helper()
 	dir := t.TempDir()
-	// The seeded catalog declares `args: [run]`; New must not double it.
-	rt, err := New(&launch.Plan{Command: fakeOpencode(t, dir), Args: []string{"run"}})
+	rt, err := New(&launch.Plan{Command: fakeOpencode(t, dir), Args: args})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -121,6 +127,18 @@ func TestRuntime_TypedEventsAndResumeArgv(t *testing.T) {
 	}
 	if usage == nil || *usage != (llmtypes.Usage{InputTokens: 3, OutputTokens: 5, CacheReadTokens: 7, CacheCreationTokens: 11, StopReason: "stop"}) {
 		t.Errorf("usage = %+v", usage)
+	}
+}
+
+// The current seed declares `args: []`; the argv matches the legacy
+// `args: [run]` catalog above.
+func TestRuntime_SeedArgsEmpty(t *testing.T) {
+	sess, _, dir := startFakeWithArgs(t, "", nil)
+	if err := sess.SendInput(context.Background(), []byte("one")); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	if got, want := argvLog(t, dir), []string{"run --format json --agent  one"}; !slices.Equal(got, want) {
+		t.Errorf("argv = %q; want %q", got, want)
 	}
 }
 
