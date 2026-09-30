@@ -6,8 +6,8 @@ runtime_kind: subprocess
 # Set an absolute path here if opencode is not on your daemon's PATH.
 # Example: command: /usr/local/bin/opencode
 command: ""
-args:
-  - run
+# The runtime adapter owns the `run` subcommand and its flags.
+args: []
 bootstrap:
   mode: prepend
   prompt_prefix: ""

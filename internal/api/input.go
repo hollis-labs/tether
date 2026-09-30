@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-providers/provider"
 )
 
 // maxInputBytes caps the per-request body size for POST /sessions/{id}/input
@@ -39,10 +40,26 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 			writeError(w, http.StatusConflict, CodeConflict, "session has no input channel")
 			return
 		}
+		if writeProviderSessionLost(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeProviderSessionLost answers a turn whose resume id the provider no
+// longer has. The runtime has already dropped the id, so the same request
+// sent again starts a fresh provider session without the old history —
+// a conflict with the session's state that the caller resolves by
+// deciding whether to resend, not a daemon fault.
+func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, provider.ErrProviderSessionLost) {
+		return false
+	}
+	writeError(w, http.StatusConflict, CodeConflict, err.Error())
+	return true
 }
 
 // SendTurnRequest is the body of POST /sessions/{id}/turn. text is the
@@ -67,6 +84,9 @@ func (s *Server) handleSendTurn(w http.ResponseWriter, r *http.Request, id strin
 	if err := s.Service.SendTurn(r.Context(), id, req.Text); err != nil {
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
+			return
+		}
+		if writeProviderSessionLost(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

@@ -90,3 +90,12 @@ func (a *PlanScopedAdapter) ParseLineEvents(line []byte) ([]events.Event, error)
 	}
 	return p.ParseLineEvents(line)
 }
+
+// IsSessionLost forwards to the inner adapter's SessionLostClassifier.
+// agentsessions asks the adapter it was given, which is this wrapper, so
+// without the forward a dead resume id would never be recognized. An inner
+// adapter with no classifier never reports a lost session.
+func (a *PlanScopedAdapter) IsSessionLost(stderrTail []byte) bool {
+	c, ok := a.Inner.(gop.SessionLostClassifier)
+	return ok && c.IsSessionLost(stderrTail)
+}

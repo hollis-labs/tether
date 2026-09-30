@@ -112,7 +112,7 @@ tidy:
 # ---------------------------------------------------------------------------
 
 tools-install:
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 	go install golang.org/x/vuln/cmd/govulncheck@latest
 	go install gotest.tools/gotestsum@latest
 
