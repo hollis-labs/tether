@@ -33,7 +33,8 @@ type pendingTask struct {
 // taskCoordinator is the in-memory hand-off point between an Execute call
 // waiting on a delegated task and the consumer-owned transition endpoint
 // that resolves it. Deliberately ephemeral (process-lifetime only, never
-// persisted) — per this package's doc comment, Tether relays delegated
+// persisted; a restart fails the tasks it was holding, see
+// Adapter.ReconcileInterrupted) — per this package's doc comment, Tether relays delegated
 // work into its own canonical messaging and waits for an explicit
 // authorized signal back; it does not durably own task outcome state
 // itself, that responsibility stays with the consumer.

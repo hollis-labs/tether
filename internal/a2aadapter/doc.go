@@ -64,6 +64,28 @@
 // (auth.go's BearerTokenInterceptor) checked before a request ever reaches
 // the executor — not a bespoke scheme layered on top of the protocol.
 //
+// # What survives a restart (CW-20260930-0063)
+//
+// Task records are durable. With [WithTaskPersistence] (the daemon always
+// passes one) each binding keeps the A2A SDK's task record in Tether's own
+// database (migration 0032, table a2a_tasks), so a peer's tasks/get still
+// answers after the daemon restarts. The SDK's default store is in-memory and
+// loses every task on restart; an adapter built without the option still
+// behaves that way, which is what the fixtures in this package use.
+//
+// In-flight waits are not durable, and cannot be. A delegated task's Execute
+// call blocks on the taskCoordinator (coordinator.go) until a consumer
+// transition arrives; that wait lives in the process and dies with it. So on
+// startup [Adapter.ReconcileInterrupted] moves every task the previous
+// process left in submitted or working to failed, with a message saying the
+// restart interrupted it, instead of leaving it 'working' forever. The
+// delegated message itself was relayed through canonical messaging before the
+// restart and is unaffected, so the consumer still has the request; it is the
+// A2A-side task that a peer must resubmit. Tasks that had already settled,
+// including input-required ones (their Execute had returned), keep their
+// state. Tether still does not own a delegated task's outcome: that stays
+// with the consumer, per the section above.
+//
 // # Fixture-only (per this task's own scope text)
 //
 // Interop tests in this package stand up a real a2a-go client against a
