@@ -68,6 +68,8 @@ github.com/hollis-labs/go-llm-contracts v0.3.0 h1:qVKulEixvxf5iJmUMzDfRoL00gfS6/
 github.com/hollis-labs/go-llm-contracts v0.3.0/go.mod h1:VIbzjZk7U+NCYuHdfa++ZwcaYI09om5xVxYTGd6cuw8=
 github.com/hollis-labs/go-llm-types v0.3.0 h1:QR4RX0F1zX0fYBh7sDVxnsFxmQ/vjlvc7bC6FWx+8s0=
 github.com/hollis-labs/go-llm-types v0.3.0/go.mod h1:BP8FMqmTWvi2vQ7dNybTGJ+FFzXS4gMMhAjyTHlNq84=
+github.com/hollis-labs/go-localdaemon v0.1.0 h1:sfxGW9Vqj75xO66cds2rxS46HFEyPumCB+0SOybWP/I=
+github.com/hollis-labs/go-localdaemon v0.1.0/go.mod h1:PB3u4GDZmVQlUhlOE2yl89cmhuKTuXw1S9C/mN9Wvjw=
 github.com/hollis-labs/go-materialize v0.1.0 h1:JQ7nKIlKIaWvuiN1yPpad0dQaJTLocuQQdfynY9n9nY=
 github.com/hollis-labs/go-materialize v0.1.0/go.mod h1:ubDxYOfG+hCX0PXQaVm8ssmJoc6ZCDh8iSO46pj0PK0=
 github.com/hollis-labs/go-mcp v0.7.0 h1:Ul2Ct8DLwYfH2Hd9lkUhb05kXZYU++W5CKhD8uERM3A=

@@ -28,6 +28,7 @@ Changes on `main` since v0.6.0.
 
 ### Fixed
 
+- **`mux daemon stop` no longer signals a process it has not identified as muxd.** The pidfile is removed only on graceful shutdown, so after a crash it can name a PID the OS has since handed to an unrelated process, and `stop` sent `SIGTERM` to whatever held the number. `stop` now reads the PID's command line (via `go-localdaemon`'s `VerifyCommand`) and signals only a `mux daemon run` process; a live PID that is not muxd is reported and the stale pidfile removed, and a check that cannot be made refuses to signal. The start guards (`daemon start`, `daemon run`, the server's own pre-flight and `WritePIDFile`) and `daemon status` apply the same identity check, so a recycled PID no longer makes start refuse or status report a live daemon; when identity cannot be checked they still err toward "already running". Adds a dependency on `go-localdaemon` v0.1.0. (CW-20260930-0045)
 - Catalog reload failures are redacted in MCP output, and launch catalog reads refresh correctly.
 - Six registry re-onboarding and group-props bugs found in review.
 - The messaging pull-only fencing gap, a binding-lease TOCTOU race, and a late-Nack-reverses-Consume race.

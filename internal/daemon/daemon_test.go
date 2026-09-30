@@ -10,9 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	localdaemon "github.com/hollis-labs/go-localdaemon"
 )
 
 // shortTempDir returns a short path under /tmp so we stay under the
@@ -158,6 +161,7 @@ func TestPIDFile_RoundTrip(t *testing.T) {
 }
 
 func TestPIDFile_RejectsLiveDaemon(t *testing.T) {
+	stubVerify(t, true, nil) // the live PID is a muxd
 	path := filepath.Join(t.TempDir(), "muxd.pid")
 	if err := WritePIDFile(path, os.Getpid()); err != nil {
 		t.Fatalf("WritePIDFile: %v", err)
@@ -344,6 +348,7 @@ func TestServer_RunRefusesSecondInstance(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket test requires unix")
 	}
+	stubVerify(t, true, nil) // the first server, in this process, stands in for a live muxd
 	dir := shortTempDir(t)
 	cfg := Config{
 		ListenAddr:      "unix:" + filepath.Join(dir, "s.sock"),
@@ -359,5 +364,73 @@ func TestServer_RunRefusesSecondInstance(t *testing.T) {
 	err := srv.Run(context.Background())
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("expected ErrAlreadyRunning; got %v", err)
+	}
+}
+
+// stubVerify replaces the process-identity probe for the test.
+func stubVerify(t *testing.T, ok bool, err error) {
+	t.Helper()
+	prev := verifyCommand
+	verifyCommand = func(context.Context, int, localdaemon.Matcher) (bool, error) { return ok, err }
+	t.Cleanup(func() { verifyCommand = prev })
+}
+
+func TestDaemonCmdRegex(t *testing.T) {
+	for cmdline, want := range map[string]bool{
+		"/Users/x/go/bin/mux daemon run --catalog /Users/x/.tether": true,
+		"mux daemon run": true,
+		"/usr/local/bin/muxd daemon run --catalog c":    true,
+		"/Users/x/go/bin/mux mcp --proxy --servers a":   false,
+		"/Users/x/go/bin/mux daemon start":              false,
+		"/usr/bin/vim mux daemon run":                   false,
+		"sleep 300":                                     false,
+		"/Applications/Slack.app/slack --type=renderer": false,
+	} {
+		if got := daemonCmdRegex.MatchString(cmdline); got != want {
+			t.Errorf("daemonCmdRegex.MatchString(%q) = %v, want %v", cmdline, got, want)
+		}
+	}
+}
+
+// A PID that is alive but is not muxd is what a recycled PID looks like after
+// a crash left the pidfile behind. It must not count as a running daemon.
+func TestIsDaemonAlive_LivePIDThatIsNotMuxdIsStale(t *testing.T) {
+	stubVerify(t, false, nil)
+	if IsDaemonAlive(os.Getpid()) {
+		t.Fatal("a live process that is not muxd was reported as a live daemon")
+	}
+	path := filepath.Join(t.TempDir(), "muxd.pid")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePIDFile(path, os.Getpid()+1); err != nil {
+		t.Fatalf("a pidfile naming a non-muxd process should be overwritten: %v", err)
+	}
+}
+
+// If identity cannot be checked, a start guard must still refuse rather than
+// start a second daemon over a live one.
+func TestIsDaemonAlive_UnverifiableLivePIDCountsAsRunning(t *testing.T) {
+	stubVerify(t, false, errors.New("ps missing"))
+	if !IsDaemonAlive(os.Getpid()) {
+		t.Fatal("an unverifiable live PID must be treated as a running daemon by a start guard")
+	}
+}
+
+func TestIsDaemonAlive_DeadPIDIsNotAlive(t *testing.T) {
+	stubVerify(t, true, nil)
+	if IsDaemonAlive(0) || IsDaemonAlive(-5) {
+		t.Fatal("a non-positive pid is never alive")
+	}
+}
+
+// IsDaemon against the real ps: this test process is not a muxd.
+func TestIsDaemon_RealPSRejectsAnUnrelatedProcess(t *testing.T) {
+	ok, err := IsDaemon(context.Background(), os.Getpid())
+	if err != nil {
+		t.Skipf("ps unavailable: %v", err)
+	}
+	if ok {
+		t.Fatal("the test binary was identified as muxd")
 	}
 }
