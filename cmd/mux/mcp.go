@@ -145,7 +145,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			Bus:          svc.Bus,
 			EventStore:   eventStore,
 			ProxyStore:   svc.Store, // durable SQLite store for mux_events_tool_calls
-			BrokerMode:   mcpBroker, // deprecated path, still works
+			BrokerMode:   mcpBroker, //nolint:staticcheck // SA1019: deliberate; --broker flag still maps to the deprecated field until ServerFilter fully replaces it
 			ServerFilter: serverFilter,
 			Only:         curatedOnly,
 		}
