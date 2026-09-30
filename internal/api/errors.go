@@ -25,6 +25,11 @@ const (
 	// session without the old history. Split from CodeConflict so callers
 	// can tell it from a session that cannot take input at all.
 	CodeProviderSessionLost = "provider_session_lost"
+
+	// CodeIdempotencyConflict (409) means an idempotency key was reused with
+	// a different request. The key stays bound to its original session
+	// (CW-20260930-0229).
+	CodeIdempotencyConflict = "idempotency_conflict"
 )
 
 // ErrorResponse is the envelope for every non-2xx JSON body. Callers

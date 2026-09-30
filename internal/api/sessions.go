@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 
@@ -223,9 +225,15 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "launch id required")
 		return
 	}
+	if msg := validateIdempotencyKey(req.IdempotencyKey); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return
+	}
 	var res LaunchResult
 	var err error
-	if req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
+	// A keyed request always takes the input path: that is where the
+	// request digest is computed and the key recorded.
+	if req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
 		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
 		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
 			LaunchID:           req.Launch,
@@ -236,6 +244,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			Override:           req.Override,
 			PromptAppend:       req.PromptAppend,
 			Injection:          req.Injection,
+			IdempotencyKey:     req.IdempotencyKey,
 		})
 	} else if req.BootPrompt != "" {
 		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)
@@ -243,17 +252,62 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		res, err = s.Service.CreateSession(req.Launch)
 	}
 	if err != nil {
+		if writeIdempotencyConflict(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, LaunchResponse{
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, launchResponseOf(res))
+}
+
+// launchResponseOf renders a LaunchResult as the wire response.
+func launchResponseOf(res LaunchResult) LaunchResponse {
+	return LaunchResponse{
 		ID:             res.SessionID,
 		Workspace:      res.Workspace,
 		Log:            res.LogPath,
 		ProviderID:     res.ProviderID,
 		ProviderKind:   res.ProviderKind,
 		LogicalAgentID: res.LogicalAgentID,
-	})
+		Replayed:       res.Replayed,
+	}
+}
+
+// maxIdempotencyKeyBytes bounds a caller's idempotency key.
+const maxIdempotencyKeyBytes = 512
+
+// validateIdempotencyKey returns a reason an idempotency key is unusable, or
+// "" when it is absent or acceptable.
+func validateIdempotencyKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if strings.TrimSpace(key) != key {
+		return "idempotency_key must not have leading or trailing whitespace"
+	}
+	if len(key) > maxIdempotencyKeyBytes {
+		return fmt.Sprintf("idempotency_key exceeds %d bytes", maxIdempotencyKeyBytes)
+	}
+	for _, r := range key {
+		if unicode.IsControl(r) {
+			return "idempotency_key must not contain control characters"
+		}
+	}
+	return ""
+}
+
+// writeIdempotencyConflict answers a key reused with a different request.
+func writeIdempotencyConflict(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, store.ErrIdempotencyConflict) {
+		return false
+	}
+	writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
+	return true
 }
 
 // handleLaunchSession services POST /sessions/{id}/launch — the start
@@ -273,14 +327,7 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, LaunchResponse{
-		ID:             res.SessionID,
-		Workspace:      res.Workspace,
-		Log:            res.LogPath,
-		ProviderID:     res.ProviderID,
-		ProviderKind:   res.ProviderKind,
-		LogicalAgentID: res.LogicalAgentID,
-	})
+	writeJSON(w, http.StatusOK, launchResponseOf(res))
 }
 
 // handleListSessions services GET /sessions. Supports three query

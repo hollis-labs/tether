@@ -2,9 +2,13 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
+
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
@@ -20,6 +24,7 @@ func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
 		Description: "Resume a logical agent: starts a new session using its most recent checkpoint as the boot context. Requires session.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("logical_agent_id", "Logical agent ID", true),
+			gomcp.StringProp("idempotency_key", "Optional. Makes the resume idempotent: a retry with the same key returns the session the first resume created (replayed=true) instead of starting another. Keys are one global, unauthenticated space; prefix them (e.g. \"myapp/<run>/<step>\").", false),
 		),
 		Handler: a.handleLogicalAgentResume,
 	}, Writes())
@@ -48,8 +53,9 @@ func (a *Adapter) handleLogicalAgentResume(ctx context.Context, args map[string]
 	if id == "" {
 		return nil, toolError("invalid_request", "logical_agent_id required")
 	}
+	opts := api.ResumeOptions{IdempotencyKey: str(args, "idempotency_key")}
 	if a.client != nil {
-		res, err := a.client.ResumeLogicalAgent(ctx, id)
+		res, err := a.client.ResumeLogicalAgentWithOptions(ctx, id, opts)
 		if err != nil {
 			if isDaemonUnreachable(err) {
 				return nil, daemonUnreachableError(err)
@@ -64,10 +70,14 @@ func (a *Adapter) handleLogicalAgentResume(ctx context.Context, args map[string]
 			"provider_id":      res.ProviderID,
 			"provider_kind":    res.ProviderKind,
 			"logical_agent_id": res.LogicalAgentID,
+			"replayed":         res.Replayed,
 		}), nil
 	}
-	res, err := a.svc.ResumeLogicalAgent(id)
+	res, err := a.svc.ResumeLogicalAgent(id, opts)
 	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			return nil, toolError("idempotency_conflict", err.Error())
+		}
 		if isNotFound(err) {
 			return nil, toolError("not_found", "logical agent not found or no checkpoint: "+id)
 		}
@@ -81,5 +91,6 @@ func (a *Adapter) handleLogicalAgentResume(ctx context.Context, args map[string]
 		"provider_id":      res.ProviderID,
 		"provider_kind":    res.ProviderKind,
 		"logical_agent_id": res.LogicalAgentID,
+		"replayed":         res.Replayed,
 	}), nil
 }

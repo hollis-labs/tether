@@ -12,6 +12,7 @@ Changes on `main` since v0.6.0.
 
 ### Added
 
+- **Idempotent session create and resume.** `POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional `idempotency_key`: a retry with the same key and request returns the session the first one created (`replayed: true`, HTTP 200), and the same key with a different request answers 409 `idempotency_conflict`. Launching a keyed session again is idempotent too. Keys are global and unauthenticated, so prefix them. Surfaced in the Go client (`ResumeLogicalAgentWithOptions`), the MCP `mux_session_create` / `mux_logical_agent_resume` tools, and `mux launch --idempotency-key` (CW-20260930-0229).
 - **Messaging surfaces.** Scoped role/slot binding across CLI, MCP, HTTP and the Go client; a durable participant registry with canonical sessions and leased runtime bindings; durable hosted-session handoff with route fencing; delivery trace, operator repair and privacy-safe retention; and a bounded, server-only inbound A2A relay adapter.
 - **MCP adapter: streamable-HTTP transport**, so an upstream restart no longer severs connected agents. Upstream `sse`/`http` connections and supervision now use the shared `go-mcp` client and supervisor packages.
 - **Registry: derived/authored field split on project entries**, callback-backed derivation, an onboarding/lookup surface, flat authored `props`, and minter/owner provenance with symmetric redaction on write routes.

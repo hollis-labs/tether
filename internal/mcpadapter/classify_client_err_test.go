@@ -24,3 +24,10 @@ func TestClassifyClientErr(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyClientErr_IdempotencyConflict(t *testing.T) {
+	msg := `daemon 409 (idempotency_conflict): idempotency key was already used with a different request (key bound to session s1 by a create request)`
+	if got := classifyClientErr(errors.New(msg), "").Code; got != "idempotency_conflict" {
+		t.Fatalf("code = %q; want idempotency_conflict", got)
+	}
+}

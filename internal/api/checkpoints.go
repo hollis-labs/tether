@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -281,10 +282,26 @@ func (s *Server) handleListCheckpoints(w http.ResponseWriter, _ *http.Request, a
 // handleResumeLogicalAgent services POST /logical-agents/{id}/resume.
 // Starts a new session using the agent's most recent checkpoint as boot context.
 // The agent's stored launch_id (set on its most recent LaunchSession call) is
-// reused — no launch override is supported in v0.0.4. Body is ignored.
-func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request, agentID string) {
-	res, err := s.Service.ResumeLogicalAgent(agentID)
+// reused — no launch override is supported in v0.0.4. The body is optional;
+// its only field is idempotency_key (CW-20260930-0229), which makes the resume
+// replay the session a lost response created instead of starting another.
+func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request, agentID string) {
+	var req ResumeRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+	if msg := validateIdempotencyKey(req.IdempotencyKey); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return
+	}
+	res, err := s.Service.ResumeLogicalAgent(agentID, ResumeOptions(req))
 	if err != nil {
+		if writeIdempotencyConflict(w, err) {
+			return
+		}
 		msg := err.Error()
 		switch {
 		case errors.Is(err, store.ErrSessionNotFound),
@@ -298,14 +315,11 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, _ *http.Request
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, LaunchResponse{
-		ID:             res.SessionID,
-		Workspace:      res.Workspace,
-		Log:            res.LogPath,
-		ProviderID:     res.ProviderID,
-		ProviderKind:   res.ProviderKind,
-		LogicalAgentID: res.LogicalAgentID,
-	})
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, launchResponseOf(res))
 }
 
 func logicalAgentPolicyResponse(policy agentmodel.LogicalAgentPolicy) LogicalAgentPolicyResponse {
