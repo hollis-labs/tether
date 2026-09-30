@@ -26,7 +26,41 @@ import (
 //
 // Returns a conflict error if the agent has never launched (no launch_id).
 // Returns a not-found-shaped error if no checkpoint exists.
-func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, error) {
+func (s *Service) ResumeLogicalAgent(logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	if opts.IdempotencyKey == "" {
+		return s.resumeLogicalAgent(logicalAgentID, nil)
+	}
+	// Idempotent resume (CW-20260930-0229). The digest is the request as
+	// sent, so a retry after the resumed session has checkpointed replays
+	// that session instead of conflicting over a newer parent.
+	unlock := s.lockIdempotencyKey(opts.IdempotencyKey)
+	defer unlock()
+	digest := resumeRequestDigest(logicalAgentID)
+	replayed, err := s.replayIfKeyed(opts.IdempotencyKey, store.IdempotencyOpResume, digest)
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	if replayed != nil {
+		return launchResultOf(replayed), nil
+	}
+	return s.resumeLogicalAgent(logicalAgentID, &store.SessionIdempotency{
+		Key: opts.IdempotencyKey, Operation: store.IdempotencyOpResume, RequestDigest: digest,
+	})
+}
+
+func launchResultOf(l *Launched) api.LaunchResult {
+	return api.LaunchResult{
+		SessionID:      l.SessionID,
+		Workspace:      l.Workspace.Root,
+		LogPath:        l.Workspace.LogPath,
+		ProviderID:     l.Plan.ProviderID,
+		ProviderKind:   l.ProviderKind,
+		LogicalAgentID: l.Plan.LogicalAgentID,
+		Replayed:       l.Replayed,
+	}
+}
+
+func (s *Service) resumeLogicalAgent(logicalAgentID string, key *store.SessionIdempotency) (api.LaunchResult, error) {
 	la, err := s.Store.GetLogicalAgent(logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get logical agent: %w", err)
@@ -89,7 +123,11 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, e
 		Intent:          "resume",
 		ParentSessionID: resumeParentSessionID(ck),
 	}
-	if err := s.Store.CreateSession(row, plan); err != nil {
+	if key != nil {
+		// Audit only: the parent the resolver chose, outside the digest.
+		key.ResolvedParentSessionID = row.ParentSessionID
+	}
+	if err := s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
 	}
 

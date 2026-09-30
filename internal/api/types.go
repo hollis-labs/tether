@@ -43,7 +43,7 @@ type LaunchService interface {
 	// recent checkpoint as boot context. Returns the new session's launch
 	// result. Errors: not_found if no checkpoint exists; conflict if the
 	// agent has never had a session launched (no launch_id).
-	ResumeLogicalAgent(logicalAgentID string) (LaunchResult, error)
+	ResumeLogicalAgent(logicalAgentID string, opts ResumeOptions) (LaunchResult, error)
 	GetLogicalAgentPolicy(logicalAgentID string) (agent.LogicalAgentPolicy, error)
 	UpdateLogicalAgentPolicy(policy agent.LogicalAgentPolicy) (agent.LogicalAgentPolicy, error)
 	// RuntimeHealth returns the live health snapshot for a running session.
@@ -105,6 +105,9 @@ type LaunchResult struct {
 	// across sessions. Returned on create and launch so consumers can
 	// correlate a new session to its logical agent without a follow-up get.
 	LogicalAgentID string
+	// Replayed is true when an idempotent request returned an existing
+	// session (CW-20260930-0229).
+	Replayed bool
 }
 
 // (RuntimeKind / Capabilities live in agentsessions; see
@@ -136,6 +139,25 @@ type LaunchRequest struct {
 	// SECURITY: injected content is persisted at rest in launch_plans —
 	// non-secret-only. See config.LaunchInjection.
 	Injection string `json:"injection,omitempty"`
+
+	// IdempotencyKey makes the create idempotent (CW-20260930-0229). The
+	// first request with a key binds it to the session it creates; a retry
+	// with the same key and the same request returns that session with
+	// replayed=true and HTTP 200, whatever state it is now in, and a
+	// different request answers 409 idempotency_conflict. Keys are one
+	// global, unauthenticated space: prefix them (e.g. "hadron/<run>/...").
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+// ResumeOptions carries the optional arguments of a resume.
+type ResumeOptions struct {
+	// IdempotencyKey makes the resume idempotent (CW-20260930-0229).
+	IdempotencyKey string
+}
+
+// ResumeRequest is the optional body of POST /logical-agents/{id}/resume.
+type ResumeRequest struct {
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined
@@ -152,6 +174,8 @@ type CreateSessionInput struct {
 	PromptAppend       string
 	// Injection is a JSON-encoded config.LaunchInjection. See LaunchRequest.
 	Injection string
+	// IdempotencyKey makes the create idempotent. See LaunchRequest.
+	IdempotencyKey string
 }
 
 type LaunchResponse struct {
@@ -161,6 +185,9 @@ type LaunchResponse struct {
 	ProviderID     string `json:"provider_id"`
 	ProviderKind   string `json:"provider_kind"`
 	LogicalAgentID string `json:"logical_agent_id"`
+	// Replayed is true when an idempotent request returned an existing
+	// session instead of creating or launching one (CW-20260930-0229).
+	Replayed bool `json:"replayed"`
 }
 
 type WaitResponse struct {

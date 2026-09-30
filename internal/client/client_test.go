@@ -33,6 +33,8 @@ import (
 type mockDaemon struct {
 	server        *httptest.Server
 	create        func(string) (api.LaunchResult, error)
+	createInput   func(api.CreateSessionInput) (api.LaunchResult, error)
+	resume        func(string, api.ResumeOptions) (api.LaunchResult, error)
 	launchSession func(string) (api.LaunchResult, error)
 	list          func() ([]store.SessionRow, error)
 	get           func(string) (*store.SessionRow, error)
@@ -55,6 +57,21 @@ func newMockDaemon(t *testing.T) *mockDaemon {
 	m := &mockDaemon{}
 
 	svc := &funcService{
+		createInputFn: func(in api.CreateSessionInput) (api.LaunchResult, error) {
+			if m.createInput != nil {
+				return m.createInput(in)
+			}
+			if m.create != nil {
+				return m.create(in.LaunchID)
+			}
+			return api.LaunchResult{}, errors.New("create not configured")
+		},
+		resumeFn: func(id string, opts api.ResumeOptions) (api.LaunchResult, error) {
+			if m.resume != nil {
+				return m.resume(id, opts)
+			}
+			return api.LaunchResult{}, nil
+		},
 		createFn: func(id string) (api.LaunchResult, error) {
 			if m.create != nil {
 				return m.create(id)
@@ -148,6 +165,8 @@ func (m mockCatalogLoader) Load() (*config.Catalog, error) { return m.fn() }
 // fields fake for the case-by-case per-test overrides that client tests need.
 type funcService struct {
 	createFn       func(string) (api.LaunchResult, error)
+	resumeFn       func(string, api.ResumeOptions) (api.LaunchResult, error)
+	createInputFn  func(api.CreateSessionInput) (api.LaunchResult, error)
 	launchFn       func(string) (api.LaunchResult, error)
 	listFn         func() ([]store.SessionRow, error)
 	getFn          func(string) (*store.SessionRow, error)
@@ -168,6 +187,9 @@ func (s *funcService) CreateSessionWithBootPrompt(id, _ string) (api.LaunchResul
 	return s.createFn(id)
 }
 func (s *funcService) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
+	if s.createInputFn != nil {
+		return s.createInputFn(in)
+	}
 	return s.createFn(in.LaunchID)
 }
 func (s *funcService) LaunchSession(id string) (api.LaunchResult, error) {
@@ -203,7 +225,10 @@ func (s *funcService) ResizeSession(id string, rows, cols uint16) error {
 	return s.resizeFn(id, rows, cols)
 }
 
-func (s *funcService) ResumeLogicalAgent(_ string) (api.LaunchResult, error) {
+func (s *funcService) ResumeLogicalAgent(id string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	if s.resumeFn != nil {
+		return s.resumeFn(id, opts)
+	}
 	return api.LaunchResult{}, nil
 }
 
@@ -661,5 +686,58 @@ func TestClient_Catalog_Unreachable(t *testing.T) {
 		if err := fn(); !errors.Is(err, ErrDaemonUnreachable) {
 			t.Errorf("expected ErrDaemonUnreachable; got %v", err)
 		}
+	}
+}
+
+// A keyed create answered with 200 (an idempotent replay) is a success, and
+// the key and replayed flag cross the wire.
+func TestClient_CreateSessionWithInput_IdempotentReplay(t *testing.T) {
+	m := newMockDaemon(t)
+	var gotKey string
+	m.createInput = func(in api.CreateSessionInput) (api.LaunchResult, error) {
+		gotKey = in.IdempotencyKey
+		return api.LaunchResult{SessionID: "sess-1", Replayed: true}, nil
+	}
+	c := New(m.addr())
+	res, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: "demo", IdempotencyKey: "test/k1"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithInput: %v", err)
+	}
+	if gotKey != "test/k1" || !res.Replayed || res.ID != "sess-1" {
+		t.Fatalf("key = %q, res = %+v", gotKey, res)
+	}
+}
+
+// A conflicting key surfaces the typed code the MCP classifier keys on.
+func TestClient_CreateSessionWithInput_IdempotencyConflictCode(t *testing.T) {
+	m := newMockDaemon(t)
+	m.createInput = func(api.CreateSessionInput) (api.LaunchResult, error) {
+		return api.LaunchResult{}, fmt.Errorf("%w (key bound to session s1 by a create request)", store.ErrIdempotencyConflict)
+	}
+	c := New(m.addr())
+	_, err := c.CreateSessionWithInput(context.Background(), api.LaunchRequest{Launch: "demo", IdempotencyKey: "test/k1"})
+	if err == nil || !strings.Contains(err.Error(), "daemon 409 (idempotency_conflict): ") {
+		t.Fatalf("err = %v; want a 409 idempotency_conflict", err)
+	}
+}
+
+func TestClient_ResumeLogicalAgentWithOptions_SendsKey(t *testing.T) {
+	m := newMockDaemon(t)
+	var got api.ResumeOptions
+	m.resume = func(_ string, opts api.ResumeOptions) (api.LaunchResult, error) {
+		got = opts
+		return api.LaunchResult{SessionID: "sess-r", Replayed: true}, nil
+	}
+	c := New(m.addr())
+	res, err := c.ResumeLogicalAgentWithOptions(context.Background(), "agent", api.ResumeOptions{IdempotencyKey: "test/r1"})
+	if err != nil {
+		t.Fatalf("ResumeLogicalAgentWithOptions: %v", err)
+	}
+	if got.IdempotencyKey != "test/r1" || !res.Replayed {
+		t.Fatalf("opts = %+v, res = %+v", got, res)
+	}
+	// The unkeyed form still works and sends no key.
+	if _, err := c.ResumeLogicalAgent(context.Background(), "agent"); err != nil || got.IdempotencyKey != "" {
+		t.Fatalf("unkeyed resume: %v, opts = %+v", err, got)
 	}
 }

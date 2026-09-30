@@ -514,7 +514,8 @@ func (c *Client) CreateSessionWithInput(ctx context.Context, req api.LaunchReque
 		return api.LaunchResponse{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusCreated {
+	// 200 is an idempotent replay of an existing session (replayed=true).
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return api.LaunchResponse{}, readError(resp)
 	}
 	var res api.LaunchResponse
@@ -817,17 +818,32 @@ func (c *Client) CreateCheckpoint(ctx context.Context, sessionID, status, summar
 // the full envelope so MCP/ACP adapters can surface workspace + log paths
 // without a follow-up GetSession round-trip.
 func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (api.LaunchResponse, error) {
+	return c.ResumeLogicalAgentWithOptions(ctx, agentID, api.ResumeOptions{})
+}
+
+// ResumeLogicalAgentWithOptions is ResumeLogicalAgent with an idempotency
+// key: a retry with the same key returns the session the first resume
+// created (Replayed=true) rather than starting another (CW-20260930-0229).
+func (c *Client) ResumeLogicalAgentWithOptions(ctx context.Context, agentID string, opts api.ResumeOptions) (api.LaunchResponse, error) {
+	var body io.Reader
+	if opts.IdempotencyKey != "" {
+		b, _ := json.Marshal(api.ResumeRequest(opts))
+		body = bytes.NewReader(b)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/logical-agents/"+url.PathEscape(agentID)+"/resume", nil)
+		c.baseURL+"/logical-agents/"+url.PathEscape(agentID)+"/resume", body)
 	if err != nil {
 		return api.LaunchResponse{}, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return api.LaunchResponse{}, wrapIfUnreachable(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return api.LaunchResponse{}, readError(resp)
 	}
 	var res api.LaunchResponse

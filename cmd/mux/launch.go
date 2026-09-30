@@ -23,6 +23,7 @@ var (
 	launchInjection    string
 	launchPromptAppend string
 	launchBootPromptOR string
+	launchIdemKey      string
 	launchTorqueTasks  []string
 	launchTorqueURL    string
 	launchTorqueDir    string
@@ -57,7 +58,7 @@ var launchCmd = &cobra.Command{
 		}
 
 		var res api.LaunchResponse
-		if launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if launchIdemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Launch:          launchID,
 				BootPrompt:      launchBootPromptOR,
@@ -67,6 +68,7 @@ var launchCmd = &cobra.Command{
 				Override:        launchOverride,
 				PromptAppend:    promptAppend,
 				Injection:       injection,
+				IdempotencyKey:  launchIdemKey,
 			})
 		} else {
 			res, err = c.Launch(ctx, launchID)
@@ -83,6 +85,9 @@ var launchCmd = &cobra.Command{
 		}
 		fmt.Fprintf(os.Stderr, "session:   %s\nworkspace: %s\nattach:    %s sessions attach %s\n",
 			res.ID, res.Workspace, attachCmd, res.ID)
+		if res.Replayed {
+			fmt.Fprintln(os.Stderr, "replayed:  this idempotency key already launched the session above")
+		}
 
 		if launchWait {
 			code, err := c.WaitSession(ctx, res.ID)
@@ -108,6 +113,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchInjection, "injection", "", `caller-provided JSON config.LaunchInjection, e.g. '{"native_files":[{"rel_path":"NOTES.md","content":"..."}]}' (non-secret only — persisted at rest)`)
 	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
+	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are global and unauthenticated; prefix them)")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990)")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")

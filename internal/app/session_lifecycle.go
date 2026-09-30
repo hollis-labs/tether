@@ -52,6 +52,10 @@ type Launched struct {
 	// the runtime factory at create/launch time. Populated as part of
 	// ADR 0022 G2/G3 so consumers don't need a follow-up catalog lookup.
 	ProviderKind string
+
+	// Replayed reports that an idempotent request returned an existing
+	// session rather than creating or launching one (CW-20260930-0229).
+	Replayed bool
 }
 
 // ErrSessionNotCreated is returned by LaunchSession when the target
@@ -91,11 +95,16 @@ func (s *Service) CreateSession(launchID string) (*Launched, error) {
 // For Tier 2 (caller-provided), populate AgentFile / AgentInline /
 // BootProfileFile / Override as needed. See CreateSessionInput for precedence.
 func (s *Service) CreateSessionWithInput(in CreateSessionInput) (*Launched, error) {
-	plan, err := s.BuildLaunchPlan(in)
-	if err != nil {
-		return nil, err
+	if in.IdempotencyKey == "" {
+		plan, err := s.BuildLaunchPlan(in)
+		if err != nil {
+			return nil, err
+		}
+		return s.createSessionFromPlan(plan, nil)
 	}
-	return s.createSessionFromPlan(plan)
+	return s.createKeyed(in.IdempotencyKey, createRequestDigest(in), func() (*launch.Plan, error) {
+		return s.BuildLaunchPlan(in)
+	})
 }
 
 // BuildLaunchPlan resolves and applies Agent Ops input without materializing a
@@ -116,7 +125,7 @@ func (s *Service) BuildLaunchPlan(in CreateSessionInput) (*launch.Plan, error) {
 	return plan, nil
 }
 
-func (s *Service) createSessionFromPlan(plan *launch.Plan) (launched *Launched, err error) {
+func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIdempotency) (launched *Launched, err error) {
 	sessID := uuid.NewString()
 
 	wsRoot := plan.WriteHome
@@ -175,7 +184,7 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan) (launched *Launched, 
 		Workspace:      ws.Root,
 		State:          string(session.StateCreated),
 	}
-	if err = s.Store.CreateSession(row, plan); err != nil {
+	if err = s.Store.CreateSessionKeyed(row, plan, key); err != nil {
 		return nil, err
 	}
 
@@ -198,6 +207,12 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, err
 	}
 	if row.State != string(session.StateCreated) {
+		// A session created by a keyed request launches idempotently: a
+		// retry after a lost response gets the session as it now stands
+		// instead of a conflict it cannot tell from any other.
+		if keyed, keyErr := s.Store.SessionHasIdempotencyKey(sessionID); keyErr == nil && keyed {
+			return s.replayedSession(sessionID)
+		}
 		return nil, fmt.Errorf("%w (state=%q)", ErrSessionNotCreated, row.State)
 	}
 

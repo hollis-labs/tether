@@ -145,6 +145,14 @@ type SessionRow struct {
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
+	return s.CreateSessionKeyed(row, plan, nil)
+}
+
+// CreateSessionKeyed is CreateSession plus an optional idempotency record,
+// written in the same transaction as the session row, so a key is never bound
+// to a session that was not persisted and a session is never persisted
+// without the key its request carried. A nil key writes no record.
+func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *SessionIdempotency) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	row.CreatedAt = now
 	row.UpdatedAt = now
@@ -170,7 +178,16 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 	// declared-but-never-assigned shape this sprint has already produced twice.
 	// The launch path leaves it NULL here and stamps it after planting, since
 	// what was planted is not known until it has been.
-	if _, err := s.db.Exec(`INSERT INTO sessions
+	pb, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`INSERT INTO sessions
 		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
@@ -178,12 +195,15 @@ func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
 		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution); err != nil {
 		return err
 	}
-	pb, err := json.Marshal(plan)
-	if err != nil {
+	if _, err := tx.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb)); err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb))
-	return err
+	if key != nil {
+		if err := insertSessionIdempotency(tx, row.ID, *key); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {

@@ -70,7 +70,7 @@ func TestCreateSessionFromPlan_FailedCreate_RemovesWorktree(t *testing.T) {
 		WorkspaceMode: "worktree",
 	}
 
-	_, err := svc.createSessionFromPlan(plan)
+	_, err := svc.createSessionFromPlan(plan, nil)
 	if err == nil {
 		t.Fatal("expected createSessionFromPlan to fail, got nil")
 	}
@@ -107,7 +107,7 @@ func TestCreateSessionFromPlan_FailedCreate_SharedModeKeepsRepoRoot(t *testing.T
 		WorkspaceMode: "shared",
 	}
 
-	if _, err := svc.createSessionFromPlan(plan); err == nil {
+	if _, err := svc.createSessionFromPlan(plan, nil); err == nil {
 		t.Fatal("expected createSessionFromPlan to fail, got nil")
 	}
 	if plan.WorkRoot != repo {

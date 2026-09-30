@@ -643,6 +643,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		Override:           in.Override,
 		BootPromptAppend:   in.PromptAppend,
 		Injection:          in.Injection,
+		IdempotencyKey:     in.IdempotencyKey,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err
@@ -654,6 +655,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		ProviderID:     l.Plan.ProviderID,
 		ProviderKind:   l.ProviderKind,
 		LogicalAgentID: l.Plan.LogicalAgentID,
+		Replayed:       l.Replayed,
 	}, nil
 }
 
@@ -669,6 +671,7 @@ func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, erro
 		ProviderID:     l.Plan.ProviderID,
 		ProviderKind:   l.ProviderKind,
 		LogicalAgentID: l.Plan.LogicalAgentID,
+		Replayed:       l.Replayed,
 	}, nil
 }
 
@@ -708,8 +711,8 @@ func (a *serviceAdapter) AttachedClients(id string) int {
 	return a.svc.AttachedClients(id)
 }
 
-func (a *serviceAdapter) ResumeLogicalAgent(logicalAgentID string) (api.LaunchResult, error) {
-	return a.svc.ResumeLogicalAgent(logicalAgentID)
+func (a *serviceAdapter) ResumeLogicalAgent(logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	return a.svc.ResumeLogicalAgent(logicalAgentID, opts)
 }
 
 func (a *serviceAdapter) GetLogicalAgentPolicy(logicalAgentID string) (agent.LogicalAgentPolicy, error) {

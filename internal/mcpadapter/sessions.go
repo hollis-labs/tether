@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gomcp "github.com/hollis-labs/go-mcp/server"
@@ -48,6 +49,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 			gomcp.StringProp("boot_profile", "v005-08: filesystem path to a bootgen boot-profile YAML. Carries the MCP server allowlist (mcp_servers).", false),
 			gomcp.StringProp("override", "v005-08: JSON object applied last over the resolved plan. Fields: system_prompt (string), env (KEY:VAL map).", false),
 			gomcp.StringProp("prompt_append", "Additional boot-prompt text appended after catalog/agent/override content. Use for narrow launch-time handoffs without replacing the base prompt.", false),
+			gomcp.StringProp("idempotency_key", "Optional. Makes the create idempotent: a retry with the same key and the same request returns the session the first one created (replayed=true); the same key with a different request fails with idempotency_conflict. Keys are one global, unauthenticated space; prefix them (e.g. \"myapp/<run>/<step>\").", false),
 			gomcp.StringProp("injection", "Caller-provided JSON config.LaunchInjection (native_files + boot_dir_overlay) supplied outside catalog YAML. Caller native files append after catalog native files; caller boot-dir overlay entries win on duplicate rel_path. SECURITY: persisted at rest in launch_plans — non-secret content only; route secrets through provider env passthrough/whitelist instead.", false),
 		),
 		Handler: a.handleSessionCreate,
@@ -186,6 +188,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	override := str(args, "override")
 	promptAppend := str(args, "prompt_append")
 	injection := str(args, "injection")
+	idempotencyKey := str(args, "idempotency_key")
+	// A keyed request always takes the input path, where the key is recorded.
+	withInput := idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
 
 	if a.client != nil {
 		// Daemon-routed path (production "mux mcp"): the daemon owns session
@@ -200,10 +205,11 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			Override:        override,
 			PromptAppend:    promptAppend,
 			Injection:       injection,
+			IdempotencyKey:  idempotencyKey,
 		}
 		var res api.LaunchResponse
 		var err error
-		if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" {
+		if withInput {
 			res, err = a.client.CreateSessionWithInput(ctx, creq)
 		} else if bootPrompt != "" {
 			res, err = a.client.CreateSessionWithBootPrompt(ctx, launchID, bootPrompt)
@@ -213,6 +219,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		if err != nil {
 			if isDaemonUnreachable(err) {
 				return nil, daemonUnreachableError(err)
+			}
+			if strings.Contains(err.Error(), "(idempotency_conflict)") {
+				return nil, toolError("idempotency_conflict", err.Error())
 			}
 			return nil, toolError("internal_error", err.Error())
 		}
@@ -224,13 +233,14 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			"provider_id":      res.ProviderID,
 			"provider_kind":    res.ProviderKind,
 			"logical_agent_id": res.LogicalAgentID,
+			"replayed":         res.Replayed,
 		}), nil
 	}
 
 	// In-process path (tests, dev with no daemon).
 	var res *app.Launched
 	var err error
-	if agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != "" {
+	if withInput {
 		res, err = a.svc.CreateSessionWithInput(app.CreateSessionInput{
 			LaunchID:           launchID,
 			BootPromptOverride: bootPrompt,
@@ -240,6 +250,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 			Override:           override,
 			BootPromptAppend:   promptAppend,
 			Injection:          injection,
+			IdempotencyKey:     idempotencyKey,
 		})
 	} else if bootPrompt != "" {
 		res, err = a.svc.CreateSessionWithBootPrompt(launchID, bootPrompt)
@@ -247,6 +258,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		res, err = a.svc.CreateSession(launchID)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			return nil, toolError("idempotency_conflict", err.Error())
+		}
 		return nil, toolError("internal_error", err.Error())
 	}
 	wsPath := ""
@@ -263,6 +277,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 		"provider_id":      res.Plan.ProviderID,
 		"provider_kind":    res.ProviderKind,
 		"logical_agent_id": res.Plan.LogicalAgentID,
+		"replayed":         res.Replayed,
 	}), nil
 }
 

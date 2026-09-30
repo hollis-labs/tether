@@ -29,9 +29,10 @@ import (
 type fakeLaunchService struct {
 	mu sync.Mutex
 
-	createRes LaunchResult
-	createErr error
-	createIDs []string
+	createRes    LaunchResult
+	createErr    error
+	createInputs []CreateSessionInput
+	createIDs    []string
 
 	launchRes LaunchResult
 	launchErr error
@@ -62,8 +63,9 @@ type fakeLaunchService struct {
 	resizeRows []uint16
 	resizeCols []uint16
 
-	resumeRes LaunchResult
-	resumeErr error
+	resumeRes  LaunchResult
+	resumeErr  error
+	resumeOpts []ResumeOptions
 
 	policyRes agent.LogicalAgentPolicy
 	policyErr error
@@ -98,6 +100,9 @@ func (f *fakeLaunchService) CreateSessionWithBootPrompt(id, _ string) (LaunchRes
 }
 
 func (f *fakeLaunchService) CreateSessionWithInput(in CreateSessionInput) (LaunchResult, error) {
+	f.mu.Lock()
+	f.createInputs = append(f.createInputs, in)
+	f.mu.Unlock()
 	return f.CreateSession(in.LaunchID)
 }
 
@@ -176,7 +181,10 @@ func (f *fakeLaunchService) ResizeSession(id string, rows, cols uint16) error {
 	return f.resizeErr
 }
 
-func (f *fakeLaunchService) ResumeLogicalAgent(_ string) (LaunchResult, error) {
+func (f *fakeLaunchService) ResumeLogicalAgent(_ string, opts ResumeOptions) (LaunchResult, error) {
+	f.mu.Lock()
+	f.resumeOpts = append(f.resumeOpts, opts)
+	f.mu.Unlock()
 	return f.resumeRes, f.resumeErr
 }
 

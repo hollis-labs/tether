@@ -79,6 +79,11 @@ type CreateSessionInput struct {
 	// whitelist mode instead. See config.LaunchInjection.
 	Injection string
 
+	// IdempotencyKey, when set, makes the create idempotent: a retry with the
+	// same key and the same request returns the session the first one
+	// created (CW-20260930-0229). Not part of the launch plan.
+	IdempotencyKey string
+
 	// BootPromptAppend appends caller-provided instructions to the composed
 	// boot prompt. Unlike BootPromptOverride, it does not replace catalog,
 	// agent, or boot-profile content.

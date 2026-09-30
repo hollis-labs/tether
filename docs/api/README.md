@@ -45,6 +45,7 @@ Defined codes:
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
+| `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
 | `locked`            | 423  | resource is archived or otherwise closed to writes |
 | `not_implemented`   | 501  | route exists, semantics land in a later version |
@@ -477,10 +478,44 @@ Response (201):
 use it to dispatch provider-kind-specific paths (chat surface vs. raw PTY
 attach) without a follow-up `GET /sessions/{id}` round-trip.
 
+Every create response carries `"replayed": false`, or `true` for an
+idempotent replay (below).
+
+#### Idempotency keys
+
+`POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional
+`idempotency_key` (at most 512 bytes, no surrounding whitespace, no control
+characters). It makes a request safe to retry after a lost response:
+
+- The first request with a key creates the session and binds the key to it
+  permanently, in the same transaction as the session row. A create that fails
+  before the row commits binds nothing.
+- A retry with the same key and the same request returns that session with
+  `"replayed": true` and HTTP **200** (a fresh create is 201), whatever state it
+  is now in. A session that has since failed or stopped is returned unchanged,
+  never replaced; the caller decides what to do with it.
+- The same key with a different request answers 409 `idempotency_conflict`.
+  "The request" is what the caller sent, hashed: for a create, `launch` and
+  every payload field; for a resume, the logical agent. It is never anything
+  the daemon resolved, so a resume retried after the resumed session has
+  written its own checkpoint still replays.
+- Only a digest of the request is stored, never the request itself.
+- `POST /sessions/{id}/launch` on a session created with a key is idempotent
+  too: once it is past `created`, a repeat answers 200 with `"replayed": true`
+  instead of 409.
+
+Keys are one **global, unauthenticated** namespace: Tether has no
+authenticated caller identity yet (CW-20260918-0037), so a key is not a
+security boundary. Prefix keys with your application and scope, e.g.
+`hadron/<run>/<node>/<iteration>`. Identity-scoped keys can follow once caller
+identity lands. Keys live as long as their session row; Tether does not purge
+sessions today, so in practice they are permanent.
+
 ### `POST /sessions/{id}/launch`
 
 Transition a `created` session to `running`. Returns 409 `conflict` when the
-target is in any other state.
+target is in any other state, except for a session created with an
+`idempotency_key`, where a repeat answers 200 with `"replayed": true`.
 
 Response (200):
 
@@ -679,6 +714,11 @@ Response (200):
 
 Start a new session for the logical agent using its most recent checkpoint as
 boot context and the agent's stored `launch_id`.
+
+The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
+retry: the same key returns the session the first resume created
+(`"replayed": true`, HTTP 200) rather than starting a second agent. See
+[Idempotency keys](#idempotency-keys).
 
 Response (201):
 
