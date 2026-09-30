@@ -25,7 +25,7 @@ func TestDetectProviders(t *testing.T) {
 	t.Setenv("CLAUDE_CLI_PATH", "")
 
 	results := setup.DetectProviders()
-	if got, want := len(results), 3; got != want {
+	if got, want := len(results), 4; got != want {
 		t.Fatalf("len(results) = %d, want %d", got, want)
 	}
 
@@ -34,7 +34,7 @@ func TestDetectProviders(t *testing.T) {
 		brands[r.Brand] = r
 	}
 
-	for _, brand := range []string{"claude", "codex", "opencode"} {
+	for _, brand := range []string{"claude", "codex", "opencode", "antigravity"} {
 		r, ok := brands[brand]
 		if !ok {
 			t.Errorf("missing brand %q", brand)

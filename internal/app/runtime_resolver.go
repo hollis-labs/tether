@@ -12,6 +12,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
+	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
 	"github.com/hollis-labs/tether/internal/provider/cli/opencode"
 )
@@ -53,6 +54,8 @@ func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 		}), nil
 	case binding.Provider == "opencode" && binding.Runtime == agentlaunch.RuntimeSubprocess:
 		return opencode.New, nil
+	case binding.Provider == "antigravity" && binding.Runtime == agentlaunch.RuntimeSubprocess:
+		return antigravity.New, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider/runtime_kind combination: provider=%q runtime_kind=%q", brand, runtimeKind)
 	}

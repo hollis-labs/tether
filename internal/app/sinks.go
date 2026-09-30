@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	gop "github.com/hollis-labs/go-providers/provider"
+	gopevents "github.com/hollis-labs/go-providers/provider/events"
 
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -142,23 +144,57 @@ func mapLifecycleStates(ev agentsessions.LifecycleEvent) (from, to string) {
 // Returns a no-op when bus is nil (test composition that skips event wiring).
 func makeBootDirPlantedCallback(bus events.Publisher, sessionID, logicalAgentID string) func(string) {
 	return func(path string) {
-		if bus == nil {
-			return
-		}
-		payload, err := json.Marshal(struct {
+		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindSessionBootDirPlanted, struct {
 			Path string `json:"path"`
 		}{Path: path})
-		if err != nil {
+	}
+}
+
+// makeProviderSessionLostCallback publishes provider.session_lost when a
+// resume turn ran in a new provider session instead of the requested one.
+// The turn itself ran; the event is how callers learn its history is gone.
+func makeProviderSessionLostCallback(bus events.Publisher, sessionID, logicalAgentID string) func(requested, actual, reason string) {
+	return func(requested, actual, reason string) {
+		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindProviderSessionLost, struct {
+			Requested string `json:"requested"`
+			Actual    string `json:"actual"`
+			Reason    string `json:"reason"`
+		}{requested, actual, reason})
+	}
+}
+
+// makeProviderTypedEventCallback publishes provider.permission_denied for
+// each tool action the provider refused headlessly, so the no-op is visible.
+// Other typed events are ignored here; the attach stream already carries
+// them.
+func makeProviderTypedEventCallback(bus events.Publisher, sessionID, logicalAgentID string) gop.EventsCallback {
+	return func(ev gopevents.Event) {
+		d, ok := ev.(gopevents.PermissionDenied)
+		if !ok {
 			return
 		}
-		_ = bus.Publish(context.Background(), events.Event{
-			Scope:          events.ScopeSession,
-			SessionID:      sessionID,
-			LogicalAgentID: logicalAgentID,
-			Kind:           events.KindSessionBootDirPlanted,
-			PayloadJSON:    string(payload),
-		})
+		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindProviderPermissionDenied, struct {
+			Action      string `json:"action"`
+			DisplayName string `json:"display_name"`
+		}{d.Action, d.DisplayName})
 	}
+}
+
+func publishSessionEvent(bus events.Publisher, sessionID, logicalAgentID, kind string, payload any) {
+	if bus == nil {
+		return
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_ = bus.Publish(context.Background(), events.Event{
+		Scope:          events.ScopeSession,
+		SessionID:      sessionID,
+		LogicalAgentID: logicalAgentID,
+		Kind:           kind,
+		PayloadJSON:    string(data),
+	})
 }
 
 // Static interface checks. The assertions let the linter see the types

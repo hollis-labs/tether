@@ -26,6 +26,7 @@ combinations once.
 | `codex-cli.yaml`              | codex-cli        | hybrid   | `-codex-launch` |
 | `codex-app-server.yaml`       | codex-app-server | hybrid   | `-codex-app-server` |
 | `opencode.yaml`               | opencode         | hybrid   | `-opencode` |
+| `antigravity.yaml`            | antigravity      | hybrid   | (none; no legacy launch) |
 
 **The `.worktree` twins are gone.** A worktree launch is the shared
 template with `isolation: worktree` — there is no second file. Only two

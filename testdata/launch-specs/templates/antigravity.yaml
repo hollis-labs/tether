@@ -1,0 +1,3 @@
+# Common-setup template: Antigravity (agy) runner, shared workspace.
+runner: antigravity
+isolation: hybrid

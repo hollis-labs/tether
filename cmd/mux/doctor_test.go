@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // helperInitedStateDir runs mux init --yes in a fresh temp dir and returns
@@ -203,5 +205,30 @@ func TestDoctorLogsDir(t *testing.T) {
 	result = checkLogsDir(stateDir)
 	if result.Status != statusOK {
 		t.Errorf("expected ok for present logs dir, got %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestDoctorProviderAuthAntigravity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cat := &config.Catalog{Providers: map[string]config.Provider{
+		"antigravity": {ID: "antigravity", Type: "cli", Provider: "antigravity"},
+		"claude-code": {ID: "claude-code", Type: "cli", Provider: "claude"},
+	}}
+
+	got := checkProviderAuth(cat)
+	if len(got) != 1 || got[0].Name != "provider-auth:antigravity" || got[0].Status != statusFail {
+		t.Fatalf("without credentials: %+v", got)
+	}
+
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gemini", "oauth_creds.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = checkProviderAuth(cat)
+	if len(got) != 1 || got[0].Status == statusFail || !strings.Contains(got[0].Message, "expired or revoked") {
+		t.Fatalf("with credentials: %+v", got)
 	}
 }

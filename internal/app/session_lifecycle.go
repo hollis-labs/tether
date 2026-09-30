@@ -312,6 +312,12 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
+	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
+	// agy reports auto-denied tool actions only on the typed-event surface;
+	// other providers keep the adapter path untapped.
+	if plan.ProviderBrand == "antigravity" {
+		startOpts.TypedEventCallback = makeProviderTypedEventCallback(s.Bus, sessionID, plan.LogicalAgentID)
+	}
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false

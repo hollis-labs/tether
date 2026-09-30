@@ -18,6 +18,8 @@
 //	Codex    → AGENTS.md inline sections (all skills aggregated into one file)
 //	Opencode → skills/<id>/SKILL.md (one directory per skill, under the
 //	           boot dir that the planter exports as OPENCODE_CONFIG_DIR)
+//	Antigravity → .agents/skills/<id>/SKILL.md (the workspace root agy
+//	           discovers from cwd = boot dir)
 //
 // Other providers (Nanite-headless) return ErrUnsupportedProvider. Compilers are intentionally additive —
 // adding a new provider compiler is a contained change; resist designing a
@@ -170,6 +172,8 @@ func CompileForProvider(providerID string, allSkills []Skill) ([]CompiledFile, e
 		return CompileCodex(allSkills), nil
 	case "opencode":
 		return CompileOpencode(allSkills)
+	case "antigravity":
+		return CompileAntigravity(allSkills)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedProvider, providerID)
 	}
@@ -184,6 +188,8 @@ func normalizeProviderID(id string) string {
 		return "codex"
 	case "opencode", "opencode-cli", "opencode-run", "opencodecli":
 		return "opencode"
+	case "antigravity", "agy", "antigravity-cli":
+		return "antigravity"
 	default:
 		return id
 	}
@@ -269,6 +275,28 @@ func CompileOpencode(allSkills []Skill) ([]CompiledFile, error) {
 		}
 		out = append(out, CompiledFile{
 			RelPath: filepath.Join("skills", s.ID, "SKILL.md"),
+			Content: content,
+		})
+	}
+	return out, nil
+}
+
+// CompileAntigravity renders one .agents/skills/<id>/SKILL.md per skill,
+// relative to the boot dir. agy runs with cwd = boot dir and discovers the
+// workspace customization root <cwd>/.agents from there; a skill there
+// shadows a global ~/.gemini/config/skills skill of the same name (verified
+// against agy 1.2.7). The file shape is the opencode one: frontmatter name
+// and description, which agy shows the model until the skill is activated.
+func CompileAntigravity(allSkills []Skill) ([]CompiledFile, error) {
+	sorted := sortByID(allSkills)
+	out := make([]CompiledFile, 0, len(sorted))
+	for _, s := range sorted {
+		content, err := opencodeSkillContent(s)
+		if err != nil {
+			return nil, fmt.Errorf("compile antigravity skill %s: %w", s.ID, err)
+		}
+		out = append(out, CompiledFile{
+			RelPath: filepath.Join(".agents", "skills", s.ID, "SKILL.md"),
 			Content: content,
 		})
 	}

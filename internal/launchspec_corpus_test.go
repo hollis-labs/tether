@@ -157,7 +157,7 @@ func TestTemplatesAreInputFragments(t *testing.T) {
 		tmplCount++
 	}
 
-	const wantTemplates = 8
+	const wantTemplates = 9
 	if tmplCount != wantTemplates {
 		t.Fatalf("template count = %d, want %d", tmplCount, wantTemplates)
 	}

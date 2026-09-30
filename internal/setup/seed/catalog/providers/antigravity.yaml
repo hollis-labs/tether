@@ -1,0 +1,25 @@
+id: antigravity
+type: cli
+provider: antigravity
+runtime_kind: subprocess
+# Leave command empty to let the adapter auto-detect agy ($AGY_CLI_PATH,
+# then PATH and ~/.local/bin). Set an absolute path if agy is not on your
+# daemon's PATH.
+# Example: command: /Users/you/.local/bin/agy
+command: ""
+# The runtime adapter owns agy's flags (--output-format stream-json, -p=).
+args: []
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  mode: merge
+  # HOME must pass through unchanged: agy's OAuth credentials live under
+  # ~/.gemini, and a relocated HOME sends it into a browser sign-in.
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - GEMINI_API_KEY
+  redact:
+    - GEMINI_API_KEY
