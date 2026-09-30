@@ -30,17 +30,30 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 // plan-scoped wrapper. Used by claudestream.New and by app composition for
 // catalog-driven cli-goprovider entries (codex, claude) which follow the
 // same per-turn subprocess + stream-JSON pattern as claude.
-func NewWithAdapter(plan *launch.Plan, adapter gop.CLIAdapter, providerID string, caps agentsessions.Capabilities) (agentsessions.Runtime, error) {
+func NewWithAdapter(plan *launch.Plan, adapter gop.CLIAdapter, providerID string, caps agentsessions.Capabilities, opts ...Option) (agentsessions.Runtime, error) {
+	scoped := &PlanScopedAdapter{
+		Inner:    adapter,
+		Binary:   plan.Command,
+		BaseArgs: append([]string(nil), plan.Args...),
+	}
+	for _, opt := range opts {
+		opt(scoped)
+	}
 	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
-		ID:   providerID,
-		Kind: "cli",
-		Adapter: &PlanScopedAdapter{
-			Inner:    adapter,
-			Binary:   plan.Command,
-			BaseArgs: append([]string(nil), plan.Args...),
-		},
-		Caps: caps,
+		ID:      providerID,
+		Kind:    "cli",
+		Adapter: scoped,
+		Caps:    caps,
 	})
+}
+
+// Option adjusts the PlanScopedAdapter NewWithAdapter builds.
+type Option func(*PlanScopedAdapter)
+
+// WithoutPreflight stops the wrapper forwarding the inner adapter's
+// Preflighter, so Prepare no longer refuses on the adapter's own check.
+func WithoutPreflight() Option {
+	return func(a *PlanScopedAdapter) { a.SkipPreflight = true }
 }
 
 // PlanScopedAdapter wraps a go-providers CLIAdapter so the catalog-
@@ -56,6 +69,10 @@ type PlanScopedAdapter struct {
 	Inner    gop.CLIAdapter
 	Binary   string
 	BaseArgs []string
+
+	// SkipPreflight suppresses the Preflight forward. Classifiers such as
+	// IsNotAuthenticated are still forwarded.
+	SkipPreflight bool
 }
 
 func (a *PlanScopedAdapter) Name() string { return a.Inner.Name() }
@@ -91,9 +108,12 @@ func (a *PlanScopedAdapter) ParseLineEvents(line []byte) ([]events.Event, error)
 	return p.ParseLineEvents(line)
 }
 
-// Preflight forwards to the inner adapter's Preflighter (agy refuses to
-// start without its credentials rather than open a browser login).
+// Preflight forwards to the inner adapter's Preflighter unless
+// SkipPreflight is set.
 func (a *PlanScopedAdapter) Preflight() error {
+	if a.SkipPreflight {
+		return nil
+	}
 	if p, ok := a.Inner.(gop.Preflighter); ok {
 		return p.Preflight()
 	}

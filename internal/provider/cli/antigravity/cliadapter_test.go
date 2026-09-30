@@ -21,24 +21,17 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
-// withCreds points HOME at a temp dir holding agy's credentials file, so
-// the preflight passes without touching the real ~/.gemini.
-func withCreds(t *testing.T) {
+// isolateHome points HOME at an empty temp dir, so nothing under test can
+// reach the real ~/.gemini.
+func isolateHome(t *testing.T) {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".gemini", "oauth_creds.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("HOME", t.TempDir())
 }
 
 // TestCompliance runs the shared agentsessions compliance suite with an
 // sh-backed plan, so no real agy is needed.
 func TestCompliance(t *testing.T) {
-	withCreds(t)
+	isolateHome(t)
 	shPath, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("sh not available")
@@ -108,7 +101,7 @@ type harness struct {
 
 func start(t *testing.T, mode, preset string) harness {
 	t.Helper()
-	withCreds(t)
+	isolateHome(t)
 	dir := t.TempDir()
 	rt, err := New(&launch.Plan{Command: fakeAgy(t, dir), PermissionMode: mode})
 	if err != nil {
@@ -202,13 +195,56 @@ func TestRuntime_ReplacedConversationIsReported(t *testing.T) {
 	}
 }
 
-func TestRuntime_PreflightRefusesWithoutCredentials(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// Gemini CLI's ~/.gemini/oauth_creds.json is not agy's credential (agy's
+// is a Keychain token), so its absence must not refuse an agy launch. The
+// adapter's own Preflight still stats it (CW-20260930-0221 R1); New does not
+// forward that check.
+func TestRuntime_PrepareIgnoresMissingGeminiCLICredentials(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "oauth_creds.json")); !os.IsNotExist(err) {
+		t.Fatalf("temp HOME must lack oauth_creds.json: %v", err)
+	}
+	// The adapter's check on its own still refuses here, so the pass below
+	// is New's doing and not an empty check.
+	if err := gop.NewAntigravityAdapter().Preflight(); !errors.Is(err, gop.ErrProviderNotAuthenticated) {
+		t.Fatalf("adapter Preflight = %v; want ErrProviderNotAuthenticated", err)
+	}
 	rt, err := New(&launch.Plan{Command: "/bin/sh"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Prepare(context.Background()); !errors.Is(err, gop.ErrProviderNotAuthenticated) {
-		t.Fatalf("Prepare = %v; want ErrProviderNotAuthenticated", err)
+	if err := rt.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare = %v; want nil without oauth_creds.json", err)
+	}
+}
+
+// Dropping the Preflight forward must keep the auth-failure classifier: a
+// turn that ends in agy's auth failure still reports not-authenticated.
+func TestRuntime_AuthFailureStillClassified(t *testing.T) {
+	isolateHome(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("test script needs sh")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agy")
+	body := "#!/bin/sh\necho 'Error: authentication failed or timed out' 1>&2\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := New(&launch.Plan{Command: bin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	sess, err := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: dir, LogPath: filepath.Join(dir, "session.log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sess.Stop(context.Background()) })
+	if err := sess.SendInput(context.Background(), []byte("x")); !errors.Is(err, gop.ErrProviderNotAuthenticated) {
+		t.Fatalf("SendInput = %v; want ErrProviderNotAuthenticated", err)
 	}
 }

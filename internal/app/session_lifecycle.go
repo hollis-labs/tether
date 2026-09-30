@@ -309,6 +309,12 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.LogPath = ws.LogPath
 	startOpts.WorkspaceDir = ws.Root
 	startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
+	startOpts.Env, err = withBrowserShim(plan.ProviderBrand, ws.Root, startOpts.Env)
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, err
+	}
 	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID

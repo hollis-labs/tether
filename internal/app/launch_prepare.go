@@ -2,8 +2,10 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -103,6 +105,22 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// withBrowserShim puts the antigravity browser shim first on an agy
+// launch's PATH and leaves every other provider's env untouched. It is a
+// soft guard: agy's browser sign-in finds `open` on PATH, so an expired
+// login fails instead of opening a window. See antigravity.PlantBrowserShim
+// for what it does not cover.
+func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]string, error) {
+	if providerBrand != "antigravity" {
+		return env, nil
+	}
+	dir, err := antigravity.PlantBrowserShim(filepath.Join(workspaceRoot, antigravity.BrowserShimDirName))
+	if err != nil {
+		return nil, err
+	}
+	return antigravity.PrependPATH(env, dir), nil
 }
 
 func sharedExtraArgs(argv, baseArgs []string) []string {
