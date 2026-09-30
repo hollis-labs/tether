@@ -12,6 +12,7 @@ package opencode
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/launch"
 )
@@ -50,6 +52,7 @@ func opencodeBinary(t *testing.T) string {
 // asserts the second turn resumed the first turn's opencode session.
 func TestSmokeResumeAcrossTurns(t *testing.T) {
 	bin := opencodeBinary(t)
+	// Args mirrors the seeded catalog's `args: [run]`.
 	rt, err := New(&launch.Plan{Command: bin, Args: []string{"run"}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -70,23 +73,34 @@ func TestSmokeResumeAcrossTurns(t *testing.T) {
 	}
 	defer func() { _ = sess.Stop(context.Background()) }()
 
+	// turn returns the reply text; typed deltas carry only the text now,
+	// not raw JSON lines. It also requires usage before done.
 	turn := func(prompt string) string {
 		t.Helper()
 		if err := sess.SendInput(ctx, []byte(prompt)); err != nil {
 			t.Fatalf("SendInput(%q): %v", prompt, err)
 		}
-		var raw strings.Builder
+		var text strings.Builder
+		var usage int
 		for {
 			select {
 			case ev := <-events:
 				switch ev.Type {
 				case llmtypes.EventDelta:
-					raw.WriteString(ev.Content)
+					text.WriteString(ev.Content)
+				case llmtypes.EventUsage:
+					usage++
+					if ev.Usage == nil || ev.Usage.OutputTokens == 0 {
+						t.Errorf("usage event without output tokens: %+v", ev.Usage)
+					}
 				case llmtypes.EventError:
 					t.Fatalf("turn error: %s", ev.Error)
 				case llmtypes.EventDone:
-					return raw.String()
-				case llmtypes.EventSessionID, llmtypes.EventToolUse, llmtypes.EventUsage, llmtypes.EventThinking:
+					if usage == 0 {
+						t.Errorf("turn %q finished with no usage event", prompt)
+					}
+					return text.String()
+				case llmtypes.EventSessionID, llmtypes.EventToolUse, llmtypes.EventThinking:
 				}
 			case <-ctx.Done():
 				t.Fatalf("turn timed out")
@@ -109,6 +123,44 @@ func TestSmokeResumeAcrossTurns(t *testing.T) {
 		t.Errorf("provider session id changed across turns: %q -> %q", first, got)
 	}
 	if !strings.Contains(out, "TETHER-SMOKE-7") {
-		t.Errorf("turn 2 did not recall turn 1; raw output:\n%s", out)
+		t.Errorf("turn 2 did not recall turn 1; reply:\n%s", out)
+	}
+}
+
+// TestSmokeLostSession resumes an id opencode never issued: the turn fails
+// with ErrProviderSessionLost before any model call, and the next turn
+// starts a fresh session.
+func TestSmokeLostSession(t *testing.T) {
+	bin := opencodeBinary(t)
+	rt, err := New(&launch.Plan{Command: bin, Args: []string{"run"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dir := t.TempDir()
+	var ids []string
+	sess, err := rt.Start(ctx, agentsessions.StartOptions{
+		Workdir:         dir,
+		LogPath:         filepath.Join(dir, "session.log"),
+		Env:             os.Environ(),
+		SessionIDPreset: "ses_tetherSmokeDoesNotExist",
+		OnSessionID:     func(id string) { ids = append(ids, id) },
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = sess.Stop(context.Background()) }()
+
+	err = sess.SendInput(ctx, []byte("Reply only with OK."))
+	if !errors.Is(err, gop.ErrProviderSessionLost) {
+		t.Fatalf("stale resume err = %v; want ErrProviderSessionLost", err)
+	}
+	if err := sess.SendInput(ctx, []byte("Reply only with OK.")); err != nil {
+		t.Fatalf("fresh turn after a lost session: %v", err)
+	}
+	if len(ids) == 0 || !strings.HasPrefix(ids[0], "ses_") || ids[0] == "ses_tetherSmokeDoesNotExist" {
+		t.Errorf("OnSessionID after the fresh turn = %q; want a new ses_ id", ids)
 	}
 }

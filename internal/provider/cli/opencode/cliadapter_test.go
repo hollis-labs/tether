@@ -1,96 +1,168 @@
 package opencode
 
 import (
-	"bufio"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
+	gop "github.com/hollis-labs/go-providers/provider"
+
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
-// The testdata/run_*.jsonl fixtures are verbatim `opencode run --format json`
-// stdout captured from opencode 1.18.30: turn 1 opens a session, turn 2
-// resumes it with `--session <id>` and recalls turn 1's content, and the
-// tool-use turn exercises the tool_use event shape.
-
-func parseFixture(t *testing.T, name string) []llmtypes.StreamEvent {
+// fakeOpencode writes a script standing in for `opencode run --format json`.
+// It appends its argv to argv.log, fails a resume of ses_dead the way
+// opencode does ("Session not found" on stderr, no JSON, exit 1), and
+// otherwise prints one step: step_start, text, step_finish with usage.
+func fakeOpencode(t *testing.T, dir string) string {
 	t.Helper()
-	f, err := os.Open(filepath.Join("testdata", name))
+	if runtime.GOOS == "windows" {
+		t.Skip("test script needs sh")
+	}
+	path := filepath.Join(dir, "opencode")
+	body := `#!/bin/sh
+printf '%s\n' "$*" >> "` + filepath.Join(dir, "argv.log") + `"
+sid=ses_fresh
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--session" ]; then sid=$2; fi
+  shift
+done
+if [ "$sid" = "ses_dead" ]; then
+  printf 'Error: Session not found\n' 1>&2
+  exit 1
+fi
+printf '{"type":"step_start","sessionID":"%s","part":{"type":"step-start"}}\n' "$sid"
+printf '{"type":"text","sessionID":"%s","part":{"type":"text","text":"hi"}}\n' "$sid"
+printf '{"type":"step_finish","sessionID":"%s","part":{"type":"step-finish","reason":"stop","tokens":{"input":3,"output":5,"reasoning":0,"cache":{"read":7,"write":11}}}}\n' "$sid"
+`
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func argvLog(t *testing.T, dir string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "argv.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	return strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+func startFake(t *testing.T, preset string) (agentsessions.Session, chan llmtypes.StreamEvent, string) {
+	t.Helper()
+	dir := t.TempDir()
+	// The seeded catalog declares `args: [run]`; New must not double it.
+	rt, err := New(&launch.Plan{Command: fakeOpencode(t, dir), Args: []string{"run"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	events := make(chan llmtypes.StreamEvent, 64)
+	sess, err := rt.Start(context.Background(), agentsessions.StartOptions{
+		Workdir:         dir,
+		LogPath:         filepath.Join(dir, "session.log"),
+		SessionIDPreset: preset,
+		EventFanout:     events,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Stop(context.Background()) })
+	return sess, events, dir
+}
+
+func drain(ch chan llmtypes.StreamEvent) []llmtypes.StreamEvent {
 	var out []llmtypes.StreamEvent
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		evs, err := cliAdapter{}.ParseLine(sc.Bytes())
-		if err != nil {
-			t.Fatalf("ParseLine: %v", err)
-		}
-		out = append(out, evs...)
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
-
-func sessionIDs(evs []llmtypes.StreamEvent) []string {
-	var ids []string
-	for _, ev := range evs {
-		if ev.Type == llmtypes.EventSessionID && !slices.Contains(ids, ev.SessionID) {
-			ids = append(ids, ev.SessionID)
-		}
-	}
-	return ids
-}
-
-func TestParseLine_ResumedTurnKeepsSessionID(t *testing.T) {
-	turn1 := sessionIDs(parseFixture(t, "run_turn1.jsonl"))
-	turn2 := sessionIDs(parseFixture(t, "run_turn2_resume.jsonl"))
-	if len(turn1) != 1 || turn1[0] == "" {
-		t.Fatalf("turn 1 session ids = %v; want exactly one", turn1)
-	}
-	if !slices.Equal(turn1, turn2) {
-		t.Errorf("resumed turn session ids = %v; want %v", turn2, turn1)
-	}
-}
-
-func TestParseLine_ForwardsEveryLineAsDelta(t *testing.T) {
-	for _, name := range []string{"run_turn1.jsonl", "run_turn2_resume.jsonl", "run_tool_use.jsonl"} {
-		evs := parseFixture(t, name)
-		counts := map[llmtypes.EventType]int{}
-		for _, ev := range evs {
-			counts[ev.Type]++
-		}
-		deltas, ids := counts[llmtypes.EventDelta], counts[llmtypes.EventSessionID]
-		// Every opencode JSON line carries a top-level sessionID, so each
-		// line yields one raw delta plus one session-id event.
-		if deltas == 0 || deltas != ids {
-			t.Errorf("%s: deltas=%d session-id events=%d; want equal and non-zero", name, deltas, ids)
+	for {
+		select {
+		case ev := <-ch:
+			out = append(out, ev)
+		default:
+			return out
 		}
 	}
 }
 
-func TestParseLine_NonJSONStillForwarded(t *testing.T) {
-	evs, err := cliAdapter{}.ParseLine([]byte("Error: Session not found"))
-	if err != nil {
-		t.Fatal(err)
+func TestRuntime_TypedEventsAndResumeArgv(t *testing.T) {
+	sess, events, dir := startFake(t, "")
+	for _, prompt := range []string{"one", "two"} {
+		if err := sess.SendInput(context.Background(), []byte(prompt)); err != nil {
+			t.Fatalf("SendInput(%s): %v", prompt, err)
+		}
 	}
-	if len(evs) != 1 || evs[0].Type != llmtypes.EventDelta {
-		t.Errorf("events = %+v; want one delta", evs)
+
+	want := []string{
+		"run --format json --agent  one",
+		"run --format json --agent  --session ses_fresh two",
+	}
+	if got := argvLog(t, dir); !slices.Equal(got, want) {
+		t.Errorf("argv per turn = %q; want %q", got, want)
+	}
+
+	var types []llmtypes.EventType
+	var usage *llmtypes.Usage
+	for _, ev := range drain(events) {
+		types = append(types, ev.Type)
+		if ev.Type == llmtypes.EventUsage {
+			usage = ev.Usage
+		}
+	}
+	turn := []llmtypes.EventType{llmtypes.EventSessionID, llmtypes.EventDelta, llmtypes.EventUsage, llmtypes.EventDone}
+	if !slices.Equal(types, append(slices.Clone(turn), turn...)) {
+		t.Errorf("event types = %v; want %v twice", types, turn)
+	}
+	if usage == nil || *usage != (llmtypes.Usage{InputTokens: 3, OutputTokens: 5, CacheReadTokens: 7, CacheCreationTokens: 11, StopReason: "stop"}) {
+		t.Errorf("usage = %+v", usage)
 	}
 }
 
-func TestBuildArgs_ResumeFlag(t *testing.T) {
-	if got := (cliAdapter{}).BuildArgs("hi", "", ""); !slices.Equal(got, []string{"--format", "json", "hi"}) {
-		t.Errorf("first turn args = %q", got)
+func TestRuntime_LostSessionIsTypedAndNextTurnStartsFresh(t *testing.T) {
+	sess, events, dir := startFake(t, "ses_dead")
+
+	err := sess.SendInput(context.Background(), []byte("turn N"))
+	if !errors.Is(err, gop.ErrProviderSessionLost) {
+		t.Fatalf("turn N err = %v; want ErrProviderSessionLost", err)
 	}
-	want := []string{"--format", "json", "--session", "ses_x", "hi"}
-	if got := (cliAdapter{}).BuildArgs("hi", "", "ses_x"); !slices.Equal(got, want) {
-		t.Errorf("resume args = %q; want %q", got, want)
+	evs := drain(events)
+	if len(evs) != 1 || evs[0].Type != llmtypes.EventError || !strings.Contains(evs[0].Error, gop.ErrProviderSessionLost.Error()) {
+		t.Errorf("turn N events = %+v; want one EventError naming the lost session", evs)
+	}
+
+	if err := sess.SendInput(context.Background(), []byte("turn N+1")); err != nil {
+		t.Fatalf("turn N+1: %v", err)
+	}
+	if got := sess.(agentsessions.SessionIDer).ProviderSessionID(); got != "ses_fresh" {
+		t.Errorf("session id after turn N+1 = %q; want ses_fresh", got)
+	}
+	log := argvLog(t, dir)
+	if len(log) != 2 || !strings.Contains(log[0], "--session ses_dead") || strings.Contains(log[1], "--session") {
+		t.Errorf("argv per turn = %q; want a resume of ses_dead, then no --session", log)
+	}
+}
+
+func TestPlanWithoutRunSubcommand(t *testing.T) {
+	cases := []struct{ in, want []string }{
+		{[]string{"run"}, []string{}},
+		{[]string{"run", "--pure"}, []string{"--pure"}},
+		{nil, nil},
+		{[]string{"--pure"}, []string{"--pure"}},
+	}
+	for _, c := range cases {
+		plan := &launch.Plan{Args: c.in}
+		got := planWithoutRunSubcommand(plan).Args
+		if !slices.Equal(got, c.want) {
+			t.Errorf("args %q -> %q; want %q", c.in, got, c.want)
+		}
+		if len(c.in) > 0 && c.in[0] == "run" && plan.Args[0] != "run" {
+			t.Errorf("input plan mutated: %q", plan.Args)
+		}
 	}
 }

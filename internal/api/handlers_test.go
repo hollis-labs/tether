@@ -10,12 +10,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/session"
@@ -601,6 +603,26 @@ func TestHandleSendInput_NoInputChannelConflict(t *testing.T) {
 	env := decodeErr(t, rr)
 	if env.Error.Code != CodeConflict {
 		t.Errorf("error code = %q", env.Error.Code)
+	}
+}
+
+func TestHandleSendInputAndTurn_ProviderSessionLostConflict(t *testing.T) {
+	lost := fmt.Errorf("agentsessions: provider session %q: %w: exit 1", "ses_dead", provider.ErrProviderSessionLost)
+	for _, route := range []struct{ path, body string }{
+		{"/sessions/s1/input", "x"},
+		{"/sessions/s1/turn", `{"text":"x"}`},
+	} {
+		svc := &fakeLaunchService{inputErr: lost}
+		req := httptest.NewRequest(http.MethodPost, route.path, bytes.NewReader([]byte(route.body)))
+		rr := httptest.NewRecorder()
+		newTestHandler(svc).ServeHTTP(rr, req)
+		if rr.Code != http.StatusConflict {
+			t.Errorf("%s: status = %d, want 409", route.path, rr.Code)
+		}
+		env := decodeErr(t, rr)
+		if env.Error.Code != CodeConflict || !strings.Contains(env.Error.Message, "provider session lost") {
+			t.Errorf("%s: error = %+v", route.path, env.Error)
+		}
 	}
 }
 
