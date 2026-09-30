@@ -21,7 +21,7 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
-- `POST /sessions/{id}/input` and `/turn` answer a lost provider resume id with the new `provider_session_lost` error code (still HTTP 409) instead of `conflict`, and the MCP `mux_session_send_input`/`mux_session_send_turn` tools report the same code. Callers that branched on `conflict` for this case should match the new code.
+- **Client-visible:** `POST /sessions/{id}/input` and `/turn` answer a lost provider resume id with the new `provider_session_lost` error code instead of `conflict`. The HTTP status stays 409, so status-only clients are unaffected, and the MCP `mux_session_send_input`/`mux_session_send_turn` tools report the same code. Callers that branched on `conflict` for this case should match the new code.
 - Dependency refreshes: `agentkit` v0.8.0, `go-providers` v0.29.0, `go-messaging` v0.5.2.
 - Planning history and design-dead docs were archived out of the repository tree.
 
