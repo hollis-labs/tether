@@ -637,6 +637,35 @@ no-op.
 
 ---
 
+### Driving sessions from an orchestrator
+
+What an orchestrator hosting agents on Tether (for example a workflow
+engine's session host) can rely on, and what it cannot:
+
+- **Launching without duplicates.** Send an `idempotency_key` on create or
+  resume, and launch the returned id. Retrying either call after a lost
+  response returns the same session (see [Idempotency keys](#idempotency-keys)).
+  The key binds to one session for good, so a replay after that session has
+  failed returns the failed session; starting over is a new key.
+- **Observing.** `GET /sessions/{id}` gives the durable `state` (it survives a
+  daemon restart), `GET /sessions/{id}/health` the live runtime,
+  `GET /sessions/{id}/wait` blocks for the exit code, and
+  `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
+- **Cancelling.** `POST /sessions/{id}/stop`. The resulting state is durable.
+- **A daemon restart ends running sessions.** Agent processes are children of
+  muxd. On startup muxd sweeps every session left `launching` or `running` to
+  `failed` with exit code -1, so after a restart an observer sees a definite terminal state, not
+  a session that silently vanished. Nothing reattaches to the old process.
+- **Resume makes a new session.** `POST /logical-agents/{id}/resume` starts a
+  new session linked to its parent by `parent_session_id`; it never reattaches
+  the old one.
+- **There is no "result" value.** Tether does not record a terminal result for
+  a session. What an agent produced is in the attach stream
+  (`GET /sessions/{id}/attach`) and the session log while it runs, and in any
+  message it sends; its end is a state and an exit code. An orchestrator that
+  needs a result value has the agent send it as a message (for example a reply
+  to the envelope or message that started the work) and reads it from there.
+
 ## Checkpoints
 
 v0.0.2 ships persistence only. No runtime side effects: creating a
