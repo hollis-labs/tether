@@ -270,6 +270,8 @@ func classifyClientErr(err error, id string) *budget.ToolError {
 			return toolError("not_found", err.Error())
 		}
 		return toolError("not_found", "session not found: "+id)
+	case strings.Contains(msg, "(provider_session_lost)"):
+		return toolError("provider_session_lost", err.Error())
 	case strings.Contains(msg, "(conflict)"), strings.Contains(msg, " 409 "):
 		return toolError("conflict", err.Error())
 	default:

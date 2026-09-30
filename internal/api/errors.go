@@ -18,6 +18,13 @@ const (
 	CodeConflict         = "conflict"
 	CodeInternalError    = "internal_error"
 	CodeNotImplemented   = "not_implemented"
+
+	// CodeProviderSessionLost (409) means the provider no longer has the
+	// session's resume id: the turn was not delivered, the runtime has
+	// dropped the id, and resending the same request starts a fresh provider
+	// session without the old history. Split from CodeConflict so callers
+	// can tell it from a session that cannot take input at all.
+	CodeProviderSessionLost = "provider_session_lost"
 )
 
 // ErrorResponse is the envelope for every non-2xx JSON body. Callers

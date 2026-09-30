@@ -44,6 +44,7 @@ Defined codes:
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
+| `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
 | `locked`            | 423  | resource is archived or otherwise closed to writes |
 | `not_implemented`   | 501  | route exists, semantics land in a later version |
@@ -558,7 +559,12 @@ Write raw bytes to the session's PTY input. Request body is
 per-request cap.
 
 Response: 204 on success; 409 `conflict` when the session has no writable
-input channel (e.g. api-stub runtimes).
+input channel (e.g. api-stub runtimes); 409 `provider_session_lost` when the
+provider no longer has the session's resume id. The same applies to
+`POST /sessions/{id}/turn`. On `provider_session_lost` the runtime has already
+dropped the id and a `provider.session_lost` event is published; resending
+the same request is the caller's decision, because the new turn starts
+without the old history.
 
 ### `GET /sessions/{id}/attach`
 

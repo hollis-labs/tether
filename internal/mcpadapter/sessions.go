@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gomcp "github.com/hollis-labs/go-mcp/server"
+	gop "github.com/hollis-labs/go-providers/provider"
 
 	messaging "github.com/hollis-labs/go-messaging"
 
@@ -91,7 +92,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_session_send_turn",
-		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden.",
+		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden. A provider_session_lost error means the provider no longer has the session's resume id: the turn was not delivered, and resending starts a fresh provider session without the old history.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 			gomcp.StringProp("text", "User-facing message body. Framing is applied per the session's caps.", true),
@@ -394,6 +395,9 @@ func (a *Adapter) handleSessionSendInput(ctx context.Context, args map[string]an
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)
 		}
+		if errors.Is(err, gop.ErrProviderSessionLost) {
+			return nil, toolError("provider_session_lost", err.Error())
+		}
 		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
@@ -423,6 +427,9 @@ func (a *Adapter) handleSessionSendTurn(ctx context.Context, args map[string]any
 	if err := a.svc.SendTurn(ctx, id, text); err != nil {
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)
+		}
+		if errors.Is(err, gop.ErrProviderSessionLost) {
+			return nil, toolError("provider_session_lost", err.Error())
 		}
 		return nil, toolError("internal_error", err.Error())
 	}

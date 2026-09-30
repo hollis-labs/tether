@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -474,6 +476,20 @@ func TestClient_SendInput_DaemonError(t *testing.T) {
 	c := New(m.addr())
 	if err := c.SendInput(context.Background(), "s1", []byte("x")); err == nil {
 		t.Fatal("expected error from daemon")
+	}
+}
+
+// A lost provider resume id reaches the client as its own envelope code,
+// which is the string mcpadapter.classifyClientErr keys on.
+func TestClient_SendInput_ProviderSessionLostCode(t *testing.T) {
+	m := newMockDaemon(t)
+	m.input = func(string, []byte) error {
+		return fmt.Errorf("agentsessions: provider session %q: %w: exit 1", "ses_dead", provider.ErrProviderSessionLost)
+	}
+	c := New(m.addr())
+	err := c.SendInput(context.Background(), "s1", []byte("x"))
+	if err == nil || !strings.Contains(err.Error(), "daemon 409 (provider_session_lost): ") {
+		t.Fatalf("err = %v; want a 409 provider_session_lost daemon error", err)
 	}
 }
 

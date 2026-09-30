@@ -606,7 +606,7 @@ func TestHandleSendInput_NoInputChannelConflict(t *testing.T) {
 	}
 }
 
-func TestHandleSendInputAndTurn_ProviderSessionLostConflict(t *testing.T) {
+func TestHandleSendInputAndTurn_ProviderSessionLost(t *testing.T) {
 	lost := fmt.Errorf("agentsessions: provider session %q: %w: exit 1", "ses_dead", provider.ErrProviderSessionLost)
 	for _, route := range []struct{ path, body string }{
 		{"/sessions/s1/input", "x"},
@@ -620,7 +620,7 @@ func TestHandleSendInputAndTurn_ProviderSessionLostConflict(t *testing.T) {
 			t.Errorf("%s: status = %d, want 409", route.path, rr.Code)
 		}
 		env := decodeErr(t, rr)
-		if env.Error.Code != CodeConflict || !strings.Contains(env.Error.Message, "provider session lost") {
+		if env.Error.Code != CodeProviderSessionLost || !strings.Contains(env.Error.Message, "provider session lost") {
 			t.Errorf("%s: error = %+v", route.path, env.Error)
 		}
 	}
