@@ -31,6 +31,8 @@ func (p Provider) ProviderBrand() string {
 		return "codex"
 	case p.ID == "opencode":
 		return "opencode"
+	case p.ID == "antigravity", p.ID == "agy":
+		return "antigravity"
 	case p.ID == "api-stub":
 		return "api-stub"
 	default:

@@ -8,7 +8,7 @@ import "github.com/hollis-labs/tether/internal/apikeyhelper"
 // an explicit recovery path.
 func providerRecordsSessionID(providerID string) bool {
 	switch providerID {
-	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode":
+	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode", "antigravity":
 		return true
 	}
 	return false

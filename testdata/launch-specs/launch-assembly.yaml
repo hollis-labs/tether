@@ -57,7 +57,7 @@ inputs:
   - name: runner
     type: string
     required: true
-    description: "Runner/provider id (claude-code, claude-stream, claude-pty, codex-cli, codex-app-server, opencode). Feeds the runtime-binding per D3 — never blueprint identity."
+    description: "Runner/provider id (claude-code, claude-stream, claude-pty, codex-cli, codex-app-server, opencode, antigravity). Feeds the runtime-binding per D3 — never blueprint identity."
 
   # --- minimum config: the two optional knobs ---
   - name: isolation

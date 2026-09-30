@@ -15,7 +15,7 @@ directly (PTY).
 - `BuildEnv` (`env.go`) — merge-by-default env composition with
   whitelist + redact opt-ins. `app.Service` calls this once per
   `LaunchSession` to build `agentsessions.StartOptions.Env`.
-- Adapter packages under `cli/` (`claudestream`, `opencode`) and
+- Adapter packages under `cli/` (`claudestream`, `opencode`, `antigravity`) and
   `api/stub` — each ships a `New(plan)` factory that returns an
   `agentsessions.Runtime` for app composition. Claude PTY sessions now
   ride the same adapter substrate via `go-providers` +

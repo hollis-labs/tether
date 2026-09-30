@@ -1,0 +1,7 @@
+id: antigravity
+type: cli
+provider: antigravity
+runtime_kind: subprocess
+command: /usr/local/bin/agy
+bootstrap:
+  mode: prepend

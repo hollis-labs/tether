@@ -1,0 +1,24 @@
+id: antigravity
+type: cli
+provider: antigravity
+runtime_kind: subprocess
+# command may be a bare name (resolved via your daemon's PATH) or an absolute
+# path. Set an absolute path when PATH is not stable for daemon launches.
+# Example: command: /Users/you/.local/bin/agy
+command: agy
+# The runtime adapter owns agy's flags (--output-format stream-json, -p=).
+args: []
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  mode: merge
+  # HOME must pass through unchanged: agy's OAuth credentials live under
+  # ~/.gemini, and a relocated HOME sends it into a browser sign-in.
+  passthrough:
+    - HOME
+    - PATH
+    - SHELL
+    - GEMINI_API_KEY
+  redact:
+    - GEMINI_API_KEY

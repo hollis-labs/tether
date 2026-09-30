@@ -40,4 +40,17 @@ const (
 	// the lifetime of the session (cleanup is automatic at terminal
 	// state).
 	KindSessionBootDirPlanted = "session.boot_dir_planted"
+
+	// KindProviderSessionLost fires when a resume turn did not continue the
+	// requested provider session and ran in a new one instead (Antigravity
+	// does this silently for an unknown conversation id). The turn itself
+	// ran; the old history is not in the new session. Payload schema:
+	//   {"requested":"<id>","actual":"<id>","reason":"<string>"}
+	KindProviderSessionLost = "provider.session_lost"
+
+	// KindProviderPermissionDenied fires for each tool action a headless
+	// provider refused because it needed an approval it could not ask for,
+	// so an otherwise silent no-op is visible. Payload schema:
+	//   {"action":"<string>","display_name":"<string>"}
+	KindProviderPermissionDenied = "provider.permission_denied"
 )

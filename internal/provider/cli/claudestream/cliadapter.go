@@ -91,6 +91,29 @@ func (a *PlanScopedAdapter) ParseLineEvents(line []byte) ([]events.Event, error)
 	return p.ParseLineEvents(line)
 }
 
+// Preflight forwards to the inner adapter's Preflighter (agy refuses to
+// start without its credentials rather than open a browser login).
+func (a *PlanScopedAdapter) Preflight() error {
+	if p, ok := a.Inner.(gop.Preflighter); ok {
+		return p.Preflight()
+	}
+	return nil
+}
+
+// IsNotAuthenticated forwards to the inner adapter's AuthFailureClassifier.
+func (a *PlanScopedAdapter) IsNotAuthenticated(stderrTail []byte) bool {
+	c, ok := a.Inner.(gop.AuthFailureClassifier)
+	return ok && c.IsNotAuthenticated(stderrTail)
+}
+
+// ResumeKeepsSessionID forwards to the inner adapter's
+// SessionResumeVerifier; adapters without one report false, so a changed
+// id is never read as a lost session for them.
+func (a *PlanScopedAdapter) ResumeKeepsSessionID() bool {
+	v, ok := a.Inner.(gop.SessionResumeVerifier)
+	return ok && v.ResumeKeepsSessionID()
+}
+
 // IsSessionLost forwards to the inner adapter's SessionLostClassifier.
 // agentsessions asks the adapter it was given, which is this wrapper, so
 // without the forward a dead resume id would never be recognized. An inner

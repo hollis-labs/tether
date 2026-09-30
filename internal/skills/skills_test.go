@@ -147,6 +147,7 @@ func TestCompileForProvider_AliasesRoute(t *testing.T) {
 		{"codex-app-server", "AGENTS.md"},
 		{"opencode", "SKILL.md"},
 		{"OpenCode-CLI", "SKILL.md"},
+		{"agy", "SKILL.md"},
 	}
 	for _, tc := range cases {
 		out, err := CompileForProvider(tc.provider, in)
@@ -272,4 +273,17 @@ func writeFileEnsureDir(path, body string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func TestCompileAntigravity_WorkspaceSkillPaths(t *testing.T) {
+	out, err := CompileForProvider("antigravity", []Skill{{ID: "lint", Name: "Lint", Description: "run linters", Body: "Lint body."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].RelPath != filepath.Join(".agents", "skills", "lint", "SKILL.md") {
+		t.Fatalf("out = %+v", out)
+	}
+	if !strings.HasPrefix(out[0].Content, "---\nname: lint\ndescription: run linters\n---\n") {
+		t.Errorf("content = %q", out[0].Content)
+	}
 }

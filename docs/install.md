@@ -126,8 +126,8 @@ mux init
 `mux init` is idempotent. It:
 
 1. Creates `~/.tether/{catalog,state,run,logs}` directories.
-2. Seeds a starter catalog (global config + 3 CLI providers + example MCP server).
-3. Auto-detects installed agent binaries (`claude`, `codex`, `opencode`) and
+2. Seeds a starter catalog (global config + 4 CLI providers + example MCP server).
+3. Auto-detects installed agent binaries (`claude`, `codex`, `opencode`, `agy`) and
    offers to record each path — every step is skippable ("set later in
    Settings → Providers").
 4. Applies database migrations.

@@ -3,7 +3,8 @@
 Tether is the local-first agent session control plane. A per-user daemon
 (`muxd`) owns session lifecycle, process/PTY management, sandboxed execution,
 checkpoint/resume, brokered messaging, and event streams for CLI-backed
-agents such as Claude Code, Codex, Kiro, and OpenCode. Clients reach it over
+agents such as Claude Code, Codex, Kiro, OpenCode, and Antigravity (`agy`).
+Clients reach it over
 a Unix-domain socket through the `mux` CLI, the HTTP API, the MCP stdio
 adapter, the ACP surface, or `go-tether-client`.
 
@@ -169,7 +170,7 @@ full development setup including catalog configuration.
 ## Quick start
 
 ```bash
-# Guided first-time setup (idempotent; detects claude/codex/opencode automatically)
+# Guided first-time setup (idempotent; detects claude/codex/opencode/agy automatically)
 mux init
 
 # Start the daemon

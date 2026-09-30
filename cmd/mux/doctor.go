@@ -13,9 +13,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	gop "github.com/hollis-labs/go-providers/provider"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/client"
@@ -28,7 +30,7 @@ import (
 
 var detectCmd = &cobra.Command{
 	Use:   "detect",
-	Short: "Show which CLI providers (claude, codex, opencode) were found on this system",
+	Short: "Show which CLI providers (claude, codex, opencode, antigravity) were found on this system",
 	Long: `mux detect calls DetectProviders() and prints a table showing which CLI
 providers were located via environment variables, PATH, or well-known install
 paths. It never modifies any files.
@@ -146,6 +148,9 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	// 5. Provider commands resolvable.
 	checks = append(checks, checkProviders(cat)...)
 
+	// 5b. Provider logins that a launch must not discover by itself.
+	checks = append(checks, checkProviderAuth(cat)...)
+
 	// 6. Logs dir exists + writable.
 	checks = append(checks, checkLogsDir(stateDir))
 
@@ -254,6 +259,35 @@ func checkMigrations(cat *config.Catalog) checkResult {
 	}
 	_ = db.Close()
 	return ok("migrations-current", dbPath)
+}
+
+// checkProviderAuth reports on providers whose CLI would otherwise fall into
+// an interactive login. For agy that is a browser sign-in, which a launch
+// must never trigger, so the runtime preflight refuses to start without the
+// credentials file; this check runs the same stat-only preflight.
+func checkProviderAuth(cat *config.Catalog) []checkResult {
+	if cat == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(cat.Providers))
+	for id, p := range cat.Providers {
+		if p.ProviderBrand() == "antigravity" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var results []checkResult
+	for _, id := range ids {
+		name := "provider-auth:" + id
+		if err := gop.NewAntigravityAdapter().Preflight(); err != nil {
+			results = append(results, fail(name, "agy not authenticated: ~/.gemini/oauth_creds.json missing",
+				"run `agy` interactively once to sign in"))
+			continue
+		}
+		results = append(results, ok(name,
+			"credentials present (~/.gemini/oauth_creds.json); expired or revoked credentials can still send a launch to a browser sign-in — if one fails as not authenticated, run `agy` interactively once"))
+	}
+	return results
 }
 
 // checkProviders checks that each configured provider's command is resolvable.
