@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const sampleSkill = `---
@@ -143,6 +145,8 @@ func TestCompileForProvider_AliasesRoute(t *testing.T) {
 		{"CLAUDE-STREAM", ".md"},
 		{"codex", "AGENTS.md"},
 		{"codex-app-server", "AGENTS.md"},
+		{"opencode", "SKILL.md"},
+		{"OpenCode-CLI", "SKILL.md"},
 	}
 	for _, tc := range cases {
 		out, err := CompileForProvider(tc.provider, in)
@@ -165,9 +169,49 @@ func TestCompileForProvider_AliasesRoute(t *testing.T) {
 }
 
 func TestCompileForProvider_UnknownReturnsSentinel(t *testing.T) {
-	_, err := CompileForProvider("opencode", []Skill{{ID: "x", Body: "b"}})
+	_, err := CompileForProvider("nanite-headless", []Skill{{ID: "x", Body: "b"}})
 	if !errors.Is(err, ErrUnsupportedProvider) {
 		t.Errorf("err = %v; want ErrUnsupportedProvider", err)
+	}
+}
+
+func TestCompileOpencode_OneSkillDirPerSkill(t *testing.T) {
+	in := []Skill{
+		{ID: "lint", Name: "Lint", Description: "run: the linters", Triggers: []string{"lint"}, Body: "Lint body."},
+		{ID: "format", Name: "Format", Body: "Format body."},
+	}
+	out, err := CompileOpencode(in)
+	if err != nil {
+		t.Fatalf("CompileOpencode: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len = %d; want 2", len(out))
+	}
+	if out[0].RelPath != filepath.Join("skills", "format", "SKILL.md") || out[1].RelPath != filepath.Join("skills", "lint", "SKILL.md") {
+		t.Errorf("paths = %q, %q", out[0].RelPath, out[1].RelPath)
+	}
+
+	// opencode keys the skill on frontmatter name; the description must
+	// survive YAML-special characters, and a missing one falls back to Name.
+	var lint struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}
+	front, body, err := splitFrontmatter([]byte(out[1].Content))
+	if err != nil {
+		t.Fatalf("splitFrontmatter: %v", err)
+	}
+	if err := yaml.Unmarshal(front, &lint); err != nil {
+		t.Fatalf("frontmatter: %v", err)
+	}
+	if lint.Name != "lint" || lint.Description != "run: the linters" {
+		t.Errorf("frontmatter = %+v", lint)
+	}
+	if !strings.Contains(string(body), "**Triggers:** lint") || !strings.Contains(string(body), "Lint body.") {
+		t.Errorf("body = %q", body)
+	}
+	if !strings.Contains(out[0].Content, "description: Format\n") {
+		t.Errorf("description fallback missing: %q", out[0].Content)
 	}
 }
 

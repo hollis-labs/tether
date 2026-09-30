@@ -42,7 +42,10 @@ func (cliAdapter) Name() string { return "opencode" }
 func (cliAdapter) Clone() gop.CLIAdapter { return &cliAdapter{} }
 
 // BuildArgs constructs the per-turn argv: --format json, optional --session
-// <id> when resuming, then the prompt. systemPrompt is unused (opencode
+// <id> when resuming, then the prompt. `run --session <id>` resumes the
+// conversation (verified against opencode 1.18.30; see testdata/ and the
+// smoke-tagged TestSmokeResumeAcrossTurns). An unknown id exits 1 with
+// "Session not found" on stderr and no JSON. systemPrompt is unused (opencode
 // reads its system context from the ambient project state, not a flag).
 func (cliAdapter) BuildArgs(prompt, _systemPrompt, cliSessionID string) []string {
 	out := []string{"--format", "json"}
@@ -56,8 +59,7 @@ func (cliAdapter) BuildArgs(prompt, _systemPrompt, cliSessionID string) []string
 // cliEventEnvelope captures the only field cliAdapter looks at from each
 // opencode JSON event line: the top-level sessionID. Everything else is
 // passed through verbatim as an EventDelta so the attach broker sees the
-// raw NDJSON stream the TUI parses today. Named to avoid collision with
-// the legacy adapter's eventEnvelope; both die together in commit 2.
+// raw NDJSON stream the TUI parses today.
 type cliEventEnvelope struct {
 	SessionID string `json:"sessionID"`
 }

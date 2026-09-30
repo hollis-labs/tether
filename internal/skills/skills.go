@@ -15,10 +15,11 @@
 // Provider conventions (initial in-scope set):
 //
 //	Claude → .claude/skills/<id>.md (one file per skill)
-//	Codex  → AGENTS.md inline sections (all skills aggregated into one file)
+//	Codex    → AGENTS.md inline sections (all skills aggregated into one file)
+//	Opencode → skills/<id>/SKILL.md (one directory per skill, under the
+//	           boot dir that the planter exports as OPENCODE_CONFIG_DIR)
 //
-// Other providers (Opencode, Nanite-headless) are out-of-scope for v005-08
-// and return ErrUnsupportedProvider. Compilers are intentionally additive —
+// Other providers (Nanite-headless) return ErrUnsupportedProvider. Compilers are intentionally additive —
 // adding a new provider compiler is a contained change; resist designing a
 // generic skill IR until a third compiler proves the pattern.
 package skills
@@ -167,6 +168,8 @@ func CompileForProvider(providerID string, allSkills []Skill) ([]CompiledFile, e
 		return CompileClaude(allSkills), nil
 	case "codex":
 		return CompileCodex(allSkills), nil
+	case "opencode":
+		return CompileOpencode(allSkills)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedProvider, providerID)
 	}
@@ -179,6 +182,8 @@ func normalizeProviderID(id string) string {
 		return "claude"
 	case "codex", "codex-app-server", "codex-cli", "codexappserver", "codexcli":
 		return "codex"
+	case "opencode", "opencode-cli", "opencode-run", "opencodecli":
+		return "opencode"
 	default:
 		return id
 	}
@@ -246,6 +251,45 @@ func CompileCodex(allSkills []Skill) []CompiledFile {
 		b.WriteString("\n\n")
 	}
 	return []CompiledFile{{RelPath: "AGENTS.md", Content: strings.TrimRight(b.String(), "\n") + "\n"}}
+}
+
+// CompileOpencode renders one skills/<id>/SKILL.md per skill. The paths are
+// relative to the boot dir, which go-providers' opencode BootDirSpec exports
+// as OPENCODE_CONFIG_DIR; opencode 1.18.30 scans <config>/skill{,s}/*/SKILL.md
+// there and ignores flat .md files and a nested .opencode/ tree (verified
+// with `opencode debug skill`). opencode keys a skill on the frontmatter
+// `name` and drops files without one, so the skill ID is emitted as `name`.
+func CompileOpencode(allSkills []Skill) ([]CompiledFile, error) {
+	sorted := sortByID(allSkills)
+	out := make([]CompiledFile, 0, len(sorted))
+	for _, s := range sorted {
+		content, err := opencodeSkillContent(s)
+		if err != nil {
+			return nil, fmt.Errorf("compile opencode skill %s: %w", s.ID, err)
+		}
+		out = append(out, CompiledFile{
+			RelPath: filepath.Join("skills", s.ID, "SKILL.md"),
+			Content: content,
+		})
+	}
+	return out, nil
+}
+
+func opencodeSkillContent(s Skill) (string, error) {
+	// opencode shows description to the model when deciding whether to load
+	// the skill; fall back to the display name rather than leaving it blank.
+	desc := s.Description
+	if desc == "" {
+		desc = s.Name
+	}
+	front, err := yaml.Marshal(struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description,omitempty"`
+	}{Name: s.ID, Description: desc})
+	if err != nil {
+		return "", err
+	}
+	return "---\n" + string(front) + "---\n\n" + claudeSkillContent(s), nil
 }
 
 func sortByID(in []Skill) []Skill {
