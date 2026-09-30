@@ -192,7 +192,7 @@ var daemonRunCmd = &cobra.Command{
 			Publisher: svc.Bus,
 		})
 
-		a2aHandler, err := buildA2AAdapter(svc.CatalogRoot, svc.Store.MessagingStore())
+		a2aHandler, err := buildA2AAdapter(ctx, svc.CatalogRoot, svc.Store.MessagingStore(), svc.Store)
 		if err != nil {
 			return err
 		}
@@ -248,7 +248,7 @@ var daemonRunCmd = &cobra.Command{
 // <catalogRoot>/a2a/ directory means the A2A surface doesn't exist on
 // this daemon at all, matching the daemon.Server.A2A field's nil-means-
 // absent convention.
-func buildA2AAdapter(catalogRoot string, sender a2aadapter.MessageSender) (http.Handler, error) {
+func buildA2AAdapter(ctx context.Context, catalogRoot string, sender a2aadapter.MessageSender, tasks a2aadapter.TaskPersistence) (http.Handler, error) {
 	entries, err := config.LoadA2ABindings(catalogRoot)
 	if err != nil {
 		return nil, fmt.Errorf("load a2a bindings: %w", err)
@@ -270,9 +270,17 @@ func buildA2AAdapter(catalogRoot string, sender a2aadapter.MessageSender) (http.
 			TaskAwaitTimeout: e.TaskAwaitTimeout(),
 		}
 	}
-	adapter, err := a2aadapter.NewAdapter(a2aadapter.Config{Bindings: bindings}, sender)
+	adapter, err := a2aadapter.NewAdapter(a2aadapter.Config{Bindings: bindings}, sender, a2aadapter.WithTaskPersistence(tasks))
 	if err != nil {
 		return nil, fmt.Errorf("build a2a adapter: %w", err)
+	}
+	// Tasks the previous process left in flight can no longer complete: their
+	// waits died with it. Fail them rather than leave a peer polling a task
+	// that looks alive.
+	if n, err := adapter.ReconcileInterrupted(ctx); err != nil {
+		log.Printf("a2a: reconcile interrupted tasks: %v", err)
+	} else if n > 0 {
+		log.Printf("a2a: marked %d task(s) interrupted by the restart as failed", n)
 	}
 	return adapter.Mux(), nil
 }

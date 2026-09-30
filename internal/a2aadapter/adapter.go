@@ -24,6 +24,7 @@ import (
 type Adapter struct {
 	coordinator *taskCoordinator
 	mux         *http.ServeMux
+	persistence TaskPersistence // nil: the SDK's in-memory task store
 }
 
 // NewAdapter builds an Adapter for cfg. sender is the canonical Tether
@@ -31,8 +32,11 @@ type Adapter struct {
 // it directly). Construction fails closed on any misconfigured binding
 // (empty/duplicate ID, empty TargetURN/BaseURL, or an unparseable
 // TargetURN) rather than silently skipping it.
-func NewAdapter(cfg Config, sender MessageSender) (*Adapter, error) {
+func NewAdapter(cfg Config, sender MessageSender, opts ...Option) (*Adapter, error) {
 	a := &Adapter{coordinator: newTaskCoordinator(), mux: http.NewServeMux()}
+	for _, opt := range opts {
+		opt(a)
+	}
 	seen := make(map[string]struct{}, len(cfg.Bindings))
 
 	for _, b := range cfg.Bindings {
@@ -69,6 +73,9 @@ func NewAdapter(cfg Config, sender MessageSender) (*Adapter, error) {
 		}
 		if b.BearerToken != "" {
 			opts = append(opts, a2asrv.WithCallInterceptors(&bearerTokenInterceptor{token: b.BearerToken}))
+		}
+		if a.persistence != nil {
+			opts = append(opts, a2asrv.WithTaskStore(&durableTaskStore{p: a.persistence, bindingID: b.ID}))
 		}
 		reqHandler := a2asrv.NewHandler(executor, opts...)
 
