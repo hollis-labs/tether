@@ -21,13 +21,12 @@ meaning of the messages it delivers.
 - `internal/messaging/` owns durable participants, canonical sessions and leased
   runtime bindings.
 - `internal/store/migrations/` holds numbered SQL applied in order.
-- ADRs (transport, provider, sandbox, MCP, registry and messaging decisions)
-  moved to `~/dev/agent-os/workspaces/research/tether/adr/` in a docs cleanup
-  pass — still authoritative, read the relevant record before changing that
-  behavior. `planning/` (roadmap, sprints, specs, parked ideas, handoffs) moved
-  alongside it to `~/dev/agent-os/workspaces/research/tether/planning/`.
-  `docs/historical/` (dead TUI design, feature since removed) moved to
-  `~/dev/agent-os/archive/tether/historical/`.
+- Architecture decisions (ADRs) are cited by number in code comments and docs
+  (for example ADR 0010, 0035, 0041). The records are no longer in this tree;
+  where a comment cites one, treat the stated rule as binding and check the
+  surrounding code and tests before changing that behavior.
+- `docs/dev-setup.md` covers the toolchain; `docs/` holds the user and
+  integration guides.
 
 ## Commands
 
@@ -37,24 +36,23 @@ make check                   # fmt + vet + lint + test-race + vuln + coverage
 make -C apps/sysop all       # separate module; the root gate does not reach it
 ```
 
-`make check` is the gate CI runs, and is required before any commit that closes
-a task.
+`make check` is the gate CI runs. Run it before opening a pull request; a
+maintainer will review the PR.
 
 ## Boundaries
 
 State lives under two roots, and the catalog decides which. `~/.tether/` holds
 `catalog/` and `run/muxd.sock`; the state DB, tmp and a second workspaces tree
 live under `~/tether/`, per `defaults.state_db` in `~/.tether/catalog/global.yaml`.
-Read that file rather than assuming a path — two 0-byte `state.db` decoys sit
-under `~/.tether/`, and opening one reports an empty database instead of an error.
+Read that file rather than assuming a path — a stray 0-byte `state.db` under
+`~/.tether/` opens as an empty database instead of an error.
 
 Session-mutating operations route through the daemon (ADR 0035). A client that
 mutates session state directly splits brain with the daemon's live runtime handles.
 
 The registry holds identity and a callback URI, never operational content.
 Substrate catalog YAMLs carry plaintext OAuth tokens in `resources[].config.env`,
-so `registry_entries` deliberately has no `cached_payload_json` column (ADR 0041,
-D18). Never reintroduce payload caching, and never copy `resources[]`, `config`
+so `registry_entries` deliberately has no `cached_payload_json` column (ADR 0041). Never reintroduce payload caching, and never copy `resources[]`, `config`
 or `env` into the registry.
 
 `apps/sysop/` is a separate Go module with a Vite frontend. The root `./...` does

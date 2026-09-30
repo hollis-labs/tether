@@ -7,8 +7,8 @@ correct, minimal, well-tested Go that passes the full quality gate.
 
 - Read [`docs/dev-setup.md`](docs/dev-setup.md) to get your toolchain in order.
 - Skim [`docs/api/README.md`](docs/api/README.md) for the public HTTP/UDS
-  surface area and [`docs/adr/`](docs/adr/) for the architectural decisions
-  that shape this codebase.
+  surface area. Code comments cite architecture decision records (ADRs) by
+  number; the rule they state is binding.
 - License: see [`LICENSE`](LICENSE) and [`TRADEMARK.md`](TRADEMARK.md).
   Code contributions are accepted under the repository's MIT licensing posture;
   the Tether and Hollis Labs names remain protected marks.

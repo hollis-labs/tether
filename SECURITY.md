@@ -1,0 +1,94 @@
+# Security policy
+
+## Supported versions
+
+Tether is pre-1.0 software. Security fixes are made on `main` and the newest
+tagged release. Older releases may not receive backports.
+
+## Report a vulnerability
+
+Do not include an exploit, token, API key, session transcript, database, or
+other sensitive material in a public issue.
+
+Use GitHub's private vulnerability-reporting flow when the repository's Security
+tab offers it. If it is unavailable, contact a repository maintainer privately
+through a contact channel published on the Hollis Labs organization or
+maintainer profile. Include:
+
+- the affected commit or version and operating system
+- how `muxd` was configured (Unix socket or TCP listener, MCP adapter flags)
+- reproduction steps and the security impact
+- whether credentials or user data may have been exposed
+- a safe way to contact you about coordination
+
+Maintainers will acknowledge a private report, investigate it, and coordinate
+disclosure; response times are best effort during the pre-release period.
+
+## Deployment boundary
+
+Tether is a **single-user, same-host** control plane. The `muxd` HTTP API has no
+authentication: trust is anchored to the filesystem permissions of the Unix
+domain socket (default `~/.tether/run/muxd.sock`). Anyone who can connect to
+that socket can create, steer and stop sessions, send messages and read
+session output as the daemon's user.
+
+- Keep the socket and its parent directory owner-only.
+- If you set `daemon.listen_addr` to a TCP address, use a loopback address
+  (`tcp:127.0.0.1:PORT`). Do not bind `muxd` to a non-loopback interface; there
+  is no TLS and no bearer-token check on the HTTP API.
+- Caller identity on messaging and group routes (the `as` / `from` URN) is
+  provenance supplied by the caller, not an authenticated credential.
+
+The MCP stdio adapter (`mux mcp`) is the one surface with scopes. Read-only
+tools need no token. Mutating tools require a token and the matching scope
+(`session.write`, `message.write`, `registry.write`, `groups.write`,
+`delivery.write`, `catalog.write`, `ai.invoke`); scopes are per capability
+group, not a hierarchy. See [`docs/mcp.md`](docs/mcp.md). The token is a
+local guard for the client you configure, not a tenant-isolation boundary: run
+the adapter only for clients you trust with the daemon.
+
+## Sandboxing
+
+Sessions can run under a sandbox profile ([`docs/sandboxing.md`](docs/sandboxing.md)).
+On macOS this uses `sandbox-exec` with a default-allow, selective-deny posture
+(outbound network and sensitive filesystem paths are blocked; other access is
+permitted). `sandbox-exec` is deprecated by Apple. Treat the sandbox as a
+containment aid, not a hardened boundary against a hostile agent.
+
+## Data at rest
+
+Tether has no built-in at-rest encryption. The state database, session logs,
+checkpoints, message history and catalog files live under `~/.tether/` and
+`~/tether/` (the state DB location is set by `defaults.state_db` in
+`~/.tether/catalog/global.yaml`) and may contain prompts, agent output and
+other sensitive content. Protect them with normal user-account and disk
+encryption controls.
+
+Catalog YAML can hold credentials in plaintext (for example
+`resources[].config.env` and MCP server `env:`/`token:` fields). Prefer secret
+references (`keychain://…`, `helper://…`) over literal values; see
+[`docs/secrets.md`](docs/secrets.md). The federation registry stores identity
+and a callback URI only, and deliberately does not cache catalog payloads.
+Do not commit catalog files containing real tokens.
+
+## External data processors
+
+Tether launches third-party agent CLIs and, when configured, calls model
+providers through its AI gateway (OpenAI, Anthropic, Gemini, Ollama-compatible
+endpoints and others). Prompts, session content and embeddings input sent
+through those runtimes and providers are governed by those providers' terms,
+not Tether. Optional OpenTelemetry export is configured through the process
+environment and sends trace data to the endpoint you choose.
+
+## Current security limitations
+
+- no authentication on the daemon HTTP/UDS API
+- no built-in TLS; TCP listeners are loopback-only by convention
+- no at-rest encryption of state, logs or backups
+- macOS sandboxing relies on a deprecated mechanism with a default-allow posture
+- MCP scopes are coarse capability guards, not multi-tenant isolation
+- caller URNs on messaging routes are unauthenticated provenance
+- pre-1.0 contracts and migration guarantees
+
+These are deployment constraints, not hidden roadmap promises. Operate within
+them or place Tether behind controls that provide the missing boundary.
