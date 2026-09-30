@@ -53,12 +53,14 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 // longer has. The runtime has already dropped the id, so the same request
 // sent again starts a fresh provider session without the old history —
 // a conflict with the session's state that the caller resolves by
-// deciding whether to resend, not a daemon fault.
+// deciding whether to resend, not a daemon fault. It carries its own code,
+// not CodeConflict, so a caller can branch on it without reading the
+// message.
 func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
 	if !errors.Is(err, provider.ErrProviderSessionLost) {
 		return false
 	}
-	writeError(w, http.StatusConflict, CodeConflict, err.Error())
+	writeError(w, http.StatusConflict, CodeProviderSessionLost, err.Error())
 	return true
 }
 
