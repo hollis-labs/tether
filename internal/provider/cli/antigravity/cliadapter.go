@@ -13,7 +13,7 @@ import (
 // New constructs an agentsessions.Runtime that drives agy one subprocess per
 // turn through go-providers' AntigravityAdapter: `agy --output-format
 // stream-json [--conversation <id>] -p=<prompt>`. The adapter owns the argv,
-// the typed event mapping, the credentials preflight and recognizing a
+// the typed event mapping, the auth-failure classifier and recognizing a
 // replaced conversation; see its doc for agy's headless behavior.
 //
 // The launch's permission posture picks the approval flags: "bypass" passes
@@ -24,8 +24,15 @@ import (
 //
 // cwd is the planted boot dir, whose .agents/ workspace root carries the
 // launch's skills and MCP plugin; the project is attached with --add-dir by
-// the planter. HOME is never relocated: agy's OAuth credentials live under
-// ~/.gemini.
+// the planter. HOME is never relocated: agy's live credential is an OAuth
+// token in the macOS Keychain (its logs report "authenticated via keyring"),
+// and its global config under ~/.gemini is shared with the desktop app.
+//
+// The adapter's Preflight is not forwarded: it stats ~/.gemini/oauth_creds.json,
+// which is Gemini CLI's file, not agy's, so it both passes without an agy
+// login and refuses a working one. The launch path instead plants a browser
+// shim (see PlantBrowserShim) and relies on the forwarded IsNotAuthenticated
+// classifier.
 func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 	adapter := gop.NewAntigravityAdapter()
 	adapter.Permission = permission(plan.PermissionMode)
@@ -35,7 +42,10 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 		ProviderSessionID: true,
 		CheckpointResume:  false,
 		BinaryRequired:    true,
-	})
+	},
+		// until go-providers drops the oauth_creds.json stat (CW-20260930-0221 R1)
+		claudestream.WithoutPreflight(),
+	)
 }
 
 func permission(mode string) string {
