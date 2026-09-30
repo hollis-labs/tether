@@ -33,14 +33,14 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/agentkit v0.7.0 // indirect
+	github.com/hollis-labs/agentkit v0.8.0 // indirect
 	github.com/hollis-labs/go-apppaths v0.1.0 // indirect
 	github.com/hollis-labs/go-llm-contracts v0.3.0 // indirect
 	github.com/hollis-labs/go-llm-types v0.3.0 // indirect
 	github.com/hollis-labs/go-materialize v0.1.0 // indirect
 	github.com/hollis-labs/go-mcp v0.7.0 // indirect
 	github.com/hollis-labs/go-otel v0.6.1 // indirect
-	github.com/hollis-labs/go-providers v0.28.0 // indirect
+	github.com/hollis-labs/go-providers v0.29.0 // indirect
 	github.com/hollis-labs/go-runner v0.7.0 // indirect
 	github.com/hollis-labs/go-sandbox v0.3.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
