@@ -73,6 +73,10 @@ type Service struct {
 
 	factories map[string]RuntimeFactory
 
+	// strictMCPStatus, when set, replaces the daemon-environment decision
+	// ClaudeStrictMCPStatus takes. Tests use it.
+	strictMCPStatus func() StrictMCPStatus
+
 	// stops is shared with the Manager's state and event sinks; see
 	// stopRequests. Nil when the Manager was built without
 	// newSessionManager, in which case a stop is recorded as "completed".

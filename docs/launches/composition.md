@@ -100,7 +100,7 @@ The leaf profile represents the concrete target requested. Its declarations take
 When a `Scope` or `Context` is supplied:
 - `RepoRoot`, `TrackingRoot`, and `WorktreeBase` provide the workspace placement.
 - `Workspace.DefaultMode` provides the default workspace mode if not overridden.
-- Project `MCP.Servers` are injected into `MUX_MCP_SERVERS` in the environment if not already defined.
+- Project `MCP.Servers` are injected into `MUX_MCP_SERVERS` in the environment if not already defined. With none declared, the launch gets the default allow-list (`torque`, `tesseract`); a declared list replaces it. The agent's proxy is confined to it. See [../mcp.md](../mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
 - Project `KnowledgeBase` and `BootFragments` are included in prompt assembly.
 
 ### Tier 4: Launch-Time Inputs (Request Parameters)

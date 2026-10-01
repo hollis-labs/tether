@@ -174,6 +174,50 @@ func LoadMCPServers(catalogDir string) ([]MCPServerEntry, error) {
 	return out, nil
 }
 
+// LoadMCPServersConfined is LoadMCPServers for a proxy confined to ids
+// (CW-20261001-0227): only the enabled entries named in ids are returned, and
+// only they have their secret references resolved. An upstream outside the
+// set contributes nothing -- its credentials never reach the proxy's memory,
+// and a reference of its that fails to resolve cannot stop the proxy.
+//
+// unknown lists the ids that name no enabled entry (a typo, a disabled or a
+// removed server), in the order given, so the caller can say so; they are
+// otherwise ignored, which narrows the confined set rather than widening it.
+func LoadMCPServersConfined(catalogDir string, ids []string) (entries []MCPServerEntry, unknown []string, err error) {
+	catalog, err := LoadMCPServerCatalog(catalogDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	ctx := context.Background()
+	found := make(map[string]struct{}, len(ids))
+	for _, entry := range catalog {
+		if _, ok := want[entry.ID]; !ok || !entry.IsEnabled() {
+			continue
+		}
+		if err := resolveEntrySecrets(ctx, &entry); err != nil {
+			return nil, nil, fmt.Errorf("mcp server %q: %w", entry.ID, err)
+		}
+		entries = append(entries, entry)
+		found[entry.ID] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		if _, ok := found[id]; ok {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unknown = append(unknown, id)
+	}
+	return entries, unknown, nil
+}
+
 // LoadMCPServerCatalog reads all upstream MCP server catalog entries,
 // including disabled entries. GUI/config surfaces use this so disabled
 // servers remain visible and can be re-enabled.
