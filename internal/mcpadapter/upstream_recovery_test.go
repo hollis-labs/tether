@@ -332,7 +332,8 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			if got := probePID(t, router, "beta"); got != beta {
 				t.Fatal("sibling replaced")
 			}
-			assertToolPresent(context.Background(), t, downstream, "alpha_extra")
+			// Connected status precedes the downstream catalog refresh.
+			waitForTool(context.Background(), t, downstream, "alpha_extra")
 			if health := callBody("tether_health", nil); health["ok"] != true {
 				t.Fatalf("health did not recover: %+v", health)
 			}
