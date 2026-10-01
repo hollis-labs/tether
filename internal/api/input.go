@@ -102,6 +102,13 @@ func (s *Server) handleSendTurn(w http.ResponseWriter, r *http.Request, id strin
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
+		// A session that cannot take this turn now (no input channel, or a
+		// turn already in flight / still booting) is a state conflict the
+		// caller can resolve, not a daemon fault.
+		if errors.Is(err, agentsessions.ErrNoInputChannel) || errors.Is(err, agentsessions.ErrTurnInFlight) {
+			writeError(w, http.StatusConflict, CodeConflict, err.Error())
+			return
+		}
 		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) {
 			return
 		}

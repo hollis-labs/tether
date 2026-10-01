@@ -351,7 +351,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		// A runtime that takes them per session places them before a turn's
 		// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
 		// StartOptions.ExtraArgs would land after the prompt.
-		extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+		extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan))
 		if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
 			er.SetExtraArgs(extraArgs)
 			startOpts.ExtraArgs = nil

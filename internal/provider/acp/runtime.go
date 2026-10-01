@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,6 +174,11 @@ func (s *session) finish(err error) {
 	s.runErr = err
 	if err != nil && !s.stopped.Load() {
 		s.exitCode.Store(1)
+		// The run's reason would otherwise be lost: Wait reports only the
+		// exit code, and the wrapper's process.exited event is not part of
+		// the transcript.
+		log.Printf("acp: session ended: %v", err)
+		s.out.writeText("\n[error] " + err.Error() + "\n")
 	}
 	_ = s.out.Close()
 	close(s.done)
@@ -222,8 +228,9 @@ func (s *session) Stop(ctx context.Context) error {
 	return err
 }
 
-// SendInput sends data as one ACP prompt (session/prompt) and returns when
-// the agent has finished the turn.
+// SendInput sends data as one ACP prompt (session/prompt). It returns once
+// the agent has accepted the prompt, not when the turn ends: the turn's end
+// arrives as its own event ([turn_done] or [error] in the transcript).
 func (s *session) SendInput(ctx context.Context, data []byte) error {
 	select {
 	case <-s.done:
@@ -233,6 +240,12 @@ func (s *session) SendInput(ctx context.Context, data []byte) error {
 	if err := s.w.SendInput(ctx, data); err != nil {
 		if errors.Is(err, wrapper.ErrSessionNotStarted) {
 			return agentsessions.ErrNoInputChannel
+		}
+		// The run is still up, so "not live" means busy (a turn in
+		// flight) or still booting: a conflict with the session's state
+		// the caller can retry, not a daemon fault.
+		if errors.Is(err, wacp.ErrNotLive) {
+			return fmt.Errorf("%w: %w", agentsessions.ErrTurnInFlight, err)
 		}
 		return err
 	}
@@ -294,9 +307,13 @@ func openOutput(opts agentsessions.StartOptions) (*output, error) {
 
 // Write implements runtimeevents.Sink. It never fails the wrapper's emit.
 func (o *output) Write(_ context.Context, ev runtimeevents.Event) error {
-	text := render(ev)
+	o.writeText(render(ev))
+	return nil
+}
+
+func (o *output) writeText(text string) {
 	if text == "" {
-		return nil
+		return
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -306,7 +323,6 @@ func (o *output) Write(_ context.Context, ev runtimeevents.Event) error {
 	if o.fanout != nil {
 		_, _ = io.WriteString(o.fanout, text)
 	}
-	return nil
 }
 
 func (o *output) Close() error {

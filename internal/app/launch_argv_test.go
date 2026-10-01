@@ -101,10 +101,23 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 			brand:       "opencode",
 			runtimeKind: config.RuntimeKindSubprocess,
 			args:        []string{"run"},
-			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "agent"; return a }(),
+			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "tether-agent"; return a }(),
 			turnPrompt:  "Reply with exactly OK",
 			wantPairs:   [][2]string{{"--dir", "project"}},
-			wantOnce:    []string{"run", "--agent", "agent", "--format"},
+			wantOnce:    []string{"run", "--agent", "tether-agent", "--format"},
+		},
+		{
+			// Catalog flags other than the leading run reach argv once
+			// (review of #79: they used to be re-added after the projection).
+			name:        "opencode run with catalog --model",
+			providerID:  "opencode",
+			brand:       "opencode",
+			runtimeKind: config.RuntimeKindSubprocess,
+			args:        []string{"run", "--model", "anthropic/claude-x"},
+			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "tether-agent"; return a }(),
+			turnPrompt:  "Reply with exactly OK",
+			wantPairs:   [][2]string{{"--dir", "project"}},
+			wantOnce:    []string{"run", "--model", "anthropic/claude-x", "--agent"},
 		},
 		{
 			name:        "codex-cli exec",
@@ -148,7 +161,7 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 
 			// Composed the way LaunchSession hands the extras to the runtime.
 			scoped := &claudestream.PlanScopedAdapter{Inner: tc.adapter, BaseArgs: launch.CatalogFlags(plan)}
-			scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args))
+			scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan)))
 			argv := scoped.BuildArgs(tc.turnPrompt, "", "")
 			assertPromptLast(t, argv, tc.turnPrompt)
 
@@ -199,7 +212,7 @@ func TestSharedExtraArgs_CodexAppServerIsOneSubcommand(t *testing.T) {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}
 	scoped := &claudestream.PlanScopedAdapter{Inner: gop.NewCodexAdapterAppServer()}
-	scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args))
+	scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan)))
 	argv := scoped.BuildArgs("", "", "")
 	if !slices.Equal(argv, []string{"app-server"}) {
 		t.Fatalf("argv = %q, want [app-server]", argv)
@@ -498,6 +511,42 @@ func countToken(argv []string, tok string) int {
 
 func preparedWithArgv(argv ...string) *agentlaunch.PreparedLaunch {
 	return &agentlaunch.PreparedLaunch{Argv: argv}
+}
+
+// opencode merges a planted agent file into its built-in agent of the same
+// name, so the shared launch plants and selects a namespaced agent: the file
+// is agents/tether-<agent>.md and --agent names it.
+func TestOpencodePlantedAgentIsNamespaced(t *testing.T) {
+	svc := &Service{CatalogRoot: t.TempDir(), Catalog: &config.Catalog{Global: config.Global{Version: "test"}}}
+	ws := t.TempDir()
+	plan := &launch.Plan{
+		LaunchID: "demo", ProjectID: "project", LogicalAgentID: "general",
+		ProviderID: "opencode", ProviderBrand: "opencode", RuntimeKind: config.RuntimeKindSubprocess,
+		RepoRoot: t.TempDir(), WriteHome: ws, WorkspaceMode: "shared", Command: "opencode", Args: []string{"run"}, BootPrompt: testBootPrompt,
+	}
+	if got := launch.OpencodeAgentName(plan); got != "tether-general" {
+		t.Fatalf("OpencodeAgentName = %q, want tether-general", got)
+	}
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux"})
+	if err != nil {
+		t.Fatalf("prepareSharedLaunch: %v", err)
+	}
+	var planted []string
+	_ = filepath.WalkDir(prepared.PlantedBootDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && filepath.Base(path) == "tether-general.md" {
+			planted = append(planted, path)
+		}
+		return nil
+	})
+	if len(planted) == 0 {
+		t.Fatalf("no agents/tether-general.md planted under %s", prepared.PlantedBootDir)
+	}
+	if i := slices.Index(prepared.Argv, "--agent"); i < 0 || prepared.Argv[i+1] != "tether-general" {
+		t.Fatalf("projected argv does not select the namespaced agent: %q", prepared.Argv)
+	}
+	if lp := launch.AgentLaunchPlan(&launch.Plan{ProviderBrand: "claude", LogicalAgentID: "general"}, ws); lp.Agent.Name != "" {
+		t.Fatalf("claude AgentSpec.Name = %q, want empty (only opencode is namespaced)", lp.Agent.Name)
+	}
 }
 
 func TestPeelIndex(t *testing.T) {

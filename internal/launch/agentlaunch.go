@@ -27,7 +27,8 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 			Root: plan.RepoRoot,
 		},
 		Agent: agentlaunch.AgentSpec{
-			ID: agentID,
+			ID:   agentID,
+			Name: plantedAgentName(plan),
 		},
 		Provider: agentlaunch.ProviderSpec{
 			ID:         plan.ProviderBrand,
@@ -75,6 +76,27 @@ func AgentName(plan *Plan) string {
 		return plan.LogicalAgentID
 	}
 	return "agent"
+}
+
+// OpencodeAgentName is the name of the agent file the shared launch plants
+// for opencode (agents/<name>.md) and selects with --agent. It is namespaced
+// because opencode merges a planted agent file into its built-in agent of the
+// same name: a Tether agent called general, plan or explore would otherwise
+// run as opencode's own agent of that name with its mode and permissions
+// (plan is edit-deny, explore denies everything).
+func OpencodeAgentName(plan *Plan) string {
+	return "tether-" + AgentName(plan)
+}
+
+// plantedAgentName is the agent display name the providers' planters use
+// (agentkit takes AgentSpec.Name before ID). Only opencode turns it into a
+// file and a flag that can collide, so only opencode's is namespaced; the
+// other providers keep the agent id.
+func plantedAgentName(plan *Plan) string {
+	if plan.ProviderBrand == "opencode" {
+		return OpencodeAgentName(plan)
+	}
+	return ""
 }
 
 // CatalogFlags is plan.Args less what the provider's own argv convention

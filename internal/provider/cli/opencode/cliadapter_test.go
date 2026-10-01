@@ -106,8 +106,8 @@ func TestRuntime_TypedEventsAndResumeArgv(t *testing.T) {
 	}
 
 	want := []string{
-		"run --format json --agent agent -- one",
-		"run --format json --agent agent --session ses_fresh -- two",
+		"run --format json --agent tether-agent -- one",
+		"run --format json --agent tether-agent --session ses_fresh -- two",
 	}
 	if got := argvLog(t, dir); !slices.Equal(got, want) {
 		t.Errorf("argv per turn = %q; want %q", got, want)
@@ -137,7 +137,7 @@ func TestRuntime_SeedArgsEmpty(t *testing.T) {
 	if err := sess.SendInput(context.Background(), []byte("one")); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
-	if got, want := argvLog(t, dir), []string{"run --format json --agent agent -- one"}; !slices.Equal(got, want) {
+	if got, want := argvLog(t, dir), []string{"run --format json --agent tether-agent -- one"}; !slices.Equal(got, want) {
 		t.Errorf("argv = %q; want %q", got, want)
 	}
 }

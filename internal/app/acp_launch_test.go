@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -36,6 +37,7 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 		{"pi turn", runtimes.Pi, providertest.Replay("pi/acp_turn"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TETHER_ENABLE_ACP", "1")
 			fake := providertest.New(t, tc.runtime, tc.run)
 			prov := config.Provider{ID: string(tc.runtime), Type: "cli", Command: fake.Path, RuntimeKind: "acp-stdio"}
 			factory, err := runtimeFactoryForProvider(prov)
@@ -102,6 +104,48 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 				t.Errorf("ACP launch planted a shared-launch boot dir: %v", entries)
 			}
 		})
+	}
+}
+
+// The ACP gate (launch.ErrACPLaunchDisabled) is closed by default: the
+// factory refuses, so neither session create (which probes it) nor
+// LaunchSession starts an ACP agent. TETHER_ENABLE_ACP=1 opens it.
+func TestACPLaunchGate(t *testing.T) {
+	prov := config.Provider{ID: "copilot", Type: "cli", RuntimeKind: "acp-stdio"}
+	factory, err := runtimeFactoryForProvider(prov)
+	if err != nil {
+		t.Fatalf("runtimeFactoryForProvider: %v", err)
+	}
+	plan := &launch.Plan{ProviderID: "copilot", ProviderBrand: "copilot", RuntimeKind: "acp-stdio"}
+
+	t.Setenv("TETHER_ENABLE_ACP", "")
+	if _, err := factory(plan); !errors.Is(err, launch.ErrACPLaunchDisabled) {
+		t.Fatalf("factory with the gate closed = %v, want ErrACPLaunchDisabled", err)
+	}
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	plan.LaunchID, plan.ProjectID, plan.WriteHome, plan.RepoRoot = "acp", "proj", t.TempDir(), t.TempDir()
+	ws, err := workspace.Create(plan.WriteHome, "sess-gated", plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateSession(store.SessionRow{ID: "sess-gated", LaunchID: "acp", ProjectID: "proj", ProviderID: "copilot", ProviderKind: "acp", Workspace: ws.Root, State: "created"}, plan); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{Store: db, Manager: agentsessions.NewManager(stateSinkAdapter{db: db}), factories: map[string]RuntimeFactory{"copilot": factory}}
+	if _, err := svc.LaunchSession("sess-gated"); !errors.Is(err, launch.ErrACPLaunchDisabled) {
+		t.Fatalf("LaunchSession with the gate closed = %v, want ErrACPLaunchDisabled", err)
+	}
+
+	for _, v := range []string{"1", "true"} {
+		t.Setenv("TETHER_ENABLE_ACP", v)
+		if _, err := factory(plan); err != nil {
+			t.Fatalf("factory with TETHER_ENABLE_ACP=%s = %v, want a runtime", v, err)
+		}
 	}
 }
 

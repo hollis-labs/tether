@@ -44,6 +44,39 @@ mux sessions attach <session-id>
 Attach sends raw terminal input to the PTY and resize events flow through the
 session manager. Detach leaves the session running under the daemon.
 
+## ACP agents (Copilot, Pi)
+
+A provider with `runtime_kind: acp-stdio` runs an Agent Client Protocol
+agent, launched through go-agent-wrapper's registry-driven `launch.Select`
+(CW-20260930-0106 stage 1). `mux init` seeds `providers/copilot.yaml` and
+`providers/pi.yaml`, and `mux detect` and `mux doctor` find their CLIs
+(`copilot`, `pi-acp`) the registry's way.
+
+**ACP launches are off by default.** go-agent-wrapper's ACP session can
+panic its host process when the agent exits during launch (fixed in
+go-agent-wrapper v0.21.1), and a panic there would take the daemon down. Until
+Tether is on that version, an ACP launch is refused with HTTP 403
+`forbidden` ("ACP launches are disabled until go-agent-wrapper >= v0.21.1")
+unless the daemon was started with
+
+```sh
+TETHER_ENABLE_ACP=1
+```
+
+in its environment. Detection and doctor still list Copilot and Pi; only the
+launch is gated. The bump to go-agent-wrapper >= v0.21.1 removes the gate.
+
+What an ACP launch does in this stage:
+
+- The boot prompt is the agent's first prompt; `mux sessions turn` sends
+  later prompts. A prompt returns once the agent accepts it; the turn's end
+  shows in `mux sessions tail` as `[turn_done]` (or `[error] …`).
+- A turn sent while one is in flight, or while the session is still booting,
+  is refused with 409 `conflict`.
+- No mux MCP server is planted for the agent yet.
+- An agent with a sandbox profile is refused: go-agent-wrapper cannot apply
+  one to an ACP agent.
+
 ## Smoke Checklist
 
 The quick checks below cover managed Claude streaming and TUI. The full

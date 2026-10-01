@@ -140,3 +140,25 @@ func TestPrepare_MissingBinary(t *testing.T) {
 		t.Fatal("Prepare with a missing binary succeeded, want an error")
 	}
 }
+
+// A run that ends in an error leaves its reason in session.log; Wait alone
+// reports only the exit code.
+func TestFinish_RecordsTheFailureReason(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "logs", "session.log")
+	out, err := openOutput(agentsessions.StartOptions{LogPath: logPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &session{out: out, done: make(chan struct{})}
+	s.finish(errors.New("wrapper: ACP session ended: agent exited 3"))
+	if code, _ := s.Wait(); code != 1 {
+		t.Fatalf("Wait code = %d, want 1", code)
+	}
+	data, err := os.ReadFile(logPath) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[error] wrapper: ACP session ended: agent exited 3") {
+		t.Fatalf("session.log has no failure reason:\n%s", data)
+	}
+}

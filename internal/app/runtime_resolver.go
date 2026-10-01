@@ -119,6 +119,12 @@ func newCodexJSONRPCStdioRuntime(providerID string) RuntimeFactory {
 
 func newACPRuntime(providerID, runtimeID string, mode runtimes.Mode) RuntimeFactory {
 	return func(plan *launch.Plan) (agentsessions.Runtime, error) {
+		// Gated off by default until go-agent-wrapper >= v0.21.1; see
+		// launch.ErrACPLaunchDisabled. Session create probes this factory,
+		// so a refused launch leaves no created session behind.
+		if !launch.ACPLaunchEnabled() {
+			return nil, launch.ErrACPLaunchDisabled
+		}
 		return acp.New(providerID, runtimeID, mode, plan.Command)
 	}
 }
