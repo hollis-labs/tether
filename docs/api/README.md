@@ -915,6 +915,26 @@ Response (201): full reply `EnvelopeDTO`.
 v0.0.2 has an in-memory pub/sub bus (Sprint v002-06) over session, daemon,
 and broker scopes. Every event also persists to the `events` table.
 
+### Retention
+
+By default the `events` table keeps every row. To bound it, enable the
+daemon's retention sweep in `~/.tether/catalog/global.yaml`:
+
+```yaml
+daemon:
+  events_retention:
+    enabled: true   # default false: nothing is deleted
+    days: 90        # window; unset means 90, and 0 or negative turns it off
+```
+
+Once an hour, the daemon deletes events older than the window, by age only
+(there is no row-count cap). It deletes in batches of 1,000 so a large
+first sweep doesn't hold the write lock, and logs `store: events retention
+deleted N event(s) older than <cutoff>` when it removes any. Replay is
+unaffected for any `since_seq` inside the window. A client resuming from an
+event older than the window gets the retained events after it, without the
+deleted gap.
+
 ### `GET /events`
 
 Durable cross-scope event history from the shared `events` table. Results are

@@ -149,8 +149,27 @@ type Server struct {
 	// tests that never call Run).
 	WakeSweeper WakeSweeper
 
+	// EventRetention is optional; when set, Run starts a periodic background
+	// pass (eventRetentionInterval) deleting events older than the
+	// configured retention window (CW-20260930-0008). The pass itself is a
+	// no-op while retention is disabled in the catalog. Populated from
+	// app.Service at daemon startup.
+	EventRetention EventRetention
+
 	startedAt time.Time
 }
+
+// EventRetention is the narrow seam Run uses to drive the events retention
+// sweep. *app.Service satisfies it (RunEventRetention,
+// internal/app/events_retention.go).
+type EventRetention interface {
+	RunEventRetention(ctx context.Context) (int64, error)
+}
+
+// eventRetentionInterval is how often the events retention sweep runs. The
+// window is measured in days, so hourly is plenty. A var so tests can
+// shrink it.
+var eventRetentionInterval = time.Hour
 
 // WakeSweeper is the narrow seam Run uses to drive the shared wake pump.
 // *app.Service satisfies it directly (RunWakeSweep, internal/app/wake.go).
@@ -168,22 +187,40 @@ type WakeSweeper interface {
 // the real production interval.
 var wakeSweepInterval = 5 * time.Second
 
-// runWakeSweepLoop ticks RunWakeSweep until ctx is canceled. Errors are
-// logged, not fatal -- a sweep failure must never bring down the daemon;
-// the next tick simply tries again.
-func (s *Server) runWakeSweepLoop(ctx context.Context) {
-	ticker := time.NewTicker(wakeSweepInterval)
+// runPeriodic calls run every interval until ctx is canceled. Errors are
+// logged, not fatal -- a periodic job failing must never bring down the
+// daemon; the next tick simply tries again. It is the daemon's one
+// periodic-job loop, shared by the wake sweep and events retention.
+func runPeriodic(ctx context.Context, interval time.Duration, name string, run func(context.Context) error) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := s.WakeSweeper.RunWakeSweep(ctx); err != nil {
-				log.Printf("daemon: wake sweep failed: %v", err)
+			if err := run(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("daemon: %s failed: %v", name, err)
 			}
 		}
 	}
+}
+
+// runWakeSweepLoop ticks RunWakeSweep until ctx is canceled.
+func (s *Server) runWakeSweepLoop(ctx context.Context) {
+	runPeriodic(ctx, wakeSweepInterval, "wake sweep", func(ctx context.Context) error {
+		_, err := s.WakeSweeper.RunWakeSweep(ctx)
+		return err
+	})
+}
+
+// runEventRetentionLoop ticks RunEventRetention until ctx is canceled. The
+// first pass runs one interval after startup, not during it.
+func (s *Server) runEventRetentionLoop(ctx context.Context) {
+	runPeriodic(ctx, eventRetentionInterval, "events retention", func(ctx context.Context) error {
+		_, err := s.EventRetention.RunEventRetention(ctx)
+		return err
+	})
 }
 
 func (s *Server) publishDaemon(kind, payloadJSON string) {
@@ -249,6 +286,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.WakeSweeper != nil {
 		go s.runWakeSweepLoop(ctx)
+	}
+	if s.EventRetention != nil {
+		go s.runEventRetentionLoop(ctx)
 	}
 
 	var runErr error

@@ -224,6 +224,7 @@ var daemonRunCmd = &cobra.Command{
 			Groups:              svc.Registry,
 			Publisher:           svc.Bus,
 			WakeSweeper:         svc,
+			EventRetention:      svc,
 			LogsDir:             filepath.Join(stateRoot, "logs"),
 			SessionBootstrap:    svc.Store,
 			DeliveryTrace:       svc.Store,
