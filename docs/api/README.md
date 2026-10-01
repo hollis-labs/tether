@@ -1019,6 +1019,8 @@ does not open the state database.
 | `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
 | `messages` | Indefinite structural rows; explicit manual body purge only | `/messages/retention/candidates` and `/messages/{id}/purge` preserve pending/repairable obligations; this knob does not purge bodies |
 | `retention_audit` | Indefinite; outside automatic sweep | Durable sweep receipts, independent of expiring event history |
+| `principals` | Indefinite; outside automatic sweep | Identity and revocation history; no automatic credential/principal deletion |
+| `identity_audit` | Indefinite; outside automatic sweep | Verified caller receipts; `identity.observed` events use the event window separately |
 
 **Existing installs:** unless explicitly disabled, the first sweep deletes rows
 older than the configured window. Back up the state database before cutover.
