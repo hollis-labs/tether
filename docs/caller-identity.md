@@ -62,10 +62,34 @@ are redacted. Observation failures are logged without database error contents.
 | `identity_audit` | Indefinite; independent of event-history expiry |
 | `events` (`identity.observed`) | The daemon's shared event-history retention window |
 
-This core PR does not yet deliver tokens to existing CLI/MCP clients or mint
-session credentials. Those are the second phase-1 PR. The client library's
-credential options have their own task/PR and require a lead-chosen release
-before consumers adopt them. No token introspection endpoint is required.
+## Clients and session credentials
+
+CLI and MCP requests prefer `--token-file`, then `TETHER_TOKEN`, then the selected
+catalog's sibling `run/operator.token`. A missing default file permits anonymous
+requests in observe/off mode; a missing explicit file or insecure existing file
+fails closed. Credentials travel as an Authorization header, including streams.
+Authenticated clients refuse redirects to another origin. Legacy `mcp --token`
+and `TETHER_MCP_TOKEN` are only adapter presence checks, not daemon credentials.
+
+Each launched session in observe/enforce receives a fresh session principal and
+`tth_` credential. A verified parent is recorded as its creator; worker scopes
+are intersected with the parent's grants, and the address is that session's own
+`msg://session/local/<id>`. Anonymous observe-mode launches have no verified
+creator. Session tokens enter the runtime and planted MCP server via
+`TETHER_TOKEN` environment entries, never argv or the stored launch plan. Native
+MCP configuration files necessarily contain that environment entry inside the
+session's boot directory. Same-uid read isolation remains a separate boundary.
+
+Migration 0037 revokes session principals transactionally when the session ends
+as completed, failed or killed, or is deleted; minting against missing/terminal
+sessions is refused. A launch that fails after mint also revokes its credential.
+A resumed session has a new session id and token. Identity-off launches mint no
+principal; their MCP adapter retains the legacy nonsecret presence marker.
+Existing running sessions are not retrofitted.
+
+The client library's credential options have their own task/PR and require a
+lead-chosen release before consumers adopt them. No token introspection endpoint
+is required.
 
 Phase 2 covers message `from` stamping, mailbox ownership, per-principal
 idempotency, AI caller stamping, route-scope policy and launch-plan read

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -298,7 +299,15 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
-	res, err := s.Service.ResumeLogicalAgent(agentID, ResumeOptions(req))
+	var res LaunchResult
+	var err error
+	if contextual, ok := s.Service.(interface {
+		ResumeLogicalAgentWithContext(context.Context, string, ResumeOptions) (LaunchResult, error)
+	}); ok {
+		res, err = contextual.ResumeLogicalAgentWithContext(r.Context(), agentID, ResumeOptions(req))
+	} else {
+		res, err = s.Service.ResumeLogicalAgent(agentID, ResumeOptions(req))
+	}
 	if err != nil {
 		if writeIdempotencyConflict(w, err) {
 			return

@@ -27,6 +27,9 @@ func identityStore(t *testing.T) (*identity.Store, *store.Store) {
 func TestIdentityMintVerifyAndRevoke(t *testing.T) {
 	s, db := identityStore(t)
 	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "test", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	want := identity.Principal{ID: "msg://session/local/test", Kind: "session", SessionID: "test", Display: "Test", Scopes: []string{"session.write"}, Addresses: []string{"msg://session/local/test"}, CreatedBy: identity.OperatorID}
 	token, err := s.Mint(ctx, want)
 	if err != nil {

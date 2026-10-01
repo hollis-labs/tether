@@ -32,7 +32,7 @@ make go-install
       "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "TETHER_MCP_TOKEN": "your-secret-token",
+        "TETHER_TOKEN": "tth_…",
         "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }
@@ -47,7 +47,7 @@ make go-install
   "mcpServers": {
     "tether": {
       "command": "tether",
-      "args": ["--catalog", "/path/to/catalog", "mcp", "--token", "your-token", "--scopes", "session.write,message.write"]
+      "args": ["--catalog", "/path/to/catalog", "--token-file", "/path/to/operator.token", "mcp", "--scopes", "session.write,message.write"]
     }
   }
 }
@@ -60,7 +60,7 @@ make go-install
 tether mcp
 
 # With mutating tool access:
-TETHER_MCP_TOKEN=your-token \
+TETHER_TOKEN=tth_… \
 TETHER_MCP_SCOPES=session.write,message.write \
 tether mcp
 ```
@@ -173,22 +173,25 @@ group it already belongs to is `groups.write` as well (`tether_group_post`).
 
 See [messaging-adoption.md](./messaging-adoption.md) for the full opt-in walkthrough.
 
-Pass both via flags or environment variables:
+Supply a daemon credential from a file or environment; adapter scopes remain a fast check:
 
 ```bash
 # Flags:
-tether mcp --token my-secret --scopes session.write,message.write,ai.invoke
+tether --token-file /path/to/operator.token mcp --scopes session.write,message.write,ai.invoke
 
 # Environment variables:
-export TETHER_MCP_TOKEN=my-secret
+export TETHER_TOKEN=tth_…
 export TETHER_MCP_SCOPES=session.write,message.write,ai.invoke
 tether mcp
 ```
 
-The token value is opaque — Tether does not validate it against any external
-service; it simply confirms one is present. Pick any string. If you're running
-in a trusted local-only context, you can omit auth and only call read-only
-tools.
+The daemon verifies `tth_` credentials against its principals table. Lookup
+prefers `--token-file`, then `TETHER_TOKEN`, then `run/operator.token` beside the
+selected catalog. Files must be current-user-owned regular 0600 files. Default
+observe mode records identity without rejecting unauthenticated requests;
+explicit enforce mode rejects them. Legacy `--token` / `TETHER_MCP_TOKEN` only
+satisfy the adapter's local presence check and do not authenticate daemon calls.
+See [caller-identity.md](./caller-identity.md) for scope and cutover limits.
 
 ---
 

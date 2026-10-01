@@ -17,7 +17,6 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/bootexec"
 	"github.com/hollis-labs/tether/internal/bootgen"
-	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
@@ -113,7 +112,7 @@ Run 'tether list-boot-profiles' to see which profiles support booting.`,
 		if err != nil {
 			return err
 		}
-		inner := client.New(cfg.ListenAddr)
+		inner := daemonClient(cfg.ListenAddr)
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "creating session with launch %q...\n", p.Launch)
 		created, err := inner.CreateSessionWithBootPrompt(context.Background(), p.Launch, bootPrompt)

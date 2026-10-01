@@ -19,7 +19,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
@@ -256,7 +255,7 @@ func checkDaemon(cat *config.Catalog) checkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	c := client.New(cfg.ListenAddr)
+	c := daemonClient(cfg.ListenAddr)
 	if err := c.Ping(ctx); err != nil {
 		return warn("daemon-reachable", "daemon not running",
 			"start it with: tether daemon start")
