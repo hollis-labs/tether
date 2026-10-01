@@ -227,6 +227,14 @@ agent (its own `mux` proxy), and every Claude launch adds
 every later turn and resume. It does not cover `mux boot`, which runs your own
 Claude in your own terminal.
 
+**This also drops the claude.ai account connectors** (Claude Docs, Google
+Calendar, Drive, Gmail and the like) from a Tether-launched agent. That is
+intended: an agent gets what Tether plants. Checked with a real login:
+`claude -p … --strict-mcp-config` with no `--mcp-config` reports
+`mcp_servers: []`. If an agent needs a connector, it has to be given to it as
+an upstream in the catalog; turning strict mode off to get one also brings back
+everything in `~/.claude.json`.
+
 To turn it off, set `TETHER_CLAUDE_STRICT_MCP=0` (or `false`) in **muxd's**
 environment and restart the daemon. It is on by default. When it is off:
 
@@ -251,7 +259,10 @@ secrets are not resolved into the agent's proxy, and `mux_call` and
 The default list is `torque` and `tesseract`. Grant others per project
 (`mcp.servers` in the project YAML) or per launch (`mcp_servers` in a boot
 profile). A list you set **replaces** the default, so keep `torque` and
-`tesseract` in it. `cerberus` can reach hosts and containers, so it is never in
+`tesseract` in it. A project that already lists upstreams keeps exactly that
+list when you upgrade; the default applies only where no list is set. Check that
+a list you wrote earlier still names `torque` and `tesseract` if its agents
+use them. `cerberus` can reach hosts and containers, so it is never in
 the default; an agent that needs it must be given it by name.
 
 mux's own native tools (`mux_*`) are not upstreams and are not affected.

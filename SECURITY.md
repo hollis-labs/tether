@@ -93,7 +93,7 @@ editing the catalog itself; that is CW-20260930-0237.
 Two defaults narrow which MCP servers a launched agent is handed
 (CW-20261001-0227). Claude agents run with `--strict-mcp-config`, so they do not
 inherit servers from your `~/.claude.json`, project `.mcp.json` files or the
-claude.ai connectors; `TETHER_CLAUDE_STRICT_MCP=0` in muxd's environment turns
+claude.ai connectors (a launched agent has no connectors at all); `TETHER_CLAUDE_STRICT_MCP=0` in muxd's environment turns
 this off, and muxd then warns at startup and `mux doctor` warns. An agent's
 `mux` proxy is confined to an allow-list of upstreams, by default `torque` and
 `tesseract`. `cerberus` is never in the default. These stop an agent from being
