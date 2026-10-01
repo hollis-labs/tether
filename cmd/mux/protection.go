@@ -28,7 +28,7 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 }
 
 // logControlPlaneProtection records at daemon startup whether the agents it
-// launches get Tether's catalog and run directories as read-only protected
+// launches get Tether's catalog, run and state directories as read-only protected
 // paths (CW-20261001-0142). Protection that is off, whether by the
 // operator's TETHER_SANDBOX_PROTECT=0 or because the platform is not yet
 // covered, is logged as a warning so it is never silent. So is protection

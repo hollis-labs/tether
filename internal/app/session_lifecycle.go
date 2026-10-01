@@ -402,8 +402,8 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// codex_approval.go.
 	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
-	// No agent may write Tether's catalog or run directory
-	// (CW-20261001-0142). Applied last, once the work directory and
+	// No agent may write Tether's catalog, run directory or state
+	// directory (CW-20261001-0142, CW-20261001-0173). Applied last, once the work directory and
 	// workspace are final, since a launch inside a protected directory is
 	// refused.
 	if err := s.applyControlPlaneProtection(plan, rt.Kind(), &startOpts); err != nil {

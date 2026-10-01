@@ -448,7 +448,7 @@ type HealthHardening struct {
 }
 
 // SandboxProtectHealth reports whether the agents the daemon launches get
-// Tether's catalog and run directories as read-only protected paths, and
+// Tether's catalog, run and state directories as read-only protected paths, and
 // whether this host can provide that.
 type SandboxProtectHealth struct {
 	// Enabled is true when protection applies to launches.

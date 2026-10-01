@@ -175,13 +175,13 @@ func TestCodexProtectionMode_FallbackRunsCodexAsBefore(t *testing.T) {
 	}
 	bwrapAvailable = func(string) error { return nil }
 	opts := codexStartOpts(t)
-	if err := svc.applyControlPlaneProtection(cliPlan, "cli", &opts); err != nil || len(opts.ProtectedPaths) != 2 || opts.ProtectedPaths[0] != catalog || opts.ProtectedPaths[1] != run {
-		t.Fatalf("claude under the fallback: ProtectedPaths = %q, err = %v; want the catalog and run dir", opts.ProtectedPaths, err)
+	if err := svc.applyControlPlaneProtection(cliPlan, "cli", &opts); err != nil || len(opts.ProtectedPaths) != 3 || opts.ProtectedPaths[0] != catalog || opts.ProtectedPaths[1] != run || opts.ProtectedPaths[2] != filepath.Join(filepath.Dir(catalog), "state") {
+		t.Fatalf("claude under the fallback: ProtectedPaths = %q, err = %v; want the catalog, run and state dirs", opts.ProtectedPaths, err)
 	}
 	// And so is opencode, which has no special handling.
 	opencode := &launch.Plan{ProviderBrand: "opencode"}
 	opts = codexStartOpts(t)
-	if err := svc.applyControlPlaneProtection(opencode, "cli", &opts); err != nil || len(opts.ProtectedPaths) != 2 {
+	if err := svc.applyControlPlaneProtection(opencode, "cli", &opts); err != nil || len(opts.ProtectedPaths) != 3 {
 		t.Fatalf("opencode under the fallback: ProtectedPaths = %q, err = %v", opts.ProtectedPaths, err)
 	}
 }

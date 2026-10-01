@@ -59,23 +59,28 @@ containment aid, not a hardened boundary against a hostile agent.
 
 Agent sessions launched by Tether run under the operator's own uid. On
 Linux, Claude, OpenCode and every other agent Tether launches, **except
-Codex**, runs inside a sandbox that makes two of Tether's own directories
-read-only for it (CW-20261001-0142):
+Codex**, runs inside a sandbox that makes three of Tether's own directories
+read-only for it (CW-20261001-0142, CW-20261001-0173):
 
 - the catalog root (`~/.tether/catalog/` by default), so an agent cannot
   rewrite the launch, provider, agent and MCP-server definitions it is run
   from, or the credentials the catalog holds;
 - the daemon's run directory (`~/.tether/run/`), which holds `muxd.pid` and
-  `muxd.sock`.
+  `muxd.sock`;
+- the directory holding the state database (`~/.tether/state/` by default),
+  where every session, message and event is kept. An agent Tether wraps cannot
+  write the database, or replace it or its WAL files. The `mux mcp` server
+  Tether plants in each agent never opens it: that server runs `--daemon-only`
+  and reaches Tether's state only through the daemon.
 
 Each directory is registered by its real path, so a symlinked `~/.tether` is
 covered. The daemon, and anything you run outside an agent, can still write
-both. The sandbox needs bubblewrap (`bwrap`) and unprivileged user
+all three. The sandbox needs bubblewrap (`bwrap`) and unprivileged user
 namespaces. Where bubblewrap is missing or cannot build a namespace, every
 launch Tether must sandbox is refused with 403 `forbidden` naming the fix,
-rather than run unprotected. A launch whose work directory, workspace or
-state database lies inside a protected directory is refused with 403
-`forbidden` too.
+rather than run unprotected. A launch whose work directory or workspace
+lies inside a protected directory, the state directory included, is refused
+with 403 `forbidden` too.
 
 **Codex is NOT protected by Tether's write-protection.** Tether does not wrap
 Codex in its sandbox, because Codex's own `workspace-write` sandbox is
@@ -125,7 +130,7 @@ and cannot use `sudo`.
 
 On macOS the protection is not applied yet. go-sandbox's seatbelt protection
 has not been verified on a real Mac (CW-20261001-0138), so agents there can
-still write both directories. The daemon logs a warning at startup and
+still write all three directories. The daemon logs a warning at startup and
 `mux doctor` reports one.
 
 `mux doctor` asks the running daemon, whose environment decides protection,
@@ -135,7 +140,8 @@ and reports a `sandbox-protect` check and a `sandbox-protect-codex` check; `GET
 An operator can turn the protection off by setting `TETHER_SANDBOX_PROTECT=0`
 (or `false`) in muxd's environment. The daemon then logs a WARN line at
 startup, and `mux doctor` reports a `sandbox-protect` warning. Agents can
-write the catalog and run directory again, and ACP launches are allowed.
+write the catalog, run directory and state directory again, and ACP launches
+are allowed.
 Turning it off is a deliberate decision, never a silent default.
 
 Where it applies, that stops an agent Tether wraps from writing those directories
@@ -144,11 +150,13 @@ itself. It does not yet cover:
 - **Codex.** Not protected, as above: Codex's own sandbox keeps it out of the
   catalog, and Codex's MCP servers, which run outside that sandbox, do not
   (CW-20261001-0230).
-- **The state database.** This change leaves the state directory writable.
-  The `mux mcp` server Tether plants in each agent used to open the state
-  database from inside the agent's sandbox, which is why; it no longer does
-  (CW-20261001-0173), so the directory can now be protected, in a change of its
-  own. Until then an agent can still write it directly.
+- **The state database, for Codex.** The state directory is read-only for the
+  agents Tether wraps. It is not for Codex, which Tether does not wrap: Codex's
+  own sandbox keeps its shell out of the directory, and the planted `mux mcp`
+  never opens the database, but Codex's MCP servers run outside that sandbox,
+  so an upstream whose tool writes a caller-chosen path can still reach it
+  (CW-20261001-0230). Any agent can still ask the daemon, over the socket, to
+  write on its behalf.
 - **The daemon socket.** A read-only directory does not stop `connect(2)` on
   a Unix socket, so an agent can still call `muxd.sock`. The socket grants the
   full, unauthenticated HTTP API, including writes the daemon makes on the
@@ -201,7 +209,7 @@ launch it asks for. The pin on a catalog agent's sandbox profile (#85) closes
 what that route can reach for the agents Tether wraps today; it does not make the
 route itself authenticated, and it does nothing for Codex, which is not protected.
 
-Until the socket and the state database are covered, treat any agent Tether
+Until the socket is covered, and Codex's MCP servers run daemon-side, treat any agent Tether
 launches as able to do anything in Tether that you can do through the
 daemon's API.
 
@@ -269,10 +277,11 @@ environment and sends trace data to the endpoint you choose.
   those tables directly, but it is not claimed to be safe as a route: other
   routes, such as `POST /broker/envelopes`, also write events with
   caller-supplied fields
-- agents run as the operator's uid. On Linux they cannot write Tether's
-  catalog or run directory themselves, but they can write its state database
-  and call its socket. On macOS nothing stops them writing any of it yet (see
-  "Agents run as your user")
+- agents run as the operator's uid. On Linux the agents Tether wraps cannot
+  write Tether's catalog, run directory or state directory themselves, but they
+  can call its socket, which writes on their behalf; Codex is not wrapped (see
+  "Agents run as your user"). On macOS nothing stops them writing any of it
+  yet
 - pre-1.0 contracts and migration guarantees
 
 These are deployment constraints, not hidden roadmap promises. Operate within
