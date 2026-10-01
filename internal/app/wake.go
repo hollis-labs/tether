@@ -31,7 +31,9 @@ package app
 //     moment Tether is about to hand off to a concrete session, then check
 //     for a stale-generation race and busy/offline before ever calling
 //     SendTurn, and Ack(turn_submitted) only once SendTurn actually
-//     succeeds. A busy session or a submit failure Nacks the delivery
+//     succeeds, then holds the lease for wakeConsumeWindow so the
+//     recipient's consumption, not lease expiry, ends the attempt. A
+//     busy session or a submit failure Nacks the delivery
 //     retryable (bounded backoff) instead of promising something that
 //     didn't happen or trying a different session for the same actor.
 //   - RunWakeSweep is the "shared pump": a bounded, non-blocking retry pass
@@ -72,6 +74,19 @@ const (
 	// Claim-then-Ack/Nack sequence, short enough that a crash mid-attempt
 	// doesn't tie up the obligation for long before it's reclaimable.
 	wakeClaimLeaseDuration = 30 * time.Second
+	// wakeConsumeWindow is how long a wake whose turn was submitted keeps
+	// its lease, awaiting the recipient's consumption (CW-20261001-0016).
+	// A submitted turn is not consumption -- the wake text only tells the
+	// agent to check its inbox -- so the attempt stays leased at
+	// turn_submitted and Consume (or the recipient's own inbox pull)
+	// closes it to delivered through the pending-receipt marker. Left at
+	// wakeClaimLeaseDuration, the lease lapsed long before an agent's turn
+	// reached its inbox, and every successful wake fell into
+	// retry_scheduled. A wake nobody consumes within the window lapses into
+	// one retry, which re-wakes the recipient as a reminder. The lease also
+	// holds the delivery against other claimants (a T07 bridge claim waits
+	// up to this long).
+	wakeConsumeWindow = 15 * time.Minute
 	// wakeBusyRetryBackoff / wakeOfflineRetryBackoff bound how soon a
 	// Nacked wake attempt becomes claimable again -- short for "try again
 	// once the current turn probably finished," longer for "nothing
@@ -279,6 +294,22 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		BindingGeneration: claim.Attempt.BindingGeneration,
 	}
 
+	// The recipient may already have handled this message while the
+	// delivery waited out a retry backoff, when Consume could not claim it
+	// (CW-20261001-0016). Waking it again would be a duplicate; settle the
+	// delivery with the consumption receipt instead. consumed_at and read_at
+	// are explicit recipient acts; delivered_at is not consulted, because
+	// any caller's inbox listing stamps it.
+	if handled, err := st.MessageHandledByRecipient(ctx, messageID); err != nil {
+		log.Printf("app: attempt wake: handled check for message %s failed (proceeding with the wake): %v", messageID, err)
+	} else if handled {
+		if _, _, err := ds.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageConsumed}); err != nil {
+			nackRetryable(ctx, ds, lease, "settle already-handled message: "+err.Error(), wakeBusyRetryBackoff)
+			return api.WakeOutcome{Reason: "settle-failed", SessionID: sessionID, Detail: err.Error()}
+		}
+		return api.WakeOutcome{Reason: "already-handled", SessionID: sessionID}
+	}
+
 	// Mark this claim as Consume-owned immediately: attemptWake drives the
 	// lease through StageTurnSubmitted below and then deliberately leaves
 	// it open "awaiting consumption," which only Consume's own receipt
@@ -368,6 +399,12 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 
 	if _, _, err := ds.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageTurnSubmitted}); err != nil {
 		log.Printf("app: attempt wake: ack turn_submitted for delivery %s failed (best-effort receipt recording skipped): %v", deliveryID, err)
+	}
+	// Hold the lease, still at turn_submitted, for the recipient to consume
+	// -- see wakeConsumeWindow. Best-effort: on failure the lease lapses at
+	// wakeClaimLeaseDuration and the delivery is retried, as before.
+	if _, err := ds.ExtendLease(ctx, lease, time.Now().Add(wakeConsumeWindow)); err != nil {
+		log.Printf("app: attempt wake: extend lease for delivery %s to await consumption failed (it will lapse and retry): %v", deliveryID, err)
 	}
 	return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID}
 }

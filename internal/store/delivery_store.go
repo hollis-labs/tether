@@ -177,6 +177,12 @@ func (d *deliveryBackedStore) Consume(ctx context.Context, id string, recipient 
 
 func (d *deliveryBackedStore) recordConsumedReceipts(ctx context.Context, messageID, deliveryID string, recipient messaging.Address) {
 	lease, err := d.leaseForConsumedReceipts(ctx, messageID, deliveryID, recipient)
+	if errors.Is(err, delivery.ErrTerminalDelivery) {
+		// Already settled -- by an earlier Consume, the recipient's own
+		// inbox pull, or a wake attempt that found the message handled.
+		// Nothing left to record.
+		return
+	}
 	if err != nil {
 		log.Printf("delivery store: consume: could not obtain a lease to record receipts for delivery %s (best-effort receipt recording skipped): %v", deliveryID, err)
 		return
@@ -329,6 +335,22 @@ func pendingReceiptLease(ctx context.Context, db *sql.DB, messageID string) (att
 // after claiming (see leaseForConsumedReceipts's doc comment).
 func (s *Store) SetPendingReceiptLease(ctx context.Context, messageID string, attemptID delivery.AttemptID, leaseToken delivery.LeaseToken) error {
 	return setPendingReceiptLease(ctx, s.db, messageID, attemptID, leaseToken)
+}
+
+// MessageHandledByRecipient reports whether messageID's recipient has
+// consumed it or marked it read: explicit recipient acts after which a wake
+// would be a duplicate (CW-20261001-0016). delivered_at is deliberately not
+// consulted -- any caller's inbox listing stamps it, including an operator
+// listing someone else's mailbox, and a listing must not settle a delivery.
+func (s *Store) MessageHandledByRecipient(ctx context.Context, messageID string) (bool, error) {
+	var handled bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT consumed_at IS NOT NULL OR read_at IS NOT NULL FROM messages WHERE id=?`, messageID,
+	).Scan(&handled)
+	if err != nil {
+		return false, err
+	}
+	return handled, nil
 }
 
 // DeliveryStore returns the singleton go-messaging delivery.Store backed by

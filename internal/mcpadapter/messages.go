@@ -68,7 +68,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 
 	a.addTool(s, gomcp.Tool{
 		Name:        "mux_message_inbox",
-		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call. For a non-destructive, repeatable listing use mux_message_list instead.",
+		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use mux_message_list instead.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("to", "Recipient URN", true),
 			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
@@ -290,7 +290,9 @@ func (a *Adapter) handleMessageInbox(ctx context.Context, args map[string]any) (
 	if a.client == nil {
 		return nil, toolError("internal_error", "mux_message_inbox requires daemon routing; start MCP with mux mcp")
 	}
-	envs, err := a.client.MessageInbox(ctx, toURN, str(args, "kind"), str(args, "thread_id"))
+	// Pass this proxy's own session: when it is the recipient, the daemon
+	// consumes what it pulls, settling the deliveries (CW-20261001-0016).
+	envs, err := a.client.MessageInboxAsSession(ctx, toURN, str(args, "kind"), str(args, "thread_id"), a.SessionID)
 	if err != nil {
 		if isDaemonUnreachable(err) {
 			return nil, daemonUnreachableError(err)

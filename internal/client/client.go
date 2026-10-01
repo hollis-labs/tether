@@ -903,9 +903,20 @@ func (c *Client) UpdateLogicalAgentPolicy(ctx context.Context, policy agent.Logi
 // T05 (messaging vNext, ADR 0045): the daemon requires ?as= to equal ?to= for
 // a mailbox read, so `to` doubles as the caller's identity claim here.
 func (c *Client) MessageInbox(ctx context.Context, to, kind, threadID string) ([]MessageEnvelopeDTO, error) {
+	return c.MessageInboxAsSession(ctx, to, kind, threadID, "")
+}
+
+// MessageInboxAsSession is MessageInbox called from Tether session
+// asSession. When that session is the recipient itself, the daemon consumes
+// the pulled messages, settling their deliveries; an empty asSession is a
+// plain pull (CW-20261001-0016).
+func (c *Client) MessageInboxAsSession(ctx context.Context, to, kind, threadID, asSession string) ([]MessageEnvelopeDTO, error) {
 	params := url.Values{}
 	params.Set("to", to)
 	params.Set("as", to)
+	if asSession != "" {
+		params.Set("as_session", asSession)
+	}
 	if kind != "" {
 		params.Set("kind", kind)
 	}
