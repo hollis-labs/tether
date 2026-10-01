@@ -40,7 +40,7 @@ Defined codes:
 | Code                | HTTP | Meaning                                       |
 |---------------------|------|-----------------------------------------------|
 | `invalid_request`   | 400  | malformed body, missing required param        |
-| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory, workspace or state database lies inside a write-protected directory; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps)) |
+| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory or workspace lies inside a write-protected directory, the state directory included; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps)) |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
@@ -446,7 +446,7 @@ Response:
   "sessions": 2,
   "sandbox_protect": {
     "enabled": true,
-    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
+    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog, run/ or state/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
     "codex": "not protected",
     "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
     "bwrap_checked": true,

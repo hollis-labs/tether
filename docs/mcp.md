@@ -1281,8 +1281,8 @@ Edit an existing agent profile. Only fields present in the call are changed.
 | `skills` | string | — | Comma-separated skill ID list — replaces existing skills; empty string clears them (optional). |
 | `system_prompt` | string | — | New system prompt (optional). |
 
-**Read-only catalog.** Tether write-protects its catalog and run directory for the
-agents it wraps, which is every agent but Codex ([control-plane protection](sandboxing.md#control-plane-protection-every-agent-tether-wraps)),
+**Read-only catalog.** Tether write-protects its catalog, run directory and state
+directory for the agents it wraps, which is every agent but Codex ([control-plane protection](sandboxing.md#control-plane-protection-every-agent-tether-wraps)),
 and starts the `mux mcp` it plants with `--protect-path <dir>` for each. From inside
 such an agent, `mux_agent_create` or `mux_agent_edit` that would write under one
 (a `system`-scope create, an edit of a catalog agent, or a path that reaches it

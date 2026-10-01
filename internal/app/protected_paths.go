@@ -42,15 +42,15 @@ func ControlPlaneProtection(goos string, getenv func(string) string) ProtectionS
 	raw := getenv(ProtectEnv)
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "0", "false":
-		return ProtectionStatus{DisabledByOperator: true, Reason: fmt.Sprintf("DISABLED by %s=%s, so agents can write the catalog and run/", ProtectEnv, raw)}
+		return ProtectionStatus{DisabledByOperator: true, Reason: fmt.Sprintf("DISABLED by %s=%s, so agents can write the catalog, run/ and state/", ProtectEnv, raw)}
 	}
 	if goos != "linux" {
-		return ProtectionStatus{Reason: fmt.Sprintf("not applied on %s until go-sandbox's seatbelt protection is verified on a real Mac (CW-20261001-0138), so agents can write the catalog and run/", goos)}
+		return ProtectionStatus{Reason: fmt.Sprintf("not applied on %s until go-sandbox's seatbelt protection is verified on a real Mac (CW-20261001-0138), so agents can write the catalog, run/ and state/", goos)}
 	}
 	if codexProtectionMode == CodexNotProtected {
-		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
+		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog, run/ or state/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
 	}
-	return ProtectionStatus{Enabled: true, Reason: "on: agents Tether wraps cannot write the catalog or run/; Codex is left to its own workspace-write sandbox under Tether's dormant guard, and its MCP servers run outside that sandbox (CW-20261001-0230)"}
+	return ProtectionStatus{Enabled: true, Reason: "on: agents Tether wraps cannot write the catalog, run/ or state/; Codex is left to its own workspace-write sandbox under Tether's dormant guard, and its MCP servers run outside that sandbox (CW-20261001-0230)"}
 }
 
 // defaultProtectionStatus is the daemon's protection decision, taken from
@@ -150,19 +150,18 @@ func protectionUnavailable(dirs []string) error {
 }
 
 // applyControlPlaneProtection sets opts.ProtectedPaths to the directories no
-// agent may write: the catalog root, and the daemon's run directory (pid file
-// and control socket) when it lies inside Tether's root. Each is registered
-// by its real path, as go-sandbox requires. A launch whose work directory,
-// workspace or state database lies inside one of them is refused with
-// launch.ErrLaunchInsideProtectedPath: the agent could not work there, and
-// the planted mux MCP server, which runs inside the agent's sandbox, must
-// write the state database. A codex launch is refused the same way even
-// though Tether does not wrap it (see protectionPlan): its own sandbox would
-// let it write its work directory.
+// agent may write: the catalog root, the daemon's run directory (pid file
+// and control socket) when it lies inside Tether's root, and the directory
+// holding the state database. Each is registered by its real path, as
+// go-sandbox requires. A launch whose work directory or workspace lies inside
+// one of them is refused with launch.ErrLaunchInsideProtectedPath: the agent
+// could not work there. A codex launch is refused the same way even though
+// Tether does not wrap it (see protectionPlan): its own sandbox would let it
+// write its work directory.
 //
-// The state directory is not protected here. The planted `mux mcp` used to
-// open the database from inside the agent's sandbox, which is why; it no
-// longer does (CW-20261001-0173), so the directory can join in its own change.
+// The state directory can be protected because the `mux mcp` server planted
+// in each agent runs daemon-only (CW-20261001-0173): it never opens the
+// database, and reads and writes Tether's state through the daemon.
 //
 // The in-process API stub starts no agent process, so there is nothing to
 // protect it from.
@@ -172,12 +171,6 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 		return err
 	}
 	writable := launchDirs(plan, opts)
-	if s.Catalog != nil {
-		db := config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths)
-		if db != "" {
-			writable = append(writable, launchDir{"state database directory", filepath.Dir(db)})
-		}
-	}
 	for _, w := range writable {
 		resolved := realPathOrClean(w.path)
 		for _, dir := range dirs {
@@ -203,6 +196,21 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 // root's parent, or the default ~/.tether, whichever the run directory is
 // in. A pid file configured into a shared directory such as /tmp is skipped:
 // it must not make that directory read-only for every agent.
+//
+// The state database's directory is always protected, wherever it is: it
+// holds every session, message and event, and the WAL and shared-memory
+// files beside the database, which an agent could otherwise replace. If it
+// does not exist the daemon has not created it, so there is nothing to
+// protect. A directory that also holds an agent's work directory or
+// workspace refuses that launch (applyControlPlaneProtection) rather than
+// leaving the state database writable.
+//
+// Protecting it wherever it is has a consequence the run directory does not:
+// a defaults.state_db in a shared directory ($HOME, /tmp, /) makes that whole
+// directory read-only for every wrapped agent. That fails closed and visibly
+// (writes there fail, and a launch whose work directory or workspace is
+// inside it is refused), but it is a footgun: the state database belongs in a
+// directory of its own, as the seeded ~/.tether/state/ is.
 func (s *Service) controlPlaneDirs() ([]string, error) {
 	catalogRoot := config.Expand(s.CatalogRoot)
 	if catalogRoot == "" {
@@ -234,6 +242,16 @@ func (s *Service) controlPlaneDirs() ([]string, error) {
 			continue
 		}
 		dirs = append(dirs, dir)
+	}
+	if db := config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths); db != "" {
+		dir, err := realDir(filepath.Dir(config.Expand(db)))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			return nil, fmt.Errorf("protect control plane: state directory: %w", err)
+		case !containsPath(dirs, dir):
+			dirs = append(dirs, dir)
+		}
 	}
 	return dirs, nil
 }

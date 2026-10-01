@@ -19,8 +19,8 @@ var ErrSymlinkedFile = errors.New("the agent file is a symlink")
 
 // CreateGuarded is Create for a caller that must not write into the protected
 // directories (real paths), such as the `mux mcp` Tether plants into a launched
-// agent: the catalog root and the run directory are the operator's, not the
-// agent's. With no protected directories it is Create.
+// agent: the catalog root, the run directory and the state directory are the
+// operator's, not the agent's. With no protected directories it is Create.
 //
 // The decision is made on the directory the write goes into, not on a path
 // that can be re-pointed afterwards. A check that resolves a path and then

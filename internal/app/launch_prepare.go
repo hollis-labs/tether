@@ -66,7 +66,8 @@ type MuxMCPPlan struct {
 // that this session's proxy can never attribute a call to it.
 //
 // A session the daemon launched also gets --protect-path for each directory
-// Tether protects from its agent (the catalog root and the run directory), so
+// Tether protects from its agent (the catalog root, the run directory and the state
+// directory), so
 // the planted server refuses to write them whether or not a sandbox is around
 // it: Codex spawns MCP servers itself, outside any Tether sandbox.
 //

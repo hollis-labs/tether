@@ -29,7 +29,7 @@ func TestLogControlPlaneProtection(t *testing.T) {
 		warn   bool
 	}{
 		{"on", healthFor("linux", nil, nil), "control-plane protection on", false},
-		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "0"}, nil), "WARN: control-plane protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the catalog and run/", true},
+		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "0"}, nil), "WARN: control-plane protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the catalog, run/ and state/", true},
 		{"darwin", healthFor("darwin", nil, nil), "WARN: control-plane protection not applied on darwin", true},
 		{"on but unusable", healthFor("linux", nil, fmt.Errorf("bwrap: setting up uid map: Permission denied")), "WARN: control-plane protection is on but unusable: bwrap: setting up uid map: Permission denied", true},
 	} {
@@ -58,7 +58,7 @@ func TestCheckSandboxProtect(t *testing.T) {
 		want       string
 		message    string
 	}{
-		{"on", healthFor("linux", nil, nil), true, statusOK, "cannot write the catalog or run/"},
+		{"on", healthFor("linux", nil, nil), true, statusOK, "cannot write the catalog, run/ or state/"},
 		{"on, unusable", healthFor("linux", nil, fmt.Errorf("bwrap: No permissions to create a new namespace")), true, statusFail, "Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected"},
 		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "false"}, nil), true, statusWarn, "DISABLED by TETHER_SANDBOX_PROTECT=false"},
 		{"darwin", healthFor("darwin", nil, nil), true, statusWarn, "CW-20261001-0138"},

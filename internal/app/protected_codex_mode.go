@@ -22,7 +22,7 @@ const (
 
 // codexProtectionMode is THE SWITCH for how codex is protected, and it ships as
 // CodexNotProtected: codex is NOT protected by Tether's write-protection of the
-// catalog and run/. In this mode protectionPlan leaves a codex launch alone (no
+// catalog, run/ and state/. In this mode protectionPlan leaves a codex launch alone (no
 // allowlist, no wrapping, no refusal inside a protected directory), no
 // per-turn check is registered, the daemon reports "codex: not protected
 // (CW-20261001-0230)", and claude, opencode and the rest stay protected. The
@@ -67,7 +67,7 @@ func codexProtectionState(st ProtectionStatus) CodexProtectionState {
 	case CodexNotProtected:
 		return CodexProtectionState{
 			State:  string(CodexNotProtected),
-			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox, as it did before Tether write-protected the catalog and run/, and codex spawns every MCP server it is given outside that sandbox, so a codex agent can reach the catalog through MCP tools (torque_session_launch with a chosen workdir, loom_export_bundle to a chosen directory, the nanite and cerberus host shells if granted); the mux tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
+			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox, as it did before Tether write-protected the catalog, run/ and state/, and codex spawns every MCP server it is given outside that sandbox, so a codex agent can reach the catalog through MCP tools (torque_session_launch with a chosen workdir, loom_export_bundle to a chosen directory, the nanite and cerberus host shells if granted); the mux tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
 		}
 	default:
 		return CodexProtectionState{
