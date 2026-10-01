@@ -51,7 +51,7 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 			},
 		},
 		MCP: agentlaunch.MCPSpec{
-			Allowlist: splitCSV(plan.Env["MUX_MCP_SERVERS"]),
+			Allowlist: splitCSV(plan.Env["TETHER_MCP_SERVERS"]),
 		},
 		Injection: agentlaunch.InjectionSpec{
 			NativeFiles:    nativeFiles(plan.NativeFiles),

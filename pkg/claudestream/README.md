@@ -5,19 +5,19 @@ when invoked with `--output-format stream-json --verbose`.
 
 ## Status: incubating, extractable
 
-This package lives **inside agent-mux** today so there's a validating
+This package lives **inside tether** today so there's a validating
 consumer to stabilize its shape. The intent is to promote it to
 `~/Projects-apps/framework/libs/go-claudestream` (or a standalone repo)
-once the agent-mux implementation settles, at which point Nanite —
+once the tether implementation settles, at which point Nanite —
 the original source of these parsers — will also migrate to consume
 the promoted package rather than maintaining its own copy.
 
 **Rules that preserve extractability** (enforce in code review):
 
-1. No imports from `github.com/chrispian/agent-mux/internal/...`.
-2. No agent-mux-specific naming on the public API (event types, field
+1. No imports from `github.com/chrispian/tether/internal/...`.
+2. No tether-specific naming on the public API (event types, field
    names, function signatures).
-3. Test fixtures live alongside the package, not in agent-mux test
+3. Test fixtures live alongside the package, not in tether test
    helpers.
 4. Dependencies limited to Go stdlib. Anything else must be load-bearing
    (which nothing currently is).
@@ -26,12 +26,12 @@ When all Sprint 2 tasks stabilize, the promotion plan runs:
 
 1. Copy `pkg/claudestream/` to its new module home.
 2. `go mod init` + tag v0.1.0.
-3. agent-mux + Nanite both replace in-tree copies with the module.
+3. tether + Nanite both replace in-tree copies with the module.
 
 ## Usage
 
 ```go
-import "github.com/chrispian/agent-mux/pkg/claudestream"
+import "github.com/chrispian/tether/pkg/claudestream"
 
 func readClaude(r io.Reader) error {
     sc := claudestream.NewScanner(r)
@@ -101,7 +101,7 @@ through the parser as long as they don't rename existing ones.
 This library does NOT:
 
 - Invoke the `claude` binary itself — subprocess spawning is the
-  consumer's responsibility (see agent-mux's `internal/provider/cli/claudestream/`
+  consumer's responsibility (see tether's `internal/provider/cli/claudestream/`
   for a reference implementation).
 - Detect the `claude` binary in PATH.
 - Generate `.mcp.json` or scaffold agent-discovery (Nanite-specific).

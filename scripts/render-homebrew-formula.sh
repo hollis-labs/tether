@@ -71,26 +71,26 @@ class Tether < Formula
   end
 
   def install
-    bin.install "mux", "mux-apikey-helper", "tether_sysop"
+    bin.install "tether", "tether-apikey-helper", "tether_sysop"
     doc.install "README.md", "LICENSE", "install.md"
   end
 
   def caveats
     <<~EOS
       Run the guided first-time setup:
-        mux init
+        tether init
 
       Start the Sysop operations UI (served at http://localhost:8947):
         tether_sysop
 
       Check provider detection and system health:
-        mux detect
-        mux doctor
+        tether detect
+        tether doctor
     EOS
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/mux --version")
+    assert_match version.to_s, shell_output("#{bin}/tether --version")
   end
 
   livecheck do

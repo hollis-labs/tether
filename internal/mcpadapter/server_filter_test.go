@@ -40,7 +40,7 @@ func TestServerFilter_Firehose(t *testing.T) {
 	mc := &mockClient{}
 	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
 	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
 	got := flatToolNames(reg, nil)
 
@@ -64,7 +64,7 @@ func TestServerFilter_SingleServer(t *testing.T) {
 	mc := &mockClient{}
 	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
 	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
 	got := flatToolNames(reg, []string{"alpha"})
 
@@ -95,7 +95,7 @@ func TestServerFilter_MultiServer(t *testing.T) {
 	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
 	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
 	reg.Register("gamma", mc, []*mcpsdk.Tool{makeTool("gamma_tool_z")})
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
 	got := flatToolNames(reg, []string{"alpha", "beta"})
 
@@ -125,7 +125,7 @@ func TestServerFilter_UnknownServerInFilter(t *testing.T) {
 	reg := NewToolRegistry()
 	mc := &mockClient{}
 	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
 	got := flatToolNames(reg, []string{"alpha", "nonexistent"})
 
@@ -146,16 +146,16 @@ func TestServerFilter_NativeToolsExcluded(t *testing.T) {
 	mc := &mockClient{}
 	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a")})
 	reg.RegisterNative([]*mcpsdk.Tool{
-		makeTool("mux_health"),
-		makeTool("mux_discover"),
-		makeTool("mux_call"),
+		makeTool("tether_health"),
+		makeTool("tether_tool_search"),
+		makeTool("tether_tool_call"),
 	})
 
 	// Firehose mode — native tools must still be absent from the flat list.
 	firehoseGot := flatToolNames(reg, nil)
 	for _, name := range firehoseGot {
 		switch name {
-		case "mux_health", "mux_discover", "mux_call":
+		case "tether_health", "tether_tool_search", "tether_tool_call":
 			t.Errorf("native tool %q must not appear in flat list (firehose mode)", name)
 		}
 	}
@@ -164,7 +164,7 @@ func TestServerFilter_NativeToolsExcluded(t *testing.T) {
 	selectiveGot := flatToolNames(reg, []string{"alpha"})
 	for _, name := range selectiveGot {
 		switch name {
-		case "mux_health", "mux_discover", "mux_call":
+		case "tether_health", "tether_tool_search", "tether_tool_call":
 			t.Errorf("native tool %q must not appear in flat list (selective mode)", name)
 		}
 	}

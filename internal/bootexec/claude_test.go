@@ -20,7 +20,7 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 		RepoRoot:       repoRoot,
 		Command:        "claude",
 		EnvMode:        "merge",
-		Env:            map[string]string{"MUX_MCP_SERVERS": "vanta,clockwork"},
+		Env:            map[string]string{"TETHER_MCP_SERVERS": "vanta,clockwork"},
 		BootPrompt:     "dynamic boot prompt",
 		BootDirOverlay: map[string]string{
 			"extra.md": "overlay body\n",
@@ -35,11 +35,11 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 		},
 	}
 	prepared, err := PrepareClaudeTUI(plan, Options{
-		BootDirRoot: bootRoot,
-		MuxCommand:  "/usr/local/bin/mux",
-		MuxArgs:     []string{"--catalog", "/catalog", "mcp", "--proxy"},
-		MuxEnv:      []string{"MUX_MCP_SERVERS=vanta,clockwork"},
-		ParentEnv:   []string{"PATH=/bin"},
+		BootDirRoot:   bootRoot,
+		TetherCommand: "/usr/local/bin/tether",
+		TetherArgs:    []string{"--catalog", "/catalog", "mcp", "--proxy"},
+		TetherEnv:     []string{"TETHER_MCP_SERVERS=vanta,clockwork"},
+		ParentEnv:     []string{"PATH=/bin"},
 	})
 	if err != nil {
 		t.Fatalf("PrepareClaudeTUI: %v", err)
@@ -68,7 +68,7 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 		t.Fatalf("CLAUDE.md missing boot prompt: %q", claudeMD)
 	}
 	mcpJSON := readFile(t, filepath.Join(prepared.BootDir, ".mcp.json"))
-	for _, want := range []string{"/usr/local/bin/mux", "MUX_MCP_SERVERS", "vanta,clockwork"} {
+	for _, want := range []string{"/usr/local/bin/tether", "TETHER_MCP_SERVERS", "vanta,clockwork"} {
 		if !strings.Contains(mcpJSON, want) {
 			t.Fatalf(".mcp.json missing %q: %s", want, mcpJSON)
 		}

@@ -62,8 +62,8 @@ func tetherLayoutKeepingMode(t *testing.T) (svc *Service, catalog, run string) {
 		t.Fatal(err)
 	}
 	cat := &config.Catalog{Global: config.Global{Version: "test"}}
-	cat.Global.Daemon.PIDFile = filepath.Join(link, "run", "muxd.pid")
-	cat.Global.Daemon.ListenAddr = "unix:" + filepath.Join(link, "run", "muxd.sock")
+	cat.Global.Daemon.PIDFile = filepath.Join(link, "run", "tetherd.pid")
+	cat.Global.Daemon.ListenAddr = "unix:" + filepath.Join(link, "run", "tetherd.sock")
 	cat.Global.Catalog.Defaults.StateDB = filepath.Join(link, "state", "tether.db")
 	prev := bwrapAvailable
 	bwrapAvailable = func(string) error { return nil }
@@ -89,14 +89,14 @@ func TestControlPlaneDirs(t *testing.T) {
 	// A pid file configured into a shared directory outside Tether's root
 	// does not make that directory read-only for every agent.
 	shared := t.TempDir()
-	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(shared, "muxd.pid")
+	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(shared, "tetherd.pid")
 	svc.Catalog.Global.Daemon.ListenAddr = "tcp:127.0.0.1:0"
 	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog, state}) {
 		t.Fatalf("pid file outside the root: dirs = %q, %v; want the catalog and the state directory", dirs, err)
 	}
 
 	// A run directory that does not exist yet is skipped.
-	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(filepath.Dir(catalog), "absent", "muxd.pid")
+	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(filepath.Dir(catalog), "absent", "tetherd.pid")
 	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog, state}) {
 		t.Fatalf("missing run dir: dirs = %q, %v; want the catalog and the state directory", dirs, err)
 	}
@@ -171,7 +171,7 @@ func TestApplyControlPlaneProtection(t *testing.T) {
 	}
 
 	// A state database inside the catalog no longer refuses a launch: the
-	// agent does not write it (its `mux mcp` is daemon-only), and the catalog
+	// agent does not write it (its `tether mcp` is daemon-only), and the catalog
 	// is protected already.
 	prevDB := svc.Catalog.Global.Catalog.Defaults.StateDB
 	svc.Catalog.Global.Catalog.Defaults.StateDB = filepath.Join(catalog, "state.db")
@@ -672,7 +672,7 @@ func TestApplyControlPlaneProtection_CodexSandboxWeakened(t *testing.T) {
 // sandbox, every one of them demonstrated against real codex 0.159.x
 // (CW-20261001-0142 review), puts Tether's protection back on the launch, as
 // does anything the allowlist does not recognize. A caller with session.write
-// reaches most of them through mux_session_create.
+// reaches most of them through tether_session_create.
 func TestCodexOwnsSandbox_BypassesAreWrapped(t *testing.T) {
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
@@ -935,8 +935,8 @@ func TestControlPlaneDirs_RunDirIndependentOfTheCatalogParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	cat := &config.Catalog{Global: config.Global{Version: "test"}}
-	cat.Global.Daemon.PIDFile = filepath.Join(home, ".tether", "run", "muxd.pid")
-	cat.Global.Daemon.ListenAddr = "unix:" + filepath.Join(home, "shared", "muxd.sock")
+	cat.Global.Daemon.PIDFile = filepath.Join(home, ".tether", "run", "tetherd.pid")
+	cat.Global.Daemon.ListenAddr = "unix:" + filepath.Join(home, "shared", "tetherd.sock")
 	svc := &Service{CatalogRoot: filepath.Join(other, "catalog"), Catalog: cat}
 
 	dirs, err := svc.controlPlaneDirs()

@@ -53,7 +53,7 @@ func TestSettings_EffectiveOnboarding_Cascade(t *testing.T) {
 	}
 
 	// Seed project
-	projectID := "msg://project/project-mux/prj_alpha"
+	projectID := "msg://project/project-tether/prj_alpha"
 	if err := svc.SetOnboarding(ctx, settings.ScopeProject, projectID, settings.OnboardingSettings{
 		RequiredProps:    []string{"docs_url", "project_root"},
 		MCPOptInOffered:  boolPtr(true),

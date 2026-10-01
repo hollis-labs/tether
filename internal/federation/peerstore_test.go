@@ -20,7 +20,7 @@ import (
 func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 	t.Helper()
 	ms := memstore.New()
-	mux := http.NewServeMux()
+	router := http.NewServeMux()
 
 	writeEnvelopes := func(w http.ResponseWriter, envs []messaging.Envelope) {
 		w.Header().Set("Content-Type", "application/json")
@@ -34,7 +34,7 @@ func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
-	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
 		var env messaging.Envelope
 		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -50,7 +50,7 @@ func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 		_ = json.NewEncoder(w).Encode(sent)
 	})
 
-	mux.HandleFunc("/messages/inbox", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/messages/inbox", func(w http.ResponseWriter, r *http.Request) {
 		to, err := messaging.ParseURN(r.URL.Query().Get("to"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -64,7 +64,7 @@ func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 		writeEnvelopes(w, envs)
 	})
 
-	mux.HandleFunc("/messages/thread/", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/messages/thread/", func(w http.ResponseWriter, r *http.Request) {
 		threadID := strings.TrimPrefix(r.URL.Path, "/messages/thread/")
 		envs, err := ms.Thread(r.Context(), threadID, queryFilter(r))
 		if err != nil {
@@ -74,7 +74,7 @@ func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 		writeEnvelopes(w, envs)
 	})
 
-	mux.HandleFunc("/messages/", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/messages/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/messages/")
 		parts := strings.SplitN(rest, "/", 2)
 		id := parts[0]
@@ -122,7 +122,7 @@ func fakeDaemon(t *testing.T) (*httptest.Server, *memstore.Store) {
 		}
 	})
 
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 	return srv, ms
 }
@@ -270,8 +270,8 @@ func TestPeerStoreSubscribe(t *testing.T) {
 	want.ID = "evt-1"
 	want.CreatedAt = time.Now().UTC()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/messages/subscribe", func(w http.ResponseWriter, r *http.Request) {
+	router := http.NewServeMux()
+	router.HandleFunc("/messages/subscribe", func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			t.Errorf("test server does not support flushing")
@@ -285,7 +285,7 @@ func TestPeerStoreSubscribe(t *testing.T) {
 		flusher.Flush()
 		<-r.Context().Done()
 	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(router)
 	defer srv.Close()
 
 	ps := peerStore(t, srv.URL)

@@ -140,9 +140,9 @@ func TestResolve_RealLaunches(t *testing.T) {
 			// all. The runtime moves with it — codex-cli was a
 			// single-turn subprocess, app-server is the long-lived
 			// JSON-RPC daemon.
-			launchID:     "agent-mux-codex-launch",
-			wantProject:  "agent-mux",
-			wantWorkdir:  "~/dev/hollis-labs/apps/agent-mux",
+			launchID:     "tether-codex-launch",
+			wantProject:  "tether",
+			wantWorkdir:  "~/dev/hollis-labs/apps/tether",
 			wantProvider: "codex",
 			wantRuntime:  runtimes.ModeJSONRPCStdio,
 			wantAgent:    "general",

@@ -93,14 +93,14 @@ tags: [interactive-ui]
 	})
 
 	t.Run("env var expansion", func(t *testing.T) {
-		t.Setenv("TEST_MUX_TOKEN", "secret-tok")
-		t.Setenv("TEST_MUX_URL", "http://host:9090/sse")
+		t.Setenv("TEST_TETHER_TOKEN", "secret-tok")
+		t.Setenv("TEST_TETHER_URL", "http://host:9090/sse")
 		dir := t.TempDir()
 		write(t, filepath.Join(dir, "mcp-servers", "test.yaml"), `
 id: test-server
 transport: sse
-url: "${TEST_MUX_URL}"
-token: "${TEST_MUX_TOKEN}"
+url: "${TEST_TETHER_URL}"
+token: "${TEST_TETHER_TOKEN}"
 `)
 		entries, err := LoadMCPServers(dir)
 		if err != nil {

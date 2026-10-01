@@ -49,9 +49,9 @@ func TestAgentOps_SymlinkedAgentFileIsATypedRefusal(t *testing.T) {
 		tool string
 		args map[string]any
 	}{
-		"edit":                        {"mux_agent_edit", map[string]any{"id": "linked", "system_prompt": "pwned"}},
-		"create over a link":          {"mux_agent_create", map[string]any{"id": "linked", "scope": "project", "project": "p", "name": "X"}},
-		"create over a dangling link": {"mux_agent_create", map[string]any{"id": "dangling", "scope": "project", "project": "q", "name": "X"}},
+		"edit":                        {"tether_agent_edit", map[string]any{"id": "linked", "system_prompt": "pwned"}},
+		"create over a link":          {"tether_agent_create", map[string]any{"id": "linked", "scope": "project", "project": "p", "name": "X"}},
+		"create over a dangling link": {"tether_agent_create", map[string]any{"id": "dangling", "scope": "project", "project": "q", "name": "X"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			res := callAgentTool(t, a, call.tool, call.args)
@@ -72,7 +72,7 @@ func TestAgentOps_SymlinkedAgentFileIsATypedRefusal(t *testing.T) {
 	}
 	// An unprotected adapter (the CLI's rules) is unchanged: it writes through.
 	free := newAgentOpsAdapter(t, catalogRoot, map[string]config.Project{"p": {RepoRoot: repo}}, ScopeCatalogWrite)
-	if res := callAgentTool(t, free, "mux_agent_edit", map[string]any{"id": "linked", "system_prompt": "edited"}); res.IsError {
+	if res := callAgentTool(t, free, "tether_agent_edit", map[string]any{"id": "linked", "system_prompt": "edited"}); res.IsError {
 		t.Fatalf("an unprotected adapter's edit through a symlink failed: %s", textOf(res))
 	}
 }

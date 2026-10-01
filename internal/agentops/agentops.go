@@ -1,6 +1,6 @@
 // Package agentops implements create / update operations on agent YAML files
 // across Tether's system / user / project discovery layers. Both the
-// `mux agents` CLI and the MCP adapter route through this package so the two
+// `tether agents` CLI and the MCP adapter route through this package so the two
 // surfaces stay behavior-identical. Reads go through config.Discover; this
 // package owns the writes.
 package agentops

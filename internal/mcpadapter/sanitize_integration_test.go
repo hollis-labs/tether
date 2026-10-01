@@ -44,7 +44,7 @@ func connectInMemory(t *testing.T, s *gomcp.Server) *mcpsdk.ClientSession {
 // uniformly across the adapter — without relying on synthetic pollution
 // against a JSON-shaped payload field (where the sanitizer is a near-no-op).
 //
-// agent-mux's MCP surface is mostly IDs and short strings; no tool takes
+// tether's MCP surface is mostly IDs and short strings; no tool takes
 // Markdown-style free-text content where pattern 1-3 sanitization would
 // engage. The lock-in worth holding is therefore "the middleware runs in
 // the request path", not "the sanitizer recovered specific markup".
@@ -70,7 +70,7 @@ func TestSanitizeMiddleware_HelperWrapsAddTool(t *testing.T) {
 		"payload_json": `{"hello":"world"}`,
 	}
 
-	res, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: "mux_message_send", Arguments: cleanArgs})
+	res, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_message_send", Arguments: cleanArgs})
 	if err != nil {
 		t.Fatalf("CallTool clean: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSanitizeMiddleware_HelperWrapsAddTool(t *testing.T) {
 	}
 
 	// Polluted call — the smoking-gun shape (closing tag + XML parameter
-	// fragment trailing in a string field). For agent-mux the only string
+	// fragment trailing in a string field). For tether the only string
 	// fields that flow into the store are the URN/kind/thread_id family;
 	// those are validated before they reach the persistence layer. The
 	// sanitizer's job here is therefore to defang the markup before
@@ -116,7 +116,7 @@ func TestSanitizeMiddleware_HelperWrapsAddTool(t *testing.T) {
 	// The handler may still succeed (it stores payload as-is) or reject the
 	// modified payload — either is fine. The lock-in is that the call
 	// traverses the middleware, installed globally on s, without panicking.
-	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: "mux_message_send", Arguments: pollutedArgs}); err != nil {
+	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_message_send", Arguments: pollutedArgs}); err != nil {
 		t.Fatalf("CallTool polluted: %v", err)
 	}
 }
@@ -142,12 +142,12 @@ func TestAddTool_RegistersWithMiddleware(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	wantNames := []string{
-		"mux_health",
-		"mux_catalog_list_projects",
-		"mux_catalog_list_agents",
-		"mux_catalog_list_providers",
-		"mux_catalog_list_launches",
-		"mux_catalog_list_boot_profiles",
+		"tether_health",
+		"tether_catalog_list_projects",
+		"tether_catalog_list_agents",
+		"tether_catalog_list_providers",
+		"tether_catalog_list_launches",
+		"tether_catalog_list_boot_profiles",
 	}
 	got := map[string]struct{}{}
 	for _, tool := range resp.Tools {
@@ -185,7 +185,7 @@ func newTestAdapter(t *testing.T) *Adapter {
 // additionally stands up a real internal/api HTTP test server (the same
 // handler construction the production daemon uses, api.NewHandler) backed
 // by the SAME store, and wires an internal/client.Client pointed at it via
-// NewWithDaemon -- mirroring exactly how "mux mcp" wires message tools
+// NewWithDaemon -- mirroring exactly how "tether mcp" wires message tools
 // through the daemon (T05: message tools no longer touch the store
 // in-process, see internal/mcpadapter/adapter.go's package doc).
 func newTestAdapterWithDaemon(t *testing.T) *Adapter {

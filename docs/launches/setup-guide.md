@@ -7,22 +7,22 @@ runtime transport.
 Before launching, preflight the resolved plan:
 
 ```sh
-mux resolve --launch <launch-id>
+tether resolve --launch <launch-id>
 ```
 
 Then start the session:
 
 ```sh
-mux launch --launch <launch-id>
+tether launch --launch <launch-id>
 ```
 
 For long-lived turn-based sessions, prefer:
 
 ```sh
-mux sessions turn <session-id> "your message"
+tether sessions turn <session-id> "your message"
 ```
 
-Use `mux sessions input` for raw PTY/TUI sessions.
+Use `tether sessions input` for raw PTY/TUI sessions.
 
 ## Runtime Modes
 
@@ -39,7 +39,7 @@ Use `mux sessions input` for raw PTY/TUI sessions.
 ### Managed Streaming
 
 Use this for daemon-owned Claude Code sessions that accept `sessions turn`, MCP
-`mux_session_send_turn`, or HTTP send-turn requests.
+`tether_session_send_turn`, or HTTP send-turn requests.
 
 Provider example:
 [`examples/catalog/providers/claude-code.yaml`](../../examples/catalog/providers/claude-code.yaml)
@@ -77,8 +77,8 @@ Launch example:
 [`examples/catalog/launches/torque-claude-tui.yaml`](../../examples/catalog/launches/torque-claude-tui.yaml)
 
 ```sh
-mux launch --launch torque-claude-tui
-mux sessions attach <session-id>
+tether launch --launch torque-claude-tui
+tether sessions attach <session-id>
 ```
 
 Smoke status: PASS on 2026-05-21. Raw input reached the TUI and Claude returned
@@ -118,7 +118,7 @@ Provider example:
 [`examples/catalog/providers/codex-app-server.yaml`](../../examples/catalog/providers/codex-app-server.yaml)
 
 Launch example:
-[`examples/catalog/launches/agent-mux-codex-app-server.yaml`](../../examples/catalog/launches/agent-mux-codex-app-server.yaml)
+[`examples/catalog/launches/tether-codex-app-server.yaml`](../../examples/catalog/launches/tether-codex-app-server.yaml)
 
 Smoke status: PASS on 2026-05-21. The same session accepted two turns and
 returned `TETHER_CODEX_JSONRPC_OK` and `TETHER_CODEX_SECOND_OK` on one Codex
@@ -137,7 +137,7 @@ Provider example:
 [`examples/catalog/providers/codex-cli.yaml`](../../examples/catalog/providers/codex-cli.yaml)
 
 Launch example:
-[`examples/catalog/launches/agent-mux-codex-launch.yaml`](../../examples/catalog/launches/agent-mux-codex-launch.yaml)
+[`examples/catalog/launches/tether-codex-launch.yaml`](../../examples/catalog/launches/tether-codex-launch.yaml)
 
 Smoke status: PARTIAL on 2026-05-21. The session launched and `sessions turn`
 returned success, but no session log was available to verify model output.
@@ -153,7 +153,7 @@ Provider example:
 [`examples/catalog/providers/opencode.yaml`](../../examples/catalog/providers/opencode.yaml)
 
 Launch example:
-[`examples/catalog/launches/agent-mux-opencode.yaml`](../../examples/catalog/launches/agent-mux-opencode.yaml)
+[`examples/catalog/launches/tether-opencode.yaml`](../../examples/catalog/launches/tether-opencode.yaml)
 
 Smoke status: PARTIAL on 2026-05-21. The session launched and `sessions turn`
 returned success, but no session log was available to verify model output.
@@ -178,19 +178,19 @@ checkout. Use `worktree` when several agents need independent working trees.
 For each launch:
 
 ```sh
-mux resolve --launch <launch-id>
-mux launch --launch <launch-id>
-mux sessions turn <session-id> "Smoke test: reply with exactly TETHER_SMOKE_OK and nothing else."
-mux sessions stop <session-id>
+tether resolve --launch <launch-id>
+tether launch --launch <launch-id>
+tether sessions turn <session-id> "Smoke test: reply with exactly TETHER_SMOKE_OK and nothing else."
+tether sessions stop <session-id>
 ```
 
 For PTY launches:
 
 ```sh
-mux launch --launch <claude-pty-launch>
-mux sessions input <session-id> $'Smoke test: reply with exactly TETHER_SMOKE_OK and nothing else.\r'
-mux sessions tail <session-id> --follow=false
-mux sessions stop <session-id>
+tether launch --launch <claude-pty-launch>
+tether sessions input <session-id> $'Smoke test: reply with exactly TETHER_SMOKE_OK and nothing else.\r'
+tether sessions tail <session-id> --follow=false
+tether sessions stop <session-id>
 ```
 
 Record provider versions, session IDs, and any limitations in

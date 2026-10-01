@@ -20,7 +20,7 @@ const EventTypeToolCallEnd = "tool_call_end"
 // arg values. This ensures tokens, passwords and other secrets never appear in
 // the event log. See ADR 0021.
 type ToolCallEvent struct {
-	// SessionID is the mux session that originated the call, if known.
+	// SessionID is the tether session that originated the call, if known.
 	// Empty string when the call came from outside a session context.
 	SessionID string `json:"session_id,omitempty"`
 
@@ -28,7 +28,7 @@ type ToolCallEvent struct {
 	ToolName string `json:"tool_name"`
 
 	// Server is the upstream MCPServerEntry.ID the call was routed to.
-	// Empty for native mux tools (those do not pass through LoggingMiddleware).
+	// Empty for native tether tools (those do not pass through LoggingMiddleware).
 	Server string `json:"server"`
 
 	// ArgsSchemaFP is an 8-character hex SHA-256 fingerprint of the sorted

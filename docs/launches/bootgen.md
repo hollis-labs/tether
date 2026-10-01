@@ -18,12 +18,12 @@ Launch examples live under
 examples live under
 [`examples/catalog/boot-profiles/`](../../examples/catalog/boot-profiles/).
 For a concrete boot profile file, see
-[`examples/catalog/boot-profiles/agent-mux.codex.main.yaml`](../../examples/catalog/boot-profiles/agent-mux.codex.main.yaml).
+[`examples/catalog/boot-profiles/tether.codex.main.yaml`](../../examples/catalog/boot-profiles/tether.codex.main.yaml).
 
 ## Generate A Boot Prompt
 
 ```sh
-mux generate-boot <boot-profile-id>
+tether generate-boot <boot-profile-id>
 ```
 
 This renders the boot profile to stdout without launching a provider. Use it to
@@ -32,17 +32,17 @@ verify slot expansion and prompt content before creating a session.
 ## Launch With A Boot Profile
 
 ```sh
-mux boot <boot-profile-id>
+tether boot <boot-profile-id>
 ```
 
-`mux boot` renders the boot prompt and creates a daemon-managed session through
+`tether boot` renders the boot prompt and creates a daemon-managed session through
 the boot profile's configured launch. This is the supported boot path for
 Claude, Codex, and Opencode managed sessions.
 
 ## Legacy Direct Exec
 
 ```sh
-mux boot-exec <boot-profile-id>
+tether boot-exec <boot-profile-id>
 ```
 
 `boot-exec` directly execs the native Claude PTY runtime. It is Claude-TUI-only
@@ -50,20 +50,20 @@ and rejects Codex or Opencode launch profiles. This path is maintained for
 interactive Claude terminal use and is expected to be deprecated from
 user-facing workflows.
 
-For Codex and Opencode, use `mux boot <profile>` or `mux launch --launch
+For Codex and Opencode, use `tether boot <profile>` or `tether launch --launch
 <launch-id>`.
 
 ## Example Boot Profile
 
 ```yaml
-id: agent-mux.codex.app-server
+id: tether.codex.app-server
 display_name: "Tether - Codex App Server"
-launch: agent-mux-codex-app-server
+launch: tether-codex-app-server
 mcp_servers: []
 identity:
-  profile_id: agent-mux-codex-app-server
+  profile_id: tether-codex-app-server
   role: backend
-  project: agent-mux
+  project: tether
 slots:
   agent:
     type: role_summary
@@ -76,9 +76,9 @@ the provider runtime.
 ## Preflight
 
 ```sh
-mux list-boot-profiles
-mux generate-boot <boot-profile-id>
-mux resolve --launch <launch-id>
+tether list-boot-profiles
+tether generate-boot <boot-profile-id>
+tether resolve --launch <launch-id>
 ```
 
 If `generate-boot` succeeds but `boot` fails, inspect the launch provider and

@@ -1,6 +1,6 @@
 # Federation Directory — Integration Guide
 
-The Mux registry is Tether's federation directory service: cross-substrate identity discovery for agents and projects (v060-01 scope). Substrates retain operational ownership of their files; Mux owns the public-identity surface used to find them.
+The Tether registry is Tether's federation directory service: cross-substrate identity discovery for agents and projects (v060-01 scope). Substrates retain operational ownership of their files; Tether owns the public-identity surface used to find them.
 
 This doc is the integration guide for substrate authors. The full architecture rationale lives in [ADR 0041](../adr/0041-registry-directory-service.md) and [ADR 0043](../adr/0043-cross-substrate-dedup.md); the API reference is in [docs/api/README.md §Registry](../api/README.md#registry).
 
@@ -8,7 +8,7 @@ This doc is the integration guide for substrate authors. The full architecture r
 
 ```
 ┌─────────────┐         ┌─────────────────┐         ┌──────────────────┐
-│ caller      │  POST   │ Mux registry    │  Sync   │ substrate's      │
+│ caller      │  POST   │ Tether registry    │  Sync   │ substrate's      │
 │ (any agent) │ ──────► │ (this database) │ ──────► │ ops store        │
 │             │  GET    │                 │  via    │ (the substrate's │
 │             │  PATCH  │  thin profile   │  callback│  YAML or CLI)    │
@@ -22,11 +22,11 @@ This doc is the integration guide for substrate authors. The full architecture r
                                             (D18)
 ```
 
-The registry stores **identity** (URN, display name, role, capabilities, skills, links, status, the callback that points at the source file). It does NOT store **ops config** (service ports, agent prompts, container images, env, secrets). Those live in the owning substrate's files; the callback is how Mux gets a fresh view of identity when those files change.
+The registry stores **identity** (URN, display name, role, capabilities, skills, links, status, the callback that points at the source file). It does NOT store **ops config** (service ports, agent prompts, container images, env, secrets). Those live in the owning substrate's files; the callback is how Tether gets a fresh view of identity when those files change.
 
 ## URN shape
 
-`msg://agent/agent-mux/<id>` everywhere in v1. The third segment is the Mux instance ID — reserved as a column (`mux_instance_id`) so multi-mux federation is a future column lookup, not a schema migration.
+`msg://agent/agent-mux/<id>` everywhere in v1. The third segment is the Tether instance ID — reserved as a column (`tether_instance_id`) so multi-tether federation is a future column lookup, not a schema migration.
 
 IDs are Stripe-style opaque tokens minted by the server:
 - `agt_<10alnum>` for agents
@@ -44,14 +44,14 @@ Each registry row carries a `callback` URI:
 }
 ```
 
-When a caller invokes `Sync(urn)`, Mux:
+When a caller invokes `Sync(urn)`, Tether:
 
 1. Dispatches to the resolver for the URI's scheme (`file://` and `cli://` in v1; `http://` and `mcp://` in v060-02).
 2. Fetches the substrate's current content.
 3. Extracts identity fields (display name, role, capabilities, etc.).
 4. Updates the thin-profile columns + bumps `cached_at`.
 
-**Raw payload is NEVER stored** (D18 — substrate ops-store files often contain plaintext secrets like `CLAUDE_CODE_OAUTH_TOKEN`; caching would leak them into Mux's `state.db`). Callers who need the full payload read it directly from the callback URI.
+**Raw payload is NEVER stored** (D18 — substrate ops-store files often contain plaintext secrets like `CLAUDE_CODE_OAUTH_TOKEN`; caching would leak them into Tether's `state.db`). Callers who need the full payload read it directly from the callback URI.
 
 ### Sync currently expects Profile-shape payloads
 
@@ -70,7 +70,7 @@ A long-term fix lands in v060-02 or v060-03: per-scheme decoder registration tha
 
 ### Register
 
-POST a Profile (without urn/kind/timestamps). Mux mints the URN and inserts. Response is the canonical Profile (with all defaults applied).
+POST a Profile (without urn/kind/timestamps). Tether mints the URN and inserts. Response is the canonical Profile (with all defaults applied).
 
 ### Update
 
@@ -123,7 +123,7 @@ These attachments are the dedup primitive. Callers resolve them with:
 
 - `GET /registry/{kind}?external_id=<id>&substrate=<sub>`
 - `tether_registry_lookup_by`
-- `mux registry lookup-by --kind <k> --external-id <id> [--substrate <sub>]`
+- `tether registry lookup-by --kind <k> --external-id <id> [--substrate <sub>]`
 
 Bootstrap ordering is deterministic:
 
@@ -162,7 +162,7 @@ The `links.kind` column is free-form text (D16) — substrates can invent kinds 
 
 Historically, the daemon auto-ran `BootstrapFromCatalog(force=false)` at startup to land `~/.tether/catalog/{agents,projects}/*.yaml` files as registry rows.
 
-**Retirement (`CW-20260914-0043`):** The passive-scan startup role has been retired. Catalog YAMLs strictly power session launch configuration (`repo_root`, workspace mode, MCP visibility) via `internal/launchresolve`. Shared registry project identity is managed explicitly via the onboarding contract (`OnboardProject` / `ReonboardProjects` / `mux registry reonboard`). The `bootstrap` CLI command and endpoint are preserved as deprecated forwarders.
+**Retirement (`CW-20260914-0043`):** The passive-scan startup role has been retired. Catalog YAMLs strictly power session launch configuration (`repo_root`, workspace mode, MCP visibility) via `internal/launchresolve`. Shared registry project identity is managed explicitly via the onboarding contract (`OnboardProject` / `ReonboardProjects` / `tether registry reonboard`). The `bootstrap` CLI command and endpoint are preserved as deprecated forwarders.
 
 ### Importer-scope discipline
 
@@ -180,16 +180,16 @@ Six operations × three transports = the full v060-01 surface.
 
 | Op | HTTP | MCP | CLI |
 |---|---|---|---|
-| Register | `POST /registry/{kind}` | `tether_registry_register` | `mux registry register --kind X --file Y` |
-| Lookup | `GET /registry/{kind}/{urn}` | `tether_registry_lookup` | `mux registry lookup <urn>` |
-| Search | `GET /registry/{kind}` | `tether_registry_search` | `mux registry search --kind X ...` |
-| UpdateSelf | `PATCH /registry/{kind}/{urn}` | `tether_registry_update_self` | `mux registry update-self <urn> --file Y` |
-| Deregister | `DELETE /registry/{kind}/{urn}` | `tether_registry_deregister` | `mux registry deregister <urn>` |
-| Sync | `POST /registry/{kind}/{urn}/sync` | `tether_registry_sync` | `mux registry sync <urn>` |
+| Register | `POST /registry/{kind}` | `tether_registry_register` | `tether registry register --kind X --file Y` |
+| Lookup | `GET /registry/{kind}/{urn}` | `tether_registry_lookup` | `tether registry lookup <urn>` |
+| Search | `GET /registry/{kind}` | `tether_registry_search` | `tether registry search --kind X ...` |
+| UpdateSelf | `PATCH /registry/{kind}/{urn}` | `tether_registry_update_self` | `tether registry update-self <urn> --file Y` |
+| Deregister | `DELETE /registry/{kind}/{urn}` | `tether_registry_deregister` | `tether registry deregister <urn>` |
+| Sync | `POST /registry/{kind}/{urn}/sync` | `tether_registry_sync` | `tether registry sync <urn>` |
 
-Plus the bootstrap operation: `POST /registry/bootstrap?force=true&substrate=tether|cerberus` (HTTP) / `mux registry bootstrap [--force] [--substrate tether|cerberus]` (CLI). No MCP tool for bootstrap — it's an operator concern, not an agent-loop concern.
+Plus the bootstrap operation: `POST /registry/bootstrap?force=true&substrate=tether|cerberus` (HTTP) / `tether registry bootstrap [--force] [--substrate tether|cerberus]` (CLI). No MCP tool for bootstrap — it's an operator concern, not an agent-loop concern.
 
 ## What's next (v060-02 + v060-03)
 
 - v060-02: cerberus catalog importer; cross-substrate dedup primitive (`LookupBy(kind, external_id, substrate?)`); URN write-back into source YAMLs; `http://` + `mcp://` callback resolvers; FK enforcement flipped on globally (ADR-0008 reopen).
-- v060-03: multi-mux federation (`mux_instance_id` lookup); cross-host token auth; richer payload-translation seam so `Sync` works for non-Profile-shape source files.
+- v060-03: multi-tether federation (`tether_instance_id` lookup); cross-host token auth; richer payload-translation seam so `Sync` works for non-Profile-shape source files.

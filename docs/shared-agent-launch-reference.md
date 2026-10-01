@@ -33,7 +33,7 @@ prepared provider command so the user lands in the native TUI.
 
 `boot-exec` is **Claude-TUI-only** — it execs into the native Claude PTY
 runtime and rejects Codex/Opencode launch profiles with a clear error. Codex
-and Opencode are fully supported as managed sessions (`mux launch`); only the
+and Opencode are fully supported as managed sessions (`tether launch`); only the
 direct-exec convenience path is Claude-specific. See
 `docs/adr/0039-boot-exec-claude-only-scope.md`.
 
@@ -44,9 +44,9 @@ Tether launch profiles expose the shared injection surface as catalog YAML:
 ```yaml
 injection:
   native_files:
-    - rel_path: .mux/handoff.md
+    - rel_path: .tether/handoff.md
       source: handoffs/current.md
-    - rel_path: .mux/session.json
+    - rel_path: .tether/session.json
       content: |
         {"source":"catalog"}
     - kind: skill

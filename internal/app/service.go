@@ -62,7 +62,7 @@ type Service struct {
 
 	// Registry is the v0.6 federation directory service (registry +
 	// search + sync). Populated by daemon startup wiring; nil in lighter
-	// composition contexts (e.g. read-only `mux mcp` connecting to a
+	// composition contexts (e.g. read-only `tether mcp` connecting to a
 	// remote daemon for session ops). MCP / HTTP / CLI surfaces that
 	// depend on it must nil-guard before dispatching.
 	Registry *registry.Service
@@ -226,7 +226,7 @@ func New(catalogRoot string) (*Service, error) {
 
 // NewCatalogOnly constructs a Service holding only the catalog at
 // catalogRoot: no state database, event bus, session manager, broker or
-// registry. It is the Service of a daemon-only `mux mcp`, which reads and
+// registry. It is the Service of a daemon-only `tether mcp`, which reads and
 // writes Tether's state over the daemon API and must never open the database
 // (CW-20261001-0173). Unlike New it never seeds a missing catalog: the
 // catalog is the daemon's to write.
@@ -256,9 +256,9 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 
 // ReconcileStaleState settles sessions the previous daemon left in
 // launching/running, and any open client_attachments. Intended for daemon
-// startup only — `mux mcp` and other catalog-reading subcommands MUST
+// startup only — `tether mcp` and other catalog-reading subcommands MUST
 // NOT call this, because they may run concurrently with a live daemon
-// (e.g. when a session spawns mux mcp as an MCP subprocess), and
+// (e.g. when a session spawns tether mcp as an MCP subprocess), and
 // sweeping would clobber the daemon's actively-tracked sessions. See
 // ADR 0030 §sweep-race for the original incident.
 //
@@ -269,7 +269,7 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 // its bindings are revoked below. On a systemd host with the default
 // KillMode=control-group the agents die with the daemon, so a restart there
 // sweeps them all; survivors happen when the daemon ran outside a unit that
-// kills its children (`mux daemon start`, launchd).
+// kills its children (`tether daemon start`, launchd).
 func (s *Service) ReconcileStaleState() {
 	now := time.Now().UTC().Format(time.RFC3339)
 	swept, spared, err := s.Store.SweepStaleSessions(now, s.sessionProcessSurvived)
@@ -422,7 +422,7 @@ func (s *Service) Close() error {
 // maybeAutoSeedCatalog writes a minimal starter catalog when the catalog root
 // has no global.yaml. This is the non-interactive safety net (D3): the daemon
 // never hard-fails on a missing catalog. Detection and full guided setup are
-// the job of mux init — auto-seed only writes blank-command providers and the
+// the job of tether init — auto-seed only writes blank-command providers and the
 // minimum needed for the daemon to start.
 func maybeAutoSeedCatalog(catalogRoot string) {
 	globalYAML := filepath.Join(config.Expand(catalogRoot), "global.yaml")
@@ -437,7 +437,7 @@ func maybeAutoSeedCatalog(catalogRoot string) {
 		log.Printf("auto-seed: failed to seed minimal catalog at %s: %v", stateRoot, err)
 		return
 	}
-	log.Printf("catalog absent — seeded minimal catalog at %s; run 'mux init' for guided setup", stateRoot)
+	log.Printf("catalog absent — seeded minimal catalog at %s; run 'tether init' for guided setup", stateRoot)
 }
 
 // seedLogicalAgents upserts a logical_agents row for every catalog agent.

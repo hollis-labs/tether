@@ -102,14 +102,14 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 	return ""
 }
 
-// DaemonConfig controls the long-lived muxd process. See ADR 0002 for the
+// DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
 	// ListenAddr accepts "unix:/path" or "tcp:host:port". If empty, defaults
-	// to "unix:~/.tether/run/muxd.sock".
+	// to "unix:~/.tether/run/tetherd.sock".
 	ListenAddr string `yaml:"listen_addr"`
 	// PIDFile records the child process PID. Defaults to
-	// "~/.tether/run/muxd.pid".
+	// "~/.tether/run/tetherd.pid".
 	PIDFile string `yaml:"pid_file"`
 	// ShutdownTimeout caps how long Shutdown waits for in-flight sessions to
 	// reach a terminal state. Go duration string; defaults to "10s".
@@ -188,7 +188,7 @@ type Defaults struct {
 	// overrides this. Path expansion (~) is applied.
 	LaunchSpecsRoot string `yaml:"launch_specs_root"`
 	// ExtractRefs is the fleet-wide default for proxy-side identifier extraction
-	// (sets --extract-refs on the planted `mux mcp` server). Empty/false resolves
+	// (sets --extract-refs on the planted `tether mcp` server). Empty/false resolves
 	// to false (off by default). Can be overridden per-project or per-launch via
 	// mcp.extract_refs.
 	ExtractRefs bool `yaml:"extract_refs,omitempty"`

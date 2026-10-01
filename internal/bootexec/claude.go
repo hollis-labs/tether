@@ -20,9 +20,9 @@ import (
 type Options struct {
 	BootDirRoot      string
 	APIKeyHelperPath string
-	MuxCommand       string
-	MuxArgs          []string
-	MuxEnv           []string
+	TetherCommand    string
+	TetherArgs       []string
+	TetherEnv        []string
 	ParentEnv        []string
 
 	// SpecPlan, when non-nil, is the agentlaunch.LaunchPlan that feeds
@@ -87,9 +87,9 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
 	}
-	prepared.PlantContext.SelfMCPCommand = opts.MuxCommand
-	prepared.PlantContext.SelfMCPArgs = append([]string(nil), opts.MuxArgs...)
-	prepared.PlantContext.SelfMCPEnv = muxEnvMap(opts.MuxEnv)
+	prepared.PlantContext.SelfMCPCommand = opts.TetherCommand
+	prepared.PlantContext.SelfMCPArgs = append([]string(nil), opts.TetherArgs...)
+	prepared.PlantContext.SelfMCPEnv = tetherEnvMap(opts.TetherEnv)
 
 	adapter := gop.NewClaudeAdapterPTY()
 	adapter.ApiKeyHelperPath = opts.APIKeyHelperPath
@@ -118,7 +118,7 @@ func agentLaunchPlan(plan *launch.Plan, workspaceDir string) agentlaunch.LaunchP
 	return launch.AgentLaunchPlan(plan, workspaceDir)
 }
 
-func muxEnvMap(env []string) map[string]string {
+func tetherEnvMap(env []string) map[string]string {
 	if len(env) == 0 {
 		return nil
 	}

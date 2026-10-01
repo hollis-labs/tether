@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 )
 
-// ResolvePath returns an absolute path to the mux-apikey-helper binary.
-// Resolution order: $MUX_APIKEY_HELPER env override, then a sibling next to
-// the mux binary, then $PATH lookup. Returns empty when not found.
+// ResolvePath returns an absolute path to the tether-apikey-helper binary.
+// Resolution order: $TETHER_APIKEY_HELPER env override, then a sibling next to
+// the tether binary, then $PATH lookup. Returns empty when not found.
 func ResolvePath() string {
-	if override := os.Getenv("MUX_APIKEY_HELPER"); override != "" {
+	if override := os.Getenv("TETHER_APIKEY_HELPER"); override != "" {
 		if abs, err := filepath.Abs(override); err == nil {
 			override = abs
 		}
@@ -25,12 +25,12 @@ func ResolvePath() string {
 		if eval, eerr := filepath.EvalSymlinks(exe); eerr == nil {
 			exe = eval
 		}
-		candidate := filepath.Join(filepath.Dir(exe), "mux-apikey-helper")
+		candidate := filepath.Join(filepath.Dir(exe), "tether-apikey-helper")
 		if isExecutableFile(candidate) {
 			return candidate
 		}
 	}
-	if path, err := exec.LookPath("mux-apikey-helper"); err == nil && isExecutableFile(path) {
+	if path, err := exec.LookPath("tether-apikey-helper"); err == nil && isExecutableFile(path) {
 		return path
 	}
 	return ""

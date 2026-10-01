@@ -81,7 +81,7 @@ func Load(catalogRoot string) (*Catalog, error) {
 	// Resolve the go-apppaths Layout once per Load. It backs the FALLBACK
 	// storage paths (state_db / workspace_root / temp_root) used only when
 	// global.yaml omits the corresponding catalog default. WithoutMaterialize
-	// keeps a plain Load (including read-only commands and `mux path`) from
+	// keeps a plain Load (including read-only commands and `tether path`) from
 	// creating ~/.local/share/tether/...; the actual consumers (store.Open,
 	// workspace.Materialize*) create the directories they need when the
 	// fallback path is reached.
@@ -99,7 +99,7 @@ func Load(catalogRoot string) (*Catalog, error) {
 // launches are resolved or validated.
 //
 // Plain Load only reads agents from the system-catalog root
-// (<catalogRoot>/agents/). But `mux agents create` and project-local config
+// (<catalogRoot>/agents/). But `tether agents create` and project-local config
 // write agents into the user layer (~/.tether/agents/) or a project layer
 // (<repo_root>/.tether/agents/) instead. A launch referencing such an agent
 // would otherwise fail validation with "references unknown agent" even though
@@ -151,10 +151,10 @@ func LoadLayered(catalogRoot string) (*Catalog, error) {
 // that need filesystem paths should run them through config.Expand.
 func applyDaemonDefaults(d *DaemonConfig) {
 	if d.ListenAddr == "" {
-		d.ListenAddr = "unix:~/.tether/run/muxd.sock"
+		d.ListenAddr = "unix:~/.tether/run/tetherd.sock"
 	}
 	if d.PIDFile == "" {
-		d.PIDFile = "~/.tether/run/muxd.pid"
+		d.PIDFile = "~/.tether/run/tetherd.pid"
 	}
 	if d.ShutdownTimeout == "" {
 		d.ShutdownTimeout = "10s"

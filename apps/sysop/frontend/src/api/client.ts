@@ -525,7 +525,7 @@ export interface RegistryLinkInfo {
 export interface RegistryProfileInfo {
   urn: string
   kind: 'agent' | 'project' | string
-  mux_instance_id: string
+  tether_instance_id: string
   display_name: string
   title?: string
   role?: string

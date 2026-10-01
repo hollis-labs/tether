@@ -131,7 +131,7 @@ func worktreeBranchName(name string) string {
 // defer so a one-shot exec leaves no worktree behind. Daemon-managed sessions
 // do NOT call it on session teardown — a terminated session's worktree (and the
 // work product / logs inside it) is preserved for inspection and is reclaimed
-// only by an explicit operator action (`mux workspaces prune`). It is always
+// only by an explicit operator action (`tether workspaces prune`). It is always
 // safe to call: it removes only worktree/isolated-mode roots and never the
 // shared/hybrid repo_root.
 func RemoveMaterializedWorkRoot(plan *launch.Plan) error {
@@ -149,7 +149,7 @@ func RemoveMaterializedWorkRoot(plan *launch.Plan) error {
 
 // RemoveWorktreeAt removes a single git worktree registered against repoRoot.
 // It is the path-level primitive behind RemoveMaterializedWorkRoot and is used
-// by cleanup commands (e.g. `mux workspaces prune`) that have a worktree path
+// by cleanup commands (e.g. `tether workspaces prune`) that have a worktree path
 // but no launch plan. Using `git worktree remove` rather than a bare
 // os.RemoveAll keeps the source repo's worktree registry consistent — a bare
 // RemoveAll leaves a stale registration that later `git worktree add` calls

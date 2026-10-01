@@ -21,7 +21,7 @@ func setCodexProtectionMode(t *testing.T, mode CodexProtection) {
 	t.Cleanup(func() { codexProtectionMode = prev })
 }
 
-// /health and `mux doctor` report how codex is protected, honestly in both
+// /health and `tether doctor` report how codex is protected, honestly in both
 // modes, and name CW-20261001-0230, the structural reason: codex spawns MCP
 // servers outside its sandbox.
 func TestCodexProtectionState(t *testing.T) {
@@ -130,7 +130,7 @@ func TestCodexProtectionMode_ShippedDefaultRunsCodexAsOnMain(t *testing.T) {
 // wrapping, no refusal), every shape the guard would have wrapped is left to
 // codex's own sandbox, even where Tether's sandbox cannot start, and nothing is
 // re-checked per turn. Everything else is unchanged: claude stays protected, and
-// the planted mux server still refuses to write the catalog.
+// the planted tether server still refuses to write the catalog.
 func TestCodexProtectionMode_FallbackRunsCodexAsBefore(t *testing.T) {
 	svc, catalog, run := tetherLayout(t)
 	clearWritableRoots(t)
@@ -186,7 +186,7 @@ func TestCodexProtectionMode_FallbackRunsCodexAsBefore(t *testing.T) {
 	}
 }
 
-// Through LaunchSession, in the fallback: the planted mux server is still told
+// Through LaunchSession, in the fallback: the planted tether server is still told
 // to refuse writing the catalog (that policy does not depend on the switch), a
 // codex session is not given a per-turn check, and a project .codex/config.toml
 // planted between turns is not refused (the guard is off, as on main). In
@@ -218,7 +218,7 @@ func TestCodexProtectionMode_FallbackThroughLaunchSession(t *testing.T) {
 
 	refused, planted := run(t, CodexNotProtected)
 	if refused || !planted {
-		t.Fatalf("fallback: turn refused = %v, planted --protect-path = %v; want the turn allowed (guard off) and the mux server still told to protect the catalog", refused, planted)
+		t.Fatalf("fallback: turn refused = %v, planted --protect-path = %v; want the turn allowed (guard off) and the tether server still told to protect the catalog", refused, planted)
 	}
 	refused, planted = run(t, CodexGuarded)
 	if !refused || !planted {

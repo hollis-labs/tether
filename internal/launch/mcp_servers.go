@@ -3,10 +3,10 @@ package launch
 import "strings"
 
 // MCPServersEnv is the plan.Env key that carries the planted proxy's upstream
-// allow-list: the comma-separated server ids a launched agent's `mux mcp
+// allow-list: the comma-separated server ids a launched agent's `tether mcp
 // --proxy` is granted. It is set from a launch's or project's mcp.servers or a
 // boot profile's mcp_servers.
-const MCPServersEnv = "MUX_MCP_SERVERS"
+const MCPServersEnv = "TETHER_MCP_SERVERS"
 
 // DefaultMCPServers is the allow-list a launched agent's proxy gets when
 // nothing sets one (CW-20261001-0227, approved by lead): the task tracker and

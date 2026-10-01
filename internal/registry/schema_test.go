@@ -277,15 +277,15 @@ func TestMigration0015_defaultsAndNulls(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	var (
-		muxInstance string
-		status      string
+		tetherInstance string
+		status         string
 	)
-	if err := db.QueryRow(`SELECT mux_instance_id, status FROM registry_entries
-		WHERE urn = ?`, "msg://agent/agent-mux/agt_test123456").Scan(&muxInstance, &status); err != nil {
+	if err := db.QueryRow(`SELECT tether_instance_id, status FROM registry_entries
+		WHERE urn = ?`, "msg://agent/agent-mux/agt_test123456").Scan(&tetherInstance, &status); err != nil {
 		t.Fatalf("select: %v", err)
 	}
-	if muxInstance != "agent-mux" {
-		t.Fatalf("mux_instance_id default = %q; want %q", muxInstance, "agent-mux")
+	if tetherInstance != "agent-mux" {
+		t.Fatalf("tether_instance_id default = %q; want %q", tetherInstance, "agent-mux")
 	}
 	if status != "active" {
 		t.Fatalf("status default = %q; want %q", status, "active")

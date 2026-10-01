@@ -17,7 +17,7 @@ See [../LICENSE](../LICENSE) and [../TRADEMARK.md](../TRADEMARK.md).
 
 The release is ready when all of the following are true:
 
-- `mux` builds and tests cleanly from the repo root
+- `tether` builds and tests cleanly from the repo root
 - Sysop builds cleanly from `apps/sysop/` with its embedded frontend
 - public docs consistently use the Tether name and `~/.tether/` paths
 - release-facing docs explain that Sysop ships with Tether
@@ -34,7 +34,7 @@ The release is ready when all of the following are true:
 
 ### 2. Clean install and build story
 
-- [x] Make the root release/build path clearly cover the Tether runtime binaries (`mux` and `mux-apikey-helper`)
+- [x] Make the root release/build path clearly cover the Tether runtime binaries (`tether` and `tether-apikey-helper`)
 - [x] Fix Sysop nested-module build so `cd apps/sysop && go build ./cmd/tether_sysop` is green
 - [x] Keep explicit Sysop build/install targets in the root Makefile without folding Sysop into the core tarball flow yet
 - [x] Add one documented Tether install/release sequence for local verification
@@ -42,9 +42,9 @@ The release is ready when all of the following are true:
 
 ### 3. Public doc consistency
 
-- [ ] Sweep remaining public docs for `Agent Mux` naming where it is no longer intentional
-- [ ] Sweep remaining public docs for stale `~/.agent-mux/` paths where they are no longer intentional
-- [ ] Remove or archive stale `mux tui` references from public documentation
+- [ ] Sweep remaining public docs for `Tether` naming where it is no longer intentional
+- [ ] Sweep remaining public docs for stale `~/.tether/` paths where they are no longer intentional
+- [ ] Remove or archive stale `tether tui` references from public documentation
 - [ ] Refresh API and MCP docs to match the current Tether naming while preserving protocol details
 
 ### 4. Repo cruft cleanup
@@ -58,7 +58,7 @@ The release is ready when all of the following are true:
 Core runtime:
 
 ```bash
-go build ./cmd/mux
+go build ./cmd/tether
 go test ./...
 ```
 

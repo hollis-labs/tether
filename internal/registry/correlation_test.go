@@ -23,7 +23,7 @@ func TestProfile_DerivedVsAuthored(t *testing.T) {
 		Description:   "A test project description",
 		Tags:          []string{"backend", "go"},
 		Guidelines:    "Follow standard Go conventions.",
-		EntryPoints:   []string{"cmd/mux/main.go"},
+		EntryPoints:   []string{"cmd/tether/main.go"},
 		LastUpdatedBy: "author:test",
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -69,8 +69,8 @@ func TestProfile_DerivedVsAuthored(t *testing.T) {
 	if auth.Guidelines != p.Guidelines {
 		t.Fatalf("auth.Guidelines = %q; want %q", auth.Guidelines, p.Guidelines)
 	}
-	if len(auth.EntryPoints) != 1 || auth.EntryPoints[0] != "cmd/mux/main.go" {
-		t.Fatalf("auth.EntryPoints = %v; want [cmd/mux/main.go]", auth.EntryPoints)
+	if len(auth.EntryPoints) != 1 || auth.EntryPoints[0] != "cmd/tether/main.go" {
+		t.Fatalf("auth.EntryPoints = %v; want [cmd/tether/main.go]", auth.EntryPoints)
 	}
 
 	// Derived projection
@@ -85,7 +85,7 @@ func TestProfile_DerivedVsAuthored(t *testing.T) {
 			t.Errorf("p.FieldClassFor(%q) = %q; want authored", field, got)
 		}
 	}
-	for _, field := range []string{"urn", "kind", "display_name", "callback", "status", "mux_instance_id"} {
+	for _, field := range []string{"urn", "kind", "display_name", "callback", "status", "tether_instance_id"} {
 		if got := p.FieldClassFor(field); got != registry.FieldClassDerived {
 			t.Errorf("p.FieldClassFor(%q) = %q; want derived", field, got)
 		}
@@ -114,7 +114,7 @@ func TestStorage_CorrelationFields_RoundtripAndSearch(t *testing.T) {
 		Description:   "Agent control plane",
 		Tags:          []string{"go", "daemon", "infrastructure"},
 		Guidelines:    "Review ADRs before modifying storage.",
-		EntryPoints:   []string{"cmd/mux/root.go", "internal/app/app.go"},
+		EntryPoints:   []string{"cmd/tether/root.go", "internal/app/app.go"},
 		LastUpdatedBy: "author:dev",
 		CachedAt:      &cached,
 	}
@@ -148,7 +148,7 @@ func TestStorage_CorrelationFields_RoundtripAndSearch(t *testing.T) {
 	if len(got.Tags) != 3 || got.Tags[0] != "go" {
 		t.Errorf("got.Tags = %v; want %v", got.Tags, registered.Tags)
 	}
-	if len(got.EntryPoints) != 2 || got.EntryPoints[0] != "cmd/mux/root.go" {
+	if len(got.EntryPoints) != 2 || got.EntryPoints[0] != "cmd/tether/root.go" {
 		t.Errorf("got.EntryPoints = %v; want %v", got.EntryPoints, registered.EntryPoints)
 	}
 
@@ -656,7 +656,7 @@ func TestSharedProject_C3_ServiceOnboardingTorqueAndPartialCoverage(t *testing.T
 		},
 		Callback: &registry.Callback{
 			Scheme: "cli",
-			Target: "mux describe --json",
+			Target: "tether describe --json",
 		},
 	})
 	if err != nil {

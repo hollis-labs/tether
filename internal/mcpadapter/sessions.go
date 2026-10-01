@@ -21,7 +21,7 @@ import (
 
 func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_list",
+		Name:        "tether_session_list",
 		Description: "List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("state", "Filter by session state: created, running, stopped, failed", false),
@@ -32,7 +32,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Reads("GET /sessions; svc.ListSessions + AttachedClients"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_get",
+		Name:        "tether_session_get",
 		Description: "Get a single agent session by ID.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -41,10 +41,10 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id}; svc.GetSession + AttachedClients"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_create",
-		Description: "Create a session from a launch profile (state=created, not yet running). Follow with mux_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile.",
+		Name:        "tether_session_create",
+		Description: "Create a session from a launch profile (state=created, not yet running). Follow with tether_session_launch to start it. Supports v005-08 Agent Ops Tier-2 caller-provided payloads (agent_file / agent_inline / boot_profile / override / prompt_append) — when any are set, they merge over the catalog-resolved agent + boot profile.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("launch_id", "Launch profile ID from the catalog (see mux_catalog_list_launches)", true),
+			gomcp.StringProp("launch_id", "Launch profile ID from the catalog (see tether_catalog_list_launches)", true),
 			gomcp.StringProp("boot_prompt", "Optional boot prompt override; replaces catalog static boot fragments verbatim", false),
 			gomcp.StringProp("agent_file", "v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent.", false),
 			gomcp.StringProp("agent_inline", "v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order.", false),
@@ -58,16 +58,16 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_launch",
+		Name:        "tether_session_launch",
 		Description: "Start a previously created session (transitions from created → running). Returns launch details including workspace path and log path.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("session_id", "Session UUID returned by mux_session_create", true),
+			gomcp.StringProp("session_id", "Session UUID returned by tether_session_create", true),
 		),
 		Handler: a.handleSessionLaunch,
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_stop",
+		Name:        "tether_session_stop",
 		Description: "Send a stop signal to a running session.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -76,8 +76,8 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Destroys("terminates the running process; a stopped session cannot be relaunched, only resumed into a new one"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_wait",
-		Description: "Block until the session exits and return its exit code. Use after mux_session_stop or for short-lived sessions.",
+		Name:        "tether_session_wait",
+		Description: "Block until the session exits and return its exit code. Use after tether_session_stop or for short-lived sessions.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 		),
@@ -85,7 +85,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id}/wait blocks on a state change it does not cause"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_send_input",
+		Name:        "tether_session_send_input",
 		Description: "Send raw text input to a running session's stdin (PTY). Use to interact with a CLI agent session.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -95,8 +95,8 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_send_turn",
-		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over mux_session_send_input for long-lived agent turns — it removes per-call framing burden. A provider_session_lost error means the provider no longer has the session's resume id: the turn was not delivered, and resending starts a fresh provider session without the old history.",
+		Name:        "tether_session_send_turn",
+		Description: "Send a user turn to a running session with lifecycle-aware framing. Streaming-stdio sessions (Claude mode-5) receive an NDJSON user-message envelope; jsonrpc-stdio sessions (Codex app-server) get initialize+thread/start lazily followed by turn/start; PTY and unknown modes fall back to raw stdin. Prefer this over tether_session_send_input for long-lived agent turns — it removes per-call framing burden. A provider_session_lost error means the provider no longer has the session's resume id: the turn was not delivered, and resending starts a fresh provider session without the old history.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 			gomcp.StringProp("text", "User-facing message body. Framing is applied per the session's caps.", true),
@@ -105,7 +105,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_resize",
+		Name:        "tether_session_resize",
 		Description: "Resize the PTY terminal for a running session.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -116,7 +116,7 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_health",
+		Name:        "tether_session_health",
 		Description: "Get the live runtime health snapshot for a running session. Returns provider identity, capability flags, and fine-grained live state (idle/processing/stopped). Returns not_found if the session does not exist, conflict if the session is not currently running.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -217,7 +217,7 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, args map[string]any) 
 	withInput := idempotencyKey != "" || agentFile != "" || agentInline != "" || bootProfile != "" || override != "" || injection != "" || promptAppend != ""
 
 	if a.client != nil {
-		// Daemon-routed path (production "mux mcp"): the daemon owns session
+		// Daemon-routed path (production "tether mcp"): the daemon owns session
 		// state, so creation must originate there. Otherwise the in-process
 		// app would race against the daemon's session store.
 		creq := api.LaunchRequest{
@@ -552,7 +552,7 @@ func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) 
 	})), nil
 }
 
-// sessionHealthData is mux_session_health's result, from the daemon's
+// sessionHealthData is tether_session_health's result, from the daemon's
 // health response or the in-process runtime alike.
 func sessionHealthData(id string, alive bool, pid int, liveState, turnID, providerID, providerKind string, caps api.CapabilitiesDTO) map[string]any {
 	data := map[string]any{

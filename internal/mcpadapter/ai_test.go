@@ -26,7 +26,7 @@ import (
 func TestAITools_ListProvidersAndChat(t *testing.T) {
 	a := newAIAdapter(t, []string{ScopeAIInvoke})
 
-	res := callAITool(t, a, "mux_ai_list_providers", nil)
+	res := callAITool(t, a, "tether_ai_list_providers", nil)
 	if res.IsError {
 		t.Fatalf("list providers error: %s", textOf(res))
 	}
@@ -35,7 +35,7 @@ func TestAITools_ListProvidersAndChat(t *testing.T) {
 		t.Fatalf("providers body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_list_routes", nil)
+	res = callAITool(t, a, "tether_ai_list_routes", nil)
 	if res.IsError {
 		t.Fatalf("list routes error: %s", textOf(res))
 	}
@@ -44,7 +44,7 @@ func TestAITools_ListProvidersAndChat(t *testing.T) {
 		t.Fatalf("routes body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_route_explain", map[string]any{"text": "hello"})
+	res = callAITool(t, a, "tether_ai_route_explain", map[string]any{"text": "hello"})
 	if res.IsError {
 		t.Fatalf("route explain error: %s", textOf(res))
 	}
@@ -53,7 +53,7 @@ func TestAITools_ListProvidersAndChat(t *testing.T) {
 		t.Fatalf("route explain body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_chat", map[string]any{
+	res = callAITool(t, a, "tether_ai_chat", map[string]any{
 		"text":     "hello",
 		"provider": "anthropic-work",
 	})
@@ -69,7 +69,7 @@ func TestAITools_ListProvidersAndChat(t *testing.T) {
 
 func TestAITools_ChatRequiresScope(t *testing.T) {
 	a := newAIAdapter(t, nil)
-	res := callAITool(t, a, "mux_ai_chat", map[string]any{"text": "hello"})
+	res := callAITool(t, a, "tether_ai_chat", map[string]any{"text": "hello"})
 	if !res.IsError {
 		t.Fatal("expected auth error")
 	}
@@ -159,7 +159,7 @@ func TestAITools_ChatStreamSendsNotificationsAndReturnsFinalResponse(t *testing.
 func TestAITools_UsageAndAudit(t *testing.T) {
 	a := newAIAdapter(t, nil)
 
-	res := callAITool(t, a, "mux_ai_usage", map[string]any{"provider": "anthropic-work"})
+	res := callAITool(t, a, "tether_ai_usage", map[string]any{"provider": "anthropic-work"})
 	if res.IsError {
 		t.Fatalf("usage error: %s", textOf(res))
 	}
@@ -169,7 +169,7 @@ func TestAITools_UsageAndAudit(t *testing.T) {
 		t.Fatalf("usage body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_audit", map[string]any{"event_type": "chat"})
+	res = callAITool(t, a, "tether_ai_audit", map[string]any{"event_type": "chat"})
 	if res.IsError {
 		t.Fatalf("audit error: %s", textOf(res))
 	}
@@ -178,7 +178,7 @@ func TestAITools_UsageAndAudit(t *testing.T) {
 		t.Fatalf("audit body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_budgets", map[string]any{"caller_id": "agent-1"})
+	res = callAITool(t, a, "tether_ai_budgets", map[string]any{"caller_id": "agent-1"})
 	if res.IsError {
 		t.Fatalf("budgets error: %s", textOf(res))
 	}
@@ -187,7 +187,7 @@ func TestAITools_UsageAndAudit(t *testing.T) {
 		t.Fatalf("budgets body = %v", body)
 	}
 
-	res = callAITool(t, a, "mux_ai_budget_alerts", map[string]any{"provider": "anthropic-work"})
+	res = callAITool(t, a, "tether_ai_budget_alerts", map[string]any{"provider": "anthropic-work"})
 	if res.IsError {
 		t.Fatalf("budget alerts error: %s", textOf(res))
 	}
@@ -206,7 +206,7 @@ func TestAITools_UsageAndAudit(t *testing.T) {
 // (CW-20260930-0011).
 func TestAITools_AuditReadsRequireToken(t *testing.T) {
 	tokenless := newAIAdapterWithToken(t, "", nil)
-	for _, name := range []string{"mux_ai_usage", "mux_ai_budgets", "mux_ai_audit", "mux_ai_budget_alerts", "mux_ai_wait_budget_alerts"} {
+	for _, name := range []string{"tether_ai_usage", "tether_ai_budgets", "tether_ai_audit", "tether_ai_budget_alerts", "tether_ai_wait_budget_alerts"} {
 		res := callAITool(t, tokenless, name, map[string]any{"wait_ms": 1})
 		if !res.IsError {
 			t.Errorf("%s answered a tokenless caller: %s", name, textOf(res))
@@ -217,15 +217,15 @@ func TestAITools_AuditReadsRequireToken(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"mux_ai_list_providers", "mux_ai_list_routes"} {
+	for _, name := range []string{"tether_ai_list_providers", "tether_ai_list_routes"} {
 		if res := callAITool(t, tokenless, name, nil); res.IsError {
 			t.Errorf("%s should stay open to a tokenless caller: %s", name, textOf(res))
 		}
 	}
 
 	// A token with no scopes at all is enough: this is a presence check.
-	if res := callAITool(t, newAIAdapter(t, nil), "mux_ai_audit", map[string]any{"event_type": "chat"}); res.IsError {
-		t.Fatalf("mux_ai_audit with a scope-less token: %s", textOf(res))
+	if res := callAITool(t, newAIAdapter(t, nil), "tether_ai_audit", map[string]any{"event_type": "chat"}); res.IsError {
+		t.Fatalf("tether_ai_audit with a scope-less token: %s", textOf(res))
 	}
 }
 
@@ -254,7 +254,7 @@ func TestAITools_WaitBudgetAlerts(t *testing.T) {
 	hostport := srv.URL[len("http://"):]
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", nil)
 
-	res := callAITool(t, a, "mux_ai_wait_budget_alerts", map[string]any{
+	res := callAITool(t, a, "tether_ai_wait_budget_alerts", map[string]any{
 		"caller_id":  "agent-1",
 		"wait_ms":    100,
 		"max_events": 1,

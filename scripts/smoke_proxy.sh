@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# smoke_proxy.sh — end-to-end smoke test for `mux mcp --proxy`
+# smoke_proxy.sh — end-to-end smoke test for `tether mcp --proxy`
 #
 # Drives the MCP stdio server with raw JSON-RPC frames and checks:
 #   1. initialize handshake succeeds
-#   2. tools/list includes both native mux_* tools and proxied hadron_* tools
+#   2. tools/list includes both native tether_* tools and proxied hadron_* tools
 #   3. tools/call for hadron_health returns a non-error result
 #
 # Usage:
-#   ./scripts/smoke_proxy.sh [path/to/mux] [catalog-dir]
+#   ./scripts/smoke_proxy.sh [path/to/tether] [catalog-dir]
 #
 # Exit codes:
 #   0 — all checks passed
@@ -15,8 +15,8 @@
 
 set -euo pipefail
 
-MUX="${1:-./mux}"
-CATALOG="${2:-${HOME}/.agent-mux/catalog}"
+TETHER="${1:-./tether}"
+CATALOG="${2:-${HOME}/.tether/catalog}"
 
 # Use a per-run temp file for stderr; clean up on exit regardless of outcome.
 SMOKE_STDERR="$(mktemp)"
@@ -36,8 +36,8 @@ CALL_HEALTH='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"had
 # Build the input sequence for the MCP server.
 INPUT="$(frame "$INIT")$(frame "$INITIALIZED")$(frame "$LIST_TOOLS")$(frame "$CALL_HEALTH")"
 
-echo "==> Starting mux mcp --proxy with catalog: $CATALOG"
-RESPONSE=$(printf '%s' "$INPUT" | timeout 30 "$MUX" mcp --proxy --catalog "$CATALOG" 2>"$SMOKE_STDERR" || true)
+echo "==> Starting tether mcp --proxy with catalog: $CATALOG"
+RESPONSE=$(printf '%s' "$INPUT" | timeout 30 "$TETHER" mcp --proxy --catalog "$CATALOG" 2>"$SMOKE_STDERR" || true)
 
 if [[ -s "$SMOKE_STDERR" ]]; then
     echo "--- stderr ---"
@@ -56,11 +56,11 @@ else
     exit 1
 fi
 
-# ── Check 2: tools/list contains both mux_* and hadron_* ──────────────────────
-if echo "$RESPONSE" | grep -q '"mux_health"'; then
-    echo "PASS: native tool mux_health present in tools/list"
+# ── Check 2: tools/list contains both tether_* and hadron_* ──────────────────────
+if echo "$RESPONSE" | grep -q '"tether_health"'; then
+    echo "PASS: native tool tether_health present in tools/list"
 else
-    echo "FAIL: mux_health not found in tools/list"
+    echo "FAIL: tether_health not found in tools/list"
     exit 1
 fi
 
@@ -72,10 +72,10 @@ else
     exit 1
 fi
 
-if echo "$RESPONSE" | grep -q '"mux_catalog_list_mcp_servers"'; then
-    echo "PASS: mux_catalog_list_mcp_servers introspection tool present"
+if echo "$RESPONSE" | grep -q '"tether_catalog_list_mcp_servers"'; then
+    echo "PASS: tether_catalog_list_mcp_servers introspection tool present"
 else
-    echo "FAIL: mux_catalog_list_mcp_servers not found"
+    echo "FAIL: tether_catalog_list_mcp_servers not found"
     exit 1
 fi
 

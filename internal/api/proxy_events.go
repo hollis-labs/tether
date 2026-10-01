@@ -58,7 +58,7 @@ type ProxyEventIngestRequest struct {
 	// Publish asks the daemon to also publish the call on its event bus as
 	// a tool_call_start / tool_call_end event, which the bus persists to the
 	// events table. A proxy that cannot write the event log itself (the
-	// daemon-only `mux mcp` Tether plants in an agent) sets it. A non-empty
+	// daemon-only `tether mcp` Tether plants in an agent) sets it. A non-empty
 	// SessionID must then name an existing session. Every field but the time
 	// is the caller's assertion.
 	Publish bool `json:"publish,omitempty"`
@@ -99,11 +99,11 @@ func TruncateProxyEventError(s string) string {
 	return truncateUTF8(s, MaxProxyEventErrorBytes-len(proxyEventErrorTruncated)) + proxyEventErrorTruncated
 }
 
-func (s *Server) registerProxyEventRoutes(mux *http.ServeMux) {
+func (s *Server) registerProxyEventRoutes(router *http.ServeMux) {
 	if s.ProxyEvents == nil {
 		return
 	}
-	mux.HandleFunc("/proxy/events", s.handleProxyEvents)
+	router.HandleFunc("/proxy/events", s.handleProxyEvents)
 }
 
 func (s *Server) handleProxyEvents(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +202,7 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	// Server may be empty for native mux tools — store it as-is.
+	// Server may be empty for native router tools — store it as-is.
 
 	// The daemon stamps the time of every record. The caller's clock is not
 	// recorded, so a record cannot be back-dated or forward-dated.

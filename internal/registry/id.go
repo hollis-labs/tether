@@ -77,7 +77,7 @@ func MintProjectURN(ctx context.Context, exists URNExistsFunc) (string, error) {
 
 // MintGroupURN returns a fresh group URN of the form
 // msg://group/<authority>/grp_<10alnum>. authority defaults to
-// `agent-mux` when empty (single-mux v1 deployments).
+// `tether` when empty (single-tether v1 deployments).
 //
 // The 3-segment shape preserves ADR-0023 §1 canonical URN structure and
 // keeps groups federation-routable via ADR-0040's Router. Note: the

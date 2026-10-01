@@ -74,7 +74,7 @@ func TestRegistryClient_Register_Happy(t *testing.T) {
 
 func TestRegistryClient_OnboardProject(t *testing.T) {
 	want := registry.Profile{
-		URN:         "msg://project/project-mux/prj_proj00001",
+		URN:         "msg://project/project-tether/prj_proj00001",
 		Kind:        registry.KindProject,
 		DisplayName: "Onboarded Project",
 		Description: "A newly onboarded project",
@@ -204,7 +204,7 @@ func TestRegistryClient_LookupBy_Happy(t *testing.T) {
 
 func TestRegistryClient_LookupByWithInclude_Happy(t *testing.T) {
 	want := registry.Profile{
-		URN:         "msg://project/project-mux/prj_torque01",
+		URN:         "msg://project/project-tether/prj_torque01",
 		Kind:        registry.KindProject,
 		DisplayName: "Torque Project",
 		ExternalIDs: []registry.ExternalID{
@@ -241,7 +241,7 @@ func TestRegistryClient_LookupByWithInclude_Happy(t *testing.T) {
 
 func TestRegistryClient_LookupByFull_Happy(t *testing.T) {
 	want := registry.Profile{
-		URN:         "msg://project/project-mux/prj_torque02",
+		URN:         "msg://project/project-tether/prj_torque02",
 		Kind:        registry.KindProject,
 		DisplayName: "Full Torque Project",
 		Callback: &registry.Callback{

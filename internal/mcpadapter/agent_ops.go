@@ -19,17 +19,17 @@ import (
 
 // registerAgentOpsTools wires the agent catalog-ops surface: list/show (read,
 // no scope) and create/edit (write, gated by catalog.write). These mirror the
-// `mux agents` CLI so an agent can manage agent definitions over MCP.
+// `tether agents` CLI so an agent can manage agent definitions over MCP.
 func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_agent_list",
+		Name:        "tether_agent_list",
 		Description: "List all agents across the system, user, and project discovery layers. Each entry is annotated with the layer it resolved from and its file path. Read-only; no scope required.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleAgentList,
 	}, Reads("catalog agent listing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_agent_show",
+		Name:        "tether_agent_show",
 		Description: "Show one agent's full resolved definition, including which discovery layer it came from and its file path. Read-only; no scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("id", "Agent ID", true),
@@ -38,7 +38,7 @@ func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
 	}, Reads("catalog agent lookup"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_agent_create",
+		Name:        "tether_agent_create",
 		Description: "Create a new agent YAML in a discovery layer. Requires the catalog.write scope.\n\nScope controls where the agent file is written and which launches can see it:\n  project (default) — <repo>/.tether/agents/; visible to that repo's launches only; commit it with the repo. Requires the 'project' argument.\n  user              — ~/.tether/agents/; visible to all of this machine's launches.\n  system            — the shared system catalog.\n\nPrefer project scope for repo-specific agents (auditors, builders for one codebase).",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("id", "Agent ID — a single name with no path separators; becomes the YAML filename. Kebab-case recommended.", true),
@@ -54,7 +54,7 @@ func (a *Adapter) registerAgentOpsTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_agent_edit",
+		Name:        "tether_agent_edit",
 		Description: "Update an existing agent's fields in place, in whichever discovery layer it currently resides. Requires the catalog.write scope.\n\nOnly the arguments you pass are changed; omitted arguments are left as-is. Passing roles/skills replaces the existing list — pass an empty string to clear it. Scalar fields (name/system_prompt/agent_prompt) cannot be cleared to empty via edit. Note: edit rewrites the file in canonical YAML form, so comments and any unknown fields in the original file are not preserved.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("id", "Agent ID to edit.", true),
@@ -200,7 +200,7 @@ const codeCatalogReadOnly = "catalog_read_only"
 
 // catalogReadOnlyMessage is what an agent is told, whichever way the write was
 // stopped.
-const catalogReadOnlyMessage = "the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo"
+const catalogReadOnlyMessage = "the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (tether agents create/edit), or use scope=project to write it into the repo"
 
 // codeAgentFileIsSymlink is the tool error code for an agent file whose own name
 // is a symlink, which a launched agent's write does not follow while Tether
@@ -227,7 +227,7 @@ func (a *Adapter) SetProtectedPaths(paths []string) {
 func (a *Adapter) ProtectedPaths() []string { return append([]string(nil), a.protected...) }
 
 // refuseProtectedWrite is the ONE guard every native tool that writes a file
-// into the catalog tree goes through, today mux_agent_create and mux_agent_edit
+// into the catalog tree goes through, today tether_agent_create and tether_agent_edit
 // (the audit of internal/mcpadapter found no other native tool that writes
 // there: the rest read the catalog, or write to the database or the daemon). It
 // returns a typed catalog_read_only error when target, resolved through

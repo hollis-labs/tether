@@ -1,11 +1,11 @@
 # Caller-Launched Sessions (v005-08 Tier-2)
 
-This guide is for external consumers (Nanite, Clockwork, Hadron blueprints, custom integrations) that want to launch Mux sessions using their own agent definitions without first registering them in Mux's catalog.
+This guide is for external consumers (Nanite, Clockwork, Hadron blueprints, custom integrations) that want to launch Tether sessions using their own agent definitions without first registering them in Tether's catalog.
 
 ## When to use Tier-2 vs Tier-1
 
-- **Tier 1 (catalog-only).** Mux owns the agent persona. The caller knows a launch ID; everything else is resolved from the catalog. Use when the agent lives in the Mux catalog and the caller just wants to spawn a session of that agent.
-- **Tier 2 (caller-provided).** The caller has its own agent definition / boot profile / per-launch override. Mux assembles the BootDirSpec compilation inputs at session-create time and routes through the same runtime pipeline.
+- **Tier 1 (catalog-only).** Tether owns the agent persona. The caller knows a launch ID; everything else is resolved from the catalog. Use when the agent lives in the Tether catalog and the caller just wants to spawn a session of that agent.
+- **Tier 2 (caller-provided).** The caller has its own agent definition / boot profile / per-launch override. Tether assembles the BootDirSpec compilation inputs at session-create time and routes through the same runtime pipeline.
 
 Tier-2 doesn't replace the launch profile entirely — the catalog still supplies project root, provider, workspace shape, and env-mode. The caller is overriding **persona** (agent definition) and optionally **MCP allowlist + per-launch tweaks**.
 
@@ -34,7 +34,7 @@ YAML. It is a JSON-encoded `config.LaunchInjection`:
 {
   "native_files": [
     { "kind": "raw", "rel_path": "NOTES.md", "content": "task handoff notes" },
-    { "kind": "raw", "rel_path": ".mux/ctx.md", "source": "boot/ctx.md" }
+    { "kind": "raw", "rel_path": ".tether/ctx.md", "source": "boot/ctx.md" }
   ],
   "boot_dir_overlay": [
     { "rel_path": "extra.md", "content": "extra boot-dir content" }
@@ -91,7 +91,7 @@ For env: provider-overrides + override.env merge into `plan.Env`; the existing p
 ### CLI
 
 ```bash
-mux launch --launch my-launch-id \
+tether launch --launch my-launch-id \
   --agent-file ./my-agent.yaml \
   --boot-profile ./research-mode.yaml \
   --override '{"system_prompt":"You are now a code reviewer."}' \
@@ -103,7 +103,7 @@ Torque task bundles can be fetched from Torque's HTTP API and planted as
 ordinary caller injection:
 
 ```bash
-mux launch --launch my-codex-worker \
+tether launch --launch my-codex-worker \
   --torque-task CW-20260417-0011 \
   --torque-url http://127.0.0.1:8990
 ```
@@ -121,7 +121,7 @@ the repo or worktree. Read planted task files through `$CODEX_HOME`, for
 example `$CODEX_HOME/tasks/README.md`. Providers that read directly from the
 boot directory can use the bootdir-relative path, for example `tasks/README.md`.
 
-### MCP (`mux_session_create`)
+### MCP (`tether_session_create`)
 
 ```jsonc
 {
@@ -134,7 +134,7 @@ boot directory can use the bootdir-relative path, for example `tasks/README.md`.
 }
 ```
 
-Follow with `mux_session_launch` to start the session.
+Follow with `tether_session_launch` to start the session.
 
 ### HTTP (`POST /sessions`)
 
@@ -156,8 +156,8 @@ Returns `201 Created`. Follow with `POST /sessions/{id}/launch`.
 ## Library client
 
 ```go
-import "github.com/chrispian/agent-mux/internal/client"
-import "github.com/chrispian/agent-mux/internal/api"
+import "github.com/chrispian/tether/internal/client"
+import "github.com/chrispian/tether/internal/api"
 
 c, _ := client.NewLocal()
 res, err := c.LaunchWithInput(ctx, api.LaunchRequest{

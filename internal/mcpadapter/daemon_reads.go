@@ -106,7 +106,7 @@ func (a *Adapter) sessionAttachments(ctx context.Context, sessionID string) ([]s
 	return out, nil
 }
 
-// proxyEventQuerier is where mux_proxy_events reads the proxy_events table.
+// proxyEventQuerier is where tether_proxy_events reads the proxy_events table.
 func (a *Adapter) proxyEventQuerier() ProxyEventQuerier {
 	if a.readsViaDaemon() {
 		return DaemonProxyEvents{Client: a.client}
@@ -131,7 +131,7 @@ func (a *Adapter) sessionWorkstreamID(ctx context.Context, sessionID string) (st
 }
 
 // DaemonProxyEvents is a ProxyEventQuerier over GET /proxy/events, for a
-// daemon-only `mux mcp` (mux_events_tool_calls, mux_proxy_events).
+// daemon-only `tether mcp` (tether_events_tool_calls, tether_proxy_events).
 type DaemonProxyEvents struct {
 	Client *client.Client
 }
@@ -166,7 +166,7 @@ func (d DaemonProxyEvents) QueryProxyEvents(f store.ProxyEventFilter) ([]store.P
 	return out, nil
 }
 
-// DaemonToolCallPublisher is the events.Publisher a daemon-only `mux mcp`
+// DaemonToolCallPublisher is the events.Publisher a daemon-only `tether mcp`
 // gives LoggingMiddleware: each tool_call_start and tool_call_end goes to the
 // daemon's POST /proxy/events with publish set, so the daemon records the
 // call in proxy_events and its event log, which this process cannot write.

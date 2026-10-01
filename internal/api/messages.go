@@ -42,18 +42,18 @@ type DeliveryClaimer interface {
 
 // registerMessageRoutes mounts the go-messaging-native HTTP surface.
 // No-op when MessageStore is nil.
-func (s *Server) registerMessageRoutes(mux *http.ServeMux) {
+func (s *Server) registerMessageRoutes(router *http.ServeMux) {
 	if s.MessageStore == nil {
 		return
 	}
-	mux.HandleFunc("/messages", s.handleMessagesCollection)
-	mux.HandleFunc("/messages/notify", s.handleMessageNotify)
-	mux.HandleFunc("/messages/request", s.handleMessageRequest)
-	mux.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
-	mux.HandleFunc("/messages/inbox", s.handleMessagesInbox)
-	mux.HandleFunc("/messages/list", s.handleMessagesList)
-	mux.HandleFunc("/messages/thread/", s.handleMessagesThread)
-	mux.HandleFunc("/messages/", s.handleMessagesItem)
+	router.HandleFunc("/messages", s.handleMessagesCollection)
+	router.HandleFunc("/messages/notify", s.handleMessageNotify)
+	router.HandleFunc("/messages/request", s.handleMessageRequest)
+	router.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
+	router.HandleFunc("/messages/inbox", s.handleMessagesInbox)
+	router.HandleFunc("/messages/list", s.handleMessagesList)
+	router.HandleFunc("/messages/thread/", s.handleMessagesThread)
+	router.HandleFunc("/messages/", s.handleMessagesItem)
 }
 
 type messageNotifyRequest struct {
