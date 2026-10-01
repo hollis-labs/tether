@@ -10,124 +10,102 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
-	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
 
 const testBootPrompt = "BOOT PROMPT: read the task and begin"
 
-// CW-20261001-0015: the shared launch's argv and the runtime adapter's argv
-// were both handed to the spawn. The argv a runtime composes — plan.Args, its
-// adapter's convention, then ExtraArgs — must name each flag and subcommand
-// once, keep the boot prompt out of argv, and still carry the args only the
-// launch knows (the planted --mcp-config, the project dir).
-func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
+// One argv owner (CW-20260930-0135, agentkit v0.13.0): a launched session's
+// every turn spawns the shared launch's template resolved for that turn
+// (StartOptions.Launch), not the runtime adapter's BuildArgs. For each
+// runtime the catalog launches, that argv names each flag once, keeps the
+// boot prompt out, carries the args only the launch knows (the planted
+// --mcp-config, the project dir) and puts the turn last after "--". Tether's
+// interim sharedExtraArgs and its splice are gone (CW-20261001-0095).
+func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
+	const turnPrompt = "--dangerously-bypass-everything"
 	for _, tc := range []struct {
 		name        string
 		providerID  string
 		brand       string
 		runtimeKind string
 		args        []string
-		adapter     gop.CLIAdapter
-		turnPrompt  string
 		wantPairs   [][2]string // flag, root ("boot" | "project")
 		wantOnce    []string
+		wantPrompt  string // "" when the turn goes over stdin, not argv
 	}{
 		{
 			name:        "claude streaming-stdio",
 			providerID:  "claude-code",
 			brand:       "claude",
 			runtimeKind: config.RuntimeKindStreamingStdio,
-			adapter:     gop.NewClaudeAdapterStreamingStdio(),
-			wantPairs:   [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
-			wantOnce:    []string{"-p", "--input-format", "--output-format", "--verbose"},
+			// launch.Resolve's claude args.
+			args:      []string{"--dangerously-skip-permissions"},
+			wantPairs: [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
+			wantOnce:  []string{"-p", "--input-format", "--output-format", "--mcp-config", "--dangerously-skip-permissions"},
 		},
 		{
-			name:        "claude streaming-stdio with provider args",
-			providerID:  "claude-code",
+			name:        "claude print turn",
+			providerID:  "claude-sub",
 			brand:       "claude",
-			runtimeKind: config.RuntimeKindStreamingStdio,
-			args:        []string{"--model", "opus", "--dangerously-skip-permissions"},
-			adapter:     gop.NewClaudeAdapterStreamingStdio(),
+			runtimeKind: config.RuntimeKindSubprocess,
+			args:        []string{"--dangerously-skip-permissions"},
 			wantPairs:   [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
-			wantOnce:    []string{"-p", "--model", "opus", "--dangerously-skip-permissions"},
-		},
-		{
-			// launch.Resolve's claude args: --mcp-config relative to the boot
-			// dir names the same file the projection passes absolute.
-			name:        "claude streaming-stdio with resolver args",
-			providerID:  "claude-code",
-			brand:       "claude",
-			runtimeKind: config.RuntimeKindStreamingStdio,
-			args:        []string{"--mcp-config", ".mcp.json", "--dangerously-skip-permissions"},
-			adapter:     gop.NewClaudeAdapterStreamingStdio(),
-			wantPairs:   [][2]string{{"--add-dir", "project"}},
-			wantOnce:    []string{"-p", "--mcp-config", ".mcp.json", "--dangerously-skip-permissions"},
+			wantOnce:    []string{"-p", "--output-format", "--mcp-config", "--dangerously-skip-permissions"},
+			wantPrompt:  turnPrompt,
 		},
 		{
 			name:        "codex app-server",
 			providerID:  "codex-app-server",
 			brand:       "codex",
 			runtimeKind: config.RuntimeKindJSONRPCStdio,
-			adapter:     gop.NewCodexAdapterAppServer(),
 			wantOnce:    []string{"app-server"},
 		},
 		{
-			// Per-turn print mode: the prompt rides after "--" (go-providers
-			// v0.34.1), and the launch's --add-dir must come before it.
-			name:        "claude print turn",
-			providerID:  "claude-sub",
-			brand:       "claude",
+			name:        "codex exec turn",
+			providerID:  "codex-cli",
+			brand:       "codex",
 			runtimeKind: config.RuntimeKindSubprocess,
-			args:        []string{"--mcp-config", ".mcp.json", "--dangerously-skip-permissions"},
-			adapter:     gop.NewClaudeAdapter(),
-			turnPrompt:  "--dangerously-bypass-everything",
-			wantPairs:   [][2]string{{"--add-dir", "project"}},
-			wantOnce:    []string{"-p", "--mcp-config", "--output-format", "--dangerously-skip-permissions"},
+			wantPairs:   [][2]string{{"--cd", "project"}},
+			wantOnce:    []string{"exec", "--json", "--skip-git-repo-check", "--cd"},
+			wantPrompt:  turnPrompt,
 		},
 		{
-			// The live catalog's opencode: `args: [run]`, a boot prompt and
-			// the planted agent. --agent once, naming the planted agent;
-			// the turn is the only argument after "--".
+			// The live catalog's opencode: `args: [run]`, the planted agent.
 			name:        "opencode run turn",
 			providerID:  "opencode",
 			brand:       "opencode",
 			runtimeKind: config.RuntimeKindSubprocess,
 			args:        []string{"run"},
-			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "tether-agent"; return a }(),
-			turnPrompt:  "Reply with exactly OK",
 			wantPairs:   [][2]string{{"--dir", "project"}},
-			wantOnce:    []string{"run", "--agent", "tether-agent", "--format"},
+			wantOnce:    []string{"run", "--format", "--agent", "tether-agent"},
+			wantPrompt:  turnPrompt,
 		},
 		{
-			// Catalog flags other than the leading run reach argv once
-			// (review of #79: they used to be re-added after the projection).
+			// Catalog flags other than the leading run reach argv once, at
+			// the convention's extra slot.
 			name:        "opencode run with catalog --model",
 			providerID:  "opencode",
 			brand:       "opencode",
 			runtimeKind: config.RuntimeKindSubprocess,
 			args:        []string{"run", "--model", "anthropic/claude-x"},
-			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "tether-agent"; return a }(),
-			turnPrompt:  "Reply with exactly OK",
 			wantPairs:   [][2]string{{"--dir", "project"}},
-			wantOnce:    []string{"run", "--model", "anthropic/claude-x", "--agent"},
+			wantOnce:    []string{"run", "--model", "anthropic/claude-x", "--agent", "tether-agent"},
+			wantPrompt:  turnPrompt,
 		},
 		{
-			name:        "codex-cli exec",
-			providerID:  "codex-cli",
-			brand:       "codex",
+			name:        "antigravity turn",
+			providerID:  "agy",
+			brand:       "antigravity",
 			runtimeKind: config.RuntimeKindSubprocess,
-			adapter:     gop.NewCodexAdapter(),
-			turnPrompt:  "TURN PROMPT",
-			wantPairs:   [][2]string{{"--cd", "project"}},
-			wantOnce:    []string{"exec", "TURN PROMPT", "--json", "--skip-git-repo-check"},
+			wantPairs:   [][2]string{{"--add-dir", "project"}},
+			wantOnce:    []string{"--output-format", "-p=" + turnPrompt},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,22 +136,26 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepareSharedLaunch: %v", err)
 			}
-
-			// Composed the way LaunchSession hands the extras to the runtime.
-			scoped := &claudestream.PlanScopedAdapter{Inner: tc.adapter, BaseArgs: launch.CatalogFlags(plan)}
-			scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan)))
-			argv := scoped.BuildArgs(tc.turnPrompt, "", "")
-			assertPromptLast(t, argv, tc.turnPrompt)
+			if prepared.Launch == nil {
+				t.Fatal("prepared launch has no template; the session would fall back to the adapter's argv")
+			}
+			argv, err := prepared.Launch.TurnArgv(gop.TurnInput{Prompt: turnPrompt})
+			if err != nil {
+				t.Fatalf("TurnArgv: %v", err)
+			}
 
 			if slices.Contains(argv, testBootPrompt) {
-				t.Errorf("boot prompt is in argv: %q", argv)
+				t.Errorf("boot prompt is in a turn's argv: %q", argv)
 			}
+			assertNoRepeatedFlags(t, argv)
 			for _, tok := range tc.wantOnce {
 				if n := countToken(argv, tok); n != 1 {
 					t.Errorf("%q appears %d times, want 1: %q", tok, n, argv)
 				}
 			}
-			assertNoRepeatedFlags(t, argv)
+			if tc.wantPrompt != "" {
+				assertPromptLast(t, argv, tc.wantPrompt)
+			}
 			roots := map[string]string{"boot": prepared.PlantedBootDir, "project": repo}
 			for _, pair := range tc.wantPairs {
 				i := slices.Index(argv, pair[0])
@@ -181,7 +163,7 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 					t.Errorf("%s missing: %q", pair[0], argv)
 					continue
 				}
-				if !underAnyRoot(argv[i+1], []string{roots[pair[1]]}) {
+				if rel, err := filepath.Rel(roots[pair[1]], argv[i+1]); err != nil || strings.HasPrefix(rel, "..") {
 					t.Errorf("%s %q is not under the %s root %q", pair[0], argv[i+1], pair[1], roots[pair[1]])
 				}
 			}
@@ -189,105 +171,43 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 	}
 }
 
-func TestSharedExtraArgs_CodexAppServerIsOneSubcommand(t *testing.T) {
-	svc := &Service{
-		CatalogRoot: t.TempDir(),
-		Catalog:     &config.Catalog{Global: config.Global{Version: "test"}},
-	}
+// opencode merges a planted agent file into its built-in agent of the same
+// name, so the shared launch plants and selects a namespaced agent: the file
+// is agents/tether-<agent>.md and the template's --agent names it.
+func TestOpencodePlantedAgentIsNamespaced(t *testing.T) {
+	svc := &Service{CatalogRoot: t.TempDir(), Catalog: &config.Catalog{Global: config.Global{Version: "test"}}}
 	ws := t.TempDir()
 	plan := &launch.Plan{
-		LaunchID:      "demo",
-		ProjectID:     "project",
-		ProviderID:    "codex-app-server",
-		ProviderBrand: "codex",
-		RuntimeKind:   config.RuntimeKindJSONRPCStdio,
-		RepoRoot:      t.TempDir(),
-		WriteHome:     ws,
-		WorkspaceMode: "shared",
-		Command:       "codex",
-		BootPrompt:    testBootPrompt,
+		LaunchID: "demo", ProjectID: "project", LogicalAgentID: "general",
+		ProviderID: "opencode", ProviderBrand: "opencode", RuntimeKind: config.RuntimeKindSubprocess,
+		RepoRoot: t.TempDir(), WriteHome: ws, WorkspaceMode: "shared", Command: "opencode", Args: []string{"run"}, BootPrompt: testBootPrompt,
+	}
+	if got := launch.OpencodeAgentName(plan); got != "tether-general" {
+		t.Fatalf("OpencodeAgentName = %q, want tether-general", got)
 	}
 	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}
-	scoped := &claudestream.PlanScopedAdapter{Inner: gop.NewCodexAdapterAppServer()}
-	scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan)))
-	argv := scoped.BuildArgs("", "", "")
-	if !slices.Equal(argv, []string{"app-server"}) {
-		t.Fatalf("argv = %q, want [app-server]", argv)
+	var planted []string
+	_ = filepath.WalkDir(prepared.PlantedBootDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && filepath.Base(path) == "tether-general.md" {
+			planted = append(planted, path)
+		}
+		return nil
+	})
+	if len(planted) == 0 {
+		t.Fatalf("no agents/tether-general.md planted under %s", prepared.PlantedBootDir)
 	}
-}
-
-// antigravity keeps the old pass-through until CW-20261001-0095 retires
-// sharedExtraArgs.
-func TestSharedExtraArgs_OtherProvidersPassThrough(t *testing.T) {
-	prepared := preparedWithArgv("agy", "--output-format", "stream-json", "--add-dir", "/p", "-p=boot")
-	got := sharedExtraArgs("antigravity", prepared, nil)
-	want := []string{"--output-format", "stream-json", "--add-dir", "/p", "-p=boot"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("sharedExtraArgs = %q, want %q", got, want)
+	argv, err := prepared.Launch.TurnArgv(gop.TurnInput{Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	got = sharedExtraArgs("antigravity", preparedWithArgv("agy", "--x", "-p=boot"), []string{"--x"})
-	if !slices.Equal(got, []string{"-p=boot"}) {
-		t.Fatalf("sharedExtraArgs with base args = %q, want [-p=boot]", got)
+	if i := slices.Index(argv, "--agent"); i < 0 || argv[i+1] != "tether-general" {
+		t.Fatalf("turn argv does not select the namespaced agent: %q", argv)
 	}
-}
-
-func TestRootBoundArgs(t *testing.T) {
-	roots := []string{"/boot", "/proj"}
-	args := []string{"-p", "prompt", "--verbose", "--mcp-config", "/boot/.mcp.json", "--add-dir", "/proj", "/proj/x", "--cd", "/elsewhere", "/bootstrap"}
-	got := rootBoundArgs(args, roots, nil)
-	want := []string{"--mcp-config", "/boot/.mcp.json", "--add-dir", "/proj", "/proj/x"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("rootBoundArgs = %q, want %q", got, want)
-	}
-
-	// A pair plan.Args already carries — same flag, same target — is not
-	// passed again; the same flag at another target still is.
-	have := flagTargets([]string{"--mcp-config", ".mcp.json", "--add-dir", "/other"}, "/boot")
-	got = rootBoundArgs(args, roots, have)
-	want = []string{"--add-dir", "/proj", "/proj/x"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("rootBoundArgs with plan.Args pairs = %q, want %q", got, want)
-	}
-}
-
-func TestStreamingStdioBootPromptFirstTurn(t *testing.T) {
-	for _, mode := range []string{"planted", "stdin", ""} {
-		t.Run("mode="+mode, func(t *testing.T) {
-			opts := agentsessions.StartOptions{BootPrompt: testBootPrompt, BootMode: mode}
-			streamingStdioBootPromptFirstTurn(agentsessions.Capabilities{StreamingStdio: true}, &opts)
-
-			if opts.BootPrompt != "" || opts.BootMode != "" {
-				t.Fatalf("BootPrompt/BootMode = %q/%q, want cleared so agentkit does not also write it raw", opts.BootPrompt, opts.BootMode)
-			}
-			if !opts.AutoFireFirstTurn {
-				t.Fatal("AutoFireFirstTurn = false, want true")
-			}
-			assertStreamJSONUserTurn(t, opts.FirstTurnPayload, testBootPrompt)
-		})
-	}
-}
-
-func TestStreamingStdioBootPromptFirstTurn_Unchanged(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		caps agentsessions.Capabilities
-		opts agentsessions.StartOptions
-	}{
-		{"pty runtime", agentsessions.Capabilities{PTY: true}, agentsessions.StartOptions{BootPrompt: "p", BootMode: "planted"}},
-		{"jsonrpc runtime", agentsessions.Capabilities{JsonRpcStdio: true}, agentsessions.StartOptions{BootPrompt: "p", BootMode: "planted"}},
-		{"boot mode none", agentsessions.Capabilities{StreamingStdio: true}, agentsessions.StartOptions{BootPrompt: "p", BootMode: "none"}},
-		{"no boot prompt", agentsessions.Capabilities{StreamingStdio: true}, agentsessions.StartOptions{BootMode: "planted"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opts := tc.opts
-			streamingStdioBootPromptFirstTurn(tc.caps, &opts)
-			if opts.BootPrompt != tc.opts.BootPrompt || opts.BootMode != tc.opts.BootMode || opts.AutoFireFirstTurn {
-				t.Fatalf("options changed: %+v", opts)
-			}
-		})
+	if lp := launch.AgentLaunchPlan(&launch.Plan{ProviderBrand: "claude", LogicalAgentID: "general"}, ws); lp.Agent.Name != "" {
+		t.Fatalf("claude AgentSpec.Name = %q, want empty (only opencode is namespaced)", lp.Agent.Name)
 	}
 }
 
@@ -324,7 +244,7 @@ func TestLaunchSession_StreamingStdioClaudeArgvAndBootTurn(t *testing.T) {
 		WriteHome:      wsRoot,
 		WorkspaceMode:  "shared",
 		Command:        fake,
-		Args:           []string{"--mcp-config", ".mcp.json", "--dangerously-skip-permissions"},
+		Args:           []string{"--dangerously-skip-permissions"},
 		BootPrompt:     testBootPrompt,
 		// What launch.Resolve copies from a claude-code provider's bootstrap.mode.
 		BootMode: config.RuntimeKindStreamingStdio,
@@ -507,62 +427,4 @@ func countToken(argv []string, tok string) int {
 		}
 	}
 	return n
-}
-
-func preparedWithArgv(argv ...string) *agentlaunch.PreparedLaunch {
-	return &agentlaunch.PreparedLaunch{Argv: argv}
-}
-
-// opencode merges a planted agent file into its built-in agent of the same
-// name, so the shared launch plants and selects a namespaced agent: the file
-// is agents/tether-<agent>.md and --agent names it.
-func TestOpencodePlantedAgentIsNamespaced(t *testing.T) {
-	svc := &Service{CatalogRoot: t.TempDir(), Catalog: &config.Catalog{Global: config.Global{Version: "test"}}}
-	ws := t.TempDir()
-	plan := &launch.Plan{
-		LaunchID: "demo", ProjectID: "project", LogicalAgentID: "general",
-		ProviderID: "opencode", ProviderBrand: "opencode", RuntimeKind: config.RuntimeKindSubprocess,
-		RepoRoot: t.TempDir(), WriteHome: ws, WorkspaceMode: "shared", Command: "opencode", Args: []string{"run"}, BootPrompt: testBootPrompt,
-	}
-	if got := launch.OpencodeAgentName(plan); got != "tether-general" {
-		t.Fatalf("OpencodeAgentName = %q, want tether-general", got)
-	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux"})
-	if err != nil {
-		t.Fatalf("prepareSharedLaunch: %v", err)
-	}
-	var planted []string
-	_ = filepath.WalkDir(prepared.PlantedBootDir, func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && filepath.Base(path) == "tether-general.md" {
-			planted = append(planted, path)
-		}
-		return nil
-	})
-	if len(planted) == 0 {
-		t.Fatalf("no agents/tether-general.md planted under %s", prepared.PlantedBootDir)
-	}
-	if i := slices.Index(prepared.Argv, "--agent"); i < 0 || prepared.Argv[i+1] != "tether-general" {
-		t.Fatalf("projected argv does not select the namespaced agent: %q", prepared.Argv)
-	}
-	if lp := launch.AgentLaunchPlan(&launch.Plan{ProviderBrand: "claude", LogicalAgentID: "general"}, ws); lp.Agent.Name != "" {
-		t.Fatalf("claude AgentSpec.Name = %q, want empty (only opencode is namespaced)", lp.Agent.Name)
-	}
-}
-
-func TestPeelIndex(t *testing.T) {
-	seg := []string{"--mcp-config", ".mcp.json"}
-	for _, tc := range []struct {
-		name string
-		argv []string
-		want int
-	}{
-		{"before the marker (agentkit v0.12.3)", []string{"-p", "--verbose", "--mcp-config", ".mcp.json", "--", "boot"}, 2},
-		{"at the end (earlier agentkit)", []string{"-p", "--", "boot", "--mcp-config", ".mcp.json"}, 3},
-		{"no marker, at the end", []string{"app-server", "--mcp-config", ".mcp.json"}, 1},
-		{"absent", []string{"-p", "--", "boot"}, -1},
-	} {
-		if got := peelIndex(tc.argv, seg); got != tc.want {
-			t.Errorf("%s: peelIndex = %d, want %d", tc.name, got, tc.want)
-		}
-	}
 }
