@@ -59,6 +59,9 @@ var clientMethodWrites = map[string]bool{
 	// not free: the second call consumes a DIFFERENT set of messages, because
 	// the first already moved the boundary. CW-20260912-0114 tracks the verb.
 	"MessageInbox": true,
+	// The same pull from a named session; when that session is the
+	// recipient, the daemon also consumes what it returns (CW-20261001-0016).
+	"MessageInboxAsSession": true,
 
 	// Writes.
 	// POST /messages/{id}/{read,archive,unarchive}; all three mutate the

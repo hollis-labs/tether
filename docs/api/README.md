@@ -1145,7 +1145,7 @@ RFC 8030 Web Push vocabulary.
 | `/messages` | `POST` | Store an envelope. Body: `{"from":"msg://...","to":"msg://...","kind":"notice","payload":{...}}`. |
 | `/messages/notify` | `POST` | Store an envelope, count unread messages for `to`, and wake a live recipient session when resolvable. |
 | `/messages/{id}` | `GET` | Fetch one message. |
-| `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive: returned messages are marked delivered. |
+| `/messages/inbox?to=<urn>` | `GET` | Agent pull model. Destructive: returned messages are marked delivered. With `as_session=<id>` naming a live session that is the recipient itself (the session address, or a session of the recipient actor), they are also consumed, settling their deliveries. Any other caller gets the listing only. |
 | `/messages/list?to=<urn>` | `GET` | Operator/UI model. Non-destructive; supports `unread_only`, `include_archived`, `limit`, `offset`. |
 | `/messages/{id}/read?as=<urn>` | `POST` | Mark read. |
 | `/messages/{id}/archive?as=<urn>` | `POST` | Archive for recipient. |
@@ -1167,6 +1167,18 @@ that live session, or `msg://agent/<auth>/<logical_agent_id>` to the newest
 running session for that logical agent. Offline recipients still receive the
 durable message; the response includes `wake_attempted`, `wake_delivered`, and
 `wake_error`.
+
+`wake_delivered: true` means the reminder turn was submitted, not that the
+message was read. The delivery then stays leased at `turn_submitted` for up to
+15 minutes, waiting for the recipient to consume the message. Any of these
+closes it as `delivered`: `POST /messages/{id}/consume`, the recipient's own
+inbox pull (the MCP `mux_message_inbox` tool passes its session), or the next
+attempt finding the message consumed or read. If none happens within the
+window, the delivery is retried, which wakes the recipient again as a
+reminder. A wake that was not submitted (busy, offline, submit failed) is
+retried after a short backoff, as before. While the lease is held, another
+claimant of that delivery (a bridge's `POST /messages/{id}/claim`) gets 409
+`conflict` ("delivery already claimed") until it ends.
 
 ---
 
