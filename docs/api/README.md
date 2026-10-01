@@ -1103,19 +1103,20 @@ Record a proxied tool call. Body:
 | `session_id`     | string | the calling session                                             |
 | `args_schema_fp` | string | fingerprint of the argument names, at most 64 bytes             |
 | `duration_ms`    | int    | not negative                                                    |
-| `ok`, `error`    | bool, string | outcome; `error` is truncated at 4 KiB                    |
-| `timestamp`      | RFC3339 | the call's time; defaults to now                               |
+| `ok`, `error`    | bool, string | outcome; `error` is cut to 4 KiB with a `…[truncated]` marker. A caller should cut it first: a body over 64 KiB is refused whole |
+| `timestamp`      | RFC3339 | accepted and ignored: the daemon stamps every record itself   |
 | `phase`          | string | `end` (default) records the call in `proxy_events`; `start` records nothing there and needs `publish` |
-| `publish`        | bool   | also publish the call on the daemon's event bus as `tool_call_start` or `tool_call_end` |
+| `publish`        | bool   | also publish the call on the daemon's event bus as `tool_call_start` or `tool_call_end`. A non-empty `session_id` must then name an existing session (400 otherwise); an empty one goes on the daemon scope |
 
 Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
 `publish`, a missing or over-long field, or a body over 64 KiB; 404 for
-`publish` when the daemon has no event bus.
+`publish` when the daemon has no event bus or no way to look sessions up.
 
-With `publish` the daemon stamps the time itself and ignores `timestamp`: the
-caller is the `mux mcp --daemon-only` server Tether plants in an agent, which
-cannot write the daemon's state, and its clock is not recorded. The other
-fields are the caller's assertion until `muxd` verifies who is calling
+The daemon stamps the time of every record itself and ignores `timestamp`, so
+a record cannot be back-dated. The caller of a published record is the
+`mux mcp --daemon-only` server Tether plants in an agent, which cannot write
+the daemon's state. Its other fields are the caller's assertion: a session that
+exists is accepted whoever names it, until `muxd` verifies who is calling
 (CW-20260930-0253).
 
 ---

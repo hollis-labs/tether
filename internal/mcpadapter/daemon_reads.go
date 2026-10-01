@@ -211,10 +211,13 @@ func (p *DaemonToolCallPublisher) Publish(_ context.Context, e events.Event) err
 		ArgsSchemaFP: tce.ArgsSchemaFP,
 		DurationMs:   tce.DurationMs,
 		OK:           tce.OK,
-		Error:        tce.Error,
-		Timestamp:    tce.Timestamp.UTC().Format(time.RFC3339Nano),
-		Phase:        phase,
-		Publish:      true,
+		// The daemon refuses a body over its limit whole, and an upstream
+		// error can be far larger than that: send what a record keeps, so a
+		// failing call is not left as a start with no end.
+		Error:     api.TruncateProxyEventError(tce.Error),
+		Timestamp: tce.Timestamp.UTC().Format(time.RFC3339Nano),
+		Phase:     phase,
+		Publish:   true,
 	}
 	select {
 	case p.queue <- req:

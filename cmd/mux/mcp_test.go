@@ -88,7 +88,11 @@ func TestRunMCPDaemonOnly_FailsClosedWithoutADaemon(t *testing.T) {
 		t.Fatal("the fixture catalog's daemon address did not resolve")
 	}
 	for name, addr := range map[string]string{"no socket": listenAddr, "no address": ""} {
+		cmd.SilenceUsage = false
 		err := runMCPDaemonOnly(cmd, addr, "tok", nil, nil, false)
+		if !cmd.SilenceUsage {
+			t.Errorf("%s: usage is not silenced, so the one-line reason is followed by cobra's usage text", name)
+		}
 		if err == nil || !strings.Contains(err.Error(), "tether daemon unreachable; mux tools unavailable") {
 			t.Errorf("%s: err = %v, want the daemon-unreachable message", name, err)
 		}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -46,7 +47,9 @@ type ProxyEventIngestRequest struct {
 	DurationMs   int64  `json:"duration_ms"`
 	OK           bool   `json:"ok"`
 	Error        string `json:"error"`
-	Timestamp    string `json:"timestamp"` // RFC3339; defaults to now if empty
+	// Timestamp is accepted for compatibility and ignored: the daemon stamps
+	// the time of every record itself, so a caller cannot back-date one.
+	Timestamp string `json:"timestamp,omitempty"`
 
 	// Phase is the call's phase: ProxyEventPhaseEnd (the default, when
 	// empty) records a finished call in proxy_events; ProxyEventPhaseStart
@@ -55,9 +58,9 @@ type ProxyEventIngestRequest struct {
 	// Publish asks the daemon to also publish the call on its event bus as
 	// a tool_call_start / tool_call_end event, which the bus persists to the
 	// events table. A proxy that cannot write the event log itself (the
-	// daemon-only `mux mcp` Tether plants in an agent) sets it. The daemon
-	// stamps the time, of the event and of the proxy_events row, and ignores
-	// Timestamp; every other field is the caller's assertion.
+	// daemon-only `mux mcp` Tether plants in an agent) sets it. A non-empty
+	// SessionID must then name an existing session. Every field but the time
+	// is the caller's assertion.
 	Publish bool `json:"publish,omitempty"`
 }
 
@@ -69,13 +72,32 @@ const (
 
 // Size limits POST /proxy/events applies. A longer identifier is refused;
 // a longer error is truncated, so one verbose upstream error does not lose
-// the record of its call.
+// the record of its call. A body over maxProxyEventBodyBytes is refused whole,
+// so a caller must truncate the error itself (TruncateProxyEventError) before
+// sending: an upstream error can be far larger than the body limit, and a
+// refused end record leaves an orphan start.
 const (
-	maxProxyEventBodyBytes  = 64 << 10
-	maxProxyEventIDBytes    = 256
-	maxProxyEventFPBytes    = 64
-	maxProxyEventErrorBytes = 4 << 10
+	maxProxyEventBodyBytes = 64 << 10
+	maxProxyEventIDBytes   = 256
+	maxProxyEventFPBytes   = 64
+	// MaxProxyEventErrorBytes is the longest error text a record carries.
+	MaxProxyEventErrorBytes = 4 << 10
 )
+
+// proxyEventErrorTruncated ends an error text TruncateProxyEventError cut.
+const proxyEventErrorTruncated = "…[truncated]"
+
+// TruncateProxyEventError returns s unchanged when it fits a record, and
+// otherwise its start cut on a rune boundary, followed by a marker, within
+// MaxProxyEventErrorBytes in all. The daemon applies it to what it receives;
+// a proxy applies it before sending, so a very large error does not push the
+// body over the limit.
+func TruncateProxyEventError(s string) string {
+	if len(s) <= MaxProxyEventErrorBytes {
+		return s
+	}
+	return truncateUTF8(s, MaxProxyEventErrorBytes-len(proxyEventErrorTruncated)) + proxyEventErrorTruncated
+}
 
 func (s *Server) registerProxyEventRoutes(mux *http.ServeMux) {
 	if s.ProxyEvents == nil {
@@ -155,24 +177,36 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", msg)
 		return
 	}
-	if req.Publish && s.Bus == nil {
-		writeError(w, http.StatusNotFound, CodeNotFound, "event bus not configured")
-		return
+	if req.Publish {
+		if s.Bus == nil {
+			writeError(w, http.StatusNotFound, CodeNotFound, "event bus not configured")
+			return
+		}
+		// A published record lands in the event log and fans out to its
+		// subscribers, so it may only name a session that exists: a forged
+		// session id would otherwise put events into a session that never
+		// ran. An empty session id is a call the proxy could not attribute
+		// (see CW-20260912-0074) and goes on the daemon scope.
+		if req.SessionID != "" {
+			if s.Service == nil {
+				writeError(w, http.StatusNotFound, CodeNotFound, "session lookup not configured")
+				return
+			}
+			if _, err := s.Service.GetSession(req.SessionID); err != nil {
+				if errors.Is(err, store.ErrSessionNotFound) {
+					writeError(w, http.StatusBadRequest, "bad_request", "session_id does not name a session")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, CodeInternalError, "look up session: "+err.Error())
+				return
+			}
+		}
 	}
 	// Server may be empty for native mux tools — store it as-is.
 
-	// With publish the caller is a proxy that cannot write the daemon's
-	// state itself, so its clock is an assertion the daemon does not record:
-	// the daemon stamps the time. Without it, the caller's timestamp is kept
-	// (the operator's own `mux mcp` forwards the call's true time).
+	// The daemon stamps the time of every record. The caller's clock is not
+	// recorded, so a record cannot be back-dated or forward-dated.
 	ts := time.Now().UTC()
-	if req.Timestamp != "" && !req.Publish {
-		if t, err := time.Parse(time.RFC3339Nano, req.Timestamp); err == nil {
-			ts = t
-		} else if t, err := time.Parse(time.RFC3339, req.Timestamp); err == nil {
-			ts = t
-		}
-	}
 
 	if req.Phase != ProxyEventPhaseStart {
 		ev := store.ProxyEvent{
@@ -230,7 +264,7 @@ func validateProxyEventIngest(req *ProxyEventIngestRequest) string {
 	if req.DurationMs < 0 {
 		return "duration_ms must not be negative"
 	}
-	req.Error = truncateUTF8(req.Error, maxProxyEventErrorBytes)
+	req.Error = TruncateProxyEventError(req.Error)
 	return ""
 }
 

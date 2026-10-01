@@ -201,6 +201,9 @@ const errDaemonOnlyUnreachable = "tether daemon unreachable; mux tools unavailab
 // Without a reachable daemon it fails closed: an agent launched while muxd is
 // down has no mux tools.
 func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serverFilter []string, curatedOnly bool) error {
+	// A refusal to start is not a usage error: print the one line that says
+	// why, not cobra's usage text after it.
+	cmd.SilenceUsage = true
 	if listenAddr == "" {
 		return fmt.Errorf("%s: the daemon address could not be resolved from the catalog", errDaemonOnlyUnreachable)
 	}

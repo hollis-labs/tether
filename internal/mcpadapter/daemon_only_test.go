@@ -49,6 +49,7 @@ func (s *daemonOnlyService) RuntimeHealth(string) (api.RuntimeHealthResult, bool
 }
 
 type daemonOnlyFixture struct {
+	client     *client.Client
 	db         *store.Store
 	inProcess  *Adapter // reads the store directly
 	daemonOnly *Adapter // no Store: reads the daemon API
@@ -106,6 +107,7 @@ func newDaemonOnlyFixture(t *testing.T) *daemonOnlyFixture {
 	dc := client.New("tcp:" + strings.TrimPrefix(srv.URL, "http://"))
 
 	return &daemonOnlyFixture{
+		client:     dc,
 		db:         db,
 		service:    svc,
 		inProcess:  New(&app.Service{Store: db}, "tok", nil),
@@ -334,5 +336,75 @@ func TestDaemonToolCallPublisher_NeverBlocksATool(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Publish blocked on a daemon that does not answer")
+	}
+}
+
+// A failing call's upstream error can be far larger than the daemon's body
+// limit, which refuses a body over it whole. The publisher cuts the error
+// before sending, so the end record still arrives; it used to be dropped,
+// leaving a start with no proxy_events row, on failing calls specifically.
+func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := NewDaemonToolCallPublisher(ctx, f.client)
+
+	huge := strings.Repeat("upstream said no. ", 100<<10/18) // about 100 KB
+	if len(huge) < 90<<10 {
+		t.Fatalf("test error is only %d bytes", len(huge))
+	}
+	mk := func(kind string, ev events.ToolCallEvent) events.Event {
+		raw, _ := json.Marshal(ev)
+		return events.Event{Scope: events.ScopeSession, SessionID: ev.SessionID, Kind: kind, PayloadJSON: string(raw)}
+	}
+	call := events.ToolCallEvent{SessionID: "sess-1", ToolName: "huge_error_tool", Server: "hadron", ArgsSchemaFP: "ab12cd34", Timestamp: time.Now().UTC()}
+	end := call
+	end.OK, end.DurationMs, end.Error = false, 5, huge
+	for _, e := range []events.Event{mk(events.EventTypeToolCallStart, call), mk(events.EventTypeToolCallEnd, end)} {
+		if err := p.Publish(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var rows []store.ProxyEvent
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, _ = f.db.QueryProxyEvents(store.ProxyEventFilter{ToolName: "huge_error_tool"})
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("proxy_events rows for the failing call = %d, want 1: the end record was dropped", len(rows))
+	}
+	if rows[0].OK || len(rows[0].Error) > api.MaxProxyEventErrorBytes || !strings.HasSuffix(rows[0].Error, "[truncated]") {
+		t.Errorf("row = ok %v, error %d bytes ending %q; want a failure with a truncated error within the cap", rows[0].OK, len(rows[0].Error), rows[0].Error[max(0, len(rows[0].Error)-14):])
+	}
+	evs, err := f.db.ListEventsBySession("sess-1", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, e := range evs {
+		kinds[e.Kind]++
+	}
+	if kinds[events.EventTypeToolCallStart] != 1 || kinds[events.EventTypeToolCallEnd] != 1 {
+		t.Errorf("event kinds for sess-1 = %v, want one tool_call_start and one tool_call_end: an orphan start", kinds)
+	}
+}
+
+// The daemon refuses a published record for a session that does not exist.
+func TestDaemonToolCallPublisher_ADaemonRefusesAForgedSession(t *testing.T) {
+	f := newDaemonOnlyFixture(t)
+	err := f.client.IngestProxyEvent(context.Background(), api.ProxyEventIngestRequest{
+		SessionID: "no-such-session", ToolName: "t", Phase: api.ProxyEventPhaseEnd, Publish: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("a record for an unknown session: err = %v, want a 400", err)
+	}
+	evs, _ := f.db.ListEventsBySession("no-such-session", 0, 0)
+	if len(evs) != 0 {
+		t.Errorf("events for a session that never ran: %+v", evs)
 	}
 }

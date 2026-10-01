@@ -227,23 +227,36 @@ the agent can then be kept from writing the state directory. In this mode:
   record to `POST /proxy/events` with `publish`, and the daemon writes
   `proxy_events` and the `events` log itself.
 - It refuses to start unless the daemon answers, with the error `tether daemon
-  unreachable; mux tools unavailable`. An agent launched while `muxd` is down
-  therefore has no mux tools. Nothing falls back to opening the database.
+  unreachable; mux tools unavailable`, and exits with that line alone (no usage
+  text). An agent launched while `muxd` is down therefore has **no mux tools and
+  no proxied upstream tools** (`torque`, `tesseract` and the rest): the whole
+  server is absent, not only its native tools. It does not retry, and nothing
+  falls back to opening the database.
+- If the daemon goes down after the server has started, each read fails with a
+  `daemon_unavailable` tool error; tool-call records are dropped with a logged
+  warning; and an upstream call goes out without its `tether.provenance`
+  stamp, because the session's workstream cannot be looked up (a WARN is
+  logged, and the call is not failed).
 - Reads of the daemon's own state are the daemon's answers: `mux_session_health`
   now reports the daemon's live sessions, and `mux_session_list` and
   `mux_session_get` carry the daemon's `attached_clients`. `mux_logical_agent_list`
-  returns the daemon's summary (`id`, `name`, `launch_id`, `checkpoint_policy`,
-  `checkpoint_status`), which has fewer fields than the table row an ordinary
-  `mux mcp` returns.
+  returns the daemon's summary, which has fewer fields than the table row an
+  ordinary `mux mcp` returns, and **different JSON keys**: `id`, `name`,
+  `launch_id`, `checkpoint_policy` (normalized) and `checkpoint_status`, where
+  the ordinary server returns `ID`, `Role`, `Name`, `Responsibilities`, … in
+  Go field case. A caller that reads those keys must handle both.
 
 An operator's own `mux mcp` (in `~/.claude.json`, say) is unchanged: it opens
 the database as before. `mux boot-exec` plants the same ordinary server, since
 it runs in the operator's terminal outside any Tether sandbox.
 
 Records the daemon-only server posts are asserted by the agent's process. The
-daemon checks their shape, caps their size and stamps their time, but the
-tool name, server and outcome are the caller's word until `muxd` verifies who is
-calling (CW-20260930-0253).
+daemon checks their shape, caps their size, stamps their time, and refuses a
+published record whose `session_id` names no session. It cannot tell which
+session is really calling, so the tool name, server, outcome and session are the
+caller's word until `muxd` verifies who is calling (CW-20260930-0253). The
+server cuts a tool error to 4 KiB, with a `…[truncated]` marker, before
+sending, because the daemon refuses an oversized body whole.
 
 ### Upstream failures and recovery
 
