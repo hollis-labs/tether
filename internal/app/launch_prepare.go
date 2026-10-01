@@ -65,6 +65,11 @@ type MuxMCPPlan struct {
 // RefAttributionUnlaunched, so a caller that DOES have a row to stamp records
 // that this session's proxy can never attribute a call to it.
 //
+// A session the daemon launched also gets --protect-path for each directory
+// Tether protects from its agent (the catalog root and the run directory), so
+// the planted server refuses to write them whether or not a sandbox is around
+// it: Codex spawns MCP servers itself, outside any Tether sandbox.
+//
 // A session the daemon launched also gets --daemon-only: its server runs
 // inside the agent's sandbox, never opens the state database, and reaches
 // Tether's state only through the daemon, so the sandbox can keep the state
@@ -76,7 +81,7 @@ type MuxMCPPlan struct {
 // Configured via catalog settings (CW-20260912-0112) and passed here from
 // LaunchSession. The flag and the attribution stamp are decided together:
 // the argv and the stamp cannot disagree.
-func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool) MuxMCPPlan {
+func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool, protected ...string) MuxMCPPlan {
 	args := []string{
 		"--catalog", catalogRoot,
 		"mcp", "--proxy",
@@ -92,6 +97,14 @@ func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool) MuxMCPPlan {
 	// sessionless caller, `mux boot`, plants for an operator's own terminal
 	// and is not confined.
 	args = append(args, "--confine", "--daemon-only", "--session", sessionID)
+	// The directories Tether protects from this agent are also refused by the
+	// planted server itself (mux_agent_create / mux_agent_edit), as a policy,
+	// because a runtime that spawns MCP servers outside Tether's sandbox (Codex)
+	// would otherwise let the server write them on the agent's behalf
+	// (CW-20261001-0142).
+	for _, dir := range protected {
+		args = append(args, "--protect-path", dir)
+	}
 	if !extractRefs {
 		return MuxMCPPlan{Args: args, Attribution: store.RefAttributionNone}
 	}

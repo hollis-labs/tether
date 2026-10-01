@@ -72,6 +72,15 @@ type Adapter struct {
 	token     string
 	scopes    map[string]struct{}
 
+	// protected is the set of directories this adapter must not write, as real
+	// paths (SetProtectedPaths). Tether sets it for the `mux mcp` it plants into
+	// a launched agent, from the same decision that registers the agent's
+	// ProtectedPaths (CW-20261001-0142). It is a POLICY, not a side effect of a
+	// read-only mount: a runtime that runs the planted server outside Tether's
+	// sandbox (Codex spawns MCP servers itself, unsandboxed) gets the same
+	// refusal as one that runs it inside.
+	protected []string
+
 	// Logger receives the warn-level telemetry emitted by the
 	// go-mcp-sanitize middleware when it cleans a polluted tool call.
 	// Optional; nil falls back to slog.Default(). The MCP stdio command

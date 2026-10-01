@@ -49,5 +49,14 @@ jobs:
       - name: Install developer tools
         run: make tools-install
 
+      - name: Install bubblewrap
+        # Every agent launch runs under a protecting sandbox (bwrap on
+        # Linux; CW-20261001-0142), and the end-to-end protection test needs
+        # one. NOTE: on ubuntu-latest that test still SKIPS itself, because
+        # AppArmor stops bwrap creating a user namespace even once installed
+        # ("setting up uid map: Permission denied"), so CI does not exercise
+        # it. Installing bubblewrap here only helps on a runner that allows it.
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Run full quality gate
         run: make check

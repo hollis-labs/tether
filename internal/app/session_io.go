@@ -12,6 +12,9 @@ import (
 // SendInput writes data to the named session's input channel. Thin wrapper
 // over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
+	if err := s.refuseWidenedCodex(id); err != nil {
+		return err
+	}
 	return s.subprocessTurn(id, func() error { return s.Manager.SendInput(id, data) })
 }
 
@@ -43,6 +46,9 @@ func (s *Service) subprocessTurn(id string, send func() error) error {
 // intended for callers that want lifecycle-aware framing without
 // hand-rolling the per-mode envelope.
 func (s *Service) SendTurn(ctx context.Context, id, text string) error {
+	if err := s.refuseWidenedCodex(id); err != nil {
+		return err
+	}
 	info, ok := s.Manager.Get(id)
 	if !ok {
 		return agentsessions.ErrSessionNotRunning

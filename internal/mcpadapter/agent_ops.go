@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
+	"github.com/hollis-labs/go-mcp/budget"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/agentops"
@@ -129,20 +131,23 @@ func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any
 	if err != nil {
 		return nil, err
 	}
-	path, err := agentops.Create(root, id, agentops.Params{
+	if refusal := a.refuseProtectedWrite(agentops.PathFor(root, id)); refusal != nil {
+		return nil, refusal
+	}
+	path, err := agentops.CreateGuarded(root, id, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
 		Skills:       csvArgPresent(args, "skills"),
 		SystemPrompt: str(args, "system_prompt"),
 		AgentPrompt:  str(args, "agent_prompt"),
-	})
+	}, a.protected)
 	if err != nil {
 		// An already-exists is a caller error (conflict); anything else
 		// (permission denied, bad layer root, write failure) is internal.
 		if errors.Is(err, agentops.ErrExists) {
 			return nil, toolError("conflict", err.Error())
 		}
-		return nil, toolError("internal_error", err.Error())
+		return nil, agentWriteError(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -168,15 +173,18 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 	if !ok {
 		return nil, toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id))
 	}
-	updated, err := agentops.Update(la.Path, agentops.Params{
+	if refusal := a.refuseProtectedWrite(la.Path); refusal != nil {
+		return nil, refusal
+	}
+	updated, err := agentops.UpdateGuarded(la.Path, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
 		Skills:       csvArgPresent(args, "skills"),
 		SystemPrompt: str(args, "system_prompt"),
 		AgentPrompt:  str(args, "agent_prompt"),
-	})
+	}, a.protected)
 	if err != nil {
-		return nil, toolError("internal_error", err.Error())
+		return nil, agentWriteError(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -184,6 +192,80 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 		"path":  la.Path,
 		"agent": updated,
 	}), nil
+}
+
+// codeCatalogReadOnly is the tool error code for a write into a directory
+// Tether protects from the agent it launched.
+const codeCatalogReadOnly = "catalog_read_only"
+
+// catalogReadOnlyMessage is what an agent is told, whichever way the write was
+// stopped.
+const catalogReadOnlyMessage = "the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo"
+
+// codeAgentFileIsSymlink is the tool error code for an agent file whose own name
+// is a symlink, which a launched agent's write does not follow while Tether
+// protects its catalog.
+const codeAgentFileIsSymlink = "agent_file_is_symlink"
+
+// agentFileIsSymlinkMessage says what to do instead.
+const agentFileIsSymlinkMessage = "the agent file is a symlink, and a launched agent's write does not follow one while Tether protects its catalog; edit the link's target, or replace the link with a regular file"
+
+// SetProtectedPaths sets the directories this adapter refuses to write: the
+// protected directories the launch registered for the agent. It resolves each
+// to its real path, so a symlink into one does not get around it.
+func (a *Adapter) SetProtectedPaths(paths []string) {
+	a.protected = a.protected[:0]
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" {
+			a.protected = append(a.protected, config.RealPath(config.Expand(p)))
+		}
+	}
+}
+
+// ProtectedPaths returns the directories this adapter refuses to write, as
+// real paths.
+func (a *Adapter) ProtectedPaths() []string { return append([]string(nil), a.protected...) }
+
+// refuseProtectedWrite is the ONE guard every native tool that writes a file
+// into the catalog tree goes through, today mux_agent_create and mux_agent_edit
+// (the audit of internal/mcpadapter found no other native tool that writes
+// there: the rest read the catalog, or write to the database or the daemon). It
+// returns a typed catalog_read_only error when target, resolved through
+// symlinks, lies in a protected directory, and nil otherwise. A tool that
+// writes under the catalog root must call it before writing.
+//
+// This is the early, path-based refusal, and it is NOT what makes the refusal
+// hold: a symlink re-pointed between this check and the write defeats it (20000
+// project-scope creates with `.tether` flipped between two symlinks, one into
+// the catalog, wrote there 3861 times). The write itself goes through
+// agentops.CreateGuarded and UpdateGuarded, which open the destination
+// directory once, judge that directory's identity and its ancestors', and write
+// relative to it.
+func (a *Adapter) refuseProtectedWrite(target string) *budget.ToolError {
+	if len(a.protected) == 0 {
+		return nil
+	}
+	resolved := config.RealPath(target)
+	for _, dir := range a.protected {
+		if config.PathWithin(dir, resolved) {
+			return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
+		}
+	}
+	return nil
+}
+
+// agentWriteError turns a failed agent-file write into a tool error. A
+// read-only file system is not a defect: Tether write-protects the catalog for
+// the agents it launches (CW-20261001-0142), so it answers with a typed error
+// that says what to do instead of a raw EROFS.
+func agentWriteError(err error) *budget.ToolError {
+	if errors.Is(err, syscall.EROFS) || errors.Is(err, agentops.ErrProtected) {
+		return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
+	}
+	if errors.Is(err, agentops.ErrSymlinkedFile) {
+		return toolError(codeAgentFileIsSymlink, agentFileIsSymlinkMessage)
+	}
+	return toolError("internal_error", err.Error())
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

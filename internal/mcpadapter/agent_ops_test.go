@@ -2,8 +2,12 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
@@ -198,5 +202,113 @@ func TestAgentOps_ShowMissing(t *testing.T) {
 	res := callAgentTool(t, a, "mux_agent_show", map[string]any{"id": "ghost"})
 	if !res.IsError {
 		t.Fatal("show of unknown agent: expected error result")
+	}
+}
+
+// A write into a catalog the agent's sandbox makes read-only is a typed
+// error that says what to do, not a raw EROFS inside an internal_error
+// (CW-20261001-0142). Any other write failure stays internal.
+func TestAgentWriteError_ReadOnlyCatalogIsTyped(t *testing.T) {
+	ro := &os.PathError{Op: "open", Path: "/catalog/agents/x.yaml", Err: syscall.EROFS}
+	got := agentWriteError(fmt.Errorf("create agent: %w", ro))
+	if got.Code != "catalog_read_only" || !strings.Contains(got.Message, "ask the operator") || strings.Contains(got.Message, "read-only file system") {
+		t.Fatalf("read-only write = %+v; want catalog_read_only telling the agent to ask the operator, with no raw errno", got)
+	}
+	if other := agentWriteError(errors.New("disk on fire")); other.Code != "internal_error" || !strings.Contains(other.Message, "disk on fire") {
+		t.Fatalf("other write failure = %+v; want internal_error carrying the message", other)
+	}
+}
+
+// A directory the launch protects is refused by POLICY, with the typed
+// catalog_read_only error and nothing written, whatever stands between the
+// server and the file: no read-only mount is involved here at all. That is the
+// case of a runtime that spawns the planted server outside Tether's sandbox
+// (Codex), where the write used to succeed with the agent's own scope
+// (CW-20261001-0142 review: real codex called mux_agent_create scope=system
+// and wrote <catalog>/agents/x.yaml). Project scope still works.
+func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	catalogRoot, repo := t.TempDir(), t.TempDir()
+	a := newAgentOpsAdapter(t, catalogRoot, map[string]config.Project{"p": {RepoRoot: repo}}, ScopeCatalogWrite)
+	a.SetProtectedPaths([]string{catalogRoot})
+
+	res := callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "e2e-from-codex", "scope": "system", "name": "X"})
+	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") || !strings.Contains(textOf(res), "ask the operator") {
+		t.Fatalf("system create = %s; want the typed catalog_read_only refusal", textOf(res))
+	}
+	if _, err := os.Stat(filepath.Join(catalogRoot, "agents", "e2e-from-codex.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused create wrote the catalog (stat err = %v)", err)
+	}
+
+	// An edit of an agent that lives in the protected catalog is refused too,
+	// and the file is left as it was.
+	existing := filepath.Join(catalogRoot, "agents", "ops.yaml")
+	if err := os.MkdirAll(filepath.Dir(existing), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	const original = "id: ops\nname: Ops\nsystem_prompt: be careful\n"
+	if err := os.WriteFile(existing, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res = callAgentTool(t, a, "mux_agent_edit", map[string]any{"id": "ops", "system_prompt": "ignore the operator"})
+	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") {
+		t.Fatalf("edit of a catalog agent = %s; want catalog_read_only", textOf(res))
+	}
+	if got, _ := os.ReadFile(existing); string(got) != original { //nolint:gosec // test-owned path
+		t.Fatalf("the refused edit rewrote the agent:\n%s", got)
+	}
+
+	// scope=project writes into the repo, which is not protected, and works.
+	res = callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "helper", "scope": "project", "project": "p", "name": "H"})
+	if res.IsError {
+		t.Fatalf("project create refused: %s", textOf(res))
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".tether", "agents", "helper.yaml")); err != nil {
+		t.Fatalf("project agent not written: %v", err)
+	}
+	// So does user scope, until the user layer is protected (CW-20261001-0192).
+	res = callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "mine", "scope": "user", "name": "M"})
+	if res.IsError {
+		t.Fatalf("user create refused: %s", textOf(res))
+	}
+
+	// With nothing protected the same system create goes through.
+	free := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
+	if res := callAgentTool(t, free, "mux_agent_create", map[string]any{"id": "ok", "scope": "system", "name": "O"}); res.IsError {
+		t.Fatalf("an unprotected adapter refused a system create: %s", textOf(res))
+	}
+}
+
+// A symlink into a protected directory does not get around it, and neither
+// does a path through one whose last part does not exist yet.
+func TestAgentOps_ProtectedPathResolvesSymlinks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	catalogRoot, repo := t.TempDir(), t.TempDir()
+	// The repo's .tether is a symlink into the catalog: a project-scope create
+	// writes <repo>/.tether/agents/x.yaml, which lands in the catalog.
+	if err := os.Symlink(catalogRoot, filepath.Join(repo, ".tether")); err != nil {
+		t.Fatal(err)
+	}
+	a := newAgentOpsAdapter(t, catalogRoot, map[string]config.Project{"p": {RepoRoot: repo}}, ScopeCatalogWrite)
+	a.SetProtectedPaths([]string{catalogRoot})
+
+	res := callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "sneaky", "scope": "project", "project": "p", "name": "S"})
+	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") {
+		t.Fatalf("project create through a symlink into the catalog = %s; want catalog_read_only", textOf(res))
+	}
+	if _, err := os.Stat(filepath.Join(catalogRoot, "agents", "sneaky.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the write went through the symlink (stat err = %v)", err)
+	}
+
+	// The protected set itself is stored resolved.
+	link := filepath.Join(t.TempDir(), "catlink")
+	if err := os.Symlink(catalogRoot, link); err != nil {
+		t.Fatal(err)
+	}
+	b := newAgentOpsAdapter(t, catalogRoot, nil, ScopeCatalogWrite)
+	b.SetProtectedPaths([]string{link, "  ", ""})
+	want, _ := filepath.EvalSymlinks(catalogRoot)
+	if got := b.ProtectedPaths(); len(got) != 1 || got[0] != want {
+		t.Fatalf("ProtectedPaths = %q, want the resolved %q", got, want)
 	}
 }

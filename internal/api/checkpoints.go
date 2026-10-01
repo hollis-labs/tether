@@ -303,6 +303,9 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		if writeIdempotencyConflict(w, err) {
 			return
 		}
+		if writeLaunchRefused(w, err) {
+			return
+		}
 		msg := err.Error()
 		switch {
 		case errors.Is(err, config.ErrUnknownSandboxProfile):
