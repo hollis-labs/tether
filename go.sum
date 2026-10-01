@@ -62,8 +62,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hollis-labs/agent-contracts-leaf v0.3.0 h1:tOAbq1y2Qtkk/S81hpSTlE3ZIsXWacSWkad1NfTMEvY=
 github.com/hollis-labs/agent-contracts-leaf v0.3.0/go.mod h1:Yp3iEG7I1qHxGL+Ad085RDVP5xUM/dbL0nFxzCAQ9/w=
-github.com/hollis-labs/agentkit v0.12.2 h1:i3OV0YODMlp2TlU9ciLDSWCpDSNt1ongtNishtpxWz8=
-github.com/hollis-labs/agentkit v0.12.2/go.mod h1:qqM7Fi3KX/41iMuGczqrc+bSoUGTqiLvTkmOmsGwsPY=
+github.com/hollis-labs/agentkit v0.12.3 h1:GbcD9UnEex82jr8m951d8CrEOKePFYw1Tol7NC/fQJE=
+github.com/hollis-labs/agentkit v0.12.3/go.mod h1:krgas5I+t6+VEDBGDhrGBX6xYSZtZRhrcwoGtZX1Mmg=
 github.com/hollis-labs/go-agent-wrapper v0.15.0 h1:KajcNh6r7r/++nk/5hwIlvE8oyNrI3GZ0Or9g+s8324=
 github.com/hollis-labs/go-agent-wrapper v0.15.0/go.mod h1:vYz+80A/EmY6Z9SdCcSdaVvR9tIJgh4Z8oz7033KqT8=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=

@@ -485,3 +485,21 @@ func countToken(argv []string, tok string) int {
 func preparedWithArgv(argv ...string) *agentlaunch.PreparedLaunch {
 	return &agentlaunch.PreparedLaunch{Argv: argv}
 }
+
+func TestPeelIndex(t *testing.T) {
+	seg := []string{"--mcp-config", ".mcp.json"}
+	for _, tc := range []struct {
+		name string
+		argv []string
+		want int
+	}{
+		{"before the marker (agentkit v0.12.3)", []string{"-p", "--verbose", "--mcp-config", ".mcp.json", "--", "boot"}, 2},
+		{"at the end (earlier agentkit)", []string{"-p", "--", "boot", "--mcp-config", ".mcp.json"}, 3},
+		{"no marker, at the end", []string{"app-server", "--mcp-config", ".mcp.json"}, 1},
+		{"absent", []string{"-p", "--", "boot"}, -1},
+	} {
+		if got := peelIndex(tc.argv, seg); got != tc.want {
+			t.Errorf("%s: peelIndex = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}

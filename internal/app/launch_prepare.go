@@ -175,11 +175,12 @@ func sharedExtraArgs(providerBrand string, prepared *agentlaunch.PreparedLaunch,
 			roots = append(roots, plan.Workspace.Workdir, plan.Project.Root)
 		}
 	}
-	// providerplant appends ProviderSpec.Flags and then Injection.Args after
-	// the launch binding; peel them off the tail when they are there.
+	// providerplant places ProviderSpec.Flags then Injection.Args right
+	// before the projected argv's end-of-options "--" (agentkit v0.12.3), or
+	// after the binding when there is none; peel them off wherever they are.
 	tail := append(append([]string(nil), flags...), injected...)
-	if n := len(binding) - len(tail); n >= 0 && slices.Equal(binding[n:], tail) {
-		binding = binding[:n]
+	if n := peelIndex(binding, tail); n >= 0 {
+		binding = slices.Delete(slices.Clone(binding), n, n+len(tail))
 	} else {
 		flags, injected = nil, nil
 	}
@@ -191,6 +192,20 @@ func sharedExtraArgs(providerBrand string, prepared *agentlaunch.PreparedLaunch,
 		out = append(out, flags...)
 	}
 	return append(out, injected...)
+}
+
+// peelIndex is where seg sits in argv: immediately before the first "--",
+// else at the end. -1 when it is in neither place.
+func peelIndex(argv, seg []string) int {
+	if i := slices.Index(argv, "--"); i >= 0 {
+		if n := i - len(seg); n >= 0 && slices.Equal(argv[n:i], seg) {
+			return n
+		}
+	}
+	if n := len(argv) - len(seg); n >= 0 && slices.Equal(argv[n:], seg) {
+		return n
+	}
+	return -1
 }
 
 // passThroughExtraArgs is the pre-CW-20261001-0015 behavior: all of argv

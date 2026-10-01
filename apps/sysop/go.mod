@@ -34,7 +34,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0 // indirect
-	github.com/hollis-labs/agentkit v0.12.2 // indirect
+	github.com/hollis-labs/agentkit v0.12.3 // indirect
 	github.com/hollis-labs/go-agent-wrapper v0.15.0 // indirect
 	github.com/hollis-labs/go-apppaths v0.1.0 // indirect
 	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
