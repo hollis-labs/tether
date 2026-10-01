@@ -216,11 +216,18 @@ func TestResolveActorSession_BoundOwnerOffline_NoFallbackReroute(t *testing.T) {
 	}
 
 	got, err := resolveActorSession(ctx, st, reg, rt.seam(), "worker")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
+	// CW-20260912-0134: the offline owner is reported, not silently declined.
+	if !errors.Is(err, api.ErrBoundSessionNotRunning) {
+		t.Fatalf("resolve err = %v, want ErrBoundSessionNotRunning", err)
 	}
 	if got != "" {
 		t.Fatalf("resolveActorSession = %q, want \"\" (a bound-but-offline owner must never silently reroute to a different running session for the same actor)", got)
+	}
+	// The sweep's resolver treats it as any offline recipient: no session,
+	// no error, so #64's parking applies.
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	if got, err := resolveWakeTarget(ctx, st, reg, rt.seam(), to); got != "" || err != nil {
+		t.Fatalf("resolveWakeTarget = %q, %v; want \"\", nil", got, err)
 	}
 }
 

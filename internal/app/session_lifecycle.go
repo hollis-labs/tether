@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -333,7 +333,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, err
 	}
 	// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
-	startOpts.ExtraArgs = sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+	// A runtime that takes them per session places them before a turn's
+	// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
+	// StartOptions.ExtraArgs would land after the prompt.
+	extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+	if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
+		er.SetExtraArgs(extraArgs)
+		startOpts.ExtraArgs = nil
+	} else {
+		startOpts.ExtraArgs = extraArgs
+	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
@@ -412,6 +421,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// otherwise-successful launch (established enhancement-write pattern,
 	// e.g. SetClaudeSessionID above).
 	s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+	s.watchSessionBindings(sessionID)
 
 	return &Launched{
 		SessionID:    sessionID,
@@ -439,7 +449,7 @@ func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsession
 		Mode:   sessionkit.AutoFireFirstTurn,
 		Prompt: bootPrompt,
 		Turn: turn.Options{
-			Runtime: runtimekind.PTY,
+			Runtime: runtimes.ModePTY,
 		},
 	})
 }
@@ -467,7 +477,7 @@ func streamingStdioBootPromptFirstTurn(caps agentsessions.Capabilities, opts *ag
 		Mode:   sessionkit.AutoFireFirstTurn,
 		Prompt: bootPrompt,
 		Turn: turn.Options{
-			Runtime: runtimekind.StreamingStdio,
+			Runtime: runtimes.ModeStreamingStdio,
 		},
 	})
 }
@@ -554,6 +564,25 @@ func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) {
 	if _, err := s.Registry.LeaseBinding(context.Background(), target, sessionID, localHostID, sessionID, nil, registry.VisibilityPrivateLocal, 0); err != nil {
 		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
 	}
+}
+
+// watchSessionBindings revokes every binding sessionID holds once the
+// session has ended, however it ended: a stop, a natural exit or a crash
+// (CW-20260912-0134). A binding left behind by an ended session is promoted
+// back to current as soon as the generations above it are revoked, binding
+// the actor to a session that no longer exists. Sessions that end while the
+// daemon is down are covered by ReconcileStaleState instead. No-op without a
+// Registry.
+func (s *Service) watchSessionBindings(sessionID string) {
+	if s.Registry == nil {
+		return
+	}
+	go func() {
+		_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+		if _, err := s.Registry.RevokeSessionBindings(context.Background(), sessionID); err != nil {
+			log.Printf("app: revoke bindings of ended session %q failed (non-fatal): %v", sessionID, err)
+		}
+	}()
 }
 
 // revokeActorBindingIfCurrent best-effort-revokes id's own binding on

@@ -433,6 +433,9 @@ func (a *Adapter) handleAIChatStream(ctx context.Context, args map[string]any) (
 }
 
 func (a *Adapter) handleAIUsage(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkToken(); err != nil {
+		return nil, err
+	}
 	c, err := a.requireAIClient()
 	if err != nil {
 		return nil, err
@@ -455,6 +458,9 @@ func (a *Adapter) handleAIUsage(ctx context.Context, args map[string]any) (any, 
 }
 
 func (a *Adapter) handleAIBudgets(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkToken(); err != nil {
+		return nil, err
+	}
 	c, err := a.requireAIClient()
 	if err != nil {
 		return nil, err
@@ -476,6 +482,9 @@ func (a *Adapter) handleAIBudgets(ctx context.Context, args map[string]any) (any
 }
 
 func (a *Adapter) handleAIAudit(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkToken(); err != nil {
+		return nil, err
+	}
 	c, err := a.requireAIClient()
 	if err != nil {
 		return nil, err
@@ -501,6 +510,9 @@ func (a *Adapter) handleAIAudit(ctx context.Context, args map[string]any) (any, 
 }
 
 func (a *Adapter) handleAIBudgetAlerts(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkToken(); err != nil {
+		return nil, err
+	}
 	c, err := a.requireAIClient()
 	if err != nil {
 		return nil, err
@@ -525,6 +537,9 @@ func (a *Adapter) handleAIBudgetAlerts(ctx context.Context, args map[string]any)
 }
 
 func (a *Adapter) handleAIWaitBudgetAlerts(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkToken(); err != nil {
+		return nil, err
+	}
 	c, err := a.requireAIClient()
 	if err != nil {
 		return nil, err

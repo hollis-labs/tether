@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	"github.com/hollis-labs/tether/internal/llm/router"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
+	"github.com/hollis-labs/tether/internal/redact"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -60,6 +61,10 @@ type Service struct {
 	Middleware   []llm.Middleware
 	Recorder     observability.Recorder
 	Publisher    events.Publisher
+	// Secrets holds the provider credentials resolved so far; audit
+	// error text is scrubbed of them before it is recorded
+	// (CW-20260930-0009). nil redacts nothing.
+	Secrets *redact.Set
 }
 
 // Chat routes one normalized chat request through middleware and into the
@@ -537,7 +542,7 @@ func (s *Service) recordAuditEvent(eventType string, req llm.Request, plan route
 		Timestamp:        time.Now().UTC(),
 	}
 	if callErr != nil {
-		ev.Error = callErr.Error()
+		ev.Error = s.Secrets.Redact(callErr.Error())
 	}
 	_ = s.Recorder.RecordAIAuditEvent(ev)
 }

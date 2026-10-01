@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // AgentLaunchPlan maps Tether's persisted launch.Plan onto the shared
@@ -33,7 +35,7 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 		Provider: agentlaunch.ProviderSpec{
 			ID:         plan.ProviderBrand,
 			Binary:     plan.Command,
-			Flags:      append([]string(nil), plan.Args...),
+			Flags:      CatalogFlags(plan),
 			Env:        copyMap(plan.Env),
 			Permission: providerPermission(plan.ProviderBrand),
 		},
@@ -67,12 +69,26 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 	}
 }
 
-func mapRuntime(runtime string) agentlaunch.RuntimeKind {
-	switch k := runtimekind.Parse(runtime); k {
-	case runtimekind.PTY, runtimekind.StreamingStdio, runtimekind.JSONRPCStdio, runtimekind.Subprocess:
-		return k
+// CatalogFlags is plan.Args less what the provider's own argv convention
+// already emits; see config.CatalogFlags.
+func CatalogFlags(plan *Plan) []string {
+	return config.CatalogFlags(plan.ProviderBrand, plan.Args)
+}
+
+// mapRuntime maps a plan's runtime-kind token onto the shared plan's mode.
+// Only the four modes Tether launches pass through; anything else (api,
+// serve-http, pty-debug, unknown) falls back to subprocess-per-turn, as it
+// did before the leaf vocabulary.
+func mapRuntime(runtime string) runtimes.Mode {
+	mode, debug, ok := config.RuntimeMode(runtime)
+	if !ok || debug {
+		return runtimes.ModeSubprocessPerTurn
+	}
+	switch mode {
+	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn:
+		return mode
 	default:
-		return runtimekind.Subprocess
+		return runtimes.ModeSubprocessPerTurn
 	}
 }
 

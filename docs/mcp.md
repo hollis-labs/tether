@@ -143,8 +143,11 @@ does not enable self-exit, change recovery delays, or authorize a live rollout.
 ## Authentication and scopes
 
 Read-only tools (catalog reads, session reads, message reads, health, boot
-prompt generation, AI provider/model inspection, route previews, and durable
-AI usage/audit queries) require no authentication.
+prompt generation, AI provider/model inspection and route previews) require no
+authentication. The AI usage, budget and audit reads (`mux_ai_usage`,
+`mux_ai_budgets`, `mux_ai_audit`, `mux_ai_budget_alerts`,
+`mux_ai_wait_budget_alerts`) require a token, as mutating tools do, but no
+scope: any configured token is enough.
 
 Mutating tools require a **token** and the corresponding **scope**:
 
@@ -1463,12 +1466,12 @@ Example full request call:
 }
 ```
 
-`mux_ai_chat`, `mux_ai_chat_stream`, and `mux_ai_embeddings` require the `ai.invoke` scope. `mux_ai_list_providers`,
-`mux_ai_list_models`, `mux_ai_list_routes`, `mux_ai_route_preview`,
-`mux_ai_route_explain`, `mux_ai_usage`, `mux_ai_budgets`,
-`mux_ai_budget_alerts`, `mux_ai_wait_budget_alerts`, `mux_ai_audit`, and
-`mux_events_history` and `mux_events_wait` are
-read-only.
+`mux_ai_chat`, `mux_ai_chat_stream`, and `mux_ai_embeddings` require the `ai.invoke` scope. `mux_ai_usage`,
+`mux_ai_budgets`, `mux_ai_budget_alerts`, `mux_ai_wait_budget_alerts` and
+`mux_ai_audit` are read-only but require a token (any scope).
+`mux_ai_list_providers`, `mux_ai_list_models`, `mux_ai_list_routes`,
+`mux_ai_route_preview`, `mux_ai_route_explain`, `mux_events_history` and
+`mux_events_wait` are read-only and open.
 
 ### AI live streaming
 

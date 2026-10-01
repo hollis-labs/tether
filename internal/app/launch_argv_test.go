@@ -80,6 +80,19 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 			wantOnce:    []string{"app-server"},
 		},
 		{
+			// Per-turn print mode: the prompt rides after "--" (go-providers
+			// v0.34.1), and the launch's --add-dir must come before it.
+			name:        "claude print turn",
+			providerID:  "claude-sub",
+			brand:       "claude",
+			runtimeKind: config.RuntimeKindSubprocess,
+			args:        []string{"--mcp-config", ".mcp.json", "--dangerously-skip-permissions"},
+			adapter:     gop.NewClaudeAdapter(),
+			turnPrompt:  "--dangerously-bypass-everything",
+			wantPairs:   [][2]string{{"--add-dir", "project"}},
+			wantOnce:    []string{"-p", "--mcp-config", "--output-format", "--dangerously-skip-permissions"},
+		},
+		{
 			name:        "codex-cli exec",
 			providerID:  "codex-cli",
 			brand:       "codex",
@@ -119,8 +132,11 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 				t.Fatalf("prepareSharedLaunch: %v", err)
 			}
 
+			// Composed the way LaunchSession hands the extras to the runtime.
 			scoped := &claudestream.PlanScopedAdapter{Inner: tc.adapter, BaseArgs: plan.Args}
-			argv := append(scoped.BuildArgs(tc.turnPrompt, "", ""), sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)...)
+			scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args))
+			argv := scoped.BuildArgs(tc.turnPrompt, "", "")
+			assertPromptLast(t, argv, tc.turnPrompt)
 
 			if slices.Contains(argv, testBootPrompt) {
 				t.Errorf("boot prompt is in argv: %q", argv)
@@ -169,7 +185,8 @@ func TestSharedExtraArgs_CodexAppServerIsOneSubcommand(t *testing.T) {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}
 	scoped := &claudestream.PlanScopedAdapter{Inner: gop.NewCodexAdapterAppServer()}
-	argv := append(scoped.BuildArgs("", "", ""), sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)...)
+	scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args))
+	argv := scoped.BuildArgs("", "", "")
 	if !slices.Equal(argv, []string{"app-server"}) {
 		t.Fatalf("argv = %q, want [app-server]", argv)
 	}
@@ -321,6 +338,95 @@ func TestLaunchSession_StreamingStdioClaudeArgvAndBootTurn(t *testing.T) {
 		}
 	}
 	assertStreamJSONUserTurn(t, waitForFile(t, stdinFile), testBootPrompt)
+}
+
+// assertPromptLast checks that nothing follows a turn's prompt but what the
+// convention puts there: when argv carries the end-of-options "--", the
+// prompt is the one and only argument after it, so no launch-only argument
+// (--add-dir, --cd, --mcp-config) is read as prompt text or a positional.
+func assertPromptLast(t *testing.T, argv []string, prompt string) {
+	t.Helper()
+	i := slices.Index(argv, "--")
+	if i < 0 {
+		if prompt != "" && slices.Contains(argv, prompt) {
+			t.Errorf("prompt %q is in argv with no end-of-options marker: %q", prompt, argv)
+		}
+		return
+	}
+	if got := argv[i+1:]; len(got) != 1 || got[0] != prompt {
+		t.Errorf("after \"--\": %q, want only the prompt %q (argv %q)", got, prompt, argv)
+	}
+}
+
+// End to end through LaunchSession and agentkit's adapter runtime with the
+// v0.34.1 conventions: a codex exec turn whose text looks like a flag reaches
+// the CLI as the prompt after "--" (CW-20261001-0069), and the launch's --cd
+// sits before the marker instead of after the prompt.
+func TestLaunchSession_CodexExecPromptAfterEndOfOptions(t *testing.T) {
+	dir := t.TempDir()
+	argvFile := filepath.Join(dir, "argv")
+	fake := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n" +
+		"echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil { //nolint:gosec // test stand-in must be executable
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	repo := t.TempDir()
+	const sessID = "sess-codex-exec-dashdash"
+	plan := &launch.Plan{
+		LaunchID:       "codex-launch",
+		ProjectID:      "proj",
+		LogicalAgentID: "agent",
+		ProviderID:     "codex-cli",
+		ProviderBrand:  "codex",
+		RuntimeKind:    config.RuntimeKindSubprocess,
+		RepoRoot:       repo,
+		WriteHome:      t.TempDir(),
+		WorkspaceMode:  "shared",
+		Command:        fake,
+	}
+	ws, err := workspace.Create(plan.WriteHome, sessID, plan)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	row := store.SessionRow{
+		ID: sessID, LaunchID: plan.LaunchID, ProjectID: plan.ProjectID, LogicalAgentID: plan.LogicalAgentID,
+		ProviderID: plan.ProviderID, ProviderKind: "cli", Workspace: ws.Root, State: "created",
+	}
+	if err := db.CreateSession(row, plan); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	factory, err := runtimeFactoryForProvider(config.Provider{ID: "codex-cli", Adapter: "codex", RuntimeKind: config.RuntimeKindSubprocess})
+	if err != nil {
+		t.Fatalf("runtime factory: %v", err)
+	}
+	svc := &Service{
+		CatalogRoot: t.TempDir(),
+		Catalog:     &config.Catalog{Global: config.Global{Version: "test"}},
+		Store:       db,
+		Manager:     agentsessions.NewManager(stateSinkAdapter{db: db}),
+		factories:   map[string]RuntimeFactory{"codex-cli": factory},
+	}
+	if _, err := svc.LaunchSession(sessID); err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Manager.Stop(context.Background(), sessID) })
+
+	const prompt = "--bogus-smoke-flag"
+	if err := svc.SendTurn(context.Background(), sessID, prompt); err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	argv := strings.Split(strings.TrimSpace(string(waitForFile(t, argvFile))), "\n")
+	assertPromptLast(t, argv, prompt)
+	cd := slices.Index(argv, "--cd")
+	if cd < 0 || cd+1 >= len(argv) || argv[cd+1] != repo || cd > slices.Index(argv, "--") {
+		t.Fatalf("argv lacks --cd %s before \"--\": %q", repo, argv)
+	}
 }
 
 func assertStreamJSONUserTurn(t *testing.T, payload []byte, want string) {

@@ -259,8 +259,11 @@ func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Ser
 			// Bound owner isn't running: honest offline. Never fall
 			// through to a different running session for this actor --
 			// that would silently redirect a stable-actor destination
-			// without authorized (re-)activation.
-			return "", nil
+			// without authorized (re-)activation. Said as an error so
+			// notify can report why it did not wake (CW-20260912-0134);
+			// an ended session's binding is revoked when it exits, so
+			// this is a session that died without the daemon seeing it.
+			return "", fmt.Errorf("%w: %s", api.ErrBoundSessionNotRunning, b.SessionID)
 		}
 		if !errors.Is(err, registry.ErrBindingNotFound) {
 			return "", fmt.Errorf("resolve actor session: current binding: %w", err)
@@ -542,7 +545,13 @@ func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Servi
 		}
 		return "", nil
 	case messaging.KindAgent:
-		return resolveActorSession(ctx, st, reg, rt, to.ID)
+		sessionID, err := resolveActorSession(ctx, st, reg, rt, to.ID)
+		if errors.Is(err, api.ErrBoundSessionNotRunning) {
+			// No live session, like any other offline recipient: the
+			// sweep parks it rather than logging a resolve failure.
+			return "", nil
+		}
+		return sessionID, err
 	default:
 		return "", nil
 	}

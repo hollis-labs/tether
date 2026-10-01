@@ -276,7 +276,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	// Wire LoggingMiddleware when a Bus is provided.
 	var mws []ToolCallMiddleware
 	if opts.Bus != nil {
-		mws = append(mws, NewLoggingMiddleware(opts.Bus))
+		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))
 	}
 
 	// Subscribe EventStore to Bus so it receives tool_call_end events.

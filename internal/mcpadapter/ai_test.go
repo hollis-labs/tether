@@ -201,6 +201,34 @@ func TestAITools_UsageAndAudit(t *testing.T) {
 	}
 }
 
+// The AI usage, budget and audit reads need the same token mutating tools
+// do, and no scope; the routing and config reads stay open
+// (CW-20260930-0011).
+func TestAITools_AuditReadsRequireToken(t *testing.T) {
+	tokenless := newAIAdapterWithToken(t, "", nil)
+	for _, name := range []string{"mux_ai_usage", "mux_ai_budgets", "mux_ai_audit", "mux_ai_budget_alerts", "mux_ai_wait_budget_alerts"} {
+		res := callAITool(t, tokenless, name, map[string]any{"wait_ms": 1})
+		if !res.IsError {
+			t.Errorf("%s answered a tokenless caller: %s", name, textOf(res))
+			continue
+		}
+		if code := parseToolJSON(t, res)["code"]; code != "auth_required" {
+			t.Errorf("%s: code = %v, want auth_required", name, code)
+		}
+	}
+
+	for _, name := range []string{"mux_ai_list_providers", "mux_ai_list_routes"} {
+		if res := callAITool(t, tokenless, name, nil); res.IsError {
+			t.Errorf("%s should stay open to a tokenless caller: %s", name, textOf(res))
+		}
+	}
+
+	// A token with no scopes at all is enough: this is a presence check.
+	if res := callAITool(t, newAIAdapter(t, nil), "mux_ai_audit", map[string]any{"event_type": "chat"}); res.IsError {
+		t.Fatalf("mux_ai_audit with a scope-less token: %s", textOf(res))
+	}
+}
+
 func TestAITools_WaitBudgetAlerts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events/stream" {
@@ -257,6 +285,11 @@ func callAITool(t *testing.T, a *Adapter, name string, args map[string]any) *mcp
 }
 
 func newAIAdapter(t *testing.T, scopes []string) *Adapter {
+	t.Helper()
+	return newAIAdapterWithToken(t, "test-token", scopes)
+}
+
+func newAIAdapterWithToken(t *testing.T, token string, scopes []string) *Adapter {
 	t.Helper()
 
 	h := api.NewHandler(api.Deps{
@@ -332,7 +365,7 @@ func newAIAdapter(t *testing.T, scopes []string) *Adapter {
 	t.Cleanup(srv.Close)
 
 	hostport := srv.URL[len("http://"):]
-	return NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", scopes)
+	return NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), token, scopes)
 }
 
 type aiStubService struct {

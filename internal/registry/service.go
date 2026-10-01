@@ -93,6 +93,8 @@ type storageBackend interface {
 	RevokeBinding(ctx context.Context, bindingID string) error
 	CurrentBinding(ctx context.Context, targetURN string) (RuntimeBinding, error)
 	ListBindingsForTarget(ctx context.Context, targetURN string) ([]RuntimeBinding, error)
+	RevokeSessionBindings(ctx context.Context, sessionID string) (int, error)
+	BoundSessionIDs(ctx context.Context) ([]string, error)
 
 	// T04 scoped role/slot bindings.
 	SetScopedBinding(ctx context.Context, scope, slot string, targetURNs []string, relationship json.RawMessage, createdBy string) (ScopedBinding, error)

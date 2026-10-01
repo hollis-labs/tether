@@ -143,6 +143,16 @@ func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]strin
 // positional for `codex exec` (exit 2). The adapter keeps the convention, and
 // only what it cannot know crosses over.
 //
+// Re-derived against go-providers v0.33.0 / agentkit v0.12.0
+// (CW-20261001-0065): v0.33.0 makes go-providers the single owner of each
+// argv convention, but Tether still composes twice. prepared.Argv is
+// agentkit's projection (a print-mode convention with the boot prompt as a
+// positional, whatever the runtime), and the session runtime's adapter
+// builds its own argv per turn. So this narrowing still stands until
+// CW-20260930-0106 puts launches on one prepared execution. With v0.33.0,
+// claude's projected --add-dir <project> arrives in every mode and is kept
+// here as a root-bound arg.
+//
 // Only claude and codex take the narrowed path. opencode's projection also
 // carries `--agent <name>`, naming the agent file it planted, which its
 // runtime adapter does not know; those providers keep the old pass-through

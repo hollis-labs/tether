@@ -43,6 +43,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
+	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -312,6 +313,10 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		secrets.WithNamedHelperResolver(apikeyhelper.ResolveNamedPath),
 	)
 
+	// Every provider credential resolved below is remembered here, so an
+	// audit row's error text can be scrubbed of it (CW-20260930-0009).
+	aiSecrets := &redact.Set{}
+
 	providers := map[string]llm.ChatProvider{}
 	providerInfos := map[string]llmservice.ProviderInfo{}
 	providerConfigs := map[string]config.AIProviderConfig{}
@@ -326,9 +331,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			secretRef := p.SecretRef
 			providers[p.ID] = llmanthropic.New(llmanthropic.Config{
 				BaseURL: p.BaseURL,
-				ResolveAPIKey: func(ctx context.Context) (string, error) {
+				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
-				},
+				}),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -341,9 +346,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			secretRef := p.SecretRef
 			providers[p.ID] = llmopenai.New(llmopenai.Config{
 				BaseURL: p.BaseURL,
-				ResolveAPIKey: func(ctx context.Context) (string, error) {
+				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
-				},
+				}),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -356,9 +361,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			secretRef := p.SecretRef
 			providers[p.ID] = llmgemini.New(llmgemini.Config{
 				BaseURL: p.BaseURL,
-				ResolveAPIKey: func(ctx context.Context) (string, error) {
+				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
-				},
+				}),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -377,7 +382,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			}
 			providers[p.ID] = llmopenaicompat.New(llmopenaicompat.Config{
 				BaseURL:       p.BaseURL,
-				ResolveAPIKey: resolve,
+				ResolveAPIKey: aiSecrets.Remember(resolve),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -475,6 +480,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		RouteOrder:   append([]string(nil), order...),
 		Recorder:     deps.Recorder,
 		Publisher:    deps.Publisher,
+		Secrets:      aiSecrets,
 	}
 }
 

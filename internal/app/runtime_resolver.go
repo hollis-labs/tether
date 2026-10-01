@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
@@ -23,38 +23,51 @@ func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 	if brand == "api-stub" && runtimeKind == config.RuntimeKindAPI {
 		return stub.New, nil
 	}
-	binding, err := runtimebind.Resolve(runtimebind.Request{
+	// The catalog's runtime-kind token becomes a leaf mode here, at the lib
+	// boundary (config.RuntimeMode). An explicit mode also keeps a catalog
+	// codex provider on the mode it names: the registry default for codex is
+	// now jsonrpc-stdio, so an unset mode would silently switch exec
+	// providers to app-server.
+	mode, debug, ok := config.RuntimeMode(runtimeKind)
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider/runtime_kind combination: provider=%q runtime_kind=%q", brand, runtimeKind)
+	}
+	req := runtimebind.Request{
 		Provider:         brand,
-		RequestedRuntime: agentlaunch.RuntimeKind(runtimeKind),
+		RequestedRuntime: mode,
 		AllowPTY:         true,
-	})
+	}
+	if debug {
+		req.Posture = runtimebind.PostureDebug
+	}
+	binding, err := runtimebind.Resolve(req)
 	if err != nil {
 		return nil, err
 	}
 
 	switch {
-	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeStreamingStdio:
+	case binding.Provider == "claude" && binding.Runtime == runtimes.ModeStreamingStdio:
 		return newClaudeStreamingStdioRuntime(p.ID), nil
-	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimePTY:
+	case binding.Provider == "claude" && binding.Runtime == runtimes.ModePTY:
 		// Deprecated: PTY is not the user-facing runtime going forward (D7, ADR 0044).
 		// subprocess and streaming-stdio are the primary runtimes. PTY is not removed
 		// yet — marker-only until output-capture is fully complete.
 		log.Printf("WARN: resolving deprecated PTY runtime for provider %q; prefer streaming_stdio or subprocess", p.ID)
 		return newClaudePTYRuntime(p.ID), nil
-	case binding.Provider == "claude" && binding.Runtime == agentlaunch.RuntimeSubprocess:
+	case binding.Provider == "claude" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return newGoproviderRuntime(p.ID, gop.NewClaudeAdapter(), agentsessions.Capabilities{
 			ProviderSessionID: true,
 			BinaryRequired:    true,
 		}), nil
-	case binding.Provider == "codex" && binding.Runtime == agentlaunch.RuntimeJsonRpcStdio:
+	case binding.Provider == "codex" && binding.Runtime == runtimes.ModeJSONRPCStdio:
 		return newCodexJSONRPCStdioRuntime(p.ID), nil
-	case binding.Provider == "codex" && binding.Runtime == agentlaunch.RuntimeSubprocess:
+	case binding.Provider == "codex" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return newGoproviderRuntime(p.ID, gop.NewCodexAdapter(), agentsessions.Capabilities{
 			BinaryRequired: true,
 		}), nil
-	case binding.Provider == "opencode" && binding.Runtime == agentlaunch.RuntimeSubprocess:
+	case binding.Provider == "opencode" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return opencode.New, nil
-	case binding.Provider == "antigravity" && binding.Runtime == agentlaunch.RuntimeSubprocess:
+	case binding.Provider == "antigravity" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return antigravity.New, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider/runtime_kind combination: provider=%q runtime_kind=%q", brand, runtimeKind)

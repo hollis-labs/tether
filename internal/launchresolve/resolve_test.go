@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 )
 
@@ -15,19 +16,19 @@ func TestResolveRuntimeBinding(t *testing.T) {
 		runnerID    string
 		wantErrIs   error // when non-nil, ResolveRuntimeBinding must fail and errors.Is must match
 		wantProv    string
-		wantRuntime agentlaunch.RuntimeKind
+		wantRuntime runtimes.Mode
 	}{
 		{
 			name:        "streaming-stdio provider",
 			runnerID:    "claude-stream",
 			wantProv:    "claude",
-			wantRuntime: agentlaunch.RuntimeStreamingStdio,
+			wantRuntime: runtimes.ModeStreamingStdio,
 		},
 		{
 			name:        "explicit subprocess runtime_kind",
 			runnerID:    "codex-cli",
 			wantProv:    "codex",
-			wantRuntime: agentlaunch.RuntimeSubprocess,
+			wantRuntime: runtimes.ModeSubprocessPerTurn,
 		},
 		{
 			name:      "unresolvable runner id is a hard error",
@@ -71,7 +72,7 @@ func TestResolveRuntimeBinding(t *testing.T) {
 
 func TestResolveRuntimeBinding_UnmappableRuntimeIsHardError(t *testing.T) {
 	// api-stub resolves to a record but its "api" runtime has no
-	// agentlaunch.RuntimeKind — that must be a precise hard error, not a
+	// runtimes.Mode — that must be a precise hard error, not a
 	// silent subprocess fallback.
 	reg := openFixture(t)
 	_, err := reg.ResolveRuntimeBinding("api-stub")

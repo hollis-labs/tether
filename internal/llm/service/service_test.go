@@ -13,6 +13,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/observability"
 	"github.com/hollis-labs/tether/internal/llm/router"
+	"github.com/hollis-labs/tether/internal/redact"
 )
 
 func TestServiceChatRoutesAndAppliesMiddleware(t *testing.T) {
@@ -420,4 +421,32 @@ type stubPublisher struct {
 func (s *stubPublisher) Publish(_ context.Context, ev events.Event) error {
 	s.events = append(s.events, ev)
 	return nil
+}
+
+// A provider error that echoes the resolved credential is recorded with the
+// credential scrubbed from ai_events' error text (CW-20260930-0009).
+func TestServiceChatAuditRedactsResolvedSecret(t *testing.T) {
+	t.Parallel()
+
+	const key = "sk-test-0123456789abcdef"
+	secrets := &redact.Set{}
+	secrets.Add(key)
+	recorder := &stubRecorder{}
+	svc := Service{
+		Planner: stubPlanner{plan: router.Plan{Provider: "openai-work", Model: "gpt-4o-mini"}},
+		Providers: map[string]llm.ChatProvider{
+			"openai-work": stubChatProvider{err: errors.New("401 Incorrect API key provided: " + key)},
+		},
+		Recorder: recorder,
+		Secrets:  secrets,
+	}
+	if _, err := svc.Chat(context.Background(), llm.Request{Operation: llm.OperationChat}); err == nil {
+		t.Fatal("Chat: want the provider error")
+	}
+	if len(recorder.events) != 1 {
+		t.Fatalf("recorded %d audit events, want 1", len(recorder.events))
+	}
+	if got := recorder.events[0].Error; got != "401 Incorrect API key provided: [redacted]" {
+		t.Fatalf("audit error = %q, want the key redacted", got)
+	}
 }
