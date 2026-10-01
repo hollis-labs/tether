@@ -147,6 +147,7 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
 		// Sweep stale sessions ONLY at daemon startup, never from short-
 		// lived subcommands (`mux mcp`, `mux agents`, etc.) — those may
 		// run concurrently with the daemon (e.g. as an MCP subprocess
@@ -227,12 +228,16 @@ var daemonRunCmd = &cobra.Command{
 			WakeSweeper:         svc,
 			SessionDrainer:      svc,
 			EventRetention:      svc,
-			LogsDir:             filepath.Join(stateRoot, "logs"),
-			SessionBootstrap:    svc.Store,
-			DeliveryTrace:       svc.Store,
-			DeliveryRepair:      svc.Store,
-			Retention:           svc.Store,
-			A2A:                 a2aHandler,
+			Hardening: func() *daemon.HealthHardening {
+				st := svc.ClaudeStrictMCPStatus()
+				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason}
+			},
+			LogsDir:          filepath.Join(stateRoot, "logs"),
+			SessionBootstrap: svc.Store,
+			DeliveryTrace:    svc.Store,
+			DeliveryRepair:   svc.Store,
+			Retention:        svc.Store,
+			A2A:              a2aHandler,
 			Close: func() error {
 				// Manager.Shutdown is driven by daemon.Server; Close just
 				// releases the store handle so the process can exit cleanly.

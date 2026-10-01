@@ -138,6 +138,8 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			svc := &Service{
 				CatalogRoot: t.TempDir(),
 				Catalog:     &config.Catalog{Global: config.Global{Version: "test"}},
+				// Strict MCP on, whatever this process's environment says.
+				strictMCPStatus: func() StrictMCPStatus { return ClaudeStrictMCP(func(string) string { return "" }) },
 			}
 			ws := t.TempDir()
 			repo := t.TempDir()
@@ -175,6 +177,15 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 				t.Errorf("boot prompt is in a turn's argv: %q", argv)
 			}
 			assertNoRepeatedFlags(t, argv)
+			// Only Claude loads MCP servers beyond the one config it is
+			// handed, so only Claude is made strict (CW-20261001-0227).
+			if tc.brand == "claude" {
+				if n := countToken(argv, "--strict-mcp-config"); n != 1 {
+					t.Errorf("--strict-mcp-config appears %d times, want 1: %q", n, argv)
+				}
+			} else if slices.Contains(argv, "--strict-mcp-config") {
+				t.Errorf("--strict-mcp-config in a %s argv: %q", tc.brand, argv)
+			}
 			for _, tok := range tc.wantOnce {
 				if n := countToken(argv, tok); n != 1 {
 					t.Errorf("%q appears %d times, want 1: %q", tok, n, argv)

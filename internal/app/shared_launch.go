@@ -102,6 +102,19 @@ type plantContextInput struct {
 // The toggle changes only HOW this plan is produced; launch.Plan and every
 // path downstream of Compile are untouched.
 func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, workspaceDir string) (agentlaunch.LaunchPlan, error) {
+	lp, err := s.engineLaunchPlan(ctx, plan, workspaceDir)
+	if err != nil {
+		return agentlaunch.LaunchPlan{}, err
+	}
+	// Whichever engine produced the plan, an app-launched Claude loads only
+	// the MCP servers Tether plants (CW-20261001-0227).
+	s.applyClaudeStrictMCP(&lp)
+	return lp, nil
+}
+
+// engineLaunchPlan is agentLaunchPlanFor's engine toggle: the plan as the
+// selected launch engine produces it, before Tether's hardening is applied.
+func (s *Service) engineLaunchPlan(ctx context.Context, plan *launch.Plan, workspaceDir string) (agentlaunch.LaunchPlan, error) {
 	if s.launchEngine() != EngineSpec {
 		return s.agentLaunchPlan(plan, workspaceDir), nil
 	}
