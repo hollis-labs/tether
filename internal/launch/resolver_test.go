@@ -1,6 +1,8 @@
 package launch
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -489,4 +491,33 @@ func TestResolve_ExtractRefs(t *testing.T) {
 			t.Errorf("plan.ExtractRefs = true, want false from launch override")
 		}
 	})
+}
+
+// TestResolve_UnknownLaunch_IsErrLaunchNotFound pins the sentinel the API
+// maps to 404 not_found (CW-20261001-0018), and the known-launches hint
+// that makes a typo or a stale catalog visible from the message alone.
+func TestResolve_UnknownLaunch_IsErrLaunchNotFound(t *testing.T) {
+	cat := &config.Catalog{Launches: map[string]config.Launch{"b": {ID: "b"}, "a": {ID: "a"}}}
+	_, err := Resolve(cat, Input{LaunchID: "nope"})
+	if !errors.Is(err, ErrLaunchNotFound) {
+		t.Fatalf("err = %v, want ErrLaunchNotFound", err)
+	}
+	if got, want := err.Error(), `launch "nope" not found (known launches: a, b)`; got != want {
+		t.Fatalf("message = %q, want %q", got, want)
+	}
+
+	_, err = Resolve(&config.Catalog{}, Input{LaunchID: "nope"})
+	if !errors.Is(err, ErrLaunchNotFound) || !strings.Contains(err.Error(), "defines no launches") {
+		t.Fatalf("empty catalog: err = %v", err)
+	}
+
+	many := &config.Catalog{Launches: map[string]config.Launch{}}
+	for i := 0; i < maxKnownLaunchesInError+3; i++ {
+		id := fmt.Sprintf("l%02d", i)
+		many.Launches[id] = config.Launch{ID: id}
+	}
+	_, err = Resolve(many, Input{LaunchID: "nope"})
+	if !errors.Is(err, ErrLaunchNotFound) || !strings.Contains(err.Error(), "and 3 more") {
+		t.Fatalf("many launches: err = %v", err)
+	}
 }

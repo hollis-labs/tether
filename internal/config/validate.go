@@ -8,17 +8,8 @@ import (
 )
 
 func (c *Catalog) Validate() error {
-	for id, l := range c.Launches {
-		if _, ok := c.Projects[l.Project]; !ok {
-			return fmt.Errorf("launch %q references unknown project %q", id, l.Project)
-		}
-		if _, ok := c.Agents[l.Agent]; !ok {
-			return fmt.Errorf("launch %q references unknown agent %q", id, l.Agent)
-		}
-		if _, ok := c.Providers[l.Provider]; !ok {
-			return fmt.Errorf("launch %q references unknown provider %q", id, l.Provider)
-		}
-		if err := validateLaunchInjection(id, l.Injection); err != nil {
+	for id := range c.Launches {
+		if err := c.ValidateLaunch(id); err != nil {
 			return err
 		}
 	}
@@ -71,6 +62,27 @@ func (c *Catalog) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidateLaunch checks one launch entry against the rest of the catalog:
+// the project, agent and provider it names must exist, and its injection
+// block must be well formed. Validate runs it for every launch; the launch
+// path runs it alone for a launch re-read after startup.
+func (c *Catalog) ValidateLaunch(id string) error {
+	l, ok := c.Launches[id]
+	if !ok {
+		return fmt.Errorf("launch %q not in catalog", id)
+	}
+	if _, ok := c.Projects[l.Project]; !ok {
+		return fmt.Errorf("launch %q references unknown project %q", id, l.Project)
+	}
+	if _, ok := c.Agents[l.Agent]; !ok {
+		return fmt.Errorf("launch %q references unknown agent %q", id, l.Agent)
+	}
+	if _, ok := c.Providers[l.Provider]; !ok {
+		return fmt.Errorf("launch %q references unknown provider %q", id, l.Provider)
+	}
+	return validateLaunchInjection(id, l.Injection)
 }
 
 func validateAIConfig(ai AIConfig) error {

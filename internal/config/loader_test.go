@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/hollis-labs/go-sandbox/sandbox"
@@ -580,5 +581,32 @@ func TestLoadLayered_ResolvesUserAndProjectAgents(t *testing.T) {
 	}
 	if err := cat.Validate(); err != nil {
 		t.Fatalf("LoadLayered + Validate: %v", err)
+	}
+}
+
+// ValidateLaunch checks one launch on its own, which the launch path uses
+// for a launch re-read after startup (CW-20261001-0018).
+func TestValidateLaunch(t *testing.T) {
+	cat := &Catalog{
+		Projects:  map[string]Project{"p": {ID: "p"}},
+		Agents:    map[string]Agent{"a": {ID: "a"}},
+		Providers: map[string]Provider{"cli": {ID: "cli"}},
+		Launches: map[string]Launch{
+			"ok":          {ID: "ok", Project: "p", Agent: "a", Provider: "cli"},
+			"bad-agent":   {ID: "bad-agent", Project: "p", Agent: "ghost", Provider: "cli"},
+			"bad-project": {ID: "bad-project", Project: "ghost", Agent: "a", Provider: "cli"},
+		},
+	}
+	if err := cat.ValidateLaunch("ok"); err != nil {
+		t.Fatalf("ok: %v", err)
+	}
+	if err := cat.ValidateLaunch("bad-agent"); err == nil || !strings.Contains(err.Error(), `unknown agent "ghost"`) {
+		t.Fatalf("bad-agent: err = %v", err)
+	}
+	if err := cat.ValidateLaunch("bad-project"); err == nil || !strings.Contains(err.Error(), `unknown project "ghost"`) {
+		t.Fatalf("bad-project: err = %v", err)
+	}
+	if err := cat.ValidateLaunch("missing"); err == nil {
+		t.Fatal("missing: want an error")
 	}
 }

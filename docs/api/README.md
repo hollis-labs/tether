@@ -483,6 +483,12 @@ attach) without a follow-up `GET /sessions/{id}` round-trip.
 Every create response carries `"replayed": false`, or `true` for an
 idempotent replay (below).
 
+The launch is read from the catalog's `launches/` on every create, so a launch
+file added or edited there is used without a daemon restart. Projects, agents
+and providers are still the ones loaded at daemon start, and a launch naming one
+added since then is refused until the daemon restarts. An unknown `launch`
+answers 404 `not_found`; the message lists the launches the catalog defines.
+
 #### Idempotency keys
 
 `POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional
