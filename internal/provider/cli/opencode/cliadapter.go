@@ -14,12 +14,18 @@ import (
 // typed event mapping (text, tool use, per-step usage, done at the end of
 // the turn), and recognizing a lost resume id on stderr.
 //
-// Agent stays empty, so opencode runs its default agent as it always has
-// here: the boot prompt already reaches the model through the catalog's
-// prepend bootstrap, and selecting the planted agents/<id>.md would put it
-// in the system prompt a second time.
+// Agent is the planted agent (launch.OpencodeAgentName, namespaced so it
+// cannot merge into one of opencode's built-in agents), the --agent the
+// shared launch's projection names. Its agents/<name>.md carries the boot
+// prompt, which is how the boot prompt reaches opencode now that argv is
+// composed once: the old empty --agent plus the projection's own made
+// opencode see the agent ",<name>" (not found) and lose the turn's prompt
+// behind a second "--" (CW-20260930-0106; the interim CW-20261001-0095
+// replaces).
 func New(plan *launch.Plan) (agentsessions.Runtime, error) {
-	return claudestream.NewWithAdapter(planWithoutRunSubcommand(plan), gop.NewOpencodeAdapter(), "opencode", agentsessions.Capabilities{
+	adapter := gop.NewOpencodeAdapter()
+	adapter.Agent = launch.OpencodeAgentName(plan)
+	return claudestream.NewWithAdapter(planWithoutRunSubcommand(plan), adapter, "opencode", agentsessions.Capabilities{
 		PTY:               false,
 		Resize:            false,
 		ProviderSessionID: true,

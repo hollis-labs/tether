@@ -690,6 +690,38 @@ func TestHandleSendInputAndTurn_TurnFailed(t *testing.T) {
 	}
 }
 
+// A turn the session cannot take now (busy, booting, no input channel) is a
+// 409 conflict, not a 500 (review of #79).
+func TestHandleSendTurn_BusyIsConflict(t *testing.T) {
+	for _, e := range []error{agentsessions.ErrTurnInFlight, agentsessions.ErrNoInputChannel} {
+		svc := &fakeLaunchService{inputErr: fmt.Errorf("%w: acp: session is not live", e)}
+		req := httptest.NewRequest(http.MethodPost, "/sessions/s1/turn", bytes.NewReader([]byte(`{"text":"x"}`)))
+		rr := httptest.NewRecorder()
+		newTestHandler(svc).ServeHTTP(rr, req)
+		if rr.Code != http.StatusConflict {
+			t.Errorf("%v: status = %d, want 409", e, rr.Code)
+		}
+		if env := decodeErr(t, rr); env.Error.Code != CodeConflict {
+			t.Errorf("%v: code = %q, want conflict", e, env.Error.Code)
+		}
+	}
+}
+
+// An ACP-mode launch while the ACP gate is closed is refused by policy: 403.
+func TestHandleLaunchSession_ACPDisabledIsForbidden(t *testing.T) {
+	svc := &fakeLaunchService{launchErr: fmt.Errorf("build runtime: %w", launch.ErrACPLaunchDisabled)}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/launch", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeForbidden || !strings.Contains(env.Error.Message, "TETHER_ENABLE_ACP") {
+		t.Fatalf("error = %+v", env.Error)
+	}
+}
+
 func TestHandleSendInput_TooLarge(t *testing.T) {
 	svc := &fakeLaunchService{}
 	body := bytes.Repeat([]byte{'x'}, maxInputBytes+1)
