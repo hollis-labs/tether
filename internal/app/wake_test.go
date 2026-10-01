@@ -49,6 +49,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -67,11 +68,12 @@ import (
 // health/state are keyed by session ID; sendTurn is call-counted and can
 // be scripted to fail.
 type fakeRuntime struct {
-	mu        sync.Mutex
-	alive     map[string]bool
-	state     map[string]agentsessions.LiveState
-	sendErr   map[string]error
-	sendCalls []sendTurnCall
+	mu          sync.Mutex
+	alive       map[string]bool
+	state       map[string]agentsessions.LiveState
+	sendErr     map[string]error
+	sendCalls   []sendTurnCall
+	healthCalls map[string]int
 }
 
 type sendTurnCall struct {
@@ -81,9 +83,10 @@ type sendTurnCall struct {
 
 func newFakeRuntime() *fakeRuntime {
 	return &fakeRuntime{
-		alive:   map[string]bool{},
-		state:   map[string]agentsessions.LiveState{},
-		sendErr: map[string]error{},
+		alive:       map[string]bool{},
+		state:       map[string]agentsessions.LiveState{},
+		sendErr:     map[string]error{},
+		healthCalls: map[string]int{},
 	}
 }
 
@@ -112,11 +115,18 @@ func (f *fakeRuntime) sendCallCount(sessionID string) int {
 	return n
 }
 
+func (f *fakeRuntime) healthCallCount(sessionID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healthCalls[sessionID]
+}
+
 func (f *fakeRuntime) seam() wakeRuntime {
 	return wakeRuntime{
 		health: func(sessionID string) (api.RuntimeHealthResult, bool) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			f.healthCalls[sessionID]++
 			if !f.alive[sessionID] {
 				return api.RuntimeHealthResult{}, false
 			}
@@ -487,7 +497,7 @@ func TestRunWakeSweep_PullOnlyTarget_NeverAttemptedAndNeverBurnsCycles(t *testin
 	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
 	sendMessage(t, st, to)
 
-	n, err := runWakeSweep(ctx, st, reg, rt.seam())
+	n, err := runWakeSweep(ctx, st, reg, rt.seam(), nil)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -1078,7 +1088,7 @@ func TestRunWakeSweep_ConsumedDeliveryIsNeverRewoken(t *testing.T) {
 		t.Fatalf("advance lease_expires_at: %v", err)
 	}
 
-	attempted, err := runWakeSweep(ctx, st, reg, rt.seam())
+	attempted, err := runWakeSweep(ctx, st, reg, rt.seam(), nil)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -1165,7 +1175,7 @@ func TestAttemptWake_ConcurrentConsumeDuringBusyCheckStaysDelivered(t *testing.T
 		time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano), deliveryID); err != nil {
 		t.Fatalf("advance next_attempt_at: %v", err)
 	}
-	attempted, err := runWakeSweep(ctx, st, reg, rt.seam())
+	attempted, err := runWakeSweep(ctx, st, reg, rt.seam(), nil)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -1195,7 +1205,7 @@ func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	// A sweep run immediately after must not re-attempt (still within the
 	// busy backoff window) -- proves the pump respects ReadyOnly rather
 	// than hammering.
-	n, err := runWakeSweep(ctx, st, reg, rt.seam())
+	n, err := runWakeSweep(ctx, st, reg, rt.seam(), nil)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -1210,7 +1220,7 @@ func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
 	time.Sleep(wakeBusyRetryBackoff + 250*time.Millisecond)
 
-	n, err = runWakeSweep(ctx, st, reg, rt.seam())
+	n, err = runWakeSweep(ctx, st, reg, rt.seam(), nil)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -1219,5 +1229,199 @@ func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 	}
 	if rt.sendCallCount("s1") != 1 {
 		t.Fatalf("sendTurn called %d times, want exactly 1 (delivered on the retry, no duplicate)", rt.sendCallCount("s1"))
+	}
+}
+
+// ─── RunWakeSweep: parking unresolvable deliveries (CW-20261001-0012) ─────
+
+// TestRunWakeSweep_UnresolvableBacklog_DoesNotStarveFreshDelivery
+// reproduces the agent-os backlog: more ready deliveries than one batch,
+// all addressed to recipients with no live session, ahead of one fresh
+// delivery to a live session. Delivery IDs are time-ordered, so before
+// parking every sweep re-read the same unresolvable head rows and never
+// reached the fresh one.
+func TestRunWakeSweep_UnresolvableBacklog_DoesNotStarveFreshDelivery(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	const staleSessions = wakeSweepBatchLimit + 5
+	var staleIDs []string
+	for i := 0; i < staleSessions; i++ {
+		id := fmt.Sprintf("gone-session-%02d", i)
+		staleIDs = append(staleIDs, id)
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id})
+	}
+	// Actor-addressed rows for an agent with no binding and no running
+	// session, like the Mac-era agt_* recipients.
+	var staleEnvs []messaging.Envelope
+	for i := 0; i < 3; i++ {
+		staleEnvs = append(staleEnvs, sendMessage(t, st, messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "gone-agent"}))
+	}
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"})
+
+	delivered := false
+	for sweep := 1; sweep <= 2 && !delivered; sweep++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", sweep, err)
+		}
+		delivered = rt.sendCallCount("s-live") == 1
+	}
+	if !delivered {
+		t.Fatalf("fresh delivery to a live session not woken within two sweeps behind %d unresolvable rows (sendTurn calls=%d)", staleSessions+3, rt.sendCallCount("s-live"))
+	}
+
+	// Further sweeps leave the parked rows alone: no re-resolution, no
+	// duplicate wake.
+	for sweep := 0; sweep < 3; sweep++ {
+		n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
+		if err != nil {
+			t.Fatalf("follow-up sweep: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("follow-up sweep attempted %d deliveries, want 0", n)
+		}
+	}
+	for _, id := range staleIDs {
+		if got := rt.healthCallCount(id); got != 1 {
+			t.Fatalf("recipient %s probed %d times across 5 sweeps, want 1 (parked after its first miss)", id, got)
+		}
+	}
+	if got := park.size(); got != staleSessions+3 {
+		t.Fatalf("park set size = %d, want %d", got, staleSessions+3)
+	}
+	if rt.sendCallCount("s-live") != 1 {
+		t.Fatalf("live session woken %d times, want 1", rt.sendCallCount("s-live"))
+	}
+
+	// Parking never touched the delivery rows themselves, so a pull
+	// consumer can still claim them at any time.
+	for _, env := range staleEnvs {
+		deliveryID, ok, err := st.DeliveryIDForMessage(ctx, env.ID)
+		if err != nil || !ok {
+			t.Fatalf("delivery id: ok=%v err=%v", ok, err)
+		}
+		rd, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(deliveryID))
+		if err != nil {
+			t.Fatalf("get delivery: %v", err)
+		}
+		if rd.Status != delivery.DeliveryPending || rd.AttemptCount != 0 || !rd.NextAttemptAt.IsZero() {
+			t.Fatalf("parked delivery = status %s attempts %d next_attempt_at %v, want pending/0/unset", rd.Status, rd.AttemptCount, rd.NextAttemptAt)
+		}
+	}
+}
+
+// TestRunWakeSweep_ParkedDelivery_ClaimableMeanwhile_RecheckedAfterBackoff
+// covers the park's two exits: the recipient comes back and the park
+// lapses (the sweep wakes it), or something else settles the delivery
+// while it is parked (the sweep forgets it).
+func TestRunWakeSweep_ParkedDelivery_ClaimableMeanwhile_RecheckedAfterBackoff(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	late := messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-late"}
+	lateEnv := sendMessage(t, st, late)
+	pulled := messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-pull"}
+	pulledEnv := sendMessage(t, st, pulled)
+
+	if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if park.size() != 2 {
+		t.Fatalf("park set size = %d, want 2", park.size())
+	}
+
+	// A pull consumer settles one of them while it is parked.
+	if err := st.MessagingStore().Consume(ctx, pulledEnv.ID, pulled); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	pulledDeliveryID, _, err := st.DeliveryIDForMessage(ctx, pulledEnv.ID)
+	if err != nil {
+		t.Fatalf("delivery id: %v", err)
+	}
+	rd, err := st.DeliveryStore().GetDelivery(ctx, delivery.DeliveryID(pulledDeliveryID))
+	if err != nil {
+		t.Fatalf("get delivery: %v", err)
+	}
+	if rd.Status != delivery.DeliveryDelivered {
+		t.Fatalf("consumed-while-parked delivery status = %s, want delivered (parking must not block Consume's claim)", rd.Status)
+	}
+
+	// The other recipient comes online; its park has not lapsed yet.
+	rt.setAlive("s-late", true, agentsessions.LiveStateIdle)
+	n, err := runWakeSweep(ctx, st, reg, rt.seam(), park)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 0 || rt.sendCallCount("s-late") != 0 {
+		t.Fatalf("parked delivery woken before its park lapsed: attempted=%d calls=%d", n, rt.sendCallCount("s-late"))
+	}
+	if park.size() != 1 {
+		t.Fatalf("park set size = %d after the consumed delivery left the ready set, want 1", park.size())
+	}
+
+	// Lapse the park (no fake clock in the sweep; the set is ours).
+	lateDeliveryID, _, err := st.DeliveryIDForMessage(ctx, lateEnv.ID)
+	if err != nil {
+		t.Fatalf("delivery id: %v", err)
+	}
+	park.mu.Lock()
+	e := park.entries[delivery.DeliveryID(lateDeliveryID)]
+	e.until = time.Now().Add(-time.Second)
+	park.entries[delivery.DeliveryID(lateDeliveryID)] = e
+	park.mu.Unlock()
+
+	n, err = runWakeSweep(ctx, st, reg, rt.seam(), park)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 1 || rt.sendCallCount("s-late") != 1 {
+		t.Fatalf("lapsed park not re-checked: attempted=%d calls=%d, want 1/1", n, rt.sendCallCount("s-late"))
+	}
+	if park.size() != 0 {
+		t.Fatalf("park set size = %d after the recipient resolved, want 0", park.size())
+	}
+}
+
+func TestWakeParkSet_BackoffDoublesToCap(t *testing.T) {
+	var p wakeParkSet
+	now := time.Now()
+	id := delivery.DeliveryID("d1")
+	want := []time.Duration{30 * time.Second, time.Minute, wakeParkMaxBackoff, wakeParkMaxBackoff}
+	for i, w := range want {
+		misses, ok := p.park(id, now)
+		if !ok || misses != i+1 {
+			t.Fatalf("park #%d: misses=%d ok=%v", i+1, misses, ok)
+		}
+		if got := p.entries[id].until.Sub(now); got != w {
+			t.Fatalf("park #%d backoff = %v, want %v", i+1, got, w)
+		}
+		if !p.parked(id, now) || p.parked(id, now.Add(w)) {
+			t.Fatalf("park #%d: parked() wrong at the window edges", i+1)
+		}
+	}
+	p.release(id)
+	if p.size() != 0 {
+		t.Fatalf("size after release = %d", p.size())
+	}
+}
+
+func TestWakeParkSet_FullSetRefusesNewEntries(t *testing.T) {
+	var p wakeParkSet
+	now := time.Now()
+	for i := 0; i < wakeParkMaxEntries; i++ {
+		if _, ok := p.park(delivery.DeliveryID(fmt.Sprintf("d%d", i)), now); !ok {
+			t.Fatalf("park %d refused before the set was full", i)
+		}
+	}
+	if _, ok := p.park("overflow", now); ok {
+		t.Fatalf("full set accepted a new entry")
+	}
+	if _, ok := p.park("d0", now); !ok {
+		t.Fatalf("full set refused a repeat miss for an entry it already holds")
 	}
 }
