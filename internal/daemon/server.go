@@ -149,6 +149,12 @@ type Server struct {
 	// tests that never call Run).
 	WakeSweeper WakeSweeper
 
+	// SessionDrainer, when set, replaces the bare Manager.Shutdown drain on
+	// a graceful shutdown. It records that the sessions it waits on ended
+	// because the daemon was stopped on purpose, not by a crash
+	// (CW-20260912-0086). *app.Service satisfies it (DrainSessions).
+	SessionDrainer SessionDrainer
+
 	// EventRetention is optional; when set, Run starts a periodic background
 	// pass (eventRetentionInterval) deleting events older than the
 	// configured retention window (CW-20260930-0008). The pass itself is a
@@ -157,6 +163,13 @@ type Server struct {
 	EventRetention EventRetention
 
 	startedAt time.Time
+}
+
+// SessionDrainer is the seam Run uses to drain sessions on a graceful
+// shutdown. DrainSessions must return once every session has ended or ctx
+// is done, as Manager.Shutdown does.
+type SessionDrainer interface {
+	DrainSessions(ctx context.Context) error
 }
 
 // EventRetention is the narrow seam Run uses to drive the events retention
@@ -310,7 +323,13 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	// Drain runtime sessions (Manager.Shutdown waits for watch goroutines).
-	if s.Manager != nil {
+	// A SessionDrainer also records why they are ending.
+	switch {
+	case s.SessionDrainer != nil:
+		if err := s.SessionDrainer.DrainSessions(shutdownCtx); err != nil && runErr == nil {
+			runErr = fmt.Errorf("runtime shutdown: %w", err)
+		}
+	case s.Manager != nil:
 		if err := s.Manager.Shutdown(shutdownCtx); err != nil && runErr == nil {
 			runErr = fmt.Errorf("runtime shutdown: %w", err)
 		}

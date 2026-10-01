@@ -236,8 +236,8 @@ func (r *Registry) ResolveLaunch(launchID string) (LaunchResolution, error) {
 // mapRuntimeKind maps a Tether config runtime-kind token onto the leaf
 // runtimes.Mode a RuntimeBinding carries, through config.RuntimeMode, the
 // same boundary internal/launch uses, so a registry-resolved binding is
-// consistent with the rest of Tether's launch pipeline. Only the four modes
-// Tether launches map; the config "api" runtime, serve-http and pty-debug
+// consistent with the rest of Tether's launch pipeline. Only the modes
+// Tether launches map (the four native ones and acp-stdio); the config "api" runtime, serve-http and pty-debug
 // map to the invalid zero value, which ResolveRuntimeBinding rejects as
 // unmappable.
 func mapRuntimeKind(kind string) runtimes.Mode {
@@ -246,7 +246,7 @@ func mapRuntimeKind(kind string) runtimes.Mode {
 		return ""
 	}
 	switch mode {
-	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn:
+	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn, runtimes.ModeACPStdio:
 		return mode
 	default:
 		return ""

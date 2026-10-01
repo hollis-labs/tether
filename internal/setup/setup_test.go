@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/go-providers/registry"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/setup"
 )
@@ -25,8 +27,10 @@ func TestDetectProviders(t *testing.T) {
 	t.Setenv("CLAUDE_CLI_PATH", "")
 
 	results := setup.DetectProviders()
-	if got, want := len(results), 4; got != want {
-		t.Fatalf("len(results) = %d, want %d", got, want)
+	// One result per registry runtime: the list comes from the registry,
+	// not a Tether table (CW-20260930-0106).
+	if got, want := len(results), len(registry.All()); got != want {
+		t.Fatalf("len(results) = %d, want one per registry runtime (%d)", got, want)
 	}
 
 	brands := make(map[string]setup.DetectResult, len(results))
@@ -34,7 +38,7 @@ func TestDetectProviders(t *testing.T) {
 		brands[r.Brand] = r
 	}
 
-	for _, brand := range []string{"claude", "codex", "opencode", "antigravity"} {
+	for _, brand := range []string{"claude", "codex", "opencode", "antigravity", "copilot", "pi"} {
 		r, ok := brands[brand]
 		if !ok {
 			t.Errorf("missing brand %q", brand)

@@ -329,7 +329,7 @@ func checkProviders(cat *config.Catalog) []checkResult {
 		cmd := p.Command
 		if cmd == "" {
 			// Empty command: rely on adapter detect. Warn if not detected.
-			brand := p.Provider // e.g. "claude", "opencode"
+			brand := p.ProviderBrand() // canonical runtime id, as detection reports it
 			if d, found := detectedByBrand[brand]; found && d.Found {
 				results = append(results, ok(name, "auto-detect → "+d.Path))
 			} else {

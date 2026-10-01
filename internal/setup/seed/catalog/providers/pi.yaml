@@ -1,0 +1,19 @@
+id: pi
+type: cli
+provider: pi
+# The pi coding agent over the Agent Client Protocol, through the pi-acp
+# bridge, launched by go-agent-wrapper.
+runtime_kind: acp-stdio
+# Leave command empty to resolve pi-acp the registry's way
+# ($PIACP_CLI_PATH, then PATH and the usual install directories). Set an
+# absolute path if pi-acp is not on your daemon's PATH.
+command: ""
+# The ACP client owns pi-acp's flags.
+args: []
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  # pi reads its model provider keys from the environment, so the daemon's
+  # environment passes through.
+  mode: merge

@@ -18,6 +18,9 @@ const (
 	RuntimeKindAPI            = "api"
 	RuntimeKindServeHTTP      = "serve-http"
 	RuntimeKindPTYDebug       = "pty-debug"
+	// RuntimeKindACPStdio is an Agent Client Protocol agent over stdio
+	// (Copilot, Pi), launched through go-agent-wrapper (CW-20260930-0106).
+	RuntimeKindACPStdio = "acp-stdio"
 )
 
 // CatalogFlags is a provider's catalog args less what its own argv
@@ -57,6 +60,8 @@ func ParseRuntimeKind(raw string) string {
 		return RuntimeKindPTY
 	case "pty-debug", "debug-pty", "raw-pty":
 		return RuntimeKindPTYDebug
+	case "acp-stdio", "acp":
+		return RuntimeKindACPStdio
 	default:
 		return ""
 	}
@@ -81,20 +86,23 @@ func RuntimeMode(kind string) (mode runtimes.Mode, debug bool, ok bool) {
 		return runtimes.ModePTY, false, true
 	case RuntimeKindPTYDebug:
 		return runtimes.ModePTY, true, true
+	case RuntimeKindACPStdio:
+		return runtimes.ModeACPStdio, false, true
 	default:
 		return "", false, false
 	}
 }
 
-// ProviderBrand returns the catalog provider's adapter/product brand. It
+// ProviderBrand returns the catalog provider's adapter/product brand: the
+// canonical runtime id the registry and Tether's launch code key on. It
 // preserves older catalogs by deriving a brand from adapter/type/id when the
-// explicit provider field is absent.
+// explicit provider field is absent, and canonicalizes an explicit one.
 func (p Provider) ProviderBrand() string {
 	if p.Provider != "" {
-		return p.Provider
+		return CanonicalRuntimeID(p.Provider)
 	}
 	if p.Adapter != "" {
-		return p.Adapter
+		return CanonicalRuntimeID(p.Adapter)
 	}
 	switch {
 	case strings.HasPrefix(p.ID, "claude-"):
@@ -110,6 +118,32 @@ func (p Provider) ProviderBrand() string {
 	default:
 		return p.ID
 	}
+}
+
+// CanonicalRuntimeID maps a catalog's provider spelling onto the runtime id
+// the go-providers registry and Tether's launch code use. The registry's own
+// aliases are narrower than what Tether catalogs carry (CW-20260930-0106,
+// lead's note): codex-cli, opencode-cli and antigravity-cli survive here
+// instead of failing at launch as unknown providers, and a claude-* or
+// antigravity-* name keeps the prefix match agentkit's runtimebind dropped in
+// v0.12.0. Anything else passes through for the registry to judge.
+func CanonicalRuntimeID(name string) string {
+	id := strings.ToLower(strings.TrimSpace(name))
+	switch id {
+	case "codex-cli", "codex-app-server", "codexcli", "codexappserver":
+		return "codex"
+	case "opencode-cli", "opencode-run", "opencodecli":
+		return "opencode"
+	case "agy", "antigravity-cli":
+		return "antigravity"
+	}
+	switch {
+	case strings.HasPrefix(id, "claude-"):
+		return "claude"
+	case strings.HasPrefix(id, "antigravity-"):
+		return "antigravity"
+	}
+	return id
 }
 
 // EffectiveRuntimeKind returns the provider runtime transport/lifecycle.

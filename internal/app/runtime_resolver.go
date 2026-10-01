@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/provider/acp"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
@@ -69,6 +70,11 @@ func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 		return opencode.New, nil
 	case binding.Provider == "antigravity" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return antigravity.New, nil
+	case binding.Runtime.ACP():
+		// Any registry runtime driven over ACP (Copilot, Pi), launched
+		// through go-agent-wrapper's launch.Select (CW-20260930-0106 stage
+		// 1). A new ACP descriptor in the registry needs no case here.
+		return newACPRuntime(p.ID, binding.Provider, binding.Runtime), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider/runtime_kind combination: provider=%q runtime_kind=%q", brand, runtimeKind)
 	}
@@ -108,6 +114,18 @@ func newCodexJSONRPCStdioRuntime(providerID string) RuntimeFactory {
 			CheckpointResume: false,
 			BinaryRequired:   true,
 		})
+	}
+}
+
+func newACPRuntime(providerID, runtimeID string, mode runtimes.Mode) RuntimeFactory {
+	return func(plan *launch.Plan) (agentsessions.Runtime, error) {
+		// Gated off by default until go-agent-wrapper >= v0.21.1; see
+		// launch.ErrACPLaunchDisabled. Session create probes this factory,
+		// so a refused launch leaves no created session behind.
+		if !launch.ACPLaunchEnabled() {
+			return nil, launch.ErrACPLaunchDisabled
+		}
+		return acp.New(providerID, runtimeID, mode, plan.Command)
 	}
 }
 

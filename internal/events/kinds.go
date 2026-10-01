@@ -29,6 +29,14 @@ const (
 	KindDaemonShutdownStarted   = "daemon.shutdown_started"
 	KindDaemonShutdownCompleted = "daemon.shutdown_completed"
 
+	// KindDaemonShutdownSessionsEnded is emitted during a graceful daemon
+	// shutdown, after the session drain (CW-20260912-0086). Sessions in
+	// ended were recorded `killed` with reason "daemon-shutdown"; sessions
+	// in still_running had not exited when the drain ended and are left for
+	// the next start's sweep. Payload schema:
+	//   {"ended":<n>,"ended_session_ids":[...],"still_running":<n>,"still_running_session_ids":[...]}
+	KindDaemonShutdownSessionsEnded = "daemon.shutdown_sessions_ended"
+
 	// KindDaemonSessionsSwept is emitted at daemon start when the startup
 	// sweep settles sessions the previous daemon left launching/running
 	// (CW-20260912-0085). Swept sessions were failed with exit_code -1
