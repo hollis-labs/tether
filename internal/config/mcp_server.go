@@ -118,7 +118,7 @@ func isFileRef(s string) bool {
 }
 
 // urlRedactionValues lists the strings under which a secret URL can appear in an
-// error. net/http re-serialises the URL it fails on: the scheme is lower-cased,
+// error. net/http re-serializes the URL it fails on: the scheme is lower-cased,
 // a path with characters such as ^ * ( ) [ ] or a space or non-ASCII is
 // percent-encoded, and a userinfo password is masked as ***. So the URL as
 // written is not enough: this also returns the parsed form, the path in both

@@ -290,7 +290,7 @@ func TestFileCredentialURL_IsRedactedInTheFormNetHTTPPrints(t *testing.T) {
 	}
 	// Precondition: the error carries the secret, but NOT in the form it was written in.
 	if strings.Contains(rawErr.Error(), written) {
-		t.Fatalf("precondition: net/http printed the URL as written; this test needs a re-serialised URL: %v", rawErr)
+		t.Fatalf("precondition: net/http printed the URL as written; this test needs a re-serialized URL: %v", rawErr)
 	}
 	for _, leaked := range []string{"tok%5Een", "qvalue123", "second456"} {
 		if !strings.Contains(rawErr.Error(), leaked) {
