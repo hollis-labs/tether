@@ -367,10 +367,25 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 	}
 
 	var rows []store.ProxyEvent
+	var kinds map[string]int
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		rows, _ = f.db.QueryProxyEvents(store.ProxyEventFilter{ToolName: "huge_error_tool"})
-		if len(rows) > 0 {
+		var err error
+		rows, err = f.db.QueryProxyEvents(store.ProxyEventFilter{ToolName: "huge_error_tool"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		evs, err := f.db.ListEventsBySession("sess-1", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kinds = map[string]int{}
+		for _, e := range evs {
+			kinds[e.Kind]++
+		}
+		// Ingestion commits the proxy row before publishing the end event.
+		// Wait for both stores before asserting or canceling the publisher.
+		if len(rows) > 0 && kinds[events.EventTypeToolCallStart] > 0 && kinds[events.EventTypeToolCallEnd] > 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -380,14 +395,6 @@ func TestDaemonToolCallPublisher_AHugeErrorStillRecordsTheCall(t *testing.T) {
 	}
 	if rows[0].OK || len(rows[0].Error) > api.MaxProxyEventErrorBytes || !strings.HasSuffix(rows[0].Error, "[truncated]") {
 		t.Errorf("row = ok %v, error %d bytes ending %q; want a failure with a truncated error within the cap", rows[0].OK, len(rows[0].Error), rows[0].Error[max(0, len(rows[0].Error)-14):])
-	}
-	evs, err := f.db.ListEventsBySession("sess-1", 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]int{}
-	for _, e := range evs {
-		kinds[e.Kind]++
 	}
 	if kinds[events.EventTypeToolCallStart] != 1 || kinds[events.EventTypeToolCallEnd] != 1 {
 		t.Errorf("event kinds for sess-1 = %v, want one tool_call_start and one tool_call_end: an orphan start", kinds)
