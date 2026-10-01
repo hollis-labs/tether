@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
@@ -331,7 +332,8 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
-	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
+	// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
+	startOpts.ExtraArgs = sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
@@ -351,6 +353,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
+	streamingStdioBootPromptFirstTurn(rt.Caps(), &startOpts)
 
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
@@ -412,6 +415,34 @@ func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsession
 		Prompt: bootPrompt,
 		Turn: turn.Options{
 			Runtime: runtimekind.PTY,
+		},
+	})
+}
+
+// streamingStdioBootPromptFirstTurn sends the boot prompt as the first
+// stream-json user turn of a streaming-stdio session.
+//
+// INTERIM (CW-20261001-0015): CW-20260930-0135 (one argv owner) and
+// CW-20260930-0106 (native launches on the wrapper) replace this. Claude under
+// --input-format stream-json reads its prompt only from stdin and ignores a
+// positional -p, but mapBootMode turns a catalog bootstrap mode of
+// "streaming-stdio" into "planted", and agentkit's streaming-stdio runtime
+// writes the boot prompt to stdin only for BootMode=stdin — so the session
+// started and sat on stdin with no turn. BootMode=stdin alone would not fix it:
+// that path writes the prompt verbatim, and a stream-json reader needs a
+// framed user message. The auto-fired first turn is framed by turn.Frame.
+func streamingStdioBootPromptFirstTurn(caps agentsessions.Capabilities, opts *agentsessions.StartOptions) {
+	if opts == nil || !caps.StreamingStdio || opts.BootPrompt == "" || opts.BootMode == agentlaunch.BootModeNone {
+		return
+	}
+	bootPrompt := opts.BootPrompt
+	opts.BootPrompt = ""
+	opts.BootMode = ""
+	_ = sessionkit.ApplyFirstTurnPolicy(opts, sessionkit.FirstTurnPolicy{
+		Mode:   sessionkit.AutoFireFirstTurn,
+		Prompt: bootPrompt,
+		Turn: turn.Options{
+			Runtime: runtimekind.StreamingStdio,
 		},
 	})
 }
