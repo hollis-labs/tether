@@ -3,7 +3,10 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/hollis-labs/agentkit/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/store"
@@ -123,22 +126,129 @@ func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]strin
 	return antigravity.PrependPATH(env, dir), nil
 }
 
-func sharedExtraArgs(argv, baseArgs []string) []string {
-	if len(argv) == 0 {
+// sharedExtraArgs is the part of the shared launch's argv the session runtime
+// cannot compose for itself: the arguments that point into roots only the
+// launch knows — the planted boot dir (claude's --mcp-config) and the project
+// dir (claude's --add-dir, codex's --cd) — plus any injected args.
+//
+// INTERIM (CW-20261001-0015): CW-20260930-0135 (one argv owner) and
+// CW-20260930-0106 (native launches on the wrapper) replace this. Until then
+// two things compose argv. prepared.Argv is a whole provider argv — binary,
+// the projection's launch convention (subcommand, output flags, the boot
+// prompt as a positional), ProviderSpec.Flags, Injection.Args — while the
+// runtime's PlanScopedAdapter prepends plan.Args to its own adapter's
+// convention and agentkit appends ExtraArgs after that. Passing all of
+// prepared.Argv[1:] through composed the convention twice: duplicated
+// -p/--output-format for claude, `codex app-server app-server`, and a stray
+// positional for `codex exec` (exit 2). The adapter keeps the convention, and
+// only what it cannot know crosses over.
+//
+// Only claude and codex take the narrowed path. opencode's projection also
+// carries `--agent <name>`, naming the agent file it planted, which its
+// runtime adapter does not know; those providers keep the old pass-through
+// until the single argv owner lands rather than change unverified here.
+func sharedExtraArgs(providerBrand string, prepared *agentlaunch.PreparedLaunch, baseArgs []string) []string {
+	if prepared == nil || len(prepared.Argv) < 2 {
 		return nil
 	}
-	args := argv[1:]
-	if len(baseArgs) > 0 && len(args) >= len(baseArgs) {
-		matches := true
-		for i := range baseArgs {
-			if args[i] != baseArgs[i] {
-				matches = false
-				break
-			}
-		}
-		if matches {
-			args = args[len(baseArgs):]
+	if providerBrand != "claude" && providerBrand != "codex" {
+		return passThroughExtraArgs(prepared.Argv, baseArgs)
+	}
+	binding := prepared.Argv[1:]
+	roots := []string{prepared.PlantedBootDir, prepared.WorkspaceDir, prepared.Workdir}
+	var flags, injected []string
+	if prepared.Compiled != nil {
+		roots = append(roots, prepared.Compiled.ResolvedProjectRoot)
+		if plan := prepared.Compiled.Plan; plan != nil {
+			flags = plan.Provider.Flags
+			injected = plan.Injection.Args
+			roots = append(roots, plan.Workspace.Workdir, plan.Project.Root)
 		}
 	}
+	// providerplant appends ProviderSpec.Flags and then Injection.Args after
+	// the launch binding; peel them off the tail when they are there.
+	tail := append(append([]string(nil), flags...), injected...)
+	if n := len(binding) - len(tail); n >= 0 && slices.Equal(binding[n:], tail) {
+		binding = binding[:n]
+	} else {
+		flags, injected = nil, nil
+	}
+
+	out := rootBoundArgs(binding, roots, flagTargets(baseArgs, prepared.Workdir))
+	// The catalog engine's flags are plan.Args, which PlanScopedAdapter
+	// already prepends; only flags it does not carry still need passing.
+	if !slices.Equal(flags, baseArgs) {
+		out = append(out, flags...)
+	}
+	return append(out, injected...)
+}
+
+// passThroughExtraArgs is the pre-CW-20261001-0015 behavior: all of argv
+// after the binary, less a leading plan.Args the adapter already prepends.
+func passThroughExtraArgs(argv, baseArgs []string) []string {
+	args := argv[1:]
+	if len(baseArgs) > 0 && len(args) >= len(baseArgs) && slices.Equal(args[:len(baseArgs)], baseArgs) {
+		args = args[len(baseArgs):]
+	}
 	return append([]string(nil), args...)
+}
+
+// rootBoundArgs keeps the args that name a path under one of roots, each with
+// the flag in front of it ("--mcp-config <bootdir>/.mcp.json"), except a pair
+// already in have — the same flag at the same target.
+func rootBoundArgs(args, roots []string, have map[string]bool) []string {
+	var out []string
+	prev := ""
+	for _, arg := range args {
+		switch {
+		case !underAnyRoot(arg, roots):
+		case strings.HasPrefix(prev, "-"):
+			if !have[flagTarget(prev, arg, "")] {
+				out = append(out, prev, arg)
+			}
+		default:
+			out = append(out, arg)
+		}
+		prev = arg
+	}
+	return out
+}
+
+// flagTargets indexes each "--flag value" pair in args by flag and target,
+// a relative value resolved against cwd. launch.Resolve splices
+// `--mcp-config .mcp.json` into claude's plan.Args, relative to the boot dir
+// the process starts in — the same file as the projection's absolute one.
+func flagTargets(args []string, cwd string) map[string]bool {
+	have := map[string]bool{}
+	prev := ""
+	for _, arg := range args {
+		if strings.HasPrefix(prev, "-") && !strings.HasPrefix(arg, "-") {
+			have[flagTarget(prev, arg, cwd)] = true
+		}
+		prev = arg
+	}
+	return have
+}
+
+func flagTarget(flag, value, cwd string) string {
+	if !filepath.IsAbs(value) && cwd != "" {
+		value = filepath.Join(cwd, value)
+	}
+	return flag + "\x00" + filepath.Clean(value)
+}
+
+func underAnyRoot(path string, roots []string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

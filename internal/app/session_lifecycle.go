@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
@@ -330,7 +332,8 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
-	startOpts.ExtraArgs = sharedExtraArgs(prepared.Argv, plan.Args)
+	// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
+	startOpts.ExtraArgs = sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
@@ -350,6 +353,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
+	streamingStdioBootPromptFirstTurn(rt.Caps(), &startOpts)
 
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
@@ -415,6 +419,34 @@ func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsession
 	})
 }
 
+// streamingStdioBootPromptFirstTurn sends the boot prompt as the first
+// stream-json user turn of a streaming-stdio session.
+//
+// INTERIM (CW-20261001-0015): CW-20260930-0135 (one argv owner) and
+// CW-20260930-0106 (native launches on the wrapper) replace this. Claude under
+// --input-format stream-json reads its prompt only from stdin and ignores a
+// positional -p, but mapBootMode turns a catalog bootstrap mode of
+// "streaming-stdio" into "planted", and agentkit's streaming-stdio runtime
+// writes the boot prompt to stdin only for BootMode=stdin — so the session
+// started and sat on stdin with no turn. BootMode=stdin alone would not fix it:
+// that path writes the prompt verbatim, and a stream-json reader needs a
+// framed user message. The auto-fired first turn is framed by turn.Frame.
+func streamingStdioBootPromptFirstTurn(caps agentsessions.Capabilities, opts *agentsessions.StartOptions) {
+	if opts == nil || !caps.StreamingStdio || opts.BootPrompt == "" || opts.BootMode == agentlaunch.BootModeNone {
+		return
+	}
+	bootPrompt := opts.BootPrompt
+	opts.BootPrompt = ""
+	opts.BootMode = ""
+	_ = sessionkit.ApplyFirstTurnPolicy(opts, sessionkit.FirstTurnPolicy{
+		Mode:   sessionkit.AutoFireFirstTurn,
+		Prompt: bootPrompt,
+		Turn: turn.Options{
+			Runtime: runtimekind.StreamingStdio,
+		},
+	})
+}
+
 // ListSessions delegates to the store with the given list filter.
 func (s *Service) ListSessions(opts store.ListSessionsOptions) ([]store.SessionRow, error) {
 	return s.Store.ListSessions(opts)
@@ -425,7 +457,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 	return s.Store.GetSession(id)
 }
 
-// StopSession routes through agentsessions.Manager.Stop.
+// StopSession routes through agentsessions.Manager.Stop. The session's
+// terminal state is recorded as "killed", distinct from "completed" and
+// "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
 	if _, ok := s.Manager.Get(id); !ok {
 		return agentsessions.ErrSessionNotRunning
@@ -445,11 +479,31 @@ func (s *Service) StopSession(id string) error {
 			}
 		}
 	}
+	// Mark before signaling: the process can exit, and the lib record its
+	// terminal state, before Manager.Stop returns. A session that exits on
+	// its own in the instant before the signal is still recorded as killed.
+	// The mark stays on any other error, as the lib's own stop flag does:
+	// the session was registered, so it is being stopped.
+	s.stops.mark(id)
 	err = s.Manager.Stop(context.Background(), id)
+	if errors.Is(err, agentsessions.ErrSessionNotRunning) {
+		s.stops.clear(id)
+		return err
+	}
+	go s.clearStopOnExit(id)
 	if err == nil && strings.TrimSpace(row.LogicalAgentID) != "" {
 		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
 	}
 	return err
+}
+
+// clearStopOnExit drops id's stop request once the Manager has recorded
+// its terminal state. WaitSession returns after the watch goroutine has
+// written the state row and emitted the event, so neither sink can miss
+// the mark.
+func (s *Service) clearStopOnExit(id string) {
+	_, _ = s.Manager.WaitSession(context.Background(), id)
+	s.stops.clear(id)
 }
 
 // leaseActorBinding best-effort-leases a T02 RuntimeBinding for a durable

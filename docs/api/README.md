@@ -452,6 +452,8 @@ Response:
 
 Sessions move through `created → launching → running → {completed|failed|killed}`.
 `POST /sessions` creates (state=created); `POST /sessions/{id}/launch` starts.
+What each terminal state means is under
+[Driving sessions from an orchestrator](#driving-sessions-from-an-orchestrator).
 
 ### `POST /sessions`
 
@@ -583,6 +585,11 @@ Signal the runtime to terminate the session. No body.
 Response: 204 on success; 404 when the session is not currently running
 (already exited or never registered).
 
+The stop is asynchronous: 204 means the signal was sent. When the process
+exits, the session's state becomes `killed`. That is distinct from
+`completed` and `failed`, whatever exit code the process returned.
+`GET /sessions/{id}/wait` returns once that state is recorded.
+
 ### `GET /sessions/{id}/wait`
 
 Long-poll until the session reaches a terminal state. Returns the exit code.
@@ -657,7 +664,8 @@ engine's session host) can rely on, and what it cannot:
   daemon restart), `GET /sessions/{id}/health` the live runtime,
   `GET /sessions/{id}/wait` blocks for the exit code, and
   `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
-- **Cancelling.** `POST /sessions/{id}/stop`. The resulting state is durable.
+- **Cancelling.** `POST /sessions/{id}/stop`. The session ends in `killed`,
+  durably, so a cancel is never mistaken for an agent that finished.
 - **A daemon restart ends running sessions.** Agent processes are children of
   muxd. On startup muxd sweeps every session left `launching` or `running` to
   `failed` with exit code -1, so after a restart an observer sees a definite terminal state, not
@@ -671,6 +679,32 @@ engine's session host) can rely on, and what it cannot:
   message it sends; its end is a state and an exit code. An orchestrator that
   needs a result value has the agent send it as a message (for example a reply
   to the envelope or message that started the work) and reads it from there.
+
+#### Session states
+
+```text
+created ──launch──▶ launching ──▶ running ──┬──▶ completed   exited on its own, code 0
+   │                    │                   ├──▶ failed      exited on its own, non-zero
+   │                    │                   └──▶ killed      ended by POST /sessions/{id}/stop
+   └────────────────────┴──▶ failed   the launch failed, exit code 1
+
+launching | running ──daemon restart──▶ failed   exit code -1
+```
+
+| State       | Terminal | Reached by                                                        | `exit_code`                         |
+|-------------|----------|-------------------------------------------------------------------|-------------------------------------|
+| `created`   | no       | `POST /sessions`, or resume                                       | —                                   |
+| `launching` | no       | `POST /sessions/{id}/launch`                                      | —                                   |
+| `running`   | no       | the runtime started                                               | —                                   |
+| `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
+| `failed`    | yes      | exited on its own non-zero; the launch failed; or a daemon restart | the process's code; `1` for a failed launch; `-1` after a restart |
+| `killed`    | yes      | `POST /sessions/{id}/stop` (also `mux sessions stop`, MCP `mux_session_stop`, ACP session close) | whatever the stopped process returned |
+
+Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
+handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
+is the `to` of the session's terminal `session.state_changed` event. A
+terminal state is final: a session never leaves it, and resuming makes a new
+session.
 
 ## Checkpoints
 
@@ -1082,7 +1116,7 @@ Current (v0.0.2):
 | daemon   | `daemon.shutdown_started`     | muxd on ctx cancel                     | empty                                                        |
 | daemon   | `daemon.shutdown_completed`   | muxd after runtime drain, before Close | empty                                                        |
 | daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
-| session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}`                            |
+| session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
 | broker   | `broker.envelope_created`     | broker.Service on successful persist   | `{id, sender, recipient, workflow_id, correlation_id, message_type}` — metadata only, never payload |
