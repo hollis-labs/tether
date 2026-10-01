@@ -58,7 +58,7 @@ func TestUpstreamFixture(t *testing.T) {
 				if string(b) == "stdout" {
 					stdoutClosed.Store(true)
 					_ = os.Stdout.Close()
-					time.Sleep(400 * time.Millisecond)
+					awaitFixtureRelease(dir, name)
 					os.Exit(0)
 				}
 				code, _ := strconv.Atoi(string(b))
@@ -116,9 +116,73 @@ func TestUpstreamFixture(t *testing.T) {
 	}
 	appendEvent("eof")
 	if stdoutClosed.Load() {
-		time.Sleep(500 * time.Millisecond)
+		awaitFixtureRelease(dir, name)
 	}
 	os.Exit(0)
+}
+
+// awaitFixtureRelease holds a fixture that has closed its stdout alive until
+// the test writes <name>.release (releaseFixture). A fixed sleep here let a
+// loaded runner skip the whole "stdout closed, process still alive" window
+// the test needs to observe. The cap only bounds an abandoned fixture.
+func awaitFixtureRelease(dir, name string) {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(dir, name+".release")); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func releaseFixture(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// awaitFixturesExited waits until every fixture process recorded in
+// <name>.events has exited, killing any still alive at the deadline.
+// ClientPool.Shutdown closes an upstream's stdin without waiting for it to
+// exit, so without this a fixture could still be writing its events file
+// while the test's TempDir is removed ("directory not empty").
+func awaitFixturesExited(t *testing.T, dir, name string) {
+	t.Helper()
+	pids := func() []int {
+		b, _ := os.ReadFile(filepath.Join(dir, name+".events"))
+		var out []int
+		for _, line := range strings.Split(string(b), "\n") {
+			if f := strings.Fields(line); len(f) == 2 && f[0] == "start" {
+				if pid, err := strconv.Atoi(f[1]); err == nil {
+					out = append(out, pid)
+				}
+			}
+		}
+		return out
+	}
+	alive := func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var live []int
+		for _, pid := range pids() {
+			if alive(pid) {
+				live = append(live, pid)
+			}
+		}
+		if len(live) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for _, pid := range live {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+			t.Logf("killed fixture processes still alive after the test: %v", live)
+			time.Sleep(100 * time.Millisecond)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func fixtureEntry(t *testing.T, dir, name string) config.MCPServerEntry {
@@ -127,12 +191,15 @@ func fixtureEntry(t *testing.T, dir, name string) config.MCPServerEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Registered after the caller's t.TempDir, so it runs before the
+	// directory is removed.
+	t.Cleanup(func() { awaitFixturesExited(t, dir, name) })
 	return config.MCPServerEntry{ID: name, Transport: "stdio", Command: exe, Args: []string{"-test.run=^TestUpstreamFixture$"}, Tags: []string{name}, Env: map[string]string{"TETHER_UPSTREAM_FIXTURE": dir, "TETHER_UPSTREAM_NAME": name, "FIXTURE_TOKEN": "secret-fixture-token", "GORACE": "atexit_sleep_ms=0"}}
 }
 
 func awaitStatus(t *testing.T, p *ClientPool, id string, predicate func(ServerStatus) bool) ServerStatus {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, s := range p.StatusSummary() {
 			if s.ID == id && predicate(s) {
@@ -169,7 +236,9 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			dir := t.TempDir()
 			registry := NewToolRegistry()
 			pool := NewClientPool([]config.MCPServerEntry{fixtureEntry(t, dir, "alpha"), fixtureEntry(t, dir, "beta")}, registry)
-			pool.policy.Delays = []time.Duration{150 * time.Millisecond, 300 * time.Millisecond}
+			// Long enough that a loaded runner still observes, and makes its
+			// health and discovery calls inside, the reconnecting window.
+			pool.policy.Delays = []time.Duration{time.Second, 2 * time.Second}
 			if err := pool.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +296,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "not replayed") {
 					t.Fatalf("pending error: %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("in-flight call hung")
 			}
 			s := awaitStatus(t, pool, "alpha", func(s ServerStatus) bool { return s.Status == "reconnecting" })
@@ -305,7 +374,7 @@ func TestUpstreamRecovery_CrashLoopBoundAndShutdown(t *testing.T) {
 		if leaf, ok := s.client.(*stdioUpstream); ok {
 			select {
 			case <-leaf.done:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("fixture not reaped on EOF")
 			}
 		}
@@ -321,6 +390,8 @@ func TestUpstreamRecovery_StdoutCloseDoesNotSpawnOverLiveProcess(t *testing.T) {
 	}
 	defer pool.Shutdown()
 	fixtureMarker(t, dir, "alpha", "stdout")
+	// The fixture stays alive with its stdout closed until released, so this
+	// state lasts as long as the test needs it to.
 	awaitStatus(t, pool, "alpha", func(s ServerStatus) bool {
 		return s.Status == "failed" && strings.Contains(s.Error, "waiting for upstream process exit")
 	})
@@ -329,13 +400,16 @@ func TestUpstreamRecovery_StdoutCloseDoesNotSpawnOverLiveProcess(t *testing.T) {
 	if strings.Count(string(b), "start") != 1 {
 		t.Fatalf("duplicate live process: %s", b)
 	}
+	releaseFixture(t, dir, "alpha")
 	awaitStatus(t, pool, "alpha", func(s ServerStatus) bool { return s.Status == "connected" && s.RestartAttempts == 1 })
 }
 
 func TestUpstreamRecovery_StableBudgetResetAndCancelBackoff(t *testing.T) {
 	dir := t.TempDir()
 	pool := NewClientPool([]config.MCPServerEntry{fixtureEntry(t, dir, "alpha")}, NewToolRegistry())
-	pool.policy.Delays = []time.Duration{150 * time.Millisecond}
+	// The backoff is the window the test must observe as "reconnecting" and
+	// shut down inside; long enough that a loaded runner cannot miss it.
+	pool.policy.Delays = []time.Duration{time.Second}
 	pool.policy.StableFor = 200 * time.Millisecond
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -347,7 +421,9 @@ func TestUpstreamRecovery_StableBudgetResetAndCancelBackoff(t *testing.T) {
 	fixtureMarker(t, dir, "alpha", "23")
 	awaitStatus(t, pool, "alpha", func(s ServerStatus) bool { return s.Status == "reconnecting" })
 	pool.Shutdown()
-	time.Sleep(200 * time.Millisecond)
+	// Outlast the backoff, so a restart Shutdown failed to cancel would
+	// have happened by now.
+	time.Sleep(1500 * time.Millisecond)
 	b, _ := os.ReadFile(filepath.Join(dir, "alpha.events"))
 	if strings.Count(string(b), "start") != 2 {
 		t.Fatalf("respawned during shutdown: %s", b)

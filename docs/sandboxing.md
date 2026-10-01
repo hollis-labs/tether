@@ -127,7 +127,7 @@ Restart the daemon to pick up the new profile.
 
 | Scenario | Behavior |
 |----------|----------|
-| Profile name references a file that doesn't exist | Catalog validation fails at `mux daemon start` |
+| Profile name references a file that doesn't exist | The daemon starts, logs a warning naming the agent and profile, and `mux doctor` fails `catalog-sandbox-profiles`. Creating, launching or resuming a session of that agent is refused with 404 `not_found` naming the profile. The same applies to an `agent_file`/`agent_inline` override that names one. It never runs without a sandbox. |
 | Profile name set but platform has no enforcement tool | Launch fails with `conflict` error |
 | Sandbox application error (SBPL syntax, bwrap arg error) | Launch fails with `conflict` error |
 | Agent has no `default_sandbox` field | No enforcement — session runs unrestricted |
