@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// proxyEventsMaxRows is the ring-buffer capacity for the proxy_events table.
-// When the row count exceeds this after an insert, the oldest rows are pruned.
-const proxyEventsMaxRows = 2000
+// proxyEventsQueryLimit caps a single query, not durable storage.
+const proxyEventsQueryLimit = 2000
 
 // ProxyEvent is one recorded MCP proxy tool call event, persisted to the
 // proxy_events table. Mirrors mcpadapter.ToolCallEvent but lives in the store
@@ -62,8 +61,8 @@ func proxyEventWhereClause(f ProxyEventFilter) (string, []any) {
 	return q, args
 }
 
-// AppendProxyEvent inserts ev into the proxy_events table and trims old rows
-// when the table exceeds proxyEventsMaxRows. The ID field of ev is ignored.
+// AppendProxyEvent inserts ev; age-based retention runs in the daemon.
+// The ID field of ev is ignored.
 func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 	ok := 1
 	if !ev.OK {
@@ -91,29 +90,18 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 		return fmt.Errorf("insert proxy event: %w", err)
 	}
 
-	// Trim oldest rows when ring buffer is full.
-	_, err = s.db.Exec(
-		`DELETE FROM proxy_events WHERE id IN (
-		     SELECT id FROM proxy_events ORDER BY id ASC
-		     LIMIT MAX(0, (SELECT COUNT(*) FROM proxy_events) - ?)
-		 )`,
-		proxyEventsMaxRows,
-	)
-	if err != nil {
-		return fmt.Errorf("trim proxy events: %w", err)
-	}
 	return nil
 }
 
 // QueryProxyEvents returns proxy events matching f, oldest-to-newest.
-// Limit defaults to 100 when f.Limit == 0; capped at 500.
+// Limit defaults to 100 when f.Limit == 0; capped at 2000.
 func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 	limit := f.Limit
 	if limit == 0 {
 		limit = 100
 	}
-	if limit < 0 || limit > proxyEventsMaxRows {
-		limit = proxyEventsMaxRows
+	if limit < 0 || limit > proxyEventsQueryLimit {
+		limit = proxyEventsQueryLimit
 	}
 
 	q := `SELECT id, session_id, server, tool_name, args_schema_fp,

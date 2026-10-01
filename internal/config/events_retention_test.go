@@ -7,8 +7,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Events retention is off unless enabled; enabled without days is D-50's 90
-// days; 0 or negative days disables it (CW-20260930-0008).
+// Defaults apply even when the config section is absent; explicit false or
+// nonpositive days disables retention.
 func TestEventsRetentionWindow(t *testing.T) {
 	day := 24 * time.Hour
 	for _, tc := range []struct {
@@ -16,8 +16,10 @@ func TestEventsRetentionWindow(t *testing.T) {
 		yaml string
 		want time.Duration
 	}{
-		{"absent", `shutdown_timeout: 10s`, 0},
-		{"days without enabled", "events_retention:\n  days: 30", 0},
+		{"absent", `shutdown_timeout: 10s`, 90 * day},
+		{"days without enabled", "events_retention:\n  days: 30", 30 * day},
+		{"explicit disabled", "events_retention:\n  enabled: false", 0},
+		{"days only, zero", "events_retention:\n  days: 0", 0},
 		{"enabled, default window", "events_retention:\n  enabled: true", 90 * day},
 		{"enabled, 30 days", "events_retention:\n  enabled: true\n  days: 30", 30 * day},
 		{"enabled, 0 days", "events_retention:\n  enabled: true\n  days: 0", 0},
