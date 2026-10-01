@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -425,7 +426,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 	return s.Store.GetSession(id)
 }
 
-// StopSession routes through agentsessions.Manager.Stop.
+// StopSession routes through agentsessions.Manager.Stop. The session's
+// terminal state is recorded as "killed", distinct from "completed" and
+// "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
 	if _, ok := s.Manager.Get(id); !ok {
 		return agentsessions.ErrSessionNotRunning
@@ -445,11 +448,31 @@ func (s *Service) StopSession(id string) error {
 			}
 		}
 	}
+	// Mark before signaling: the process can exit, and the lib record its
+	// terminal state, before Manager.Stop returns. A session that exits on
+	// its own in the instant before the signal is still recorded as killed.
+	// The mark stays on any other error, as the lib's own stop flag does:
+	// the session was registered, so it is being stopped.
+	s.stops.mark(id)
 	err = s.Manager.Stop(context.Background(), id)
+	if errors.Is(err, agentsessions.ErrSessionNotRunning) {
+		s.stops.clear(id)
+		return err
+	}
+	go s.clearStopOnExit(id)
 	if err == nil && strings.TrimSpace(row.LogicalAgentID) != "" {
 		s.revokeActorBindingIfCurrent(id, row.LogicalAgentID)
 	}
 	return err
+}
+
+// clearStopOnExit drops id's stop request once the Manager has recorded
+// its terminal state. WaitSession returns after the watch goroutine has
+// written the state row and emitted the event, so neither sink can miss
+// the mark.
+func (s *Service) clearStopOnExit(id string) {
+	_, _ = s.Manager.WaitSession(context.Background(), id)
+	s.stops.clear(id)
 }
 
 // leaseActorBinding best-effort-leases a T02 RuntimeBinding for a durable

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -10,29 +11,77 @@ import (
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
 
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
+
+// stopRequests records which sessions a caller asked to stop, so their
+// terminal transition is recorded as "killed" rather than "completed"
+// (CW-20260930-0250). The lib knows a session is being stopped (its
+// entry.killing flag) but lands it as StateDone and passes neither the
+// flag nor a reason to the StateSink or the EventSink, so tether keeps
+// its own record. Service.StopSession marks a session before signaling
+// it and clears the mark once the terminal state has been written.
+//
+// Marks are counted, one clear per mark, so a second stop of the same
+// session that finds it already gone cannot drop the first stop's mark
+// before the terminal state is written.
+//
+// Methods are nil-safe: a composition without a stopRequests (tests that
+// build a Manager by hand) records stops the old way, as "completed".
+type stopRequests struct {
+	mu  sync.Mutex
+	ids map[string]int
+}
+
+func (r *stopRequests) mark(id string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids == nil {
+		r.ids = make(map[string]int)
+	}
+	r.ids[id]++
+}
+
+func (r *stopRequests) clear(id string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids[id] <= 1 {
+		delete(r.ids, id)
+		return
+	}
+	r.ids[id]--
+}
+
+func (r *stopRequests) requested(id string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ids[id] > 0
+}
 
 // stateSinkAdapter adapts *store.Store to agentsessions.StateSink. The
 // lib's vocabulary (launching/running/done/failed) does not match mux's
 // persisted vocabulary (launching/running/completed/failed/killed)
-// exactly: lib terminal "done" persists as mux's "completed".
-//
-// The StateSink callback does not receive the lib's stop reason, so this
-// path cannot distinguish an explicit kill from a clean completion at
-// the column level — both land as "completed". The killed-vs-completed
-// distinction is preserved in the events stream (eventSinkAdapter sees
-// Reason and emits to="killed" in the session.state_changed payload).
-// Consumers that need DB-level kill detection can join against the
-// events table; the column itself is best-effort.
+// exactly: lib terminal "done" persists as mux's "completed", and a
+// terminal state reached after a stop request persists as "killed".
 type stateSinkAdapter struct {
-	db *store.Store
+	db    *store.Store
+	stops *stopRequests
 }
 
 // muxSessionState normalises a lib State value to mux's persisted
 // vocabulary. Lib "done" → mux "completed"; everything else passthrough.
-// "killed" is not a lib state today — it's recovered from LifecycleEvent
-// .Reason in eventSinkAdapter / mapLifecycleStates.
+// "killed" is not a lib state — terminalState derives it from a stop
+// request.
 func muxSessionState(state agentsessions.State) string {
 	if state == agentsessions.StateDone {
 		return "completed"
@@ -40,8 +89,20 @@ func muxSessionState(state agentsessions.State) string {
 	return string(state)
 }
 
+// terminalState maps a lib state to mux's vocabulary for one session:
+// any terminal state (done or failed) reached after a stop request is
+// "killed", whatever the exit code. A stopped process may exit 0 (it
+// caught SIGTERM and exited cleanly) or -1 (a signal ended it), so the
+// exit code alone cannot tell a stop from a finish.
+func terminalState(state agentsessions.State, stopRequested bool) string {
+	if stopRequested && (state == agentsessions.StateDone || state == agentsessions.StateFailed) {
+		return string(session.StateKilled)
+	}
+	return muxSessionState(state)
+}
+
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
-	return a.db.UpdateSessionState(id, muxSessionState(state), pid, exit)
+	return a.db.UpdateSessionState(id, terminalState(state, a.stops.requested(id)), pid, exit)
 }
 
 // attachmentSinkAdapter adapts *store.Store to agentsessions.AttachmentSink.
@@ -67,12 +128,13 @@ func (a attachmentSinkAdapter) DetachClientAttachment(attachID string, detachedA
 // the circular reference (sink referenced by Manager, Manager referenced
 // by sink) is resolved post-hoc.
 //
-// State transitions also re-derive a mux-domain "from"/"to" pair: the lib
-// emits Done with Reason="killed" for explicitly-stopped sessions; mux
-// persists this as Killed on the session row. Other states map 1:1.
+// State transitions also re-derive a mux-domain "from"/"to" pair: a
+// terminal transition after a stop request is "killed", matching what
+// stateSinkAdapter persists on the session row. Other states map 1:1.
 type eventSinkAdapter struct {
-	bus events.Publisher
-	mgr *agentsessions.Manager // set post-construction; nil-safe
+	bus   events.Publisher
+	mgr   *agentsessions.Manager // set post-construction; nil-safe
+	stops *stopRequests
 }
 
 // SetManager wires the lookup target after Manager construction. Safe to
@@ -94,7 +156,7 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 	if a.bus == nil {
 		return
 	}
-	from, to := mapLifecycleStates(ev)
+	from, to := mapLifecycleStates(ev, a.stops.requested(ev.SessionID))
 	payload, err := json.Marshal(sessionStateChangedPayload{
 		From:     from,
 		To:       to,
@@ -123,17 +185,13 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 
 // mapLifecycleStates translates a lib LifecycleEvent's From/To pair into
 // mux's string state vocabulary used in session.state_changed payloads.
-// Base translation via muxSessionState (Done → completed); when To is
-// Done with Reason="killed", override to "killed" so consumers reading
-// the events stream can distinguish kill from clean completion (a
-// distinction the StateSink-driven sessions.state column cannot
-// preserve).
-func mapLifecycleStates(ev agentsessions.LifecycleEvent) (from, to string) {
+// To goes through terminalState, so a stopped session's event says
+// "killed", as its session row does. Done with Reason="killed" is also
+// read as a stop, for a lib that reports one that way.
+func mapLifecycleStates(ev agentsessions.LifecycleEvent, stopRequested bool) (from, to string) {
 	from = muxSessionState(ev.From)
-	to = muxSessionState(ev.To)
-	if ev.To == agentsessions.StateDone && ev.Reason == "killed" {
-		to = "killed"
-	}
+	killed := stopRequested || (ev.To == agentsessions.StateDone && ev.Reason == "killed")
+	to = terminalState(ev.To, killed)
 	return from, to
 }
 
