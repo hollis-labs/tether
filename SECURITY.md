@@ -101,8 +101,9 @@ encryption controls.
 
 Catalog YAML can hold credentials in plaintext (for example
 `resources[].config.env` and MCP server `env:`/`token:` fields). Prefer secret
-references (`keychain://…`, `helper://…`) over literal values; see
-[`docs/secrets.md`](docs/secrets.md). The federation registry stores identity
+references (`keychain://…`, `helper://…`, or `file://` for a 0600 file) over
+literal values; see [`docs/secrets.md`](docs/secrets.md), including what a
+file reference does not hide. The federation registry stores identity
 and a callback URI only, and deliberately does not cache catalog payloads.
 Do not commit catalog files containing real tokens.
 
