@@ -38,7 +38,7 @@ func storeSharedLaunchState(plan *launch.Plan, compiled *agentlaunch.CompiledLau
 		PlanHash:        compiled.Provenance.PlanHash,
 		CompilerVersion: compiled.Provenance.CompilerVersion,
 		ProviderID:      compiled.Plan.Provider.ID,
-		RuntimeKind:     compiled.Plan.Runtime.String(),
+		RuntimeKind:     string(compiled.Plan.Runtime),
 		WorkspaceMode:   compiled.Plan.Workspace.Mode.String(),
 		BootFile:        compiled.BootDirIntent.PerProviderBootFile,
 		TransientFile:   compiled.BootDirIntent.TransientBootFile,

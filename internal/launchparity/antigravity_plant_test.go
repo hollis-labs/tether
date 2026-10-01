@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
 	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
@@ -57,7 +58,7 @@ func TestPlantSmoke_AntigravitySpecPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if plan.Provider.ID != "antigravity" || plan.Runtime != agentlaunch.RuntimeSubprocess {
+	if plan.Provider.ID != "antigravity" || plan.Runtime != runtimes.ModeSubprocessPerTurn {
 		t.Fatalf("provider/runtime = %q/%q; want antigravity/subprocess", plan.Provider.ID, plan.Runtime)
 	}
 

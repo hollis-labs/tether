@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/launchresolve"
@@ -110,7 +111,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 		wantProject  string
 		wantWorkdir  string
 		wantProvider string
-		wantRuntime  agentlaunch.RuntimeKind
+		wantRuntime  runtimes.Mode
 		wantAgent    string
 		wantWSMode   agentlaunch.WorkspaceMode
 	}{
@@ -119,7 +120,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 			wantProject:  "tether",
 			wantWorkdir:  "~/dev/hollis-labs/apps/tether",
 			wantProvider: "claude",
-			wantRuntime:  agentlaunch.RuntimeStreamingStdio,
+			wantRuntime:  runtimes.ModeStreamingStdio,
 			wantAgent:    "general",
 			wantWSMode:   agentlaunch.WorkspacePersistent, // isolation: hybrid
 		},
@@ -128,7 +129,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 			wantProject:  "nanite",
 			wantWorkdir:  "~/dev/hollis-labs/apps/nanite",
 			wantProvider: "claude",
-			wantRuntime:  agentlaunch.RuntimeStreamingStdio,
+			wantRuntime:  runtimes.ModeStreamingStdio,
 			wantAgent:    "general",
 			wantWSMode:   agentlaunch.WorkspacePersistent,
 		},
@@ -143,7 +144,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 			wantProject:  "agent-mux",
 			wantWorkdir:  "~/dev/hollis-labs/apps/agent-mux",
 			wantProvider: "codex",
-			wantRuntime:  agentlaunch.RuntimeJsonRpcStdio,
+			wantRuntime:  runtimes.ModeJSONRPCStdio,
 			wantAgent:    "general",
 			wantWSMode:   agentlaunch.WorkspacePersistent,
 		},
@@ -158,7 +159,7 @@ func TestResolve_RealLaunches(t *testing.T) {
 			// so the plan carries the literal token.
 			wantWorkdir:  "~/dev/hollis-labs/apps/tether",
 			wantProvider: "claude",
-			wantRuntime:  agentlaunch.RuntimeStreamingStdio,
+			wantRuntime:  runtimes.ModeStreamingStdio,
 			wantAgent:    "general", // agent defaults to "general"
 			wantWSMode:   agentlaunch.WorkspacePersistent,
 		},

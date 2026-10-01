@@ -6,7 +6,8 @@ require (
 	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/agentkit v0.8.0
+	github.com/hollis-labs/agent-contracts-leaf v0.3.0
+	github.com/hollis-labs/agentkit v0.12.2
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.3.0
 	github.com/hollis-labs/go-localdaemon v0.1.0
@@ -14,9 +15,9 @@ require (
 	github.com/hollis-labs/go-messaging v0.5.2
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
-	github.com/hollis-labs/go-providers v0.29.0
+	github.com/hollis-labs/go-providers v0.34.1
 	github.com/hollis-labs/go-runner v0.7.0
-	github.com/hollis-labs/go-sandbox v0.3.0
+	github.com/hollis-labs/go-sandbox v0.4.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
@@ -79,6 +80,8 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/hollis-labs/go-llm-contracts v0.3.0 // indirect
 	github.com/hollis-labs/go-materialize v0.1.0 // indirect
+	github.com/hollis-labs/go-permission v0.1.0 // indirect
+	github.com/hollis-labs/go-safefs v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

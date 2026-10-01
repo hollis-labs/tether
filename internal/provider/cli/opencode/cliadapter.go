@@ -31,12 +31,11 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 // planWithoutRunSubcommand drops a leading "run" from plan.Args. Catalogs
 // seeded before the adapter owned the subcommand declare `args: [run]`,
 // and PlanScopedAdapter prepends plan.Args to the adapter's argv, which
-// would otherwise start `run run ...`.
+// would otherwise start `run run ...`. launch.CatalogFlags is the one
+// definition; the shared launch uses it too.
 func planWithoutRunSubcommand(plan *launch.Plan) *launch.Plan {
-	if len(plan.Args) == 0 || plan.Args[0] != "run" {
-		return plan
-	}
 	p := *plan
-	p.Args = append([]string(nil), plan.Args[1:]...)
+	p.ProviderBrand = "opencode"
+	p.Args = launch.CatalogFlags(&p)
 	return &p
 }

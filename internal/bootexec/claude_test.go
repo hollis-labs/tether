@@ -73,7 +73,9 @@ func TestPrepareClaudeTUIPlantsBootDirAndNeverResumes(t *testing.T) {
 			t.Fatalf(".mcp.json missing %q: %s", want, mcpJSON)
 		}
 	}
-	skill := readFile(t, filepath.Join(prepared.BootDir, ".claude", "skills", "refactor.md"))
+	// agentkit v0.9.0 plants Claude skills in the directory form Claude Code
+	// reads, .claude/skills/<id>/SKILL.md (the flat <id>.md was never loaded).
+	skill := readFile(t, filepath.Join(prepared.BootDir, ".claude", "skills", "refactor", "SKILL.md"))
 	if skill != "refactor body\n" {
 		t.Fatalf("native skill = %q", skill)
 	}
