@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 const secret = "s3cr3t-token-value-0123456789"
@@ -225,5 +226,82 @@ func TestWithin(t *testing.T) {
 	}
 	if within("/a/b", nil) {
 		t.Error("nothing is within an empty root list")
+	}
+}
+
+// A FIFO at the credential path must be refused, not waited on. Opening one with
+// no writer blocks forever, which would hang `mux mcp --proxy` at startup.
+func TestRead_RefusesAFIFOWithoutHanging(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Read(fifo, Options{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotRegular) {
+			t.Fatalf("err = %v, want ErrNotRegular", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read blocked on a FIFO")
+	}
+}
+
+// The race the Lstat cannot close: a path that became a FIFO after the check.
+// openNoFollow must still return at once, and the descriptor check refuses it.
+func TestOpenNoFollow_DoesNotBlockOnAFIFO(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	type result struct {
+		f   *os.File
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		f, err := openNoFollow(fifo)
+		done <- result{f, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("open: %v", r.err)
+		}
+		defer func() { _ = r.f.Close() }()
+		fi, err := r.f.Stat()
+		if err != nil || fi.Mode().IsRegular() {
+			t.Fatalf("descriptor should describe a FIFO: %v, mode %v", err, fi.Mode())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("openNoFollow blocked on a FIFO")
+	}
+}
+
+// Devices are refused before anything is opened.
+func TestRead_RefusesDevices(t *testing.T) {
+	for _, dev := range []string{"/dev/null", "/dev/zero"} {
+		if _, err := os.Stat(dev); err != nil {
+			continue
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := Read(dev, Options{Roots: []string{"/dev"}})
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatalf("%s was read as a credential", dev)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Read blocked on %s", dev)
+		}
 	}
 }

@@ -40,13 +40,20 @@ type MCPServerEntry struct {
 	Enabled   *bool             `yaml:"enabled"` // nil → defaults to true
 	Tags      []string          `yaml:"tags"`
 
-	// argumentRedactionValues carries resolved argument secret material to the
-	// stdio process owner without exposing it through YAML serialization.
+	// argumentRedactionValues carries resolved argument and URL secret material
+	// to the process owner without exposing it through YAML serialization.
 	argumentRedactionValues []string
 
 	// catalogDir is the catalog this entry was read from. A file:// credential
 	// that is a symlink may resolve only into it or the operator's home.
 	catalogDir string
+
+	// fileRefs names the credential fields whose YAML value, as the operator
+	// wrote it, is a file:// reference ("token", "url", "args[i]", "env.KEY").
+	// It is recorded BEFORE ${VAR} expansion, so only a reference the catalog
+	// author wrote counts: a value that merely becomes file://... through an
+	// environment variable (which a launch's caller can set) stays a literal.
+	fileRefs map[string]bool
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
@@ -55,8 +62,8 @@ func (e *MCPServerEntry) IsEnabled() bool {
 	return e.Enabled == nil || *e.Enabled
 }
 
-// ArgumentRedactionValues returns secret material resolved from argument
-// references or environment substitutions. The caller receives a copy.
+// ArgumentRedactionValues returns secret material resolved from argument or url
+// references and environment substitutions in them. The caller receives a copy.
 func (e *MCPServerEntry) ArgumentRedactionValues() []string {
 	return append([]string(nil), e.argumentRedactionValues...)
 }
@@ -110,7 +117,9 @@ func isFileRef(s string) bool {
 }
 
 // resolveFileRef reads the credential file s names. The path is whatever follows
-// file://: absolute, or ~/ for the operator's home.
+// file://: absolute, or ~/ for the operator's home. It is used exactly as the
+// catalog wrote it: ${VAR} is not expanded inside a file:// reference, so an
+// environment variable cannot choose which file is read.
 //
 // Like resolveSecretRef, the value never reaches the returned error: only the
 // field and the path (the reference), which are non-sensitive by construction.
@@ -154,7 +163,8 @@ func resolveSecretRef(ctx context.Context, field, s string) (string, error) {
 // entry, then switch the catalog to the reference" — never the reverse.
 func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	resolve := func(field, s string) (string, error) {
-		if isFileRef(s) {
+		// Only a reference the operator wrote in the YAML is a file reference.
+		if entry.fileRefs[field] && isFileRef(s) {
 			return resolveFileRef(field, s, entry.catalogDir)
 		}
 		return resolveSecretRef(ctx, field, s)
@@ -163,14 +173,22 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	if entry.Token, err = resolve("token", entry.Token); err != nil {
 		return err
 	}
+	rawURL := entry.URL
 	if entry.URL, err = resolve("url", entry.URL); err != nil {
 		return err
+	}
+	if entry.URL != rawURL {
+		// A url that came from a reference is itself a secret (for example
+		// https://host/<token>). It reaches connect errors and logs, which scrub
+		// these values.
+		entry.argumentRedactionValues = append(entry.argumentRedactionValues, entry.URL)
 	}
 	if len(entry.Args) > 0 {
 		args := make([]string, len(entry.Args))
 		for i, arg := range entry.Args {
-			secretRef := isSecretRef(arg) || isFileRef(arg)
-			if args[i], err = resolve(fmt.Sprintf("args[%d]", i), arg); err != nil {
+			field := fmt.Sprintf("args[%d]", i)
+			secretRef := isSecretRef(arg) || entry.fileRefs[field]
+			if args[i], err = resolve(field, arg); err != nil {
 				return err
 			}
 			if secretRef {
@@ -258,17 +276,34 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		}
 
 		entry.catalogDir = catalogDir
+		entry.fileRefs = map[string]bool{}
 
-		// Expand ${VAR} references at load time.
-		entry.URL = expandEnvRefs(entry.URL)
-		entry.Token = expandEnvRefs(entry.Token)
+		// Expand ${VAR} references at load time, except inside a file://
+		// reference. Whether a field is a file reference is decided here, from
+		// what the operator wrote, before any expansion: a value that only
+		// becomes file://... after substitution is a literal.
+		expand := func(field, raw string) string {
+			if isFileRef(raw) {
+				entry.fileRefs[field] = true
+				return raw
+			}
+			return expandEnvRefs(raw)
+		}
+		if !isFileRef(entry.URL) {
+			entry.argumentRedactionValues = append(entry.argumentRedactionValues, envRefValues(entry.URL)...)
+		}
+		entry.URL = expand("url", entry.URL)
+		entry.Token = expand("token", entry.Token)
 		for i, arg := range entry.Args {
-			entry.argumentRedactionValues = append(entry.argumentRedactionValues, envRefValues(arg)...)
-			entry.Args[i] = expandEnvRefs(arg)
+			field := fmt.Sprintf("args[%d]", i)
+			if !isFileRef(arg) {
+				entry.argumentRedactionValues = append(entry.argumentRedactionValues, envRefValues(arg)...)
+			}
+			entry.Args[i] = expand(field, arg)
 		}
 		expanded := make(map[string]string, len(entry.Env))
 		for k, v := range entry.Env {
-			expanded[k] = expandEnvRefs(v)
+			expanded[k] = expand("env."+k, v)
 		}
 		entry.Env = expanded
 

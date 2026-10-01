@@ -18,7 +18,11 @@
 //
 // These checks catch a misconfigured or misdirected file. They are not a
 // defense against another process running as the same user, which can read the
-// file and the environment the credential is passed in; see docs/mcp.md.
+// file and the environment the credential is passed in; see docs/secrets.md.
+// Only the credential file itself is checked: a parent directory that others can
+// write to is accepted, and so is the race of an ancestor directory being
+// swapped for a symlink between the checks and the open, which needs write
+// access to that ancestor.
 package credfile
 
 import (
@@ -77,14 +81,26 @@ func Read(path string, opts Options) (string, error) {
 		return "", fmt.Errorf("%s: %w (it resolves to %s)", p, ErrSymlinkEscape, resolved)
 	}
 
+	// Look at what is there BEFORE opening it. Opening a FIFO with no writer
+	// blocks forever, and a device can do worse; neither is a credential file.
+	li, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("credential file %s: %w", p, unwrapPathError(err))
+	}
+	if !li.Mode().IsRegular() {
+		return "", fmt.Errorf("%s: %w", p, ErrNotRegular)
+	}
+
 	f, err := openNoFollow(resolved)
 	if err != nil {
 		return "", fmt.Errorf("credential file %s: %w", p, unwrapPathError(err))
 	}
 	defer func() { _ = f.Close() }()
 
-	// Check the open file, not the path, so the mode that was checked is the mode
-	// of the file that is read.
+	// Check the open file as well, not only the path: if the path was swapped for
+	// something else after the Lstat above, the mode and type checked here are
+	// those of the file actually read. openNoFollow does not block on a FIFO, so
+	// even that swap cannot hang the open.
 	fi, err := f.Stat()
 	if err != nil {
 		return "", fmt.Errorf("credential file %s: %w", p, unwrapPathError(err))

@@ -179,6 +179,84 @@ env:
 		}
 	})
 
+	// An environment variable the catalog author did not write must not be able to
+	// turn a value into a file reference: LaunchOverride.Env is caller-supplied,
+	// and the proxy runs with it.
+	t.Run("a value that only becomes file:// through ${VAR} stays a literal", func(t *testing.T) {
+		dir := t.TempDir()
+		cred := credFile(t, filepath.Join(home, "steer"), "tok", 0o600)
+		t.Setenv("STEER_REF", "file://"+cred)
+		write(t, filepath.Join(dir, "mcp-servers", "x.yaml"), "id: x\ntransport: stdio\ncommand: /bin/x\n"+
+			"args: [\"${STEER_REF}\"]\ntoken: \"${STEER_REF}\"\nurl: \"${STEER_REF}\"\nenv:\n  T: \"${STEER_REF}\"\n")
+		entries, err := LoadMCPServers(dir)
+		if err != nil {
+			t.Fatalf("a literal must not fail the load: %v", err)
+		}
+		e := entries[0]
+		want := "file://" + cred
+		if e.Args[0] != want || e.Token != want || e.URL != want || e.Env["T"] != want {
+			t.Fatalf("expected the literal %q everywhere, got args=%q token=%q url=%q env=%q", want, e.Args, e.Token, e.URL, e.Env["T"])
+		}
+		for _, got := range []string{e.Args[0], e.Token, e.URL, e.Env["T"]} {
+			if strings.Contains(got, fileCredSecret) {
+				t.Fatalf("the credential file was read through an environment variable: %q", got)
+			}
+		}
+	})
+
+	t.Run("${VAR} is not expanded inside a file:// reference", func(t *testing.T) {
+		dir := t.TempDir()
+		credDir := filepath.Join(home, "expand")
+		credFile(t, credDir, "tok", 0o600)
+		t.Setenv("STEER_DIR", credDir)
+		write(t, filepath.Join(dir, "mcp-servers", "x.yaml"), "id: x\ntransport: stdio\ncommand: /bin/x\nenv:\n  T: \"file://${STEER_DIR}/tok\"\n")
+		_, err := LoadMCPServers(dir)
+		if !errors.Is(err, credfile.ErrNotAbsolute) {
+			t.Fatalf("err = %v; the path must be used as written, so ${STEER_DIR}/tok is relative and refused", err)
+		}
+		if strings.Contains(err.Error(), fileCredSecret) {
+			t.Fatalf("error exposes the credential: %v", err)
+		}
+	})
+
+	t.Run("a url from a file or keychain reference is redaction material, a literal url is not", func(t *testing.T) {
+		secretURL := "https://upstream.example/mcp/" + fileCredSecret
+		dir := t.TempDir()
+		urlCred := filepath.Join(home, "urlcred")
+		if err := os.MkdirAll(urlCred, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(urlCred, "url")
+		if err := os.WriteFile(p, []byte(secretURL+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		withResolver(t, &stubResolver{values: map[string]string{"keychain://up/url": "https://kc.example/mcp/kc-secret-path"}})
+		t.Setenv("URL_TOKEN", "env-url-token-value")
+		write(t, filepath.Join(dir, "mcp-servers", "file.yaml"), "id: filed\ntransport: http\nurl: \"file://"+p+"\"\n")
+		write(t, filepath.Join(dir, "mcp-servers", "kc.yaml"), "id: kc\ntransport: http\nurl: \"keychain://up/url\"\n")
+		write(t, filepath.Join(dir, "mcp-servers", "env.yaml"), "id: envurl\ntransport: http\nurl: \"https://h.example/mcp?k=${URL_TOKEN}\"\n")
+		write(t, filepath.Join(dir, "mcp-servers", "lit.yaml"), "id: lit\ntransport: http\nurl: \"http://127.0.0.1:9/mcp\"\n")
+		entries, err := LoadMCPServers(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		byID := map[string]*MCPServerEntry{}
+		for i := range entries {
+			byID[entries[i].ID] = &entries[i]
+		}
+		if got := byID["filed"].URL; got != secretURL {
+			t.Fatalf("file url not resolved: %q", got)
+		}
+		for id, want := range map[string]string{"filed": secretURL, "kc": "https://kc.example/mcp/kc-secret-path", "envurl": "env-url-token-value"} {
+			if !slices.Contains(byID[id].ArgumentRedactionValues(), want) {
+				t.Errorf("%s: ArgumentRedactionValues() = %q, want to contain %q", id, byID[id].ArgumentRedactionValues(), want)
+			}
+		}
+		if got := byID["lit"].ArgumentRedactionValues(); len(got) != 0 {
+			t.Errorf("a literal url must not be redacted from diagnostics, got %q", got)
+		}
+	})
+
 	t.Run("a disabled entry's file is not read", func(t *testing.T) {
 		dir := t.TempDir()
 		write(t, filepath.Join(dir, "mcp-servers", "off.yaml"), "id: off\nenabled: false\ntransport: stdio\ncommand: /bin/x\nenv:\n  T: \"file://"+filepath.Join(home, "absent")+"\"\n")
