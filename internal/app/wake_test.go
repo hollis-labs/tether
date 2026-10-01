@@ -297,8 +297,11 @@ func TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy(t *testing.
 		t.Fatalf("create legacy session: %v", err)
 	}
 
+	// The ttl must outlast the pre-expiry check below even on a loaded
+	// runner; a 20ms lease could lapse before that check ran.
+	const ttl = 2 * time.Second
 	target := registry.LogicalAgentBindingTarget("worker")
-	if _, err := reg.LeaseBinding(ctx, target, "s-expired-owner", "local", "s-expired-owner", nil, "", 20*time.Millisecond); err != nil {
+	if _, err := reg.LeaseBinding(ctx, target, "s-expired-owner", "local", "s-expired-owner", nil, "", ttl); err != nil {
 		t.Fatalf("lease with short ttl: %v", err)
 	}
 
@@ -311,14 +314,20 @@ func TestResolveActorSession_ExplicitSessionExpiry_FallsBackToLegacy(t *testing.
 		t.Fatalf("resolveActorSession (pre-expiry) = %q, want %q", got, "s-expired-owner")
 	}
 
-	time.Sleep(40 * time.Millisecond)
-
-	got, err = resolveActorSession(ctx, st, reg, rt.seam(), "worker")
-	if err != nil {
-		t.Fatalf("resolve (post-expiry): %v", err)
-	}
-	if got != "s-legacy" {
-		t.Fatalf("resolveActorSession (post-expiry) = %q, want %q (an expired lease must fall back to the legacy scan, not report a permanently stuck offline actor)", got, "s-legacy")
+	// Once the lease lapses, resolution falls back to the legacy scan.
+	deadline := time.Now().Add(ttl + 30*time.Second)
+	for {
+		got, err = resolveActorSession(ctx, st, reg, rt.seam(), "worker")
+		if err != nil {
+			t.Fatalf("resolve (post-expiry): %v", err)
+		}
+		if got == "s-legacy" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resolveActorSession (post-expiry) = %q, want %q (an expired lease must fall back to the legacy scan, not report a permanently stuck offline actor)", got, "s-legacy")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
