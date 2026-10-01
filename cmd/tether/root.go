@@ -29,6 +29,7 @@ func init() {
 	// Top-level aliases for discoverability.
 	rootCmd.AddCommand(generateBootCmd, listBootProfilesCmd, bootLaunchCmd, bootExecCmd)
 	rootCmd.AddCommand(pathCmd())
+	rootCmd.AddCommand(settingsCmd())
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(detectCmd, doctorCmd)
 	rootCmd.AddCommand(workstreamsCmd)

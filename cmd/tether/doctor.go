@@ -139,6 +139,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	cat = loadedCat
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
+		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
 
