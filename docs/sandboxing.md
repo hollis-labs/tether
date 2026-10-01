@@ -123,6 +123,11 @@ permissions:
 
 Restart the daemon to pick up the new profile.
 
+An `agent_file` or `agent_inline` override on session create can name a
+different profile. The override's profile is the one applied at launch; if
+the catalog doesn't define it, the session is refused. It never silently falls
+back to the catalog agent's profile.
+
 ## Failure modes
 
 | Scenario | Behavior |

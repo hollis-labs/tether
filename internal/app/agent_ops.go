@@ -114,6 +114,11 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	if _, _, err := s.Catalog.SandboxProfile(plan.LogicalAgentID, effectiveAgent.Permissions.DefaultSandbox); err != nil {
 		return err
 	}
+	// Record an override's sandbox on the plan so LaunchSession applies it;
+	// the catalog agent's is what it reads otherwise (CW-20261001-0145).
+	if eff := effectiveAgent.Permissions.DefaultSandbox; eff != s.Catalog.Agents[plan.LogicalAgentID].Permissions.DefaultSandbox {
+		plan.SandboxProfile = eff
+	}
 
 	bootProfile, err := loadBootProfile(in.BootProfileFile)
 	if err != nil {

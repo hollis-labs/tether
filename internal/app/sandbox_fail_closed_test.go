@@ -91,6 +91,13 @@ type sandboxLaunch struct {
 // catalog whose agent names sandboxName.
 func launchWithSandbox(t *testing.T, sandboxName string) sandboxLaunch {
 	t.Helper()
+	return launchWithPlanSandbox(t, sandboxName, "")
+}
+
+// launchWithPlanSandbox is launchWithSandbox with the plan also carrying
+// planSandbox, as an agent_file/agent_inline override records it.
+func launchWithPlanSandbox(t *testing.T, sandboxName, planSandbox string) sandboxLaunch {
+	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +119,7 @@ func launchWithSandbox(t *testing.T, sandboxName string) sandboxLaunch {
 		ProviderID: "claude-pty", ProviderBrand: "claude", RuntimeKind: config.RuntimeKindPTY,
 		RepoRoot: t.TempDir(), WriteHome: wsRoot, WorkspaceMode: "shared",
 		Command: "echo", BootPrompt: "boot", BootMode: "stdin",
+		SandboxProfile: planSandbox,
 	}
 	row := store.SessionRow{ID: sessID, LaunchID: "launch-1", ProjectID: "proj-1", LogicalAgentID: "agent-1",
 		ProviderID: "claude-pty", ProviderKind: "cli", Workspace: wsRoot, State: string(session.StateCreated)}
