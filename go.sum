@@ -74,8 +74,8 @@ github.com/hollis-labs/go-localdaemon v0.1.0 h1:sfxGW9Vqj75xO66cds2rxS46HFEyPumC
 github.com/hollis-labs/go-localdaemon v0.1.0/go.mod h1:PB3u4GDZmVQlUhlOE2yl89cmhuKTuXw1S9C/mN9Wvjw=
 github.com/hollis-labs/go-materialize v0.1.0 h1:JQ7nKIlKIaWvuiN1yPpad0dQaJTLocuQQdfynY9n9nY=
 github.com/hollis-labs/go-materialize v0.1.0/go.mod h1:ubDxYOfG+hCX0PXQaVm8ssmJoc6ZCDh8iSO46pj0PK0=
-github.com/hollis-labs/go-mcp v0.7.0 h1:Ul2Ct8DLwYfH2Hd9lkUhb05kXZYU++W5CKhD8uERM3A=
-github.com/hollis-labs/go-mcp v0.7.0/go.mod h1:sy+7ptjvPxcwu3XDL5EGC6OUlze0iy/hHddLh5T4MZQ=
+github.com/hollis-labs/go-mcp v0.14.1 h1:u4RdvFt8tCBiGF9LoygQCqP/TMFfXE6Ovo+zD6J6/6s=
+github.com/hollis-labs/go-mcp v0.14.1/go.mod h1:Ff+towTWDfy6lheDalxfzZh15RwWiKM4yQKW91Pr+eM=
 github.com/hollis-labs/go-messaging v0.5.2 h1:sMVnZRE1BAm/AN+36Zri5Bdd4SzF+EmCqULL627ztXA=
 github.com/hollis-labs/go-messaging v0.5.2/go.mod h1:hSEDlxOWkgZQAxlqFDfKvQ1hSHNZ8zrwee+0rAKuvXc=
 github.com/hollis-labs/go-modelsdev v0.2.0 h1:g3SLpD4l43U1DyXcNaVePJS07yBr07mrjM7xcGqKMmk=
