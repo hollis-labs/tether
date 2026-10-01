@@ -115,16 +115,16 @@ func listToolNames(t *testing.T, cs *mcpsdk.ClientSession) []string {
 	return names
 }
 
-// muxCall calls an upstream tool through mux_call and returns its text and whether
+// tetherCall calls an upstream tool through tether_tool_call and returns its text and whether
 // it was reported as an error.
-func muxCall(t *testing.T, cs *mcpsdk.ClientSession, tool string) (text string, isError bool) {
+func tetherCall(t *testing.T, cs *mcpsdk.ClientSession, tool string) (text string, isError bool) {
 	t.Helper()
 	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
-		Name:      "mux_call",
+		Name:      "tether_tool_call",
 		Arguments: map[string]any{"tool_name": tool, "arguments": map[string]any{}},
 	})
 	if err != nil {
-		t.Fatalf("mux_call(%s): %v", tool, err)
+		t.Fatalf("tether_tool_call(%s): %v", tool, err)
 	}
 	return textOf(res), res.IsError
 }
@@ -135,7 +135,7 @@ func started(fixtures, name string) bool {
 }
 
 // With Confine, an upstream outside the allow-list is never started and cannot be
-// reached through mux_call; without it the same allow-list only chooses which
+// reached through tether_tool_call; without it the same allow-list only chooses which
 // tools are native, and every upstream still starts. The second case is what
 // makes the first one mean something.
 func TestRunWithProxyOpts_ConfineKeepsUnlistedUpstreamsOut(t *testing.T) {
@@ -162,11 +162,11 @@ func TestRunWithProxyOpts_ConfineKeepsUnlistedUpstreamsOut(t *testing.T) {
 				t.Fatalf("tool %q of an unlisted upstream is exposed", tool)
 			}
 		}
-		if text, isErr := muxCall(t, cs, "beta_probe"); !isErr || !strings.Contains(text, "not found") {
-			t.Fatalf("mux_call(beta_probe) should be not-found for an unlisted upstream, got isError=%v %q", isErr, text)
+		if text, isErr := tetherCall(t, cs, "beta_probe"); !isErr || !strings.Contains(text, "not found") {
+			t.Fatalf("tether_tool_call(beta_probe) should be not-found for an unlisted upstream, got isError=%v %q", isErr, text)
 		}
-		if text, isErr := muxCall(t, cs, "alpha_probe"); isErr {
-			t.Fatalf("mux_call(alpha_probe) on the granted upstream failed: %q", text)
+		if text, isErr := tetherCall(t, cs, "alpha_probe"); isErr {
+			t.Fatalf("tether_tool_call(alpha_probe) on the granted upstream failed: %q", text)
 		}
 	})
 
@@ -179,8 +179,8 @@ func TestRunWithProxyOpts_ConfineKeepsUnlistedUpstreamsOut(t *testing.T) {
 				t.Fatalf("%s did not start in an unconfined proxy", name)
 			}
 		}
-		if text, isErr := muxCall(t, cs, "beta_probe"); isErr {
-			t.Fatalf("an unconfined proxy reaches beta through mux_call, got error %q", text)
+		if text, isErr := tetherCall(t, cs, "beta_probe"); isErr {
+			t.Fatalf("an unconfined proxy reaches beta through tether_tool_call, got error %q", text)
 		}
 	})
 
@@ -193,7 +193,7 @@ func TestRunWithProxyOpts_ConfineKeepsUnlistedUpstreamsOut(t *testing.T) {
 				t.Fatalf("%s started under an empty allow-list", name)
 			}
 		}
-		if _, isErr := muxCall(t, cs, "alpha_probe"); !isErr {
+		if _, isErr := tetherCall(t, cs, "alpha_probe"); !isErr {
 			t.Fatal("an empty allow-list must reach nothing")
 		}
 	})

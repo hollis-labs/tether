@@ -128,7 +128,7 @@ type LaunchResult struct {
 type LaunchRequest struct {
 	Launch string `json:"launch"`
 	// BootPrompt, when non-empty, overrides the catalog's static boot prompt
-	// fragments. Used by `mux boot <profile_id>` to inject a dynamically
+	// fragments. Used by `tether boot <profile_id>` to inject a dynamically
 	// generated boot prompt without modifying the catalog.
 	BootPrompt string `json:"boot_prompt,omitempty"`
 
@@ -171,7 +171,7 @@ type ResumeRequest struct {
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined
 // here so the api package doesn't import internal/app (which would create a
-// cycle via internal/app importing api). The adapter in cmd/mux/daemon.go
+// cycle via internal/app importing api). The adapter in cmd/tether/daemon.go
 // translates between the two.
 type CreateSessionInput struct {
 	LaunchID           string

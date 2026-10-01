@@ -1,6 +1,6 @@
 package e2e
 
-// harness_test.go — proves the e2e harness itself works: a real `mux
+// harness_test.go — proves the e2e harness itself works: a real `tether
 // daemon run` OS process, spawned against an isolated state root,
 // answers a real health check over its real UDS socket, and never
 // touches anything under the real user's home directory.

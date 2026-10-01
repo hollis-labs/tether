@@ -7,21 +7,21 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 )
 
-// registerCatalogRoutes wires GET /catalog/<type> handlers onto mux.
+// registerCatalogRoutes wires GET /catalog/<type> handlers onto router.
 // Catalog routes are mounted only when a CatalogLoader is configured;
 // callers whose Deps.Catalog is nil see 404s (falls through to the
 // daemon-level ServeMux default) rather than panicking.
 //
 // Reads are the full v0.0.2 catalog surface. Writes are deliberately
 // not registered — see ADR 0012 and sprint v002-s08 for the scope fence.
-func (s *Server) registerCatalogRoutes(mux *http.ServeMux) {
+func (s *Server) registerCatalogRoutes(router *http.ServeMux) {
 	if s.Catalog == nil {
 		return
 	}
-	mux.HandleFunc("/catalog/projects", s.handleListProjects)
-	mux.HandleFunc("/catalog/agents", s.handleListAgents)
-	mux.HandleFunc("/catalog/providers", s.handleListProviders)
-	mux.HandleFunc("/catalog/launches", s.handleListLaunches)
+	router.HandleFunc("/catalog/projects", s.handleListProjects)
+	router.HandleFunc("/catalog/agents", s.handleListAgents)
+	router.HandleFunc("/catalog/providers", s.handleListProviders)
+	router.HandleFunc("/catalog/launches", s.handleListLaunches)
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {

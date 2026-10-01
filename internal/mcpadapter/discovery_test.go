@@ -177,7 +177,7 @@ func TestDiscoveryIndex_NoNativeTools(t *testing.T) {
 	reg := NewToolRegistry()
 	// Register a native tool (no serverID).
 	reg.RegisterNative([]*mcpsdk.Tool{
-		{Name: "mux_health", Description: "Health check"},
+		{Name: "tether_health", Description: "Health check"},
 	})
 	// Register one upstream tool.
 	reg.Register("clockwork", nil, []*mcpsdk.Tool{
@@ -193,8 +193,8 @@ func TestDiscoveryIndex_NoNativeTools(t *testing.T) {
 	}
 	results, _ := idx.Search("", "", nil, 10)
 	for _, r := range results {
-		if r.ToolName == "mux_health" {
-			t.Error("native tool mux_health must not appear in discovery results")
+		if r.ToolName == "tether_health" {
+			t.Error("native tool tether_health must not appear in discovery results")
 		}
 	}
 }

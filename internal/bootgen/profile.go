@@ -1,11 +1,11 @@
-// Package bootgen implements the boot prompt generator for mux generate-boot.
+// Package bootgen implements the boot prompt generator for tether generate-boot.
 //
 // A boot profile is a YAML file under <catalog-root>/boot-profiles/ that
 // declares how to populate each named slot. Slots are assembled into the
 // canonical 7-section shape (or a custom template) and written to stdout
 // so callers can pipe directly to their CLI tool:
 //
-//	mux generate-boot nanite.backend.main | claude --dangerously-skip-permissions
+//	tether generate-boot nanite.backend.main | claude --dangerously-skip-permissions
 //
 // Slot source types:
 //
@@ -55,7 +55,7 @@ type Profile struct {
 	DisplayName string   `yaml:"display_name"`
 	Tags        []string `yaml:"tags,omitempty"`
 	// Launch is the catalog launch ID to use when this profile is used to
-	// start a session via `mux boot <profile_id>` or the TUI boot-launch flow.
+	// start a session via `tether boot <profile_id>` or the TUI boot-launch flow.
 	// When empty, generate-boot only writes to stdout (no session created).
 	Launch string `yaml:"launch,omitempty"`
 	// Identity carries the agent identity fields (Agent Identity Model,
@@ -66,7 +66,7 @@ type Profile struct {
 	Template string `yaml:"template,omitempty"`
 	// MCPServers is the allowlist of upstream MCP server IDs this boot profile
 	// exposes via the proxy at launch time (v005-08). Pipes through to
-	// `mux mcp --proxy --servers <ids>`. Empty = no allowlist (proxy default).
+	// `tether mcp --proxy --servers <ids>`. Empty = no allowlist (proxy default).
 	// The list lives on the boot profile, not the agent, so a single agent
 	// can have multiple profiles with different tool surfaces.
 	MCPServers []string `yaml:"mcp_servers,omitempty"`
@@ -74,7 +74,7 @@ type Profile struct {
 
 // Identity holds agent identity metadata per the Agent Identity Model:
 //   - lineage_alias  = <project>.<role>.<profile> dot notation (scope_key)
-//   - lineage_id     = stable machine ID (format: agtln_<ulid>; issued by Agent Mux)
+//   - lineage_id     = stable machine ID (format: agtln_<ulid>; issued by Tether)
 //   - profile_id     = config name (e.g. "nanite-backend")
 //   - profile_version = integer revision counter for this profile config
 //   - role / project / work_root / tracking_root — contextual metadata

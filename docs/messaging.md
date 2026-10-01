@@ -57,11 +57,11 @@ escalation.
 
 ### Store Only
 
-`POST /messages`, MCP `mux_message_send`, and CLI `mux messages send` persist a
+`POST /messages`, MCP `tether_message_send`, and CLI `tether messages send` persist a
 message. They do not inject anything into a running agent session.
 
 ```sh
-mux messages send \
+tether messages send \
   --from msg://user/local/operator \
   --to msg://agent/agent-mux/torque-supervisor \
   --kind notice \
@@ -71,12 +71,12 @@ mux messages send \
 
 ### Notify And Wake
 
-`POST /messages/notify`, MCP `mux_message_notify`, and CLI
-`mux messages notify` persist the same durable message and then best-effort
+`POST /messages/notify`, MCP `tether_message_notify`, and CLI
+`tether messages notify` persist the same durable message and then best-effort
 wake a live session with a daemon-injected mailbox reminder turn.
 
 ```sh
-mux messages notify \
+tether messages notify \
   --from msg://user/local/operator \
   --to msg://agent/agent-mux/torque-supervisor \
   --urgency high \
@@ -136,15 +136,15 @@ CLI examples:
 
 ```sh
 # Agent-style pull; marks returned messages delivered.
-mux messages inbox msg://agent/agent-mux/torque-supervisor
+tether messages inbox msg://agent/agent-mux/torque-supervisor
 
 # UI/operator-style read; does not mark delivered.
-mux messages list msg://agent/agent-mux/torque-supervisor --unread-only
+tether messages list msg://agent/agent-mux/torque-supervisor --unread-only
 
 # Mark handled mail.
-mux messages read <message-id> --as msg://agent/agent-mux/torque-supervisor
-mux messages consume <message-id> --as msg://agent/agent-mux/torque-supervisor
-mux messages archive <message-id> --as msg://agent/agent-mux/torque-supervisor
+tether messages read <message-id> --as msg://agent/agent-mux/torque-supervisor
+tether messages consume <message-id> --as msg://agent/agent-mux/torque-supervisor
+tether messages archive <message-id> --as msg://agent/agent-mux/torque-supervisor
 ```
 
 ## Subscriptions
@@ -166,8 +166,8 @@ command, and directive conventions.
 
 | Surface | Commands / routes |
 |---|---|
-| CLI | `mux messages send`, `notify`, `get`, `inbox`, `list`, `thread`, `read`, `consume`, `archive`, `unarchive`, `cancel` |
-| MCP | `mux_message_send`, `mux_message_notify`, `mux_message_get`, `mux_message_inbox`, `mux_message_list`, `mux_message_thread`, `mux_message_mark_read`, `mux_message_consume`, `mux_message_archive`, `mux_message_unarchive`, `mux_message_cancel` |
+| CLI | `tether messages send`, `notify`, `get`, `inbox`, `list`, `thread`, `read`, `consume`, `archive`, `unarchive`, `cancel` |
+| MCP | `tether_message_send`, `tether_message_notify`, `tether_message_get`, `tether_message_inbox`, `tether_message_list`, `tether_message_thread`, `tether_message_mark_read`, `tether_message_consume`, `tether_message_archive`, `tether_message_unarchive`, `tether_message_cancel` |
 | HTTP | `/messages`, `/messages/notify`, `/messages/{id}`, `/messages/inbox`, `/messages/list`, `/messages/thread/{thread_id}`, `/messages/subscribe` |
 
 ### Identity and runtime bindings
@@ -176,7 +176,7 @@ Who an actor durably *is*, and which live session currently receives its mail.
 
 | Surface | Commands / routes |
 |---|---|
-| CLI | `mux registry register`, `update-self`, `deregister`, `lookup`, `search`, `merge`, `sync`, `mux whoami`, `mux registry binding lease\|renew\|revoke\|current\|list` |
+| CLI | `tether registry register`, `update-self`, `deregister`, `lookup`, `search`, `merge`, `sync`, `tether whoami`, `tether registry binding lease\|renew\|revoke\|current\|list` |
 | MCP | `tether_whoami`, `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_lookup`, `tether_registry_lookup_by`, `tether_registry_search`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_binding_current`, `tether_registry_binding_list`, `tether_registry_scoped_binding_set`, `tether_registry_scoped_binding_resolve`, `tether_registry_scoped_binding_revisions` |
 | HTTP | `/whoami`, `/registry`, `/registry/bindings`, `/registry/scoped-bindings`, `/registry/scoped-bindings/resolve`, `/registry/scoped-bindings/revisions`, `/sessions/bootstrap` |
 
@@ -191,7 +191,7 @@ Who an actor durably *is*, and which live session currently receives its mail.
 
 | Surface | Commands / routes |
 |---|---|
-| MCP | `mux_message_trace`, `mux_message_redrive`, `mux_message_purge`, `mux_message_retention_candidates` |
+| MCP | `tether_message_trace`, `tether_message_redrive`, `tether_message_purge`, `tether_message_retention_candidates` |
 | HTTP | `/messages/{id}/trace`, `/messages/{id}/redrive`, `/messages/{id}/purge`, `/messages/retention/candidates`, `/messages/{id}/claim`, `/messages/{id}/ack`, `/messages/{id}/nack` |
 
 `claim`/`ack`/`nack` are the durable-delivery primitives. They are raw HTTP

@@ -11,14 +11,14 @@ import (
 )
 
 // RegisteredTool associates a tool definition with its upstream source.
-// Client is nil for native mux tools.
+// Client is nil for native tether tools.
 type RegisteredTool struct {
 	Definition *mcpsdk.Tool
 	ServerID   string // upstream server ID; empty string = native tool
 	Client     upstreamClient
 }
 
-// ToolRegistry holds the merged tool set: native mux tools plus all proxied
+// ToolRegistry holds the merged tool set: native tether tools plus all proxied
 // upstream tools. It is safe for concurrent reads and writes.
 type ToolRegistry struct {
 	tools map[string]RegisteredTool
@@ -37,7 +37,7 @@ func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{tools: make(map[string]RegisteredTool)}
 }
 
-// RegisterNative bulk-registers native mux tools (serverID = "", client = nil).
+// RegisterNative bulk-registers native tether tools (serverID = "", client = nil).
 func (r *ToolRegistry) RegisterNative(tools []*mcpsdk.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

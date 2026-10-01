@@ -1,7 +1,7 @@
 // Package registry is Tether's federation directory service. It owns
 // public-identity rows for agents and projects (v060-01); the owning
 // substrate retains all operational configuration behind a callback URI.
-// The two-store model — Mux for discovery, substrate for ops — is the
+// The two-store model — Tether for discovery, substrate for ops — is the
 // load-bearing design choice of the v0.6 epic. See ADR 0041 for the
 // full rationale.
 //
@@ -10,7 +10,7 @@
 // package was renamed to internal/launchresolve/ in T-v060-01-01 to free
 // the registry name for this service. D14 mandates "registry" as the
 // user-facing term (HTTP path /registry/*, MCP tool prefix
-// tether_registry_*, CLI subcommand mux registry); aligning the internal
+// tether_registry_*, CLI subcommand tether registry); aligning the internal
 // package name removes a cognitive-drift risk for readers comparing API
 // surface to source. The launchresolve package is otherwise untouched —
 // different concern, no shared types.

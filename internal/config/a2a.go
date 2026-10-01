@@ -26,7 +26,7 @@ import (
 
 // A2ABindingEntry describes one Tether agent opted into A2A reachability.
 // Deliberately plain (no internal/a2aadapter dependency) -- the
-// composition root (cmd/mux/daemon.go) converts this into
+// composition root (cmd/tether/daemon.go) converts this into
 // a2aadapter.AgentBinding, keeping this package's dependency direction
 // unchanged (config does not import adapter packages).
 type A2ABindingEntry struct {

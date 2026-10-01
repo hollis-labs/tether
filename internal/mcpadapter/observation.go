@@ -16,12 +16,12 @@ import (
 // registerObservationTools wires the observation surface tools
 // onto s. These tools expose per-session history that is persisted in SQLite:
 //
-//   - mux_session_events       — lifecycle events from the events table
-//   - mux_session_checkpoints  — checkpoints via the session's logical agent
-//   - mux_session_attachments  — client attach/detach history
-//   - mux_proxy_events         — proxied tool call events (same as mux_events_tool_calls
+//   - tether_session_events       — lifecycle events from the events table
+//   - tether_session_checkpoints  — checkpoints via the session's logical agent
+//   - tether_session_attachments  — client attach/detach history
+//   - tether_proxy_events         — proxied tool call events (same as tether_events_tool_calls
 //     but with richer filtering and a stable name)
-//   - mux_events_history       — broader durable event history across daemon/session/broker scopes
+//   - tether_events_history       — broader durable event history across daemon/session/broker scopes
 //
 // All tools are read-only and require no auth scope. They are always
 // registered (not proxy-mode-only) because the underlying tables are populated
@@ -35,11 +35,11 @@ func (a *Adapter) registerObservationTools(s *gomcp.Server) {
 	a.registerEventsWaitTool(s)
 }
 
-// ─── mux_session_events ───────────────────────────────────────────────────────
+// ─── tether_session_events ───────────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_session_events",
+		Name: "tether_session_events",
 		Description: "List historical lifecycle events for a session. " +
 			"Returns events in descending seq order (newest first).",
 		InputSchema: gomcp.InputSchema(
@@ -112,11 +112,11 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id}/events"))
 }
 
-// ─── mux_session_checkpoints ─────────────────────────────────────────────────
+// ─── tether_session_checkpoints ─────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionCheckpointsTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_session_checkpoints",
+		Name: "tether_session_checkpoints",
 		Description: "List checkpoints for a session (via its logical agent). " +
 			"Returns newest first.",
 		InputSchema: gomcp.InputSchema(
@@ -142,11 +142,11 @@ func (a *Adapter) registerSessionCheckpointsTool(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id}/checkpoints"))
 }
 
-// ─── mux_session_attachments ─────────────────────────────────────────────────
+// ─── tether_session_attachments ─────────────────────────────────────────────────
 
 func (a *Adapter) registerSessionAttachmentsTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_session_attachments",
+		Name:        "tether_session_attachments",
 		Description: "List client attach/detach records for a session.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
@@ -193,15 +193,15 @@ func (a *Adapter) registerSessionAttachmentsTool(s *gomcp.Server) {
 	}, Reads("GET /sessions/{id}/attachments"))
 }
 
-// ─── mux_proxy_events ────────────────────────────────────────────────────────
+// ─── tether_proxy_events ────────────────────────────────────────────────────────
 
 func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_proxy_events",
+		Name: "tether_proxy_events",
 		Description: "Query durable proxy/tool call events from the SQLite store. " +
 			"Supports filtering by session, server, tool, errors-only, and since cursor.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("session_id", "Filter by mux session ID (exact match)", false),
+			gomcp.StringProp("session_id", "Filter by tether session ID (exact match)", false),
 			gomcp.StringProp("server", "Filter by upstream server ID (exact match, e.g. 'hadron')", false),
 			gomcp.StringProp("tool_name", "Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)", false),
 			gomcp.BooleanProp("errors_only", "When true, return only events where the tool call failed", false),
@@ -254,11 +254,11 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 	}, Reads("GET /proxy/events"))
 }
 
-// ─── mux_events_history ──────────────────────────────────────────────────────
+// ─── tether_events_history ──────────────────────────────────────────────────────
 
 func (a *Adapter) registerEventsHistoryTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_events_history",
+		Name: "tether_events_history",
 		Description: "Query durable daemon/session/broker event history from the shared events table. " +
 			"Returns newest first.",
 		InputSchema: gomcp.InputSchema(
@@ -353,12 +353,12 @@ func (a *Adapter) handleEventsHistory(ctx context.Context, args map[string]any) 
 	}), nil
 }
 
-// ─── mux_events_wait ─────────────────────────────────────────────────────────
+// ─── tether_events_wait ─────────────────────────────────────────────────────────
 
 func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_events_wait",
-		Description: "Wait briefly for live daemon or session events from the muxd event stream. " +
+		Name: "tether_events_wait",
+		Description: "Wait briefly for live daemon or session events from the tetherd event stream. " +
 			"Useful for bounded polling-style MCP flows without maintaining a long-lived SSE connection.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("scope", "Event scope filter. Repeatable via comma-separated values: daemon, session, broker. Defaults to daemon.", false),
@@ -374,7 +374,7 @@ func (a *Adapter) registerEventsWaitTool(s *gomcp.Server) {
 
 func (a *Adapter) handleEventsWait(ctx context.Context, args map[string]any) (any, error) {
 	if a.client == nil {
-		return nil, toolError("daemon_unavailable", "mux_events_wait requires muxd daemon routing; start muxd and run mux mcp against that catalog")
+		return nil, toolError("daemon_unavailable", "tether_events_wait requires tetherd daemon routing; start tetherd and run tether mcp against that catalog")
 	}
 
 	scopes, err := decodeEventScopes(args)

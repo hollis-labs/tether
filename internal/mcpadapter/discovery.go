@@ -15,7 +15,7 @@ type DiscoveryEntry struct {
 	ServerID    string   // upstream server (e.g. "clockwork")
 	Description string   // tool description
 	Tags        []string // server-level tags from catalog (e.g. ["tasks","planning"])
-	// ToolDef is the original *mcpsdk.Tool — stored so mux_discover can return
+	// ToolDef is the original *mcpsdk.Tool — stored so tether_tool_search can return
 	// the full marshaled schema (Description, InputSchema) without re-encoding.
 	ToolDef *mcpsdk.Tool
 	// words is the pre-computed word set for keyword matching (lowercase).
@@ -50,7 +50,7 @@ func (idx *DiscoveryIndex) Build(registry *ToolRegistry, serverTags map[string][
 	for _, def := range defs {
 		rt, ok := registry.Lookup(def.Name)
 		if !ok || rt.ServerID == "" {
-			// Skip native mux tools — they're not proxied upstream tools.
+			// Skip native tether tools — they're not proxied upstream tools.
 			continue
 		}
 
@@ -80,7 +80,7 @@ type SearchResult struct {
 	Description string   `json:"description"`
 	Tags        []string `json:"tags,omitempty"`
 	// InputSchema is the marshaled mcp.Tool.InputSchema, ready for the LLM to
-	// use when constructing a mux_call arguments object.
+	// use when constructing a tether_tool_call arguments object.
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 	Score       int             `json:"score"` // match word count; 0 = unfiltered return
 }

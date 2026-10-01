@@ -96,27 +96,27 @@ func (r *stopRequests) requested(id string) bool {
 }
 
 // stateSinkAdapter adapts *store.Store to agentsessions.StateSink. The
-// lib's vocabulary (launching/running/done/failed) does not match mux's
+// lib's vocabulary (launching/running/done/failed) does not match tether's
 // persisted vocabulary (launching/running/completed/failed/killed)
-// exactly: lib terminal "done" persists as mux's "completed", and a
+// exactly: lib terminal "done" persists as tether's "completed", and a
 // terminal state reached after a stop request persists as "killed".
 type stateSinkAdapter struct {
 	db    *store.Store
 	stops *stopRequests
 }
 
-// muxSessionState normalises a lib State value to mux's persisted
-// vocabulary. Lib "done" → mux "completed"; everything else passthrough.
+// tetherSessionState normalises a lib State value to tether's persisted
+// vocabulary. Lib "done" → tether "completed"; everything else passthrough.
 // "killed" is not a lib state — terminalState derives it from a stop
 // request.
-func muxSessionState(state agentsessions.State) string {
+func tetherSessionState(state agentsessions.State) string {
 	if state == agentsessions.StateDone {
 		return "completed"
 	}
 	return string(state)
 }
 
-// terminalState maps a lib state to mux's vocabulary for one session:
+// terminalState maps a lib state to tether's vocabulary for one session:
 // any terminal state (done or failed) reached after a stop request is
 // "killed", whatever the exit code. A stopped process may exit 0 (it
 // caught SIGTERM and exited cleanly) or -1 (a signal ended it), so the
@@ -125,7 +125,7 @@ func terminalState(state agentsessions.State, stopRequested bool) string {
 	if stopRequested && (state == agentsessions.StateDone || state == agentsessions.StateFailed) {
 		return string(session.StateKilled)
 	}
-	return muxSessionState(state)
+	return tetherSessionState(state)
 }
 
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
@@ -153,7 +153,7 @@ func recordProcessStart(db *store.Store, id string, pid int) {
 }
 
 // attachmentSinkAdapter adapts *store.Store to agentsessions.AttachmentSink.
-// Translates time.Time → RFC3339 string (the format mux's store schema uses).
+// Translates time.Time → RFC3339 string (the format tether's store schema uses).
 type attachmentSinkAdapter struct {
 	db *store.Store
 }
@@ -169,13 +169,13 @@ func (a attachmentSinkAdapter) DetachClientAttachment(attachID string, detachedA
 // eventSinkAdapter adapts an events.Publisher to agentsessions.EventSink.
 //
 // The lib's LifecycleEvent does not carry logical_agent_id (sessions are
-// process-level; logical-agent identity is mux-domain). The adapter
+// process-level; logical-agent identity is tether-domain). The adapter
 // resolves it on each Emit by looking up the session's metadata in the
 // owning Manager. mgr is set after Manager construction via SetManager —
 // the circular reference (sink referenced by Manager, Manager referenced
 // by sink) is resolved post-hoc.
 //
-// State transitions also re-derive a mux-domain "from"/"to" pair: a
+// State transitions also re-derive a tether-domain "from"/"to" pair: a
 // terminal transition after a stop request is "killed", matching what
 // stateSinkAdapter persists on the session row. Other states map 1:1.
 type eventSinkAdapter struct {
@@ -189,7 +189,7 @@ type eventSinkAdapter struct {
 // synchronization (set-once-before-first-event ordering).
 func (a *eventSinkAdapter) SetManager(m *agentsessions.Manager) { a.mgr = m }
 
-// sessionStateChangedPayload mirrors the v0.0.4 mux payload shape so
+// sessionStateChangedPayload mirrors the v0.0.4 tether payload shape so
 // existing consumers of `session.state_changed` envelopes keep working
 // without contract surgery.
 type sessionStateChangedPayload struct {
@@ -237,12 +237,12 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 }
 
 // mapLifecycleStates translates a lib LifecycleEvent's From/To pair into
-// mux's string state vocabulary used in session.state_changed payloads.
+// tether's string state vocabulary used in session.state_changed payloads.
 // To goes through terminalState, so a stopped session's event says
 // "killed", as its session row does. Done with Reason="killed" is also
 // read as a stop, for a lib that reports one that way.
 func mapLifecycleStates(ev agentsessions.LifecycleEvent, stopRequested bool) (from, to string) {
-	from = muxSessionState(ev.From)
+	from = tetherSessionState(ev.From)
 	killed := stopRequested || (ev.To == agentsessions.StateDone && ev.Reason == "killed")
 	to = terminalState(ev.To, killed)
 	return from, to

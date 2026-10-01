@@ -1380,7 +1380,7 @@ func TestRegistry_C3_OnboardingLookupAndTorqueSubstrate(t *testing.T) {
 		"tags":       []string{"runtime", "daemon"},
 		"callback": map[string]any{
 			"scheme": "cli",
-			"target": "mux describe --json",
+			"target": "tether describe --json",
 		},
 	}
 	resp, body := r.do(http.MethodPost, "/registry/projects", regBody)
@@ -1480,7 +1480,7 @@ func TestRegistry_C3_OnboardingLookupAndTorqueSubstrate(t *testing.T) {
 		t.Fatalf("unmarshal reverse full: %v", err)
 	}
 	revFullProj := revFullEnv["project"]
-	if revFullProj.Callback == nil || revFullProj.Callback.Target != "mux describe --json" {
+	if revFullProj.Callback == nil || revFullProj.Callback.Target != "tether describe --json" {
 		t.Errorf("reverse full did not return callback: %+v", revFullProj.Callback)
 	}
 	if len(revFullProj.ExternalIDs) != 3 {

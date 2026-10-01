@@ -60,16 +60,16 @@ func sampleProfile(t *testing.T, urn string) registry.Profile {
 	lastSeen := fixedTime(t, "2026-05-20T11:30:00Z")
 	learned := fixedTime(t, "2026-05-15T09:00:00Z")
 	return registry.Profile{
-		URN:           urn,
-		Kind:          registry.KindAgent,
-		MuxInstanceID: "agent-mux",
-		DisplayName:   "Sprint Agent Alpha",
-		Title:         "Implementer",
-		Role:          "implementer",
-		Description:   "Drives the v060-01 sprint home.",
-		Avatar:        "https://example.invalid/avatar.png",
-		Project:       "tether",
-		Status:        registry.StatusActive,
+		URN:              urn,
+		Kind:             registry.KindAgent,
+		TetherInstanceID: "agent-mux",
+		DisplayName:      "Sprint Agent Alpha",
+		Title:            "Implementer",
+		Role:             "implementer",
+		Description:      "Drives the v060-01 sprint home.",
+		Avatar:           "https://example.invalid/avatar.png",
+		Project:          "tether",
+		Status:           registry.StatusActive,
 		Callback: &registry.Callback{
 			Scheme: "file",
 			Target: "file:///tmp/agent.yaml",
@@ -109,7 +109,7 @@ func TestStorage_InsertGet_RoundTrip(t *testing.T) {
 		t.Fatalf("GetProfile: %v", err)
 	}
 
-	if got.URN != want.URN || got.Kind != want.Kind || got.MuxInstanceID != want.MuxInstanceID {
+	if got.URN != want.URN || got.Kind != want.Kind || got.TetherInstanceID != want.TetherInstanceID {
 		t.Errorf("identity mismatch: got %+v want %+v", got, want)
 	}
 	if got.DisplayName != want.DisplayName || got.Title != want.Title || got.Role != want.Role {
@@ -175,7 +175,7 @@ func TestStorage_InsertProfile_DefaultsApplied(t *testing.T) {
 		URN:         urn,
 		Kind:        registry.KindAgent,
 		DisplayName: "Defaults",
-		// MuxInstanceID empty → "agent-mux"
+		// TetherInstanceID empty → "agent-mux"
 		// Status empty → StatusActive
 		// CreatedAt/UpdatedAt zero → time.Now().UTC()
 	}
@@ -189,8 +189,8 @@ func TestStorage_InsertProfile_DefaultsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProfile: %v", err)
 	}
-	if got.MuxInstanceID != "agent-mux" {
-		t.Errorf("mux_instance_id default = %q want %q", got.MuxInstanceID, "agent-mux")
+	if got.TetherInstanceID != "agent-mux" {
+		t.Errorf("tether_instance_id default = %q want %q", got.TetherInstanceID, "agent-mux")
 	}
 	if got.Status != registry.StatusActive {
 		t.Errorf("status default = %q want %q", got.Status, registry.StatusActive)
@@ -282,7 +282,7 @@ func TestStorage_UpdateProfileFields_RejectsUnknownColumn(t *testing.T) {
 	}
 
 	// Immutable columns are also rejected.
-	for _, col := range []string{"urn", "kind", "mux_instance_id", "created_at", "updated_at"} {
+	for _, col := range []string{"urn", "kind", "tether_instance_id", "created_at", "updated_at"} {
 		err := st.UpdateProfileFields(ctx, urn, map[string]any{col: "x"})
 		if !errors.Is(err, registry.ErrUnknownColumn) {
 			t.Errorf("immutable col %q err = %v, want ErrUnknownColumn", col, err)

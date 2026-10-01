@@ -41,10 +41,10 @@ func TestLoadExampleCatalog(t *testing.T) {
 	}
 
 	// Daemon defaults are applied when the catalog omits the block.
-	if got, want := cat.Global.Daemon.ListenAddr, "unix:~/.tether/run/muxd.sock"; got != want {
+	if got, want := cat.Global.Daemon.ListenAddr, "unix:~/.tether/run/tetherd.sock"; got != want {
 		t.Errorf("daemon.listen_addr = %q, want default %q", got, want)
 	}
-	if got, want := cat.Global.Daemon.PIDFile, "~/.tether/run/muxd.pid"; got != want {
+	if got, want := cat.Global.Daemon.PIDFile, "~/.tether/run/tetherd.pid"; got != want {
 		t.Errorf("daemon.pid_file = %q, want default %q", got, want)
 	}
 	if got, want := cat.Global.Daemon.ShutdownTimeout, "10s"; got != want {
@@ -532,7 +532,7 @@ func TestValidate_LaunchInjectionRejectsUnsafeRelPaths(t *testing.T) {
 		{name: "overlay parent traversal", relPath: "../CLAUDE.md", overlay: true},
 		{name: "overlay nested traversal", relPath: "safe/../../CLAUDE.md", overlay: true},
 		{name: "overlay absolute", relPath: "/tmp/CLAUDE.md", overlay: true},
-		{name: "native parent traversal", relPath: "../.mux/context.md", overlay: false},
+		{name: "native parent traversal", relPath: "../.tether/context.md", overlay: false},
 		{name: "native home expansion", relPath: "~/context.md", overlay: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -546,14 +546,14 @@ func TestValidate_LaunchInjectionRejectsUnsafeRelPaths(t *testing.T) {
 func TestApplyDaemonDefaults_OverrideRespected(t *testing.T) {
 	d := DaemonConfig{
 		ListenAddr:      "tcp:127.0.0.1:9999",
-		PIDFile:         "/tmp/muxd.pid",
+		PIDFile:         "/tmp/tetherd.pid",
 		ShutdownTimeout: "30s",
 	}
 	applyDaemonDefaults(&d)
 	if d.ListenAddr != "tcp:127.0.0.1:9999" {
 		t.Errorf("listen_addr overwritten: %q", d.ListenAddr)
 	}
-	if d.PIDFile != "/tmp/muxd.pid" {
+	if d.PIDFile != "/tmp/tetherd.pid" {
 		t.Errorf("pid_file overwritten: %q", d.PIDFile)
 	}
 	if d.ShutdownTimeout != "30s" {

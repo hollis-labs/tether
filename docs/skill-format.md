@@ -43,7 +43,7 @@ For managed sessions and `boot-exec`, compiled skill content is not appended to 
 
 ## Authoring round-trip
 
-The `skills.WriteSkillFile(w, Skill)` helper emits the canonical frontmatter+body shape so authored files round-trip through `skills.Parse`. Useful in tests and any future `mux skills create` scaffolding.
+The `skills.WriteSkillFile(w, Skill)` helper emits the canonical frontmatter+body shape so authored files round-trip through `skills.Parse`. Useful in tests and any future `tether skills create` scaffolding.
 
 ## See also
 

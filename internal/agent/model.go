@@ -1,5 +1,5 @@
 // Package agent defines the durable LogicalAgent identity model used by
-// Agent Mux. A LogicalAgent is the stable handle for an agent across
+// Tether. A LogicalAgent is the stable handle for an agent across
 // any number of ephemeral RuntimeSessions; policies, checkpoint rules,
 // and hot/cold behavior all attach here.
 //

@@ -1,6 +1,6 @@
 # Tether — MCP Adapter
 
-`mux mcp` starts an MCP stdio server that exposes the Tether runtime as
+`tether mcp` starts an MCP stdio server that exposes the Tether runtime as
 tools. Any MCP-capable client — Claude Desktop, Claude Code, Cursor, a custom
 agent, a Hadron blueprint — can call session lifecycle, catalog reads,
 messaging, and boot prompt generation directly from tool calls.
@@ -16,7 +16,7 @@ subprocess; no daemon needs to be running first.
 
 ```bash
 cd ~/dev/hollis-labs/apps/tether
-make build          # produces bin/mux
+make build          # produces bin/tether
 # or install into $GOBIN for development:
 make go-install
 ```
@@ -29,11 +29,11 @@ make go-install
 {
   "mcpServers": {
     "tether": {
-      "command": "/path/to/bin/mux",
+      "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "AGENT_MUX_MCP_TOKEN": "your-secret-token",
-        "AGENT_MUX_MCP_SCOPES": "session.write,message.write"
+        "TETHER_MCP_TOKEN": "your-secret-token",
+        "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }
   }
@@ -46,7 +46,7 @@ make go-install
 {
   "mcpServers": {
     "tether": {
-      "command": "mux",
+      "command": "tether",
       "args": ["--catalog", "/path/to/catalog", "mcp", "--token", "your-token", "--scopes", "session.write,message.write"]
     }
   }
@@ -57,17 +57,17 @@ make go-install
 
 ```bash
 # Read-only (no auth required):
-mux mcp
+tether mcp
 
 # With mutating tool access:
-AGENT_MUX_MCP_TOKEN=your-token \
-AGENT_MUX_MCP_SCOPES=session.write,message.write \
-mux mcp
+TETHER_MCP_TOKEN=your-token \
+TETHER_MCP_SCOPES=session.write,message.write \
+tether mcp
 ```
 
 ### 3. Verify
 
-Once your client is connected, call `mux_health`:
+Once your client is connected, call `tether_health`:
 
 ```json
 { "ok": true, "version": "0.1.0", "projects": 3, "agents": 5, "providers": 2, "launches": 4 }
@@ -78,12 +78,12 @@ Once your client is connected, call `mux_health`:
 ## Running proxy and leaf launch observations
 
 MCP `serverInfo.version`, the proxy's upstream `clientInfo.version`, and
-`mux_health.version` use metadata embedded in the running `mux` program. Builds
+`tether_health.version` use metadata embedded in the running `tether` program. Builds
 made with the Makefile include its version, commit and build date; ordinary
 `go build` / `go install` can report `dev` or the module version. Replacing a
 file on disk does not change an existing process's reported build.
 
-`mux_health.runtime` and downstream initialize's
+`tether_health.runtime` and downstream initialize's
 `capabilities.experimental["hollis-labs.dev/mcp-runtime"]` identify that process:
 schema version 1, a per-process UUID (`instance_id`), PID, observation time and
 build metadata. The UUID distinguishes instances even if a PID is reused. It
@@ -127,7 +127,7 @@ the owner will launch next. This v1 observation does not publish that private
 environment or provide an owner-resolution query. A consumer that cannot
 resolve the actual next candidate must report unknown.
 
-`mux_health.upstream_servers` and `mux_catalog_list_mcp_servers` expose
+`tether_health.upstream_servers` and `tether_catalog_list_mcp_servers` expose
 `last_launch` and a current `recovery` snapshot. Initialize's snapshot is only
 for that handshake; it does not update when the retry budget resets or is
 consumed. **No snapshot reserves a replacement attempt or permits exit.**
@@ -144,22 +144,22 @@ does not enable self-exit, change recovery delays, or authorize a live rollout.
 
 Read-only tools (catalog reads, session reads, message reads, health, boot
 prompt generation, AI provider/model inspection and route previews) require no
-authentication. The AI usage, budget and audit reads (`mux_ai_usage`,
-`mux_ai_budgets`, `mux_ai_audit`, `mux_ai_budget_alerts`,
-`mux_ai_wait_budget_alerts`) require a token, as mutating tools do, but no
+authentication. The AI usage, budget and audit reads (`tether_ai_usage`,
+`tether_ai_budgets`, `tether_ai_audit`, `tether_ai_budget_alerts`,
+`tether_ai_wait_budget_alerts`) require a token, as mutating tools do, but no
 scope: any configured token is enough.
 
 Mutating tools require a **token** and the corresponding **scope**:
 
 | Scope | Grants access to |
 |---|---|
-| `session.write` | `mux_session_create`, `mux_session_launch`, `mux_session_stop`, `mux_session_send_input`, `mux_session_send_turn`, `mux_session_resize`, `mux_logical_agent_resume` |
-| `message.write` | `mux_message_send`, `mux_message_notify`, `mux_message_consume`, `mux_message_cancel`, `mux_message_mark_read`, `mux_message_archive`, `mux_message_unarchive` |
+| `session.write` | `tether_session_create`, `tether_session_launch`, `tether_session_stop`, `tether_session_send_input`, `tether_session_send_turn`, `tether_session_resize`, `tether_logical_agent_resume` |
+| `message.write` | `tether_message_send`, `tether_message_notify`, `tether_message_consume`, `tether_message_cancel`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive` |
 | `registry.write` | `tether_registry_register`, `tether_registry_update_self`, `tether_registry_deregister`, `tether_registry_merge`, `tether_registry_sync`, `tether_registry_binding_lease`, `tether_registry_binding_renew`, `tether_registry_binding_revoke`, `tether_registry_scoped_binding_set` |
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
-| `delivery.write` | `mux_message_redrive`, `mux_message_purge` |
-| `catalog.write` | `mux_agent_create`, `mux_agent_edit` |
-| `ai.invoke` | `mux_ai_chat`, `mux_ai_chat_stream`, `mux_ai_embeddings` |
+| `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
+| `catalog.write` | `tether_agent_create`, `tether_agent_edit` |
+| `ai.invoke` | `tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings` |
 
 Scopes are per capability group, not a hierarchy — `registry.write` does not
 imply `groups.write`, and neither implies `message.write`. Grant the ones the
@@ -177,12 +177,12 @@ Pass both via flags or environment variables:
 
 ```bash
 # Flags:
-mux mcp --token my-secret --scopes session.write,message.write,ai.invoke
+tether mcp --token my-secret --scopes session.write,message.write,ai.invoke
 
 # Environment variables:
-export AGENT_MUX_MCP_TOKEN=my-secret
-export AGENT_MUX_MCP_SCOPES=session.write,message.write,ai.invoke
-mux mcp
+export TETHER_MCP_TOKEN=my-secret
+export TETHER_MCP_SCOPES=session.write,message.write,ai.invoke
+tether mcp
 ```
 
 The token value is opaque — Tether does not validate it against any external
@@ -194,24 +194,24 @@ tools.
 
 ## Proxy Mode
 
-`mux mcp --proxy` turns Tether into an MCP gateway for upstream servers from
+`tether mcp --proxy` turns Tether into an MCP gateway for upstream servers from
 `<catalog>/mcp-servers/`.
 
 | Command | Tool surface |
 |---|---|
-| `mux mcp` | Tether native `mux_*` tools only |
-| `mux mcp --proxy` | Tether native tools, all upstream tools, `mux_discover_tools`, `mux_discover`, and `mux_call` |
-| `mux mcp --proxy --servers vanta,clockwork` | Tether native tools, selected upstream tools, and discovery/call tools for hidden upstreams |
-| `mux mcp --proxy --only vanta,clockwork` | Only tools from the selected upstream servers |
+| `tether mcp` | Tether native `tether_*` tools only |
+| `tether mcp --proxy` | Tether native tools, all upstream tools, `tether_tool_list`, `tether_tool_search`, and `tether_tool_call` |
+| `tether mcp --proxy --servers vanta,clockwork` | Tether native tools, selected upstream tools, and discovery/call tools for hidden upstreams |
+| `tether mcp --proxy --only vanta,clockwork` | Only tools from the selected upstream servers |
 
 Use `--servers` for Tether-launched agents that may still need the control-plane
-tools or the `mux_call` fallback. Use `--only` for external MCP clients where
+tools or the `tether_tool_call` fallback. Use `--only` for external MCP clients where
 the operator expects the named servers to be the complete native tool list.
 `--only` requires `--proxy` and a non-empty server list; it suppresses native
-Tether `mux_*` tools, `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`,
-`mux_discover_tools`, `mux_discover`, and `mux_call`.
+Tether `tether_*` tools, `tether_catalog_list_mcp_servers`, `tether_catalog_refresh`,
+`tether_tool_list`, `tether_tool_search`, and `tether_tool_call`.
 
-`MUX_MCP_SERVERS` remains the environment fallback for `--servers` mode. The
+`TETHER_MCP_SERVERS` remains the environment fallback for `--servers` mode. The
 explicit `--only` flag uses its own comma-separated value and does not widen
 from the environment.
 
@@ -222,9 +222,9 @@ Two defaults limit which MCP servers a launched agent sees.
 **Claude loads only the planted proxy.** Claude Code merges servers from
 `--mcp-config`, the operator's `~/.claude.json`, project `.mcp.json` files and
 the claude.ai connectors on the logged-in account. Tether plants one config per
-agent (its own `mux` proxy), and every Claude launch adds
+agent (its own `tether` proxy), and every Claude launch adds
 `--strict-mcp-config`, so nothing else loads. This covers the first turn and
-every later turn and resume. It does not cover `mux boot`, which runs your own
+every later turn and resume. It does not cover `tether boot`, which runs your own
 Claude in your own terminal.
 
 **This also drops the claude.ai account connectors** (Claude Docs, Google
@@ -235,12 +235,12 @@ intended: an agent gets what Tether plants. Checked with a real login:
 an upstream in the catalog; turning strict mode off to get one also brings back
 everything in `~/.claude.json`.
 
-To turn it off, set `TETHER_CLAUDE_STRICT_MCP=0` (or `false`) in **muxd's**
+To turn it off, set `TETHER_CLAUDE_STRICT_MCP=0` (or `false`) in **tetherd's**
 environment and restart the daemon. It is on by default. When it is off:
 
-- muxd logs `WARN` at startup;
+- tetherd logs `WARN` at startup;
 - `GET /health` reports `hardening.claude_strict_mcp: false` with a reason;
-- `mux doctor` shows `claude-strict-mcp` as a warning. It asks the running
+- `tether doctor` shows `claude-strict-mcp` as a warning. It asks the running
   daemon, so it reflects what the daemon runs with, not doctor's own shell.
 
 An older daemon that has no `hardening` field makes doctor warn too, because it
@@ -250,10 +250,10 @@ This is an interim flag. It goes when go-agent-wrapper has an option that does
 the same.
 
 **The proxy reaches only a granted list of upstreams.** A launched agent's
-`mux mcp --proxy` runs with `--confine`. With `--confine`, `--servers` /
-`MUX_MCP_SERVERS` is an allow-list: upstreams outside it are not started, their
-secrets are not resolved into the agent's proxy, and `mux_call` and
-`mux_discover` cannot reach them. Without `--confine` (an operator's own proxy)
+`tether mcp --proxy` runs with `--confine`. With `--confine`, `--servers` /
+`TETHER_MCP_SERVERS` is an allow-list: upstreams outside it are not started, their
+secrets are not resolved into the agent's proxy, and `tether_tool_call` and
+`tether_tool_search` cannot reach them. Without `--confine` (an operator's own proxy)
 `--servers` only chooses which tools are listed natively, as above.
 
 The default list is `torque` and `tesseract`. Grant others per project
@@ -265,7 +265,7 @@ a list you wrote earlier still names `torque` and `tesseract` if its agents
 use them. `cerberus` can reach hosts and containers, so it is never in
 the default; an agent that needs it must be given it by name.
 
-mux's own native tools (`mux_*`) are not upstreams and are not affected.
+tether's own native tools (`tether_*`) are not upstreams and are not affected.
 
 A resumed session (`POST /logical-agents/{id}/resume`) gets the project's
 `mcp.servers` list, or the default, not the list the original launch had. A
@@ -280,18 +280,18 @@ against a hostile agent: see [SECURITY.md](../SECURITY.md#agents-run-as-your-use
 
 ### Daemon-only mode (`--daemon-only`)
 
-`mux mcp --daemon-only` never opens Tether's state database. Tether plants it
+`tether mcp --daemon-only` never opens Tether's state database. Tether plants it
 in every agent it launches, where the server runs inside the agent's sandbox:
 the agent can then be kept from writing the state directory. In this mode:
 
 - Every read and write of Tether state goes to the running daemon over its API
-  (`muxd.sock`). The server loads the catalog from disk and nothing else.
+  (`tetherd.sock`). The server loads the catalog from disk and nothing else.
 - Each tool call is recorded by the daemon. The server posts a start and an end
   record to `POST /proxy/events` with `publish`, and the daemon writes
   `proxy_events` and the `events` log itself.
 - It refuses to start unless the daemon answers, with the error `tether daemon
-  unreachable; mux tools unavailable`, and exits with that line alone (no usage
-  text). An agent launched while `muxd` is down therefore has **no mux tools and
+  unreachable; tether tools unavailable`, and exits with that line alone (no usage
+  text). An agent launched while `tetherd` is down therefore has **no tether tools and
   no proxied upstream tools** (`torque`, `tesseract` and the rest): the whole
   server is absent, not only its native tools. It does not retry, and nothing
   falls back to opening the database.
@@ -300,24 +300,24 @@ the agent can then be kept from writing the state directory. In this mode:
   warning; and an upstream call goes out without its `tether.provenance`
   stamp, because the session's workstream cannot be looked up (a WARN is
   logged, and the call is not failed).
-- Reads of the daemon's own state are the daemon's answers: `mux_session_health`
-  now reports the daemon's live sessions, and `mux_session_list` and
-  `mux_session_get` carry the daemon's `attached_clients`. `mux_logical_agent_list`
+- Reads of the daemon's own state are the daemon's answers: `tether_session_health`
+  now reports the daemon's live sessions, and `tether_session_list` and
+  `tether_session_get` carry the daemon's `attached_clients`. `tether_logical_agent_list`
   returns the daemon's summary, which has fewer fields than the table row an
-  ordinary `mux mcp` returns, and **different JSON keys**: `id`, `name`,
+  ordinary `tether mcp` returns, and **different JSON keys**: `id`, `name`,
   `launch_id`, `checkpoint_policy` (normalized) and `checkpoint_status`, where
   the ordinary server returns `ID`, `Role`, `Name`, `Responsibilities`, … in
   Go field case. A caller that reads those keys must handle both.
 
-An operator's own `mux mcp` (in `~/.claude.json`, say) is unchanged: it opens
-the database as before. `mux boot-exec` plants the same ordinary server, since
+An operator's own `tether mcp` (in `~/.claude.json`, say) is unchanged: it opens
+the database as before. `tether boot-exec` plants the same ordinary server, since
 it runs in the operator's terminal outside any Tether sandbox.
 
 Records the daemon-only server posts are asserted by the agent's process. The
 daemon checks their shape, caps their size, stamps their time, and refuses a
 published record whose `session_id` names no session. It cannot tell which
 session is really calling, so the tool name, server, outcome and session are the
-caller's word until `muxd` verifies who is calling (CW-20260930-0253). The
+caller's word until `tetherd` verifies who is calling (CW-20260930-0253). The
 server cuts a tool error to 4 KiB, with a `…[truncated]` marker, before
 sending, because the daemon refuses an oversized body whole.
 
@@ -332,7 +332,7 @@ policy; a clean exit is not interpreted as a request to replace a stale binary.
 There are at most five restart attempts, delayed by 1, 2, 4, 8, and 16 seconds.
 A successful handshake does not reset the budget: the connection must remain
 open for 60 seconds. Startup failures also consume this budget. After exhaustion,
-correct the upstream failure and start a new proxy session. `mux_catalog_refresh`
+correct the upstream failure and start a new proxy session. `tether_catalog_refresh`
 refreshes tool schemas on existing connections; it does not reset the budget.
 Initialization and tool-list requests have a 10-second timeout.
 
@@ -342,15 +342,15 @@ Likewise, a child that ignores stdin EOF is not forcibly terminated. Closing the
 proxy cancels pending restart timers. This policy supervises local stdio children;
 it does not add remote HTTP/SSE reconnection or periodic liveness probes.
 
-In normal proxy modes, `mux_health` returns `ok: false` and names
+In normal proxy modes, `tether_health` returns `ok: false` and names
 `unavailable_servers` when an observed connection has failed or is recovering.
-`mux_catalog_list_mcp_servers` includes `status` (`starting`, `connected`,
+`tether_catalog_list_mcp_servers` includes `status` (`starting`, `connected`,
 `reconnecting`, or `failed`), `restart_attempts`, `restart_limit`,
 `recovery_exhausted`, `next_retry_at`, and `last_exit` (kind, exit code, signal,
 and timestamp when available). `tool_count` includes cached tool definitions;
 it does not establish availability. These are observed states, not active probes.
 
-`mux_discover` and `mux_discover_tools` exclude unavailable upstreams from search
+`tether_tool_search` and `tether_tool_list` exclude unavailable upstreams from search
 results and report `complete: false` with the missing servers. An empty result
 with incomplete discovery does not establish that a product has no matching tool.
 Cached native tool registrations fail explicitly while recovery is pending.
@@ -373,7 +373,7 @@ schemas follow the existing tool-list notification path.
 
 ### Semantic Discovery
 
-In normal proxy and `--servers` mode, `mux_discover_tools` provides a concise
+In normal proxy and `--servers` mode, `tether_tool_list` provides a concise
 tool-selection flow:
 
 ```json
@@ -386,13 +386,13 @@ tool-selection flow:
 It returns JSON grouped by upstream server/domain. Each recommendation includes
 `call_name`, `server`, `summary`, up to three `tags`, `safety`, `native`, `why`,
 `score`, and refs such as `tools/list:<tool>` for schemas. Use
-`mux_discover` or MCP `tools/list` when you need the full input schema.
+`tether_tool_search` or MCP `tools/list` when you need the full input schema.
 
 ---
 
 ## Catalog setup
 
-The adapter reads the same catalog as the rest of `mux`. Default catalog root:
+The adapter reads the same catalog as the rest of `tether`. Default catalog root:
 `~/.tether/catalog/`. Override with `--catalog /path/to/catalog`.
 
 Minimum catalog structure for useful MCP sessions:
@@ -408,7 +408,7 @@ Minimum catalog structure for useful MCP sessions:
     claude-stream.yaml   — provider (e.g. cli-goprovider using claude)
   launches/
     myproject-backend.yaml  — launch profile: ties project + agent + provider
-  boot-profiles/         — optional: YAML files for mux_boot_generate
+  boot-profiles/         — optional: YAML files for tether_boot_generate
     myproject.backend.main.yaml
 ```
 
@@ -439,17 +439,17 @@ read Tether's `idempotentHint` as a claim.** The other three are claims.
 ### How `readOnlyHint` is established
 
 By tracing the call path to a store operation — never from the tool's name, its
-scope, or the HTTP verb behind it. `mux_message_inbox` is why:
+scope, or the HTTP verb behind it. `tether_message_inbox` is why:
 
 ```
-mux_message_inbox        ← a read verb, and unscoped
+tether_message_inbox        ← a read verb, and unscoped
   a.client.MessageInbox  ← reads as a read
     GET /messages/inbox  ← an HTTP GET
       MessageStore.Inbox ← reads as a read
         UPDATE messages SET delivered_at   ← the truth, four layers down
 ```
 
-Every signal above the last line is wrong. `mux_message_inbox` is annotated as a
+Every signal above the last line is wrong. `tether_message_inbox` is annotated as a
 write, and **retrying it is not free** — the second call consumes a different
 set of messages, because the first already marked the boundary. The verb is
 tracked as a defect at `CW-20260912-0114`.
@@ -482,7 +482,7 @@ another application's tools. Everything above describes Tether's own tools.
 
 ### Health
 
-#### `mux_health`
+#### `tether_health`
 Returns adapter version and catalog summary. No auth required.
 
 ```json
@@ -509,8 +509,8 @@ Returns adapter version and catalog summary. No auth required.
 
 All catalog tools are read-only and require no auth.
 
-`mux_health`, `mux_catalog_list_projects`, `mux_catalog_list_agents`,
-`mux_catalog_list_providers`, and `mux_catalog_list_launches` reload and validate
+`tether_health`, `tether_catalog_list_projects`, `tether_catalog_list_agents`,
+`tether_catalog_list_providers`, and `tether_catalog_list_launches` reload and validate
 the layered launch catalog for every call. A running MCP adapter therefore sees
 valid file edits on the next read without a process restart. Each successful
 response includes `catalog_read` with its source, observation time, and
@@ -522,7 +522,7 @@ Catalog files do not form a filesystem transaction; write individual files
 atomically and keep intermediate states valid when coordinating several files.
 If a call observes a malformed or incomplete edit, catalog list tools return an
 MCP error with code
-`catalog_reload_failed`. `mux_health` remains callable but reports `ok: false`,
+`catalog_reload_failed`. `tether_health` remains callable but reports `ok: false`,
 `catalog_read.status: "reload_failed"`, and the error instead of stale counts.
 The next call retries from disk and recovers as soon as the catalog is valid.
 Reload errors contain only bounded `category` and `location` values. Raw decoder
@@ -539,20 +539,20 @@ values.
 ```
 
 This read path does not replace the service's startup catalog, reconfigure
-provider factories, or mutate daemon-owned sessions. `mux_catalog_refresh`
+provider factories, or mutate daemon-owned sessions. `tether_catalog_refresh`
 continues to refresh upstream MCP `tools/list` caches only. Boot-profile reads
 already load their directory for each call.
 
-#### `mux_catalog_list_projects`
+#### `tether_catalog_list_projects`
 List all projects defined in the catalog.
 
-#### `mux_catalog_list_agents`
+#### `tether_catalog_list_agents`
 List all agent profiles.
 
-#### `mux_catalog_list_providers`
+#### `tether_catalog_list_providers`
 List all provider definitions.
 
-#### `mux_catalog_list_launches`
+#### `tether_catalog_list_launches`
 List all launch profiles. Each launch combines a project, agent, and provider.
 
 ```json
@@ -571,18 +571,18 @@ List all launch profiles. Each launch combines a project, agent, and provider.
 }
 ```
 
-#### `mux_catalog_list_boot_profiles`
-List boot-profile YAMLs from `<catalog>/boot-profiles/`. Used with `mux_boot_generate`.
+#### `tether_catalog_list_boot_profiles`
+List boot-profile YAMLs from `<catalog>/boot-profiles/`. Used with `tether_boot_generate`.
 
 ---
 
 ### Skills
 
-#### `mux_skill_get`
+#### `tether_skill_get`
 Load a skill by id and return its instructions. This is the provider-neutral
 counterpart to Claude Code's built-in skill loader: when a boot prompt lists a
 pointer such as `/refactor-go — Apply Go refactoring patterns`, non-Claude
-providers can call `mux_skill_get` with `skill_id: "refactor-go"` and follow the
+providers can call `tether_skill_get` with `skill_id: "refactor-go"` and follow the
 returned body.
 
 Read-only; no auth required.
@@ -613,9 +613,9 @@ skill locations:
 }
 ```
 
-#### `mux_skill_list`
-List every skill visible through the same resolver used by `mux_skill_get`.
-Returns metadata only; call `mux_skill_get` to load the full body.
+#### `tether_skill_list`
+List every skill visible through the same resolver used by `tether_skill_get`.
+Returns metadata only; call `tether_skill_get` to load the full body.
 
 Read-only; no auth required.
 
@@ -637,11 +637,11 @@ Read-only; no auth required.
 }
 ```
 
-#### `mux_skill_broker`
+#### `tether_skill_broker`
 Return ranked skill recommendations for a specific task, role, project, or
-trigger set. This is the progressive-discovery companion to `mux_skill_list`:
+trigger set. This is the progressive-discovery companion to `tether_skill_list`:
 it returns metadata, ranking, and reasons, then the caller uses
-`mux_skill_get` only for the chosen skill body.
+`tether_skill_get` only for the chosen skill body.
 
 Read-only; no auth required.
 
@@ -678,7 +678,7 @@ Read-only; no auth required.
         "matched role/project: backend",
         "preferred triggers: refactor"
       ],
-      "next": "mux_skill_get"
+      "next": "tether_skill_get"
     }
   ],
   "meta": {
@@ -702,7 +702,7 @@ Read-only; no auth required.
 
 ### Sessions
 
-#### `mux_session_list`
+#### `tether_session_list`
 List sessions with optional filtering.
 
 | Parameter | Type | Required | Description |
@@ -711,20 +711,20 @@ List sessions with optional filtering.
 | `cursor` | string | — | RFC3339 pagination cursor |
 | `limit` | number | — | Max results (default 50, max 200) |
 
-#### `mux_session_get`
+#### `tether_session_get`
 Get a single session by ID.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `session_id` | string | ✓ | Session UUID |
 
-#### `mux_session_create` _(session.write)_
+#### `tether_session_create` _(session.write)_
 Create a session from a launch profile. Session starts in `created` state; it
-is not running yet. Follow with `mux_session_launch`.
+is not running yet. Follow with `tether_session_launch`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `launch_id` | string | ✓ | Launch profile ID from the catalog (see mux_catalog_list_launches) |
+| `launch_id` | string | ✓ | Launch profile ID from the catalog (see tether_catalog_list_launches) |
 | `boot_prompt` | string | — | Optional boot prompt override; replaces catalog static boot fragments verbatim |
 | `agent_file` | string | — | v005-08: filesystem path to an agent YAML matching config.Agent shape. Field-merged over the catalog agent. |
 | `agent_inline` | string | — | v005-08: JSON-encoded agent definition (same shape as config.Agent). Highest precedence in agent resolve order. |
@@ -735,24 +735,24 @@ is not running yet. Follow with `mux_session_launch`.
 
 ```json
 // Response
-{ "ok": true, "session_id": "01abc...", "workspace": "/home/user/.agent-mux/workspaces/...", "log": "..." }
+{ "ok": true, "session_id": "01abc...", "workspace": "/home/user/.tether/workspaces/...", "log": "..." }
 ```
 
-#### `mux_session_launch` _(session.write)_
+#### `tether_session_launch` _(session.write)_
 Start a previously created session. Transitions `created → running`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `session_id` | string | ✓ | Session UUID from `mux_session_create` |
+| `session_id` | string | ✓ | Session UUID from `tether_session_create` |
 
-#### `mux_session_stop` _(session.write)_
+#### `tether_session_stop` _(session.write)_
 Send a stop signal to a running session.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `session_id` | string | ✓ | Session UUID |
 
-#### `mux_session_wait`
+#### `tether_session_wait`
 Block until the session exits. Returns the exit code. Read-only; no scope required.
 
 | Parameter | Type | Required | Description |
@@ -764,7 +764,7 @@ Block until the session exits. Returns the exit code. Read-only; no scope requir
 { "ok": true, "session_id": "01abc...", "exit_code": 0 }
 ```
 
-#### `mux_session_send_input` _(session.write)_
+#### `tether_session_send_input` _(session.write)_
 Send raw text to a running session's stdin (PTY). A newline is **not**
 appended automatically — include `\n` if you want to submit a command.
 
@@ -773,7 +773,7 @@ appended automatically — include `\n` if you want to submit a command.
 | `session_id` | string | ✓ | Session UUID |
 | `input` | string | ✓ | Text to send |
 
-#### `mux_session_resize` _(session.write)_
+#### `tether_session_resize` _(session.write)_
 Resize the PTY terminal for a running session.
 
 | Parameter | Type | Required | Description |
@@ -790,10 +790,10 @@ A logical agent is a durable identity that persists across sessions and
 accumulates checkpoints. Resuming a logical agent starts a new session with
 its most recent checkpoint injected as boot context.
 
-#### `mux_logical_agent_list`
+#### `tether_logical_agent_list`
 List all registered logical agents.
 
-#### `mux_logical_agent_resume` _(session.write)_
+#### `tether_logical_agent_resume` _(session.write)_
 Resume a logical agent from its most recent checkpoint.
 
 | Parameter | Type | Required | Description |
@@ -819,10 +819,10 @@ are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 
 **Kind values:** `request`, `response`, `notice`, `handoff`,
 `status_update`, `escalation`. Use `metadata.urgency` or
-`mux_message_notify.urgency` for delivery urgency: `very-low`, `low`,
+`tether_message_notify.urgency` for delivery urgency: `very-low`, `low`,
 `normal`, or `high`.
 
-#### `mux_message_send` _(message.write)_
+#### `tether_message_send` _(message.write)_
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -833,7 +833,7 @@ are addressed using URNs in the form `msg://<kind>/<authority>/<id>[/<subid>]`.
 | `thread_id` | string | — | Thread ID for grouping |
 | `in_reply_to` | string | — | Message ID this replies to |
 
-#### `mux_message_notify` _(message.write)_
+#### `tether_message_notify` _(message.write)_
 Send a message and best-effort wake a live recipient session with a
 daemon-injected mailbox reminder turn. The message is stored even when no live
 session can be resolved.
@@ -851,7 +851,7 @@ session can be resolved.
 | `wake_text` | string | — | Override the generated mailbox wake text |
 | `no_wake` | boolean | — | Store only; skip wake injection |
 
-#### `mux_message_get`
+#### `tether_message_get`
 Get a message by ID. Scoped to the claimed identity — `as` must be the
 message's sender or recipient, or the call returns `forbidden` (403).
 
@@ -860,10 +860,10 @@ message's sender or recipient, or the call returns `forbidden` (403).
 | `message_id` | string | ✓ | Message ID |
 | `as` | string | ✓ | Caller URN asserting the read (ADR 0045) |
 
-#### `mux_message_inbox`
+#### `tether_message_inbox`
 Pull a recipient's undelivered messages — the atomic-delivery agent pull model.
 **Destructive:** what it returns is marked delivered and will not appear in a
-future inbox call. For a repeatable browse, use `mux_message_list`.
+future inbox call. For a repeatable browse, use `tether_message_list`.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -871,7 +871,7 @@ future inbox call. For a repeatable browse, use `mux_message_list`.
 | `kind` | string | — | Comma-separated kind filter |
 | `thread_id` | string | — | Thread ID filter |
 
-#### `mux_message_thread`
+#### `tether_message_thread`
 List all messages in a thread, scoped to the ones involving the claimed
 identity.
 
@@ -881,7 +881,7 @@ identity.
 | `as` | string | ✓ | Caller URN asserting the read (ADR 0045) |
 | `kind` | string | — | Comma-separated kind filter |
 
-#### `mux_message_consume` _(message.write)_
+#### `tether_message_consume` _(message.write)_
 Mark a message consumed by the recipient.
 
 | Parameter | Type | Required | Description |
@@ -889,7 +889,7 @@ Mark a message consumed by the recipient.
 | `message_id` | string | ✓ | Message ID |
 | `as` | string | ✓ | Recipient URN consuming the message |
 
-#### `mux_message_cancel` _(message.write)_
+#### `tether_message_cancel` _(message.write)_
 Cancel a pending message.
 
 | Parameter | Type | Required | Description |
@@ -905,7 +905,7 @@ Added by messaging vNext. The caller identity these tools carry is
 and an audit trail, not authentication.
 
 The parameter carrying it is **not uniformly named**: `to` on
-`mux_message_inbox`/`mux_message_list`, `as` on most other reads,
+`tether_message_inbox`/`tether_message_list`, `as` on most other reads,
 `authorized_by` on the repair tools below, and `by` / `member_urn` /
 `from_urn` / `creator_urn` on the group tools. Each table states which.
 
@@ -961,7 +961,7 @@ Search by filter; all filters AND together, results ordered alphabetically on `d
 | `title` | string | — | Filter on title (exact match). |
 
 #### `tether_registry_update_self` _(registry.write)_
-Partial-merge update. Scalar fields update column-wise — only fields present in the patch are touched. Array fields follow the patch semantics in the tool's own description; read it via `mux mcp` before relying on replace-vs-append behavior.
+Partial-merge update. Scalar fields update column-wise — only fields present in the patch are touched. Array fields follow the patch semantics in the tool's own description; read it via `tether mcp` before relying on replace-vs-append behavior.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -1205,21 +1205,21 @@ The caller's own mention notices across every group. Usually what you want when 
 
 ### Delivery trace, repair and retention
 
-#### `mux_message_trace`
+#### `tether_message_trace`
 Full delivery state for one message. Read this before theorising about a message that did not arrive — it distinguishes never-sent from sent-and-unclaimed from delivered-and-ignored, and those have nothing to do with each other.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `message_id` | string | ✓ | Message ID. |
 
-#### `mux_message_retention_candidates`
+#### `tether_message_retention_candidates`
 Messages eligible for a privacy-safe body purge.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `older_than_hours` | number | — | Lookback window in hours; 0 or omitted uses the daemon's default. |
 
-#### `mux_message_redrive` _(delivery.write)_
+#### `tether_message_redrive` _(delivery.write)_
 Re-attempt a stuck or dead-lettered delivery. A repair tool — drive it from trace evidence, not as a retry reflex.
 
 | Parameter | Type | Required | Description |
@@ -1228,8 +1228,8 @@ Re-attempt a stuck or dead-lettered delivery. A repair tool — drive it from tr
 | `message_id` | string | ✓ | Message ID, or a literal delivery id for a group-fanout recipient. |
 | `new_deadline_seconds` | number | — | New delivery deadline in seconds from now; 0 or omitted means no deadline. |
 
-#### `mux_message_purge` _(delivery.write)_
-Clear one message's body and metadata, leaving its structural and trace fields (id, kind, from, to, thread, timestamps) intact. **Irreversible.** Refuses when the message still has a pending delivery obligation — including dead-lettered, which remains repairable via `mux_message_redrive` and would resend an empty message if purged first. Idempotent: purging an already-purged message reports `purged=false` rather than erroring.
+#### `tether_message_purge` _(delivery.write)_
+Clear one message's body and metadata, leaving its structural and trace fields (id, kind, from, to, thread, timestamps) intact. **Irreversible.** Refuses when the message still has a pending delivery obligation — including dead-lettered, which remains repairable via `tether_message_redrive` and would resend an empty message if purged first. Idempotent: purging an already-purged message reports `purged=false` rather than erroring.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -1243,19 +1243,19 @@ Clear one message's body and metadata, leaving its structural and trace fields (
 Catalog agent profiles. Not messaging — listed here because `catalog.write`
 appears in the scope table above.
 
-#### `mux_agent_list`
+#### `tether_agent_list`
 List agent profiles in the catalog.
 
 _No parameters._
 
-#### `mux_agent_show`
+#### `tether_agent_show`
 Show one agent profile.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | ✓ | Agent ID |
 
-#### `mux_agent_create` _(catalog.write)_
+#### `tether_agent_create` _(catalog.write)_
 Create an agent profile in the catalog.
 
 | Parameter | Type | Required | Description |
@@ -1269,7 +1269,7 @@ Create an agent profile in the catalog.
 | `skills` | string | — | Comma-separated skill ID list (optional). |
 | `system_prompt` | string | — | Agent system prompt (optional). |
 
-#### `mux_agent_edit` _(catalog.write)_
+#### `tether_agent_edit` _(catalog.write)_
 Edit an existing agent profile. Only fields present in the call are changed.
 
 | Parameter | Type | Required | Description |
@@ -1283,24 +1283,24 @@ Edit an existing agent profile. Only fields present in the call are changed.
 
 **Read-only catalog.** Tether write-protects its catalog, run directory and state
 directory for the agents it wraps, which is every agent but Codex ([control-plane protection](sandboxing.md#control-plane-protection-every-agent-tether-wraps)),
-and starts the `mux mcp` it plants with `--protect-path <dir>` for each. From inside
-such an agent, `mux_agent_create` or `mux_agent_edit` that would write under one
+and starts the `tether mcp` it plants with `--protect-path <dir>` for each. From inside
+such an agent, `tether_agent_create` or `tether_agent_edit` that would write under one
 (a `system`-scope create, an edit of a catalog agent, or a path that reaches it
 through a symlink) returns the typed error `catalog_read_only`, telling the agent to
-ask the operator (`mux agents create` / `edit`) or to use `scope=project`, which
+ask the operator (`tether agents create` / `edit`) or to use `scope=project`, which
 writes into the repo. This is a policy of the server, enforced for every runtime,
 Codex included (Codex is otherwise not protected, CW-20261001-0230), whether or
 not a sandbox also makes the directory read-only, and it is not a raw
 read-only-filesystem error. On Linux it holds against a symlink re-pointed while
 the call runs: the destination directory is opened once and judged, and the file is
 written relative to it without following a symlink. `--protect-path` is repeatable and is set only on a
-launched agent's server, never on `mux boot` or your own `mux mcp`.
+launched agent's server, never on `tether boot` or your own `tether mcp`.
 
 ---
 
 ### Boot prompt generation
 
-#### `mux_boot_generate`
+#### `tether_boot_generate`
 Generate a boot prompt for an agent profile and return it as a string. The
 profile YAML in `<catalog>/boot-profiles/<id>.yaml` defines how to assemble
 slot content from static files, role summaries, skill indexes, shell commands,
@@ -1313,7 +1313,7 @@ Read-only; no auth required.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `profile_id` | string | ✓ | Boot profile ID (see `mux_catalog_list_boot_profiles`) |
+| `profile_id` | string | ✓ | Boot profile ID (see `tether_catalog_list_boot_profiles`) |
 
 ```json
 // Response
@@ -1327,26 +1327,26 @@ Read-only; no auth required.
 **Common workflow:**
 
 ```
-mux_catalog_list_boot_profiles   → discover available profiles
-mux_boot_generate (profile_id)   → get assembled boot prompt
-mux_session_create (launch_id, boot_prompt=<above>)   → create session with it
-mux_session_launch (session_id)  → start
+tether_catalog_list_boot_profiles   → discover available profiles
+tether_boot_generate (profile_id)   → get assembled boot prompt
+tether_session_create (launch_id, boot_prompt=<above>)   → create session with it
+tether_session_launch (session_id)  → start
 ```
 
 ---
 
 ### Observation (durable history)
 
-These tools expose durable history stored in the agent-mux SQLite database plus
+These tools expose durable history stored in the tether SQLite database plus
 a bounded live event wait surface over the daemon SSE stream. All are read-only
 and require no auth scope. They are available in both
 normal and `--proxy` mode.
 
-> **Note:** `mux_events_tool_calls` (proxy mode only) is now backed by the
-> same durable `proxy_events` SQLite table as `mux_proxy_events`. Results
+> **Note:** `tether_events_tool_calls` (proxy mode only) is now backed by the
+> same durable `proxy_events` SQLite table as `tether_proxy_events`. Results
 > survive daemon restarts.
 
-#### `mux_session_events`
+#### `tether_session_events`
 List historical lifecycle events for a session in descending seq order.
 
 | Parameter | Type | Required | Description |
@@ -1365,7 +1365,7 @@ List historical lifecycle events for a session in descending seq order.
 }
 ```
 
-#### `mux_session_checkpoints`
+#### `tether_session_checkpoints`
 List checkpoints for a session (resolved via its logical agent). Newest first.
 
 | Parameter | Type | Required | Description |
@@ -1377,7 +1377,7 @@ List checkpoints for a session (resolved via its logical agent). Newest first.
 { "ok": true, "checkpoints": [...], "count": 2 }
 ```
 
-#### `mux_session_attachments`
+#### `tether_session_attachments`
 List client attach/detach records for a session. `detached_at` is `""` for
 still-open or pre-tracking attachments.
 
@@ -1390,7 +1390,7 @@ still-open or pre-tracking attachments.
 { "ok": true, "attachments": [{"id":"...","session_id":"...","client_kind":"cli","attached_at":"...","detached_at":"..."}], "count": 1 }
 ```
 
-#### `mux_proxy_events`
+#### `tether_proxy_events`
 Query durable proxy/tool call events from the SQLite store.
 
 | Parameter | Type | Required | Description |
@@ -1407,7 +1407,7 @@ Query durable proxy/tool call events from the SQLite store.
 { "ok": true, "events": [...], "count": 5 }
 ```
 
-#### `mux_events_history`
+#### `tether_events_history`
 Query durable event-bus history across daemon, session, and broker scopes from
 the shared `events` table. Returns newest first.
 
@@ -1439,8 +1439,8 @@ the shared `events` table. Returns newest first.
 }
 ```
 
-#### `mux_events_wait`
-Wait briefly for live daemon or session events from the running `muxd` event
+#### `tether_events_wait`
+Wait briefly for live daemon or session events from the running `tetherd` event
 stream. This is a bounded read surface for agents that need near-real-time
 event reaction without keeping a long-lived stream open.
 
@@ -1479,58 +1479,58 @@ event reaction without keeping a long-lived stream open.
 ### Launch a new agent session
 
 ```
-1. mux_catalog_list_launches          → pick a launch_id
-2. mux_session_create (launch_id)     → get session_id
-3. mux_session_launch (session_id)    → start the agent
-4. mux_session_wait  (session_id)     → block until done
+1. tether_catalog_list_launches          → pick a launch_id
+2. tether_session_create (launch_id)     → get session_id
+3. tether_session_launch (session_id)    → start the agent
+4. tether_session_wait  (session_id)     → block until done
 ```
 
 ### Launch with a generated boot prompt
 
 ```
-1. mux_catalog_list_boot_profiles     → pick a profile_id
-2. mux_boot_generate (profile_id)     → get boot_prompt text
-3. mux_session_create (launch_id, boot_prompt)
-4. mux_session_launch (session_id)
+1. tether_catalog_list_boot_profiles     → pick a profile_id
+2. tether_boot_generate (profile_id)     → get boot_prompt text
+3. tether_session_create (launch_id, boot_prompt)
+4. tether_session_launch (session_id)
 ```
 
 ### Resume a logical agent from checkpoint
 
 ```
-1. mux_logical_agent_list             → find the logical_agent_id
-2. mux_logical_agent_resume (id)      → starts session with checkpoint context injected
+1. tether_logical_agent_list             → find the logical_agent_id
+2. tether_logical_agent_resume (id)      → starts session with checkpoint context injected
 ```
 
 ### Send a cross-agent message
 
 ```
-1. mux_message_send (from, to, kind, payload_json)   → get message_id
-2. mux_message_inbox (to)            → recipient polls inbox
-3. mux_message_consume (message_id, as)              → mark consumed
+1. tether_message_send (from, to, kind, payload_json)   → get message_id
+2. tether_message_inbox (to)            → recipient polls inbox
+3. tether_message_consume (message_id, as)              → mark consumed
 ```
 
 ### Inspect or invoke the AI gateway
 
 ```
-1. mux_ai_list_providers             → discover configured provider ids
-2. mux_ai_list_models                → inspect visible models
-3. mux_ai_list_routes                → inspect live planner route order
-4. mux_ai_route_preview              → preview route/cost without model invocation
-5. mux_ai_route_explain              → explain why each route matched or failed
-6. mux_ai_chat                       → invoke the gateway and return one final response (requires ai.invoke)
-7. mux_ai_chat_stream                → invoke the gateway as a live MCP stream (requires ai.invoke)
-8. mux_ai_embeddings                 → generate embedding vectors (requires ai.invoke)
-9. mux_ai_usage / mux_ai_budgets     → inspect durable usage and live budget headroom
-10. mux_ai_budget_alerts             → inspect durable budget_rejection alerts directly
-11. mux_ai_wait_budget_alerts        → wait briefly for live ai.budget_rejected events
-12. mux_events_history               → inspect broader durable daemon/session/broker history
-13. mux_events_wait                  → reuse the bounded-live pattern for live daemon/session events
-14. mux_ai_audit                     → inspect broader durable audit history
+1. tether_ai_list_providers             → discover configured provider ids
+2. tether_ai_list_models                → inspect visible models
+3. tether_ai_list_routes                → inspect live planner route order
+4. tether_ai_route_preview              → preview route/cost without model invocation
+5. tether_ai_route_explain              → explain why each route matched or failed
+6. tether_ai_chat                       → invoke the gateway and return one final response (requires ai.invoke)
+7. tether_ai_chat_stream                → invoke the gateway as a live MCP stream (requires ai.invoke)
+8. tether_ai_embeddings                 → generate embedding vectors (requires ai.invoke)
+9. tether_ai_usage / tether_ai_budgets     → inspect durable usage and live budget headroom
+10. tether_ai_budget_alerts             → inspect durable budget_rejection alerts directly
+11. tether_ai_wait_budget_alerts        → wait briefly for live ai.budget_rejected events
+12. tether_events_history               → inspect broader durable daemon/session/broker history
+13. tether_events_wait                  → reuse the bounded-live pattern for live daemon/session events
+14. tether_ai_audit                     → inspect broader durable audit history
 ```
 
 ### AI tool request forms
 
-`mux_ai_route_preview`, `mux_ai_chat`, `mux_ai_chat_stream`, and `mux_ai_embeddings` support two request styles:
+`tether_ai_route_preview`, `tether_ai_chat`, `tether_ai_chat_stream`, and `tether_ai_embeddings` support two request styles:
 
 1. Shorthand text form: `text` plus optional `system_prompt`, `provider`,
    `model`, budget/correlation hints, and optional image helpers
@@ -1587,22 +1587,22 @@ Example full request call:
 }
 ```
 
-`mux_ai_chat`, `mux_ai_chat_stream`, and `mux_ai_embeddings` require the `ai.invoke` scope. `mux_ai_usage`,
-`mux_ai_budgets`, `mux_ai_budget_alerts`, `mux_ai_wait_budget_alerts` and
-`mux_ai_audit` are read-only but require a token (any scope).
-`mux_ai_list_providers`, `mux_ai_list_models`, `mux_ai_list_routes`,
-`mux_ai_route_preview`, `mux_ai_route_explain`, `mux_events_history` and
-`mux_events_wait` are read-only and open.
+`tether_ai_chat`, `tether_ai_chat_stream`, and `tether_ai_embeddings` require the `ai.invoke` scope. `tether_ai_usage`,
+`tether_ai_budgets`, `tether_ai_budget_alerts`, `tether_ai_wait_budget_alerts` and
+`tether_ai_audit` are read-only but require a token (any scope).
+`tether_ai_list_providers`, `tether_ai_list_models`, `tether_ai_list_routes`,
+`tether_ai_route_preview`, `tether_ai_route_explain`, `tether_events_history` and
+`tether_events_wait` are read-only and open.
 
 ### AI live streaming
 
-`mux_ai_chat_stream` bridges the daemon `/ai/chat/stream` SSE path into MCP
+`tether_ai_chat_stream` bridges the daemon `/ai/chat/stream` SSE path into MCP
 client notifications while the tool call is still running.
 
 During one streaming invocation, clients can receive:
 
 - `notifications/ai/chat_stream`
-  - structured payload with `source: "mux_ai_chat_stream"` and the normalized
+  - structured payload with `source: "tether_ai_chat_stream"` and the normalized
     `event`
 - `notifications/message`
   - info-level logging notification carrying the same structured event payload
@@ -1619,7 +1619,7 @@ answer.
 
 ## Limitations (v0.1.0)
 
-- **No PTY output streaming.** `mux_session_send_input` sends input; reading
+- **No PTY output streaming.** `tether_session_send_input` sends input; reading
   output requires the daemon's attach endpoint or `go-tether-client`. A
   polling pattern (send input → wait → read session state) works for short
   interactions.

@@ -50,7 +50,7 @@ func sessionsFor(ids ...string) *fakeLaunchService {
 	return &fakeLaunchService{getRes: rows}
 }
 
-// A daemon-only `mux mcp` cannot write the event log, so it asks the daemon
+// A daemon-only `tether mcp` cannot write the event log, so it asks the daemon
 // to: POST /proxy/events with publish puts the call on the daemon's bus
 // (CW-20261001-0173). The daemon stamps the time itself.
 func TestIngestProxyEvent_PublishPutsTheCallOnTheDaemonsBus(t *testing.T) {
@@ -131,7 +131,7 @@ func TestIngestProxyEvent_WithoutPublishWritesOnlyTheRow(t *testing.T) {
 	if len(bus.published) != 0 {
 		t.Errorf("published without publish: %+v", bus.published)
 	}
-	// The operator's own `mux mcp` forwards without publish, and does not
+	// The operator's own `tether mcp` forwards without publish, and does not
 	// need the session to exist (boot-exec has none).
 	if len(store.events) != 1 || store.events[0].SessionID != "any-session" {
 		t.Errorf("rows = %+v, want the one record", store.events)

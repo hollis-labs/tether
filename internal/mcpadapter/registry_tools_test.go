@@ -47,7 +47,7 @@ import (
 // newRegistryAdapter builds an Adapter wired with a live registry.Service
 // backed by an in-memory SQLite DB, plus a real internal/api HTTP test
 // server (T08: registry tools now route through the daemon, the same
-// mux-mcp split-brain fix T05 applied to message tools) and an
+// tether-mcp split-brain fix T05 applied to message tools) and an
 // internal/client.Client pointed at it via NewWithDaemon. Optional
 // ServiceOptions let individual tests register Sync resolvers. The
 // adapter holds ScopeRegistryWrite so mutating tools dispatch; tests that

@@ -60,7 +60,7 @@ func TestNewAdapter_EmptyConfigIsValidAndServesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAdapter with empty config: %v", err)
 	}
-	if adapter.Mux() == nil {
-		t.Fatal("Mux() returned nil for an empty config")
+	if adapter.Tether() == nil {
+		t.Fatal("Tether() returned nil for an empty config")
 	}
 }

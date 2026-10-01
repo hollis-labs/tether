@@ -1,4 +1,4 @@
-// Package daemon implements the long-lived muxd process that owns running
+// Package daemon implements the long-lived tetherd process that owns running
 // sessions across CLI invocations. It exposes a small HTTP API (v0.0.2 ships
 // only /health; Sprint v002-s05 adds the full surface) served over either a
 // Unix domain socket or loopback TCP per the scheme-prefixed listen_addr

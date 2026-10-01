@@ -177,7 +177,7 @@ func TestMessageConsume_OwnershipEnforcedOverHTTP(t *testing.T) {
 // pass found in this task: /messages' Get/Inbox/List/Thread reads had zero
 // identity check at all (worse than the write actions on the same file,
 // which already required ?as=), even though this task specifically
-// rewired mux_message_get/inbox/list/thread (mcpadapter) to hit these very
+// rewired tether_message_get/inbox/list/thread (mcpadapter) to hit these very
 // endpoints. Positive and negative cases per handler.
 func TestMessageMailboxReads_RequireAsClaim(t *testing.T) {
 	srv, db := newMessageTestServer(t)

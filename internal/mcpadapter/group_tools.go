@@ -3,7 +3,7 @@
 // vNext). One tool per HTTP endpoint in internal/api/groups.go; every
 // handler now routes through a.client (the daemon HTTP client) rather
 // than dispatching to a.svc.Registry in-process — see registry_tools.go's
-// package doc for why (the `mux mcp` split-brain SQLite-connection issue
+// package doc for why (the `tether mcp` split-brain SQLite-connection issue
 // T05 fixed for messages, applied here too).
 //
 // Scope. Membership + post + read tools require `groups.write`. Read
@@ -261,7 +261,7 @@ func (a *Adapter) handleGroupCreate(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "display_name and creator_urn are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_create requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_create requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().Create(ctx, client.CreateGroupRequest{
 		DisplayName:  name,
@@ -285,7 +285,7 @@ func (a *Adapter) handleGroupLookup(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_lookup requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_lookup requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().Lookup(ctx, urn)
 	if err != nil {
@@ -306,7 +306,7 @@ func (a *Adapter) handleGroupListForMember(ctx context.Context, args map[string]
 		return nil, toolError("invalid_request", "member_urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_list_for_member requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_list_for_member requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().ListForMember(ctx, member)
 	if err != nil {
@@ -331,7 +331,7 @@ func (a *Adapter) handleGroupArchive(ctx context.Context, args map[string]any) (
 		return nil, toolError("invalid_request", "urn and by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_archive requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_archive requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().Archive(ctx, urn, by)
 	if err != nil {
@@ -355,7 +355,7 @@ func (a *Adapter) handleGroupInvite(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "group_urn, member_urn, and by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_invite requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_invite requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().AddMember(ctx, grp, member, by, registry.MemberRole(role))
 	if err != nil {
@@ -378,7 +378,7 @@ func (a *Adapter) handleGroupKick(ctx context.Context, args map[string]any) (any
 		return nil, toolError("invalid_request", "group_urn, member_urn, and by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_kick requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_kick requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.Groups().RemoveMember(ctx, grp, member, by); err != nil {
 		if isDaemonUnreachable(err) {
@@ -399,7 +399,7 @@ func (a *Adapter) handleGroupLeave(ctx context.Context, args map[string]any) (an
 		return nil, toolError("invalid_request", "group_urn and member_urn are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_leave requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_leave requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.Groups().Leave(ctx, grp, member); err != nil {
 		if isDaemonUnreachable(err) {
@@ -422,7 +422,7 @@ func (a *Adapter) handleGroupSetRole(ctx context.Context, args map[string]any) (
 		return nil, toolError("invalid_request", "group_urn, member_urn, role, and by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_set_role requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_set_role requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.Groups().SetMemberRole(ctx, grp, member, registry.MemberRole(role), by); err != nil {
 		if isDaemonUnreachable(err) {
@@ -439,7 +439,7 @@ func (a *Adapter) handleGroupListMembers(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "group_urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_list_members requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_list_members requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().ListMembers(ctx, grp)
 	if err != nil {
@@ -480,7 +480,7 @@ func (a *Adapter) handleGroupPost(ctx context.Context, args map[string]any) (any
 	}
 
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_post requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_post requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().Send(ctx, grp, client.SendGroupRequest{
 		From:        from,
@@ -520,7 +520,7 @@ func (a *Adapter) handleGroupRead(ctx context.Context, args map[string]any) (any
 	threadID := str(args, "thread_id")
 
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_read requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_read requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().ListMessages(ctx, grp, client.ListMessagesParams{
 		As: as, SinceSeq: sinceSeq, ThreadID: threadID, Limit: limit,
@@ -556,7 +556,7 @@ func (a *Adapter) handleGroupMarkRead(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "up_to_seq is required and must be ≥ 0")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_mark_read requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_mark_read requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.Groups().MarkRead(ctx, grp, as, upTo); err != nil {
 		if isDaemonUnreachable(err) {
@@ -582,7 +582,7 @@ func (a *Adapter) handleGroupMentions(ctx context.Context, args map[string]any) 
 		since = t
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_group_mentions requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_group_mentions requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Groups().Mentions(ctx, client.MentionsParams{As: as, Since: since, Limit: limit})
 	if err != nil {

@@ -143,8 +143,8 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
-		if _, ok := plan.Env["MUX_MCP_SERVERS"]; ok {
-			t.Fatalf("MUX_MCP_SERVERS should not be set when no servers configured; got %q", plan.Env["MUX_MCP_SERVERS"])
+		if _, ok := plan.Env["TETHER_MCP_SERVERS"]; ok {
+			t.Fatalf("TETHER_MCP_SERVERS should not be set when no servers configured; got %q", plan.Env["TETHER_MCP_SERVERS"])
 		}
 	})
 
@@ -158,8 +158,8 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
-		if plan.Env["MUX_MCP_SERVERS"] != "hadron,vanta" {
-			t.Fatalf("want MUX_MCP_SERVERS=hadron,vanta, got %q", plan.Env["MUX_MCP_SERVERS"])
+		if plan.Env["TETHER_MCP_SERVERS"] != "hadron,vanta" {
+			t.Fatalf("want TETHER_MCP_SERVERS=hadron,vanta, got %q", plan.Env["TETHER_MCP_SERVERS"])
 		}
 	})
 
@@ -176,8 +176,8 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
-		if plan.Env["MUX_MCP_SERVERS"] != "cerberus" {
-			t.Fatalf("want project servers to win; got %q", plan.Env["MUX_MCP_SERVERS"])
+		if plan.Env["TETHER_MCP_SERVERS"] != "cerberus" {
+			t.Fatalf("want project servers to win; got %q", plan.Env["TETHER_MCP_SERVERS"])
 		}
 	})
 
@@ -191,8 +191,8 @@ func TestResolve_MCPServerChain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
-		if plan.Env["MUX_MCP_SERVERS"] != "hadron" {
-			t.Fatalf("want MUX_MCP_SERVERS=hadron, got %q", plan.Env["MUX_MCP_SERVERS"])
+		if plan.Env["TETHER_MCP_SERVERS"] != "hadron" {
+			t.Fatalf("want TETHER_MCP_SERVERS=hadron, got %q", plan.Env["TETHER_MCP_SERVERS"])
 		}
 	})
 }
@@ -302,8 +302,8 @@ func TestResolve_InjectionFiles(t *testing.T) {
 				ID: "l", Project: "proj", Agent: "a", Provider: "p",
 				Injection: config.LaunchInjection{
 					NativeFiles: []config.InjectedFile{
-						{RelPath: ".mux/inline.md", Content: "inline\n", Mode: 0o600},
-						{RelPath: ".mux/context.md", Source: "context.md"},
+						{RelPath: ".tether/inline.md", Content: "inline\n", Mode: 0o600},
+						{RelPath: ".tether/context.md", Source: "context.md"},
 					},
 					BootDirOverlay: []config.InjectedFile{
 						{RelPath: "extra.md", Content: "overlay\n"},
@@ -319,7 +319,7 @@ func TestResolve_InjectionFiles(t *testing.T) {
 	if len(plan.NativeFiles) != 2 {
 		t.Fatalf("NativeFiles len = %d, want 2", len(plan.NativeFiles))
 	}
-	if plan.NativeFiles[0].Kind != "raw" || plan.NativeFiles[0].RelPath != ".mux/inline.md" || plan.NativeFiles[0].Content != "inline\n" || plan.NativeFiles[0].Mode != 0o600 {
+	if plan.NativeFiles[0].Kind != "raw" || plan.NativeFiles[0].RelPath != ".tether/inline.md" || plan.NativeFiles[0].Content != "inline\n" || plan.NativeFiles[0].Mode != 0o600 {
 		t.Fatalf("unexpected inline native file: %#v", plan.NativeFiles[0])
 	}
 	if plan.NativeFiles[1].Content != "from source\n" {

@@ -6,7 +6,7 @@ package api
 // guard to `source`, including source=proxy. It used to reject that value, and
 // the rejection was wrong for two independent reasons documented at the call
 // site — it could not detect impersonation under ADR 0045, and it blocked the
-// only caller that had a legitimate claim to it, since `mux mcp --proxy` is a
+// only caller that had a legitimate claim to it, since `tether mcp --proxy` is a
 // separate process that reaches the store through this route.
 //
 // An absence is exactly what regresses silently, so it is asserted.

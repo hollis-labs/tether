@@ -4,9 +4,9 @@
 # Install / release metadata
 # ---------------------------------------------------------------------------
 
-APP_NAME := mux
-HELPER_NAME := mux-apikey-helper
-GO_PACKAGES := ./cmd/mux ./cmd/mux-apikey-helper ./internal/... ./pkg/...
+APP_NAME := tether
+HELPER_NAME := tether-apikey-helper
+GO_PACKAGES := ./cmd/tether ./cmd/tether-apikey-helper ./internal/... ./pkg/...
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 GOBIN ?= $(shell go env GOPATH)/bin
@@ -23,8 +23,8 @@ all: build
 
 build:
 	mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/mux
-	go build -ldflags "$(LDFLAGS)" -o bin/$(HELPER_NAME) ./cmd/mux-apikey-helper
+	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/tether
+	go build -ldflags "$(LDFLAGS)" -o bin/$(HELPER_NAME) ./cmd/tether-apikey-helper
 
 # `make install` — BSD/GNU convention. Honors PREFIX/BINDIR/DESTDIR.
 install: build
@@ -34,7 +34,7 @@ install: build
 
 # `make go-install` — wraps `go install` for Go-native devs and local Tether work.
 go-install:
-	GOBIN=$(GOBIN) go install -ldflags "$(LDFLAGS)" ./cmd/mux ./cmd/mux-apikey-helper
+	GOBIN=$(GOBIN) go install -ldflags "$(LDFLAGS)" ./cmd/tether ./cmd/tether-apikey-helper
 	@echo "installed → $(GOBIN)/$(APP_NAME)"
 	@echo "installed → $(GOBIN)/$(HELPER_NAME)"
 

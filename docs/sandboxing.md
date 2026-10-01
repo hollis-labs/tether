@@ -80,7 +80,7 @@ database too. **That is not protection from Tether**, and it does not hold
 against the rest of what a Codex agent can reach:
 
 **Codex spawns every MCP server it is given outside its sandbox.** The planted
-`mux` proxy and every upstream it starts run unsandboxed, with the operator's uid,
+`tether` proxy and every upstream it starts run unsandboxed, with the operator's uid,
 so a Codex agent can reach the catalog through MCP tools:
 
 - `torque_session_launch` (`torque mcp`) takes a caller-chosen `workdir`, so
@@ -95,15 +95,15 @@ so a Codex agent can reach the catalog through MCP tools:
 So the default MCP allow-list (`torque`, `tesseract`) is not safe for a Codex agent
 either. **The structural fix is MCP upstreams that run daemon-side, outside the
 agent's reach, or that confine what they write (CW-20261001-0230).** Until it
-lands, `GET /health` (`sandbox_protect.codex`), `mux doctor`
+lands, `GET /health` (`sandbox_protect.codex`), `tether doctor`
 (`sandbox-protect-codex`, a warning) and the daemon's startup log all say
 `codex: not protected (CW-20261001-0230)`. Claude, OpenCode and every other agent
-Tether wraps stay protected, and one guard still holds for Codex: the planted `mux`
+Tether wraps stay protected, and one guard still holds for Codex: the planted `tether`
 server refuses to write the catalog, run and state directories (see below). The
 planted Codex `config.toml` carries `--protect-path <catalog> --protect-path <run>
---protect-path <state>` on its `mux` server's arguments (one per directory
+--protect-path <state>` on its `tether` server's arguments (one per directory
 protection registers, so no `<run>` when the run directory is in a shared
-directory), so the `mux_agent_create`/`mux_agent_edit` refusal applies
+directory), so the `tether_agent_create`/`tether_agent_edit` refusal applies
 to Codex too (seen live: `catalog_read_only`, nothing written). Otherwise "exactly
 as on `main`" is true for Codex's sandbox and for wrapping.
 
@@ -226,7 +226,7 @@ guard passes its own tests and none of these is caught by them):
   arbitrary file-write tool and is not sufficient.
 - **SF4: the per-turn check accepts any content inside `[mcp_servers.*]`.** A
   co-located wrapped agent can add `[mcp_servers.evil] command="sh" args=[…]`,
-  drop `--protect-path` from the planted `mux` args, or add `LD_PRELOAD` to its
+  drop `--protect-path` from the planted `tether` args, or add `LD_PRELOAD` to its
   environment, and Codex spawns it unsandboxed. The planted shape is known at launch
   and would have to be pinned.
 
@@ -267,17 +267,17 @@ slightly different machine:
 ### The state directory
 
 An agent Tether wraps cannot write the state database, nor replace it or its WAL
-files. The `mux mcp` server planted in each agent never opens the database: it
+files. The `tether mcp` server planted in each agent never opens the database: it
 runs `--daemon-only` and reads and writes Tether's state through the daemon (see
-[mcp.md](mcp.md#daemon-only-mode---daemon-only)). A `mux` command such an agent
+[mcp.md](mcp.md#daemon-only-mode---daemon-only)). A `tether` command such an agent
 runs by hand that opens the database itself fails inside the sandbox (see
-[`mux` commands that do not work inside the sandbox](#mux-commands-that-do-not-work-inside-the-sandbox)).
+[`tether` commands that do not work inside the sandbox](#tether-commands-that-do-not-work-inside-the-sandbox)).
 The tools the agent calls through its MCP server are unaffected.
 
 **For Codex this holds only in part**, because Tether does not wrap Codex. Its
 shell is kept out of the directory by Codex's own sandbox (unless `state_db` is in
 a directory that sandbox can write: `/tmp`, `$TMPDIR` or the work directory), and
-its planted `mux mcp` holds no handle on the database. But Codex spawns its MCP servers outside
+its planted `tether mcp` holds no handle on the database. But Codex spawns its MCP servers outside
 that sandbox, so an upstream whose tool writes a caller-chosen path can still
 reach the state directory (CW-20261001-0230), and any agent can ask the daemon,
 over the socket, to write for it.
@@ -287,23 +287,23 @@ directory is read-only, not hidden, so the sessions, messages and events in it
 stay readable to an agent that opens the file directly (CW-20261001-0263).
 
 Planted workers keep the `catalog.write` MCP scope: it also gates
-`mux_agent_create` with `scope=project`, which writes into the repo and is not
+`tether_agent_create` with `scope=project`, which writes into the repo and is not
 protected, and it is not a boundary anyway (a worker can start its own
-`mux mcp --scopes`).
+`tether mcp --scopes`).
 
-**The catalog refusal is a policy, for every runtime.** The planted `mux mcp` is
+**The catalog refusal is a policy, for every runtime.** The planted `tether mcp` is
 started with `--protect-path` for each directory Tether protects from the agent
 (the catalog root, the run directory and the state directory), from the same decision that registers
-the agent's protected paths. `mux_agent_create` and `mux_agent_edit` go through one
+the agent's protected paths. `tether_agent_create` and `tether_agent_edit` go through one
 guard, which refuses a write under a protected directory with a typed
 `catalog_read_only` error telling the agent to ask the operator, whether or not a
 sandbox also makes it read-only. That matters because a
 read-only mount only exists inside Tether's sandbox: Codex spawns MCP servers
-itself, outside it, and a Codex agent calling `mux_agent_create scope=system`
+itself, outside it, and a Codex agent calling `tether_agent_create scope=system`
 wrote `<catalog>/agents/x.yaml` before this guard. Those two are the only native
 tools that write a file into the catalog tree (audited); the rest read it, or write
 the database or the daemon. An operator creates and edits agents with
-`mux agents` or by editing the files. The unprotected `scope=project` and
+`tether agents` or by editing the files. The unprotected `scope=project` and
 `scope=user` still work (the user layer is CW-20261001-0192).
 
 **The refusal holds against a symlink re-pointed while the call runs.** Resolving a
@@ -323,26 +323,26 @@ not closed; the protection is not applied there yet (CW-20261001-0138). The race
 tests flip the symlink while calling the real tools thousands of times and assert
 nothing lands in the catalog (`internal/agentops`, `internal/mcpadapter`).
 
-### `mux` commands that do not work inside the sandbox
+### `tether` commands that do not work inside the sandbox
 
-The `mux` commands that open the state database in-process cannot, because its
-directory is read-only: `mux projects list`, `mux resolve`, `mux acp`,
-`mux workspaces prune` and the migrations check of `mux doctor`. Each exits 1 with
+The `tether` commands that open the state database in-process cannot, because its
+directory is read-only: `tether projects list`, `tether resolve`, `tether acp`,
+`tether workspaces prune` and the migrations check of `tether doctor`. Each exits 1 with
 `apply delivery schema: attempt to write a readonly database (8)` (prefixed by the
 command's step, such as `open state db:`), or, when the daemon is down and the
 WAL files that SQLite would have to create are gone, with `migrate: create
-schema_migrations: unable to open database file (14)`. `mux init` fails earlier, on
+schema_migrations: unable to open database file (14)`. `tether init` fails earlier, on
 the read-only catalog (`read-only file system`). None of these messages says why,
 or what to use instead.
 
-Use the tools the agent already has: `mux_catalog_list_projects` (and
-`mux_catalog_list_launches`, `_agents`, `_providers`) for the catalog, and
-`mux_health` or `GET /health` for what `mux doctor` reports about the daemon. The
-`mux` commands that go through the daemon (`mux messages`, `mux sessions`,
-`mux events`, `mux registry`, `mux launch`, `mux ai`, `mux group`) and the planted
-`mux mcp` work, as does `mux path`, which opens no database. `mux resolve` has no
-daemon route: its plan is a function of the catalog. That `mux resolve`, `mux
-projects list` and `mux acp` open the database at all, when they need only the
+Use the tools the agent already has: `tether_catalog_list_projects` (and
+`tether_catalog_list_launches`, `_agents`, `_providers`) for the catalog, and
+`tether_health` or `GET /health` for what `tether doctor` reports about the daemon. The
+`tether` commands that go through the daemon (`tether messages`, `tether sessions`,
+`tether events`, `tether registry`, `tether launch`, `tether ai`, `tether group`) and the planted
+`tether mcp` work, as does `tether path`, which opens no database. `tether resolve` has no
+daemon route: its plan is a function of the catalog. That `tether resolve`, `tether
+projects list` and `tether acp` open the database at all, when they need only the
 catalog, and the unhelpful messages are tracked in CW-20261001-0470.
 
 ### macOS, status and the off switch
@@ -350,19 +350,19 @@ catalog, and the unhelpful messages are tracked in CW-20261001-0470.
 **macOS:** not applied yet. go-sandbox's seatbelt protection has not been
 verified on a real Mac (CW-20261001-0138), so darwin launches run as before.
 
-**Status:** `mux doctor` asks the running daemon, whose environment decides
+**Status:** `tether doctor` asks the running daemon, whose environment decides
 protection, and reports a `sandbox-protect` check: ok when protection is on and
 usable, a warning when it is off, a failure when it is on but bubblewrap cannot
 build a namespace. The daemon logs the same at startup, and `GET /health`
-carries it as `sandbox_protect`. Without a daemon to ask, `mux doctor` says it
+carries it as `sandbox_protect`. Without a daemon to ask, `tether doctor` says it
 is reporting its own shell's environment. A second check, `sandbox-protect-codex`,
 reports how Codex is protected: a warning, `codex: not protected
 (CW-20261001-0230)`, as shipped, and ok only if the dormant guard is switched on.
 
-**Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in muxd's
+**Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in tetherd's
 environment and restart the daemon. The daemon logs `WARN: control-plane
 protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the
-catalog, run/ and state/` at startup, and `mux doctor` reports a `sandbox-protect`
+catalog, run/ and state/` at startup, and `tether doctor` reports a `sandbox-protect`
 warning. Agents then run as they did before protection, ACP launches
 included. See [SECURITY.md](../SECURITY.md) for what protection stops and
 what it does not.
@@ -491,7 +491,7 @@ back to the catalog agent's profile.
 - If the catalog agent is pinned to a profile, an override may name only that
   same profile. Any other profile is refused with 403 `forbidden`.
 
-The reason: an agent Tether launches holds `session.write` through its `mux`
+The reason: an agent Tether launches holds `session.write` through its `tether`
 MCP, so without this rule it could create a child session that loosens its
 own sandbox. Tether cannot yet tell an operator from an agent caller. The rule
 is lifted when per-caller identity (CW-20260930-0253) lands.
@@ -500,7 +500,7 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 
 | Scenario | Behavior |
 |----------|----------|
-| Profile name references a file that doesn't exist | The daemon starts, logs a warning naming the agent and profile, and `mux doctor` fails `catalog-sandbox-profiles`. Creating, launching or resuming a session of that agent is refused with 404 `not_found` naming the profile. The same applies to an `agent_file`/`agent_inline` override that names one. It never runs without a sandbox. |
+| Profile name references a file that doesn't exist | The daemon starts, logs a warning naming the agent and profile, and `tether doctor` fails `catalog-sandbox-profiles`. Creating, launching or resuming a session of that agent is refused with 404 `not_found` naming the profile. The same applies to an `agent_file`/`agent_inline` override that names one. It never runs without a sandbox. |
 | Profile name set but platform has no enforcement tool | Launch fails with `conflict` error |
 | Sandbox application error (SBPL syntax, bwrap arg error) | Launch fails with `conflict` error |
 | Agent has no `default_sandbox` field | No profile; on Linux the session runs under control-plane protection only |

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-opencode.yaml.
+# Boot-profile folded: tether.engineer.opencode.yaml
+# Legacy: project=tether / agent=general / provider=opencode / workspace.mode=hybrid.
+spec: tether.launch
+name: tether-opencode
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: opencode
+  isolation: hybrid
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tether — OpenCode"

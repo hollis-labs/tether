@@ -17,7 +17,7 @@ import (
 //   - catalog-git-readonly    — the `cmd` sources for the history and
 //     status vars (read-only `git log` / `git status`).
 //   - catalog-skill-index     — the `cmd` source for the skills var
-//     (the `mux skills index` subcommand).
+//     (the `tether skills index` subcommand).
 //
 // A gated var source carrying any other trust token is DENIED. D6(c) is
 // fail-closed: the authorizer authorizes a known, catalog-authored token,

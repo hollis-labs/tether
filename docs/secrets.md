@@ -3,7 +3,7 @@
 MCP catalog entries may name a secret instead of containing one. `args:`, `env:`,
 `token:` and `url:` all accept:
 
-    keychain://<authority>/<path>       → mux-apikey-helper → macOS `security` CLI
+    keychain://<authority>/<path>       → tether-apikey-helper → macOS `security` CLI
     helper://<helper>/<path>            → the named helper binary
     file:///<absolute path>             → a private file (see below)
     file://~/<path under home>          → the same, relative to your home
@@ -15,10 +15,10 @@ reference fails the load rather than spawning an upstream with a blank credentia
 
 - `internal/config/mcp_server.go` — expansion and resolution
 - `internal/llm/secrets` — the reference resolver
-- `cmd/mux-apikey-helper` — keychain access, service `tether`,
+- `cmd/tether-apikey-helper` — keychain access, service `tether`,
   account `provider-api-key:<authority>/<path>`
 
-Note `mux-apikey-helper` prefers a conventional env var (`OPENAI_API_KEY`,
+Note `tether-apikey-helper` prefers a conventional env var (`OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY`) over the keychain. Callers that pass a service environment
 through to it must strip reference-valued variables first, or the helper echoes
 the reference back as the secret.
@@ -100,14 +100,14 @@ What this does and does not do:
 
 ## Populating a keychain entry
 
-`mux-apikey-helper` reads the secret on stdin, so it never appears in a command
+`tether-apikey-helper` reads the secret on stdin, so it never appears in a command
 line, shell history, or `ps` output:
 
-    printf '%s' "$KEY" | mux-apikey-helper set keychain://openai/work
+    printf '%s' "$KEY" | tether-apikey-helper set keychain://openai/work
 
 To confirm a value without printing it, compare digests:
 
-    printf '%s' "$(mux-apikey-helper resolve keychain://openai/work)" \
+    printf '%s' "$(tether-apikey-helper resolve keychain://openai/work)" \
       | shasum -a 256 | cut -c1-12
 
 ### Interop note
@@ -119,7 +119,7 @@ implements the same decode (`decodeKeyringValue`). Entries written by either
 tool are therefore readable by both. Without it, a go-keyring-written entry
 reads back as the marker string — credential-shaped, and wrong.
 
-`mux doctor` checks catalog-authored `file://` credentials for enabled MCP
+`tether doctor` checks catalog-authored `file://` credentials for enabled MCP
 servers before a proxy is started. It uses the spawn-time file checks, reports
 unusable files as failures, and never prints their contents or runs secret
 helpers. Disabled entries are skipped.

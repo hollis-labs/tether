@@ -71,7 +71,7 @@ var ErrSessionNotCreated = session.ErrNotCreated
 
 // CreateSessionWithBootPrompt creates a session like CreateSession but
 // replaces the catalog's static boot prompt with the provided text.
-// Used by `mux boot <profile_id>` to inject a dynamically generated
+// Used by `tether boot <profile_id>` to inject a dynamically generated
 // prompt without modifying the catalog.
 func (s *Service) CreateSessionWithBootPrompt(launchID, bootPrompt string) (*Launched, error) {
 	return s.CreateSessionWithInput(CreateSessionInput{
@@ -226,6 +226,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
 
+	if err := rejectLegacyMCPPlan(plan); err != nil {
+		return nil, err
+	}
+
 	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
@@ -313,7 +317,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 
 	// One decision, one value. The argv that gets planted and the attribution
 	// that gets stamped come from the same call, so nothing here can write a
-	// stamp that disagrees with the flags actually planted -- see MuxMCPPlan.
+	// stamp that disagrees with the flags actually planted -- see TetherMCPPlan.
 	//
 	// extractRefs comes from the resolved launch plan (CW-20260912-0112),
 	// falling back to catalog config if unpopulated on an older plan.
@@ -326,7 +330,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
 		// launch does its own setup, and agentkit's planting has no
 		// constructor for an ACP mode (providerplant.ErrNoNativeAdapter), so
-		// there is no shared launch to prepare and no mux MCP server is
+		// there is no shared launch to prepare and no tether MCP server is
 		// planted for it in this stage.
 		startOpts, err = acpStartOptions(plan, ws, profile)
 		if err != nil {
@@ -345,11 +349,11 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
 		}
-		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
+		mcpPlan := TetherMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
-			MuxCommand: muxCommandPath(),
-			MuxArgs:    mcpPlan.Args,
-			MuxEnv:     muxEnvMap(plan.Env),
+			TetherCommand: tetherCommandPath(),
+			TetherArgs:    mcpPlan.Args,
+			TetherEnv:     tetherEnvMap(plan.Env),
 		})
 		if err != nil {
 			exit := 1
@@ -602,7 +606,7 @@ func (s *Service) clearStopOnExit(id string) {
 // (a one-off session that never manufactures a durable actor record just
 // by existing -- architecture: "A one-off session need not manufacture a
 // permanent actor record merely to send a message") or when Registry isn't
-// wired (lighter composition contexts, e.g. read-only `mux mcp`).
+// wired (lighter composition contexts, e.g. read-only `tether mcp`).
 // hostID is a fixed literal: Tether has no multi-host clustering model
 // within one daemon instance (ADR 0045) -- every session a given daemon
 // manages IS that one host, so a constant is accurate, not invented.
@@ -707,4 +711,19 @@ func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
 		Caps:         snap.Caps,
 		Health:       snap.Health,
 	}, true
+}
+
+// rejectLegacyMCPPlan checks keys only: legacy grants must never be ignored
+// in favor of the default allow-list when a created session crosses cutover.
+func rejectLegacyMCPPlan(plan *launch.Plan) error {
+	for key := range plan.Env {
+		if strings.HasPrefix(key, "MUX_MCP_") || strings.HasPrefix(key, "AGENT_MUX_MCP_") {
+			suffix := strings.TrimPrefix(strings.TrimPrefix(key, "AGENT_"), "MUX_")
+			replacement := "TETHER_" + suffix
+			if _, ok := plan.Env[replacement]; !ok {
+				return fmt.Errorf("stored launch plan contains legacy MCP setting %s without %s; recreate the session with current Tether configuration", key, replacement)
+			}
+		}
+	}
+	return nil
 }

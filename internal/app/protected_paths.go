@@ -18,9 +18,9 @@ import (
 )
 
 // ProtectEnv names the daemon environment variable that turns control-plane
-// protection off: "0" or "false" in muxd's environment. Protection is on by
+// protection off: "0" or "false" in tetherd's environment. Protection is on by
 // default; turning it off is an operator decision the daemon logs at startup
-// and `mux doctor` reports, never a silent one.
+// and `tether doctor` reports, never a silent one.
 const ProtectEnv = "TETHER_SANDBOX_PROTECT"
 
 // ProtectionStatus says whether the agents Tether launches get its own
@@ -144,7 +144,7 @@ func protectionUnavailable(dirs []string) error {
 		return nil
 	}
 	if err := bwrapAvailable(dirs[0]); err != nil {
-		return fmt.Errorf("%w: %w: install bubblewrap and allow unprivileged user namespaces, or set %s=0 in muxd's environment to run agents unprotected", launch.ErrProtectionUnavailable, err, ProtectEnv)
+		return fmt.Errorf("%w: %w: install bubblewrap and allow unprivileged user namespaces, or set %s=0 in tetherd's environment to run agents unprotected", launch.ErrProtectionUnavailable, err, ProtectEnv)
 	}
 	return nil
 }
@@ -159,7 +159,7 @@ func protectionUnavailable(dirs []string) error {
 // Tether does not wrap it (see protectionPlan): its own sandbox would let it
 // write its work directory.
 //
-// The state directory can be protected because the `mux mcp` server planted
+// The state directory can be protected because the `tether mcp` server planted
 // in each agent runs daemon-only (CW-20261001-0173): it never opens the
 // database, and reads and writes Tether's state through the daemon.
 //
@@ -358,7 +358,7 @@ func (s *Service) refuseWidenedCodex(sessionID string) error {
 	return fmt.Errorf("%w: %s; remove it, or relaunch the session so Tether wraps the agent instead of relying on codex's own sandbox", launch.ErrCodexSandboxWidened, why)
 }
 
-// mcpProtectedPaths are the directories the planted `mux mcp` must refuse to
+// mcpProtectedPaths are the directories the planted `tether mcp` must refuse to
 // write: the ones protection registers for the agent, or none while
 // protection is off. An agent that is not protected (the kill switch, darwin)
 // gets no protect-path either, so the server behaves as it did.
@@ -374,7 +374,7 @@ func (s *Service) mcpProtectedPaths(plan *launch.Plan) ([]string, error) {
 	}
 	dirs, err := s.controlPlaneDirs()
 	if err != nil && plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
-		log.Printf("app: WARN launch %s: %v; codex is not protected (CW-20261001-0230), so its planted mux server gets no --protect-path for this launch and will not refuse catalog writes", plan.LaunchID, err)
+		log.Printf("app: WARN launch %s: %v; codex is not protected (CW-20261001-0230), so its planted tether server gets no --protect-path for this launch and will not refuse catalog writes", plan.LaunchID, err)
 		return nil, nil
 	}
 	return dirs, err

@@ -2,7 +2,7 @@
 # Boot-profile folded: (no boot-profile for auditor agent; uses backend role)
 # Legacy: project=stack-explorer / agent=stack-explorer-auditor / provider=codex-app-server / workspace.mode=hybrid.
 # Repointed 2026-09-12: the codex-cli provider has no command and no
-# auto-detectable binary (`mux doctor` reports it unusable), so every
+# auto-detectable binary (`tether doctor` reports it unusable), so every
 # launch on it failed. codex-app-server is the framed, steerable path.
 spec: tether.launch
 name: stack-explorer-auditor-codex

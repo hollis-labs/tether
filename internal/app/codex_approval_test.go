@@ -7,22 +7,22 @@ import (
 
 // realElicitationRequest is the params block codex-cli 0.154.0 actually
 // sent for an MCP tool-call approval, captured from a live
-// agent-mux-codex-app-server session on 2026-09-12. Kept verbatim so this
+// tether-codex-app-server session on 2026-09-12. Kept verbatim so this
 // test breaks if the shape Tether keys on (`_meta.codex_approval_kind`)
 // moves, rather than asserting against a hand-written approximation of it.
 const realElicitationRequest = `{
   "threadId": "01a095f4-371e-7992-8cdb-7904962af41f",
   "turnId": "01a095f4-3750-78a2-a722-ebd832593249",
-  "serverName": "mux",
+  "serverName": "tether",
   "mode": "form",
   "_meta": {
     "codex_approval_kind": "mcp_tool_call",
     "persist": ["session", "always"],
-    "tool_description": "Health check for the agent-mux MCP adapter.",
+    "tool_description": "Health check for the tether MCP adapter.",
     "tool_params": {},
     "tool_params_display": []
   },
-  "message": "Allow the mux MCP server to run tool \"mux_health\"?",
+  "message": "Allow the tether MCP server to run tool \"tether_health\"?",
   "requestedSchema": {"type": "object", "properties": {}}
 }`
 
@@ -69,12 +69,12 @@ func TestJSONRPCRequestHookRefusesUnknownRequests(t *testing.T) {
 		{
 			name:   "elicitation for a future approval kind",
 			method: codexElicitationMethod,
-			params: `{"serverName":"mux","_meta":{"codex_approval_kind":"exec_escalation"}}`,
+			params: `{"serverName":"tether","_meta":{"codex_approval_kind":"exec_escalation"}}`,
 		},
 		{
 			name:   "elicitation with no approval kind at all",
 			method: codexElicitationMethod,
-			params: `{"serverName":"mux"}`,
+			params: `{"serverName":"tether"}`,
 		},
 		{
 			name:   "malformed params for a handled method",

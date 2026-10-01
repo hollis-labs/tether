@@ -2,8 +2,8 @@
 
 Tether ships as three operator-facing binaries:
 
-- `mux` — the main CLI and daemon launcher
-- `mux-apikey-helper` — optional helper for storing and resolving provider API
+- `tether` — the main CLI and daemon launcher
+- `tether-apikey-helper` — optional helper for storing and resolving provider API
   keys from the local keychain
 - `tether_sysop` — the operations GUI (served at `http://localhost:8947/`)
 
@@ -28,8 +28,8 @@ brew install hollis-labs/tap/tether
 Verify:
 
 ```sh
-mux --version
-mux-apikey-helper --version
+tether --version
+tether-apikey-helper --version
 ```
 
 ## Option 2: Release Tarballs
@@ -43,8 +43,8 @@ Tagged releases publish tarballs for:
 
 Each archive contains:
 
-- `mux`
-- `mux-apikey-helper`
+- `tether`
+- `tether-apikey-helper`
 - `tether_sysop`
 - `README.md`
 - `LICENSE`
@@ -57,8 +57,8 @@ curl -L -o tether.tar.gz \
   https://github.com/hollis-labs/tether/releases/download/v<version>/tether_<version>_darwin_arm64.tar.gz
 tar -xzf tether.tar.gz
 install -d "$HOME/.local/bin"
-install -m 0755 mux "$HOME/.local/bin/"
-install -m 0755 mux-apikey-helper "$HOME/.local/bin/"
+install -m 0755 tether "$HOME/.local/bin/"
+install -m 0755 tether-apikey-helper "$HOME/.local/bin/"
 install -m 0755 tether_sysop "$HOME/.local/bin/"
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -111,8 +111,8 @@ make go-install
 ## Option 4: `go install`
 
 ```sh
-go install github.com/hollis-labs/tether/cmd/mux@latest
-go install github.com/hollis-labs/tether/cmd/mux-apikey-helper@latest
+go install github.com/hollis-labs/tether/cmd/tether@latest
+go install github.com/hollis-labs/tether/cmd/tether-apikey-helper@latest
 ```
 
 ## First-Time Setup
@@ -120,10 +120,10 @@ go install github.com/hollis-labs/tether/cmd/mux-apikey-helper@latest
 Run the guided setup wizard once after install:
 
 ```sh
-mux init
+tether init
 ```
 
-`mux init` is idempotent. It:
+`tether init` is idempotent. It:
 
 1. Creates `~/.tether/{catalog,state,run,logs}` directories.
 2. Seeds a starter catalog (global config + 4 CLI providers + example MCP server).
@@ -136,49 +136,49 @@ mux init
 Start the daemon and the operations GUI:
 
 ```sh
-mux daemon start
+tether daemon start
 tether_sysop     # opens the GUI at http://localhost:8947/
 ```
 
 Verify detection and system health:
 
 ```sh
-mux detect       # reports found/missing + resolved path for each agent binary
-mux doctor       # checks daemon, catalog, migrations, binary paths, permissions
+tether detect       # reports found/missing + resolved path for each agent binary
+tether doctor       # checks daemon, catalog, migrations, binary paths, permissions
 ```
 
 Optional: store provider API keys in the local keychain:
 
 ```sh
-printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/work
-printf '%s\n' "$OPENAI_API_KEY"    | mux-apikey-helper set keychain://openai/work
-printf '%s\n' "$GEMINI_API_KEY"    | mux-apikey-helper set keychain://gemini/work
+printf '%s\n' "$ANTHROPIC_API_KEY" | tether-apikey-helper set keychain://anthropic/work
+printf '%s\n' "$OPENAI_API_KEY"    | tether-apikey-helper set keychain://openai/work
+printf '%s\n' "$GEMINI_API_KEY"    | tether-apikey-helper set keychain://gemini/work
 ```
 
 Then verify the CLI:
 
 ```sh
-mux sessions list
-mux ai providers
+tether sessions list
+tether ai providers
 ```
 
 ### Manual catalog setup (fallback)
 
-If you prefer not to use `mux init`, you can bootstrap manually:
+If you prefer not to use `tether init`, you can bootstrap manually:
 
 ```sh
 install -d "$HOME/.tether/catalog"
 cp -R examples/catalog/* "$HOME/.tether/catalog/"
-mux daemon start
+tether daemon start
 ```
 
 ## Notes
 
 - Tether state lives under `~/.tether/`; the binary can live anywhere on
   `PATH`.
-- `mux-apikey-helper` is only required if you use `keychain://...` AI secret
+- `tether-apikey-helper` is only required if you use `keychain://...` AI secret
   refs.
 - `tether_sysop` is now included in release tarballs and the Homebrew formula.
-  Start it any time after `mux daemon start` to access the operations GUI.
-- `mux detect` and `mux doctor` reuse the same detection plumbing as `mux init`
+  Start it any time after `tether daemon start` to access the operations GUI.
+- `tether detect` and `tether doctor` reuse the same detection plumbing as `tether init`
   and are safe to re-run at any time.

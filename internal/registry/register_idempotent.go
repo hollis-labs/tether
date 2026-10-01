@@ -93,8 +93,8 @@ func (s *Storage) RegisterWithExternalKey(ctx context.Context, p Profile, substr
 	if p.Status == "" {
 		p.Status = StatusActive
 	}
-	if p.MuxInstanceID == "" {
-		p.MuxInstanceID = defaultMuxInstanceID
+	if p.TetherInstanceID == "" {
+		p.TetherInstanceID = defaultTetherInstanceID
 	}
 	if p.Owner == "" && substrate != "" {
 		p.Owner = substrate
@@ -148,13 +148,13 @@ func (s *Storage) RegisterWithExternalKey(ctx context.Context, p Profile, substr
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO registry_entries
-		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		    (urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		     created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
+		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.TetherInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),

@@ -93,9 +93,9 @@ Tether exposes this catalog shape:
 ```yaml
 injection:
   native_files:
-    - rel_path: .mux/handoff.md
+    - rel_path: .tether/handoff.md
       source: handoffs/current.md
-    - rel_path: .mux/session.json
+    - rel_path: .tether/session.json
       content: |
         {"source":"catalog"}
     - kind: skill
@@ -151,7 +151,7 @@ the catalog/config root, not the process CWD.
 - `boot-exec` is Claude-TUI-only. It execs into the native Claude PTY runtime
   and rejects Codex/Opencode launch profiles. Catalog launch support for a
   provider does not imply `boot-exec` support — Codex and Opencode are reached
-  through managed sessions (`mux launch`). See
+  through managed sessions (`tether launch`). See
   `docs/adr/0039-boot-exec-claude-only-scope.md`.
 - Provider support and provider polish are separate. The shared layer can carry
   NativeFiles/BootDirOverlay even when a provider-specific skill compiler is not

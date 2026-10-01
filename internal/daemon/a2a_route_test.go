@@ -39,7 +39,7 @@ func TestDaemonHandler_A2ARouteReachable(t *testing.T) {
 		t.Fatalf("NewAdapter: %v", err)
 	}
 
-	srv := &Server{Catalog: stubCatalogLoader{}, A2A: adapter.Mux()}
+	srv := &Server{Catalog: stubCatalogLoader{}, A2A: adapter.Tether()}
 	ts.Config.Handler = srv.Handler()
 
 	resp, err := http.Get(ts.URL + "/a2a/agents/route-test/.well-known/agent-card.json")
@@ -48,7 +48,7 @@ func TestDaemonHandler_A2ARouteReachable(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (route must be mounted through the real daemon.Server.Handler(), not just a2aadapter.Adapter.Mux() directly)", resp.StatusCode)
+		t.Fatalf("status = %d, want 200 (route must be mounted through the real daemon.Server.Handler(), not just a2aadapter.Adapter.Tether() directly)", resp.StatusCode)
 	}
 }
 

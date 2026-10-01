@@ -8,7 +8,7 @@
 #   ./scripts/lifecycle-smoke.sh [--catalog <path>]
 #
 # Requirements:
-#   - 'mux' binary on PATH (run: go install ./cmd/mux)
+#   - 'tether' binary on PATH (run: go install ./cmd/tether)
 #   - 'curl' available
 #   - macOS or Linux
 #
@@ -37,8 +37,8 @@ if [[ -z "$CATALOG" ]]; then
     CATALOG="$REPO_ROOT/examples/catalog"
 fi
 
-if ! command -v mux &>/dev/null; then
-    echo "ERROR: 'mux' not on PATH. Run: go install ./cmd/mux" >&2
+if ! command -v tether &>/dev/null; then
+    echo "ERROR: 'tether' not on PATH. Run: go install ./cmd/tether" >&2
     exit 1
 fi
 
@@ -140,7 +140,7 @@ wait_session_state() {
 # waits for it to be ready.
 start_daemon() {
     local sock="$1" pid_file="$2" log="$3" cat_dir="$4"
-    mux --catalog "$cat_dir" daemon run >"$log" 2>&1 &
+    tether --catalog "$cat_dir" daemon run >"$log" 2>&1 &
     wait_daemon_up "$sock"
 }
 
@@ -319,10 +319,10 @@ echo
 echo "E4  PTY child orphan after daemon SIGKILL (informational)"
 skip "E4" "$(cat <<'MSG'
 api-stub has no real child process (PID=0). Manual procedure for real PTY providers:
-  1. mux --catalog <catalog> daemon start
-  2. mux --catalog <catalog> sessions list   # note session ID
-  3. SESS_ID=<id>; PID=\$(mux --catalog <catalog> sessions get \$SESS_ID | grep '^pid' | awk '{print \$2}')
-  4. DAEMON_PID=\$(cat \$(mux --catalog <catalog> daemon status 2>&1 | grep pidfile | awk '{print \$NF}'))
+  1. tether --catalog <catalog> daemon start
+  2. tether --catalog <catalog> sessions list   # note session ID
+  3. SESS_ID=<id>; PID=\$(tether --catalog <catalog> sessions get \$SESS_ID | grep '^pid' | awk '{print \$2}')
+  4. DAEMON_PID=\$(cat \$(tether --catalog <catalog> daemon status 2>&1 | grep pidfile | awk '{print \$NF}'))
   5. kill -KILL \$DAEMON_PID
   6. ps -p \$PID    # if process still alive: orphan adopted by launchd (macOS expected behavior)
   7. kill \$PID     # clean up orphan manually
@@ -336,10 +336,10 @@ MSG
 
 echo
 echo "E5  Workspace prune mechanism"
-if mux --help 2>&1 | grep -q "workspaces"; then
-    pass "E5  'mux workspaces' subcommand exists"
+if tether --help 2>&1 | grep -q "workspaces"; then
+    pass "E5  'tether workspaces' subcommand exists"
 else
-    fail "E5" "no 'mux workspaces' command — workspace dirs accumulate under workspace_root. Defer: add 'mux workspaces prune [--older-than <duration>]'."
+    fail "E5" "no 'tether workspaces' command — workspace dirs accumulate under workspace_root. Defer: add 'tether workspaces prune [--older-than <duration>]'."
 fi
 
 ###############################################################################

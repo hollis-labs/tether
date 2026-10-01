@@ -30,7 +30,7 @@ import (
 const targetURN = "msg://agent/agent-mux/agt_a2atarget00"
 
 // newFixture stands up a real *store.Store, an Adapter wrapping it per
-// binding, and an httptest.Server serving the Adapter's Mux() directly
+// binding, and an httptest.Server serving the Adapter's Tether() directly
 // (no /a2a/ prefix stripping needed in-process -- that's daemon wiring,
 // exercised separately). Returns the store (for asserting what actually
 // landed in canonical messaging) and the server URL (for client-side
@@ -53,7 +53,7 @@ func newFixture(t *testing.T, bindings ...a2aadapter.AgentBinding) (*store.Store
 	if err != nil {
 		t.Fatalf("NewAdapter: %v", err)
 	}
-	srv.Config.Handler = adapter.Mux()
+	srv.Config.Handler = adapter.Tether()
 
 	return db, srv.URL
 }

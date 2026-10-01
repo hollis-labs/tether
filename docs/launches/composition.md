@@ -8,7 +8,7 @@
 ## 1. Overview and Problem Statement
 
 Prior to this architecture, Tether's launch configuration suffered from a combinatorial cross-product explosion across projects, providers, and workspace modes. Catalog directories contained:
-- **`launches/` (64+ files):** Every combination of `(Project × Provider × WorkspaceMode)` was authored as a separate launch YAML file (e.g. `agent-mux-claude-stream-worktree.yaml`, `agent-mux-claude-stream-direct.yaml`, `agent-mux-codex-worktree.yaml`).
+- **`launches/` (64+ files):** Every combination of `(Project × Provider × WorkspaceMode)` was authored as a separate launch YAML file (e.g. `tether-claude-stream-worktree.yaml`, `tether-claude-stream-direct.yaml`, `tether-codex-worktree.yaml`).
 - **`boot-profiles/` (62+ files):** Because Tether profiles lacked inheritance (`extends`), every combination restated all slots, roles, and guidelines in full.
 
 ### Root Cause
@@ -19,7 +19,7 @@ Project scope, provider harness, and workspace mode were treated as **identity c
 2. **`Extends` Cascade:** Profiles support inheritance chains (`extends`). Ancestor profiles define shared behaviors and guidelines; descendants customize or add specific skills and overrides.
 3. **Pluggable Sources (`launchprofile.Source`):** A clean adapter interface with built-in offline implementations (`FileSource`, `MemorySource`, `CairnBundleSource`, `MultiSource`). Tether operates completely standalone with zero external runtime dependencies on Cairn or external registries.
 4. **Deterministic Snapshots:** Every resolved launch produces an immutable `Snapshot` with a deterministic SHA-256 digest (`sha256:<hex>`), persisted with the session to guarantee auditability and reproducible resumes.
-5. **Legacy Compatibility:** Existing launch IDs (e.g. `agent-mux-claude-stream-worktree`) resolve seamlessly through `CatalogSource` without breaking historical sessions or API clients.
+5. **Legacy Compatibility:** Existing launch IDs (e.g. `tether-claude-stream-worktree`) resolve seamlessly through `CatalogSource` without breaking historical sessions or API clients.
 
 ---
 
@@ -100,7 +100,7 @@ The leaf profile represents the concrete target requested. Its declarations take
 When a `Scope` or `Context` is supplied:
 - `RepoRoot`, `TrackingRoot`, and `WorktreeBase` provide the workspace placement.
 - `Workspace.DefaultMode` provides the default workspace mode if not overridden.
-- Project `MCP.Servers` are injected into `MUX_MCP_SERVERS` in the environment if not already defined. With none declared, the launch gets the default allow-list (`torque`, `tesseract`); a declared list replaces it. The agent's proxy is confined to it. See [../mcp.md](../mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
+- Project `MCP.Servers` are injected into `TETHER_MCP_SERVERS` in the environment if not already defined. With none declared, the launch gets the default allow-list (`torque`, `tesseract`); a declared list replaces it. The agent's proxy is confined to it. See [../mcp.md](../mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
 - Project `KnowledgeBase` and `BootFragments` are included in prompt assembly.
 
 ### Tier 4: Launch-Time Inputs (Request Parameters)
@@ -152,5 +152,5 @@ Built-in implementations:
 ## 6. Compatibility & Migration
 
 - **Zero Breaking Changes:** Existing catalog files (`agents/*.yaml`, `projects/*.yaml`, `launches/*.yaml`) continue to work without modification.
-- **Legacy Launch IDs:** Calling `Resolve` with an old launch ID (e.g. `agent-mux-claude-stream-worktree`) resolves the underlying agent profile, folds the launch provider and workspace mode, and returns a valid `Plan`.
+- **Legacy Launch IDs:** Calling `Resolve` with an old launch ID (e.g. `tether-claude-stream-worktree`) resolves the underlying agent profile, folds the launch provider and workspace mode, and returns a valid `Plan`.
 - **Phased Catalog Deprecation:** New launches do not require creating `launches/*.yaml` files; operators invoke profiles directly with scope and provider arguments.
