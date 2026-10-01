@@ -4,27 +4,16 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/store"
 )
 
-// Events retention sweep (CW-20260930-0008, decision D-50). The events table
-// is the durable backbone behind GET /events, /events/stream replay and
-// /sessions/{id}/events, and nothing ever deleted from it. The sweep deletes
-// rows older than the window, by age only: a row-count cap was rejected
-// because it could drop a long-running session's recent history at an
-// arbitrary point. It is off unless daemon.events_retention.enabled is set
-// (window: days, default 90); see config.EventsRetentionConfig.
-
 var (
-	// eventsRetentionBatch bounds one DELETE statement, so a large first
-	// sweep releases the write lock between batches instead of holding it
-	// for the whole backlog. A var so tests can shrink it.
-	eventsRetentionBatch = 1000
-	// eventsRetentionBatchPause separates batches, leaving room for the
-	// daemon's own writes on the single shared connection.
+	// Bound each write transaction and yield between batches.
+	eventsRetentionBatch      = 1000
 	eventsRetentionBatchPause = 50 * time.Millisecond
 )
 
-// eventsRetention returns the configured window, or 0 when disabled.
 func (s *Service) eventsRetention() time.Duration {
 	if s.Catalog == nil {
 		return 0
@@ -32,41 +21,62 @@ func (s *Service) eventsRetention() time.Duration {
 	return s.Catalog.Global.Daemon.EventsRetention.Window()
 }
 
-// RunEventRetention runs one retention pass: it deletes every event older
-// than the window, in bounded batches, and returns how many it deleted. The
-// daemon calls it periodically; a no-op when retention is disabled.
-func (s *Service) RunEventRetention(ctx context.Context) (int64, error) {
-	window := s.eventsRetention()
-	if window <= 0 || s.Store == nil {
-		return 0, nil
-	}
-	cutoff := time.Now().Add(-window)
-	var total int64
-	for {
-		n, err := s.Store.DeleteEventsBefore(ctx, cutoff, eventsRetentionBatch)
-		total += n
-		if err != nil {
-			logEventsRetention(total, cutoff, window)
-			return total, err
-		}
-		if n < int64(eventsRetentionBatch) {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			logEventsRetention(total, cutoff, window)
-			return total, ctx.Err()
-		case <-time.After(eventsRetentionBatchPause):
-		}
-	}
-	logEventsRetention(total, cutoff, window)
-	return total, nil
+// RetentionSweep is the post-delete integration hook. Counts and receipts
+// describe only committed removals, including a partial sweep on error.
+// This is not an archive-before-delete hook; no removed bodies are retained.
+type RetentionSweep struct {
+	Cutoff  time.Time              `json:"cutoff"`
+	Removed map[string]int64       `json:"removed"`
+	Batches []store.RetentionBatch `json:"batches"`
 }
 
-func logEventsRetention(deleted int64, cutoff time.Time, window time.Duration) {
-	if deleted == 0 {
-		return
+func (r RetentionSweep) Total() int64 {
+	var n int64
+	for _, count := range r.Removed {
+		n += count
 	}
-	log.Printf("store: events retention deleted %d event(s) older than %s (window %d days)",
-		deleted, cutoff.UTC().Format(time.RFC3339), int(window/(24*time.Hour)))
+	return n
+}
+
+// SweepEventRetention exposes a structured result for future consumers.
+// The same catalog knob governs all three histories; disabled means no writes.
+func (s *Service) SweepEventRetention(ctx context.Context) (RetentionSweep, error) {
+	result := RetentionSweep{Removed: map[string]int64{}}
+	window := s.eventsRetention()
+	if window <= 0 || s.Store == nil {
+		return result, nil
+	}
+	result.Cutoff = time.Now().Add(-window)
+	for _, table := range []string{"events", "proxy_events", "ai_events"} {
+		result.Removed[table] = 0
+		for {
+			batch, err := s.Store.DeleteEventHistoryBefore(ctx, table, result.Cutoff, eventsRetentionBatch)
+			if err != nil {
+				return result, err
+			}
+			result.Removed[table] += batch.Removed
+			if batch.Removed > 0 {
+				result.Batches = append(result.Batches, batch)
+			}
+			if batch.Removed < int64(eventsRetentionBatch) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return result, ctx.Err()
+			case <-time.After(eventsRetentionBatchPause):
+			}
+		}
+	}
+	return result, nil
+}
+
+// RunEventRetention is the daemon's periodic-job seam. Structured output is
+// emitted even for partial sweeps; the audit survives log rotation and expiry.
+func (s *Service) RunEventRetention(ctx context.Context) (int64, error) {
+	result, err := s.SweepEventRetention(ctx)
+	if result.Total() > 0 {
+		log.Printf("store: events retention removed=%v cutoff=%s", result.Removed, result.Cutoff.UTC().Format(time.RFC3339))
+	}
+	return result.Total(), err
 }

@@ -17,3 +17,6 @@ daemon:
   listen_addr: unix:~/.tether/run/muxd.sock
   pid_file: ~/.tether/run/muxd.pid
   shutdown_timeout: 10s
+  events_retention:
+    enabled: true
+    days: 90 # Set below 1 to disable age-based event retention.

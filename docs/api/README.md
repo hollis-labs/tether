@@ -989,23 +989,48 @@ and broker scopes. Every event also persists to the `events` table.
 
 ### Retention
 
-By default the `events` table keeps every row. To bound it, enable the
-daemon's retention sweep in `~/.tether/catalog/global.yaml`:
+The daemon retains event history for **90 days by default**, with an hourly
+sweep. Configure the shared app knob in `~/.tether/catalog/global.yaml`
+(and restart the daemon to apply it):
 
 ```yaml
 daemon:
   events_retention:
-    enabled: true   # default false: nothing is deleted
-    days: 90        # window; unset means 90, and 0 or negative turns it off
+    enabled: true   # default true; explicit false also disables
+    days: 90        # default 90; any value below 1 disables
 ```
 
-Once an hour, the daemon deletes events older than the window, by age only
-(there is no row-count cap). It deletes in batches of 1,000 so a large
-first sweep doesn't hold the write lock, and logs `store: events retention
-deleted N event(s) older than <cutoff>` when it removes any. Replay is
-unaffected for any `since_seq` inside the window. A client resuming from an
-event older than the window gets the retained events after it, without the
-deleted gap.
+This is daemon-wide app configuration, not the project/user onboarding settings
+cascade. The same window applies to all three event histories; inserts no longer
+evict proxy or AI records at 2,000 rows. Query limits still bound response size.
+The effective value is shown by doctor and settings output.
+
+| Table | Retention policy | Reason / operator control |
+|-------|------------------|---------------------------|
+| `events` | Shared age window, default 90 days | Session/daemon/broker replay history |
+| `proxy_events` | Shared age window, default 90 days | Durable tool-call history; no row-count eviction |
+| `ai_events` | Shared age window, default 90 days | AI summaries and usage; usage totals cover retained history only |
+| `a2a_tasks` | Indefinite; outside automatic sweep | Durable peer task lookup and repair; no automatic expiry contract |
+| `broker_envelopes` | Indefinite; outside automatic sweep | Delivery obligations and correlation history must survive event expiry |
+| `session_refs` | Indefinite; outside automatic sweep | Provenance pointers; dangling refs after session deletion are retained (FK cascades are not enforced) |
+| `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
+| `messages` | Indefinite structural rows; explicit manual body purge only | `/messages/retention/candidates` and `/messages/{id}/purge` preserve pending/repairable obligations; this knob does not purge bodies |
+| `retention_audit` | Indefinite; outside automatic sweep | Durable sweep receipts, independent of expiring event history |
+
+**Existing installs:** unless explicitly disabled, the first sweep deletes rows
+older than the configured window. Back up the state database before cutover.
+There is no archive-before-delete step. The sweep deletes in batches of 1,000
+and yields between batches. Each nonempty batch commits its deletion and a
+`retention_audit` receipt atomically (table, cutoff, removed count, timestamp).
+If the receipt cannot be written, that batch is rolled back. Logs report
+per-table removals, including a partially completed sweep.
+
+`Service.SweepEventRetention` returns a structured result with per-table counts,
+cutoff and committed batch audit IDs, including partial results on cancellation
+or error. This is the integration hook for future post-sweep consumers; it does
+not contain deleted bodies or provide an archive-before-delete guarantee.
+Replay is unaffected for a `since_seq` inside the window. Resuming from an older
+event returns retained events after it, without the deleted gap.
 
 ### `GET /events`
 
