@@ -6,6 +6,7 @@ import (
 )
 
 func TestIdentityConfigDefaultsAndValidation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	for _, mode := range []string{"", "off", "observe", "enforce", "typo"} {
 		t.Run(mode, func(t *testing.T) {
 			var global Global

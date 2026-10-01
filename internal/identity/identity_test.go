@@ -25,6 +25,7 @@ func identityStore(t *testing.T) (*identity.Store, *store.Store) {
 }
 
 func TestIdentityMintVerifyAndRevoke(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s, db := identityStore(t)
 	ctx := context.Background()
 	want := identity.Principal{ID: "msg://session/local/test", Kind: "session", SessionID: "test", Display: "Test", Scopes: []string{"session.write"}, Addresses: []string{"msg://session/local/test"}, CreatedBy: identity.OperatorID}
@@ -73,6 +74,7 @@ func TestIdentityMintVerifyAndRevoke(t *testing.T) {
 }
 
 func TestIdentityExpiryAndOperatorBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s, db := identityStore(t)
 	ctx := context.Background()
 	at := time.Now().Add(time.Hour)
@@ -125,6 +127,7 @@ func TestIdentityExpiryAndOperatorBootstrap(t *testing.T) {
 }
 
 func TestIdentityTokenFileFailsClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	token, err := identity.NewToken()
 	if err != nil {
 		t.Fatal(err)
