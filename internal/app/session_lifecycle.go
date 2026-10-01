@@ -333,7 +333,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, err
 	}
 	// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
-	startOpts.ExtraArgs = sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+	// A runtime that takes them per session places them before a turn's
+	// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
+	// StartOptions.ExtraArgs would land after the prompt.
+	extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+	if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
+		er.SetExtraArgs(extraArgs)
+		startOpts.ExtraArgs = nil
+	} else {
+		startOpts.ExtraArgs = extraArgs
+	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)

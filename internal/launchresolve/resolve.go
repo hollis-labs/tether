@@ -109,7 +109,10 @@ func (r *Registry) ResolveRuntimeBinding(runnerID string) (agentlaunch.RuntimeBi
 	binding := agentlaunch.RuntimeBinding{
 		Provider:    prov.ProviderBrand(),
 		RuntimeKind: runtimeKind,
-		Args:        prov.Args,
+		// The spec engine reads catalog args here; the same strip as the
+		// catalog engine (config.CatalogFlags), or opencode's `args: [run]`
+		// fails with ErrPositionalAfterProjection.
+		Args: config.CatalogFlags(prov.ProviderBrand(), prov.Args),
 	}
 	// Thread the permission posture onto the binding. go-agent-launch
 	// v0.3.3 carries RuntimeBinding.Permission verbatim through

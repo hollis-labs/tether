@@ -43,3 +43,33 @@ func TestRuntimeMode(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogFlags(t *testing.T) {
+	for _, tc := range []struct {
+		brand      string
+		args, want []string
+	}{
+		{"opencode", []string{"run"}, []string{}},
+		{"opencode", []string{"run", "--print-logs"}, []string{"--print-logs"}},
+		{"opencode", []string{"--print-logs", "run"}, []string{"--print-logs", "run"}},
+		{"claude", []string{"run"}, []string{"run"}},
+		{"codex", nil, []string{}},
+	} {
+		got := CatalogFlags(tc.brand, tc.args)
+		if len(got) != len(tc.want) || (len(got) > 0 && !equalStrings(got, tc.want)) {
+			t.Errorf("CatalogFlags(%q, %q) = %q, want %q", tc.brand, tc.args, got, tc.want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

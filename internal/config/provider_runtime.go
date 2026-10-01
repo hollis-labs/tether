@@ -20,6 +20,21 @@ const (
 	RuntimeKindPTYDebug       = "pty-debug"
 )
 
+// CatalogFlags is a provider's catalog args less what its own argv
+// convention already emits. Catalogs seeded before go-providers owned
+// opencode's subcommand declare `args: [run]`; the projection emits `run`
+// itself, and providerplant (agentkit v0.12.0) refuses a positional at the
+// head of the flags it appends after the projected argv
+// (ErrPositionalAfterProjection), so a leading "run" is dropped here rather
+// than in every catalog on disk. Both launch engines and the opencode
+// runtime read catalog args through this.
+func CatalogFlags(brand string, args []string) []string {
+	if brand == "opencode" && len(args) > 0 && args[0] == "run" {
+		args = args[1:]
+	}
+	return append([]string(nil), args...)
+}
+
 // ParseRuntimeKind normalizes a catalog runtime-kind token, accepting the
 // aliases older catalogs use ("exec", "app-server", "claude-code", ...).
 // It returns "" for a token it does not know. agentkit v0.12.0 removed its

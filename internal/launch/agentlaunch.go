@@ -70,17 +70,9 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 }
 
 // CatalogFlags is plan.Args less what the provider's own argv convention
-// already emits. Catalogs seeded before go-providers owned opencode's
-// subcommand declare `args: [run]`; the projection emits `run` itself, and
-// providerplant (agentkit v0.12.0) refuses a positional at the head of the
-// flags it appends after the projected argv (ErrPositionalAfterProjection),
-// so a leading "run" is dropped here rather than in every catalog on disk.
+// already emits; see config.CatalogFlags.
 func CatalogFlags(plan *Plan) []string {
-	args := plan.Args
-	if plan.ProviderBrand == "opencode" && len(args) > 0 && args[0] == "run" {
-		args = args[1:]
-	}
-	return append([]string(nil), args...)
+	return config.CatalogFlags(plan.ProviderBrand, plan.Args)
 }
 
 // mapRuntime maps a plan's runtime-kind token onto the shared plan's mode.
