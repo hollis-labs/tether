@@ -314,6 +314,9 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if s := p.statuses[id]; s != nil && s.client == client && s.state != "reconnecting" && !s.exhausted {
+		// Scrub before the error is stored (ServerStatus.Error) or logged: an
+		// endpoint in the text may be a secret.
+		err = redactUpstreamError(err, s.entry)
 		s.err = err
 		s.state = "failed"
 		slog.Warn("mcp-proxy: upstream unavailable", "server", id, "err", err)
@@ -556,6 +559,10 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 		return ToolRefreshResult{}, fmt.Errorf("upstream %q refresh already running", id)
 	}
 	p.refreshing[client] = true
+	var entry config.MCPServerEntry
+	if s := p.statuses[id]; s != nil {
+		entry = s.entry
+	}
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); delete(p.refreshing, client); p.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
@@ -566,7 +573,8 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 		if callerErr == nil || !errors.Is(err, callerErr) {
 			p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
 		}
-		return ToolRefreshResult{}, err
+		// The caller (mux_catalog_refresh, a sysop probe) shows this text.
+		return ToolRefreshResult{}, redactUpstreamError(err, entry)
 	}
 	return p.publish(ctx, id, client, result.Tools, true)
 }
