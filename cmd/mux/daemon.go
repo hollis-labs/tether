@@ -119,7 +119,7 @@ var daemonRunCmd = &cobra.Command{
 		// runs seedLogicalAgents (a DB write) and, on a catalog-absent
 		// first run, auto-seeds catalog files; the code below additionally
 		// runs ReconcileStaleState (marks any 'launching'/'running' session
-		// row 'failed') and a full registry bootstrap -- all against the
+		// row whose process did not survive 'failed') and a full registry bootstrap -- all against the
 		// SAME state.db a second `daemon run` invocation would share with
 		// an already-live daemon. daemon.Server.Run has its own PID-file
 		// liveness check, but it fires only after all of that has already

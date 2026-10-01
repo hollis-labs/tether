@@ -222,12 +222,12 @@ func TestSweepStaleSessions(t *testing.T) {
 	}
 
 	const sweepTime = "2026-04-21T12:00:00Z"
-	n, err := db.SweepStaleSessions(sweepTime)
+	swept, spared, err := db.SweepStaleSessions(sweepTime, nil)
 	if err != nil {
 		t.Fatalf("SweepStaleSessions: %v", err)
 	}
-	if n != 2 {
-		t.Errorf("swept %d sessions, want 2 (launching + running)", n)
+	if len(swept) != 2 || len(spared) != 0 {
+		t.Errorf("swept %v spared %v, want launching + running swept and none spared", swept, spared)
 	}
 
 	// launching and running → failed with exit_code and ended_at set
@@ -264,6 +264,63 @@ func TestSweepStaleSessions(t *testing.T) {
 		if row.State != tc.want {
 			t.Errorf("%s state = %q, want %q (should be untouched)", tc.id, row.State, tc.want)
 		}
+	}
+}
+
+// A session the spare predicate approves keeps its state and is reported
+// as spared; the predicate sees the recorded pid and start time
+// (CW-20260912-0085).
+func TestSweepStaleSessions_SparesApprovedSessions(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	for _, id := range []string{"s-live", "s-dead"} {
+		r := SessionRow{ID: id, LaunchID: "l1", ProjectID: "p", LogicalAgentID: "a", ProviderID: "pv", Workspace: "/tmp", State: "created"}
+		if err := db.CreateSession(r, &launch.Plan{LaunchID: "l1"}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if err := db.UpdateSessionState("s-live", "running", 111, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSessionState("s-dead", "running", 222, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSessionProcessStart("s-live", 111, "2026-10-01T03:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	// A start time recorded against a pid the row no longer names is ignored.
+	if err := db.SetSessionProcessStart("s-dead", 999, "2026-10-01T03:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]StaleSession{}
+	swept, spared, err := db.SweepStaleSessions("2026-10-01T04:00:00Z", func(r StaleSession) bool {
+		seen[r.ID] = r
+		return r.ID == "s-live"
+	})
+	if err != nil {
+		t.Fatalf("SweepStaleSessions: %v", err)
+	}
+	if len(swept) != 1 || swept[0] != "s-dead" || len(spared) != 1 || spared[0] != "s-live" {
+		t.Fatalf("swept %v spared %v", swept, spared)
+	}
+	if got := seen["s-live"]; got.PID != 111 || got.PIDStartedAt != "2026-10-01T03:00:00Z" {
+		t.Errorf("predicate saw %+v for s-live", got)
+	}
+	if got := seen["s-dead"]; got.PID != 222 || got.PIDStartedAt != "" {
+		t.Errorf("predicate saw %+v for s-dead, want no start time", got)
+	}
+	live, _ := db.GetSession("s-live")
+	dead, _ := db.GetSession("s-dead")
+	if live.State != "running" || live.ExitCode.Valid {
+		t.Errorf("spared session = %s exit %v, want running and no exit code", live.State, live.ExitCode)
+	}
+	if dead.State != "failed" || dead.ExitCode.Int64 != -1 {
+		t.Errorf("swept session = %s exit %v, want failed -1", dead.State, dead.ExitCode)
 	}
 }
 

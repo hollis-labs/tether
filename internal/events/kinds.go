@@ -29,6 +29,14 @@ const (
 	KindDaemonShutdownStarted   = "daemon.shutdown_started"
 	KindDaemonShutdownCompleted = "daemon.shutdown_completed"
 
+	// KindDaemonSessionsSwept is emitted at daemon start when the startup
+	// sweep settles sessions the previous daemon left launching/running
+	// (CW-20260912-0085). Swept sessions were failed with exit_code -1
+	// ("swept at daemon start", not an observed exit); spared ones still
+	// had their own process alive and keep their state. Payload schema:
+	//   {"swept":<n>,"swept_session_ids":[...],"spared":<n>,"spared_session_ids":[...]}
+	KindDaemonSessionsSwept = "daemon.sessions_swept"
+
 	// KindAIBudgetRejected is emitted when durable AI usage_budget policy
 	// rejects one route candidate. Payload schema:
 	//   {"request_id":"...","caller_id":"...","session_id":"...","provider":"...","model":"...","policy_version":"...","error":"..."}

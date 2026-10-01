@@ -221,25 +221,72 @@ func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
 	return err
 }
 
-// SweepStaleSessions marks any session stuck in 'launching' or 'running'
-// as 'failed'. Intended for call-once-on-daemon-start: after a crash, any
-// session still in a live state is an orphan. Exit code -1 signals
-// "daemon lost contact" rather than a natural process exit. Returns the
-// number of rows updated.
-func (s *Store) SweepStaleSessions(now string) (int, error) {
-	res, err := s.db.Exec(
-		`UPDATE sessions SET state='failed', exit_code=-1, ended_at=?, updated_at=?
-		 WHERE state IN ('launching', 'running')`,
-		now, now,
-	)
+// StaleSession is a session the previous daemon left in 'launching' or
+// 'running', with what the daemon-start sweep needs to decide whether its
+// process survived.
+type StaleSession struct {
+	ID        string
+	PID       int
+	CreatedAt string
+	// PIDStartedAt is the start time the OS reported for PID when it was
+	// recorded (RFC3339, UTC, second precision), or "" for a session
+	// launched before migration 0033.
+	PIDStartedAt string
+}
+
+// SweepStaleSessions settles every session the previous daemon left in
+// 'launching' or 'running'. A session spare approves keeps its state; every
+// other one becomes 'failed' with exit_code -1, which means "swept at daemon
+// start", not an observed exit (CW-20260912-0085). spare may be nil, which
+// spares none. Intended for call-once-on-daemon-start. Returns the swept and
+// spared session ids.
+func (s *Store) SweepStaleSessions(now string, spare func(StaleSession) bool) (swept, spared []string, err error) {
+	rows, err := s.db.Query(`SELECT id, COALESCE(pid, 0), created_at, COALESCE(pid_started_at, '') FROM sessions WHERE state IN ('launching', 'running') ORDER BY created_at`)
 	if err != nil {
-		return 0, fmt.Errorf("sweep stale sessions: %w", err)
+		return nil, nil, fmt.Errorf("sweep stale sessions: list: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
+	var stale []StaleSession
+	for rows.Next() {
+		var r StaleSession
+		if err := rows.Scan(&r.ID, &r.PID, &r.CreatedAt, &r.PIDStartedAt); err != nil {
+			_ = rows.Close()
+			return nil, nil, fmt.Errorf("sweep stale sessions: scan: %w", err)
+		}
+		stale = append(stale, r)
 	}
-	return int(n), nil
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	for _, r := range stale {
+		if spare != nil && spare(r) {
+			spared = append(spared, r.ID)
+			continue
+		}
+		res, err := s.db.Exec(
+			`UPDATE sessions SET state='failed', exit_code=-1, ended_at=?, updated_at=?
+			 WHERE id=? AND state IN ('launching', 'running')`,
+			now, now, r.ID,
+		)
+		if err != nil {
+			return swept, spared, fmt.Errorf("sweep stale sessions: fail %s: %w", r.ID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			swept = append(swept, r.ID)
+		}
+	}
+	return swept, spared, nil
+}
+
+// SetSessionProcessStart records the OS start time of the process now
+// running session id under pid (see StaleSession.PIDStartedAt). It writes
+// only while the row still names that pid, so a late call cannot attach one
+// process's start time to another.
+func (s *Store) SetSessionProcessStart(id string, pid int, startedAt string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET pid_started_at=? WHERE id=? AND pid=?`, startedAt, id, pid)
+	return err
 }
 
 // ListSessionsOptions narrows the ListSessions query. All fields are

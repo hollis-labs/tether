@@ -9,6 +9,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -94,6 +95,10 @@ type Service struct {
 	specResolverOnce sync.Once
 	specResolver     *specresolve.Resolver
 	specResolverErr  error
+
+	// procs answers the daemon-start sweep's questions about a session's
+	// recorded pid. nil means the OS (osProcessInspector); tests substitute.
+	procs processInspector
 
 	// wakePark carries the wake sweep's parked deliveries between ticks.
 	// See wakeParkSet in wake.go.
@@ -213,24 +218,118 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 	return mgr, stops
 }
 
-// ReconcileStaleState sweeps any sessions stuck in launching/running and
-// any open client_attachments to terminal state. Intended for daemon
+// ReconcileStaleState settles sessions the previous daemon left in
+// launching/running, and any open client_attachments. Intended for daemon
 // startup only — `mux mcp` and other catalog-reading subcommands MUST
 // NOT call this, because they may run concurrently with a live daemon
 // (e.g. when a session spawns mux mcp as an MCP subprocess), and
 // sweeping would clobber the daemon's actively-tracked sessions. See
 // ADR 0030 §sweep-race for the original incident.
+//
+// A session whose process survived the restart is spared (CW-20260912-0085):
+// its row keeps its state, though this daemon holds no runtime handle for it
+// and cannot steer or stop it. A truthful state for that is CW-20260912-0086.
+// Every other one is failed with exit_code -1, "swept at daemon start", and
+// its bindings are revoked below. On a systemd host with the default
+// KillMode=control-group the agents die with the daemon, so a restart there
+// sweeps them all; survivors happen when the daemon ran outside a unit that
+// kills its children (`mux daemon start`, launchd).
 func (s *Service) ReconcileStaleState() {
 	now := time.Now().UTC().Format(time.RFC3339)
-	if swept, err := s.Store.SweepStaleSessions(now); err == nil && swept > 0 {
-		log.Printf("store: swept %d stale session(s) to failed", swept)
+	swept, spared, err := s.Store.SweepStaleSessions(now, s.sessionProcessSurvived)
+	if err != nil {
+		log.Printf("store: startup sweep failed: %v", err)
 	}
+	s.reportSweep(swept, spared)
 	if swept, err := s.Store.SweepStaleAttachments(now); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
 	}
 	if revoked := s.revokeEndedSessionBindings(context.Background()); revoked > 0 {
 		log.Printf("registry: revoked %d binding(s) held by ended sessions", revoked)
 	}
+}
+
+// sessionProcessSurvived reports whether a stale session's own process is
+// still alive. The pid must be alive and still be the process the session
+// started: same start time as recorded at launch. A session launched before
+// start times were recorded falls back to a weaker test: the process started
+// no earlier than the session was created and runs the session's launch
+// command. Anything that cannot be verified is not a survivor.
+func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
+	procs := s.procs
+	if procs == nil {
+		procs = osProcessInspector{}
+	}
+	if row.PID <= 0 || !procs.alive(row.PID) {
+		return false
+	}
+	started, ok := procs.startTime(row.PID)
+	if !ok {
+		return false
+	}
+	if row.PIDStartedAt != "" {
+		return started == row.PIDStartedAt
+	}
+	startedAt, err := time.Parse(time.RFC3339, started)
+	if err != nil {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339, row.CreatedAt)
+	if err != nil || startedAt.Before(created.Add(-2*time.Second)) {
+		return false
+	}
+	plan, err := s.Store.GetLaunchPlan(row.ID)
+	if err != nil || plan.Command == "" {
+		return false
+	}
+	cmdline, ok := procs.command(row.PID)
+	return ok && strings.Contains(cmdline, filepath.Base(plan.Command))
+}
+
+// reportSweep logs what the startup sweep did and publishes it as one
+// daemon.sessions_swept event, so a swept session is traceable to the
+// restart that swept it rather than only by timestamp correlation.
+func (s *Service) reportSweep(swept, spared []string) {
+	if len(swept) == 0 && len(spared) == 0 {
+		return
+	}
+	if len(swept) > 0 {
+		log.Printf("store: startup sweep failed %d session(s) whose process did not survive the restart (exit_code -1): %s", len(swept), strings.Join(swept, ", "))
+	}
+	if len(spared) > 0 {
+		log.Printf("store: startup sweep left %d session(s) in place whose process is still alive; this daemon cannot steer or stop them: %s", len(spared), strings.Join(spared, ", "))
+	}
+	if s.Bus == nil {
+		return
+	}
+	payload, err := json.Marshal(sessionsSweptPayload{
+		Swept:            len(swept),
+		SweptSessionIDs:  nonNil(swept),
+		Spared:           len(spared),
+		SparedSessionIDs: nonNil(spared),
+	})
+	if err != nil {
+		return
+	}
+	_ = s.Bus.Publish(context.Background(), events.Event{
+		Scope:       events.ScopeDaemon,
+		Kind:        events.KindDaemonSessionsSwept,
+		PayloadJSON: string(payload),
+	})
+}
+
+type sessionsSweptPayload struct {
+	Swept            int      `json:"swept"`
+	SweptSessionIDs  []string `json:"swept_session_ids"`
+	Spared           int      `json:"spared"`
+	SparedSessionIDs []string `json:"spared_session_ids"`
+}
+
+func nonNil(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // revokeEndedSessionBindings revokes the bindings of every Tether session
