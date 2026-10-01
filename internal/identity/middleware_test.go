@@ -18,6 +18,7 @@ func (f verifierFunc) Verify(ctx context.Context, token string) (identity.Princi
 }
 
 func TestIdentityMiddlewareModes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	good, err := identity.NewToken()
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +73,7 @@ func TestIdentityMiddlewareModes(t *testing.T) {
 }
 
 func TestIdentityObserveSurvivesUnavailableAndHealthStaysOpen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	for _, mode := range []identity.Mode{identity.Observe, identity.Enforce} {
 		handler := identity.Middleware(mode, verifierFunc(func(context.Context, string) (identity.Principal, error) {
 			return identity.Principal{}, errors.New("storage failure")
@@ -93,6 +95,7 @@ func TestIdentityObserveSurvivesUnavailableAndHealthStaysOpen(t *testing.T) {
 }
 
 func TestIdentityValidateBind(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	for _, addr := range []string{"unix:/tmp/test.sock", "tcp:127.0.0.1:7180", "tcp:[::1]:7180", "tcp:localhost:7180"} {
 		if err := identity.ValidateBind(addr, identity.Observe); err != nil {
 			t.Fatal(err)

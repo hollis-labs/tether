@@ -25,6 +25,7 @@ func identityStore(t *testing.T) (*identity.Store, *store.Store) {
 }
 
 func TestIdentityMintVerifyAndRevoke(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s, db := identityStore(t)
 	ctx := context.Background()
 	if err := db.CreateSession(store.SessionRow{ID: "test", State: "created"}, nil); err != nil {
@@ -76,6 +77,7 @@ func TestIdentityMintVerifyAndRevoke(t *testing.T) {
 }
 
 func TestIdentityExpiryAndOperatorBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s, db := identityStore(t)
 	ctx := context.Background()
 	at := time.Now().Add(time.Hour)
@@ -128,6 +130,7 @@ func TestIdentityExpiryAndOperatorBootstrap(t *testing.T) {
 }
 
 func TestIdentityTokenFileFailsClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	token, err := identity.NewToken()
 	if err != nil {
 		t.Fatal(err)

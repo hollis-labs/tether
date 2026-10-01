@@ -15,6 +15,7 @@ import (
 )
 
 func TestIdentityHandlerPersistsVerifiedAuditAndEvent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
