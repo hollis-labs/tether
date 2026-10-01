@@ -962,6 +962,26 @@ Response (201): full reply `EnvelopeDTO`.
 v0.0.2 has an in-memory pub/sub bus (Sprint v002-06) over session, daemon,
 and broker scopes. Every event also persists to the `events` table.
 
+### Retention
+
+By default the `events` table keeps every row. To bound it, enable the
+daemon's retention sweep in `~/.tether/catalog/global.yaml`:
+
+```yaml
+daemon:
+  events_retention:
+    enabled: true   # default false: nothing is deleted
+    days: 90        # window; unset means 90, and 0 or negative turns it off
+```
+
+Once an hour, the daemon deletes events older than the window, by age only
+(there is no row-count cap). It deletes in batches of 1,000 so a large
+first sweep doesn't hold the write lock, and logs `store: events retention
+deleted N event(s) older than <cutoff>` when it removes any. Replay is
+unaffected for any `since_seq` inside the window. A client resuming from an
+event older than the window gets the retained events after it, without the
+deleted gap.
+
 ### `GET /events`
 
 Durable cross-scope event history from the shared `events` table. Results are
@@ -1238,6 +1258,28 @@ reminder. A wake that was not submitted (busy, offline, submit failed) is
 retried after a short backoff, as before. While the lease is held, another
 claimant of that delivery (a bridge's `POST /messages/{id}/claim`) gets 409
 `conflict` ("delivery already claimed") until it ends.
+
+#### `wake_reason` values
+
+When no wake was delivered for a reason that is not an error, `wake_reason`
+says which. The message is stored in every case. Its delivery is retried by
+the daemon's wake sweep, except `already-handled`, which is settled.
+go-tether-client mirrors these as `WakeReason*` constants.
+
+| `wake_reason` | Meaning |
+|---|---|
+| `busy` | The session was mid-turn. Retried after a short backoff. |
+| `offline` | No live session to wake. |
+| `offline-race` | The session stopped between resolution and the wake. |
+| `stale-generation` | The actor moved to a newer session while the wake was in flight. |
+| `claim-unavailable` | Another attempt already holds the delivery; this one stood down rather than wake twice. |
+| `marker-write-failed` | The daemon could not record the attempt's bookkeeping and released the delivery for retry. |
+| `already-handled` | The recipient had already consumed or read the message, so it was settled without a wake. Comes from retries rather than a fresh notify. |
+| `settle-failed` | Settling an already-handled message failed; it is retried. |
+| `session-not-running` | The agent recipient's binding names a session that is not running. Nothing is woken until a live session owns the address. |
+
+A wake that was attempted and failed is reported in `wake_error` instead,
+which carries the error's text (for example, submitting the turn failed).
 
 ---
 
