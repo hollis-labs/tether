@@ -8,7 +8,7 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/observability"
 )
 
-const aiEventsMaxRows = 2000
+const aiEventsQueryLimit = 2000
 
 type AIEvent = observability.AuditEvent
 
@@ -166,16 +166,6 @@ func (s *Store) RecordAIAuditEvent(ev observability.AuditEvent) error {
 	if err != nil {
 		return fmt.Errorf("insert ai event: %w", err)
 	}
-	_, err = s.db.Exec(
-		`DELETE FROM ai_events WHERE id IN (
-		     SELECT id FROM ai_events ORDER BY id ASC
-		     LIMIT MAX(0, (SELECT COUNT(*) FROM ai_events) - ?)
-		 )`,
-		aiEventsMaxRows,
-	)
-	if err != nil {
-		return fmt.Errorf("trim ai events: %w", err)
-	}
 	return nil
 }
 
@@ -184,8 +174,8 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 	if limit == 0 {
 		limit = 100
 	}
-	if limit < 0 || limit > aiEventsMaxRows {
-		limit = aiEventsMaxRows
+	if limit < 0 || limit > aiEventsQueryLimit {
+		limit = aiEventsQueryLimit
 	}
 	q := `SELECT id, event_type, request_id, session_id, caller_id, operation, provider, model,
 	             policy_version, latency_ms, success, refusal, error, input_tokens, output_tokens,

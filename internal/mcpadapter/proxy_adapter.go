@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -296,6 +297,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	registry := NewToolRegistry()
 	pool := NewClientPool(entries, registry)
+	pool.confineRemote = len(a.protected) > 0 && os.Getenv(config.MCPConfineRemoteEnv) == "1"
 	pool.runtime = a.runtime
 	a.upstreams = pool
 
@@ -835,7 +837,7 @@ func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allE
 				if ls, ok := liveByID[e.ID]; ok {
 					out = append(out, serverEntry{
 						ServerStatus: ls,
-						Surface:      surfaceOf(e.ID, true),
+						Surface:      surfaceOf(e.ID, ls.Status != "excluded"),
 					})
 				}
 			}

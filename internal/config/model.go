@@ -127,21 +127,21 @@ type DaemonConfig struct {
 	// ShutdownTimeout caps how long Shutdown waits for in-flight sessions to
 	// reach a terminal state. Go duration string; defaults to "10s".
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
-	// EventsRetention turns on the daemon's hourly sweep of the events table
-	// (CW-20260930-0008). Off unless enabled. See EventsRetentionConfig.
+	// EventsRetention controls the hourly age-based sweep of events,
+	// proxy_events and ai_events. Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
 }
 
 // EventsRetentionConfig is daemon.events_retention:
 //
 //	events_retention:
-//	  enabled: true # default false: nothing is deleted
+//	  enabled: true # default true
 //	  days: 90      # window; unset means DefaultEventsRetentionDays
 //
 // Retention is time-based only (decision D-50): a row-count cap could drop a
 // long-running session's recent history at an arbitrary point.
 type EventsRetentionConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled,omitempty"`
 	// Days is the window in days. Unset means DefaultEventsRetentionDays;
 	// 0 or negative disables the sweep even when Enabled.
 	Days *int `yaml:"days,omitempty"`
@@ -153,7 +153,7 @@ const DefaultEventsRetentionDays = 90
 
 // Window returns how long events are kept, or 0 when retention is off.
 func (c EventsRetentionConfig) Window() time.Duration {
-	if !c.Enabled {
+	if c.Enabled != nil && !*c.Enabled {
 		return 0
 	}
 	days := DefaultEventsRetentionDays
