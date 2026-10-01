@@ -75,7 +75,7 @@ namespaces. Where bubblewrap is missing or cannot build a namespace, every
 launch Tether must sandbox is refused with 403 `forbidden` naming the fix,
 rather than run unprotected. A launch whose work directory, workspace or
 state database lies inside a protected directory is refused with 403
-`forbidden` too.
+`forbidden` too (not Codex's, which is not protected).
 
 **Codex is NOT protected by Tether's write-protection.** Tether does not wrap
 Codex in its sandbox, because Codex's own `workspace-write` sandbox is

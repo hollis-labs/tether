@@ -64,8 +64,8 @@ func TestCodexProtectionState(t *testing.T) {
 		t.Fatalf("protection reason hides that codex is unprotected: %q", r)
 	}
 	setCodexProtectionMode(t, CodexGuarded)
-	if r := ControlPlaneProtection("linux", func(string) string { return "" }).Reason; strings.Contains(r, "NOT protected") {
-		t.Fatalf("guarded protection reason says codex is unprotected: %q", r)
+	if r := ControlPlaneProtection("linux", func(string) string { return "" }).Reason; strings.Contains(r, "NOT protected") || !strings.Contains(r, "MCP servers run outside that sandbox (CW-20261001-0230)") {
+		t.Fatalf("guarded protection reason = %q; want no \"NOT protected\" and the MCP caveat naming CW-20261001-0230", r)
 	}
 }
 

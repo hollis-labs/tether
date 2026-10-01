@@ -190,8 +190,9 @@ line the check rejected. That is loud and fail-closed, and the fix is one line: 
 the key to the allowlist in `codexConfigUnsafe` (`internal/app/protected_sandbox.go`)
 once it is known not to widen the sandbox. Where Tether's sandbox cannot start either, as on a
 host that cannot nest bubblewrap, the launch fails loudly: the fail-closed
-outcome. A Codex launch whose work directory, project root, workspace or state
-database lies inside a protected directory is refused like any other. Paths are
+outcome. With the dormant guard switched on, a Codex launch whose work directory,
+project root, workspace or state database lies inside a protected directory is
+refused like any other; while Codex is not protected (as shipped) it is not. Paths are
 resolved through symlinks, including the existing prefix of one that does not
 exist yet, so `link-to-the-catalog/new` is judged as the catalog.
 
@@ -221,8 +222,8 @@ default) argv, environment and injection come from files under
 
 These launches are refused with 403 `forbidden`:
 
-- a launch whose work directory, workspace or state database lies inside a
-  protected directory (move it out of that directory);
+- a launch (not Codex's, which is not protected) whose work directory, workspace or
+  state database lies inside a protected directory (move it out of that directory);
 - any launch Tether must sandbox, while `bwrap` is not installed or cannot
   build a namespace (install bubblewrap and allow unprivileged user
   namespaces, or turn protection off);
@@ -448,7 +449,7 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 | Profile name set but platform has no enforcement tool | Launch fails with `conflict` error |
 | Sandbox application error (SBPL syntax, bwrap arg error) | Launch fails with `conflict` error |
 | Agent has no `default_sandbox` field | No profile; on Linux the session runs under control-plane protection only |
-| Work directory, workspace or state database inside a protected directory | Launch refused with 403 `forbidden` |
+| Work directory, workspace or state database inside a protected directory | Launch refused with 403 `forbidden` (not for Codex, which is not protected) |
 | Control-plane protection on and `bwrap` not installed or unable to build a namespace | Launch refused with 403 `forbidden` (not for Codex) |
 
 ## Follow-ups

@@ -50,7 +50,7 @@ func ControlPlaneProtection(goos string, getenv func(string) string) ProtectionS
 	if codexProtectionMode == CodexNotProtected {
 		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
 	}
-	return ProtectionStatus{Enabled: true, Reason: "on: agents cannot write the catalog or run/ (Codex relies on its own workspace-write sandbox, under Tether's guard)"}
+	return ProtectionStatus{Enabled: true, Reason: "on: agents Tether wraps cannot write the catalog or run/; Codex is left to its own workspace-write sandbox under Tether's dormant guard, and its MCP servers run outside that sandbox (CW-20261001-0230)"}
 }
 
 // defaultProtectionStatus is the daemon's protection decision, taken from
