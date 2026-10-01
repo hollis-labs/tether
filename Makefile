@@ -61,15 +61,24 @@ run: go-install
 # Test
 # ---------------------------------------------------------------------------
 
+# gotestsum when installed, otherwise go test: one or the other, never both.
+# The former `gotestsum ... || go test ...` also ran go test when gotestsum
+# ran fine but a test FAILED, re-running the whole suite: a failure could be
+# masked by a passing re-run, and CI hit its job timeout running the suite
+# twice.
 test:
-	@command -v gotestsum >/dev/null 2>&1 && \
-		gotestsum -- -coverpkg=./... -coverprofile=coverage.out ./... || \
-		go test -coverpkg=./... -coverprofile=coverage.out ./...
+	@if command -v gotestsum >/dev/null 2>&1; then \
+		gotestsum -- -coverpkg=./... -coverprofile=coverage.out ./...; \
+	else \
+		go test -coverpkg=./... -coverprofile=coverage.out ./...; \
+	fi
 
 test-race:
-	@command -v gotestsum >/dev/null 2>&1 && \
-		gotestsum -- -race -coverpkg=./... -coverprofile=coverage.out ./... || \
-		go test -race -coverpkg=./... -coverprofile=coverage.out ./...
+	@if command -v gotestsum >/dev/null 2>&1; then \
+		gotestsum -- -race -coverpkg=./... -coverprofile=coverage.out ./...; \
+	else \
+		go test -race -coverpkg=./... -coverprofile=coverage.out ./...; \
+	fi
 
 coverage: coverage.out
 	@go tool cover -func=coverage.out | tail -1

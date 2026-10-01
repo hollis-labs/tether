@@ -16,12 +16,10 @@ import (
 //
 // Agent is the planted agent (launch.OpencodeAgentName, namespaced so it
 // cannot merge into one of opencode's built-in agents), the --agent the
-// shared launch's projection names. Its agents/<name>.md carries the boot
-// prompt, which is how the boot prompt reaches opencode now that argv is
-// composed once: the old empty --agent plus the projection's own made
-// opencode see the agent ",<name>" (not found) and lose the turn's prompt
-// behind a second "--" (CW-20260930-0106; the interim CW-20261001-0095
-// replaces).
+// shared launch's projection names; its agents/<name>.md carries the boot
+// prompt. A launched session's argv comes from agentkit's launch template
+// (CW-20260930-0135), which already names it; the adapter's own BuildArgs
+// does the same when it runs without one.
 func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 	adapter := gop.NewOpencodeAdapter()
 	adapter.Agent = launch.OpencodeAgentName(plan)

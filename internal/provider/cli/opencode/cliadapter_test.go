@@ -125,7 +125,7 @@ func TestRuntime_TypedEventsAndResumeArgv(t *testing.T) {
 	if !slices.Equal(types, append(slices.Clone(turn), turn...)) {
 		t.Errorf("event types = %v; want %v twice", types, turn)
 	}
-	if usage == nil || *usage != (llmtypes.Usage{InputTokens: 3, OutputTokens: 5, CacheReadTokens: 7, CacheCreationTokens: 11, StopReason: "stop"}) {
+	if usage == nil || *usage != (llmtypes.Usage{InputTokens: 3, OutputTokens: 5, CacheReadTokens: 7, CacheCreationTokens: 11, StopReason: "end_turn"}) {
 		t.Errorf("usage = %+v", usage)
 	}
 }

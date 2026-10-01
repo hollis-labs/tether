@@ -338,7 +338,8 @@ func (o *output) Close() error {
 
 // render maps one wrapper event to transcript text, in the shape the other
 // runtimes' attach output uses: reply text as-is, then bracketed markers.
-// Thought/thinking deltas are dropped (not part of the reply).
+// Thought/thinking deltas (phase "thought" since go-agent-wrapper v0.17.0,
+// "thinking" before) are dropped: they are not part of the reply.
 func render(ev runtimeevents.Event) string {
 	switch ev.Kind {
 	case runtimeevents.KindAgentDelta:
@@ -371,6 +372,19 @@ func render(ev runtimeevents.Event) string {
 		}
 		_ = json.Unmarshal(ev.Payload, &p)
 		return "\n[error] " + firstNonEmpty(p.Error, p.Message, "turn failed") + "\n"
+	// The three kinds go-agent-wrapper v0.17.0 added, as the markers
+	// agentkit v0.14.0 writes for the same events on the native path.
+	case runtimeevents.KindAgentPermissionDenied:
+		var p struct {
+			Action      string `json:"action"`
+			DisplayName string `json:"display_name"`
+		}
+		_ = json.Unmarshal(ev.Payload, &p)
+		return "\n[permission_denied:" + firstNonEmpty(p.DisplayName, p.Action, "action") + "]\n"
+	case runtimeevents.KindSessionAuthFailed:
+		return "\n[auth_failed]\n"
+	case runtimeevents.KindSessionLost:
+		return "\n[session_lost]\n"
 	default:
 		return ""
 	}

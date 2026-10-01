@@ -134,18 +134,14 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	permMode := config.EffectivePermissionMode(cat.Global, agent)
 	args := append([]string(nil), prov.Args...)
 	if prov.ProviderBrand() == "claude" {
-		// --mcp-config loads the planted .mcp.json explicitly. Explicit
-		// loading is not subject to the project-scoped .mcp.json "Use this
-		// MCP server?" trust prompt that fires in interactive (PTY) mode.
-		// cwd is the boot dir (claude BootDirSpec CwdBootDir), so the
-		// relative path resolves to <bootDir>/.mcp.json.
+		// The planted .mcp.json is not spliced in here: go-providers'
+		// projection passes it as --mcp-config <bootDir>/.mcp.json in every
+		// Claude mode, and agentkit v0.13.0 resolves every turn's argv from
+		// that convention (CW-20260930-0135), so a second --mcp-config from
+		// here would repeat it.
 		//
-		// Each flag is added only if the provider config didn't already
-		// declare it — so a catalog that hardcodes a flag in provider.args
-		// never gets a duplicate.
-		if !slices.Contains(args, "--mcp-config") {
-			args = append(args, "--mcp-config", ".mcp.json")
-		}
+		// The flag is added only if the provider config didn't already
+		// declare it, so a catalog that hardcodes it never gets a duplicate.
 		if permMode == config.PermissionModeBypass && !slices.Contains(args, "--dangerously-skip-permissions") {
 			args = append(args, "--dangerously-skip-permissions")
 		}
