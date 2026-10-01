@@ -32,7 +32,21 @@ func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleLogicalAgentList(_ context.Context, _ map[string]any) (any, error) {
+func (a *Adapter) handleLogicalAgentList(ctx context.Context, _ map[string]any) (any, error) {
+	if a.readsViaDaemon() {
+		// GET /logical-agents' summary: id, name, launch_id and the
+		// checkpoint policy and status.
+		agents, err := a.client.ListLogicalAgents(ctx)
+		if err != nil {
+			return nil, daemonReadError(err, "")
+		}
+		sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+		return toolJSON(map[string]any{
+			"ok":             true,
+			"logical_agents": agents,
+			"count":          len(agents),
+		}), nil
+	}
 	rows, err := a.svc.Store.ListLogicalAgents()
 	if err != nil {
 		return nil, toolError("internal_error", err.Error())

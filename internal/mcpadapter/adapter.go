@@ -247,6 +247,24 @@ func daemonUnreachableError(err error) *budget.ToolError {
 		"muxd daemon is not reachable; start it with `mux daemon up` ("+err.Error()+")")
 }
 
+// readsViaDaemon reports whether the adapter reads the state database over
+// the daemon API rather than in-process. A daemon-only adapter (`mux mcp
+// --daemon-only`, the server Tether plants in each agent) has a client and no
+// Store: it never opens the database, so an agent's sandbox can keep the
+// state directory read-only (CW-20261001-0173).
+func (a *Adapter) readsViaDaemon() bool {
+	return a.client != nil && (a.svc == nil || a.svc.Store == nil)
+}
+
+// daemonReadError maps a failed daemon read to a tool error: the daemon being
+// down, or the classified HTTP error. id names the session for a not_found.
+func daemonReadError(err error, id string) *budget.ToolError {
+	if isDaemonUnreachable(err) {
+		return daemonUnreachableError(err)
+	}
+	return classifyClientErr(err, id)
+}
+
 // isDaemonUnreachable reports whether err signals that the daemon is not
 // running (socket missing, connection refused, dial timeout). Wraps
 // client.ErrDaemonUnreachable so handlers can branch on transport-vs-domain

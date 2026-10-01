@@ -13,18 +13,19 @@ import (
 	"github.com/hollis-labs/tether/internal/redact"
 )
 
-// LoggingMiddleware emits tool_call_start and tool_call_end events to the
-// events Bus for every proxied tool call. ArgsSchemaFP is derived from
+// LoggingMiddleware emits tool_call_start and tool_call_end events to an
+// events Publisher (the Bus, or a DaemonToolCallPublisher) for every proxied
+// tool call. ArgsSchemaFP is derived from
 // the sorted arg key names only — values are never logged. See ADR 0021
 // §Decision 3.
 type LoggingMiddleware struct {
-	bus     events.Bus
+	bus     events.Publisher
 	secrets *redact.Set
 }
 
 // NewLoggingMiddleware creates a LoggingMiddleware backed by bus.
 // bus may be nil; when nil the middleware is a no-op pass-through.
-func NewLoggingMiddleware(bus events.Bus) *LoggingMiddleware {
+func NewLoggingMiddleware(bus events.Publisher) *LoggingMiddleware {
 	return &LoggingMiddleware{bus: bus}
 }
 

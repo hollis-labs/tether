@@ -177,6 +177,11 @@ type ProxyOptions struct {
 	// tool_call_start / tool_call_end events for every proxied call.
 	Bus events.Bus
 
+	// Publisher, when non-nil and Bus is nil, is where the LoggingMiddleware
+	// publishes instead: a daemon-only `mux mcp` has no bus of its own and
+	// passes a DaemonToolCallPublisher.
+	Publisher events.Publisher
+
 	// EventStore, when non-nil, is subscribed to the Bus to accumulate
 	// tool call events for the live TUI Activity feed (in-memory ring buffer).
 	// See ADR 0021. The TUI reads from this store; the MCP tool
@@ -273,10 +278,13 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	pool.runtime = a.runtime
 	a.upstreams = pool
 
-	// Wire LoggingMiddleware when a Bus is provided.
+	// Wire LoggingMiddleware when a Bus or a Publisher is provided.
 	var mws []ToolCallMiddleware
-	if opts.Bus != nil {
+	switch {
+	case opts.Bus != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))
+	case opts.Publisher != nil:
+		mws = append(mws, NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(entries)))
 	}
 
 	// Subscribe EventStore to Bus so it receives tool_call_end events.
@@ -303,17 +311,8 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	plainRouter := NewProxyRouter(registry)
 	plainRouter.pool = pool
 	plainRouter.SetLogger(a.logger())
-	if a.svc != nil && a.svc.Store != nil {
-		plainRouter.SetWorkstreamResolver(func(ctx context.Context, sessionID string) (string, error) {
-			row, err := a.svc.Store.GetSession(sessionID)
-			if err != nil {
-				return "", err
-			}
-			if row.WorkstreamID.Valid {
-				return row.WorkstreamID.String, nil
-			}
-			return "", nil
-		})
+	if a.readsViaDaemon() || (a.svc != nil && a.svc.Store != nil) {
+		plainRouter.SetWorkstreamResolver(a.sessionWorkstreamID)
 	}
 
 	if opts.Only && len(opts.ServerFilter) == 0 {
