@@ -412,6 +412,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// otherwise-successful launch (established enhancement-write pattern,
 	// e.g. SetClaudeSessionID above).
 	s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+	s.watchSessionBindings(sessionID)
 
 	return &Launched{
 		SessionID:    sessionID,
@@ -554,6 +555,25 @@ func (s *Service) leaseActorBinding(sessionID, logicalAgentID string) {
 	if _, err := s.Registry.LeaseBinding(context.Background(), target, sessionID, localHostID, sessionID, nil, registry.VisibilityPrivateLocal, 0); err != nil {
 		log.Printf("app: lease runtime binding for logical agent %q session %q failed (non-fatal): %v", logicalAgentID, sessionID, err)
 	}
+}
+
+// watchSessionBindings revokes every binding sessionID holds once the
+// session has ended, however it ended: a stop, a natural exit or a crash
+// (CW-20260912-0134). A binding left behind by an ended session is promoted
+// back to current as soon as the generations above it are revoked, binding
+// the actor to a session that no longer exists. Sessions that end while the
+// daemon is down are covered by ReconcileStaleState instead. No-op without a
+// Registry.
+func (s *Service) watchSessionBindings(sessionID string) {
+	if s.Registry == nil {
+		return
+	}
+	go func() {
+		_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+		if _, err := s.Registry.RevokeSessionBindings(context.Background(), sessionID); err != nil {
+			log.Printf("app: revoke bindings of ended session %q failed (non-fatal): %v", sessionID, err)
+		}
+	}()
 }
 
 // revokeActorBindingIfCurrent best-effort-revokes id's own binding on

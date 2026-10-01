@@ -171,9 +171,16 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	if wake {
 		sessionID, resolveErr := s.resolveNotifySession(r.Context(), req.SessionID, sent.To)
-		if resolveErr != nil {
+		switch {
+		case errors.Is(resolveErr, ErrBoundSessionNotRunning):
+			// Not an error: the actor is bound to a session that is not
+			// running, so there is nothing to wake (CW-20260912-0134).
+			// The message is stored; the wake sweep retries it once a live
+			// session owns the address.
+			res.WakeReason = "session-not-running"
+		case resolveErr != nil:
 			res.WakeError = resolveErr.Error()
-		} else if sessionID != "" {
+		case sessionID != "":
 			res.WakeAttempted = true
 			res.SessionID = sessionID
 			text := req.WakeText

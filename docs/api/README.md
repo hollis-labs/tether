@@ -1175,7 +1175,8 @@ If `session_id` is omitted, the daemon resolves `msg://session/<auth>/<id>` to
 that live session, or `msg://agent/<auth>/<logical_agent_id>` to the newest
 running session for that logical agent. Offline recipients still receive the
 durable message; the response includes `wake_attempted`, `wake_delivered`, and
-`wake_error`.
+`wake_error`. An agent recipient whose binding names a session that is not
+running gets `wake_reason: "session-not-running"` and no wake.
 
 `wake_delivered: true` means the reminder turn was submitted, not that the
 message was read. The delivery then stays leased at `turn_submitted` for up to
@@ -1385,6 +1386,28 @@ fresh mint from an idempotent replay.
 | malformed body | 400 | `invalid_request` |
 | `session_id` missing | 400 | `invalid_request` |
 | method other than POST | 405 | `method_not_allowed` |
+
+### Runtime bindings and session lifetime
+
+Launching a session for a logical agent leases a binding for
+`msg://agent/<authority>/<logical_agent_id>`, one generation above the
+previous one. The current binding is the highest generation that is neither
+revoked nor lease-expired. A binding never outlives its session:
+
+- When a session ends (stopped, exited on its own, or crashed), the daemon
+  revokes every binding it holds, current or superseded.
+- On startup, the daemon revokes the bindings of every session that has ended,
+  including those its sweep has just marked `failed`. Bindings whose
+  `session_id` is not a Tether session, such as a published-local bridge's,
+  are left alone.
+
+A superseded generation stays while its session runs. So when two sessions
+share an agent and the newer one stops, the actor goes back to the older one
+if it is still running, and is unbound if it is not. It never goes to a
+session that has ended. When the current binding still names a session that
+is not running (it died without the daemon seeing it), notify does not
+reroute: it stores the message and answers `wake_reason:
+"session-not-running"`.
 
 ### `POST /registry/bindings` — Lease a runtime binding
 

@@ -40,9 +40,11 @@ type fakeLaunchService struct {
 	launchErr error
 	launchIDs []string
 
-	listRes  []store.SessionRow
-	listErr  error
-	listOpts store.ListSessionsOptions
+	listRes []store.SessionRow
+	// resolveActorErr, when set, is ResolveActorSession's error.
+	resolveActorErr error
+	listErr         error
+	listOpts        store.ListSessionsOptions
 
 	getRes  map[string]*store.SessionRow
 	getErr  error
@@ -223,6 +225,9 @@ func (f *fakeLaunchService) RuntimeHealth(id string) (RuntimeHealthResult, bool)
 func (f *fakeLaunchService) ResolveActorSession(_ context.Context, logicalAgentID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.resolveActorErr != nil {
+		return "", f.resolveActorErr
+	}
 	for _, row := range f.listRes {
 		if row.LogicalAgentID == logicalAgentID {
 			if f.runtimeHealthOK != nil && f.runtimeHealthOK[row.ID] {

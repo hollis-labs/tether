@@ -41,6 +41,21 @@ func (s *Service) RevokeBinding(ctx context.Context, bindingID string) error {
 	return s.storage.RevokeBinding(ctx, bindingID)
 }
 
+// RevokeSessionBindings revokes every binding an ended session still holds.
+// See bindings.go.
+func (s *Service) RevokeSessionBindings(ctx context.Context, sessionID string) (int, error) {
+	if sessionID == "" {
+		return 0, fmt.Errorf("registry: revoke session bindings: %w: session id required", ErrInvalidRequest)
+	}
+	return s.storage.RevokeSessionBindings(ctx, sessionID)
+}
+
+// BoundSessionIDs lists the sessions that hold an unrevoked binding. See
+// bindings.go.
+func (s *Service) BoundSessionIDs(ctx context.Context) ([]string, error) {
+	return s.storage.BoundSessionIDs(ctx)
+}
+
 // CurrentBinding returns the single authoritative binding for targetURN, if
 // one exists. See bindings.go.
 func (s *Service) CurrentBinding(ctx context.Context, targetURN string) (RuntimeBinding, error) {

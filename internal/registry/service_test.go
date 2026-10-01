@@ -366,6 +366,14 @@ func (s *stubStorage) CurrentBinding(context.Context, string) (registry.RuntimeB
 func (s *stubStorage) ListBindingsForTarget(context.Context, string) ([]registry.RuntimeBinding, error) {
 	panic("stubStorage.ListBindingsForTarget: unexpected call")
 }
+
+func (s *stubStorage) RevokeSessionBindings(context.Context, string) (int, error) {
+	panic("stubStorage.RevokeSessionBindings: unexpected call")
+}
+
+func (s *stubStorage) BoundSessionIDs(context.Context) ([]string, error) {
+	panic("stubStorage.BoundSessionIDs: unexpected call")
+}
 func (s *stubStorage) SetScopedBinding(context.Context, string, string, []string, json.RawMessage, string) (registry.ScopedBinding, error) {
 	panic("stubStorage.SetScopedBinding: unexpected call")
 }
