@@ -267,6 +267,14 @@ the default; an agent that needs it must be given it by name.
 
 mux's own native tools (`mux_*`) are not upstreams and are not affected.
 
+A resumed session (`POST /logical-agents/{id}/resume`) gets the project's
+`mcp.servers` list, or the default, not the list the original launch had. A
+boot profile's `mcp_servers` is applied when a session is created, and resume
+re-resolves the launch from the catalog without it. So a list granted to one
+launch alone is gone on resume (the agent has less), and a list narrowed below the
+project's for one launch is the project's list on resume (the agent has what the
+project grants, never more).
+
 The allow-list limits what an agent's own proxy offers. It is not a boundary
 against a hostile agent: see [SECURITY.md](../SECURITY.md#agents-run-as-your-user).
 
