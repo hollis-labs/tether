@@ -55,6 +55,33 @@ On macOS this uses `sandbox-exec` with a default-allow, selective-deny posture
 permitted). `sandbox-exec` is deprecated by Apple. Treat the sandbox as a
 containment aid, not a hardened boundary against a hostile agent.
 
+## Agents run as your user
+
+Agent sessions launched by Tether run under the operator's own uid. Today
+nothing stops an agent from reading or writing Tether's control-plane state:
+
+- the catalog under `~/.tether/catalog/`, including credentials it holds;
+- the state database (its path is `defaults.state_db` in
+  `~/.tether/catalog/global.yaml`);
+- the daemon socket `~/.tether/run/muxd.sock`, which grants the full,
+  unauthenticated HTTP API;
+- the MCP token in a client's config, such as the `mux` entry in
+  `~/.claude.json`, and the one planted in each worker's `.mcp.json`.
+
+The MCP token and scopes are checked inside the agent's own `mux mcp`
+process; `muxd` does not verify them. An agent that calls the socket directly
+bypasses them. Sandbox profiles do not yet deny these paths.
+
+Two planned changes close this:
+
+- CW-20260930-0237: agent sandbox profiles deny access to control-plane state
+  and credentials.
+- CW-20260930-0253: `muxd` verifies a per-caller identity, so an agent acts as
+  itself, not as the operator.
+
+Until both land, treat any agent Tether launches as able to do anything in
+Tether that you can.
+
 ## Data at rest
 
 Tether has no built-in at-rest encryption. The state database, session logs,
@@ -88,6 +115,8 @@ environment and sends trace data to the endpoint you choose.
 - macOS sandboxing relies on a deprecated mechanism with a default-allow posture
 - MCP scopes are coarse capability guards, not multi-tenant isolation
 - caller URNs on messaging routes are unauthenticated provenance
+- agents run as the operator's uid and can read and write Tether's catalog,
+  state database, socket and MCP token (see "Agents run as your user")
 - pre-1.0 contracts and migration guarantees
 
 These are deployment constraints, not hidden roadmap promises. Operate within
