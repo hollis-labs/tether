@@ -74,7 +74,7 @@ func Read(path string, opts Options) (string, error) {
 		return "", fmt.Errorf("credential file %s: %w", p, unwrapPathError(err))
 	}
 	if resolved != p && !within(resolved, resolveRoots(opts.Roots)) {
-		return "", fmt.Errorf("credential file %s: %w (it resolves to %s)", p, ErrSymlinkEscape, resolved)
+		return "", fmt.Errorf("%s: %w (it resolves to %s)", p, ErrSymlinkEscape, resolved)
 	}
 
 	f, err := openNoFollow(resolved)
@@ -90,13 +90,13 @@ func Read(path string, opts Options) (string, error) {
 		return "", fmt.Errorf("credential file %s: %w", p, unwrapPathError(err))
 	}
 	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("credential file %s: %w", p, ErrNotRegular)
+		return "", fmt.Errorf("%s: %w", p, ErrNotRegular)
 	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return "", fmt.Errorf("credential file %s: %w (mode %04o); run chmod 600 on it", p, ErrTooPermissive, perm)
+		return "", fmt.Errorf("%s: %w (mode %04o); run chmod 600 on it", p, ErrTooPermissive, perm)
 	}
 	if !ownedByCurrentUID(fi) {
-		return "", fmt.Errorf("credential file %s: %w", p, ErrNotOwner)
+		return "", fmt.Errorf("%s: %w", p, ErrNotOwner)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
@@ -104,11 +104,11 @@ func Read(path string, opts Options) (string, error) {
 		return "", fmt.Errorf("credential file %s: read: %w", p, unwrapPathError(err))
 	}
 	if len(body) > MaxSize {
-		return "", fmt.Errorf("credential file %s: %w (limit %d bytes)", p, ErrTooLarge, MaxSize)
+		return "", fmt.Errorf("%s: %w (limit %d bytes)", p, ErrTooLarge, MaxSize)
 	}
 	secret := strings.TrimSpace(string(body))
 	if secret == "" {
-		return "", fmt.Errorf("credential file %s: %w", p, ErrEmpty)
+		return "", fmt.Errorf("%s: %w", p, ErrEmpty)
 	}
 	return secret, nil
 }
@@ -123,7 +123,7 @@ func expand(path string) (string, error) {
 		}
 		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	case !filepath.IsAbs(path):
-		return "", fmt.Errorf("credential file %q: %w", path, ErrNotAbsolute)
+		return "", fmt.Errorf("%q: %w", path, ErrNotAbsolute)
 	}
 	return filepath.Clean(path), nil
 }
