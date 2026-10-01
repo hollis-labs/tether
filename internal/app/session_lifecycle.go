@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -439,7 +439,7 @@ func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsession
 		Mode:   sessionkit.AutoFireFirstTurn,
 		Prompt: bootPrompt,
 		Turn: turn.Options{
-			Runtime: runtimekind.PTY,
+			Runtime: runtimes.ModePTY,
 		},
 	})
 }
@@ -467,7 +467,7 @@ func streamingStdioBootPromptFirstTurn(caps agentsessions.Capabilities, opts *ag
 		Mode:   sessionkit.AutoFireFirstTurn,
 		Prompt: bootPrompt,
 		Turn: turn.Options{
-			Runtime: runtimekind.StreamingStdio,
+			Runtime: runtimes.ModeStreamingStdio,
 		},
 	})
 }

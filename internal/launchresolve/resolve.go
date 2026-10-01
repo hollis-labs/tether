@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
 
 	"github.com/hollis-labs/tether/internal/config"
 )
@@ -230,18 +230,23 @@ func (r *Registry) ResolveLaunch(launchID string) (LaunchResolution, error) {
 	}, nil
 }
 
-// mapRuntimeKind maps a Tether config runtime-kind token onto the
-// canonical agentlaunch.RuntimeKind enum. It mirrors the mapping used by
-// internal/app and internal/bootexec so a registry-resolved binding is
-// consistent with the rest of Tether's launch pipeline. The config "api"
-// runtime has no agentlaunch equivalent and maps to the invalid zero
-// value, which ResolveRuntimeBinding rejects as unmappable.
-func mapRuntimeKind(kind string) agentlaunch.RuntimeKind {
-	switch k := runtimekind.Parse(kind); k {
-	case runtimekind.PTY, runtimekind.StreamingStdio, runtimekind.JSONRPCStdio, runtimekind.Subprocess:
-		return k
+// mapRuntimeKind maps a Tether config runtime-kind token onto the leaf
+// runtimes.Mode a RuntimeBinding carries, through config.RuntimeMode, the
+// same boundary internal/launch uses, so a registry-resolved binding is
+// consistent with the rest of Tether's launch pipeline. Only the four modes
+// Tether launches map; the config "api" runtime, serve-http and pty-debug
+// map to the invalid zero value, which ResolveRuntimeBinding rejects as
+// unmappable.
+func mapRuntimeKind(kind string) runtimes.Mode {
+	mode, debug, ok := config.RuntimeMode(kind)
+	if !ok || debug {
+		return ""
+	}
+	switch mode {
+	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn:
+		return mode
 	default:
-		return agentlaunch.RuntimeKind("")
+		return ""
 	}
 }
 

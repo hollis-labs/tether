@@ -196,19 +196,14 @@ func TestRuntime_ReplacedConversationIsReported(t *testing.T) {
 }
 
 // Gemini CLI's ~/.gemini/oauth_creds.json is not agy's credential (agy's
-// is a Keychain token), so its absence must not refuse an agy launch. The
-// adapter's own Preflight still stats it (CW-20260930-0221 R1); New does not
-// forward that check.
+// is a Keychain token), so its absence must not refuse an agy launch.
+// go-providers v0.30.0 dropped the adapter's stat of it (CW-20260930-0221
+// R1); this keeps the launch path honest either way.
 func TestRuntime_PrepareIgnoresMissingGeminiCLICredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if _, err := os.Stat(filepath.Join(home, ".gemini", "oauth_creds.json")); !os.IsNotExist(err) {
 		t.Fatalf("temp HOME must lack oauth_creds.json: %v", err)
-	}
-	// The adapter's check on its own still refuses here, so the pass below
-	// is New's doing and not an empty check.
-	if err := gop.NewAntigravityAdapter().Preflight(); !errors.Is(err, gop.ErrProviderNotAuthenticated) {
-		t.Fatalf("adapter Preflight = %v; want ErrProviderNotAuthenticated", err)
 	}
 	rt, err := New(&launch.Plan{Command: "/bin/sh"})
 	if err != nil {

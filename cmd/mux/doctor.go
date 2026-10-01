@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	gop "github.com/hollis-labs/go-providers/provider"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/client"
@@ -263,8 +262,12 @@ func checkMigrations(cat *config.Catalog) checkResult {
 
 // checkProviderAuth reports on providers whose CLI would otherwise fall into
 // an interactive login. For agy that is a browser sign-in, which a launch
-// must never trigger, so the runtime preflight refuses to start without the
-// credentials file; this check runs the same stat-only preflight.
+// must never trigger. agy keeps its login in the system keychain, which no
+// static check can read without risking a keychain prompt, so go-providers
+// v0.30.0 dropped the old ~/.gemini/oauth_creds.json stat (that file belongs
+// to the retired Gemini CLI, so the check was wrong both ways). The check now
+// says what it cannot see; a launch that is not signed in fails as not
+// authenticated after the fact.
 func checkProviderAuth(cat *config.Catalog) []checkResult {
 	if cat == nil {
 		return nil
@@ -276,16 +279,11 @@ func checkProviderAuth(cat *config.Catalog) []checkResult {
 		}
 	}
 	sort.Strings(ids)
-	var results []checkResult
+	results := make([]checkResult, 0, len(ids))
 	for _, id := range ids {
-		name := "provider-auth:" + id
-		if err := gop.NewAntigravityAdapter().Preflight(); err != nil {
-			results = append(results, fail(name, "agy not authenticated: ~/.gemini/oauth_creds.json missing",
-				"run `agy` interactively once to sign in"))
-			continue
-		}
-		results = append(results, ok(name,
-			"credentials present (~/.gemini/oauth_creds.json); expired or revoked credentials can still send a launch to a browser sign-in — if one fails as not authenticated, run `agy` interactively once"))
+		results = append(results, warn("provider-auth:"+id,
+			"agy sign-in not checked: agy keeps its login in the system keychain, which cannot be read here",
+			"if an agy launch fails as not authenticated, run `agy` interactively once to sign in"))
 	}
 	return results
 }
