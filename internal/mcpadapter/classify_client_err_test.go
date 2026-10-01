@@ -16,6 +16,7 @@ func TestClassifyClientErr(t *testing.T) {
 		{"daemon 409 (conflict): session has no input channel", "conflict"},
 		{"daemon 404 (not_found): session not running", "not_found"},
 		{"daemon 400 (invalid_request): decode body", "invalid_request"},
+		{"daemon 502 (turn_failed): turn failed: runner: process exited 1", "turn_failed"},
 		{"daemon 500 (internal_error): boom", "internal_error"},
 	}
 	for _, tc := range cases {

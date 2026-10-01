@@ -80,6 +80,11 @@ type Service struct {
 	// Tether session id. Populated lazily on the first SendTurn call.
 	codexThreads turn.CodexAppServerCache
 
+	// subprocessLogs holds each running subprocess-runtime session's
+	// *subprocessLog, keyed by session id, from launch until the session
+	// ends (CW-20261001-0033).
+	subprocessLogs sync.Map
+
 	// specResolver is the S5 Spec-path launch resolver. It is constructed
 	// lazily on first use (only when the launch engine is "spec") via
 	// specResolverOnce and reused across launches. specResolverErr records

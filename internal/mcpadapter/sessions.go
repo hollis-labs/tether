@@ -8,6 +8,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-runner/runner"
 
 	messaging "github.com/hollis-labs/go-messaging"
 
@@ -413,6 +414,10 @@ func (a *Adapter) handleSessionSendInput(ctx context.Context, args map[string]an
 		if errors.Is(err, gop.ErrProviderSessionLost) {
 			return nil, toolError("provider_session_lost", err.Error())
 		}
+		var exit *runner.ExitError
+		if errors.As(err, &exit) {
+			return nil, toolError("turn_failed", "turn failed: "+err.Error())
+		}
 		return nil, toolError("internal_error", err.Error())
 	}
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "bytes_sent": len(input)}), nil
@@ -445,6 +450,10 @@ func (a *Adapter) handleSessionSendTurn(ctx context.Context, args map[string]any
 		}
 		if errors.Is(err, gop.ErrProviderSessionLost) {
 			return nil, toolError("provider_session_lost", err.Error())
+		}
+		var exit *runner.ExitError
+		if errors.As(err, &exit) {
+			return nil, toolError("turn_failed", "turn failed: "+err.Error())
 		}
 		return nil, toolError("internal_error", err.Error())
 	}

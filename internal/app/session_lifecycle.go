@@ -355,6 +355,20 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 	streamingStdioBootPromptFirstTurn(rt.Caps(), &startOpts)
 
+	// A subprocess runtime writes no session.log and drops stderr unless
+	// given somewhere to put them; see subprocessLog. Best-effort: a log
+	// that cannot open must not fail the launch.
+	var procLog *subprocessLog
+	if isSubprocessRuntime(rt) {
+		if procLog, err = openSubprocessLog(ws.LogPath); err != nil {
+			log.Printf("session %s: open subprocess log: %v", sessionID, err)
+			procLog = nil
+		} else {
+			startOpts.Stderr = procLog.Stderr()
+			startOpts.Fanout = procLog
+		}
+	}
+
 	req := agentsessions.StartRequest{
 		ID:      sessionID,
 		Runtime: rt,
@@ -367,7 +381,18 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		},
 	}
 	if err := s.Manager.Start(context.Background(), req); err != nil {
+		if procLog != nil {
+			_ = procLog.Close()
+		}
 		return nil, err
+	}
+	if procLog != nil {
+		s.subprocessLogs.Store(sessionID, procLog)
+		go func() {
+			_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+			s.subprocessLogs.Delete(sessionID)
+			_ = procLog.Close()
+		}()
 	}
 
 	// Record this launch profile on the logical agent so the resume

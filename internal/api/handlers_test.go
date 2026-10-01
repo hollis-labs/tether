@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-runner/runner"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -652,6 +653,34 @@ func TestHandleSendInputAndTurn_ProviderSessionLost(t *testing.T) {
 		env := decodeErr(t, rr)
 		if env.Error.Code != CodeProviderSessionLost || !strings.Contains(env.Error.Message, "provider session lost") {
 			t.Errorf("%s: error = %+v", route.path, env.Error)
+		}
+	}
+}
+
+// CW-20261001-0033: a subprocess turn whose process exits non-zero failed
+// upstream of the daemon. It answers 502 turn_failed with the service's
+// message (exit status + stderr tail), not 500 internal_error.
+func TestHandleSendInputAndTurn_TurnFailed(t *testing.T) {
+	failed := fmt.Errorf("%w\nstderr (last 26 bytes):\nError: 401 Unauthorized", &runner.ExitError{Code: 1})
+	for _, route := range []struct{ path, body string }{
+		{"/sessions/s1/input", "x"},
+		{"/sessions/s1/turn", `{"text":"x"}`},
+	} {
+		svc := &fakeLaunchService{inputErr: failed}
+		req := httptest.NewRequest(http.MethodPost, route.path, bytes.NewReader([]byte(route.body)))
+		rr := httptest.NewRecorder()
+		newTestHandler(svc).ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadGateway {
+			t.Errorf("%s: status = %d, want 502", route.path, rr.Code)
+		}
+		env := decodeErr(t, rr)
+		if env.Error.Code != CodeTurnFailed {
+			t.Errorf("%s: code = %q, want %q", route.path, env.Error.Code, CodeTurnFailed)
+		}
+		for _, want := range []string{"turn failed", "process exited 1", "401 Unauthorized"} {
+			if !strings.Contains(env.Error.Message, want) {
+				t.Errorf("%s: message %q missing %q", route.path, env.Error.Message, want)
+			}
 		}
 	}
 }

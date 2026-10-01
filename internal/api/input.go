@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-runner/runner"
 )
 
 // maxInputBytes caps the per-request body size for POST /sessions/{id}/input
@@ -40,7 +41,7 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 			writeError(w, http.StatusConflict, CodeConflict, "session has no input channel")
 			return
 		}
-		if writeProviderSessionLost(w, err) {
+		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -61,6 +62,19 @@ func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	writeError(w, http.StatusConflict, CodeProviderSessionLost, err.Error())
+	return true
+}
+
+// writeTurnFailed answers a turn whose agent process exited non-zero: the
+// process failed, not the daemon, so it is a 502 with its own code rather
+// than a 500. Only subprocess runtimes return a *runner.ExitError from a
+// turn; the service has already appended the turn's stderr tail.
+func writeTurnFailed(w http.ResponseWriter, err error) bool {
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) {
+		return false
+	}
+	writeError(w, http.StatusBadGateway, CodeTurnFailed, "turn failed: "+err.Error())
 	return true
 }
 
@@ -88,7 +102,7 @@ func (s *Server) handleSendTurn(w http.ResponseWriter, r *http.Request, id strin
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
 		}
-		if writeProviderSessionLost(w, err) {
+		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
