@@ -26,6 +26,14 @@ const (
 	// can tell it from a session that cannot take input at all.
 	CodeProviderSessionLost = "provider_session_lost"
 
+	// CodeTurnFailed (502) means the session's agent process ran the turn
+	// and exited non-zero — a subprocess runtime (codex exec, claude -p)
+	// that failed on its own terms, such as a provider 401 or a usage
+	// error. The daemon is fine and the session stays up; the message
+	// carries the exit status and a bounded tail of the process's stderr
+	// (CW-20261001-0033).
+	CodeTurnFailed = "turn_failed"
+
 	// CodeIdempotencyConflict (409) means an idempotency key was reused with
 	// a different request. The key stays bound to its original session
 	// (CW-20260930-0229).

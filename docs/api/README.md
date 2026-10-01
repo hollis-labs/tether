@@ -47,6 +47,7 @@ Defined codes:
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
+| `turn_failed`       | 502  | the session's agent process ran the turn and exited non-zero (subprocess runtimes: codex exec, claude -p, opencode run, agy); the message carries the exit status and up to 2 KB of the turn's stderr |
 | `locked`            | 423  | resource is archived or otherwise closed to writes |
 | `not_implemented`   | 501  | route exists, semantics land in a later version |
 | `internal_error`    | 500  | unexpected server failure                     |
@@ -613,6 +614,14 @@ provider no longer has the session's resume id. The same applies to
 dropped the id and a `provider.session_lost` event is published; resending
 the same request is the caller's decision, because the new turn starts
 without the old history.
+
+On a subprocess-runtime session (one agent process per turn), a turn whose
+process exits non-zero answers 502 `turn_failed`: the process failed, not
+the daemon, and the session stays up for the next turn. The message reads
+`turn failed: … runner: process exited <code>` followed by up to 2 KB of
+that turn's stderr. The full stderr, and the turn's rendered output (reply
+text, `[tool_use:…]`, `[error] …`, `[turn_done]`), are appended to the
+session's `logs/session.log`, which `mux sessions tail` reads.
 
 ### `GET /sessions/{id}/attach`
 

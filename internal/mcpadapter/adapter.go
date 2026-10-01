@@ -274,6 +274,8 @@ func classifyClientErr(err error, id string) *budget.ToolError {
 		return toolError("idempotency_conflict", err.Error())
 	case strings.Contains(msg, "(provider_session_lost)"):
 		return toolError("provider_session_lost", err.Error())
+	case strings.Contains(msg, "(turn_failed)"):
+		return toolError("turn_failed", err.Error())
 	case strings.Contains(msg, "(conflict)"), strings.Contains(msg, " 409 "):
 		return toolError("conflict", err.Error())
 	default:

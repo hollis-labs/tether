@@ -12,7 +12,19 @@ import (
 // SendInput writes data to the named session's input channel. Thin wrapper
 // over agentsessions.Manager.SendInput.
 func (s *Service) SendInput(id string, data []byte) error {
-	return s.Manager.SendInput(id, data)
+	return s.subprocessTurn(id, func() error { return s.Manager.SendInput(id, data) })
+}
+
+// subprocessTurn runs send and, for a subprocess-runtime session whose turn
+// process exited non-zero, adds that turn's stderr tail to the error. The
+// error still wraps go-runner's *runner.ExitError, which the HTTP and MCP
+// surfaces answer as turn_failed rather than internal_error
+// (CW-20261001-0033). Other sessions pass straight through.
+func (s *Service) subprocessTurn(id string, send func() error) error {
+	if v, ok := s.subprocessLogs.Load(id); ok {
+		return v.(*subprocessLog).turn(send)
+	}
+	return send()
 }
 
 // SendTurn delivers a user message to the named session, applying the
@@ -45,7 +57,7 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 	case info.Caps.JsonRpcStdio:
 		return s.sendTurnJSONRPC(ctx, id, text)
 	default:
-		return s.Manager.SendInput(id, []byte(text))
+		return s.subprocessTurn(id, func() error { return s.Manager.SendInput(id, []byte(text)) })
 	}
 }
 

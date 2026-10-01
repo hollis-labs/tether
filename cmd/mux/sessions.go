@@ -126,6 +126,7 @@ var sessionsInputCmd = &cobra.Command{
 				return fmt.Errorf("read stdin: %w", err)
 			}
 		}
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
 		if err := c.SendInput(cmd.Context(), id, data); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
 				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
@@ -145,6 +146,10 @@ var sessionsTurnCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// From here an error is the daemon's answer, not a usage mistake:
+		// no usage dump over a turn_failed stderr tail, and main prints the
+		// error once instead of cobra printing it first.
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
 		if err := c.SendTurn(cmd.Context(), args[0], args[1]); err != nil {
 			if errors.Is(err, client.ErrDaemonUnreachable) {
 				return fmt.Errorf("tether daemon is not running; run `mux daemon start` first")
