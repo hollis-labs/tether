@@ -56,7 +56,8 @@ type ProxyEventIngestRequest struct {
 	// a tool_call_start / tool_call_end event, which the bus persists to the
 	// events table. A proxy that cannot write the event log itself (the
 	// daemon-only `mux mcp` Tether plants in an agent) sets it. The daemon
-	// stamps the event's time; every other field is the caller's assertion.
+	// stamps the time, of the event and of the proxy_events row, and ignores
+	// Timestamp; every other field is the caller's assertion.
 	Publish bool `json:"publish,omitempty"`
 }
 
@@ -160,8 +161,12 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	// Server may be empty for native mux tools — store it as-is.
 
+	// With publish the caller is a proxy that cannot write the daemon's
+	// state itself, so its clock is an assertion the daemon does not record:
+	// the daemon stamps the time. Without it, the caller's timestamp is kept
+	// (the operator's own `mux mcp` forwards the call's true time).
 	ts := time.Now().UTC()
-	if req.Timestamp != "" {
+	if req.Timestamp != "" && !req.Publish {
 		if t, err := time.Parse(time.RFC3339Nano, req.Timestamp); err == nil {
 			ts = t
 		} else if t, err := time.Parse(time.RFC3339, req.Timestamp); err == nil {
