@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestResolveMCPProxyConfigOnlyRequiresProxy(t *testing.T) {
@@ -58,5 +63,45 @@ func TestResolveMCPProxyConfigServersFallbackAndOnly(t *testing.T) {
 	}
 	if want := []string{"cerberus", "clockwork"}; !reflect.DeepEqual(filter, want) {
 		t.Fatalf("only filter = %v, want %v", filter, want)
+	}
+}
+
+// A planted `mux mcp --daemon-only` refuses to start without a reachable
+// daemon, with an error the agent's MCP status shows, and never opens the
+// state database on the way (CW-20261001-0173).
+func TestRunMCPDaemonOnly_FailsClosedWithoutADaemon(t *testing.T) {
+	state := t.TempDir()
+	catalog := t.TempDir()
+	global := "version: 1.0.0\ncatalog:\n  defaults:\n    state_db: " + filepath.Join(state, "tether.db") + "\n" +
+		"daemon:\n  listen_addr: unix:" + filepath.Join(state, "muxd.sock") + "\n  shutdown_timeout: 1s\n"
+	if err := os.WriteFile(filepath.Join(catalog, "global.yaml"), []byte(global), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := catalogPath
+	catalogPath = catalog
+	t.Cleanup(func() { catalogPath = old })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	listenAddr, _ := resolveDaemonAddr()
+	if listenAddr == "" {
+		t.Fatal("the fixture catalog's daemon address did not resolve")
+	}
+	for name, addr := range map[string]string{"no socket": listenAddr, "no address": ""} {
+		cmd.SilenceUsage = false
+		err := runMCPDaemonOnly(cmd, addr, "tok", nil, nil, false)
+		if !cmd.SilenceUsage {
+			t.Errorf("%s: usage is not silenced, so the one-line reason is followed by cobra's usage text", name)
+		}
+		if err == nil || !strings.Contains(err.Error(), "tether daemon unreachable; mux tools unavailable") {
+			t.Errorf("%s: err = %v, want the daemon-unreachable message", name, err)
+		}
+	}
+	if entries, _ := os.ReadDir(state); len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the state directory gained %v: a daemon-only server must not create the database", names)
 	}
 }

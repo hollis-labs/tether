@@ -86,3 +86,17 @@ func TestMuxMCPPlant_AlwaysCarriesTheProxyContract(t *testing.T) {
 		}
 	}
 }
+
+// A launched session's server is daemon-only, so it never opens the state
+// database inside the agent's sandbox (CW-20261001-0173); boot-exec's, which
+// has no session and runs outside any sandbox, is not.
+func TestMuxMCPPlant_LaunchedSessionIsDaemonOnly(t *testing.T) {
+	for _, extractRefs := range []bool{false, true} {
+		if args := MuxMCPPlant("/catalog", "sess-1", extractRefs).Args; !slices.Contains(args, "--daemon-only") {
+			t.Errorf("extractRefs=%v: a launched session's argv lacks --daemon-only: %v", extractRefs, args)
+		}
+	}
+	if args := MuxMCPPlant("/catalog", "", false).Args; slices.Contains(args, "--daemon-only") {
+		t.Errorf("boot-exec's argv carries --daemon-only: %v", args)
+	}
+}

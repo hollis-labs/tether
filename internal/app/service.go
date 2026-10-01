@@ -210,6 +210,23 @@ func New(catalogRoot string) (*Service, error) {
 	}, nil
 }
 
+// NewCatalogOnly constructs a Service holding only the catalog at
+// catalogRoot: no state database, event bus, session manager, broker or
+// registry. It is the Service of a daemon-only `mux mcp`, which reads and
+// writes Tether's state over the daemon API and must never open the database
+// (CW-20261001-0173). Unlike New it never seeds a missing catalog: the
+// catalog is the daemon's to write.
+func NewCatalogOnly(catalogRoot string) (*Service, error) {
+	cat, err := config.LoadLayered(catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := cat.Validate(); err != nil {
+		return nil, err
+	}
+	return &Service{CatalogRoot: catalogRoot, Catalog: cat}, nil
+}
+
 // newSessionManager wires an agentsessions.Manager to db and bus through
 // the state, attachment and event sinks, sharing one stopRequests between
 // the sinks and Service.StopSession so a stop is recorded as "killed".
@@ -377,8 +394,13 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
-	if err := s.Manager.Shutdown(context.Background()); err != nil {
-		return err
+	if s.Manager != nil {
+		if err := s.Manager.Shutdown(context.Background()); err != nil {
+			return err
+		}
+	}
+	if s.Store == nil {
+		return nil
 	}
 	return s.Store.Close()
 }
