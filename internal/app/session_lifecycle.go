@@ -256,6 +256,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	)
 	if plan.SandboxProfile != "" {
 		sp, hasProfile, err = s.Catalog.SandboxProfile(plan.LogicalAgentID, plan.SandboxProfile)
+		if err == nil {
+			// The catalog agent may have been pinned since create.
+			err = s.Catalog.CheckSandboxOverride(plan.LogicalAgentID, plan.SandboxProfile)
+		}
 	} else {
 		sp, hasProfile, err = s.Catalog.AgentSandbox(plan.LogicalAgentID)
 	}

@@ -652,3 +652,28 @@ func TestValidateLaunch(t *testing.T) {
 		t.Fatal("missing: want an error")
 	}
 }
+
+// Interim override rule until CW-20260930-0253 (CW-20261001-0145).
+func TestCheckSandboxOverride(t *testing.T) {
+	cat := &Catalog{Agents: map[string]Agent{
+		"open":   {ID: "open"},
+		"pinned": {ID: "pinned", Permissions: AgentPermissions{DefaultSandbox: "workspace-only"}},
+	}}
+	for _, tc := range []struct {
+		agent, override string
+		refused         bool
+	}{
+		{"open", "", false},
+		{"open", "workspace-only", false}, // tightening an unsandboxed agent
+		{"open", "unrestricted", false},
+		{"pinned", "", false},
+		{"pinned", "workspace-only", false}, // same as the pin
+		{"pinned", "unrestricted", true},
+		{"pinned", "workspace-plus-net", true},
+	} {
+		err := cat.CheckSandboxOverride(tc.agent, tc.override)
+		if got := errors.Is(err, ErrSandboxOverrideRefused); got != tc.refused {
+			t.Fatalf("CheckSandboxOverride(%s, %q) = %v; want refused=%v", tc.agent, tc.override, err, tc.refused)
+		}
+	}
+}

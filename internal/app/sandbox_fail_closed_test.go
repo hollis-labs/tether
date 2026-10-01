@@ -22,7 +22,7 @@ import (
 )
 
 func sandboxProfiles() map[string]sandbox.Profile {
-	return map[string]sandbox.Profile{"workspace-only": {ID: "workspace-only"}}
+	return map[string]sandbox.Profile{"workspace-only": {ID: "workspace-only"}, "unrestricted": {ID: "unrestricted"}}
 }
 
 func TestApplyAgentOps_UnknownSandboxProfileRefused(t *testing.T) {

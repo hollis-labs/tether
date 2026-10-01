@@ -112,6 +112,29 @@ func (c *Catalog) SandboxProfile(agentID, name string) (profile sandbox.Profile,
 	return sp, true, nil
 }
 
+// ErrSandboxOverrideRefused means a session-create override (agent_file or
+// agent_inline) names a sandbox profile other than the one its catalog
+// agent is pinned to. An agent Tether launches holds session.write and could
+// otherwise create a child session that loosens its own sandbox, and Tether
+// cannot yet tell an operator from an agent caller. Interim rule until
+// CW-20260930-0253 (per-caller identity) lands (CW-20261001-0145).
+var ErrSandboxOverrideRefused = errors.New("overriding a catalog-pinned sandbox profile is refused")
+
+// CheckSandboxOverride applies the interim override rule to a profile an
+// override names for agentID. With no override (empty, or the catalog
+// agent's own profile) it allows. When the catalog agent names no profile,
+// any profile only tightens and is allowed. When the catalog agent is
+// pinned to a profile, any other profile is refused with
+// ErrSandboxOverrideRefused.
+func (c *Catalog) CheckSandboxOverride(agentID, override string) error {
+	pinned := c.Agents[agentID].Permissions.DefaultSandbox
+	if override == "" || override == pinned || pinned == "" {
+		return nil
+	}
+	return fmt.Errorf("%w: agent %q is pinned to sandbox profile %q, so an override naming %q is refused until caller identity (CW-20260930-0253) can tell an operator from an agent",
+		ErrSandboxOverrideRefused, agentID, pinned, override)
+}
+
 // SandboxIssues returns one error for each agent that names a sandbox
 // profile the catalog does not define, sorted by agent id.
 func (c *Catalog) SandboxIssues() []error {
