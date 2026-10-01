@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,5 +225,86 @@ func TestRedactUpstreamError_KeepsTheCause(t *testing.T) {
 	untouched("empty credential values", redactUpstreamError(plain, config.MCPServerEntry{ID: "y"}))
 	if redactUpstreamError(nil, entry) != nil {
 		t.Fatal("nil must stay nil")
+	}
+}
+
+// A short env value (a flag such as "1" or "on") is not a credential, and
+// scrubbing it would mangle every word that contains it. The status error and the
+// "upstream unavailable" log must stay readable for ordinary entries while a
+// real secret is still scrubbed (review of CW-20261001-0229).
+func TestRedactUpstreamError_ShortValuesDoNotMangleTheText(t *testing.T) {
+	const secret = "long-secret-value-0123456789"
+	entry := config.MCPServerEntry{
+		ID:  "x",
+		Env: map[string]string{"DEBUG": "1", "FLAG": "on", "MODE": "ab", "TOKEN": secret},
+	}
+	raw := errors.New(`connect mcp stdio upstream "/bin/sh": connection closed: calling "initialize": EOF; token ` + secret)
+	got := redactUpstreamError(raw, entry).Error()
+
+	want := `connect mcp stdio upstream "/bin/sh": connection closed: calling "initialize": EOF; token [redacted]`
+	if got != want {
+		t.Fatalf("redacted text\n got: %s\nwant: %s", got, want)
+	}
+
+	// An entry whose only values are short has nothing to scrub at all.
+	shortOnly := config.MCPServerEntry{ID: "y", Env: map[string]string{"DEBUG": "1", "FLAG": "on"}}
+	if text := redactUpstreamError(raw, shortOnly).Error(); text != raw.Error() {
+		t.Fatalf("short values rewrote the text: %s", text)
+	}
+}
+
+// net/http does not print a URL as it was written: the scheme is lower-cased, the
+// path is percent-encoded and a userinfo password is masked. A secret URL read
+// from a reference must be scrubbed from the text that actually appears.
+func TestFileCredentialURL_IsRedactedInTheFormNetHTTPPrints(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const written = "HTTP://user:pa55wordSecret@127.0.0.1:1/tok^en(1)[x]/ü secret?key=qvalue123&b=second456"
+	cred := filepath.Join(home, "url")
+	if err := os.WriteFile(cred, []byte(written+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	catalog := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(catalog, "mcp-servers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "id: remote\ntransport: http\nurl: \"file://" + cred + "\"\n"
+	if err := os.WriteFile(filepath.Join(catalog, "mcp-servers", "remote.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := config.LoadMCPServers(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := entries[0]
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, entry.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rawErr := http.DefaultClient.Do(req)
+	if rawErr == nil {
+		t.Fatal("expected the connection to port 1 to fail")
+	}
+	// Precondition: the error carries the secret, but NOT in the form it was written in.
+	if strings.Contains(rawErr.Error(), written) {
+		t.Fatalf("precondition: net/http printed the URL as written; this test needs a re-serialised URL: %v", rawErr)
+	}
+	for _, leaked := range []string{"tok%5Een", "qvalue123", "second456"} {
+		if !strings.Contains(rawErr.Error(), leaked) {
+			t.Fatalf("precondition: the raw error should carry %q in some form: %v", leaked, rawErr)
+		}
+	}
+
+	got := redactUpstreamError(rawErr, entry).Error()
+	for _, leaked := range []string{"tok%5Een", "tok^en", "qvalue123", "second456", "%C3%BC", "pa55wordSecret"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("scrubbed text still carries %q:\n%s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "[redacted]") {
+		t.Fatalf("the endpoint should be scrubbed, not dropped: %s", got)
 	}
 }

@@ -1,8 +1,8 @@
 package mcpadapter
 
 import (
-	"github.com/hollis-labs/go-mcp/supervise"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/redact"
 )
 
 // redactedError is an upstream error whose text has had the upstream's
@@ -25,12 +25,18 @@ func (e *redactedError) Unwrap() error { return e.err }
 // "upstream unavailable" log line and into ServerStatus.Error, which
 // mux_health and the sysop API return. Errors with nothing to scrub are
 // returned as they were.
+//
+// This is error text, which is whole, so it uses internal/redact (exact matches
+// only, nothing shorter than four bytes), not supervise.Redact. supervise.Redact
+// is written for a stderr tail that can be cut mid-value: it has no minimum
+// length and blanks a secret's edge fragments, so a short env value such as "1"
+// or "on" turned "connect" into "c[redacted]nect".
 func redactUpstreamError(err error, entry config.MCPServerEntry) error {
 	if err == nil {
 		return nil
 	}
 	text := err.Error()
-	if got := supervise.Redact(text, stderrRedactionValues(entry)); got != text {
+	if got := redact.Text(text, stderrRedactionValues(entry)); got != text {
 		return &redactedError{text: got, err: err}
 	}
 	return err

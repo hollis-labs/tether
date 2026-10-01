@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -116,10 +117,40 @@ func isFileRef(s string) bool {
 	return strings.HasPrefix(s, fileRefPrefix)
 }
 
+// urlRedactionValues lists the strings under which a secret URL can appear in an
+// error. net/http re-serialises the URL it fails on: the scheme is lower-cased,
+// a path with characters such as ^ * ( ) [ ] or a space or non-ASCII is
+// percent-encoded, and a userinfo password is masked as ***. So the URL as
+// written is not enough: this also returns the parsed form, the path in both
+// spellings, the query, each query value, and the userinfo password.
+func urlRedactionValues(raw string) []string {
+	values := []string{raw}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return values
+	}
+	values = append(values, u.String())
+	if u.Path != "" && u.Path != "/" {
+		values = append(values, u.Path, u.EscapedPath())
+	}
+	if u.RawQuery != "" {
+		values = append(values, u.RawQuery)
+		for _, vs := range u.Query() {
+			values = append(values, vs...)
+		}
+	}
+	if u.User != nil {
+		if pw, ok := u.User.Password(); ok {
+			values = append(values, pw)
+		}
+	}
+	return values
+}
+
 // resolveFileRef reads the credential file s names. The path is whatever follows
 // file://: absolute, or ~/ for the operator's home. It is used exactly as the
-// catalog wrote it: ${VAR} is not expanded inside a file:// reference, so an
-// environment variable cannot choose which file is read.
+// catalog wrote it: ${VAR} is not expanded inside a file:// reference. (~ follows
+// $HOME, which a launch's environment can set; an absolute path pins the file.)
 //
 // Like resolveSecretRef, the value never reaches the returned error: only the
 // field and the path (the reference), which are non-sensitive by construction.
@@ -180,8 +211,8 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	if entry.URL != rawURL {
 		// A url that came from a reference is itself a secret (for example
 		// https://host/<token>). It reaches connect errors and logs, which scrub
-		// these values.
-		entry.argumentRedactionValues = append(entry.argumentRedactionValues, entry.URL)
+		// these values, and net/http does not print it as written; see urlRedactionValues.
+		entry.argumentRedactionValues = append(entry.argumentRedactionValues, urlRedactionValues(entry.URL)...)
 	}
 	if len(entry.Args) > 0 {
 		args := make([]string, len(entry.Args))

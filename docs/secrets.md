@@ -62,10 +62,16 @@ How a reference is recognised:
 
 - A value is a file reference only if the catalog YAML says `file://…`. A value
   that merely *becomes* `file://…` through a `${VAR}` stays a literal: a launch's
-  caller can set environment variables, and they must not choose which file the
-  proxy reads.
-- `${VAR}` is not expanded inside a `file://` reference. Write an absolute path
-  or `~/`; a path with `${VAR}` in it is refused as relative.
+  caller can set environment variables, and they must not be able to turn an
+  ordinary value into a credential-file read.
+- `${VAR}` is not expanded inside a `file://` reference, so the path is used as
+  written. `file://${VAR}/x` is refused as a relative path, and `file:///a/${X}`
+  is a literal absolute path (it fails as not found unless a directory is really
+  named `${X}`).
+- **`~` still follows `$HOME`**, and a launch's environment can set `$HOME`, so
+  `file://~/cred` can end up reading `<another home>/cred` (the 0600, ownership
+  and symlink checks still apply, and that other home becomes a root a symlink
+  may resolve into). Use an absolute path in a catalog entry to pin the file.
 - A literal value written as `file://…` in an MCP entry's `args:`, `env:`,
   `token:` or `url:` is read as a credential file, so one that is not a
   credential file fails the load. No entry in the live catalog has one.
