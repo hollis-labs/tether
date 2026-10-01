@@ -4,15 +4,39 @@ Tether is a single-user, same-host control plane. An agent it launches runs
 under the operator's own uid, so every layer below narrows what the agent can
 do by default; none of them is a boundary against a hostile agent. This page
 is the one place that says **which layer covers which resource, and what is
-still open**, so that nobody has to reconstruct it from five changelog entries.
-[SECURITY.md](../SECURITY.md) states the deployment boundary; this page is the
-inventory.
+still open**, so that nobody has to reconstruct it from a dozen changelog
+entries. [SECURITY.md](../SECURITY.md) states the deployment boundary; this
+page is the inventory.
 
-> **The headline.** Today an agent Tether launches can **read** the catalog,
-> including the plaintext credentials in it, the state database, which holds
-> every session and message, and the MCP tokens. Every layer below that
-> protects a directory protects it from being **written**; none of them hides
-> it. That is the largest open item, and it is tracked as CW-20261001-0263.
+> **Three things to read first.**
+>
+> 1. **Today an agent can read the control plane.** The catalog, including
+>    the plaintext credentials in it, the state database, which holds every
+>    session and message, and the MCP tokens are all readable by an agent.
+>    Every protection below that protects a directory protects it from being
+>    *written*; none of them hides it. Tracked as CW-20261001-0263.
+> 2. **Codex is not protected by Tether's write-protection** (as of #87).
+>    Claude and OpenCode agents run with the catalog root and the run
+>    directory read-only, and a write attempt fails with "Read-only file
+>    system". Codex runs under its own `workspace-write` sandbox instead,
+>    which keeps its *shell* out of the catalog, but **Codex spawns every MCP
+>    server it is given outside that sandbox**, at the operator's uid. A Codex
+>    agent can therefore reach the catalog through MCP tools. `GET /health`,
+>    `mux doctor` and the daemon log say `codex: not protected
+>    (CW-20261001-0230)`. See the Codex row.
+> 3. **All of it is advisory against a hostile worker until the daemon can
+>    tell an agent caller from the operator** (CW-20260930-0253). Any process
+>    that can reach `muxd.sock`, a worker included, can call `POST /sessions`
+>    with `agent_inline` (extra flags and environment per provider),
+>    `injection` and an MCP server list, and so shape the launch it asks for.
+>    Scoping the MCP tool is not a boundary, because the daemon API accepts the
+>    same fields from anyone on the socket. The sandbox-profile rule (#85), the
+>    MCP allow-list (#88) and the catalog policy guard are all advisory against
+>    such a worker until then.
+>
+> The protection is **Linux-only** (macOS is CW-20261001-0138), and an
+> operator can turn it off with `TETHER_SANDBOX_PROTECT=0` (or `false`) in
+> muxd's environment.
 
 > **Draft.** This describes the state once the open layers below have landed.
 > A row that depends on an unmerged change says so. Update it when a
@@ -24,10 +48,11 @@ inventory.
 |---|---|---|
 | CW-20261001-0130 (#84) | A launch of an agent that names a sandbox profile the catalog does not define is refused (404), instead of running with no sandbox | merged |
 | CW-20261001-0145 (#85) | A session-create override (`agent_file`, `agent_inline`) may not change a catalog agent's pinned sandbox profile (403); it may only tighten an agent that has none | merged |
-| CW-20261001-0142 (#87) | On Linux, the catalog root and the daemon's run directory are read-only for every launched agent, under `bwrap`; ACP launches are refused while it is on. Codex runtimes are exempt from Tether's `bwrap` and rely on codex's own sandbox (see the Codex row). Planted workers no longer carry `catalog.write`, so `mux_agent_create` and `mux_agent_edit` from inside an agent are refused with `insufficient_scope` | open (head 1746fd5, in re-review) |
-| CW-20261001-0227 (#88) | A launched Claude agent loads only the MCP servers Tether plants (`--strict-mcp-config`), and every launched agent's `mux` proxy is confined (`--confine`) to an allow-list of upstreams | open |
-| CW-20261001-0173 (#89) | The `mux mcp` planted in each agent is `--daemon-only`: it never opens the state database, reads Tether's state through the daemon, and the daemon records each tool call | open |
-| CW-20261001-0173, second PR | The state directory joins the read-only set. Lands after #89 and #87, never before: until the planted server is daemon-only, a read-only state directory breaks every agent's mux tools | not yet opened |
+| CW-20261001-0173 (#89) | The `mux mcp` planted in each agent is `--daemon-only`: it never opens the state database, reads Tether's state through the daemon, and the daemon records each tool call | merged |
+| CW-20261001-0227 (#88) | A launched Claude agent loads only the MCP servers Tether plants (`--strict-mcp-config`), and every launched agent's `mux` proxy is confined (`--confine`) to an allow-list of upstreams, in the daemon-only proxy as well as the in-process one | merged |
+| CW-20261001-0229 (#90) | An MCP-server catalog entry can take a credential from a 0600 file (`file://`) instead of carrying it in the YAML or on a command line | merged |
+| CW-20261001-0142 (#87) | On Linux, the catalog root and the daemon's run directory are read-only for every agent Tether wraps, under `bwrap`; ACP launches are refused while it is on. **Codex is not wrapped and not protected**, and is flagged as such. The planted `mux mcp` refuses `mux_agent_create` and `mux_agent_edit` writes under the catalog and run directory for every runtime, Codex included | open (head 7a9c0c4) |
+| CW-20261001-0173, second PR | The state directory joins the read-only set for the agents Tether wraps. Lands after #87, never before it | not yet opened |
 
 ## The matrix
 
@@ -37,16 +62,17 @@ table hides a file from an agent unless it says so; reads are their own row.
 | Resource | Protected how | Still open | Follow-up |
 |---|---|---|---|
 | **Reading the control plane** (the catalog's plaintext credentials, the state database with every session and message, the MCP tokens in each `.mcp.json` and in the operator's client configs) | **Nothing.** Write protection does not cover reads | **Today an agent can read all of it.** The credentials and tokens are readable by the agent, and the state database holds every other agent's sessions and messages. This is a gap in every row below | CW-20261001-0263 |
-| **Catalog root** (launch, agent, provider and MCP-server definitions, and the plaintext credentials they hold) | Read-only for the agent, by real path, on Linux (#87), except for codex, which has its own sandbox (Codex row). The daemon and the operator can still write it. Planted workers no longer carry `catalog.write`, so an agent cannot create or edit a catalog agent through its MCP tools | **Reading it** (first row). macOS: not applied. `TETHER_SANDBOX_PROTECT=0` turns it off (the daemon logs a WARN, `mux doctor` asks the daemon and warns) | CW-20261001-0263 (read denial), CW-20261001-0138 (macOS) |
-| **Run directory** (`muxd.pid`, `muxd.sock`) | Read-only for the agent (#87), when it lies in the catalog's parent or in `~/.tether`; a pid file in a shared directory such as `/tmp` is skipped | Connecting to the socket: see the next row | CW-20260930-0253 |
-| **The daemon's HTTP API** (`muxd.sock`) | Nothing stops `connect(2)`. The override rule (#85) stops an agent from loosening its own sandbox through a child session | The socket is the full, unauthenticated API, including writes the daemon makes on the caller's behalf. The MCP token and scopes are checked inside the agent's own `mux mcp`, so an agent that calls the socket directly bypasses them. The #85 rule is interim and is removed when identity lands | CW-20260930-0253 (verified caller identity), CW-20260918-0037 (the audit it came from) |
-| **State database** (`defaults.state_db`: every session, message and event) | The planted `mux mcp` never opens it (#89). The directory is read-only for the agent (second PR), so the agent cannot write the database or replace it or its WAL files. A `mux` command an agent runs by hand that opens the database fails inside the sandbox | **Reading it today**, including every other agent's sessions and messages (first row). Writes the daemon makes for the agent through the socket | CW-20261001-0263 (read denial), CW-20260930-0253 |
+| **Catalog root** (launch, agent, provider and MCP-server definitions, and the plaintext credentials they hold) | For Claude, OpenCode and every other agent Tether wraps, on Linux: a read-only bind of the real path (#87); a write attempt fails with "Read-only file system". For **every** runtime, Codex included: the planted `mux mcp` is started with `--protect-path` and refuses `mux_agent_create` and `mux_agent_edit` writes under the catalog and run directory with a typed `catalog_read_only` error. That is a policy of the planted server, not a mount, and it holds against a symlink re-pointed while the call runs (on Linux the destination directory is opened once and judged by its device and inode). Planted workers keep `catalog.write`, since it also gates `scope=project`, which writes into the repository and is not protected | **Reading it** (first row). **Codex is not covered** (Codex row). macOS: not applied. `TETHER_SANDBOX_PROTECT=0` turns it off (the daemon logs a WARN, `mux doctor` warns) | CW-20261001-0263 (read denial), CW-20261001-0466 (Codex), CW-20261001-0138 (macOS) |
+| **Run directory** (`muxd.pid`, `muxd.sock`) | Read-only for the wrapped agents (#87), when it lies in the catalog's parent or in `~/.tether`; a pid file in a shared directory such as `/tmp` is skipped | Connecting to the socket: see the next row. Codex: as above | CW-20260930-0253 |
+| **The daemon's HTTP API** (`muxd.sock`) | Nothing stops `connect(2)`, and the socket is reachable from inside every agent's sandbox by design, since the planted proxy needs it | The socket is the full, unauthenticated API, including writes the daemon makes on the caller's behalf. The MCP token and scopes are checked inside the agent's own `mux mcp`, so an agent that calls the socket directly bypasses them | CW-20260930-0253 (verified caller identity), CW-20260918-0037 (the audit it came from) |
+| **Caller-supplied launch overrides** (`agent_inline`, `provider_overrides.extra_args`, `injection`, an MCP list, from a planted worker, over the MCP tool or straight at `POST /sessions`) | #85 stops an override from changing a pinned sandbox profile. #88's allow-list and #87's guards limit what a launch is handed by default | **All advisory.** The daemon accepts the same fields from anyone on the socket, so a worker can ask for a launch with wider flags, environment, injection or MCP list. #85's rule closes only the sandbox-profile case, and #88 already notes an agent can widen its MCP list this way | CW-20260930-0253 |
+| **State database** (`defaults.state_db`: every session, message and event) | The planted `mux mcp` never opens it (#89). For the wrapped agents the directory is read-only (second PR), so the agent cannot write the database or replace it or its WAL files; a `mux` command such an agent runs by hand that opens the database fails inside the sandbox | **Reading it today**, including every other agent's sessions and messages (first row). **Codex:** its shell is kept out by Codex's own sandbox, and its planted `mux mcp` holds no handle on the database, but an MCP upstream whose tool writes a caller-chosen path can still reach it. Writes the daemon makes for the agent through the socket | CW-20261001-0263 (read denial), CW-20261001-0230, CW-20260930-0253 |
 | **The agent's own sandbox profile** | An undefined profile refuses the launch (#84). An override cannot change a pinned profile (#85). An agent with no profile runs under a minimal profile whose only effect is the protection above | Everything else about an agent without a pinned profile: Tether leaves it unconfined beyond the protected directories. The #85 rule goes away with identity | CW-20260930-0253 |
-| **MCP servers the agent can call** | A Claude agent loads only the servers Tether plants, so none of the operator's `~/.claude.json` servers, project `.mcp.json` files or claude.ai connectors (#88; `TETHER_CLAUDE_STRICT_MCP=0` turns it off). The planted proxy reaches only its allow-list, by default `torque` and `tesseract` and never `cerberus`; an upstream outside it is never started or resolved and is not reachable through `mux_call` (#88) | An agent that goes looking can create a child session through the API with a wider list, or run an upstream's binary itself. Strict loading is Claude-only: #88 does not cover codex or opencode, and what they load beyond the planted server is not verified | CW-20260930-0253, CW-20261001-0230 |
-| **Upstream MCP credentials** (tokens for `tesseract`, `hadrond`, …) | A non-allow-listed upstream's secrets are never read into the agent's proxy (#88) | An allow-listed upstream runs as a child of the agent's own proxy, with its token on argv, readable by any same-uid process through `/proc/<pid>/cmdline`. The catalog entries that hold them are readable | CW-20261001-0230 (run upstreams daemon-side), CW-20261001-0228 (decision: rotate and move), CW-20261001-0229 (take a credential from a 0600 file), CW-20261001-0257 and CW-20261001-0258 (token from environment or file) |
-| **Tool-call records** (`proxy_events`, the event log) | The planted server cannot write them. It asks the daemon, which checks the record's shape, caps its size and stamps the time itself (#89) | The tool name, server and outcome are the agent process's word until the daemon knows who is calling. Calls to native mux tools are recorded with an empty `session_id` | CW-20260930-0253, CW-20260912-0074 |
+| **Codex runtimes** (`exec`, `app-server`) | **Not protected by Tether's write-protection, as of #87.** Tether does not wrap Codex: its own `workspace-write` sandbox is `bwrap` too, and `bwrap` cannot nest where AppArmor restricts unprivileged user namespaces, so wrapping it would stop it running any shell command. Codex runs under that sandbox as it does on main, which still denies its shell the catalog, the run directory and the state directory ("Read-only file system", seen live with real codex in `exec` and `app-server`). The one thing that holds for Codex is the planted `mux` server's `catalog_read_only` refusal, above | **Codex spawns every MCP server it is given outside its sandbox**, at the operator's uid, so a Codex agent can reach the catalog through MCP tools: `torque_session_launch` with a chosen `workdir` (CW-20261001-0464, reported: inferred from the real tool, not demonstrated end to end), `loom_export_bundle(dir=…)` writing into an arbitrary directory (CW-20261001-0465, reproduced), the `nanite` and `cerberus` host shells if a project grants them, and `tangent.runner_launch`, which runs any host command the caller names. The default allow-list (`torque`, `tesseract`) is not safe for Codex either. `GET /health` (`sandbox_protect.codex`), `mux doctor` (`sandbox-protect-codex`, a warning) and the startup log say `codex: not protected (CW-20261001-0230)` | CW-20261001-0466 (the Codex finding, p1), CW-20261001-0230 (the structural fix: upstreams that run daemon-side), CW-20261001-0464, CW-20261001-0465 |
+| **MCP servers the agent can call** | A Claude agent loads only the servers Tether plants, so none of the operator's `~/.claude.json` servers, project `.mcp.json` files or claude.ai connectors (#88; `TETHER_CLAUDE_STRICT_MCP=0` turns it off). The planted proxy reaches only its allow-list, by default `torque` and `tesseract` and never `cerberus`; an upstream outside it is never started or resolved and is not reachable through `mux_call` (#88) | An agent that goes looking can create a child session through the API with a wider list, or run an upstream's binary itself. Strict loading is Claude-only: #88 does not cover codex or opencode, and what they load beyond the planted server is not verified. **For a Codex agent, the planted proxy and every upstream it starts run outside any sandbox:** `--confine` still limits which upstreams start, but each started upstream has its full tool surface at the operator's uid | CW-20260930-0253, CW-20261001-0230 |
+| **Upstream MCP credentials** (tokens for `tesseract`, `hadrond`, …) | A non-allow-listed upstream's secrets are never read into the agent's proxy (#88). A catalog entry can now take a credential from a 0600 file, and a reference in `env:` keeps it off the command line (#90) | An allow-listed upstream runs as a child of the agent's own proxy. Its token is on argv unless it comes from `env:` or a file, and `tesseract mcp` and `hadrond mcp` currently take their token only as `--token`, so it is readable by any same-uid process through `/proc/<pid>/cmdline`. The catalog entries that hold them are readable. Whether the operator's entries move to the new reference is a decision, not yet taken | CW-20261001-0230 (run upstreams daemon-side), CW-20261001-0228 (decision: rotate and move), CW-20261001-0257 and CW-20261001-0258 (token from environment or file) |
+| **Tool-call records** (`proxy_events`, the `tool_call_*` events) | The planted server cannot write them. It asks the daemon, which checks the record's shape and size, stamps the time itself, and refuses a published record for a session that does not exist (#89) | The tool name, server, outcome and session are the agent process's word: the daemon cannot tell which session is really calling, so a record for another existing session is accepted. Calls to native mux tools are recorded with an empty `session_id`. `POST /broker/envelopes` is another route that writes events with caller-supplied fields | CW-20260930-0253, CW-20260912-0074 |
 | **User and project definition layers** (`~/.tether/agents`, `skills`, `boot-profiles`, a project's `.tether/`) | Nothing. They sit outside the catalog root | Writable. An agent can plant a definition that a later launch resolves | CW-20261001-0192 |
-| **Codex runtimes** (`exec`, `app-server`) | Tether does not wrap codex in its sandbox: codex's own `workspace-write` sandbox, which Tether's accept-edits posture gives it, makes the filesystem read-only except its working directories, `/tmp`, `$TMPDIR` and any `--add-dir`, so the catalog and run directory are outside it (#87). Codex's sandbox is `bwrap` too, and `bwrap` cannot nest where AppArmor restricts unprivileged user namespaces, so wrapping it would stop it running any shell command. Tether withdraws the exemption, and wraps codex like any other agent, when the launch's flags switch codex's sandbox off or widen it (`--dangerously-bypass-approvals-and-sandbox`, `--yolo`, a `danger-full-access` sandbox mode given by `--sandbox`, `-s` or `-c sandbox_mode=…`, an `--add-dir` over a protected directory) or when a protected directory lies in or around `/tmp` or `$TMPDIR`. A codex launch inside a protected directory is refused like any other. Live, in #87's evidence: with real codex 0.159.2 in both `exec` and `app-server`, `touch <catalog>/x` and `touch <run>/x` were denied with "Read-only file system" and `touch <workdir>/x` succeeded | The protection is codex's, not Tether's. **Tether cannot see inside codex's sandbox**, so a defect there would leave the catalog writable to codex. The two conditions are checked at launch only. Where codex's sandbox cannot start for another reason, codex fails as it would without Tether | none |
 | **ACP agents** (Copilot, Pi) | Launches are refused while protection is on (#87) | They cannot be launched while protection is on, until Tether can apply a protect-only sandbox to an ACP agent | CW-20261001-0162 |
 | **`mux boot` and `mux boot-exec`** | None. They run the operator's own Claude, in the operator's terminal, with the operator's own MCP servers. The planted `mux mcp` there is an ordinary one that opens the database | Outside the daemon's launch path by design | none |
 | **Writes delegated to same-uid services** | None | An agent can ask a service running as the same user to write for it, such as `systemd-run --user` or the daemon over its socket. Inherent to running as the operator's uid | CW-20260930-0253, CW-20261001-0263 |
@@ -58,13 +84,20 @@ table hides a file from an agent unless it says so; reads are their own row.
 - **Write protection is not hiding.** `bwrap` binds the host filesystem and
   makes the protected directories read-only. An agent can still read the
   catalog, with the credentials in it, and the state database, with every
-  agent's sessions and messages, and the MCP tokens. go-sandbox's
-  `FS.Protect` is write-only, and its `FS.Deny` is refused on Linux in the
-  host-filesystem mode Tether uses, so closing this is its own piece of work
-  (CW-20261001-0263).
+  agent's sessions and messages, and the MCP tokens (CW-20261001-0263).
+  go-sandbox's `FS.Protect` is write-only, and its `FS.Deny` is refused on
+  Linux in the host-filesystem mode Tether uses.
+- **Codex is the exception to "wrapped".** Where a row says "the agents
+  Tether wraps", it means Claude, OpenCode and the other runtimes, and not
+  Codex. Where the row is about the planted `mux` server's own policy, it
+  holds for every runtime.
 - **Two switches turn layers off, and neither is silent.**
   `TETHER_SANDBOX_PROTECT=0` and `TETHER_CLAUDE_STRICT_MCP=0` each log a WARN
   at daemon start and make `mux doctor` warn.
 - **Identity is the common follow-up.** Most "still open" cells name
   CW-20260930-0253. Until the daemon can tell an agent from the operator,
   anything an agent can ask the daemon to do, it can do.
+- **The structural fix for MCP is CW-20261001-0230.** The planted proxy and
+  the upstreams it starts run inside the agent's process tree, which is why
+  credentials sit on argv and why a Codex agent's upstreams are unsandboxed.
+  Running upstreams in the daemon removes both.
