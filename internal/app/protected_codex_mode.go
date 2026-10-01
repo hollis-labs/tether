@@ -27,7 +27,8 @@ const (
 // per-turn check is registered, the daemon reports "codex: not protected
 // (CW-20261001-0230)", and claude, opencode and the rest stay protected. The
 // planted `mux mcp` is still started with --protect-path, so codex still cannot
-// write the catalog through mux_agent_create or mux_agent_edit.
+// write the catalog through mux_agent_create or mux_agent_edit. Its planted local
+// proxy and stdio descendants are wrapped separately (CW-20261001-0466).
 //
 // The guard (codexOwnsSandbox, the per-turn re-check, Plan.CallerEnv, the
 // config.toml line validator, the MCP-grant rule) stays in the tree, DORMANT
@@ -67,7 +68,7 @@ func codexProtectionState(st ProtectionStatus) CodexProtectionState {
 	case CodexNotProtected:
 		return CodexProtectionState{
 			State:  string(CodexNotProtected),
-			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox, as it did before Tether write-protected the catalog, run/ and state/, and codex spawns every MCP server it is given outside that sandbox, so a codex agent can reach the catalog through MCP tools (torque_session_launch with a chosen workdir, loom_export_bundle to a chosen directory, the nanite and cerberus host shells if granted); the mux tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
+			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox and spawns MCP servers outside that sandbox. Tether wraps the planted local proxy and its stdio descendants to protect catalog, run/ and state/ (CW-20261001-0466); remote upstreams are excluded unless the operator opts in. The MCP config is not pinned and caller identity is pending (CW-20260930-0253), so substituted servers or host services can still reach the catalog (including torque_session_launch and loom_export_bundle); the mux tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
 		}
 	default:
 		return CodexProtectionState{

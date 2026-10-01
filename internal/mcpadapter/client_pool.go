@@ -74,6 +74,7 @@ func (e *RefreshAllError) Error() string {
 
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
+	confineRemote      bool
 	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
@@ -139,6 +140,17 @@ func (p *ClientPool) Start(ctx context.Context) error {
 		p.mu.Lock()
 		p.statuses[entry.ID] = &clientStatus{entry: entry, state: "starting"}
 		p.mu.Unlock()
+		if err := confineUpstreamTransport(entry, p.confineRemote); err != nil {
+			p.mu.Lock()
+			p.statuses[entry.ID].state = "excluded"
+			p.statuses[entry.ID].err = err
+			p.mu.Unlock()
+			slog.Warn("mcp-proxy: upstream excluded", "server", entry.ID, "reason", err.Error())
+			continue
+		}
+		if p.confineRemote && entry.AllowUnconfinedRemote && entry.Transport != "stdio" {
+			slog.Warn("mcp-proxy: operator opted in to an unconfined remote upstream", "server", entry.ID)
+		}
 		initial.Add(1)
 		p.workers.Add(1)
 		go func() { defer p.workers.Done(); p.supervise(ctx, entry, initial.Done) }()
@@ -330,6 +342,9 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 // used, bounded by its own internal handshakeTimeout window, for the
 // connect+initialize handshake itself.
 func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (upstreamClient, error) {
+	if err := confineUpstreamTransport(entry, p.confineRemote); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	connectFn := p.connectFn
 	p.mu.Unlock()

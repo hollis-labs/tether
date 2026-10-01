@@ -15,6 +15,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MCPConfineRemoteEnv marks a planted Codex proxy whose local process tree is protected.
+const MCPConfineRemoteEnv = "TETHER_MCP_CONFINE_REMOTE"
+
 // MCPServerEntry describes one upstream MCP server in the catalog.
 // Files live at <catalogDir>/mcp-servers/*.yaml.
 //
@@ -30,16 +33,19 @@ import (
 // References are resolved only by LoadMCPServers, at spawn time; see
 // resolveEntrySecrets. A catalog listing shows the reference, never the value.
 type MCPServerEntry struct {
-	ID        string            `yaml:"id"`
-	Transport string            `yaml:"transport"` // "stdio" | "sse" | "http"
-	Command   string            `yaml:"command"`   // stdio: binary path
-	Args      []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
-	Env       map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
-	URL       string            `yaml:"url"`       // sse, http: endpoint URL
-	Token     string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
-	Scopes    []string          `yaml:"scopes"`
-	Enabled   *bool             `yaml:"enabled"` // nil → defaults to true
-	Tags      []string          `yaml:"tags"`
+	// AllowUnconfinedRemote is an operator opt-in for HTTP/SSE upstreams that
+	// cannot inherit a protected Codex proxy's local filesystem confinement.
+	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`
+	ID                    string            `yaml:"id"`
+	Transport             string            `yaml:"transport"` // "stdio" | "sse" | "http"
+	Command               string            `yaml:"command"`   // stdio: binary path
+	Args                  []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
+	Env                   map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
+	URL                   string            `yaml:"url"`       // sse, http: endpoint URL
+	Token                 string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
+	Scopes                []string          `yaml:"scopes"`
+	Enabled               *bool             `yaml:"enabled"` // nil → defaults to true
+	Tags                  []string          `yaml:"tags"`
 
 	// argumentRedactionValues carries resolved argument and URL secret material
 	// to the process owner without exposing it through YAML serialization.

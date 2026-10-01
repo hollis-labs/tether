@@ -346,10 +346,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
+		mcpCommand, mcpArgs, err := confineMCPPlant(plan, muxCommandPath(), mcpPlan.Args, mcpProtected)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
-			MuxCommand: muxCommandPath(),
-			MuxArgs:    mcpPlan.Args,
-			MuxEnv:     muxEnvMap(plan.Env),
+			MuxCommand: mcpCommand,
+			MuxArgs:    mcpArgs,
+			MuxEnv:     confinedMCPEnv(plan, mcpProtected),
 		})
 		if err != nil {
 			exit := 1
