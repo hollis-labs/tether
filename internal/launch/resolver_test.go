@@ -226,7 +226,7 @@ func TestResolve_PermissionMode(t *testing.T) {
 		return cat
 	}
 
-	t.Run("claude + global bypass → skip-permissions + mcp-config", func(t *testing.T) {
+	t.Run("claude + global bypass → skip-permissions, no spliced mcp-config", func(t *testing.T) {
 		plan, err := Resolve(base("claude", config.PermissionModeBypass, ""), Input{LaunchID: "l"})
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
@@ -237,8 +237,9 @@ func TestResolve_PermissionMode(t *testing.T) {
 		if !strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
 			t.Errorf("args missing --dangerously-skip-permissions: %v", plan.Args)
 		}
-		if !hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
-			t.Errorf("args missing --mcp-config .mcp.json: %v", plan.Args)
+		// The projection passes the planted .mcp.json itself (CW-20260930-0135).
+		if hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
+			t.Errorf("args splice --mcp-config the projection already passes: %v", plan.Args)
 		}
 	})
 
@@ -253,9 +254,8 @@ func TestResolve_PermissionMode(t *testing.T) {
 		if strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
 			t.Errorf("default mode must not emit --dangerously-skip-permissions: %v", plan.Args)
 		}
-		// --mcp-config is independent of permission mode — always on for claude.
-		if !hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
-			t.Errorf("args missing --mcp-config .mcp.json: %v", plan.Args)
+		if hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
+			t.Errorf("args splice --mcp-config the projection already passes: %v", plan.Args)
 		}
 	})
 

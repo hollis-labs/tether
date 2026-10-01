@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/providertest"
+	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 )
 
 // lockedBuffer is a Fanout stand-in the test can read while the session
@@ -160,5 +161,31 @@ func TestFinish_RecordsTheFailureReason(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "[error] wrapper: ACP session ended: agent exited 3") {
 		t.Fatalf("session.log has no failure reason:\n%s", data)
+	}
+}
+
+func TestRender_DeliberateKinds(t *testing.T) {
+	ev := func(kind runtimeevents.EventKind, payload string) runtimeevents.Event {
+		return runtimeevents.Event{Kind: kind, Payload: []byte(payload)}
+	}
+	for _, tc := range []struct {
+		ev   runtimeevents.Event
+		want string
+	}{
+		{ev(runtimeevents.KindAgentDelta, `{"content":"hello","phase":"message"}`), "hello"},
+		{ev(runtimeevents.KindAgentDelta, `{"content":"musing","phase":"thought"}`), ""},
+		{ev(runtimeevents.KindAgentDelta, `{"content":"musing","thinking":true}`), ""},
+		{ev(runtimeevents.KindAgentToolUse, `{"tool_use":{"name":"read_file"}}`), "\n[tool_use:read_file]\n"},
+		{ev(runtimeevents.KindTurnCompleted, `{}`), "\n[turn_done]\n"},
+		{ev(runtimeevents.KindTurnFailed, `{"error":"boom"}`), "\n[error] boom\n"},
+		{ev(runtimeevents.KindAgentPermissionDenied, `{"display_name":"Bash"}`), "\n[permission_denied:Bash]\n"},
+		{ev(runtimeevents.KindSessionAuthFailed, `{"error":"x"}`), "\n[auth_failed]\n"},
+		{ev(runtimeevents.KindSessionLost, `{}`), "\n[session_lost]\n"},
+		{ev(runtimeevents.KindSessionHeartbeat, `{}`), ""},
+		{ev(runtimeevents.KindStdinWrite, `{"bytes":"x"}`), ""},
+	} {
+		if got := render(tc.ev); got != tc.want {
+			t.Errorf("render(%s %s) = %q, want %q", tc.ev.Kind, tc.ev.Payload, got, tc.want)
+		}
 	}
 }
