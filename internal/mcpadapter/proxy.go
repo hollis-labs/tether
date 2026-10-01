@@ -77,8 +77,9 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		return errorResult(fmt.Sprintf("tool %q not found in registry", call.ToolName)), nil
 	}
 
-	// Native tool reached the proxy — this is a wiring bug in the caller.
-	if rt.ServerID == "" {
+	// Native targets dispatch through an in-memory protocol client in gateway
+	// modes. A metadata-only native registration has no dispatch seam.
+	if rt.ServerID == "" && rt.Client == nil {
 		return nil, fmt.Errorf("internal: native tool %q must not be routed through ProxyRouter", call.ToolName)
 	}
 
@@ -111,7 +112,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 				rt.ServerID, tCall.ToolName,
 			)), nil
 		}
-		if r.pool != nil {
+		if r.pool != nil && rt.ServerID != "" {
 			if err := r.pool.unavailableError(rt.ServerID, rt.Client); err != nil {
 				return errorResult(err.Error()), nil
 			}

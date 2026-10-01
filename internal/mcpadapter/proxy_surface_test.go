@@ -2,146 +2,100 @@ package mcpadapter
 
 import (
 	"context"
-	"sort"
-	"testing"
-
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"gopkg.in/yaml.v3"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
 )
 
-func proxySurfaceToolNamesForTest(t *testing.T, serverFilter []string, only bool) []string {
-	t.Helper()
-
-	reg := NewToolRegistry()
-	mc := &mockClient{}
-	reg.Register("alpha", mc, []*mcpsdk.Tool{makeTool("alpha_tool_a"), makeTool("alpha_tool_b")})
-	reg.Register("beta", mc, []*mcpsdk.Tool{makeTool("beta_tool_x")})
-
-	s := gomcp.NewServer("test", "test")
-	a := &Adapter{}
-	if !only {
-		a.registerTools(s)
-	}
-
-	allowed := make(map[string]struct{}, len(serverFilter))
-	for _, id := range serverFilter {
-		allowed[id] = struct{}{}
-	}
-	firehose := len(allowed) == 0
-	router := NewProxyRouter(reg)
-	idx := NewDiscoveryIndex()
-	idx.Build(reg, nil)
-	live := &liveProxyCatalog{
-		adapter:  a,
-		server:   s,
-		registry: reg,
-		router:   router,
-		index:    idx,
-		allowed:  allowed,
-		firehose: firehose,
-	}
-
-	var proxied []*mcpsdk.Tool
-	for _, def := range reg.AllDefinitions() {
-		rt, ok := reg.Lookup(def.Name)
-		if !ok || rt.ServerID == "" {
-			continue
+func TestProxySurfaceFlatHasNoDiscoveryHatch(t *testing.T) {
+	catalog, _ := proxyCatalog(t, "alpha", "beta")
+	cs := connectProxy(t, catalog, false, "alpha")
+	names := listToolNames(t, cs)
+	for _, name := range []string{"alpha_probe", "tether_health", "tether_gateway_status"} {
+		if !slices.Contains(names, name) {
+			t.Fatalf("missing %s: %v", name, names)
 		}
-		if !firehose {
-			if _, ok := allowed[rt.ServerID]; !ok {
-				continue
-			}
+	}
+	for _, name := range []string{"beta_probe", "tether_tool_search", "tether_tool_list", "tether_tool_call"} {
+		if slices.Contains(names, name) {
+			t.Fatalf("unexpected %s: %v", name, names)
 		}
-		proxied = append(proxied, def)
 	}
-	live.addProxyTools(proxied...)
-
-	if !only {
-		a.registerDiscoverTool(s, idx, allowed, firehose)
-		a.registerSemanticDiscoverTool(s, idx, allowed, firehose)
-		a.registerCallTool(s, router)
-		a.registerMCPServersTool(s, NewClientPool(nil, reg), nil, allowed, firehose)
-		a.registerCatalogRefreshTool(s, NewClientPool(nil, reg))
+}
+func TestProxySurfaceSearchHasOnlyFixedFront(t *testing.T) {
+	catalog, _ := proxyCatalog(t, "alpha", "beta")
+	cs := connectProxyMode(t, catalog, "search", false, "alpha")
+	names := listToolNames(t, cs)
+	want := []string{"tether_gateway_status", "tether_tool_call", "tether_tool_list", "tether_tool_search"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("search front = %v, want %v", names, want)
 	}
+}
 
-	// s.ToolDefinitions() only reflects go-mcp's own RegisterTool bookkeeping,
-	// which addProxyTools deliberately bypasses (see its doc comment) -- so
-	// the full wire-visible surface, regardless of registration path, is read
-	// back through a real ListTools call instead.
-	c := connectInMemory(t, s)
-	resp, err := c.ListTools(context.Background(), &mcpsdk.ListToolsParams{})
+func TestSearchModeHydratesAndCallsNativeTargets(t *testing.T) {
+	catalog, _ := proxyCatalog(t, "alpha")
+	cs := connectProxyMode(t, catalog, "search", true, "alpha")
+	result, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_tool_list", Arguments: map[string]any{"names": []string{"tether_health", "alpha_probe", "beta_probe"}}})
+	if err != nil || result.IsError {
+		t.Fatalf("hydrate: %v %v", result, err)
+	}
+	body := parseToolJSON(t, result)
+	items := body["items"].([]any)
+	for _, i := range []int{0, 1} {
+		if items[i].(map[string]any)["inputSchema"] == nil {
+			t.Fatalf("missing real schema: %+v", items[i])
+		}
+	}
+	if items[2].(map[string]any)["error"] == nil {
+		t.Fatal("excluded target hydrated")
+	}
+	result, err = cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_tool_call", Arguments: map[string]any{"name": "tether_health", "arguments": map[string]any{}}})
+	if err != nil || result.IsError {
+		t.Fatalf("native dispatch: %v %v", result, err)
+	}
+	if parseToolJSON(t, result)["ok"] != true {
+		t.Fatal("native result not preserved")
+	}
+	tools, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
-		t.Fatalf("ListTools: %v", err)
+		t.Fatal(err)
 	}
-	names := make([]string, 0, len(resp.Tools))
-	for _, tl := range resp.Tools {
-		names = append(names, tl.Name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-func hasToolName(names []string, want string) bool {
-	for _, name := range names {
-		if name == want {
-			return true
+	for _, tool := range tools.Tools {
+		if tool.Name == "tether_tool_call" && (tool.Annotations == nil || tool.Annotations.ReadOnlyHint) {
+			t.Fatal("dispatcher claimed read-only")
 		}
 	}
-	return false
 }
 
-func TestProxySurfaceDefaultKeepsNativeAndHatchTools(t *testing.T) {
-	names := proxySurfaceToolNamesForTest(t, nil, false)
-	for _, want := range []string{
-		"alpha_tool_a",
-		"alpha_tool_b",
-		"beta_tool_x",
-		"tether_health",
-		"tether_tool_search",
-		"tether_tool_list",
-		"tether_tool_call",
-		"tether_catalog_list_mcp_servers",
+func TestGatewayStartupRejectsInvalidSelections(t *testing.T) {
+	catalog, fixtures := proxyCatalog(t, "alpha")
+	for _, opts := range []ProxyOptions{
+		{ServerFilter: []string{"not-configured"}},
+		{ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: "flat", Source: "argument"}}, Gateway: stringPointer("directory")}},
 	} {
-		if !hasToolName(names, want) {
-			t.Fatalf("default proxy missing %q in %v", want, names)
+		if err := newTestAdapter(t).RunWithProxyOpts(context.Background(), catalog, opts); err == nil {
+			t.Fatal("invalid selection accepted")
 		}
+		if started(fixtures, "alpha") {
+			t.Fatal("invalid selection started an upstream")
+		}
+	}
+	disabled := false
+	entry := fixtureEntry(t, fixtures, "disabled")
+	entry.Enabled = &disabled
+	raw, err := yaml.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(catalog, "mcp-servers", "disabled.yaml"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := newTestAdapter(t).RunWithProxyOpts(context.Background(), catalog, ProxyOptions{ServerFilter: []string{"disabled"}}); err == nil {
+		t.Fatal("disabled origin accepted")
 	}
 }
-
-func TestProxySurfaceServersKeepsNativeAndHatchTools(t *testing.T) {
-	names := proxySurfaceToolNamesForTest(t, []string{"alpha"}, false)
-	for _, want := range []string{
-		"alpha_tool_a",
-		"alpha_tool_b",
-		"tether_health",
-		"tether_tool_search",
-		"tether_tool_list",
-		"tether_tool_call",
-		"tether_catalog_list_mcp_servers",
-	} {
-		if !hasToolName(names, want) {
-			t.Fatalf("selective proxy missing %q in %v", want, names)
-		}
-	}
-	if hasToolName(names, "beta_tool_x") {
-		t.Fatalf("selective proxy included beta tool: %v", names)
-	}
-}
-
-func TestProxySurfaceOnlySuppressesTetherTools(t *testing.T) {
-	names := proxySurfaceToolNamesForTest(t, []string{"alpha"}, true)
-	want := []string{"alpha_tool_a", "alpha_tool_b"}
-	if len(names) != len(want) {
-		t.Fatalf("only proxy tools = %v, want %v", names, want)
-	}
-	for i := range want {
-		if names[i] != want[i] {
-			t.Fatalf("only proxy tools = %v, want %v", names, want)
-		}
-	}
-	for _, name := range names {
-		if len(name) >= 4 && name[:4] == "tether_" {
-			t.Fatalf("only proxy exposed tether tool %q in %v", name, names)
-		}
-	}
-}
+func stringPointer(value string) *string { return &value }

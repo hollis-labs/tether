@@ -19,6 +19,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 // A real, disposable MCP process. Exit markers are consumed by the child;
@@ -251,15 +252,14 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			adapter.upstreams = pool
 			local := gomcp.NewServer("proxy", "test")
 			adapter.registerTools(local)
-			idx := NewDiscoveryIndex()
 			tags := map[string][]string{"alpha": {"alpha"}, "beta": {"beta"}}
-			idx.Build(registry, tags)
-			live := &liveProxyCatalog{adapter: adapter, server: local, registry: registry, router: router, index: idx, serverTags: tags, firehose: true}
+			live := &liveProxyCatalog{adapter: adapter, server: local, registry: registry, router: router, firehose: true}
 			live.addProxyTools(registry.AllDefinitions()...)
 			pool.SetToolRefreshHandler(live.applyRefresh)
-			adapter.registerDiscoverTool(local, idx, nil, true)
-			adapter.registerSemanticDiscoverTool(local, idx, nil, true)
-			adapter.registerMCPServersTool(local, pool, pool.entries, nil, true)
+			gateway := adapter.gatewayService(registry, router, mcpgateway.Selection{Mode: mcpgateway.Search, Source: "test"}, tags)
+			adapter.registerSearchTool(local, gateway)
+			adapter.registerListTool(local, gateway)
+			adapter.registerGatewayStatus(local, gateway)
 			downstream := connectInMemory(t, local)
 			callBody := func(name string, args map[string]any) map[string]any {
 				res, err := downstream.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
@@ -317,8 +317,12 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 				t.Fatalf("health hid failure: %+v", health)
 			}
 			for _, tool := range []string{"tether_tool_search", "tether_tool_list"} {
-				body := callBody(tool, map[string]any{"intent": "alpha"})
-				if body["complete"] != false || body["count"] != float64(0) || len(body["unavailable_servers"].([]any)) != 1 {
+				args := map[string]any{"query": "alpha"}
+				if tool == "tether_tool_list" {
+					args = map[string]any{"servers": []string{"alpha"}}
+				}
+				body := callBody(tool, args)
+				if body["complete"] != false || body["returned"] != float64(0) || len(body["unavailable_servers"].([]any)) != 1 {
 					t.Fatalf("discovery hid failure: %+v", body)
 				}
 			}
@@ -336,7 +340,7 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			if health := callBody("tether_health", nil); health["ok"] != true {
 				t.Fatalf("health did not recover: %+v", health)
 			}
-			if body := callBody("tether_tool_search", map[string]any{"intent": "no-such-tool-zxy"}); body["complete"] != true || body["count"] != float64(0) {
+			if body := callBody("tether_tool_search", map[string]any{"query": "no-such-tool-zxy"}); body["complete"] != true || body["returned"] != float64(0) {
 				t.Fatalf("no-match: %+v", body)
 			}
 			b, _ := os.ReadFile(filepath.Join(dir, "alpha.events"))

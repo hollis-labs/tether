@@ -1,7 +1,9 @@
 package settings
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"time"
 )
 
@@ -71,6 +73,16 @@ func (s Setting) Validate() error {
 	}
 	if s.Key == "" {
 		return fmt.Errorf("settings key cannot be empty")
+	}
+	if s.Key == KeyMCPDiscoveryMode {
+		if s.Scope != ScopeGlobal {
+			return fmt.Errorf("mcp.discovery_mode is a global daemon fallback")
+		}
+		var mode string
+		if err := json.Unmarshal([]byte(s.ValueJSON), &mode); err != nil {
+			return fmt.Errorf("mcp.discovery_mode must be a JSON string: %w", err)
+		}
+		return mcpgateway.ValidateMode(mode)
 	}
 	return nil
 }

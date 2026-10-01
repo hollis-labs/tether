@@ -24,6 +24,8 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
+- **Selectable MCP discovery mode** (CW-20261001-0542): flat remains the default with no discovery/dispatch hatch; explicit search exposes `tether_tool_search`, `tether_tool_list`, `tether_tool_call` and `tether_gateway_status`. Argument/env/config/persisted settings select the mode, with every supplied value validated. List supports enumeration and exact schema hydration, search supports summary/schema detail, and cursors reject changed inventories. `--servers` restricts loading and every call path; unknown/disabled IDs fail, and `--broker` is removed. Profile selection follows separately.
+
 - CW-20260926-0007: clean break from mux to tether (CLI, MCP tool/server names, environment and socket paths); no compatibility aliases. Durable identity authorities and historical SQL are retained.
 
 - **Library bump: go-agent-wrapper v0.25.6, agentkit v0.21.0, go-providers v0.42.0, go-sandbox v0.6.0, go-runner v0.8.2, go-llm-contracts v0.4.0** (go-llm-types stays at v0.5.1). (CW-20261001-0210) Every first-turn argv, and every other runtime's argv, is byte-identical to before, because Tether launches through the prepared launch template and agentkit v0.21.0 changes only the path without one. The one argv that changes is a codex exec turn that resumes a thread, which gains `resume <id>` (first bullet below). What changes, as measured on a live daemon with the real codex-cli 0.159.3:

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 
@@ -18,6 +16,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 // rawProxyHandler wraps fn -- a dispatch from decoded arguments/meta to a raw
@@ -49,22 +48,19 @@ func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, 
 }
 
 type liveProxyCatalog struct {
-	mu         sync.Mutex
-	adapter    *Adapter
-	server     *gomcp.Server
-	registry   *ToolRegistry
-	router     *ProxyRouter
-	index      *DiscoveryIndex
-	serverTags map[string][]string
-	allowed    map[string]struct{}
-	firehose   bool
+	mu       sync.Mutex
+	adapter  *Adapter
+	server   *gomcp.Server
+	registry *ToolRegistry
+	router   *ProxyRouter
+	allowed  map[string]struct{}
+	firehose bool
 }
 
 func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.index.Build(c.registry, c.serverTags)
 	if len(refresh.Delta.Removed) > 0 {
 		c.server.SDKServer().RemoveTools(c.filterNativeToolNames(refresh.ServerID, refresh.Delta.Removed)...)
 	}
@@ -194,36 +190,18 @@ type ProxyOptions struct {
 	// the MCP tool.
 	ProxyStore ProxyEventQuerier
 
-	// BrokerMode, when true, enables progressive tool discovery instead of
-	// registering every upstream tool at startup. Only tether_tool_search,
-	// tether_tool_call, and tether_catalog_list_mcp_servers are registered with the MCP
-	// server. The LLM queries tether_tool_search to receive tool schemas on demand,
-	// then calls tether_tool_call to execute them. This reduces per-request context
-	// size by an order of magnitude for large upstream catalogs.
-	//
-	// Deprecated: use ServerFilter instead. BrokerMode is kept for backward
-	// compatibility and still works.
-	BrokerMode bool
-
-	// ServerFilter, when non-empty, limits which upstream servers are registered
-	// as native flat tools. Servers not in the list are still reachable via
-	// tether_tool_search + tether_tool_call. Empty means all servers (firehose). Only
-	// consulted when BrokerMode is false.
+	// ModeInputs are resolved once before any upstream starts. The profile
+	// tier is a typed hook; selecting/filtering profiles belongs to CW-0008.
+	ModeInputs mcpgateway.ModeInputs
+	// ServerFilter is a strict upstream restriction in both discovery modes.
+	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
-
-	// Confine restricts the proxy to ServerFilter: only those upstreams are
-	// loaded (their secrets resolved), started and registered, and
-	// tether_tool_search, tether_tool_call and the catalog introspection tools cannot see
-	// or reach any other. Without it ServerFilter only chooses which tools
-	// are registered as flat tools, every upstream is started, and the rest
-	// stay reachable through tether_tool_search + tether_tool_call. Tether's planted proxy
-	// sets it, so a launched agent's proxy holds only the upstreams it was
-	// granted (CW-20261001-0227). An empty ServerFilter confines to none.
+	// Confine also treats a nil filter as an explicit grant of no upstreams.
 	Confine bool
 
 	// Only enables curated external-client mode. Only upstream tools from
-	// ServerFilter are registered. Native Tether tether_* tools, tether_tool_search,
-	// tether_tool_list, tether_tool_call, and proxy catalog tools are suppressed.
+	// ServerFilter are registered. Native Tether targets are suppressed; gateway infrastructure
+	// follows the discovery mode.
 	Only bool
 }
 
@@ -278,28 +256,45 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
 func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts ProxyOptions) error {
-	var entries []config.MCPServerEntry
-	var err error
-	if opts.Confine {
-		var unknown []string
-		entries, unknown, err = config.LoadMCPServersConfined(catalogDir, opts.ServerFilter)
-		if len(unknown) > 0 {
-			slog.Warn("mcp-proxy: confined to servers that are not enabled in the catalog; they are skipped", "servers", unknown)
-		}
-		slog.Info("mcp-proxy: confined to the granted upstreams", "granted", opts.ServerFilter, "loaded", len(entries))
-	} else {
-		entries, err = config.LoadMCPServers(catalogDir)
-	}
-	if err != nil {
-		return fmt.Errorf("load mcp-servers catalog: %w", err)
-	}
+	return a.RunWithGatewayOpts(ctx, catalogDir, opts, true)
+}
 
+// RunWithGatewayOpts serves the same policy for native-only and proxy clients.
+func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opts ProxyOptions, proxy bool) error {
+	selection, err := mcpgateway.ResolveMode(opts.ModeInputs)
+	if err != nil {
+		return err
+	}
 	registry := NewToolRegistry()
+	s := a.newBareServer()
+	var entries []config.MCPServerEntry
+	if proxy {
+		authored, loadErr := config.LoadMCPServerCatalog(catalogDir)
+		if loadErr != nil {
+			return loadErr
+		}
+		selected := opts.ServerFilter
+		if selected == nil && !opts.Confine {
+			selected = []string{}
+			for _, entry := range authored {
+				if entry.IsEnabled() {
+					selected = append(selected, entry.ID)
+				}
+			}
+		}
+		var unknown []string
+		entries, unknown, err = config.LoadMCPServersConfined(catalogDir, selected)
+		if err != nil {
+			return fmt.Errorf("load mcp-servers catalog: %w", err)
+		}
+		if len(unknown) > 0 {
+			return fmt.Errorf("unknown or disabled MCP server IDs: %s", strings.Join(unknown, ", "))
+		}
+	}
 	pool := NewClientPool(entries, registry)
 	pool.runtime = a.runtime
 	a.upstreams = pool
-
-	// Wire LoggingMiddleware when a Bus or a Publisher is provided.
+	defer pool.Shutdown()
 	var mws []ToolCallMiddleware
 	switch {
 	case opts.Bus != nil:
@@ -307,550 +302,66 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	case opts.Publisher != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(entries)))
 	}
-
-	// Subscribe EventStore to Bus so it receives tool_call_end events.
 	if opts.Bus != nil && opts.EventStore != nil {
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}
-
-	s := a.newBareServer()
-
-	// Register LoggingMiddleware as a server-level receiving middleware (over
-	// every tools/call dispatch, regardless of registration path) so that ALL
-	// tool calls — native tether tools and proxied upstream tools alike — emit
-	// tool_call_start / tool_call_end events. This covers native tools
-	// (tether_health, tether_session_list, tether_message_*, etc.) which previously
-	// bypassed the ProxyRouter and were never recorded.
-	//
-	// Because the server-level middleware now observes every call, we build a
-	// plain router (no middleware) for upstream dispatch to avoid double-logging.
 	if len(mws) > 0 {
 		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws))
 	}
-
-	// Plain router — no middleware; observation is handled server-side above.
-	plainRouter := NewProxyRouter(registry)
-	plainRouter.pool = pool
-	plainRouter.SetLogger(a.logger())
+	router := NewProxyRouter(registry)
+	router.pool = pool
+	router.SetLogger(a.logger())
 	if a.readsViaDaemon() || (a.svc != nil && a.svc.Store != nil) {
-		plainRouter.SetWorkstreamResolver(a.sessionWorkstreamID)
+		router.SetWorkstreamResolver(a.sessionWorkstreamID)
 	}
-
-	if opts.Only && len(opts.ServerFilter) == 0 {
-		return fmt.Errorf("curated proxy --only requires a non-empty server filter")
-	}
-	if opts.Only && opts.BrokerMode {
-		return fmt.Errorf("curated proxy --only cannot be combined with broker mode")
-	}
-
-	// Register native tether tools unless curated mode asks for only the selected
-	// upstream surface.
+	var nativeSession *mcpsdk.ClientSession
 	if !opts.Only {
-		a.registerTools(s)
+		native := a.newServer()
+		a.registerCatalogRefreshTool(native, pool)
+		switch {
+		case opts.ProxyStore != nil:
+			a.registerToolCallEventsTool(native, opts.ProxyStore)
+		case opts.EventStore != nil:
+			a.registerToolCallEventsTool(native, &toolCallEventStoreQuerier{store: opts.EventStore})
+		}
+		serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
+		serverSession, connectErr := native.SDKServer().Connect(ctx, serverTransport, nil)
+		if connectErr != nil {
+			return connectErr
+		}
+		defer func() { _ = serverSession.Close() }()
+		nativeSession, err = mcpsdk.NewClient(&mcpsdk.Implementation{Name: "tether-local-dispatch", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = nativeSession.Close() }()
+		// List every page: native tools are eligible targets in both modes.
+		for page, listErr := range nativeSession.Tools(ctx, nil) {
+			if listErr != nil {
+				return listErr
+			}
+			registry.RegisterLocal(page, nativeSession)
+		}
 	}
-
-	// Build discovery index for proxy modes. Normal and broker modes expose it
-	// through tether_tool_search/tether_tool_list; curated --only mode keeps the
-	// index internal so the selected upstream tools are the entire surface.
-	serverTags := make(map[string][]string, len(entries))
-	for _, e := range entries {
-		serverTags[e.ID] = e.Tags
+	tags := map[string][]string{}
+	for _, entry := range entries {
+		tags[entry.ID] = entry.Tags
 	}
-	idx := NewDiscoveryIndex()
-
-	// Build allowed-server set. Empty = all servers (firehose).
-	// Threaded into tether_tool_search and tether_catalog_list_mcp_servers so their
-	// responses can mark which tools/servers are reachable directly vs. only
-	// via tether_tool_call.
-	allowed := make(map[string]struct{}, len(opts.ServerFilter))
-	for _, id := range opts.ServerFilter {
-		allowed[id] = struct{}{}
-	}
-	firehose := len(allowed) == 0
-	liveCatalog := &liveProxyCatalog{
-		adapter:    a,
-		server:     s,
-		registry:   registry,
-		router:     plainRouter,
-		index:      idx,
-		serverTags: serverTags,
-		allowed:    allowed,
-		firehose:   firehose && !opts.BrokerMode,
-	}
-	pool.SetToolRefreshHandler(liveCatalog.applyRefresh)
-
-	// Start pool concurrently — failed upstreams are logged but do not abort.
+	live := &liveProxyCatalog{adapter: a, server: s, registry: registry, router: router, allowed: map[string]struct{}{}, firehose: selection.Mode == mcpgateway.Flat}
+	pool.SetToolRefreshHandler(live.applyRefresh)
 	if err := pool.Start(ctx); err != nil {
-		return fmt.Errorf("client pool start: %w", err)
+		return err
 	}
-	defer pool.Shutdown()
-	idx.Build(registry, serverTags)
-	slog.Info("mcp-proxy: discovery index built", "indexed_tools", idx.Len())
-
-	if opts.BrokerMode {
-		// ── Broker mode (deprecated) ─────────────────────────────────────────
-		// Pure discovery: no upstream tools registered natively.
-		// Kept for backward compatibility; --servers filtering is preferred.
-		slog.Warn("mcp-proxy: --broker is deprecated; use --proxy with optional --servers instead")
-		slog.Info("mcp-proxy: broker mode — registering tether_tool_search + tether_tool_call only",
-			"upstream_tools", len(registry.AllDefinitions()))
-		// In broker mode no upstream tool is registered natively: pass an empty
-		// allowed set with firehose=false so every tool reports native=false.
-		a.registerDiscoverTool(s, idx, map[string]struct{}{}, false)
-		a.registerSemanticDiscoverTool(s, idx, map[string]struct{}{}, false)
-		a.registerCallTool(s, plainRouter)
+	gateway := a.gatewayService(registry, router, selection, tags)
+	if selection.Mode == mcpgateway.Flat {
+		live.addProxyTools(registry.AllDefinitions()...)
 	} else {
-		// ── Selective flat mode ───────────────────────────────────────────────
-		if firehose {
-			slog.Info("mcp-proxy: flat mode (firehose) — registering all upstream tools natively",
-				"upstream_tools", len(registry.AllDefinitions()))
-		} else {
-			slog.Info("mcp-proxy: selective flat mode — filtering upstream tools",
-				"servers", opts.ServerFilter,
-				"upstream_tools", len(registry.AllDefinitions()))
-		}
-
-		proxied := make([]*mcpsdk.Tool, 0)
-		for _, def := range registry.AllDefinitions() {
-			rt, ok := registry.Lookup(def.Name)
-			if !ok || rt.ServerID == "" {
-				continue
-			}
-			if !firehose {
-				if _, inFilter := allowed[rt.ServerID]; !inFilter {
-					continue
-				}
-			}
-			slog.Debug("mcp-proxy: registering proxied tool", "tool", def.Name, "server", rt.ServerID)
-			proxied = append(proxied, def)
-		}
-		liveCatalog.addProxyTools(proxied...)
-
-		if !opts.Only {
-			// Always register tether_tool_search + tether_tool_call as a safety hatch so agents
-			// can reach undeclared servers without needing a restart.
-			a.registerDiscoverTool(s, idx, allowed, firehose)
-			a.registerSemanticDiscoverTool(s, idx, allowed, firehose)
-			a.registerCallTool(s, plainRouter)
-		}
+		a.registerSearchTool(s, gateway)
+		a.registerListTool(s, gateway)
+		a.registerCallTool(s, gateway)
 	}
-
-	if !opts.Only {
-		// Introspection tools are registered in normal proxy modes. Curated
-		// --only mode suppresses them so tools/list contains only selected
-		// upstream tools.
-		a.registerMCPServersTool(s, pool, entries, allowed, firehose)
-		a.registerCatalogRefreshTool(s, pool)
-	}
-
-	// Register tether_events_tool_calls when a durable proxy store is wired.
-	// Falls back to EventStore for backwards compatibility when ProxyStore
-	// is not set (e.g. tests that only wire the in-memory store).
-	switch {
-	case opts.Only:
-	case opts.ProxyStore != nil:
-		a.registerToolCallEventsTool(s, opts.ProxyStore)
-	case opts.EventStore != nil:
-		a.registerToolCallEventsTool(s, &toolCallEventStoreQuerier{store: opts.EventStore})
-	}
-
+	a.registerGatewayStatus(s, gateway)
 	return s.Run(ctx)
-}
-
-// registerDiscoverTool registers tether_tool_search on s. It lets the LLM search the
-// upstream tool catalog by intent, category, or tags without receiving every
-// tool schema upfront. Returns up to `limit` matching tool schemas as JSON.
-//
-// nativeServers is the set of upstream server IDs whose tools were registered
-// natively at startup (the --servers filter). When firehose is true, every
-// server's tools are native and nativeServers is ignored. The discover handler
-// uses these to mark each result with native: bool so the LLM knows whether
-// to call the tool directly or wrap it in tether_tool_call.
-func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
-	isNative := func(serverID string) bool {
-		if firehose {
-			return true
-		}
-		_, ok := nativeServers[serverID]
-		return ok
-	}
-
-	a.addTool(s, gomcp.Tool{
-		Name: "tether_tool_search",
-		Description: "Search the upstream tool catalog by intent, category, or tags. " +
-			"Returns matching tool names, descriptions, input schemas, and a `native` flag.\n\n" +
-			"How to use the result:\n" +
-			"  • If a result has `native: true`, the tool is already in your tool list — " +
-			"call it directly by its `tool_name` (do NOT wrap it in tether_tool_call).\n" +
-			"  • If a result has `native: false`, the tool is reachable only via " +
-			"tether_tool_call(tool_name, arguments).\n" +
-			"  • If the response includes `truncated: true`, narrow your query (more " +
-			"specific intent/category/tags) or raise `limit` (max 50).\n\n" +
-			"Examples:\n" +
-			"  tether_tool_search(intent=\"create a task\")\n" +
-			"  tether_tool_search(category=\"memory\")\n" +
-			"  tether_tool_search(intent=\"list sessions\", limit=20)",
-		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("intent", "Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')", false),
-			gomcp.StringProp("category", "Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')", false),
-			gomcp.StringProp("tags", "Comma-separated additional tag filters (AND semantics)", false),
-			gomcp.StringProp("limit", "Max tools to return (default 10, max 50)", false),
-		),
-		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			intent := str(args, "intent")
-			category := str(args, "category")
-			tagsRaw := str(args, "tags")
-			limit := intArg(args, "limit", 10)
-
-			var extraTags []string
-			for _, t := range strings.Split(tagsRaw, ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					extraTags = append(extraTags, t)
-				}
-			}
-
-			statuses := a.upstreamStatus()
-			results, totalMatches := idx.search(intent, category, extraTags, limit, unavailableIDs(statuses))
-
-			tools := make([]map[string]any, 0, len(results))
-			for _, r := range results {
-				tools = append(tools, map[string]any{
-					"tool_name":    r.ToolName,
-					"server":       r.ServerID,
-					"description":  r.Description,
-					"tags":         r.Tags,
-					"input_schema": r.InputSchema,
-					"score":        r.Score,
-					"native":       isNative(r.ServerID),
-				})
-			}
-
-			truncated := totalMatches > len(results)
-			payload := map[string]any{
-				"ok":                true,
-				"count":             len(tools),
-				"total_match_count": totalMatches,
-				"truncated":         truncated,
-				"tools":             tools,
-				"hint": "Tools with native: true are in your tool list — call them directly by tool_name. " +
-					"Tools with native: false require tether_tool_call(tool_name, arguments).",
-			}
-			if truncated {
-				payload["more_hint"] = fmt.Sprintf(
-					"Returned %d of %d matches. Narrow the query or raise `limit` (max 50) to see more.",
-					len(tools), totalMatches,
-				)
-			}
-			addAvailability(payload, statuses)
-			return toolJSON(payload), nil
-		},
-	}, Reads("searches the merged tool catalog").OpenWorld())
-}
-
-// registerSemanticDiscoverTool registers tether_tool_list. It is the
-// low-token, task-shaped companion to tether_tool_search: ranked recommendations are
-// grouped by server and point callers to schema/detail refs instead of inlining
-// full input schemas.
-func (a *Adapter) registerSemanticDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
-	isNative := func(serverID string) bool {
-		if firehose {
-			return true
-		}
-		_, ok := nativeServers[serverID]
-		return ok
-	}
-
-	a.addTool(s, gomcp.Tool{
-		Name: "tether_tool_list",
-		Description: "Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. " +
-			"Use this before tether_tool_search when you need tool selection help without full schemas.",
-		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("intent", "Free-text description of the task you want to accomplish", true),
-			gomcp.StringProp("category", "Optional exact category/tag filter such as tasks, automation, memory, or services", false),
-			gomcp.StringProp("tags", "Comma-separated additional tag filters (AND semantics)", false),
-			gomcp.StringProp("limit", "Max recommendations to return (default 8, max 20)", false),
-		),
-		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			intent := str(args, "intent")
-			category := str(args, "category")
-			tagsRaw := str(args, "tags")
-			limit := intArg(args, "limit", 8)
-			if limit <= 0 {
-				limit = 8
-			}
-			if limit > 20 {
-				limit = 20
-			}
-
-			var extraTags []string
-			for _, t := range strings.Split(tagsRaw, ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					extraTags = append(extraTags, t)
-				}
-			}
-
-			statuses := a.upstreamStatus()
-			results, totalMatches := idx.search(intent, category, extraTags, limit, unavailableIDs(statuses))
-			payload := semanticDiscoveryPayload(intent, results, totalMatches, isNative)
-			addAvailability(payload, statuses)
-			return toolJSON(payload), nil
-		},
-	}, Reads("searches the merged tool catalog").OpenWorld())
-}
-
-func semanticDiscoveryPayload(intent string, results []SearchResult, totalMatches int, isNative func(string) bool) map[string]any {
-	type recommendation struct {
-		CallName string         `json:"call_name"`
-		Server   string         `json:"server"`
-		Summary  string         `json:"summary"`
-		Tags     []string       `json:"tags,omitempty"`
-		Safety   string         `json:"safety"`
-		Native   bool           `json:"native"`
-		Why      string         `json:"why"`
-		Score    int            `json:"score"`
-		Refs     map[string]any `json:"refs"`
-	}
-	type group struct {
-		Server          string           `json:"server"`
-		Domain          string           `json:"domain"`
-		Recommendations []recommendation `json:"recommendations"`
-	}
-
-	groupsByServer := make(map[string]*group)
-	order := make([]string, 0)
-	for _, r := range results {
-		g, ok := groupsByServer[r.ServerID]
-		if !ok {
-			g = &group{
-				Server: r.ServerID,
-				Domain: semanticDomain(r),
-			}
-			groupsByServer[r.ServerID] = g
-			order = append(order, r.ServerID)
-		}
-		g.Recommendations = append(g.Recommendations, recommendation{
-			CallName: r.ToolName,
-			Server:   r.ServerID,
-			Summary:  conciseSummary(r.Description),
-			Tags:     firstStrings(r.Tags, 3),
-			Safety:   inferToolSafety(r),
-			Native:   isNative(r.ServerID),
-			Why:      recommendationWhy(intent, r),
-			Score:    r.Score,
-			Refs: map[string]any{
-				"schema":   "tools/list:" + r.ToolName,
-				"detail":   "tether_tool_search?intent=" + r.ToolName,
-				"catalog":  "mcp-servers/" + r.ServerID,
-				"examples": "tool-docs:" + r.ToolName + "#examples",
-			},
-		})
-	}
-
-	groups := make([]group, 0, len(order))
-	for _, serverID := range order {
-		groups = append(groups, *groupsByServer[serverID])
-	}
-	return map[string]any{
-		"ok":                true,
-		"query":             intent,
-		"count":             len(results),
-		"total_match_count": totalMatches,
-		"truncated":         totalMatches > len(results),
-		"groups":            groups,
-		"hint":              "Call native recommendations directly. For native=false, use tether_tool_call, or use tether_tool_search for full schemas.",
-	}
-}
-
-func semanticDomain(r SearchResult) string {
-	if len(r.Tags) > 0 && strings.TrimSpace(r.Tags[0]) != "" {
-		return r.Tags[0]
-	}
-	return r.ServerID
-}
-
-func conciseSummary(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= 140 {
-		return s
-	}
-	return strings.TrimSpace(s[:137]) + "..."
-}
-
-func firstStrings(in []string, n int) []string {
-	if len(in) == 0 || n <= 0 {
-		return nil
-	}
-	if len(in) > n {
-		in = in[:n]
-	}
-	out := make([]string, len(in))
-	copy(out, in)
-	return out
-}
-
-func inferToolSafety(r SearchResult) string {
-	text := strings.ToLower(r.ToolName + " " + r.Description)
-	for _, word := range []string{"create", "update", "edit", "delete", "remove", "write", "send", "post", "start", "stop", "run", "enqueue"} {
-		if strings.Contains(text, word) {
-			return "mutating"
-		}
-	}
-	return "read_only"
-}
-
-func recommendationWhy(intent string, r SearchResult) string {
-	switch {
-	case strings.TrimSpace(intent) == "":
-		return "Available upstream tool in the matching category."
-	case r.Score > 0:
-		return fmt.Sprintf("Matched %d intent term(s) against the tool name, description, or tags.", r.Score)
-	default:
-		return "Matched the requested category or tags."
-	}
-}
-
-// registerCallTool registers tether_tool_call on s. It accepts a tool name and
-// arguments object, looks the tool up in the registry, and forwards it
-// through the ProxyRouter.
-//
-// Registered directly against the SDK server, like addProxyTools, and for
-// the identical reason: the upstream's *mcpsdk.CallToolResult must reach the
-// caller verbatim, which go-mcp's own (any, error) ToolHandler contract
-// cannot represent. Observation/logging happens at the server middleware
-// layer (proxyLoggingMiddleware), not inside the router — all proxied calls
-// flow here so they are recorded in the event store.
-func (a *Adapter) registerCallTool(s *gomcp.Server, router *ProxyRouter) {
-	s.SDKServer().AddTool(&mcpsdk.Tool{
-		Name: "tether_tool_call",
-		Description: "Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. " +
-			"If the tool you need already appears in your tool list (e.g. memory_recall, " +
-			"clockwork_task_create), call it directly — do NOT wrap it in tether_tool_call.\n\n" +
-			"Use tether_tool_call only when:\n" +
-			"  • A tool's `native: false` flag was returned by tether_tool_search, OR\n" +
-			"  • You need a tool from a server outside the current --servers filter.\n\n" +
-			"Run tether_tool_search first if you don't know the exact tool name or input schema. " +
-			"Arguments must match the tool's input schema exactly.\n\n" +
-			"Example:\n" +
-			"  tether_tool_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
-		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("tool_name", "The exact tool name to call (as returned by tether_tool_search)", true),
-			gomcp.ObjectProp("arguments", "Arguments object matching the tool's input schema", false),
-		),
-		Annotations: Writes().OpenWorld().annotations().sdk(),
-	}, a.rawProxyHandler("tether_tool_call", func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
-		toolName := str(args, "tool_name")
-		if toolName == "" {
-			return errorResult("tool_name is required"), nil
-		}
-
-		// Extract the arguments sub-object.
-		var innerArgs map[string]any
-		if raw, ok := args["arguments"]; ok {
-			m, ok := raw.(map[string]any)
-			if !ok {
-				return errorResult("arguments must be a JSON object"), nil
-			}
-			innerArgs = m
-		}
-		if innerArgs == nil {
-			innerArgs = map[string]any{}
-		}
-
-		if a.resolver == nil && router != nil {
-			a.resolver = &routerRefResolver{router: router}
-		}
-		res, err := router.Handle(handlerCtx, ToolCall{ToolName: toolName, Args: innerArgs, Meta: meta})
-		a.recordRefs(handlerCtx, toolName, innerArgs, res, err)
-		return res, err
-	}))
-}
-
-// registerMCPServersTool adds the tether_catalog_list_mcp_servers native tool to s.
-// It uses the pool for live status and the original entries slice for disabled entries.
-//
-// nativeServers is the set of server IDs whose tools were registered natively
-// at startup. firehose=true means every server is native. Each server entry in
-// the response carries `surface: "native_flat"` (call tools directly) or
-// `surface: "proxy_only"` (only reachable via tether_tool_search/tether_tool_call).
-func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allEntries []config.MCPServerEntry, nativeServers map[string]struct{}, firehose bool) {
-	// Build a set of IDs that are enabled (present in pool).
-	enabledIDs := make(map[string]struct{})
-	for _, e := range allEntries {
-		if e.IsEnabled() {
-			enabledIDs[e.ID] = struct{}{}
-		}
-	}
-
-	surfaceOf := func(serverID string, enabled bool) string {
-		if !enabled {
-			return "disabled"
-		}
-		if firehose {
-			return "native_flat"
-		}
-		if _, ok := nativeServers[serverID]; ok {
-			return "native_flat"
-		}
-		return "proxy_only"
-	}
-
-	a.addTool(s, gomcp.Tool{
-		Name: "tether_catalog_list_mcp_servers",
-		Description: "List all upstream MCP servers configured in the tether catalog.\n\n" +
-			"Each server reports `surface`:\n" +
-			"  • \"native_flat\" — this server's tools are in your tool list; call them directly.\n" +
-			"  • \"proxy_only\"  — this server's tools are reachable only via tether_tool_search + tether_tool_call.\n" +
-			"  • \"disabled\"    — server is configured but not connected.\n\n" +
-			"Use tether_tool_search to search the catalog by intent/category when you don't know a tool name.",
-		InputSchema: gomcp.EmptyObjectSchema(),
-		Handler: func(_ context.Context, _ map[string]any) (any, error) {
-			live := pool.StatusSummary()
-			liveByID := make(map[string]ServerStatus, len(live))
-			for _, s := range live {
-				liveByID[s.ID] = s
-			}
-
-			// Merge live status with disabled entries into a uniform shape, attaching
-			// the surface field per server.
-			type serverEntry struct {
-				ServerStatus
-				Surface string `json:"surface"`
-			}
-			out := make([]serverEntry, 0, len(allEntries))
-			for _, e := range allEntries {
-				if !e.IsEnabled() {
-					out = append(out, serverEntry{
-						ServerStatus: ServerStatus{
-							ID:        e.ID,
-							Transport: e.Transport,
-							Status:    "disabled",
-							Tags:      e.Tags,
-						},
-						Surface: surfaceOf(e.ID, false),
-					})
-					continue
-				}
-				if ls, ok := liveByID[e.ID]; ok {
-					out = append(out, serverEntry{
-						ServerStatus: ls,
-						Surface:      surfaceOf(e.ID, true),
-					})
-				}
-			}
-
-			sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-
-			return toolJSON(map[string]any{
-				"ok":       true,
-				"servers":  out,
-				"count":    len(out),
-				"firehose": firehose,
-				"hint":     "Servers with surface=native_flat have their tools in your tool list — call them directly. Use tether_tool_search + tether_tool_call for proxy_only servers.",
-			}), nil
-		},
-	}, Reads("configured upstream listing"))
 }
 
 func (a *Adapter) registerCatalogRefreshTool(s *gomcp.Server, pool *ClientPool) {
