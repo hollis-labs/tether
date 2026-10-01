@@ -23,6 +23,14 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
+- **Permission modes reach each provider as a posture, with no change to what an agent may do.** go-agent-wrapper v0.23.0 (agentkit v0.19.1, go-providers v0.39.0, go-sandbox v0.5.1) takes a launch's permission as a go-permission posture and refuses a provider's own spelling. Tether now maps `permission_mode` onto one posture per provider, the same in both launch engines:
+  - claude: `bypass` runs with `--permission-mode bypassPermissions` instead of `--dangerously-skip-permissions`, and `default` runs with `--permission-mode default`.
+  - codex: runs `workspace-write` with `approval_policy` `on-request` in both modes, as before. That is the policy under which its MCP tool calls are asked for and approved, rather than refused.
+  - opencode: keeps its own defaults.
+  - antigravity: `bypass` passes `--dangerously-skip-permissions`, and `default` passes `--mode accept-edits`.
+
+  (CW-20261001-0156)
+- **Client-visible: ACP launches (Copilot, Pi) are on.** The `TETHER_ENABLE_ACP` gate and its 403 `forbidden` answer are gone. The gate guarded against a go-agent-wrapper panic that took the daemon down when an ACP agent exited during launch, which v0.21.1 fixed. A launch whose agent exits early now fails like any other launch. The ACP runtime's `[permission_denied:…]`, `[auth_failed]` and `[session_lost]` log markers take the format the native runtimes write. (CW-20261001-0156)
 - **Client-visible:** `POST /sessions/{id}/input` and `/turn` answer a lost provider resume id with the new `provider_session_lost` error code instead of `conflict`. The HTTP status stays 409, so status-only clients are unaffected, and the MCP `mux_session_send_input`/`mux_session_send_turn` tools report the same code. Callers that branched on `conflict` for this case should match the new code.
 - Dependency refreshes: `agentkit` v0.8.0, `go-providers` v0.29.0, `go-messaging` v0.5.2.
 - Planning history and design-dead docs were archived out of the repository tree.
