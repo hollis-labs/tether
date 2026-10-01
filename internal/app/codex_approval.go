@@ -30,8 +30,11 @@ package app
 // several hundred tools whose names Tether does not know at plant time.
 //
 // So both halves are required, and neither works alone:
-//   1. the planted approval_policy must be a value that ASKS rather than
-//      refusing outright (runtime_resolver.go sets "on-request"), and
+//   1. the approval_policy must be a value that ASKS rather than refusing
+//      outright. The launch's posture (config.ProviderPosture, mapped by the
+//      go-providers registry) sets "on-request", in the launch template's argv
+//      and, since CW-20261001-0216, in the planted config.toml too (see
+//      plantResolver), and
 //   2. something must answer — this file.
 //
 // Policy: a launched worker gets open MCP access by default. An agent that

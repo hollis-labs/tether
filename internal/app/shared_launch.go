@@ -72,7 +72,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	prepared.PlantContext.SelfMCPCommand = plant.MuxCommand
 	prepared.PlantContext.SelfMCPArgs = append([]string(nil), plant.MuxArgs...)
 	prepared.PlantContext.SelfMCPEnv = copyMap(plant.MuxEnv)
-	if err := providerplant.Plant(ctx, prepared); err != nil {
+	if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver)); err != nil {
 		return nil, err
 	}
 	// Interim until CW-20260930-0106: see linkCodexHostAuth.
