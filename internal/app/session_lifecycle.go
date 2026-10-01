@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
@@ -353,17 +352,6 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
 		}
-		// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
-		// A runtime that takes them per session places them before a turn's
-		// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
-		// StartOptions.ExtraArgs would land after the prompt.
-		extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, launch.CatalogFlags(plan))
-		if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
-			er.SetExtraArgs(extraArgs)
-			startOpts.ExtraArgs = nil
-		} else {
-			startOpts.ExtraArgs = extraArgs
-		}
 	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
@@ -384,7 +372,6 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
-	streamingStdioBootPromptFirstTurn(rt.Caps(), &startOpts)
 
 	// A subprocess runtime writes no session.log and drops stderr unless
 	// given somewhere to put them; see subprocessLog. Best-effort: a log
@@ -496,34 +483,6 @@ func deferPTYStdinBootPrompt(caps agentsessions.Capabilities, opts *agentsession
 		Prompt: bootPrompt,
 		Turn: turn.Options{
 			Runtime: runtimes.ModePTY,
-		},
-	})
-}
-
-// streamingStdioBootPromptFirstTurn sends the boot prompt as the first
-// stream-json user turn of a streaming-stdio session.
-//
-// INTERIM (CW-20261001-0015): CW-20260930-0135 (one argv owner) and
-// CW-20260930-0106 (native launches on the wrapper) replace this. Claude under
-// --input-format stream-json reads its prompt only from stdin and ignores a
-// positional -p, but mapBootMode turns a catalog bootstrap mode of
-// "streaming-stdio" into "planted", and agentkit's streaming-stdio runtime
-// writes the boot prompt to stdin only for BootMode=stdin — so the session
-// started and sat on stdin with no turn. BootMode=stdin alone would not fix it:
-// that path writes the prompt verbatim, and a stream-json reader needs a
-// framed user message. The auto-fired first turn is framed by turn.Frame.
-func streamingStdioBootPromptFirstTurn(caps agentsessions.Capabilities, opts *agentsessions.StartOptions) {
-	if opts == nil || !caps.StreamingStdio || opts.BootPrompt == "" || opts.BootMode == agentlaunch.BootModeNone {
-		return
-	}
-	bootPrompt := opts.BootPrompt
-	opts.BootPrompt = ""
-	opts.BootMode = ""
-	_ = sessionkit.ApplyFirstTurnPolicy(opts, sessionkit.FirstTurnPolicy{
-		Mode:   sessionkit.AutoFireFirstTurn,
-		Prompt: bootPrompt,
-		Turn: turn.Options{
-			Runtime: runtimes.ModeStreamingStdio,
 		},
 	})
 }

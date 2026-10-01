@@ -63,17 +63,13 @@ func TestSplitBrain_DeletedPIDFileStillRefusesToStealTheSocket(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(500 * time.Millisecond)
-
-	if err := first.Client().Ping(t.Context()); err != nil {
-		t.Fatalf("original daemon unresponsive after a second invocation raced its (removed) pid file: %v", err)
-	}
-
-	// If the bug were present, the second process would have stolen the
-	// socket and be running as an independent live daemon right now
-	// (Process.Wait would block). With the fix, it should have already
-	// exited (refused to steal a live socket) -- confirm that rather than
-	// leaving an orphaned process for the deferred Kill to paper over.
+	// If the bug were present, the second process would steal the socket
+	// and keep running as an independent live daemon (Wait would block).
+	// With the fix it refuses and exits. Wait for that rather than sleeping
+	// a fixed interval: its startup (catalog load, migrations, startup
+	// sweep) runs before it reaches the socket, and on a loaded runner that
+	// alone can take several seconds. The bound only has to separate
+	// "exits after its startup" from "never exits".
 	done := make(chan error, 1)
 	go func() { done <- second.Wait() }()
 	select {
@@ -81,7 +77,11 @@ func TestSplitBrain_DeletedPIDFileStillRefusesToStealTheSocket(t *testing.T) {
 		if waitErr == nil {
 			t.Fatal("second daemon run exited 0 -- it should have refused to steal the live socket")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(60 * time.Second):
 		t.Fatal("second daemon run is still running -- it stole the socket instead of refusing (split-brain)")
+	}
+
+	if err := first.Client().Ping(t.Context()); err != nil {
+		t.Fatalf("original daemon unresponsive after a second invocation raced its (removed) pid file: %v", err)
 	}
 }
