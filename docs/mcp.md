@@ -127,7 +127,7 @@ the owner will launch next. This v1 observation does not publish that private
 environment or provide an owner-resolution query. A consumer that cannot
 resolve the actual next candidate must report unknown.
 
-`tether_health.upstream_servers` and `tether_catalog_list_mcp_servers` expose
+`tether_health.upstream_servers` and `tether_gateway_status` expose
 `last_launch` and a current `recovery` snapshot. Initialize's snapshot is only
 for that handshake; it does not update when the retry budget resets or is
 consumed. **No snapshot reserves a replacement attempt or permits exit.**
@@ -217,7 +217,7 @@ There is no hybrid surface or hidden fallback. `--broker` is removed and fails
 as an unknown flag. Flat mode preserves each real tool's client-visible identity
 for permissions and hooks. Search mode reduces the initial schema surface, but
 client rules/hooks see **`tether_tool_call`**, rather than its downstream name.
-The dispatcher may mutate state and does not advertise read-only safety.
+The dispatcher may mutate or irreversibly remove state, so it advertises destructive behavior rather than read-only safety. Its inner arguments receive the same sanitization as direct calls; tool-call events record the target name and origin.
 
 ### Selecting discovery mode
 
@@ -237,7 +237,7 @@ The global persisted fallback is read/written at `GET` / `PUT /settings/mcp`:
 `{"discovery_mode":"search"}` sets it and `{}` clears it. It lives in the existing
 settings store; daemon-only proxies read it over the daemon API, never by opening
 the state DB. Mode/source resolve once at startup; edits affect newly started
-endpoints. `tether_gateway_status` reports the effective mode and its source.
+endpoints. An older daemon returning 404 for this setting means no persisted fallback; other errors fail startup. Invalid gateway mode values fail gateway startup and appear in `tether doctor`, while generic catalog loading and daemon startup remain available. `tether_gateway_status` reports the effective mode and its source.
 
 The profile tier is a typed `mcp.profiles.<id>.discovery_mode` hook in this change;
 profile selection/filtering is CW-20260926-0008. No profile is selected yet.

@@ -27,9 +27,6 @@ func Load(catalogRoot string) (*Catalog, error) {
 	if err := loadYAML(filepath.Join(catalogRoot, "global.yaml"), &cat.Global); err != nil {
 		return nil, fmt.Errorf("load global: %w", err)
 	}
-	if err := cat.Global.MCP.Validate(); err != nil {
-		return nil, err
-	}
 	applyDaemonDefaults(&cat.Global.Daemon)
 
 	roots := cat.Global.Catalog.Roots

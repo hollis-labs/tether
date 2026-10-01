@@ -139,6 +139,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	cat = loadedCat
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
+		checks = append(checks, checkMCPDiscoveryMode(cat))
 		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
@@ -396,4 +397,11 @@ func checkLogsDir(stateDir string) checkResult {
 	_ = f.Close()
 	_ = os.Remove(f.Name())
 	return ok("logs-dir", logsDir)
+}
+
+func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
+	if err := cat.Global.MCP.Validate(); err != nil {
+		return fail("mcp-discovery-mode", err.Error(), "set mcp.discovery_mode and profile discovery_mode to flat or search in global.yaml")
+	}
+	return ok("mcp-discovery-mode", "configured discovery modes are valid")
 }

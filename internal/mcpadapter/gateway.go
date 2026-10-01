@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -55,6 +56,9 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 			return snapshot
 		},
 		Score: func(query string, entry mcpgateway.Entry) int {
+			if query == entry.Tool.Name {
+				return len(tokenise(query)) + 1
+			}
 			words := buildWordSet(entry.Tool.Name, entry.Tool.Description, entry.Tags)
 			score := 0
 			for word := range tokenise(query) {
@@ -137,14 +141,18 @@ func (a *Adapter) registerListTool(s *gomcp.Server, gateway *mcpgateway.Service)
 	}}, Reads("eligible tool schemas"))
 }
 func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service) {
-	s.SDKServer().AddTool(&mcpsdk.Tool{Name: "tether_tool_call", Description: "Dispatch one eligible exact tool name using its real arguments schema. Unknown, excluded or unavailable targets fail. In search mode client permissions and hooks see tether_tool_call, not the downstream tool identity; this dispatcher may mutate state and is not read-only.", InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": map[string]any{"type": "string", "minLength": 1}, "arguments": map[string]any{"type": "object"}}}, Annotations: Writes().OpenWorld().annotations().sdk()}, a.rawProxyHandler("tether_tool_call", func(ctx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
-		name := str(args, "name")
+	s.SDKServer().AddTool(&mcpsdk.Tool{Name: "tether_tool_call", Description: "Dispatch one eligible exact tool name using its real arguments schema. Unknown, excluded or unavailable targets fail. In search mode client permissions and hooks see tether_tool_call, not the downstream tool identity; this dispatcher may mutate state and is not read-only.", InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": map[string]any{"type": "string", "minLength": 1}, "arguments": map[string]any{"type": "object"}}}, Annotations: Destroys("dispatches targets that may irreversibly remove information or stop sessions").OpenWorld().annotations().sdk()}, a.rawProxyHandler("tether_tool_call", func(ctx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+		name, _ := args["name"].(string)
 		if name == "" {
 			return errorResult("name is required"), nil
 		}
 		arguments, ok := args["arguments"].(map[string]any)
 		if !ok {
 			return errorResult("arguments must be a JSON object"), nil
+		}
+		arguments, report := sanitize.Sanitize(arguments)
+		if report.Changed() {
+			a.logger().Warn("mcp-sanitize: cleaned dispatched tool call", "tool", name, "fields_cleaned", report.FieldsCleaned, "dropped_count", len(report.DroppedFragments))
 		}
 		result, err := gateway.Call(ctx, name, arguments, meta)
 		if err != nil {
@@ -159,7 +167,7 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 }
 func (a *Adapter) registerGatewayStatus(s *gomcp.Server, gateway *mcpgateway.Service) {
 	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain the effective discovery mode and source, upstream availability/counts, and why an optional exact name is not listed directly. Incomplete discovery is explicit.", InputSchema: gomcp.InputSchema(gomcp.StringProp("name", "Optional exact tool name to explain", false)), Handler: func(_ context.Context, args map[string]any) (any, error) {
-		name := str(args, "name")
+		name, _ := args["name"].(string)
 		out := gateway.Status(name)
 		if isGatewayTool(name) {
 			visible := name == "tether_gateway_status" || gateway.Selection.Mode == mcpgateway.Search

@@ -214,7 +214,7 @@ type ProxyOptions struct {
 // registered through go-mcp's RegisterTool and proxy tools registered
 // directly against the SDK server (addProxyTools) alike -- mirroring
 // mark3labs' s.Use, which sat above per-tool handlers the same way.
-func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
+func proxyLoggingMiddleware(mws []ToolCallMiddleware, registries ...*ToolRegistry) mcpsdk.Middleware {
 	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
 			call, ok := req.(*mcpsdk.CallToolRequest)
@@ -239,7 +239,22 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 				return result, nil
 			})
 			chain := buildMiddlewareChain(terminal, mws)
-			result, err := chain(ctx, ToolCall{ToolName: call.Params.Name, Args: args, Meta: map[string]any(call.Params.Meta)})
+			observed := ToolCall{ToolName: call.Params.Name, Args: args, Meta: map[string]any(call.Params.Meta)}
+			if len(registries) > 0 {
+				name := call.Params.Name
+				if name == "tether_tool_call" {
+					name, _ = args["name"].(string)
+				}
+				if target, ok := registries[0].Lookup(name); ok {
+					observed.ToolName = name
+					if call.Params.Name == "tether_tool_call" {
+						observed.Args, _ = args["arguments"].(map[string]any)
+					}
+					ctx = WithServerID(ctx, target.ServerID)
+				}
+			}
+
+			result, err := chain(ctx, observed)
 			if err != nil {
 				return nil, err
 			}
@@ -252,7 +267,7 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 //  1. Loads MCPServerEntry definitions from <catalogDir>/mcp-servers/
 //  2. Starts a ClientPool (spawning stdio subprocesses / SSE connections)
 //  3. Registers each upstream tool via AddTool with a ProxyRouter handler
-//  4. Registers the tether_catalog_list_mcp_servers introspection tool
+//  4. Registers the tether_gateway_status introspection tool
 //  5. Wires LoggingMiddleware + ToolCallEventStore when opts.Bus is set (ADR 0021)
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
@@ -308,7 +323,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}
 	if len(mws) > 0 {
-		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws))
+		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws, registry))
 	}
 	router := NewProxyRouter(registry)
 	router.pool = pool

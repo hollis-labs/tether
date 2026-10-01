@@ -453,6 +453,9 @@ func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind
 // The stdio client's environment is a distinct precedence tier, not a daemon
 // environment guessed by an HTTP caller. Resolution is immutable for this run.
 func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Client) (mcpgateway.ModeInputs, error) {
+	if err := svc.Catalog.Global.MCP.Validate(); err != nil {
+		return mcpgateway.ModeInputs{}, err
+	}
 	in := mcpgateway.ModeInputs{Gateway: svc.Catalog.Global.MCP.DiscoveryMode}
 	if cmd.Flags().Changed("discovery-mode") {
 		in.Explicit = []mcpgateway.Selector{{Value: mcpDiscoveryMode, Source: "argument"}}

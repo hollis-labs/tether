@@ -44,9 +44,12 @@ func TestRunWithProxyOptsHelper(t *testing.T) {
 	if v := os.Getenv(proxyHelperServersEnv); v != "" {
 		filter = strings.Split(v, ",")
 	}
-	opts := ProxyOptions{ServerFilter: filter, Confine: os.Getenv(proxyHelperConfineEnv) == "1", ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: os.Getenv("TETHER_PROXY_HELPER_MODE"), Source: "test"}}}}
+	opts := ProxyOptions{Only: os.Getenv("TETHER_PROXY_HELPER_ONLY") == "1", ServerFilter: filter, Confine: os.Getenv(proxyHelperConfineEnv) == "1", ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: os.Getenv("TETHER_PROXY_HELPER_MODE"), Source: "test"}}}}
 	adapter := newTestAdapter(t)
 	adapter.svc.Catalog = &config.Catalog{}
+	if os.Getenv("TETHER_PROXY_HELPER_PROTECTED") == "1" {
+		adapter.protected = []string{catalog}
+	}
 	if err := adapter.RunWithProxyOpts(context.Background(), catalog, opts); err != nil {
 		fmt.Fprintln(os.Stderr, "proxy helper:", err)
 		os.Exit(3)
