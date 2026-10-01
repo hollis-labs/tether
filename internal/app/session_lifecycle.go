@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	gopevents "github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/go-sandbox/sandbox"
 
 	"github.com/hollis-labs/tether/internal/agent"
@@ -370,10 +371,25 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	// agy reports auto-denied tool actions only on the typed-event surface;
-	// other providers keep the adapter path untapped.
-	if plan.ProviderBrand == "antigravity" {
-		startOpts.TypedEventCallback = makeProviderTypedEventCallback(s.Bus, sessionID, plan.LogicalAgentID)
+	// Turn telemetry for every agentkit runtime: provider.turn_usage,
+	// session.turn_output and session.turn_failed, from the typed provider
+	// events (see turn_telemetry.go). agy also reports auto-denied tool
+	// actions on this surface. agentkit taps an adapter's typed events
+	// whether or not a callback is set, so setting one for every provider
+	// changes nothing on the byte Fanout or in session.log. The ACP runtime
+	// and the in-process API stub have no typed-event surface.
+	var telemetry *turnTelemetry
+	if kind := rt.Kind(); kind != acp.Kind && kind != "api" {
+		telemetry = newTurnTelemetry(s.Bus, sessionID, plan.LogicalAgentID, plan.ProviderID, launchModel(plan.Args))
+		callback := telemetry.observe
+		if plan.ProviderBrand == "antigravity" {
+			denied := makeProviderTypedEventCallback(s.Bus, sessionID, plan.LogicalAgentID)
+			callback = func(ev gopevents.Event) {
+				telemetry.observe(ev)
+				denied(ev)
+			}
+		}
+		startOpts.TypedEventCallback = callback
 	}
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
@@ -396,6 +412,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			log.Printf("session %s: open subprocess log: %v", sessionID, err)
 			procLog = nil
 		} else {
+			procLog.telemetry = telemetry
+			if telemetry != nil {
+				telemetry.bracketed = true
+			}
 			startOpts.Stderr = procLog.Stderr()
 			startOpts.Fanout = procLog
 		}

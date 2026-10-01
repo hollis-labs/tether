@@ -1197,10 +1197,22 @@ Current (v0.0.2):
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
+| session  | `provider.turn_usage`         | a turn that reported usage, once at its end (every agentkit runtime) | `{session_id, provider, model?, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd?, stop_reason?}` — the turn's sum: a provider reporting usage per step (OpenCode) is summed into one turn, a context-size total never is. `cost_usd` is present when the provider reported a cost. `model` is present when the launch selected one with `--model`/`-m`. No reasoning-token count: the providers' typed usage has none |
+| session  | `session.turn_output`         | an agent's turn ending (every agentkit runtime) | `{session_id, text, text_bytes, truncated, stop_reason?}` — the reply text. When the provider marks a final message (Codex), the text is that message only. **`text` is capped at 4096 bytes**: `text_bytes` is the full length and `truncated` says it was cut. `logs/session.log` keeps the full reply |
+| session  | `session.turn_failed`         | an agent's turn failing: the provider reported an error, or a subprocess turn's process exited non-zero | `{session_id, error, truncated, exit_code?}` — one event per failed turn, even where the provider reports the failure twice. `error` is the provider's own message when it sent one, and otherwise the Go error, which carries the subprocess turn's bounded stderr tail. `exit_code` is present when a subprocess turn's process exited non-zero. **`error` is capped at 4096 bytes**. Never carries the environment |
 | broker   | `broker.envelope_created`     | broker.Service on successful persist   | `{id, sender, recipient, workflow_id, correlation_id, message_type}` — metadata only, never payload |
 | broker   | `broker.envelope_replied`     | broker.Service on successful reply     | same shape as created                                        |
 
 Additional kinds will land as v0.0.3 extends runtime and broker semantics.
+
+The three turn kinds (`provider.turn_usage`, `session.turn_output`,
+`session.turn_failed`) come from the typed events agentkit's runtimes parse
+from a provider's output: subprocess-per-turn (codex exec, claude -p, opencode
+run, agy), streaming-stdio (Claude), jsonrpc-stdio and PTY. They depend on the
+provider's parser recognising the output. ACP agents (Copilot, Pi) and the API
+stub publish none yet. To watch an agent's turns:
+`mux events history --session-id <id>`, or
+`GET /events/stream?session_id=<id>&kind=session.turn_output`.
 
 To watch live budget alerts, subscribe to
 `GET /events/stream?scope=daemon&kind=ai.budget_rejected`.

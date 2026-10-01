@@ -70,4 +70,33 @@ const (
 	// so an otherwise silent no-op is visible. Payload schema:
 	//   {"action":"<string>","display_name":"<string>"}
 	KindProviderPermissionDenied = "provider.permission_denied"
+
+	// KindProviderTurnUsage fires once per turn that reported usage, with the
+	// turn's summed usage (CW-20260930-0223). A provider reporting usage per
+	// step (OpenCode) is summed into one turn; a context-size total is never
+	// summed. cost_usd is present when the provider reported a cost; model
+	// is present when the launch selected one with --model or -m. Payload
+	// schema:
+	//   {"session_id":"<id>","provider":"<catalog provider id>","model":"<id>",
+	//    "input_tokens":N,"output_tokens":N,"cache_creation_tokens":N,
+	//    "cache_read_tokens":N,"cost_usd":F,"stop_reason":"<reason>"}
+	KindProviderTurnUsage = "provider.turn_usage"
+
+	// KindSessionTurnOutput fires when an agent's turn ends, with its reply
+	// text (CW-20261001-0058). The text is capped at 4096 bytes; text_bytes
+	// is the full length and truncated says it was cut. session.log keeps
+	// the full text. Payload schema:
+	//   {"session_id":"<id>","text":"<reply>","text_bytes":N,
+	//    "truncated":bool,"stop_reason":"<reason>"}
+	KindSessionTurnOutput = "session.turn_output"
+
+	// KindSessionTurnFailed fires once when an agent's turn fails: the
+	// provider reported an error, or a subprocess turn's process exited
+	// non-zero. error is the provider's own message when it sent one, and
+	// otherwise the Go error, which carries the subprocess turn's bounded
+	// stderr tail; exit_code is present when the process exited non-zero.
+	// The error is capped at 4096 bytes. Never carries the environment.
+	// Payload schema:
+	//   {"session_id":"<id>","error":"<message>","truncated":bool,"exit_code":N}
+	KindSessionTurnFailed = "session.turn_failed"
 )

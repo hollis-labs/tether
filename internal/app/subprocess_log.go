@@ -39,6 +39,12 @@ type subprocessLog struct {
 	mu   sync.Mutex
 	f    *os.File
 	tail []byte
+
+	// telemetry, when set, brackets each turn under turnMu, so a failed
+	// turn's exit status reaches the bus as session.turn_failed and a turn
+	// whose provider sent no end-of-turn event still publishes its output
+	// (CW-20261001-0058). Set once at launch, before any turn.
+	telemetry *turnTelemetry
 }
 
 func openSubprocessLog(path string) (*subprocessLog, error) {
@@ -86,16 +92,21 @@ func (w subprocessStderr) Write(p []byte) (int, error) {
 
 // turn runs send as one turn and, when the turn's process exited non-zero,
 // adds that turn's stderr tail to the error. The tail is the process's own
-// stderr and nothing else — no argv, no env.
-func (l *subprocessLog) turn(send func() error) error {
+// stderr and nothing else — no argv, no env. The returned error is also what
+// the turn's telemetry reports.
+func (l *subprocessLog) turn(send func() error) (err error) {
 	l.turnMu.Lock()
 	defer l.turnMu.Unlock()
+	if l.telemetry != nil {
+		l.telemetry.beginTurn()
+		defer func() { l.telemetry.endSubprocessTurn(err) }()
+	}
 
 	l.mu.Lock()
 	l.tail = l.tail[:0]
 	l.mu.Unlock()
 
-	err := send()
+	err = send()
 	var exit *runner.ExitError
 	if err == nil || !errors.As(err, &exit) {
 		return err

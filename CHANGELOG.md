@@ -12,6 +12,12 @@ Changes on `main` since v0.6.0.
 
 ### Added
 
+- **Turn telemetry on the event bus.** Three new session-scoped event kinds, all additive (no existing kind or `session.log` line changes):
+  - `provider.turn_usage`: a turn's summed usage: input, output, cache-creation and cache-read tokens, cost when the provider reports one, provider and model. agentkit reports usage per step and keeps no per-turn total, so Tether sums it; a context-size total is never summed. (CW-20260930-0223)
+  - `session.turn_output`: an agent's reply when its turn ends, capped at 4096 bytes with `text_bytes` and a `truncated` flag. (CW-20261001-0058)
+  - `session.turn_failed`: a failed turn, once per turn, with the provider's error message and, for a subprocess turn, its non-zero exit code (the bounded stderr tail when the provider sent no message of its own). (CW-20261001-0058)
+
+  They come from agentkit's typed provider events, for every agentkit runtime; ACP agents and the API stub publish none yet. The events table's opt-in retention applies, and the caps keep each event small.
 - **Opt-in retention for the `events` table.** `daemon.events_retention` in `global.yaml` (`enabled`, default `false`; `days`, default 90, where 0 or negative turns it off) runs an hourly sweep. The sweep deletes events older than the window, by age only, in bounded batches, and logs how many it removed. Off by default, so upgrading deletes nothing; replay within the window is unchanged. The daemon's wake sweep and this sweep now share one periodic-job loop. (CW-20260930-0008)
 - **Idempotent session create and resume.** `POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional `idempotency_key`: a retry with the same key and request returns the session the first one created (`replayed: true`, HTTP 200), and the same key with a different request answers 409 `idempotency_conflict`. Launching a keyed session again is idempotent too. Keys are global and unauthenticated, so prefix them. Surfaced in the Go client (`ResumeLogicalAgentWithOptions`), the MCP `mux_session_create` / `mux_logical_agent_resume` tools, and `mux launch --idempotency-key` (CW-20260930-0229).
 - **Messaging surfaces.** Scoped role/slot binding across CLI, MCP, HTTP and the Go client; a durable participant registry with canonical sessions and leased runtime bindings; durable hosted-session handoff with route fencing; delivery trace, operator repair and privacy-safe retention; and a bounded, server-only inbound A2A relay adapter.
