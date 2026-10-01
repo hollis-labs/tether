@@ -27,12 +27,12 @@ func ReadTokenFile(path string) (string, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || int(owner.Uid) != os.Getuid() {
 		return "", fmt.Errorf("token file must be a regular file owned by this user with mode 0600")
 	}
-	body, err := io.ReadAll(io.LimitReader(f, 256))
+	body, err := io.ReadAll(io.LimitReader(f, 257))
 	if err != nil {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 	token := strings.TrimSpace(string(body))
-	if !validToken(token) {
+	if len(body) > 256 || !validToken(token) {
 		return "", fmt.Errorf("token file has invalid content")
 	}
 	return token, nil

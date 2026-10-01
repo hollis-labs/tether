@@ -167,3 +167,21 @@ func TestIdentityTokenFileFailsClosed(t *testing.T) {
 		t.Fatal("oversized content accepted")
 	}
 }
+
+func TestIdentityTokenFileRejectsValidPrefixWithUnreadSuffix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	token, err := identity.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "token")
+	// The first bounded read looks valid after trimming; the remainder must
+	// still make the file invalid rather than being silently ignored.
+	body := token + strings.Repeat(" ", 256-len(token)) + "unread-junk"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.ReadTokenFile(path); err == nil {
+		t.Fatal("unread suffix accepted")
+	}
+}
