@@ -1,4 +1,4 @@
-// Package api owns the HTTP surface of the mux daemon: DTOs, handlers,
+// Package api owns the HTTP surface of the tether daemon: DTOs, handlers,
 // and router composition. The daemon package wraps this with listener +
 // PID-file lifecycle; clients import this package for the DTO types.
 package api

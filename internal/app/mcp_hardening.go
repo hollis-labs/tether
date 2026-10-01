@@ -15,9 +15,9 @@ import (
 // launch hands it with --mcp-config: the operator's user-level
 // ~/.claude.json, project-scoped .mcp.json files, and the claude.ai
 // connectors on the logged-in account. Tether plants exactly one MCP config
-// per agent (its own `mux` proxy), so anything else Claude loads is a server
-// Tether did not put there. Today the planted entry is named `mux` and
-// shadows the one user-level `mux` entry, which is why a second proxy does
+// per agent (its own `tether` proxy), so anything else Claude loads is a server
+// Tether did not put there. Today the planted entry is named `tether` and
+// shadows the one user-level `tether` entry, which is why a second proxy does
 // not appear; any user-level server with another name would load into every
 // Tether-launched agent.
 //
@@ -25,16 +25,16 @@ import (
 // adds it to every Claude launch it makes through the shared launch template
 // (the streaming, subprocess and pty runtimes, and the resume path, since all
 // of them compile through agentLaunchPlanFor), unless the operator turns it
-// off. `mux boot` is not covered: it runs the operator's own interactive
+// off. `tether boot` is not covered: it runs the operator's own interactive
 // Claude in their terminal, with their own servers.
 //
 // This is an interim measure. A go-agent-wrapper / agentkit option will
 // replace it, and the flag goes when that lands.
 
 // ClaudeStrictMCPEnv names the daemon environment variable that turns strict
-// MCP off: "0" or "false" in muxd's environment. It is on by default;
+// MCP off: "0" or "false" in tetherd's environment. It is on by default;
 // turning it off is an operator decision the daemon logs at startup and
-// `mux doctor` reports, never a silent one.
+// `tether doctor` reports, never a silent one.
 const ClaudeStrictMCPEnv = "TETHER_CLAUDE_STRICT_MCP"
 
 // claudeStrictMCPFlag is Claude Code's flag; see the file comment.

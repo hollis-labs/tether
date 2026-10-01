@@ -63,9 +63,9 @@ Two models, and the choice is not free.
 **Pull** — on a cadence you choose. Works everywhere, with no binding and no
 daemon-hosted session. **Two different calls, and the distinction matters:**
 
-- `mux_message_list` / the client's list read is **non-destructive and
+- `tether_message_list` / the client's list read is **non-destructive and
   repeatable**. This is the polling call.
-- `mux_message_inbox` / `Inbox` is an **atomic-delivery pull**: returned
+- `tether_message_inbox` / `Inbox` is an **atomic-delivery pull**: returned
   messages are marked delivered and **will not come back on a later inbox
   call**. It is a take, not a look.
 
@@ -219,7 +219,7 @@ safe, not the backward one.
 - **A2A interoperability** — inbound relay only; Tether is not an A2A client
   (CW-20260907-0028). T12's handoff §3.7 has the binding format.
 - **Per-tool parameter reference** — [mcp.md](./mcp.md) carries a table per
-  tool, and [api/README.md](./api/README.md) an entry per route. `mux mcp`
+  tool, and [api/README.md](./api/README.md) an entry per route. `tether mcp`
   remains authoritative if the two ever disagree.
 - **Durable claim/ack/nack** — the primitives exist as raw HTTP routes but have
   no typed client wrapper (CW-20260907-0038). If your design depends on them,

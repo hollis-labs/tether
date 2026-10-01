@@ -396,8 +396,8 @@ func TestProxiedCall_RecallPreviews_NeverCountAsRead(t *testing.T) {
 	}
 }
 
-// CW-20260914-0003: mux_call forwards and extracts refs with source=proxy.
-func TestProxiedCall_MuxCall_ExtractsRefs(t *testing.T) {
+// CW-20260914-0003: tether_tool_call forwards and extracts refs with source=proxy.
+func TestProxiedCall_TetherCall_ExtractsRefs(t *testing.T) {
 	a, attacher := newExtractingAdapter("sess-1", true)
 
 	mc := &mockClient{
@@ -415,21 +415,21 @@ func TestProxiedCall_MuxCall_ExtractsRefs(t *testing.T) {
 	c := connectInMemory(t, s)
 	ctx := context.Background()
 	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{
-		Name: "mux_call",
+		Name: "tether_tool_call",
 		Arguments: map[string]any{
 			"tool_name": "workspace_write",
 			"arguments": map[string]any{"summary": "dispatched draft"},
 		},
 	}); err != nil {
-		t.Fatalf("CallTool mux_call: %v", err)
+		t.Fatalf("CallTool tether_tool_call: %v", err)
 	}
 
 	if len(attacher.got) != 1 {
-		t.Fatalf("mux_call did not extract ref: %+v", attacher.got)
+		t.Fatalf("tether_tool_call did not extract ref: %+v", attacher.got)
 	}
 	ref := attacher.got[0]
 	if ref.kind != refKindTesseractItem || ref.refID != "01M2ITEM000000000000000000" || ref.source != "proxy" {
-		t.Errorf("mux_call extracted unexpected ref: %+v", ref)
+		t.Errorf("tether_tool_call extracted unexpected ref: %+v", ref)
 	}
 }
 

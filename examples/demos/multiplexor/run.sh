@@ -6,8 +6,8 @@
 #   communicating via broker request/reply envelopes.
 #
 # Prerequisites:
-#   - mux daemon running: `mux daemon start`
-#   - mux binary on PATH: `go install ./cmd/mux`
+#   - tether daemon running: `tether daemon start`
+#   - tether binary on PATH: `go install ./cmd/tether`
 #   - curl available
 #
 # Usage:
@@ -25,9 +25,9 @@ if [[ -z "$CATALOG" ]]; then
 fi
 
 # Resolve daemon address from catalog.
-DAEMON_ADDR=$(mux --catalog "$CATALOG" daemon status 2>&1 | grep listener | awk '{print $2}' || echo "")
+DAEMON_ADDR=$(tether --catalog "$CATALOG" daemon status 2>&1 | grep listener | awk '{print $2}' || echo "")
 if [[ -z "$DAEMON_ADDR" ]]; then
-    echo "ERROR: daemon not running. Start it with: mux --catalog $CATALOG daemon start" >&2
+    echo "ERROR: daemon not running. Start it with: tether --catalog $CATALOG daemon start" >&2
     exit 1
 fi
 

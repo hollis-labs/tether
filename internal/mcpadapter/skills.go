@@ -14,14 +14,14 @@ import (
 
 func (a *Adapter) registerSkillTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_skill_list",
-		Description: "List Tether skills visible through layered discovery. Returns id, name, description, triggers, path, and layer; use mux_skill_get to load a skill body.",
+		Name:        "tether_skill_list",
+		Description: "List Tether skills visible through layered discovery. Returns id, name, description, triggers, path, and layer; use tether_skill_get to load a skill body.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleSkillList,
 	}, Reads("skill catalog listing"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_skill_broker",
-		Description: "Return ranked skill recommendations for a specific task, role, project, or trigger set. This is the progressive-discovery companion to mux_skill_list: it returns metadata, reasons, and ranking, then the caller uses mux_skill_get for the chosen skill body.",
+		Name:        "tether_skill_broker",
+		Description: "Return ranked skill recommendations for a specific task, role, project, or trigger set. This is the progressive-discovery companion to tether_skill_list: it returns metadata, reasons, and ranking, then the caller uses tether_skill_get for the chosen skill body.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("query", "Free-text task or intent, for example 'refactor handler' or 'capture findings'", false),
 			gomcp.StringProp("role", "Optional requester role signal, for example 'backend'", false),
@@ -34,7 +34,7 @@ func (a *Adapter) registerSkillTools(s *gomcp.Server) {
 		Handler: a.handleSkillBroker,
 	}, Reads("skills.BrokerLayered reads the catalog and cwd; selection only"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_skill_get",
+		Name:        "tether_skill_get",
 		Description: "Load a Tether skill by id and return its instructions. Use when a boot prompt lists a skill pointer like `/refactor-go`; pass `refactor-go` as skill_id, then follow the returned body.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("skill_id", "Skill id from the boot prompt, with or without the leading slash", true),
@@ -111,7 +111,7 @@ func (a *Adapter) handleSkillBroker(_ context.Context, args map[string]any) (any
 			"priority":          match.Score.Priority,
 		}
 		item["reasons"] = match.Reasons
-		item["next"] = "mux_skill_get"
+		item["next"] = "tether_skill_get"
 		items = append(items, item)
 	}
 

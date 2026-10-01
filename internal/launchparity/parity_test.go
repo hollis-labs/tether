@@ -65,37 +65,37 @@ var upstreamStaleExpected = map[string]bool{
 	"expected-old-error hollislabs-web-writer-claude": true,
 }
 
-// agentMuxRepointed is the agent-mux launches NOT in the harness's
+// agentTetherRepointed is the tether launches NOT in the harness's
 // built-in expected-diff registry. The built-in registry covers the five
-// S4.4-sample agent-mux bags; Tether's full corpus has ten. Every
-// agent-mux bag correctly scopes to project agent-mux while the legacy
-// launches/agent-mux-*.yaml carry project:tether (cloned, never
+// S4.4-sample tether bags; Tether's full corpus has ten. Every
+// tether bag correctly scopes to project tether while the legacy
+// launches/tether-*.yaml carry project:tether (cloned, never
 // re-pointed — see limitations.tether.live_catalog_data_defects Defect 2),
 // so all ten diff old-vs-new on project + work_dir. These five need a
 // caller-side registration; the other five the harness already knows.
-var agentMuxRepointed = []string{
-	"agent-mux-claude-stream",
-	"agent-mux-claude-worktree",
-	"agent-mux-codex-app-server-worktree",
-	"agent-mux-codex-launch-worktree",
-	"agent-mux-opencode-worktree",
+var agentTetherRepointed = []string{
+	"tether-claude-stream",
+	"tether-claude-worktree",
+	"tether-codex-app-server-worktree",
+	"tether-codex-launch-worktree",
+	"tether-opencode-worktree",
 }
 
-// expectedAgentMuxDiffs builds the project + work_dir ExpectedDiff pair
-// for each agent-mux launch in agentMuxRepointed.
-func expectedAgentMuxDiffs() []parity.ExpectedDiff {
-	const rationale = "agent-mux-project-repoint: legacy launch carries project:tether " +
-		"(cloned, never re-pointed); the S4.4/S5 bag correctly scopes to agent-mux"
+// expectedAgentTetherDiffs builds the project + work_dir ExpectedDiff pair
+// for each tether launch in agentTetherRepointed.
+func expectedAgentTetherDiffs() []parity.ExpectedDiff {
+	const rationale = "tether-project-repoint: legacy launch carries project:tether " +
+		"(cloned, never re-pointed); the S4.4/S5 bag correctly scopes to tether"
 	var diffs []parity.ExpectedDiff
-	for _, launch := range agentMuxRepointed {
+	for _, launch := range agentTetherRepointed {
 		diffs = append(diffs,
 			parity.ExpectedDiff{
 				Launch: launch, Field: "project",
-				Old: "tether", New: "agent-mux", Rationale: rationale,
+				Old: "tether", New: "tether", Rationale: rationale,
 			},
 			parity.ExpectedDiff{
 				Launch: launch, Field: "work_dir",
-				Old: "~/dev/hollis-labs/apps/tether", New: "~/dev/hollis-labs/apps/agent-mux",
+				Old: "~/dev/hollis-labs/apps/tether", New: "~/dev/hollis-labs/apps/tether",
 				Rationale: rationale,
 			},
 		)
@@ -159,7 +159,7 @@ func TestFullCorpusParity(t *testing.T) {
 	}
 	report, err := parity.RunParity(catalogRoot, specsRoot,
 		parity.WithCorpus(corpus),
-		parity.WithExpectedDiffs(expectedAgentMuxDiffs()...),
+		parity.WithExpectedDiffs(expectedAgentTetherDiffs()...),
 	)
 	if err != nil {
 		t.Fatalf("RunParity: %v", err)

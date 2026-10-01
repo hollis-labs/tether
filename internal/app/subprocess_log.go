@@ -18,7 +18,7 @@ import (
 const subprocessStderrTailBytes = 2048
 
 // subprocessLog keeps a subprocess-runtime session's output in its
-// logs/session.log, the file `mux sessions tail` reads (CW-20261001-0033).
+// logs/session.log, the file `tether sessions tail` reads (CW-20261001-0033).
 //
 // The streaming-stdio, jsonrpc-stdio and PTY runtimes write that file
 // themselves; agentkit's adapter runtime, which runs one process per turn

@@ -96,11 +96,11 @@ func TestProxySurfaceDefaultKeepsNativeAndHatchTools(t *testing.T) {
 		"alpha_tool_a",
 		"alpha_tool_b",
 		"beta_tool_x",
-		"mux_health",
-		"mux_discover",
-		"mux_discover_tools",
-		"mux_call",
-		"mux_catalog_list_mcp_servers",
+		"tether_health",
+		"tether_tool_search",
+		"tether_tool_list",
+		"tether_tool_call",
+		"tether_catalog_list_mcp_servers",
 	} {
 		if !hasToolName(names, want) {
 			t.Fatalf("default proxy missing %q in %v", want, names)
@@ -113,11 +113,11 @@ func TestProxySurfaceServersKeepsNativeAndHatchTools(t *testing.T) {
 	for _, want := range []string{
 		"alpha_tool_a",
 		"alpha_tool_b",
-		"mux_health",
-		"mux_discover",
-		"mux_discover_tools",
-		"mux_call",
-		"mux_catalog_list_mcp_servers",
+		"tether_health",
+		"tether_tool_search",
+		"tether_tool_list",
+		"tether_tool_call",
+		"tether_catalog_list_mcp_servers",
 	} {
 		if !hasToolName(names, want) {
 			t.Fatalf("selective proxy missing %q in %v", want, names)
@@ -128,7 +128,7 @@ func TestProxySurfaceServersKeepsNativeAndHatchTools(t *testing.T) {
 	}
 }
 
-func TestProxySurfaceOnlySuppressesMuxTools(t *testing.T) {
+func TestProxySurfaceOnlySuppressesTetherTools(t *testing.T) {
 	names := proxySurfaceToolNamesForTest(t, []string{"alpha"}, true)
 	want := []string{"alpha_tool_a", "alpha_tool_b"}
 	if len(names) != len(want) {
@@ -140,8 +140,8 @@ func TestProxySurfaceOnlySuppressesMuxTools(t *testing.T) {
 		}
 	}
 	for _, name := range names {
-		if len(name) >= 4 && name[:4] == "mux_" {
-			t.Fatalf("only proxy exposed mux tool %q in %v", name, names)
+		if len(name) >= 4 && name[:4] == "tether_" {
+			t.Fatalf("only proxy exposed tether tool %q in %v", name, names)
 		}
 	}
 }

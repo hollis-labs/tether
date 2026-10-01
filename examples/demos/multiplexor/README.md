@@ -25,11 +25,11 @@ queryable via `GET /broker/envelopes?workflow_id=…&correlation_id=…`.
 ## Prerequisites
 
 ```bash
-# Build and install mux
-go install ./cmd/mux
+# Build and install tether
+go install ./cmd/tether
 
 # Start the daemon (uses examples/catalog by default)
-mux daemon start
+tether daemon start
 ```
 
 ## Running the demo
@@ -97,7 +97,7 @@ continuing — use:
 ```bash
 # POST /broker/requests?wait=true&timeout=30s
 # Returns 200 with the response envelope, or 504 on timeout.
-curl -sf --unix-socket ~/.tether/run/muxd.sock \
+curl -sf --unix-socket ~/.tether/run/tetherd.sock \
   -X POST "http://unix/broker/requests?wait=true&timeout=30s" \
   -H "Content-Type: application/json" \
   -d '{"sender":"primary-id","recipient":"sibling-id","payload":"..."}'

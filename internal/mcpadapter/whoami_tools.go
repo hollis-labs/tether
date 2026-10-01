@@ -1,7 +1,7 @@
 // Package mcpadapter — whoami_tools.go wires the native tether_whoami
 // MCP tool (T08, messaging vNext), giving MCP callers parity with GET
 // /whoami (internal/api/whoami.go) -- CLI parity landed the same task as
-// `mux whoami`.
+// `tether whoami`.
 package mcpadapter
 
 import (
@@ -33,7 +33,7 @@ func (a *Adapter) handleWhoami(ctx context.Context, args map[string]any) (any, e
 		return nil, toolError("invalid_request", "as is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_whoami requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_whoami requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Whoami(ctx, as)
 	if err != nil {

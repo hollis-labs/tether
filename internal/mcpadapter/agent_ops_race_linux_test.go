@@ -14,7 +14,7 @@ import (
 )
 
 // The review's reproduction through the real handlers: a project-scope
-// mux_agent_create, and a mux_agent_edit, while the repository's .tether is
+// tether_agent_create, and a tether_agent_edit, while the repository's .tether is
 // flipped between two symlinks, one into the protected catalog. Checking a
 // resolved path and writing it later lost this race (3861 of 20000 creates wrote
 // into the catalog); the handlers write through the directory they judged, so

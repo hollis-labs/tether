@@ -14,6 +14,6 @@ catalog:
 # above, so an overridden state dir stays fully self-contained. Change
 # listen_addr to e.g. tcp:127.0.0.1:7180 for debugging.
 daemon:
-  listen_addr: unix:~/.tether/run/muxd.sock
-  pid_file: ~/.tether/run/muxd.pid
+  listen_addr: unix:~/.tether/run/tetherd.sock
+  pid_file: ~/.tether/run/tetherd.pid
   shutdown_timeout: 10s

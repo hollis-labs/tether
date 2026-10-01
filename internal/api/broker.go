@@ -84,13 +84,13 @@ func envelopeToDTO(e broker.Envelope) EnvelopeDTO {
 	}
 }
 
-func (s *Server) registerBrokerRoutes(mux *http.ServeMux) {
+func (s *Server) registerBrokerRoutes(router *http.ServeMux) {
 	if s.Broker == nil {
 		return
 	}
-	mux.HandleFunc("/broker/envelopes", s.handleEnvelopesCollection)
-	mux.HandleFunc("/broker/envelopes/", s.handleEnvelopesItem)
-	mux.HandleFunc("/broker/requests", s.handleBrokerRequests)
+	router.HandleFunc("/broker/envelopes", s.handleEnvelopesCollection)
+	router.HandleFunc("/broker/envelopes/", s.handleEnvelopesItem)
+	router.HandleFunc("/broker/requests", s.handleBrokerRequests)
 }
 
 func (s *Server) handleEnvelopesCollection(w http.ResponseWriter, r *http.Request) {

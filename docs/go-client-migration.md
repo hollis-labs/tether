@@ -3,16 +3,16 @@
 Tether's canonical external Go daemon client is now
 [`go-tether-client`](https://github.com/hollis-labs/go-tether-client).
 
-`go-agentmux-client` is the legacy predecessor. New integrations should target
+`go-agenttether-client` is the legacy predecessor. New integrations should target
 `go-tether-client`, and existing consumers should migrate there before the old
 module is archived.
 
 ## Why
 
 - Tether is the canonical runtime/product name.
-- The default daemon socket path is `unix:~/.tether/run/muxd.sock`.
+- The default daemon socket path is `unix:~/.tether/run/tetherd.sock`.
 - The new client includes the typed AI gateway and newer event surfaces that
-  were added after the original `go-agentmux-client` shape.
+  were added after the original `go-agenttether-client` shape.
 
 ## Surface
 
@@ -30,10 +30,10 @@ module is archived.
 
 ## Migration Sequence
 
-1. Update imports from `github.com/hollis-labs/go-agentmux-client` to
+1. Update imports from `github.com/hollis-labs/go-agenttether-client` to
    `github.com/hollis-labs/go-tether-client`.
 2. Replace assumptions about the legacy default socket path with
-   `unix:~/.tether/run/muxd.sock`, or pass an explicit listen address.
+   `unix:~/.tether/run/tetherd.sock`, or pass an explicit listen address.
 3. Retest long-lived calls:
    - attach
    - wait

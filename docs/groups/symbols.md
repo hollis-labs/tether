@@ -68,7 +68,7 @@ The notice is a **pointer**, not a copy. To read full context, the mentioned age
 
 Mention notices are durable mailbox messages. They do not, by themselves,
 inject a turn into a live session. Use the notify surface (`/messages/notify`,
-`mux_message_notify`, or `mux messages notify`) when a sender also needs a
+`tether_message_notify`, or `tether messages notify`) when a sender also needs a
 best-effort mailbox wake for a currently running session.
 
 ### Caps

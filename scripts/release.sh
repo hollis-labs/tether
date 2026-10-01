@@ -64,11 +64,11 @@ for target in "${TARGETS[@]}"; do
     CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
       -trimpath \
       -ldflags "${ldflags}" \
-      -o "${work_dir}/mux" ./cmd/mux
+      -o "${work_dir}/tether" ./cmd/tether
     CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
       -trimpath \
       -ldflags "${ldflags}" \
-      -o "${work_dir}/mux-apikey-helper" ./cmd/mux-apikey-helper
+      -o "${work_dir}/tether-apikey-helper" ./cmd/tether-apikey-helper
   )
 
   # Build tether_sysop with the embedded frontend (frontend was pre-built above).
@@ -83,7 +83,7 @@ for target in "${TARGETS[@]}"; do
   cp "${REPO_ROOT}/README.md" "${REPO_ROOT}/LICENSE" "${REPO_ROOT}/docs/install.md" "${work_dir}/"
 
   tar -C "${work_dir}" -czf "${archive_path}" \
-    mux mux-apikey-helper tether_sysop README.md LICENSE install.md
+    tether tether-apikey-helper tether_sysop README.md LICENSE install.md
   shasum -a 256 "${archive_path}" > "${checksum_path}"
 
   echo "  wrote: ${archive_path}"

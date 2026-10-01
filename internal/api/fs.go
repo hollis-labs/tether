@@ -32,9 +32,9 @@ type FSDetectResponse struct {
 	Source string `json:"source"`
 }
 
-func (s *Server) registerFSRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/fs/validate", s.handleFSValidate)
-	mux.HandleFunc("/fs/detect", s.handleFSDetect)
+func (s *Server) registerFSRoutes(router *http.ServeMux) {
+	router.HandleFunc("/fs/validate", s.handleFSValidate)
+	router.HandleFunc("/fs/detect", s.handleFSDetect)
 }
 
 func (s *Server) handleFSValidate(w http.ResponseWriter, r *http.Request) {

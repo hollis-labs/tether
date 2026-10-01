@@ -22,7 +22,7 @@ package api
 //
 // Routing: GET /messages/{id}/trace is dispatched from
 // handleMessagesItem's existing action switch (messages.go), not a
-// separate mux.HandleFunc("/messages/", ...) registration -- that prefix
+// separate tether.HandleFunc("/messages/", ...) registration -- that prefix
 // is already owned by registerMessageRoutes, and a second registration
 // on the same pattern panics ("multiple registrations").
 

@@ -120,7 +120,7 @@ func singularForKind(k registry.Kind) string {
 	return string(k)
 }
 
-// registerRegistryRoutes mounts the /registry/ tree onto mux. The route
+// registerRegistryRoutes mounts the /registry/ tree onto router. The route
 // is only attached when Server.Registry is non-nil; absent the dep, the
 // daemon falls through to its 404 default (matches the Catalog/Broker
 // convention in this package).
@@ -129,15 +129,15 @@ func singularForKind(k registry.Kind) string {
 // `/registry/{kind}/...` dispatcher) because "bootstrap" isn't a kind —
 // the verb operates on the whole catalog. Stdlib ServeMux longest-prefix
 // match routes the exact path here before the `/registry/` prefix scoop.
-func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
+func (s *Server) registerRegistryRoutes(router *http.ServeMux) {
 	if s.Registry == nil {
 		return
 	}
-	mux.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
-	mux.HandleFunc("/registry/reonboard", s.handleRegistryReonboard)
-	mux.HandleFunc("/registry/bindings", s.handleBindingsCollection)
-	mux.HandleFunc("/registry/bindings/", s.handleBindingsItem)
-	mux.HandleFunc("/registry/", s.handleRegistry)
+	router.HandleFunc("/registry/bootstrap", s.handleRegistryBootstrap)
+	router.HandleFunc("/registry/reonboard", s.handleRegistryReonboard)
+	router.HandleFunc("/registry/bindings", s.handleBindingsCollection)
+	router.HandleFunc("/registry/bindings/", s.handleBindingsItem)
+	router.HandleFunc("/registry/", s.handleRegistry)
 }
 
 // handleRegistry is the single entry point for every /registry/... route.
@@ -152,7 +152,7 @@ func (s *Server) registerRegistryRoutes(mux *http.ServeMux) {
 //
 // The {urn} segment is the full msg:// URN as a single (URL-encoded)
 // path component. Callers MUST url.PathEscape it before assembly; the
-// handler url.PathUnescapes before passing to the service. Because Mux
+// handler url.PathUnescapes before passing to the service. Because Tether
 // URNs contain ':' and '/' characters, escaping is non-optional.
 func (s *Server) handleRegistry(w http.ResponseWriter, r *http.Request) {
 	// Use the escaped path so URN segments containing %2F survive splitting.
@@ -242,7 +242,7 @@ type registryMergeRequest struct {
 }
 
 // handleRegistryRegister services POST /registry/{kind}. Body is a
-// Profile JSON. Kind/CreatedAt/UpdatedAt/MuxInstanceID are stripped here
+// Profile JSON. Kind/CreatedAt/UpdatedAt/TetherInstanceID are stripped here
 // so the storage path's defaults apply. A non-empty URN is NOT stripped —
 // Service.Register rejects it with ErrInvalidRequest (400) so callers
 // learn the contract (server mints URNs; never accepted from input).
@@ -260,7 +260,7 @@ func (s *Server) handleRegistryRegister(w http.ResponseWriter, r *http.Request, 
 	p.Kind = ""
 	p.CreatedAt = noTime()
 	p.UpdatedAt = noTime()
-	p.MuxInstanceID = ""
+	p.TetherInstanceID = ""
 
 	out, err := s.Registry.Register(r.Context(), kind, p)
 	if err != nil {
@@ -356,32 +356,32 @@ func (s *Server) handleRegistryLookup(w http.ResponseWriter, r *http.Request, ur
 //   - ?include=callback,kind_meta,host_address,external_ids: selectively includes the
 //     requested fields.
 type redactedProfile struct {
-	URN           string                        `json:"urn"`
-	Kind          registry.Kind                 `json:"kind"`
-	Owner         string                        `json:"owner,omitempty"`
-	MuxInstanceID string                        `json:"mux_instance_id"`
-	DisplayName   string                        `json:"display_name"`
-	Title         string                        `json:"title,omitempty"`
-	Role          string                        `json:"role,omitempty"`
-	Description   string                        `json:"description,omitempty"`
-	Avatar        string                        `json:"avatar,omitempty"`
-	Project       string                        `json:"project,omitempty"`
-	Status        registry.Status               `json:"status"`
-	CachedAt      *time.Time                    `json:"cached_at,omitempty"`
-	HealthStatus  string                        `json:"health_status,omitempty"`
-	LastSeenAt    *time.Time                    `json:"last_seen_at,omitempty"`
-	MergedInto    string                        `json:"merged_into,omitempty"`
-	LastUpdatedBy string                        `json:"last_updated_by,omitempty"`
-	Capabilities  []string                      `json:"capabilities,omitempty"`
-	Skills        []registry.Skill              `json:"skills,omitempty"`
-	Links         []registry.Link               `json:"links,omitempty"`
-	Tags          []string                      `json:"tags,omitempty"`
-	Guidelines    string                        `json:"guidelines,omitempty"`
-	EntryPoints   []string                      `json:"entry_points,omitempty"`
-	Props         map[string]string             `json:"props,omitempty"`
-	FieldMetadata map[string]registry.FieldMeta `json:"field_metadata,omitempty"`
-	CreatedAt     time.Time                     `json:"created_at"`
-	UpdatedAt     time.Time                     `json:"updated_at"`
+	URN              string                        `json:"urn"`
+	Kind             registry.Kind                 `json:"kind"`
+	Owner            string                        `json:"owner,omitempty"`
+	TetherInstanceID string                        `json:"tether_instance_id"`
+	DisplayName      string                        `json:"display_name"`
+	Title            string                        `json:"title,omitempty"`
+	Role             string                        `json:"role,omitempty"`
+	Description      string                        `json:"description,omitempty"`
+	Avatar           string                        `json:"avatar,omitempty"`
+	Project          string                        `json:"project,omitempty"`
+	Status           registry.Status               `json:"status"`
+	CachedAt         *time.Time                    `json:"cached_at,omitempty"`
+	HealthStatus     string                        `json:"health_status,omitempty"`
+	LastSeenAt       *time.Time                    `json:"last_seen_at,omitempty"`
+	MergedInto       string                        `json:"merged_into,omitempty"`
+	LastUpdatedBy    string                        `json:"last_updated_by,omitempty"`
+	Capabilities     []string                      `json:"capabilities,omitempty"`
+	Skills           []registry.Skill              `json:"skills,omitempty"`
+	Links            []registry.Link               `json:"links,omitempty"`
+	Tags             []string                      `json:"tags,omitempty"`
+	Guidelines       string                        `json:"guidelines,omitempty"`
+	EntryPoints      []string                      `json:"entry_points,omitempty"`
+	Props            map[string]string             `json:"props,omitempty"`
+	FieldMetadata    map[string]registry.FieldMeta `json:"field_metadata,omitempty"`
+	CreatedAt        time.Time                     `json:"created_at"`
+	UpdatedAt        time.Time                     `json:"updated_at"`
 }
 
 func redactFieldMetadata(fm map[string]registry.FieldMeta, f includeFields) map[string]registry.FieldMeta {
@@ -425,7 +425,7 @@ func redactFieldMetadata(fm map[string]registry.FieldMeta, f includeFields) map[
 // guidelines, and entry_points, are visible by default.
 func redactProfile(p registry.Profile) redactedProfile {
 	return redactedProfile{
-		URN: p.URN, Kind: p.Kind, Owner: p.Owner, MuxInstanceID: p.MuxInstanceID,
+		URN: p.URN, Kind: p.Kind, Owner: p.Owner, TetherInstanceID: p.TetherInstanceID,
 		DisplayName: p.DisplayName, Title: p.Title, Role: p.Role,
 		Description: p.Description, Avatar: p.Avatar, Project: p.Project,
 		Status: p.Status, CachedAt: p.CachedAt, HealthStatus: p.HealthStatus,

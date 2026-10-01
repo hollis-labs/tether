@@ -24,7 +24,7 @@ const (
 	KindBrokerEnvelopeReplied = "broker.envelope_replied"
 
 	// KindDaemonStarted / KindDaemonShutdownStarted /
-	// KindDaemonShutdownCompleted bracket the muxd daemon's lifetime.
+	// KindDaemonShutdownCompleted bracket the tetherd daemon's lifetime.
 	KindDaemonStarted           = "daemon.started"
 	KindDaemonShutdownStarted   = "daemon.shutdown_started"
 	KindDaemonShutdownCompleted = "daemon.shutdown_completed"

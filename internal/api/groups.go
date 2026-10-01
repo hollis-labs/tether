@@ -83,17 +83,17 @@ type GroupsService interface {
 	GetMyMentions(ctx context.Context, memberURN string, sinceTS time.Time, limit int) ([]registry.GroupMessage, error)
 }
 
-// registerGroupRoutes mounts the /groups/ tree + /mentions onto mux. The
+// registerGroupRoutes mounts the /groups/ tree + /mentions onto router. The
 // routes are only attached when Server.Groups is non-nil; absent the
 // dep, the daemon falls through to its 404 default (matches the
 // Catalog/Broker/Registry convention).
-func (s *Server) registerGroupRoutes(mux *http.ServeMux) {
+func (s *Server) registerGroupRoutes(router *http.ServeMux) {
 	if s.Groups == nil {
 		return
 	}
-	mux.HandleFunc("/groups", s.handleGroupsRoot)
-	mux.HandleFunc("/groups/", s.handleGroupsTree)
-	mux.HandleFunc("/mentions", s.handleMentions)
+	router.HandleFunc("/groups", s.handleGroupsRoot)
+	router.HandleFunc("/groups/", s.handleGroupsTree)
+	router.HandleFunc("/mentions", s.handleMentions)
 }
 
 // handleGroupsRoot services /groups (no trailing slash): POST creates a
@@ -235,7 +235,7 @@ func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	p.Kind = ""
 	p.CreatedAt = noTime()
 	p.UpdatedAt = noTime()
-	p.MuxInstanceID = ""
+	p.TetherInstanceID = ""
 
 	out, err := s.Groups.Register(r.Context(), registry.KindGroup, p)
 	if err != nil {

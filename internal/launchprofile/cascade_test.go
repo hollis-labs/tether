@@ -244,9 +244,9 @@ func TestResolveLaunchInputsAndContext(t *testing.T) {
 	if comp.Env["LAUNCH_PARAM"] != "42" {
 		t.Errorf("Env[LAUNCH_PARAM] = %q, want 42", comp.Env["LAUNCH_PARAM"])
 	}
-	// Context MCP servers injected into MUX_MCP_SERVERS
-	if comp.Env["MUX_MCP_SERVERS"] != "server-1,server-2" {
-		t.Errorf("Env[MUX_MCP_SERVERS] = %q, want server-1,server-2", comp.Env["MUX_MCP_SERVERS"])
+	// Context MCP servers injected into TETHER_MCP_SERVERS
+	if comp.Env["TETHER_MCP_SERVERS"] != "server-1,server-2" {
+		t.Errorf("Env[TETHER_MCP_SERVERS] = %q, want server-1,server-2", comp.Env["TETHER_MCP_SERVERS"])
 	}
 	// Skills union
 	if len(comp.Skills) != 2 || comp.Skills[0] != "base-skill" || comp.Skills[1] != "custom-skill" {

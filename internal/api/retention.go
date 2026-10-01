@@ -53,11 +53,11 @@ type RetentionStore interface {
 // picks it over handleMessagesItem's id-based dispatch. Only attached
 // when Server.Retention is non-nil, matching every other optional
 // dependency in this package.
-func (s *Server) registerRetentionRoutes(mux *http.ServeMux) {
+func (s *Server) registerRetentionRoutes(router *http.ServeMux) {
 	if s.Retention == nil {
 		return
 	}
-	mux.HandleFunc("/messages/retention/candidates", s.handleRetentionCandidates)
+	router.HandleFunc("/messages/retention/candidates", s.handleRetentionCandidates)
 }
 
 // retentionCandidateDTO is the wire shape for one ListRetentionCandidates

@@ -1,0 +1,16 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-codex-launch.yaml.
+# Boot-profile folded: tether.codex.main.yaml
+# Legacy: project=tether / agent=general / provider=codex-app-server / workspace.mode=hybrid.
+# Repointed 2026-09-12: the codex-cli provider has no command and no
+# auto-detectable binary (`tether doctor` reports it unusable), so every
+# launch on it failed. codex-app-server is the framed, steerable path.
+spec: tether.launch
+name: tether-codex-launch
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: codex-app-server
+  isolation: hybrid
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tether — Codex App-Server"

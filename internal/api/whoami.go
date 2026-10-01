@@ -56,11 +56,11 @@ import (
 // registerWhoamiRoutes mounts GET /whoami. Only attached when Server.Registry
 // is non-nil, matching the registry/bindings routes' nil-disables-route
 // convention.
-func (s *Server) registerWhoamiRoutes(mux *http.ServeMux) {
+func (s *Server) registerWhoamiRoutes(router *http.ServeMux) {
 	if s.Registry == nil {
 		return
 	}
-	mux.HandleFunc("/whoami", s.handleWhoami)
+	router.HandleFunc("/whoami", s.handleWhoami)
 }
 
 // whoamiResponse is the self-discovery payload. Fields are individually

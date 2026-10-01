@@ -313,10 +313,10 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 			if !strings.Contains(s.StderrTail, "fixture diagnostic") || strings.Contains(s.StderrTail, "secret-fixture-token") {
 				t.Fatalf("stderr: %q", s.StderrTail)
 			}
-			if health := callBody("mux_health", nil); health["ok"] != false {
+			if health := callBody("tether_health", nil); health["ok"] != false {
 				t.Fatalf("health hid failure: %+v", health)
 			}
-			for _, tool := range []string{"mux_discover", "mux_discover_tools"} {
+			for _, tool := range []string{"tether_tool_search", "tether_tool_list"} {
 				body := callBody(tool, map[string]any{"intent": "alpha"})
 				if body["complete"] != false || body["count"] != float64(0) || len(body["unavailable_servers"].([]any)) != 1 {
 					t.Fatalf("discovery hid failure: %+v", body)
@@ -333,10 +333,10 @@ func TestUpstreamRecovery_ExitKindsInflightSiblingAndVisibility(t *testing.T) {
 				t.Fatal("sibling replaced")
 			}
 			assertToolPresent(context.Background(), t, downstream, "alpha_extra")
-			if health := callBody("mux_health", nil); health["ok"] != true {
+			if health := callBody("tether_health", nil); health["ok"] != true {
 				t.Fatalf("health did not recover: %+v", health)
 			}
-			if body := callBody("mux_discover", map[string]any{"intent": "no-such-tool-zxy"}); body["complete"] != true || body["count"] != float64(0) {
+			if body := callBody("tether_tool_search", map[string]any{"intent": "no-such-tool-zxy"}); body["complete"] != true || body["count"] != float64(0) {
 				t.Fatalf("no-match: %+v", body)
 			}
 			b, _ := os.ReadFile(filepath.Join(dir, "alpha.events"))

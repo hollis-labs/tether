@@ -75,9 +75,9 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	}
 }
 
-// TestProvenance_MuxCallForwardingStampsEnvelope tests that forwarding through mux_call
+// TestProvenance_TetherCallForwardingStampsEnvelope tests that forwarding through tether_tool_call
 // stamps tether.provenance onto the upstream request.
-func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
+func TestProvenance_TetherCallForwardingStampsEnvelope(t *testing.T) {
 	var gotMeta map[string]any
 	var gotArgs map[string]any
 
@@ -103,13 +103,13 @@ func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
 	a := New(nil, "", nil)
 	a.SessionID = "sess-mc"
 
-	s := gomcp.NewServer("test-mux", "0.0.1")
+	s := gomcp.NewServer("test-tether", "0.0.1")
 	a.registerCallTool(s, router)
 
 	client := connectInMemory(t, s)
 
 	res, err := client.CallTool(context.Background(), &mcpsdk.CallToolParams{
-		Name: "mux_call",
+		Name: "tether_tool_call",
 		Arguments: map[string]any{
 			"tool_name": "knowledge_write",
 			"arguments": map[string]any{
@@ -118,18 +118,18 @@ func TestProvenance_MuxCallForwardingStampsEnvelope(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("CallTool mux_call: %v", err)
+		t.Fatalf("CallTool tether_tool_call: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("unexpected tool error from mux_call: %v", res)
+		t.Fatalf("unexpected tool error from tether_tool_call: %v", res)
 	}
 
 	if gotMeta == nil {
-		t.Fatal("expected _meta on forwarded call from mux_call, got nil")
+		t.Fatal("expected _meta on forwarded call from tether_tool_call, got nil")
 	}
 	env := ExtractProvenanceMeta(gotMeta)
 	if env == nil {
-		t.Fatalf("missing tether.provenance in _meta from mux_call: %v", gotMeta)
+		t.Fatalf("missing tether.provenance in _meta from tether_tool_call: %v", gotMeta)
 	}
 	if env.SchemaVersion != 1 || env.SessionID != "sess-mc" || env.WorkstreamID != "ws-mc" {
 		t.Errorf("unexpected provenance envelope: %+v", env)

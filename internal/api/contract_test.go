@@ -411,9 +411,9 @@ func TestContract_Resume_ContractFields(t *testing.T) {
 		Service:     svc,
 		Checkpoints: &fakeCheckpoints{},
 	}
-	mux := http.NewServeMux()
-	s.registerCheckpointRoutes(mux)
-	mux.ServeHTTP(rr, req)
+	router := http.NewServeMux()
+	s.registerCheckpointRoutes(router)
+	router.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())

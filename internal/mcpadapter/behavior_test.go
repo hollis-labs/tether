@@ -8,7 +8,7 @@ package mcpadapter
 // value, and specifically a copied one: annotating a tool `Reads` because the
 // tool beside it reads, or because the name looks like a read.
 //
-// `mux_message_inbox` is why that is not hypothetical. Its name, its handler's
+// `tether_message_inbox` is why that is not hypothetical. Its name, its handler's
 // callee, its HTTP verb (a GET) and its API handler all read as a read, and
 // four layers down messagingStore.Inbox runs UPDATE ... SET delivered_at inside
 // a write transaction. No signal available at the registration site is
@@ -54,7 +54,7 @@ var clientMethodWrites = map[string]bool{
 	"WaitSession":                false,
 	"Whoami":                     false,
 
-	// A daemon-only `mux mcp` reads Tether's state through these plain GETs
+	// A daemon-only `tether mcp` reads Tether's state through these plain GETs
 	// (CW-20261001-0173); none of them consumes or marks anything.
 	"ListSessions":      false,
 	"GetSession":        false,
@@ -110,7 +110,7 @@ var clientMethodWrites = map[string]bool{
 // a.client.Groups().ListMessages(...).
 //
 // tether_group_read is the near-miss worth recording: it looks exactly like
-// mux_message_inbox and is NOT the same, because registry.ListGroupMessages
+// tether_message_inbox and is NOT the same, because registry.ListGroupMessages
 // contains no write and MarkRead is a separate explicit call. Groups got right
 // what messaging did not, and the only way to know that is to have looked.
 var subClientWrites = map[string]bool{
@@ -203,7 +203,7 @@ func parseRegistrations(t *testing.T) ([]registration, map[string]*ast.FuncDecl)
 					case "Name":
 						if bl, ok := kv.Value.(*ast.BasicLit); ok && bl.Kind == token.STRING {
 							if v, err := strconv.Unquote(bl.Value); err == nil &&
-								(strings.HasPrefix(v, "mux_") || strings.HasPrefix(v, "tether_")) {
+								strings.HasPrefix(v, "tether_") {
 								r.tool = v
 							}
 						}
@@ -283,7 +283,7 @@ func clientCallsIn(fd *ast.FuncDecl) (direct, sub []string) {
 //
 // It reaches past the registration site to the client method, which is the
 // nearest layer where read and write are actually distinguishable. Annotating
-// mux_message_inbox as Reads fails here, because MessageInbox is classified a
+// tether_message_inbox as Reads fails here, because MessageInbox is classified a
 // write in one reviewed list rather than re-judged from its name.
 //
 // WHAT IT DOES NOT COVER, stated so nobody reads a green run as more than it
@@ -333,7 +333,7 @@ func TestReadOnlyClaimsAgreeWithTheClientMethodsTheyCall(t *testing.T) {
 // helper. It is also the list to extend when the next one is found.
 func TestKnownMisleadingToolsAreNotReadOnly(t *testing.T) {
 	hazards := map[string]string{
-		"mux_message_inbox": "GET /messages/inbox, and messagingStore.Inbox marks every envelope it returns as delivered in the same write transaction",
+		"tether_message_inbox": "GET /messages/inbox, and messagingStore.Inbox marks every envelope it returns as delivered in the same write transaction",
 	}
 	regs, _ := parseRegistrations(t)
 	seen := map[string]bool{}

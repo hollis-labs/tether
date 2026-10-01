@@ -188,8 +188,8 @@ func catalogReloadToolError(failure *catalogReadFailure) error {
 
 func (a *Adapter) registerHealthTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_health",
-		Description: "Health check for the agent-mux MCP adapter. Returns version and catalog summary.",
+		Name:        "tether_health",
+		Description: "Health check for the tether MCP adapter. Returns version and catalog summary.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleHealth,
 	}, Reads("runtime observation and validated launch catalog reload; no store or catalog write"))
@@ -197,35 +197,35 @@ func (a *Adapter) registerHealthTools(s *gomcp.Server) {
 
 func (a *Adapter) registerCatalogTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_catalog_list_projects",
-		Description: "List all projects defined in the agent-mux catalog.",
+		Name:        "tether_catalog_list_projects",
+		Description: "List all projects defined in the tether catalog.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleListProjects,
 	}, Reads("validated launch catalog reload and project listing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_catalog_list_agents",
-		Description: "List all agent profiles defined in the agent-mux catalog.",
+		Name:        "tether_catalog_list_agents",
+		Description: "List all agent profiles defined in the tether catalog.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleListAgents,
 	}, Reads("validated layered launch catalog reload and agent listing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_catalog_list_providers",
-		Description: "List all provider definitions in the agent-mux catalog.",
+		Name:        "tether_catalog_list_providers",
+		Description: "List all provider definitions in the tether catalog.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleListProviders,
 	}, Reads("validated launch catalog reload and provider listing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_catalog_list_launches",
-		Description: "List all launch profiles in the agent-mux catalog. A launch profile combines a project, agent, and provider into a named runnable configuration.",
+		Name:        "tether_catalog_list_launches",
+		Description: "List all launch profiles in the tether catalog. A launch profile combines a project, agent, and provider into a named runnable configuration.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleListLaunches,
 	}, Reads("validated layered launch catalog reload and launch listing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_catalog_list_boot_profiles",
+		Name:        "tether_catalog_list_boot_profiles",
 		Description: "List available boot prompt profiles from the catalog boot-profiles directory.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleListBootProfiles,

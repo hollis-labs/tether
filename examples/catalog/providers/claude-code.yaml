@@ -15,7 +15,7 @@ bootstrap:
   # --verbose`). System context rides via the planted CLAUDE.md /
   # --append-system-prompt-file injection paths from go-providers'
   # BootDirSpec; user turns flow via the daemon's /turn endpoint (or
-  # `mux sessions turn`, `mux_session_send_turn`). Per-turn payloads are
+  # `tether sessions turn`, `tether_session_send_turn`). Per-turn payloads are
   # framed as {"type":"user","message":{"role":"user","content":"..."}}\n
   # by service.SendTurn.
   mode: streaming-stdio

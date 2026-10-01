@@ -72,7 +72,7 @@ func appendURNLine(path string, src []byte, urn string) error {
 	if len(src) > 0 && src[len(src)-1] != '\n' {
 		src = append(src, '\n')
 	}
-	src = append(src, []byte("# registry_urn added by mux registry bootstrap\nregistry_urn: "+urn+"\n")...)
+	src = append(src, []byte("# registry_urn added by tether registry bootstrap\nregistry_urn: "+urn+"\n")...)
 	if err := os.WriteFile(filepath.Clean(path), src, 0o600); err != nil { //nolint:gosec // caller constrains target to operator-owned config file
 		return fmt.Errorf("registry: write-back append %s: %w", path, err)
 	}

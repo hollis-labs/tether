@@ -27,7 +27,7 @@ error envelope everywhere: `{error:{code,message}}`.
 
 **Neighbors:**
 
-- Mounted onto the HTTP mux by [`internal/daemon`](../daemon). The
+- Mounted onto the HTTP tether by [`internal/daemon`](../daemon). The
   daemon package owns the listener, PID file, and lifecycle.
 - Talks to [`internal/app`](../app) through the `LaunchService`
   interface (create / launch / list / get / stop / attach / input).

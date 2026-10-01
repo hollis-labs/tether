@@ -23,7 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// The daemon-only `mux mcp` (CW-20261001-0173) has an app.Service with no
+// The daemon-only `tether mcp` (CW-20261001-0173) has an app.Service with no
 // Store: it must never open the state database, so it reads Tether's state
 // from the daemon. These tests run its tools against the real API handler
 // over a real store, and against an in-process adapter on that same store:
@@ -131,14 +131,14 @@ func TestDaemonOnly_ReadsAnswerLikeTheStoreDoes(t *testing.T) {
 		tool string
 		args map[string]any
 	}{
-		{"mux_session_events", map[string]any{"session_id": "sess-1"}},
-		{"mux_session_events", map[string]any{"session_id": "sess-1", "limit": 2}},
-		{"mux_session_checkpoints", map[string]any{"session_id": "sess-1"}},
-		{"mux_session_attachments", map[string]any{"session_id": "sess-1"}},
-		{"mux_proxy_events", map[string]any{}},
-		{"mux_proxy_events", map[string]any{"session_id": "sess-1"}},
-		{"mux_proxy_events", map[string]any{"server": "hadron", "errors_only": true}},
-		{"mux_proxy_events", map[string]any{"tool_name": "hadron_", "limit": 1}},
+		{"tether_session_events", map[string]any{"session_id": "sess-1"}},
+		{"tether_session_events", map[string]any{"session_id": "sess-1", "limit": 2}},
+		{"tether_session_checkpoints", map[string]any{"session_id": "sess-1"}},
+		{"tether_session_attachments", map[string]any{"session_id": "sess-1"}},
+		{"tether_proxy_events", map[string]any{}},
+		{"tether_proxy_events", map[string]any{"session_id": "sess-1"}},
+		{"tether_proxy_events", map[string]any{"server": "hadron", "errors_only": true}},
+		{"tether_proxy_events", map[string]any{"tool_name": "hadron_", "limit": 1}},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			want := callAnyTool(t, f.inProcess, tc.tool, tc.args)
@@ -159,33 +159,33 @@ func TestDaemonOnly_ReadsAnswerLikeTheStoreDoes(t *testing.T) {
 func TestDaemonOnly_SessionReads(t *testing.T) {
 	f := newDaemonOnlyFixture(t)
 
-	list := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "mux_session_list", map[string]any{}))
+	list := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_list", map[string]any{}))
 	sessions, _ := list["sessions"].([]any)
 	if len(sessions) != 1 {
-		t.Fatalf("mux_session_list = %v", list)
+		t.Fatalf("tether_session_list = %v", list)
 	}
 	if s, _ := sessions[0].(map[string]any); s["id"] != "sess-1" || s["state"] != "running" || s["logical_agent_id"] != "worker" {
 		t.Errorf("session = %v", s)
 	}
 
-	get := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "mux_session_get", map[string]any{"session_id": "sess-1"}))
+	get := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_get", map[string]any{"session_id": "sess-1"}))
 	if s, _ := get["session"].(map[string]any); s["id"] != "sess-1" || s["workspace"] != "/ws" {
-		t.Errorf("mux_session_get = %v", get)
+		t.Errorf("tether_session_get = %v", get)
 	}
 
-	res := callAnyTool(t, f.daemonOnly, "mux_session_get", map[string]any{"session_id": "missing"})
+	res := callAnyTool(t, f.daemonOnly, "tether_session_get", map[string]any{"session_id": "missing"})
 	if !res.IsError || !strings.Contains(textOf(res), "not_found") {
-		t.Errorf("mux_session_get of an unknown session = %q (error %v), want not_found", textOf(res), res.IsError)
+		t.Errorf("tether_session_get of an unknown session = %q (error %v), want not_found", textOf(res), res.IsError)
 	}
 }
 
-// The planted server's mux_session_health used to ask its own, empty
+// The planted server's tether_session_health used to ask its own, empty
 // session manager and so always answered "not running". Daemon-only it asks
 // the daemon, which owns the live sessions.
 func TestDaemonOnly_SessionHealthComesFromTheDaemon(t *testing.T) {
 	f := newDaemonOnlyFixture(t)
 
-	res := callAnyTool(t, f.daemonOnly, "mux_session_health", map[string]any{"session_id": "sess-1"})
+	res := callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"})
 	if !res.IsError || !strings.Contains(textOf(res), "conflict") {
 		t.Fatalf("health of a session the daemon is not running = %q (error %v), want conflict", textOf(res), res.IsError)
 	}
@@ -194,20 +194,20 @@ func TestDaemonOnly_SessionHealthComesFromTheDaemon(t *testing.T) {
 	f.service.health.ProviderID, f.service.health.ProviderKind = "claude-code", "cli"
 	f.service.health.Health.Alive = true
 	f.service.health.Health.PID = 4242
-	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "mux_session_health", map[string]any{"session_id": "sess-1"}))
+	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_session_health", map[string]any{"session_id": "sess-1"}))
 	if body["alive"] != true || body["provider_id"] != "claude-code" || body["pid"] != float64(4242) {
 		t.Errorf("health = %v", body)
 	}
 }
 
-// mux_logical_agent_list reads GET /logical-agents, whose summary carries
+// tether_logical_agent_list reads GET /logical-agents, whose summary carries
 // less than the table row the in-process tool returns.
 func TestDaemonOnly_LogicalAgentList(t *testing.T) {
 	f := newDaemonOnlyFixture(t)
-	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "mux_logical_agent_list", map[string]any{}))
+	body := parseToolJSON(t, callAnyTool(t, f.daemonOnly, "tether_logical_agent_list", map[string]any{}))
 	agents, _ := body["logical_agents"].([]any)
 	if len(agents) != 1 {
-		t.Fatalf("mux_logical_agent_list = %v", body)
+		t.Fatalf("tether_logical_agent_list = %v", body)
 	}
 	if a, _ := agents[0].(map[string]any); a["id"] != "worker" || a["name"] != "Worker" {
 		t.Errorf("agent = %v", a)
@@ -217,13 +217,13 @@ func TestDaemonOnly_LogicalAgentList(t *testing.T) {
 func TestDaemonOnly_ADaemonThatIsDownIsADaemonUnavailableError(t *testing.T) {
 	dir := t.TempDir()
 	a := NewWithDaemon(&app.Service{}, client.New("unix:"+filepath.Join(dir, "no-such.sock")), "tok", nil)
-	for _, tool := range []string{"mux_session_get", "mux_session_events", "mux_session_checkpoints", "mux_session_attachments", "mux_session_health"} {
+	for _, tool := range []string{"tether_session_get", "tether_session_events", "tether_session_checkpoints", "tether_session_attachments", "tether_session_health"} {
 		res := callAnyTool(t, a, tool, map[string]any{"session_id": "sess-1"})
 		if !res.IsError || !strings.Contains(textOf(res), "daemon_unavailable") {
 			t.Errorf("%s with the daemon down = %q (error %v), want daemon_unavailable", tool, textOf(res), res.IsError)
 		}
 	}
-	for _, tool := range []string{"mux_session_list", "mux_proxy_events", "mux_logical_agent_list"} {
+	for _, tool := range []string{"tether_session_list", "tether_proxy_events", "tether_logical_agent_list"} {
 		res := callAnyTool(t, a, tool, map[string]any{})
 		if !res.IsError || !strings.Contains(textOf(res), "daemon_unavailable") {
 			t.Errorf("%s with the daemon down = %q (error %v), want daemon_unavailable", tool, textOf(res), res.IsError)

@@ -45,11 +45,11 @@ var ErrUnknownColumn = errors.New("registry: unknown column in UpdateProfileFiel
 // returns deprecated only; StatusAny disables the status filter entirely.
 const StatusAny = "*"
 
-// defaultMuxInstanceID matches the column DEFAULT in 0015_registry.sql.
-const defaultMuxInstanceID = "agent-mux"
+// defaultTetherInstanceID is the durable identity authority; migration 0034 preserves it.
+const defaultTetherInstanceID = "agent-mux"
 
 // updateProfileFieldAllowlist is the column whitelist for
-// UpdateProfileFields. Immutable columns (urn, kind, mux_instance_id,
+// UpdateProfileFields. Immutable columns (urn, kind, tether_instance_id,
 // created_at, updated_at) are intentionally excluded — updated_at is
 // always bumped automatically; the others are write-once on insert.
 var updateProfileFieldAllowlist = map[string]struct{}{
@@ -92,7 +92,7 @@ func NewStorage(db *sql.DB) *Storage {
 
 // InsertProfile writes a Profile and all its child rows in a single
 // transaction. CreatedAt/UpdatedAt default to time.Now().UTC() when zero;
-// Status defaults to StatusActive when empty; MuxInstanceID defaults to
+// Status defaults to StatusActive when empty; TetherInstanceID defaults to
 // "agent-mux" when empty. Callback is JSON-marshaled for callback_json;
 // KindMeta (json.RawMessage) is written verbatim to kind_meta_json.
 func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
@@ -112,8 +112,8 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 	if p.Status == "" {
 		p.Status = StatusActive
 	}
-	if p.MuxInstanceID == "" {
-		p.MuxInstanceID = defaultMuxInstanceID
+	if p.TetherInstanceID == "" {
+		p.TetherInstanceID = defaultTetherInstanceID
 	}
 
 	var callbackJSON sql.NullString
@@ -169,13 +169,13 @@ func (s *Storage) InsertProfile(ctx context.Context, p Profile) error {
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO registry_entries
-		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		    (urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		     created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
+		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.TetherInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
@@ -305,7 +305,7 @@ func (s *Storage) FindByCallbackTarget(ctx context.Context, target string) (Prof
 		return Profile{}, errors.New("registry: find by callback target: target required")
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		`SELECT urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
@@ -746,7 +746,7 @@ func (s *Storage) Search(ctx context.Context, kind Kind, f Filter) ([]Profile, e
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		`SELECT urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
@@ -846,7 +846,7 @@ func bumpUpdatedAtTx(ctx context.Context, tx *sql.Tx, urn string) error {
 
 func (s *Storage) selectEntry(ctx context.Context, urn string) (Profile, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		`SELECT urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
@@ -1067,7 +1067,7 @@ func scanEntryRow(scan scanFn) (Profile, error) {
 		createdAt, updatedAt                                                                                               string
 	)
 	if err := scan(
-		&p.URN, &kindStr, &owner, &p.MuxInstanceID, &p.DisplayName,
+		&p.URN, &kindStr, &owner, &p.TetherInstanceID, &p.DisplayName,
 		&title, &role, &description, &avatar, &project, &status,
 		&callbackJSON, &cachedAt, &healthStatus, &lastSeenAt, &hostAddress, &mergedInto,
 		&kindMetaJSON, &lastUpdatedBy,
@@ -1240,8 +1240,8 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 	if p.Status == "" {
 		p.Status = StatusActive
 	}
-	if p.MuxInstanceID == "" {
-		p.MuxInstanceID = "agent-mux"
+	if p.TetherInstanceID == "" {
+		p.TetherInstanceID = "agent-mux"
 	}
 
 	var callbackJSON sql.NullString
@@ -1297,13 +1297,13 @@ func (s *Storage) InsertGroupWithOwner(ctx context.Context, p Profile, ownerURN 
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO registry_entries
-		    (urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		    (urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		     avatar, project, status, callback_json, cached_at, health_status,
 		     last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		     tags_json, guidelines, entry_points_json, field_metadata_json, props_json,
 		     created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.MuxInstanceID, p.DisplayName,
+		p.URN, string(p.Kind), nullIfEmpty(p.Owner), p.TetherInstanceID, p.DisplayName,
 		nullIfEmpty(p.Title), nullIfEmpty(p.Role), nullIfEmpty(p.Description),
 		nullIfEmpty(p.Avatar), nullIfEmpty(p.Project), string(p.Status),
 		callbackJSON, nullIfTimePtr(p.CachedAt), nullIfEmpty(p.HealthStatus),
@@ -1403,7 +1403,7 @@ func (s *Storage) ListGroupsForMember(ctx context.Context, memberURN string) ([]
 		return nil, errors.New("registry: list groups for member: memberURN required")
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT e.urn, e.kind, e.owner, e.mux_instance_id, e.display_name, e.title, e.role,
+		`SELECT e.urn, e.kind, e.owner, e.tether_instance_id, e.display_name, e.title, e.role,
 		        e.description, e.avatar, e.project, e.status, e.callback_json,
 		        e.cached_at, e.health_status, e.last_seen_at, e.host_address, e.merged_into,
 		        e.kind_meta_json, e.last_updated_by,
@@ -1549,7 +1549,7 @@ func (s *Storage) FindByDisplayName(ctx context.Context, name string) ([]Profile
 		return nil, errors.New("registry: find by display name: name required")
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT urn, kind, owner, mux_instance_id, display_name, title, role, description,
+		`SELECT urn, kind, owner, tether_instance_id, display_name, title, role, description,
 		        avatar, project, status, callback_json, cached_at, health_status,
 		        last_seen_at, host_address, merged_into, kind_meta_json, last_updated_by,
 		        tags_json, guidelines, entry_points_json, field_metadata_json, props_json,

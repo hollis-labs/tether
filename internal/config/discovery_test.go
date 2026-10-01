@@ -10,8 +10,8 @@ func TestDiscovery_LayerPrecedence(t *testing.T) {
 	tmp := t.TempDir()
 
 	systemRoot := filepath.Join(tmp, "system")
-	userRoot := filepath.Join(tmp, "user", ".agent-mux")
-	projRoot := filepath.Join(tmp, "proj", ".agent-mux")
+	userRoot := filepath.Join(tmp, "user", ".tether")
+	projRoot := filepath.Join(tmp, "proj", ".tether")
 
 	// shared id present in all three layers
 	writeAgent(t, systemRoot, "shared", "Shared System")
@@ -85,7 +85,7 @@ func TestDiscovery_MissingLayersAreSilent(t *testing.T) {
 	tmp := t.TempDir()
 
 	// Only the user layer exists on disk; system + project roots are nonexistent.
-	userRoot := filepath.Join(tmp, "user", ".agent-mux")
+	userRoot := filepath.Join(tmp, "user", ".tether")
 	writeAgent(t, userRoot, "only-agent", "Only Agent")
 
 	layers := []LayerSpec{
