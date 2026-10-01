@@ -148,6 +148,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
+		logControlPlaneProtection(log.Printf, svc.ProtectionHealth())
 		// Sweep stale sessions ONLY at daemon startup, never from short-
 		// lived subcommands (`mux mcp`, `mux agents`, etc.) — those may
 		// run concurrently with the daemon (e.g. as an MCP subprocess
@@ -233,6 +234,7 @@ var daemonRunCmd = &cobra.Command{
 				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason}
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
+			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },
 			SessionBootstrap: svc.Store,
 			DeliveryTrace:    svc.Store,
 			DeliveryRepair:   svc.Store,

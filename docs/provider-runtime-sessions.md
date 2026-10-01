@@ -62,6 +62,11 @@ What an ACP launch does in this stage:
 - No mux MCP server is planted for the agent yet.
 - An agent with a sandbox profile is refused: go-agent-wrapper cannot apply
   one to an ACP agent.
+- On Linux, while [control-plane protection](sandboxing.md#control-plane-protection-every-launch)
+  is on, every ACP launch is refused with 403 `forbidden`.
+  go-agent-wrapper's ACP launcher cannot write-protect Tether's catalog and
+  run directory until CW-20261001-0162. With `TETHER_SANDBOX_PROTECT=0`, or
+  on macOS, ACP launches run unprotected.
 
 ## Smoke Checklist
 

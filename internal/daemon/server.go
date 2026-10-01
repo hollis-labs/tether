@@ -37,6 +37,9 @@ type Config struct {
 type Server struct {
 	Config  Config
 	Manager *agentsessions.Manager
+	// SandboxProtect, when set, fills /health's sandbox_protect field. It
+	// runs on each /health request, so it must be cheap or cache.
+	SandboxProtect func() *SandboxProtectHealth
 	// Service is the LaunchService the HTTP handlers dispatch to. When nil,
 	// only /health is registered — useful for tests that don't need the
 	// session surface.
@@ -429,6 +432,11 @@ type Health struct {
 	// muxd does rather than what the doctor's environment would do. Absent
 	// from a daemon that predates it.
 	Hardening *HealthHardening `json:"hardening,omitempty"`
+
+	// SandboxProtect is the daemon's own view of control-plane protection
+	// (CW-20261001-0142): decided from the daemon's environment, which `mux
+	// doctor` cannot see from its shell. Absent from an older daemon.
+	SandboxProtect *SandboxProtectHealth `json:"sandbox_protect,omitempty"`
 }
 
 // HealthHardening is the launch-hardening state in GET /health.
@@ -437,6 +445,24 @@ type HealthHardening struct {
 	// Tether plants (--strict-mcp-config, CW-20261001-0227).
 	ClaudeStrictMCP       bool   `json:"claude_strict_mcp"`
 	ClaudeStrictMCPReason string `json:"claude_strict_mcp_reason,omitempty"`
+}
+
+// SandboxProtectHealth reports whether the agents the daemon launches get
+// Tether's catalog and run directories as read-only protected paths, and
+// whether this host can provide that.
+type SandboxProtectHealth struct {
+	// Enabled is true when protection applies to launches.
+	Enabled bool `json:"enabled"`
+	// DisabledByOperator is true when TETHER_SANDBOX_PROTECT turned it off.
+	DisabledByOperator bool `json:"disabled_by_operator,omitempty"`
+	// Reason says, in a sentence, what the state means for an agent.
+	Reason string `json:"reason"`
+	// BwrapChecked is true when the host was probed (protection on, Linux).
+	BwrapChecked bool `json:"bwrap_checked,omitempty"`
+	// BwrapUsable is true when bubblewrap can build the protecting sandbox.
+	BwrapUsable bool `json:"bwrap_usable,omitempty"`
+	// BwrapError is why it cannot, when it cannot.
+	BwrapError string `json:"bwrap_error,omitempty"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +477,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Hardening != nil {
 		h.Hardening = s.Hardening()
+	}
+	if s.SandboxProtect != nil {
+		h.SandboxProtect = s.SandboxProtect()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)

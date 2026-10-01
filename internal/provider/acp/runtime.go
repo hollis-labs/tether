@@ -127,6 +127,12 @@ func (r *acpRuntime) Start(ctx context.Context, opts agentsessions.StartOptions)
 		SessionIDPreset: opts.SessionIDPreset,
 		ACPManager:      manager,
 		OnSessionID:     opts.OnSessionID,
+		// Forwarded so the wrapper enforces them or refuses the launch
+		// (ErrProtectedPathsUnsupported); it never runs the agent
+		// unprotected. Tether refuses ACP launches itself while protection
+		// is on (launch.ErrACPLaunchUnprotected, CW-20261001-0162), so this
+		// is the backstop rather than the gate.
+		ProtectedPaths: opts.ProtectedPaths,
 	}
 	if len(opts.Env) > 0 {
 		cfg.Environment = wrapper.ChildEnvironment{Mode: wrapper.EnvironmentReplace, Set: append([]string(nil), opts.Env...)}

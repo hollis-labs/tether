@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
+	"github.com/hollis-labs/go-mcp/budget"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/agentops"
@@ -142,7 +144,7 @@ func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any
 		if errors.Is(err, agentops.ErrExists) {
 			return nil, toolError("conflict", err.Error())
 		}
-		return nil, toolError("internal_error", err.Error())
+		return nil, agentWriteError(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -176,7 +178,7 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 		AgentPrompt:  str(args, "agent_prompt"),
 	})
 	if err != nil {
-		return nil, toolError("internal_error", err.Error())
+		return nil, agentWriteError(err)
 	}
 	return toolJSON(map[string]any{
 		"ok":    true,
@@ -184,6 +186,22 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 		"path":  la.Path,
 		"agent": updated,
 	}), nil
+}
+
+// codeCatalogReadOnly is the tool error code for a write into a layer the
+// agent's sandbox makes read-only.
+const codeCatalogReadOnly = "catalog_read_only"
+
+// agentWriteError turns a failed agent-file write into a tool error. A
+// read-only file system is not a defect: Tether write-protects the catalog for
+// the agents it launches (CW-20261001-0142), so it answers with a typed error
+// that says what to do instead of a raw EROFS.
+func agentWriteError(err error) *budget.ToolError {
+	if errors.Is(err, syscall.EROFS) {
+		return toolError(codeCatalogReadOnly,
+			"the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo")
+	}
+	return toolError("internal_error", err.Error())
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

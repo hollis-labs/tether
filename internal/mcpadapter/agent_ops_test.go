@@ -2,8 +2,12 @@ package mcpadapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
@@ -198,5 +202,19 @@ func TestAgentOps_ShowMissing(t *testing.T) {
 	res := callAgentTool(t, a, "mux_agent_show", map[string]any{"id": "ghost"})
 	if !res.IsError {
 		t.Fatal("show of unknown agent: expected error result")
+	}
+}
+
+// A write into a catalog the agent's sandbox makes read-only is a typed
+// error that says what to do, not a raw EROFS inside an internal_error
+// (CW-20261001-0142). Any other write failure stays internal.
+func TestAgentWriteError_ReadOnlyCatalogIsTyped(t *testing.T) {
+	ro := &os.PathError{Op: "open", Path: "/catalog/agents/x.yaml", Err: syscall.EROFS}
+	got := agentWriteError(fmt.Errorf("create agent: %w", ro))
+	if got.Code != "catalog_read_only" || !strings.Contains(got.Message, "ask the operator") || strings.Contains(got.Message, "read-only file system") {
+		t.Fatalf("read-only write = %+v; want catalog_read_only telling the agent to ask the operator, with no raw errno", got)
+	}
+	if other := agentWriteError(errors.New("disk on fire")); other.Code != "internal_error" || !strings.Contains(other.Message, "disk on fire") {
+		t.Fatalf("other write failure = %+v; want internal_error carrying the message", other)
 	}
 }

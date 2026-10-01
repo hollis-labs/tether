@@ -15,6 +15,7 @@
 package launchparity
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -105,7 +106,7 @@ func expectedAgentMuxDiffs() []parity.ExpectedDiff {
 // fullCorpus builds the parity corpus from every bag file on disk. Each
 // bag was authored with its filename stem equal to the legacy launch id
 // it re-expresses (S5 prep-B), so the mapping is 1:1.
-func fullCorpus(t *testing.T) []parity.CorpusEntry {
+func fullCorpus(t *testing.T, catalogRoot string) (corpus []parity.CorpusEntry, skipped []string) {
 	t.Helper()
 	bags, err := filepath.Glob(filepath.Join(specsRoot, "launches", "*.yaml"))
 	if err != nil {
@@ -114,16 +115,30 @@ func fullCorpus(t *testing.T) []parity.CorpusEntry {
 	if len(bags) == 0 {
 		t.Fatalf("no launch bags found under %s/launches", specsRoot)
 	}
-	var corpus []parity.CorpusEntry
 	for _, bag := range bags {
 		stem := strings.TrimSuffix(filepath.Base(bag), ".yaml")
 		if stem == minimumConfigBag {
 			continue
 		}
+		// The old side is the LIVE catalog, which changes under this repo: a
+		// launch an operator removed there (an ion project that vanished on
+		// 2026-10-01) has no old side to compare, which is drift in the host,
+		// not a parity failure. Skip it, and say so.
+		if !liveLaunchPresent(catalogRoot, stem) {
+			skipped = append(skipped, stem)
+			continue
+		}
 		corpus = append(corpus, parity.CorpusEntry{BagFile: stem, LegacyID: stem})
 	}
 	sort.Slice(corpus, func(i, j int) bool { return corpus[i].BagFile < corpus[j].BagFile })
-	return corpus
+	return corpus, skipped
+}
+
+// liveLaunchPresent reports whether the live catalog at catalogRoot still has
+// the launch id.
+func liveLaunchPresent(catalogRoot, id string) bool {
+	_, err := os.Stat(filepath.Join(catalogRoot, "launches", id+".yaml"))
+	return err == nil
 }
 
 // TestFullCorpusParity runs the S4.5 parity harness over all 64 Tether
@@ -135,8 +150,15 @@ func TestFullCorpusParity(t *testing.T) {
 		t.Skipf("live catalog absent, skipping parity: %v", err)
 	}
 
+	corpus, skipped := fullCorpus(t, catalogRoot)
+	if len(skipped) > 0 {
+		t.Logf("skipping %d launch bag(s) with no launch in the live catalog %s (host drift, not a parity failure): %v", len(skipped), catalogRoot, skipped)
+	}
+	if len(corpus) == 0 {
+		t.Skipf("no launch bag has a counterpart in the live catalog %s", catalogRoot)
+	}
 	report, err := parity.RunParity(catalogRoot, specsRoot,
-		parity.WithCorpus(fullCorpus(t)),
+		parity.WithCorpus(corpus),
 		parity.WithExpectedDiffs(expectedAgentMuxDiffs()...),
 	)
 	if err != nil {
@@ -158,7 +180,7 @@ func TestFullCorpusParity(t *testing.T) {
 	// registers itself are exempt — see upstreamStaleExpected.
 	var stale []string
 	for _, e := range report.StaleExpected() {
-		if upstreamStaleExpected[e] {
+		if upstreamStaleExpected[e] || mentionsAny(e, skipped) {
 			continue
 		}
 		stale = append(stale, e)
@@ -166,4 +188,14 @@ func TestFullCorpusParity(t *testing.T) {
 	if len(stale) > 0 {
 		t.Errorf("stale expected-divergence registrations (no longer observed): %v", stale)
 	}
+}
+
+// mentionsAny reports whether s names one of the launch ids.
+func mentionsAny(s string, ids []string) bool {
+	for _, id := range ids {
+		if strings.Contains(s, id) {
+			return true
+		}
+	}
+	return false
 }

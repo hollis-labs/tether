@@ -257,6 +257,9 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeIdempotencyConflict(w, err) {
 			return
 		}
+		if writeLaunchRefused(w, err) {
+			return
+		}
 		if errors.Is(err, launch.ErrLaunchNotFound) || errors.Is(err, config.ErrUnknownSandboxProfile) {
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
@@ -328,6 +331,9 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 	if err != nil {
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
+			return
+		}
+		if writeLaunchRefused(w, err) {
 			return
 		}
 		if errors.Is(err, session.ErrNotCreated) {
@@ -524,4 +530,23 @@ func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Req
 		out = append(out, checkpointToDTO(c))
 	}
 	writeJSON(w, http.StatusOK, CheckpointListResponse{Checkpoints: out})
+}
+
+// writeLaunchRefused answers a launch the daemon refuses by policy, with
+// 403: the request is well formed, and the daemon will not run it until its
+// configuration changes. The refusals are an ACP-mode launch while Tether
+// write-protects its directories, which the ACP launcher cannot enforce yet
+// (launch.ErrACPLaunchUnprotected, CW-20261001-0162), and a launch whose
+// agent would work inside a protected directory
+// (launch.ErrLaunchInsideProtectedPath), or any launch while protection is on
+// and the host cannot provide it (launch.ErrProtectionUnavailable: bubblewrap
+// is missing; CW-20261001-0142).
+func writeLaunchRefused(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, launch.ErrACPLaunchUnprotected) &&
+		!errors.Is(err, launch.ErrLaunchInsideProtectedPath) &&
+		!errors.Is(err, launch.ErrProtectionUnavailable) {
+		return false
+	}
+	writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
+	return true
 }

@@ -1281,6 +1281,14 @@ Edit an existing agent profile. Only fields present in the call are changed.
 | `skills` | string | — | Comma-separated skill ID list — replaces existing skills; empty string clears them (optional). |
 | `system_prompt` | string | — | New system prompt (optional). |
 
+**Read-only catalog.** Tether write-protects its catalog and run directory for the
+agents it launches ([control-plane protection](sandboxing.md#control-plane-protection-every-launch)).
+From inside such an agent, `mux_agent_create` or `mux_agent_edit` that writes into
+the protected catalog (a `system`-scope create, or an edit of a catalog agent)
+returns the typed error `catalog_read_only`, telling the agent to ask the operator
+(`mux agents create` / `edit`) or to use `scope=project`, which writes into the
+repo. It is not a raw read-only-filesystem error.
+
 ---
 
 ### Boot prompt generation

@@ -104,6 +104,9 @@ func (s *Service) resumeLogicalAgent(logicalAgentID string, key *store.SessionId
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
 	}
+	if err := s.refuseUnprotectable(plan, probe.Kind()); err != nil {
+		return api.LaunchResult{}, err
+	}
 
 	row := store.SessionRow{
 		ID:             sessID,

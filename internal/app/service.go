@@ -107,6 +107,16 @@ type Service struct {
 	// wakePark carries the wake sweep's parked deliveries between ticks.
 	// See wakeParkSet in wake.go.
 	wakePark wakeParkSet
+
+	// codexExempt holds, by session id, each running codex session that Tether
+	// left to codex's own sandbox, so each turn can be re-checked
+	// (refuseWidenedCodex). Set at launch, removed when the session ends.
+	codexExempt sync.Map
+
+	// protectionStatus decides whether launched agents get Tether's own
+	// directories as ProtectedPaths; nil uses the daemon's OS and
+	// environment. See protected_paths.go.
+	protectionStatus func() ProtectionStatus
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the
