@@ -14,6 +14,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -126,10 +127,25 @@ func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
-func (a *Adapter) handleSessionList(_ context.Context, args map[string]any) (any, error) {
+func (a *Adapter) handleSessionList(ctx context.Context, args map[string]any) (any, error) {
 	limit := intArg(args, "limit", 50)
 	if limit > 200 {
 		limit = 200
+	}
+	if a.readsViaDaemon() {
+		res, err := a.client.ListSessions(ctx, client.ListOptions{State: str(args, "state"), Cursor: str(args, "cursor"), Limit: limit})
+		if err != nil {
+			return nil, daemonReadError(err, "")
+		}
+		out := map[string]any{
+			"ok":       true,
+			"sessions": res.Sessions,
+			"count":    len(res.Sessions),
+		}
+		if res.NextCursor != "" {
+			out["next_cursor"] = res.NextCursor
+		}
+		return toolJSON(out), nil
 	}
 	opts := store.ListSessionsOptions{
 		State:  str(args, "state"),
@@ -157,10 +173,17 @@ func (a *Adapter) handleSessionList(_ context.Context, args map[string]any) (any
 	return toolJSON(out), nil
 }
 
-func (a *Adapter) handleSessionGet(_ context.Context, args map[string]any) (any, error) {
+func (a *Adapter) handleSessionGet(ctx context.Context, args map[string]any) (any, error) {
 	id := str(args, "session_id")
 	if id == "" {
 		return nil, toolError("invalid_request", "session_id required")
+	}
+	if a.readsViaDaemon() {
+		dto, err := a.client.GetSession(ctx, id)
+		if err != nil {
+			return nil, daemonReadError(err, id)
+		}
+		return toolJSON(map[string]any{"ok": true, "session": dto}), nil
 	}
 	row, err := a.svc.GetSession(id)
 	if err != nil {
@@ -493,10 +516,17 @@ func (a *Adapter) handleSessionResize(ctx context.Context, args map[string]any) 
 	return toolJSON(map[string]any{"ok": true, "session_id": id, "rows": rows, "cols": cols}), nil
 }
 
-func (a *Adapter) handleSessionHealth(_ context.Context, args map[string]any) (any, error) {
+func (a *Adapter) handleSessionHealth(ctx context.Context, args map[string]any) (any, error) {
 	id := str(args, "session_id")
 	if id == "" {
 		return nil, toolError("invalid_request", "session_id required")
+	}
+	if a.readsViaDaemon() {
+		h, err := a.client.SessionHealth(ctx, id)
+		if err != nil {
+			return nil, daemonReadError(err, id)
+		}
+		return toolJSON(sessionHealthData(id, h.Alive, h.PID, h.LiveState, h.TurnID, h.ProviderID, h.ProviderKind, h.Caps)), nil
 	}
 	// Verify the session exists in the store.
 	if _, err := a.svc.GetSession(id); err != nil {
@@ -511,28 +541,42 @@ func (a *Adapter) handleSessionHealth(_ context.Context, args map[string]any) (a
 		return nil, toolError("conflict", "session is not currently running; no live health available")
 	}
 	caps := result.Caps
+	return toolJSON(sessionHealthData(id, result.Health.Alive, result.Health.PID, result.Health.State.String(), result.Health.TurnID, result.ProviderID, result.ProviderKind, api.CapabilitiesDTO{
+		PTY:               caps.PTY,
+		StreamingStdio:    caps.StreamingStdio,
+		JSONRPCStdio:      caps.JsonRpcStdio, //nolint:staticcheck // mirrors lib's Caps.JsonRpcStdio field name
+		Resize:            caps.Resize,
+		ProviderSessionID: caps.ProviderSessionID,
+		CheckpointResume:  caps.CheckpointResume,
+		BinaryRequired:    caps.BinaryRequired,
+	})), nil
+}
+
+// sessionHealthData is mux_session_health's result, from the daemon's
+// health response or the in-process runtime alike.
+func sessionHealthData(id string, alive bool, pid int, liveState, turnID, providerID, providerKind string, caps api.CapabilitiesDTO) map[string]any {
 	data := map[string]any{
 		"ok":            true,
 		"session_id":    id,
-		"alive":         result.Health.Alive,
-		"live_state":    result.Health.State.String(),
-		"turn_id":       result.Health.TurnID,
-		"provider_id":   result.ProviderID,
-		"provider_kind": result.ProviderKind,
+		"alive":         alive,
+		"live_state":    liveState,
+		"turn_id":       turnID,
+		"provider_id":   providerID,
+		"provider_kind": providerKind,
 		"caps": map[string]any{
 			"pty":                 caps.PTY,
 			"streaming_stdio":     caps.StreamingStdio,
-			"jsonrpc_stdio":       caps.JsonRpcStdio, //nolint:staticcheck // mirrors lib's Caps.JsonRpcStdio field name
+			"jsonrpc_stdio":       caps.JSONRPCStdio,
 			"resize":              caps.Resize,
 			"provider_session_id": caps.ProviderSessionID,
 			"checkpoint_resume":   caps.CheckpointResume,
 			"binary_required":     caps.BinaryRequired,
 		},
 	}
-	if result.Health.PID != 0 {
-		data["pid"] = result.Health.PID
+	if pid != 0 {
+		data["pid"] = pid
 	}
-	return toolJSON(data), nil
+	return data
 }
 
 // ─── error helpers ─────────────────────────────────────────────────────────────

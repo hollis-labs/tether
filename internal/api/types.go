@@ -262,6 +262,8 @@ type SessionDTO struct {
 	EndedAt         *string `json:"ended_at,omitempty"`
 	AttachedClients int     `json:"attached_clients"`
 	SessionGroupID  string  `json:"session_group_id,omitempty"`
+	// WorkstreamID is the workstream the session is assigned to, if any.
+	WorkstreamID string `json:"workstream_id,omitempty"`
 }
 
 // AttachmentDTO is the on-the-wire shape for a client attachment row.
@@ -311,5 +313,6 @@ func SessionRowToDTO(r store.SessionRow) SessionDTO {
 		dto.EndedAt = &s
 	}
 	dto.SessionGroupID = r.SessionGroupID.String
+	dto.WorkstreamID = r.WorkstreamID.String
 	return dto
 }

@@ -64,6 +64,14 @@ type MuxMCPPlan struct {
 // attribution is better than a fabricated one. It also reports
 // RefAttributionUnlaunched, so a caller that DOES have a row to stamp records
 // that this session's proxy can never attribute a call to it.
+//
+// A session the daemon launched also gets --daemon-only: its server runs
+// inside the agent's sandbox, never opens the state database, and reaches
+// Tether's state only through the daemon, so the sandbox can keep the state
+// directory read-only (CW-20261001-0173). boot-exec (no session) keeps an
+// ordinary server: it runs in the operator's own terminal, outside any
+// Tether sandbox, and works without a daemon.
+//
 // extractRefs enables proxy-side identifier extraction (--extract-refs).
 // Configured via catalog settings (CW-20260912-0112) and passed here from
 // LaunchSession. The flag and the attribution stamp are decided together:
@@ -83,7 +91,7 @@ func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool) MuxMCPPlan {
 	// those, and mux_call cannot reach the rest (CW-20261001-0227). The
 	// sessionless caller, `mux boot`, plants for an operator's own terminal
 	// and is not confined.
-	args = append(args, "--confine", "--session", sessionID)
+	args = append(args, "--confine", "--daemon-only", "--session", sessionID)
 	if !extractRefs {
 		return MuxMCPPlan{Args: args, Attribution: store.RefAttributionNone}
 	}

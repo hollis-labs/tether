@@ -54,6 +54,13 @@ var clientMethodWrites = map[string]bool{
 	"WaitSession":                false,
 	"Whoami":                     false,
 
+	// A daemon-only `mux mcp` reads Tether's state through these plain GETs
+	// (CW-20261001-0173); none of them consumes or marks anything.
+	"ListSessions":      false,
+	"GetSession":        false,
+	"SessionHealth":     false,
+	"ListLogicalAgents": false,
+
 	// THE HAZARD. GET /messages/inbox, and messagingStore.Inbox marks every
 	// envelope it returns as delivered in the same transaction. Retrying it is
 	// not free: the second call consumes a DIFFERENT set of messages, because

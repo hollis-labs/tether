@@ -68,6 +68,7 @@ var (
 	mcpServers     string
 	mcpOnly        string
 	mcpConfine     bool
+	mcpDaemonOnly  bool
 )
 
 func init() {
@@ -80,6 +81,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: MUX_MCP_SERVERS); empty = all servers when --proxy is set")
 	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "curated proxy mode: expose only these comma-separated upstream server IDs as native tools; suppress Tether mux_* and discovery/call tools")
 	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / MUX_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, mux_call included; the rest of the catalog is invisible. Set automatically in a launched worker's .mcp.json")
+	mcpCmd.Flags().BoolVar(&mcpDaemonOnly, "daemon-only", false, "never open the state database: read and write Tether state only through the running daemon, and refuse to start without one (set in a launched worker's .mcp.json)")
 	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
@@ -104,6 +106,11 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--confine requires --proxy")
 	}
 
+	listenAddr, _ := resolveDaemonAddr()
+	if mcpDaemonOnly {
+		return runMCPDaemonOnly(cmd, listenAddr, token, scopes, serverFilter, curatedOnly)
+	}
+
 	svc, err := app.New(expandCatalogPath())
 	if err != nil {
 		return fmt.Errorf("init service: %w", err)
@@ -119,42 +126,21 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// or shared-DB reads that don't have the OS-process-state coupling.
 	// When the daemon address can't be resolved the adapter falls back to
 	// fully in-process behavior so dev/test paths still work.
-	listenAddr, _ := resolveDaemonAddr()
 	var adapter *mcpadapter.Adapter
 	if listenAddr != "" {
 		adapter = mcpadapter.NewWithDaemon(svc, client.New(listenAddr), token, scopes)
 	} else {
 		adapter = mcpadapter.New(svc, token, scopes)
 	}
-	adapter.SessionID = mcpSession
-	adapter.SetBuildMetadata(version, commit, buildDate)
-	if mcpExtractRefs {
-		if listenAddr == "" {
-			return fmt.Errorf("--extract-refs needs the daemon: refs are written over HTTP because `mux mcp` runs in its own process, and the daemon address could not be resolved")
-		}
-		if mcpSession == "" {
-			return fmt.Errorf("--extract-refs needs --session: an extracted ref attaches to a session, and there is nothing to attach to without one")
-		}
-		adapter.ExtractRefs = true
-		adapter.SetRefAttacher(refAttacherClient{c: client.New(listenAddr)})
+	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
+		return err
 	}
-	// Route go-mcp's sanitize middleware's warn telemetry to stderr so the
-	// stdio MCP protocol stream on stdout stays clean.
-	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if mcpProxy {
 		// Wire observability — LoggingMiddleware + in-memory ToolCallEventStore
 		// (consumed by anyone subscribing to the event bus) + durable proxy_events
 		// table (queryable via the mux_events_tool_calls MCP tool).
 		eventStore := mcpadapter.NewToolCallEventStore(1000)
-		opts := mcpadapter.ProxyOptions{
-			Bus:          svc.Bus,
-			EventStore:   eventStore,
-			ProxyStore:   svc.Store, // durable SQLite store for mux_events_tool_calls
-			BrokerMode:   mcpBroker, //nolint:staticcheck // SA1019: deliberate; --broker flag still maps to the deprecated field until ServerFilter fully replaces it
-			ServerFilter: serverFilter,
-			Only:         curatedOnly,
-			Confine:      mcpConfine,
-		}
+		opts := inProcessProxyOptions(svc, eventStore, mcpBroker, serverFilter, curatedOnly, mcpConfine)
 
 		// Forward tool_call_end events to the running muxd daemon's event bus so
 		// any consumer (HTTP /events SSE, MCP tools, downstream subscribers) can
@@ -175,9 +161,112 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonListenAddr, daemonBaseURL, sinceSeq)
 		}
 
-		return adapter.RunWithProxyOpts(cmd.Context(), expandCatalogPath(), opts)
+		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 	}
 	return adapter.Run(cmd.Context())
+}
+
+// configureMCPAdapter applies the flags every `mux mcp` mode shares.
+func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
+	adapter.SessionID = mcpSession
+	adapter.SetBuildMetadata(version, commit, buildDate)
+	if mcpExtractRefs {
+		if listenAddr == "" {
+			return fmt.Errorf("--extract-refs needs the daemon: refs are written over HTTP because `mux mcp` runs in its own process, and the daemon address could not be resolved")
+		}
+		if mcpSession == "" {
+			return fmt.Errorf("--extract-refs needs --session: an extracted ref attaches to a session, and there is nothing to attach to without one")
+		}
+		adapter.ExtractRefs = true
+		adapter.SetRefAttacher(refAttacherClient{c: client.New(listenAddr)})
+	}
+	// Route go-mcp's sanitize middleware's warn telemetry to stderr so the
+	// stdio MCP protocol stream on stdout stays clean.
+	adapter.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	return nil
+}
+
+// errDaemonOnlyUnreachable is why a daemon-only `mux mcp` will not start.
+const errDaemonOnlyUnreachable = "tether daemon unreachable; mux tools unavailable"
+
+// runMCPDaemonOnly serves `mux mcp --daemon-only`, the server Tether plants in
+// each agent (CW-20261001-0173). It never opens the state database: the
+// Service holds only the catalog, every read and write of Tether's state goes
+// to the daemon over its API, and a proxied tool call is recorded by the
+// daemon (POST /proxy/events with publish) instead of in this process. So an
+// agent's sandbox can keep the state directory read-only.
+//
+// Without a reachable daemon it fails closed: an agent launched while muxd is
+// down has no mux tools.
+func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serverFilter []string, curatedOnly bool) error {
+	// A refusal to start is not a usage error: print the one line that says
+	// why, not cobra's usage text after it.
+	cmd.SilenceUsage = true
+	if listenAddr == "" {
+		return fmt.Errorf("%s: the daemon address could not be resolved from the catalog", errDaemonOnlyUnreachable)
+	}
+	dc := client.New(listenAddr)
+	pingCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+	err := dc.Ping(pingCtx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("%s: %w", errDaemonOnlyUnreachable, err)
+	}
+
+	svc, err := app.NewCatalogOnly(expandCatalogPath())
+	if err != nil {
+		return fmt.Errorf("load catalog: %w", err)
+	}
+	adapter := mcpadapter.NewWithDaemon(svc, dc, token, scopes)
+	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
+		return err
+	}
+	if !mcpProxy {
+		return adapter.Run(cmd.Context())
+	}
+	return runProxy(cmd.Context(), adapter, expandCatalogPath(), daemonOnlyProxyOptions(cmd.Context(), dc, mcpBroker, serverFilter, curatedOnly, mcpConfine))
+}
+
+// runProxy serves the proxy with the options a path built. It is a variable so a
+// test can capture those options without running a stdio server.
+var runProxy = func(ctx context.Context, adapter *mcpadapter.Adapter, catalog string, opts mcpadapter.ProxyOptions) error {
+	return adapter.RunWithProxyOpts(ctx, catalog, opts)
+}
+
+// proxyOptionsFor is what both ways of serving the proxy share: which upstreams
+// it loads and exposes. A switch that decides what an agent can reach belongs
+// here and not inline at either call site. The planted server of every launched
+// agent takes the daemon-only path (CW-20261001-0173), the operator's own takes
+// the in-process one, and a flag wired into only one of them is a control that
+// quietly does nothing on the other: that is how --confine (CW-20261001-0227)
+// was once accepted and ignored in daemon-only mode. The callers add the fields
+// that depend on where state lives.
+func proxyOptionsFor(broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+	return mcpadapter.ProxyOptions{
+		BrokerMode:   broker, //nolint:staticcheck // SA1019: deliberate; the --broker flag still maps to the deprecated field until ServerFilter fully replaces it
+		ServerFilter: serverFilter,
+		Only:         curatedOnly,
+		Confine:      confine,
+	}
+}
+
+// inProcessProxyOptions is proxyOptionsFor plus the event wiring of a server that
+// opens the state database itself.
+func inProcessProxyOptions(svc *app.Service, eventStore *mcpadapter.ToolCallEventStore, broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+	opts := proxyOptionsFor(broker, serverFilter, curatedOnly, confine)
+	opts.Bus = svc.Bus
+	opts.EventStore = eventStore
+	opts.ProxyStore = svc.Store // durable SQLite store for mux_events_tool_calls
+	return opts
+}
+
+// daemonOnlyProxyOptions is proxyOptionsFor plus the event wiring of a server that
+// never opens the database: the daemon records each call.
+func daemonOnlyProxyOptions(ctx context.Context, dc *client.Client, broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+	opts := proxyOptionsFor(broker, serverFilter, curatedOnly, confine)
+	opts.Publisher = mcpadapter.NewDaemonToolCallPublisher(ctx, dc)
+	opts.ProxyStore = mcpadapter.DaemonProxyEvents{Client: dc}
+	return opts
 }
 
 // resolveDaemonAddr derives the daemon's listen address and HTTP base URL from
