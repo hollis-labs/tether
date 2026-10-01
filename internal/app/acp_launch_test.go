@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -37,7 +36,6 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 		{"pi turn", runtimes.Pi, providertest.Replay("pi/acp_turn"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("TETHER_ENABLE_ACP", "1")
 			fake := providertest.New(t, tc.runtime, tc.run)
 			prov := config.Provider{ID: string(tc.runtime), Type: "cli", Command: fake.Path, RuntimeKind: "acp-stdio"}
 			factory, err := runtimeFactoryForProvider(prov)
@@ -107,45 +105,69 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 	}
 }
 
-// The ACP gate (launch.ErrACPLaunchDisabled) is closed by default: the
-// factory refuses, so neither session create (which probes it) nor
-// LaunchSession starts an ACP agent. TETHER_ENABLE_ACP=1 opens it.
-func TestACPLaunchGate(t *testing.T) {
-	prov := config.Provider{ID: "copilot", Type: "cli", RuntimeKind: "acp-stdio"}
-	factory, err := runtimeFactoryForProvider(prov)
-	if err != nil {
-		t.Fatalf("runtimeFactoryForProvider: %v", err)
-	}
-	plan := &launch.Plan{ProviderID: "copilot", ProviderBrand: "copilot", RuntimeKind: "acp-stdio"}
-
-	t.Setenv("TETHER_ENABLE_ACP", "")
-	if _, err := factory(plan); !errors.Is(err, launch.ErrACPLaunchDisabled) {
-		t.Fatalf("factory with the gate closed = %v, want ErrACPLaunchDisabled", err)
-	}
-
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	plan.LaunchID, plan.ProjectID, plan.WriteHome, plan.RepoRoot = "acp", "proj", t.TempDir(), t.TempDir()
-	ws, err := workspace.Create(plan.WriteHome, "sess-gated", plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.CreateSession(store.SessionRow{ID: "sess-gated", LaunchID: "acp", ProjectID: "proj", ProviderID: "copilot", ProviderKind: "acp", Workspace: ws.Root, State: "created"}, plan); err != nil {
-		t.Fatal(err)
-	}
-	svc := &Service{Store: db, Manager: agentsessions.NewManager(stateSinkAdapter{db: db}), factories: map[string]RuntimeFactory{"copilot": factory}}
-	if _, err := svc.LaunchSession("sess-gated"); !errors.Is(err, launch.ErrACPLaunchDisabled) {
-		t.Fatalf("LaunchSession with the gate closed = %v, want ErrACPLaunchDisabled", err)
-	}
-
-	for _, v := range []string{"1", "true"} {
-		t.Setenv("TETHER_ENABLE_ACP", v)
-		if _, err := factory(plan); err != nil {
-			t.Fatalf("factory with TETHER_ENABLE_ACP=%s = %v, want a runtime", v, err)
-		}
+// An ACP agent that exits while it is being launched fails the launch and
+// leaves the daemon running. Up to go-agent-wrapper v0.21.1 its ACP session
+// could panic the host here ("send on closed channel"), which is why ACP
+// launches were gated off until the bump (CW-20261001-0156). A panic on any
+// of the wrapper's goroutines would end this test binary.
+func TestLaunchSession_ACPAgentExitingDuringLaunch(t *testing.T) {
+	for _, tc := range []struct{ name, script string }{
+		{"exits at once", "exit 1"},
+		{"exits after the initialize request", "head -n 1 >/dev/null\nexit 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			agent := filepath.Join(dir, "copilot")
+			if err := os.WriteFile(agent, []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755); err != nil { //nolint:gosec // test stand-in must be executable
+				t.Fatal(err)
+			}
+			prov := config.Provider{ID: "copilot", Type: "cli", Command: agent, RuntimeKind: "acp-stdio"}
+			factory, err := runtimeFactoryForProvider(prov)
+			if err != nil {
+				t.Fatalf("runtimeFactoryForProvider: %v", err)
+			}
+			db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			const sessID = "sess-acp-exit"
+			plan := &launch.Plan{
+				LaunchID: "acp", ProjectID: "proj", LogicalAgentID: "agent",
+				ProviderID: prov.ID, ProviderBrand: prov.ProviderBrand(), RuntimeKind: prov.EffectiveRuntimeKind(),
+				RepoRoot: t.TempDir(), WriteHome: t.TempDir(), WorkspaceMode: "shared", Command: agent, BootPrompt: "say hi",
+			}
+			ws, err := workspace.Create(plan.WriteHome, sessID, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.CreateSession(store.SessionRow{ID: sessID, LaunchID: plan.LaunchID, ProjectID: plan.ProjectID, ProviderID: prov.ID, ProviderKind: "acp", Workspace: ws.Root, State: "created"}, plan); err != nil {
+				t.Fatal(err)
+			}
+			svc := &Service{
+				CatalogRoot: t.TempDir(),
+				Catalog:     &config.Catalog{Global: config.Global{Version: "test"}},
+				Store:       db,
+				Manager:     agentsessions.NewManager(stateSinkAdapter{db: db}),
+				factories:   map[string]RuntimeFactory{prov.ID: factory},
+			}
+			if _, err := svc.LaunchSession(sessID); err == nil {
+				t.Cleanup(func() { _ = svc.Manager.Stop(context.Background(), sessID) })
+			}
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				row, err := db.GetSession(sessID)
+				if err == nil && (row.State == "failed" || row.State == "completed" || row.State == "killed") {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("session did not end after its agent exited: %+v (%v)", row, err)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			// Let the wrapper's goroutines observe the exit.
+			time.Sleep(200 * time.Millisecond)
+		})
 	}
 }
 

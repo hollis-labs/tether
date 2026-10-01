@@ -372,19 +372,30 @@ func render(ev runtimeevents.Event) string {
 		}
 		_ = json.Unmarshal(ev.Payload, &p)
 		return "\n[error] " + firstNonEmpty(p.Error, p.Message, "turn failed") + "\n"
-	// The three kinds go-agent-wrapper v0.17.0 added, as the markers
-	// agentkit v0.14.0 writes for the same events on the native path.
+	// The three kinds go-agent-wrapper v0.17.0 added, in the format
+	// agentkit's native path writes for the same events
+	// (agentsessions/from_adapter.go).
 	case runtimeevents.KindAgentPermissionDenied:
 		var p struct {
 			Action      string `json:"action"`
 			DisplayName string `json:"display_name"`
 		}
 		_ = json.Unmarshal(ev.Payload, &p)
-		return "\n[permission_denied:" + firstNonEmpty(p.DisplayName, p.Action, "action") + "]\n"
+		return fmt.Sprintf("\n[permission_denied:%s] %s\n", p.Action, p.DisplayName)
 	case runtimeevents.KindSessionAuthFailed:
-		return "\n[auth_failed]\n"
+		var p struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(ev.Payload, &p)
+		return fmt.Sprintf("\n[auth_failed] %s\n", p.Error)
 	case runtimeevents.KindSessionLost:
-		return "\n[session_lost]\n"
+		var p struct {
+			RequestedID string `json:"requested_id"`
+			ActualID    string `json:"actual_id"`
+			Reason      string `json:"reason"`
+		}
+		_ = json.Unmarshal(ev.Payload, &p)
+		return fmt.Sprintf("\n[session_lost] requested=%s actual=%s: %s\n", p.RequestedID, p.ActualID, p.Reason)
 	default:
 		return ""
 	}

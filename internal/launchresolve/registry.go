@@ -30,10 +30,10 @@ type Registry struct {
 
 	// permissionMode is the fleet-wide default permission posture read
 	// from <root>/global.yaml (catalog.defaults.permission_mode). It is
-	// threaded onto a resolved claude RuntimeBinding's Permission field —
-	// see ResolveRuntimeBinding / claudePermission. Empty when global.yaml
-	// is absent or declares none, which claudePermission maps to claude's
-	// "default" posture (config.EffectivePermissionMode's empty->default).
+	// mapped onto a resolved RuntimeBinding's Permission field — see
+	// ResolveRuntimeBinding and config.ProviderPosture. Empty when
+	// global.yaml is absent or declares none, which ProviderPosture treats
+	// as "default" (config.EffectivePermissionMode's empty->default).
 	permissionMode string
 }
 
@@ -112,7 +112,7 @@ func OpenAt(opts Options) (*Registry, error) {
 // loadDefaultPermissionMode reads catalog.defaults.permission_mode from
 // <root>/global.yaml. A missing or unreadable global.yaml is not fatal —
 // the registry's core job is registration resolution — so it degrades to
-// an empty string, which claudePermission maps to claude's "default".
+// an empty string, which config.ProviderPosture treats as "default".
 func loadDefaultPermissionMode(root string) string {
 	var global config.Global
 	if err := readCatalogYAML(filepath.Join(root, "global.yaml"), &global); err != nil {

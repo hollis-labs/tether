@@ -61,8 +61,12 @@ func WithoutPreflight() Option {
 // binary unconditionally (catalog is the source of truth — env-var
 // fallbacks like CLAUDE_CLI_PATH from go-providers' default would
 // confuse multi-launch tenants). BuildArgs prepends Plan.Args before
-// the adapter's per-turn argv so wrapper scripts and env-injecting
-// prefixes work transparently. BootDirSpec is forwarded so lib v0.9.x's
+// the adapter's per-turn argv, but only a runtime started without a launch
+// template calls it: a launched session's every turn comes from the shared
+// launch's template (StartOptions.Launch), which puts the catalog's flags
+// at the convention's extra-argument slot. A catalog arg meant as a prefix
+// ahead of the provider's own argv (a wrapper script's arguments) is
+// therefore not supported on the launch path. BootDirSpec is forwarded so lib v0.9.x's
 // AutoPlantBootDir path can discover the inner adapter's planting spec
 // through the wrapper.
 type PlanScopedAdapter struct {

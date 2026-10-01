@@ -1,21 +1,30 @@
 package launch
 
-import "testing"
+import (
+	"testing"
 
-// The approval hook in internal/app is only reachable when the PLANTED
-// approval_policy lets codex ask. Under go-providers' "never" default it
-// refuses every MCP tool call outright and the hook never runs, so this
-// asserts the half of the fix that lives on the plan.
-func TestProviderPermissionLetsCodexAsk(t *testing.T) {
-	if got := providerPermission("codex"); got == "" || got == "never" {
-		t.Fatalf("providerPermission(codex) = %q; must be a policy that elicits, or every MCP tool call is refused before the approval hook is consulted", got)
+	permission "github.com/hollis-labs/go-permission"
+
+	"github.com/hollis-labs/tether/internal/config"
+)
+
+// AgentLaunchPlan carries the plan's permission mode to the shared launch as
+// a go-permission posture (config.ProviderPosture), and none for an ACP agent.
+func TestAgentLaunchPlanCarriesThePosture(t *testing.T) {
+	tests := []struct {
+		brand, runtime, mode string
+		want                 permission.Mode
+	}{
+		{"claude", config.RuntimeKindStreamingStdio, config.PermissionModeBypass, permission.ModeYolo},
+		{"claude", config.RuntimeKindPTY, config.PermissionModeDefault, permission.ModeDefault},
+		{"codex", config.RuntimeKindSubprocess, config.PermissionModeBypass, permission.ModeAcceptEdits},
+		{"opencode", config.RuntimeKindSubprocess, config.PermissionModeBypass, ""},
+		{"copilot", config.RuntimeKindACPStdio, config.PermissionModeBypass, ""},
 	}
-}
-
-// Claude's posture rides on argv, not on this field. Asserting the empty
-// value keeps an incidental change to the planted settings.json visible.
-func TestProviderPermissionLeavesClaudeAlone(t *testing.T) {
-	if got := providerPermission("claude"); got != "" {
-		t.Errorf("providerPermission(claude) = %q, want \"\"", got)
+	for _, tc := range tests {
+		plan := &Plan{ProviderBrand: tc.brand, RuntimeKind: tc.runtime, PermissionMode: tc.mode}
+		if got := AgentLaunchPlan(plan, t.TempDir()).Provider.Permission; got != tc.want {
+			t.Errorf("%s %s %s: Provider.Permission = %q, want %q", tc.brand, tc.runtime, tc.mode, got, tc.want)
+		}
 	}
 }

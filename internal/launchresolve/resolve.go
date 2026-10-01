@@ -114,15 +114,11 @@ func (r *Registry) ResolveRuntimeBinding(runnerID string) (agentlaunch.RuntimeBi
 		// fails with ErrPositionalAfterProjection.
 		Args: config.CatalogFlags(prov.ProviderBrand(), prov.Args),
 	}
-	// Thread the permission posture onto the binding. go-agent-launch
-	// v0.3.3 carries RuntimeBinding.Permission verbatim through
-	// PlanFromLaunch -> providerplant onto the planted boot-dir content;
-	// without it a headless claude launch hangs on the first approval
-	// prompt. Only claude needs it — go-providers defaults codex's
-	// approval_policy to "never" when empty.
-	if binding.Provider == "claude" {
-		binding.Permission = claudePermission(r.permissionMode)
-	}
+	// Thread the permission posture onto the binding, the same mapping the
+	// catalog engine uses (config.ProviderPosture). agentkit carries
+	// RuntimeBinding.Permission onto the launch's Provider.Permission and
+	// refuses a headless claude launch without one.
+	binding.Permission = config.ProviderPosture(r.permissionMode, binding.Provider, binding.RuntimeKind)
 	if err := binding.Validate(); err != nil {
 		return agentlaunch.RuntimeBinding{}, fmt.Errorf(
 			"registry: runtime binding %q is invalid: %w", runnerID, err)
@@ -272,23 +268,4 @@ func readCatalogYAML(path string, out any) error {
 // flattened rather than dropped.
 func joinRoles(roles []string) string {
 	return strings.Join(roles, ",")
-}
-
-// claudePermission maps Tether's permission_mode knob (config vocabulary:
-// "bypass" / "default" / "") onto the claude permission vocabulary the
-// go-providers ClaudeAdapter expects (default / acceptEdits / plan /
-// bypassPermissions). The mapping is faithful to operator intent —
-// "bypass" -> bypassPermissions, "default"/"" -> default — and mirrors
-// config.EffectivePermissionMode's empty->default rule.
-//
-// It always returns a non-empty value: an empty RuntimeBinding.Permission
-// on a claude binding leaves a headless launch hanging on the first
-// approval prompt (go-agent-launch v0.3.3 deliberately imposes no default).
-func claudePermission(permissionMode string) string {
-	switch permissionMode {
-	case config.PermissionModeBypass:
-		return "bypassPermissions"
-	default:
-		return "default"
-	}
 }

@@ -23,27 +23,6 @@ type Input struct {
 // ("launch \"x\" not found").
 var ErrLaunchNotFound = errors.New("not found")
 
-// ErrACPLaunchDisabled refuses a launch in an ACP mode (Copilot, Pi) while the
-// ACP gate is closed. go-agent-wrapper's ACP session can panic its host
-// process ("send on closed channel" when the agent exits during launch) up to
-// v0.21.1, and a panic on the wrapper's goroutine would take muxd down, which
-// Tether cannot recover. ACPLaunchEnabled opens the gate.
-//
-// INTERIM (CW-20260930-0106): a bump to go-agent-wrapper >= v0.21.1 removes
-// the gate together with this error.
-var ErrACPLaunchDisabled = errors.New("ACP launches are disabled until go-agent-wrapper >= v0.21.1 (CW-20260930-0106); set TETHER_ENABLE_ACP=1 in the daemon's environment to opt in")
-
-// ACPLaunchEnabled reports whether the daemon opted in to ACP launches:
-// TETHER_ENABLE_ACP=1 (or true) in its environment. Default off; see
-// ErrACPLaunchDisabled.
-func ACPLaunchEnabled() bool {
-	switch os.Getenv("TETHER_ENABLE_ACP") {
-	case "1", "true", "TRUE", "True":
-		return true
-	}
-	return false
-}
-
 // maxKnownLaunchesInError caps how many known launch IDs a not-found error
 // lists.
 const maxKnownLaunchesInError = 20
@@ -126,26 +105,19 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		return nil, fmt.Errorf("resolve injection: %w", err)
 	}
 
-	// Resolve the Claude Code permission posture (agent override > global
-	// default > "default") and thread the concrete CLI flags into the argv
-	// for claude providers. plan.Args feeds both the boot-exec composeArgv
-	// path and the daemon PlanScopedAdapter.BuildArgs path, so injecting
-	// here is the single chokepoint that covers every claude launch.
+	// Resolve the permission mode (agent override > global default >
+	// "default"). It reaches the provider as a posture, not as a flag here:
+	// AgentLaunchPlan maps it through config.ProviderPosture onto the shared
+	// launch, and agentkit puts the posture's own flags and environment into
+	// every turn's argv (CW-20261001-0156).
+	//
+	// The planted .mcp.json is not spliced in here either: go-providers'
+	// projection passes it as --mcp-config <bootDir>/.mcp.json in every
+	// Claude mode, and agentkit v0.13.0 resolves every turn's argv from that
+	// convention (CW-20260930-0135), so a second --mcp-config from here would
+	// repeat it.
 	permMode := config.EffectivePermissionMode(cat.Global, agent)
 	args := append([]string(nil), prov.Args...)
-	if prov.ProviderBrand() == "claude" {
-		// The planted .mcp.json is not spliced in here: go-providers'
-		// projection passes it as --mcp-config <bootDir>/.mcp.json in every
-		// Claude mode, and agentkit v0.13.0 resolves every turn's argv from
-		// that convention (CW-20260930-0135), so a second --mcp-config from
-		// here would repeat it.
-		//
-		// The flag is added only if the provider config didn't already
-		// declare it, so a catalog that hardcodes it never gets a duplicate.
-		if permMode == config.PermissionModeBypass && !slices.Contains(args, "--dangerously-skip-permissions") {
-			args = append(args, "--dangerously-skip-permissions")
-		}
-	}
 
 	extractRefs := config.EffectiveExtractRefs(cat.Global, proj, l)
 

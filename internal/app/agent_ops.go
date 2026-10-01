@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -409,32 +408,16 @@ func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
 	plan.Env["MUX_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
 }
 
-// applyPermissionMode reconciles the resolved permission posture against the
+// applyPermissionMode reconciles the resolved permission mode against the
 // effective agent (after the AgentFile / AgentInline merges).
 //
-// launch.Resolve injects plan.PermissionMode and the claude CLI flags from the
-// catalog agent — it runs before resolveEffectiveAgent, so a caller-provided
-// agent that overrides permissions.permission_mode is only known here. When the
-// effective mode differs from what Resolve baked in, update plan.PermissionMode
-// and reconcile the --dangerously-skip-permissions flag in plan.Args. The
-// --mcp-config flag is permission-independent and is left untouched.
+// launch.Resolve sets plan.PermissionMode from the catalog agent — it runs
+// before resolveEffectiveAgent, so a caller-provided agent that overrides
+// permissions.permission_mode is only known here. The mode reaches the
+// provider as a posture (launch.AgentLaunchPlan, config.ProviderPosture), so
+// updating plan.PermissionMode is the whole reconciliation.
 func applyPermissionMode(plan *launch.Plan, global config.Global, effectiveAgent config.Agent) {
-	effMode := config.EffectivePermissionMode(global, effectiveAgent)
-	if effMode == plan.PermissionMode {
-		return
-	}
-	plan.PermissionMode = effMode
-	if plan.ProviderBrand != "claude" {
-		return
-	}
-	const skipFlag = "--dangerously-skip-permissions"
-	has := slices.Contains(plan.Args, skipFlag)
-	switch {
-	case effMode == config.PermissionModeBypass && !has:
-		plan.Args = append(plan.Args, skipFlag)
-	case effMode != config.PermissionModeBypass && has:
-		plan.Args = slices.DeleteFunc(plan.Args, func(a string) bool { return a == skipFlag })
-	}
+	plan.PermissionMode = config.EffectivePermissionMode(global, effectiveAgent)
 }
 
 // loadEffectiveSkills resolves a list of skill IDs against the layered

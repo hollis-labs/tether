@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	permission "github.com/hollis-labs/go-permission"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
@@ -234,24 +236,25 @@ func TestApplyAgentOps_AgentInline_OverridesFile(t *testing.T) {
 
 // TestApplyAgentOps_PermissionMode_CallerOverride pins that a caller-provided
 // agent (AgentInline) overriding permissions.permission_mode is honored:
-// mergeAgent carries the field, and applyPermissionMode reconciles both
-// plan.PermissionMode and the --dangerously-skip-permissions flag that
-// launch.Resolve baked in from the catalog agent. --mcp-config is left alone.
+// mergeAgent carries the field, applyPermissionMode updates the
+// plan.PermissionMode launch.Resolve baked in from the catalog agent, and the
+// shared launch carries the matching posture. plan.Args are left alone.
 func TestApplyAgentOps_PermissionMode_CallerOverride(t *testing.T) {
 	// Simulate the plan as launch.Resolve leaves it for a claude provider.
-	claudePlan := func(mode string, args ...string) *launch.Plan {
+	claudePlan := func(mode string) *launch.Plan {
 		p := basePlan()
 		p.ProviderBrand = "claude"
+		p.RuntimeKind = config.RuntimeKindStreamingStdio
 		p.PermissionMode = mode
-		p.Args = append([]string(nil), args...)
+		p.Args = []string{"--verbose"}
 		return p
 	}
 
-	t.Run("inline default beats catalog bypass — skip flag removed", func(t *testing.T) {
+	t.Run("inline default beats catalog bypass", func(t *testing.T) {
 		svc := buildTestService(t, map[string]config.Agent{
 			"test-agent": {ID: "test-agent", Permissions: config.AgentPermissions{PermissionMode: config.PermissionModeBypass}},
 		}, t.TempDir())
-		plan := claudePlan(config.PermissionModeBypass, "--mcp-config", ".mcp.json", "--dangerously-skip-permissions")
+		plan := claudePlan(config.PermissionModeBypass)
 		in := CreateSessionInput{LaunchID: "test-launch", AgentInline: `{"id":"i","permissions":{"permission_mode":"default"}}`}
 		if err := svc.applyAgentOps(plan, in); err != nil {
 			t.Fatal(err)
@@ -259,19 +262,19 @@ func TestApplyAgentOps_PermissionMode_CallerOverride(t *testing.T) {
 		if plan.PermissionMode != config.PermissionModeDefault {
 			t.Errorf("PermissionMode = %q, want default", plan.PermissionMode)
 		}
-		if slices.Contains(plan.Args, "--dangerously-skip-permissions") {
-			t.Errorf("--dangerously-skip-permissions should be removed: %v", plan.Args)
+		if got := launch.AgentLaunchPlan(plan, t.TempDir()).Provider.Permission; got != permission.ModeDefault {
+			t.Errorf("posture = %q, want %q", got, permission.ModeDefault)
 		}
-		if !slices.Contains(plan.Args, "--mcp-config") {
-			t.Errorf("--mcp-config must be preserved: %v", plan.Args)
+		if !slices.Equal(plan.Args, []string{"--verbose"}) {
+			t.Errorf("args changed: %v", plan.Args)
 		}
 	})
 
-	t.Run("inline bypass beats catalog default — skip flag added", func(t *testing.T) {
+	t.Run("inline bypass beats catalog default", func(t *testing.T) {
 		svc := buildTestService(t, map[string]config.Agent{
 			"test-agent": {ID: "test-agent", Permissions: config.AgentPermissions{PermissionMode: config.PermissionModeDefault}},
 		}, t.TempDir())
-		plan := claudePlan(config.PermissionModeDefault, "--mcp-config", ".mcp.json")
+		plan := claudePlan(config.PermissionModeDefault)
 		in := CreateSessionInput{LaunchID: "test-launch", AgentInline: `{"id":"i","permissions":{"permission_mode":"bypass"}}`}
 		if err := svc.applyAgentOps(plan, in); err != nil {
 			t.Fatal(err)
@@ -279,8 +282,11 @@ func TestApplyAgentOps_PermissionMode_CallerOverride(t *testing.T) {
 		if plan.PermissionMode != config.PermissionModeBypass {
 			t.Errorf("PermissionMode = %q, want bypass", plan.PermissionMode)
 		}
-		if !slices.Contains(plan.Args, "--dangerously-skip-permissions") {
-			t.Errorf("--dangerously-skip-permissions should be added: %v", plan.Args)
+		if got := launch.AgentLaunchPlan(plan, t.TempDir()).Provider.Permission; got != permission.ModeYolo {
+			t.Errorf("posture = %q, want %q", got, permission.ModeYolo)
+		}
+		if slices.Contains(plan.Args, "--dangerously-skip-permissions") {
+			t.Errorf("args splice the flag the posture already passes: %v", plan.Args)
 		}
 	})
 }

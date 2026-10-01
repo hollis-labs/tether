@@ -226,7 +226,7 @@ func TestResolve_PermissionMode(t *testing.T) {
 		return cat
 	}
 
-	t.Run("claude + global bypass → skip-permissions, no spliced mcp-config", func(t *testing.T) {
+	t.Run("claude + global bypass → mode recorded, no flags spliced", func(t *testing.T) {
 		plan, err := Resolve(base("claude", config.PermissionModeBypass, ""), Input{LaunchID: "l"})
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
@@ -234,8 +234,10 @@ func TestResolve_PermissionMode(t *testing.T) {
 		if plan.PermissionMode != config.PermissionModeBypass {
 			t.Fatalf("PermissionMode = %q, want bypass", plan.PermissionMode)
 		}
-		if !strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
-			t.Errorf("args missing --dangerously-skip-permissions: %v", plan.Args)
+		// The posture owns the permission flag (AgentLaunchPlan →
+		// config.ProviderPosture), so a second one from here would repeat it.
+		if strings.Contains(strings.Join(plan.Args, " "), "--dangerously-skip-permissions") {
+			t.Errorf("args splice --dangerously-skip-permissions the posture already passes: %v", plan.Args)
 		}
 		// The projection passes the planted .mcp.json itself (CW-20260930-0135).
 		if hasFlag(plan.Args, "--mcp-config", ".mcp.json") {
