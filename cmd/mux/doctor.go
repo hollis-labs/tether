@@ -137,6 +137,9 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	catalogCheck, loadedCat := checkCatalog(catalogRoot)
 	checks = append(checks, catalogCheck)
 	cat = loadedCat
+	if cat != nil {
+		checks = append(checks, checkSandboxProfiles(cat))
+	}
 
 	// 3. Daemon reachable (requires catalog for listen addr).
 	checks = append(checks, checkDaemon(cat))
@@ -206,6 +209,22 @@ func checkStateDir(stateDir string) checkResult {
 	_ = f.Close()
 	_ = os.Remove(f.Name())
 	return ok("state-dir", stateDir)
+}
+
+// checkSandboxProfiles fails when an agent names a sandbox profile the
+// catalog does not define. The daemon still starts, but refuses every
+// launch of that agent (CW-20261001-0130), so it is a failure here.
+func checkSandboxProfiles(cat *config.Catalog) checkResult {
+	issues := cat.SandboxIssues()
+	if len(issues) == 0 {
+		return ok("catalog-sandbox-profiles", fmt.Sprintf("every agent's sandbox profile is defined (%d profiles)", len(cat.SandboxProfiles)))
+	}
+	msgs := make([]string, len(issues))
+	for i, issue := range issues {
+		msgs[i] = issue.Error()
+	}
+	return fail("catalog-sandbox-profiles", strings.Join(msgs, "; "),
+		"add the missing profile under sandbox-profiles/ or fix the agent's permissions.default_sandbox, then restart the daemon")
 }
 
 // checkCatalog loads and validates the catalog. Returns the loaded catalog (nil on failure).

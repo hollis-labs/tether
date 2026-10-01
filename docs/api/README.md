@@ -1132,7 +1132,7 @@ Response (200):
       "id": "demo-agent",
       "name": "Demo Agent",
       "roles": ["general"],
-      "permissions": { "network": true, "default_sandbox": "none" }
+      "permissions": { "network": true, "default_sandbox": "workspace-only" }
     }
   ]
 }

@@ -13,6 +13,7 @@ import (
 
 	agentmodel "github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/checkpoint"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -304,6 +305,8 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		}
 		msg := err.Error()
 		switch {
+		case errors.Is(err, config.ErrUnknownSandboxProfile):
+			writeError(w, http.StatusNotFound, CodeNotFound, msg)
 		case errors.Is(err, store.ErrSessionNotFound),
 			strings.Contains(msg, "no checkpoint"),
 			strings.Contains(msg, "no rows"):

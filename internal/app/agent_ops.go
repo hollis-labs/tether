@@ -108,6 +108,12 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	if err != nil {
 		return err
 	}
+	// Refuse a session whose agent, after any agent_file or agent_inline
+	// override, names a sandbox profile the catalog does not define, rather
+	// than create one that would run unsandboxed (CW-20261001-0130).
+	if _, _, err := s.Catalog.SandboxProfile(plan.LogicalAgentID, effectiveAgent.Permissions.DefaultSandbox); err != nil {
+		return err
+	}
 
 	bootProfile, err := loadBootProfile(in.BootProfileFile)
 	if err != nil {

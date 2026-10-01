@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,18 +130,59 @@ func TestLoad_SandboxProfiles(t *testing.T) {
 	}
 }
 
+// An agent naming an undefined sandbox profile no longer fails Validate,
+// which would take down daemon startup for every launch; the agent's own
+// launches are refused instead (CW-20261001-0130).
 func TestValidate_UnknownSandboxProfile(t *testing.T) {
 	cat := &Catalog{
-		Projects:  map[string]Project{},
-		Agents:    map[string]Agent{"a": {ID: "a", Permissions: AgentPermissions{DefaultSandbox: "no-such-profile"}}},
-		Providers: map[string]Provider{},
-		Launches:  map[string]Launch{},
+		Projects: map[string]Project{"proj": {ID: "proj"}},
+		Agents: map[string]Agent{
+			"bad":         {ID: "bad", Permissions: AgentPermissions{DefaultSandbox: "no-such-profile"}},
+			"good":        {ID: "good", Permissions: AgentPermissions{DefaultSandbox: "workspace-only"}},
+			"unsandboxed": {ID: "unsandboxed"},
+		},
+		Providers: map[string]Provider{"prov": {ID: "prov", Type: "cli", Command: "echo"}},
+		Launches: map[string]Launch{
+			"bad-launch":         {ID: "bad-launch", Project: "proj", Agent: "bad", Provider: "prov"},
+			"good-launch":        {ID: "good-launch", Project: "proj", Agent: "good", Provider: "prov"},
+			"unsandboxed-launch": {ID: "unsandboxed-launch", Project: "proj", Agent: "unsandboxed", Provider: "prov"},
+		},
 		SandboxProfiles: map[string]sandbox.Profile{
 			"workspace-only": {ID: "workspace-only"},
 		},
 	}
-	if err := cat.Validate(); err == nil {
-		t.Error("expected error for unknown sandbox profile reference, got nil")
+	if err := cat.Validate(); err != nil {
+		t.Fatalf("Validate = %v; an agent's unknown sandbox profile must not fail the whole catalog", err)
+	}
+
+	err := cat.ValidateLaunch("bad-launch")
+	if !errors.Is(err, ErrUnknownSandboxProfile) {
+		t.Fatalf("ValidateLaunch(bad-launch) = %v; want ErrUnknownSandboxProfile", err)
+	}
+	for _, want := range []string{`"bad-launch"`, `"bad"`, `"no-such-profile"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not name %s", err, want)
+		}
+	}
+	for _, id := range []string{"good-launch", "unsandboxed-launch"} {
+		if err := cat.ValidateLaunch(id); err != nil {
+			t.Fatalf("ValidateLaunch(%s) = %v; want nil", id, err)
+		}
+	}
+
+	issues := cat.SandboxIssues()
+	if len(issues) != 1 || !errors.Is(issues[0], ErrUnknownSandboxProfile) {
+		t.Fatalf("SandboxIssues = %v; want the one bad agent", issues)
+	}
+
+	if _, ok, err := cat.AgentSandbox("unsandboxed"); ok || err != nil {
+		t.Fatalf("AgentSandbox(unsandboxed) = ok %v, %v; an empty name is no sandbox, as before", ok, err)
+	}
+	if p, ok, err := cat.AgentSandbox("good"); !ok || err != nil || p.ID != "workspace-only" {
+		t.Fatalf("AgentSandbox(good) = %+v, %v, %v; want workspace-only", p, ok, err)
+	}
+	if _, ok, err := cat.AgentSandbox("not-an-agent"); ok || err != nil {
+		t.Fatalf("AgentSandbox(unknown agent) = ok %v, %v; want no sandbox, no error", ok, err)
 	}
 }
 

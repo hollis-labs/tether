@@ -8,19 +8,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/go-sandbox/sandbox"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // buildTestService is the minimal Service for agent-ops unit tests. It
-// populates only the fields applyAgentOps reads — Catalog (Agents) and
-// CatalogRoot for skill discovery.
+// populates only the fields applyAgentOps reads — Catalog (Agents, and the
+// seed sandbox profiles an agent may name) and CatalogRoot for skill
+// discovery.
 func buildTestService(t *testing.T, agents map[string]config.Agent, catalogRoot string) *Service {
 	t.Helper()
 	return &Service{
 		Catalog: &config.Catalog{
 			Agents:   agents,
 			Projects: map[string]config.Project{},
+			SandboxProfiles: map[string]sandbox.Profile{
+				"workspace-only":     {ID: "workspace-only"},
+				"workspace-plus-net": {ID: "workspace-plus-net"},
+				"unrestricted":       {ID: "unrestricted"},
+			},
 		},
 		CatalogRoot: catalogRoot,
 	}
