@@ -11,9 +11,8 @@ import (
 // ~/.config/tether) and the TETHER_* env-var prefix go-apppaths reads
 // natively (TETHER_DB_PATH, TETHER_WORKSPACE).
 //
-// The binary is `mux`, but the app identity is `tether` — matching the
-// catalog dir ~/.tether/ and the module path. Naming the app `mux` would
-// diverge the XDG roots and env prefix from the rest of Tether's surface.
+// The binary and application identity are both `tether`, matching the
+// catalog directory ~/.tether/ and the module path.
 const appName = "tether"
 
 // ResolveLayout resolves Tether's on-disk layout via go-apppaths in the
@@ -29,7 +28,7 @@ const appName = "tether"
 // the catalog's global.yaml omits state_db / workspace_root / temp_root. The
 // explicit catalog values, when set, still win — see ResolveStateDB,
 // ResolveWorkspaceRoot, and ResolveTempRoot. Callers that only introspect
-// (the `mux path` subcommand) pass paths.WithoutMaterialize().
+// (the `tether path` subcommand) pass paths.WithoutMaterialize().
 func ResolveLayout(extra ...paths.Option) (paths.Layout, error) {
 	return paths.Resolve(appName, extra...)
 }

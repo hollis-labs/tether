@@ -198,7 +198,7 @@ func TestAttemptWake_HandledDuringBackoffSettlesWithoutWaking(t *testing.T) {
 }
 
 // A listing that is not the recipient's own -- an operator running
-// `mux messages inbox` for someone else -- stamps delivered_at but settles
+// `tether messages inbox` for someone else -- stamps delivered_at but settles
 // nothing: the next attempt still wakes the recipient.
 func TestAttemptWake_OperatorListingDoesNotSettle(t *testing.T) {
 	st, reg := newWakeHarness(t)

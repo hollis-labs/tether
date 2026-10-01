@@ -1,13 +1,13 @@
 # Tether Local API (v0.0.2)
 
-The `muxd` daemon exposes an HTTP API for session lifecycle, attach streaming,
+The `tetherd` daemon exposes an HTTP API for session lifecycle, attach streaming,
 checkpoints, broker envelopes, and event observation. Clients are assumed to
 run on the same host — there is no authentication. Trust is anchored to the
 UDS filesystem permissions (or loopback interface for TCP transports).
 
 ## Transport
 
-- Default: Unix domain socket at `~/.tether/run/muxd.sock`.
+- Default: Unix domain socket at `~/.tether/run/tetherd.sock`.
 - Alternate: TCP on loopback when `daemon.listen_addr` is `tcp:127.0.0.1:PORT`.
 
 Over UDS, clients address the daemon with the `http://unix/<path>` convention;
@@ -56,7 +56,7 @@ Defined codes:
 
 ## AI Gateway
 
-The AI gateway is optional. `muxd` only mounts `/ai/*` when `global.yaml`
+The AI gateway is optional. `tetherd` only mounts `/ai/*` when `global.yaml`
 contains at least one enabled AI provider that can be built successfully at
 startup.
 
@@ -72,7 +72,7 @@ All write-side AI endpoints accept a typed JSON envelope:
     "intent": "release-notes",
     "request_id": "req-123",
     "session_id": "sess-123",
-    "caller_id": "cli:mux",
+    "caller_id": "cli:tether",
     "max_output_tokens": 512,
     "token_budget": 4000,
     "cost_budget_usd": 0.10,
@@ -442,7 +442,7 @@ Response:
   "status": "ok",
   "pid": 12345,
   "uptime_sec": 42,
-  "listener": "unix:/Users/me/.tether/run/muxd.sock",
+  "listener": "unix:/Users/me/.tether/run/tetherd.sock",
   "sessions": 2,
   "sandbox_protect": {
     "enabled": true,
@@ -457,7 +457,7 @@ Response:
 
 `sandbox_protect` is the daemon's own view of [control-plane
 protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps), decided from
-the daemon's environment, which `mux doctor` reads from here and not from its
+the daemon's environment, which `tether doctor` reads from here and not from its
 own shell. `enabled` says whether launches are protected; `disabled_by_operator`
 is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the
 state means for an agent. On Linux with protection on, the daemon probes
@@ -465,7 +465,7 @@ bubblewrap: `bwrap_usable` is false, with `bwrap_error`, when it cannot build th
 sandbox, in which case every launch except Codex's is refused. `codex` is how
 Codex is protected: `not protected` as shipped (Codex runs as it did before
 protection, under its own sandbox, and spawns MCP servers outside it, so an MCP
-tool can reach the catalog; the catalog-writing `mux` tools are still refused for
+tool can reach the catalog; the catalog-writing `tether` tools are still refused for
 it), `guarded` only if the dormant guard is switched on, or `not applicable`
 (protection is off); `codex_reason` says what that means and names
 CW-20261001-0230, the structural reason (Codex spawns MCP servers outside its
@@ -646,7 +646,7 @@ the daemon, and the session stays up for the next turn. The message reads
 `turn failed: … runner: process exited <code>` followed by up to 2 KB of
 that turn's stderr. The full stderr, and the turn's rendered output (reply
 text, `[tool_use:…]`, `[error] …`, `[turn_done]`), are appended to the
-session's `logs/session.log`, which `mux sessions tail` reads.
+session's `logs/session.log`, which `tether sessions tail` reads.
 
 ### `GET /sessions/{id}/attach`
 
@@ -701,7 +701,7 @@ engine's session host) can rely on, and what it cannot:
 - **Cancelling.** `POST /sessions/{id}/stop`. The session ends in `killed`,
   durably, so a cancel is never mistaken for an agent that finished.
 - **A daemon restart ends running sessions.** Agent processes are children of
-  muxd. On startup muxd sweeps every session left `launching` or `running` to
+  tetherd. On startup tetherd sweeps every session left `launching` or `running` to
   `failed` with exit code -1, so after a restart an observer sees a definite terminal state, not
   a session that silently vanished. Nothing reattaches to the old process.
 - **Resume makes a new session.** `POST /logical-agents/{id}/resume` starts a
@@ -733,7 +733,7 @@ launching | running ──crash, then restart, process gone──▶ failed   ex
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
 | `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
-| `killed`    | yes      | `POST /sessions/{id}/stop` (also `mux sessions stop`, MCP `mux_session_stop`, ACP session close), or a planned daemon shutdown | whatever the stopped process returned |
+| `killed`    | yes      | `POST /sessions/{id}/stop` (also `tether sessions stop`, MCP `tether_session_stop`, ACP session close), or a planned daemon shutdown | whatever the stopped process returned |
 
 **`exit_code` -1 from the startup sweep means "swept at daemon start", not an
 observed failure.** When the daemon starts, it settles every session the
@@ -756,8 +756,8 @@ Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
 liveness and are not backfilled. Treat their `exit_code` -1 the same way.
 
 **`killed` with reason `daemon-shutdown` means the daemon was stopped on
-purpose.** On a graceful shutdown (SIGTERM or SIGINT to `muxd`,
-`mux daemon stop`, `systemctl stop`/`restart`), the daemon marks every live
+purpose.** On a graceful shutdown (SIGTERM or SIGINT to `tetherd`,
+`tether daemon stop`, `systemctl stop`/`restart`), the daemon marks every live
 session as stopping before it drains them. Any session the daemon sees exit
 during the drain (`daemon.shutdown_timeout`, default 10s) gets two records:
 - its row is `killed`, with the process's own `exit_code`;
@@ -779,7 +779,7 @@ On a Linux host running the daemon as a systemd unit with the default
 the same SIGTERM. A planned `systemctl restart` therefore normally records
 them `killed` / `daemon-shutdown`. A crash, or an agent that outlasts the
 drain, is swept at the next start. Sessions survive a restart only when the
-daemon runs outside such a unit, for example `mux daemon start` or launchd.
+daemon runs outside such a unit, for example `tether daemon start` or launchd.
 
 Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
 handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
@@ -1067,8 +1067,8 @@ server does not persist subscription offsets.
 
 CLI parity:
 
-- `mux events history` → durable `GET /events`
-- `mux events watch` → live `GET /events/stream`
+- `tether events history` → durable `GET /events`
+- `tether events watch` → live `GET /events/stream`
 
 ### `GET /sessions/{id}/events`
 
@@ -1123,7 +1123,7 @@ Record a proxied tool call. Body:
 | Field            | Type   | Description                                                     |
 |------------------|--------|-----------------------------------------------------------------|
 | `tool_name`      | string | required, at most 256 bytes                                     |
-| `server`         | string | upstream server id; empty for a native mux tool                 |
+| `server`         | string | upstream server id; empty for a native tether tool                 |
 | `session_id`     | string | the calling session                                             |
 | `args_schema_fp` | string | fingerprint of the argument names, at most 64 bytes             |
 | `duration_ms`    | int    | not negative                                                    |
@@ -1138,9 +1138,9 @@ Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
 
 The daemon stamps the time of every record itself and ignores `timestamp`, so
 a record cannot be back-dated. The caller of a published record is the
-`mux mcp --daemon-only` server Tether plants in an agent, which cannot write
+`tether mcp --daemon-only` server Tether plants in an agent, which cannot write
 the daemon's state. Its other fields are the caller's assertion: a session that
-exists is accepted whoever names it, until `muxd` verifies who is calling
+exists is accepted whoever names it, until `tetherd` verifies who is calling
 (CW-20260930-0253).
 
 ---
@@ -1257,10 +1257,10 @@ Current (v0.0.2):
 
 | Scope    | Kind                          | Emitted by                             | Payload                                                      |
 |----------|-------------------------------|----------------------------------------|--------------------------------------------------------------|
-| daemon   | `daemon.started`              | muxd at listener-up                    | `{version, pid, listener}`                                   |
-| daemon   | `daemon.shutdown_started`     | muxd on ctx cancel                     | empty                                                        |
-| daemon   | `daemon.shutdown_completed`   | muxd after runtime drain, before Close | empty                                                        |
-| daemon   | `daemon.shutdown_sessions_ended` | muxd after the graceful-shutdown session drain, when any session was live | `{ended, ended_session_ids, still_running, still_running_session_ids}` — ended sessions were recorded `killed` with reason `daemon-shutdown`; still-running ones are left for the next start's sweep (see [Session states](#session-states)) |
+| daemon   | `daemon.started`              | tetherd at listener-up                    | `{version, pid, listener}`                                   |
+| daemon   | `daemon.shutdown_started`     | tetherd on ctx cancel                     | empty                                                        |
+| daemon   | `daemon.shutdown_completed`   | tetherd after runtime drain, before Close | empty                                                        |
+| daemon   | `daemon.shutdown_sessions_ended` | tetherd after the graceful-shutdown session drain, when any session was live | `{ended, ended_session_ids, still_running, still_running_session_ids}` — ended sessions were recorded `killed` with reason `daemon-shutdown`; still-running ones are left for the next start's sweep (see [Session states](#session-states)) |
 | daemon   | `daemon.sessions_swept`       | the startup sweep, when it settles any session | `{swept, swept_session_ids, spared, spared_session_ids}` — swept sessions were failed with `exit_code` -1; spared ones still had their own process alive (see [Session states](#session-states)) |
 | daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
@@ -1320,7 +1320,7 @@ running gets `wake_reason: "session-not-running"` and no wake.
 message was read. The delivery then stays leased at `turn_submitted` for up to
 15 minutes, waiting for the recipient to consume the message. Any of these
 closes it as `delivered`: `POST /messages/{id}/consume`, the recipient's own
-inbox pull (the MCP `mux_message_inbox` tool passes its session), or the next
+inbox pull (the MCP `tether_message_inbox` tool passes its session), or the next
 attempt finding the message consumed or read. If none happens within the
 window, the delivery is retried, which wakes the recipient again as a
 reminder. A wake that was not submitted (busy, offline, submit failed) is
@@ -1354,7 +1354,7 @@ which carries the error's text (for example, submitting the turn failed).
 
 ## Registry
 
-The federation directory service. Mux owns public-identity rows for
+The federation directory service. Tether owns public-identity rows for
 agents + projects; substrates retain operational config behind each row's
 `callback` URI. Cross-substrate dedup is driven by substrate-local
 `external_id` attachments and `LookupBy(kind, external_id, substrate?)`.
@@ -1369,7 +1369,7 @@ internal `Kind` value is singular (`agent`, `project`).
 
 Body: a Profile JSON. The caller supplies `display_name` and any optional
 identity fields. The server assigns `urn`, `kind`, `created_at`,
-`updated_at`, `mux_instance_id` and ignores any caller-supplied versions
+`updated_at`, `tether_instance_id` and ignores any caller-supplied versions
 of those.
 
 Response: `201 Created` + the canonical Profile JSON (with the minted
@@ -1404,7 +1404,7 @@ curl 'http://unix/registry/agents?role=reviewer&status=active'
 
 ### `GET /registry/{kind}/{urn}` — Lookup
 
-`{urn}` is URL-encoded (`msg%3A%2F%2Fagent%2Fagent-mux%2Fagt_xxx`).
+`{urn}` is URL-encoded (`msg%3A%2F%2Fagent%2Ftether%2Fagt_xxx`).
 
 Response: `200 OK` + Profile, or `404 not_found`. Soft-deleted rows are
 still returned here with `status: "deprecated"`.
@@ -1699,7 +1699,7 @@ and `docs/groups/symbols.md` for the `@` / `!` / `:` vocabulary.
 |-------|--------|-------------|
 | `/groups` | `POST` | Create a group. Body: `{display_name, description?, role?, capabilities?, avatar?, last_updated_by}`. The caller URN goes in `last_updated_by`; it's auto-added to `group_members` with `role='owner'` inside the same transaction as the profile insert. Returns the reloaded `Profile`. |
 | `/groups?member=<urn>` | `GET` | List groups that `<urn>` belongs to, ordered alphabetically by `display_name`. Status is not filtered (archived groups appear). |
-| `/groups/{urn}` | `GET` | Read a group profile by URN. URN is path-escaped (e.g. `msg%3A%2F%2Fgroup%2Fagent-mux%2Fgrp_x9k2p4`). |
+| `/groups/{urn}` | `GET` | Read a group profile by URN. URN is path-escaped (e.g. `msg%3A%2F%2Fgroup%2Ftether%2Fgrp_x9k2p4`). |
 | `/groups/{urn}` | `DELETE` | Archive a group (soft — sets `status='archived'`, read-only). Body: `{"by": "<urn>"}` (or `?as=<urn>`). Owner/moderator only. |
 | `/groups/{urn}/members` | `POST` | Add a member. Body: `{"member": "<urn>", "by": "<urn>", "role"?: "member|moderator|owner"}`. Role defaults to `member`. Owner/moderator only. |
 | `/groups/{urn}/members` | `GET` | List members of a group, ordered by `joined_at` ASC, with `display_name` hydrated. |
@@ -1725,7 +1725,7 @@ semantic — body wins when both body and query are supplied):
   - `from` on `POST /groups/{urn}/messages` — the message author.
   - `as` on `POST /groups/{urn}/read` — the member whose cursor moves.
 - **Query fallback:** `?as=<urn>` on GET / DELETE verbs where building a
-  body is awkward (the `mux` CLI uses this).
+  body is awkward (the `tether` CLI uses this).
 
 The HTTP layer does not authenticate the URN — same-host UDS trust per
 ADR-0041 §D7.

@@ -76,7 +76,7 @@ export function LogsPage() {
         <EmptyState
           variant="empty"
           title="No daemon logs yet"
-          description="Start the daemon with 'mux daemon start'. Logs appear here once it writes to ~/.tether/logs/muxd.log."
+          description="Start the daemon with 'tether daemon start'. Logs appear here once it writes to ~/.tether/logs/tetherd.log."
         />
       )}
 

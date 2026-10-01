@@ -46,12 +46,12 @@ func eventToDTO(e events.Event) EventDTO {
 	}
 }
 
-func (s *Server) registerEventRoutes(mux *http.ServeMux) {
+func (s *Server) registerEventRoutes(router *http.ServeMux) {
 	if s.Bus != nil {
-		mux.HandleFunc("/events/stream", s.handleEventsStream)
+		router.HandleFunc("/events/stream", s.handleEventsStream)
 	}
 	if s.EventsStore != nil {
-		mux.HandleFunc("/events", s.handleEventsList)
+		router.HandleFunc("/events", s.handleEventsList)
 	}
 	// Per-session history mounts under the sessions dispatcher's
 	// "events" action case; see handleSessionsItem.

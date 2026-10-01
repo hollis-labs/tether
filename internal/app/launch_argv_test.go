@@ -159,8 +159,8 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 				BootPrompt:     testBootPrompt,
 			}
 			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
-				MuxCommand: "mux",
-				MuxArgs:    []string{"mcp"},
+				TetherCommand: "tether",
+				TetherArgs:    []string{"mcp"},
 			})
 			if err != nil {
 				t.Fatalf("prepareSharedLaunch: %v", err)
@@ -238,7 +238,7 @@ func TestOpencodePlantedAgentIsNamespaced(t *testing.T) {
 	if got := launch.OpencodeAgentName(plan); got != "tether-general" {
 		t.Fatalf("OpencodeAgentName = %q, want tether-general", got)
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux"})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}

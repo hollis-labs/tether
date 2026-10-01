@@ -1,7 +1,7 @@
 // Package mcpadapter — workstream_tools.go wires the tether_workstream_*
 // tools, giving MCP callers parity with /workstreams and
 // /sessions/{id}/workstream (internal/api/workstreams.go) and with
-// `mux workstreams` on the CLI.
+// `tether workstreams` on the CLI.
 //
 // S1 of SP-20260912-0001 (CW-20260912-0059).
 package mcpadapter
@@ -227,7 +227,7 @@ func (a *Adapter) handleWorkstreamNamespace(ctx context.Context, args map[string
 // client.
 func (a *Adapter) workstreamClientReady() error {
 	if a.client == nil {
-		return toolError("internal_error", "workstream tools require daemon routing; start MCP with mux mcp")
+		return toolError("internal_error", "workstream tools require daemon routing; start MCP with tether mcp")
 	}
 	return nil
 }

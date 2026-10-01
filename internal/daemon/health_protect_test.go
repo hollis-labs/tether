@@ -9,7 +9,7 @@ import (
 )
 
 // /health carries the daemon's own view of control-plane protection when the
-// server has one, and omits the field otherwise, so `mux doctor` can tell a
+// server has one, and omits the field otherwise, so `tether doctor` can tell a
 // daemon that reports it from one that does not (CW-20261001-0142).
 func TestHandleHealth_SandboxProtect(t *testing.T) {
 	get := func(s *Server) (Health, string) {

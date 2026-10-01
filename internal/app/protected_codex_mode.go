@@ -14,7 +14,7 @@ const (
 	// CodexNotProtected is the shipped state: codex runs exactly as it did
 	// before control-plane protection existed, under its own workspace-write
 	// sandbox, with none of Tether's guard on its launch or turns, and /health
-	// and `mux doctor` say so. The catalog-writing mux tools are still refused
+	// and `tether doctor` say so. The catalog-writing tether tools are still refused
 	// for it, because that policy is the planted server's and does not depend
 	// on this switch.
 	CodexNotProtected CodexProtection = "not protected"
@@ -26,8 +26,8 @@ const (
 // allowlist, no wrapping, no refusal inside a protected directory), no
 // per-turn check is registered, the daemon reports "codex: not protected
 // (CW-20261001-0230)", and claude, opencode and the rest stay protected. The
-// planted `mux mcp` is still started with --protect-path, so codex still cannot
-// write the catalog through mux_agent_create or mux_agent_edit. Its planted local
+// planted `tether mcp` is still started with --protect-path, so codex still cannot
+// write the catalog through tether_agent_create or tether_agent_edit. Its planted local
 // proxy and stdio descendants are wrapped separately (CW-20261001-0466).
 //
 // The guard (codexOwnsSandbox, the per-turn re-check, Plan.CallerEnv, the
@@ -45,14 +45,14 @@ const (
 //     upstreams run daemon-side, or confine what they write.
 //   - SF4: the per-turn check accepts any content inside [mcp_servers.*], so a
 //     co-located wrapped agent can add [mcp_servers.evil] command="sh", drop
-//     --protect-path from the planted mux args, or add LD_PRELOAD, and codex
+//     --protect-path from the planted tether args, or add LD_PRELOAD, and codex
 //     spawns it unsandboxed. The planted shape is known at launch and would
 //     have to be pinned.
 //
 // It is a variable only so a test can drive both states.
 var codexProtectionMode = CodexNotProtected
 
-// CodexProtectionState is what /health and `mux doctor` report about codex.
+// CodexProtectionState is what /health and `tether doctor` report about codex.
 type CodexProtectionState struct {
 	State  string
 	Reason string
@@ -68,7 +68,7 @@ func codexProtectionState(st ProtectionStatus) CodexProtectionState {
 	case CodexNotProtected:
 		return CodexProtectionState{
 			State:  string(CodexNotProtected),
-			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox and spawns MCP servers outside that sandbox. Tether wraps the planted local proxy and its stdio descendants to protect catalog, run/ and state/ (CW-20261001-0466); remote upstreams are excluded unless the operator opts in. The MCP config is not pinned and caller identity is pending (CW-20260930-0253), so substituted servers or host services can still reach the catalog (including torque_session_launch and loom_export_bundle); the mux tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
+			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox and spawns MCP servers outside that sandbox. Tether wraps the planted local proxy and its stdio descendants to protect catalog, run/ and state/ (CW-20261001-0466); remote upstreams are excluded unless the operator opts in. The MCP config is not pinned and caller identity is pending (CW-20260930-0253), so substituted servers or host services can still reach the catalog (including torque_session_launch and loom_export_bundle); the tether tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
 		}
 	default:
 		return CodexProtectionState{

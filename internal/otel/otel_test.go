@@ -29,7 +29,7 @@ func restoreLogging(t *testing.T) {
 }
 
 // TestConfigureLoggingDoesNotDeadlockLogPrintf is the regression test for the
-// hang that took down `mux mcp`: wrapping slog's built-in default handler made
+// hang that took down `tether mcp`: wrapping slog's built-in default handler made
 // log.Printf reenter log.std's mutex and block forever.
 func TestConfigureLoggingDoesNotDeadlockLogPrintf(t *testing.T) {
 	restoreLogging(t)

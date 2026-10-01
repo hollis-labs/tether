@@ -2,7 +2,7 @@
 // tether_registry_scoped_binding_* MCP tools (T08, messaging vNext),
 // giving MCP callers parity with T04's scoped role/slot binding
 // primitive -- CLI parity landed the same task as
-// `mux registry scoped-bindings`.
+// `tether registry scoped-bindings`.
 package mcpadapter
 
 import (
@@ -68,7 +68,7 @@ func (a *Adapter) handleScopedBindingSet(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "scope, slot, created_by, and at least one target_urns entry are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_scoped_binding_set requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_set requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.ScopedBindings().Set(ctx, scope, slot, targets, nil, createdBy)
 	if err != nil {
@@ -87,7 +87,7 @@ func (a *Adapter) handleScopedBindingResolve(ctx context.Context, args map[strin
 		return nil, toolError("invalid_request", "scope and slot are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_scoped_binding_resolve requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_resolve requires daemon routing; start MCP with tether mcp")
 	}
 	if boolArg(args, "single") {
 		target, binding, err := a.client.ScopedBindings().ResolveSingle(ctx, scope, slot)
@@ -116,7 +116,7 @@ func (a *Adapter) handleScopedBindingRevisions(ctx context.Context, args map[str
 		return nil, toolError("invalid_request", "scope and slot are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_scoped_binding_revisions requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_scoped_binding_revisions requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.ScopedBindings().ListRevisions(ctx, scope, slot)
 	if err != nil {

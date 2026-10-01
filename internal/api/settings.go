@@ -16,12 +16,12 @@ type SettingsService interface {
 	SetOnboarding(ctx context.Context, scope settings.Scope, scopeID string, ob settings.OnboardingSettings) error
 }
 
-func (s *Server) registerSettingsRoutes(mux *http.ServeMux) {
+func (s *Server) registerSettingsRoutes(router *http.ServeMux) {
 	if s.Settings == nil {
 		return
 	}
-	mux.HandleFunc("/settings/onboarding", s.handleEffectiveOnboarding)
-	mux.HandleFunc("/settings/onboarding/", s.handleScopedOnboarding)
+	router.HandleFunc("/settings/onboarding", s.handleEffectiveOnboarding)
+	router.HandleFunc("/settings/onboarding/", s.handleScopedOnboarding)
 }
 
 // handleEffectiveOnboarding handles GET /settings/onboarding?project={p}&user={u}.

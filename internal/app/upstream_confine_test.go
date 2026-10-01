@@ -19,8 +19,8 @@ func TestConfineMCPPlant_UnchangedOtherLaunches(t *testing.T) {
 		if brand != "codex" {
 			protected = []string{t.TempDir()}
 		}
-		command, args, err := ConfineMCPPlant(plan, "mux", []string{"mcp"}, protected)
-		if err != nil || command != "mux" || len(args) != 1 || args[0] != "mcp" {
+		command, args, err := ConfineMCPPlant(plan, "tether", []string{"mcp"}, protected)
+		if err != nil || command != "tether" || len(args) != 1 || args[0] != "mcp" {
 			t.Fatalf("%s: command=%q args=%v err=%v", brand, command, args, err)
 		}
 		if confinedMCPEnv(plan, protected)[config.MCPConfineRemoteEnv] != "" {

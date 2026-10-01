@@ -18,7 +18,7 @@ var ErrProtected = errors.New("the destination is inside a protected directory")
 var ErrSymlinkedFile = errors.New("the agent file is a symlink")
 
 // CreateGuarded is Create for a caller that must not write into the protected
-// directories (real paths), such as the `mux mcp` Tether plants into a launched
+// directories (real paths), such as the `tether mcp` Tether plants into a launched
 // agent: the catalog root, the run directory and the state directory are the
 // operator's, not the agent's. With no protected directories it is Create.
 //

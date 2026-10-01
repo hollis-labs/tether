@@ -20,7 +20,7 @@ func TestCodexConfinedProxy_RealDaemonGateway(t *testing.T) {
 		t.Skip("control-plane protection ships on Linux only")
 	}
 	// Build before isolating HOME so the build uses the existing module cache.
-	binary := muxBinary(t)
+	binary := tetherBinary(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
@@ -29,7 +29,7 @@ func TestCodexConfinedProxy_RealDaemonGateway(t *testing.T) {
 	plan := &launch.Plan{ProviderBrand: "codex", RepoRoot: t.TempDir()}
 	// Exact constructor used by LaunchSession; only the test executable/paths
 	// and granted upstream list differ. No model process is ever started.
-	planting := app.MuxMCPPlant(d.CatalogDir, "smoke-codex", false, protected...)
+	planting := app.TetherMCPPlant(d.CatalogDir, "smoke-codex", false, protected...)
 	command, args, err := app.ConfineMCPPlant(plan, binary, planting.Args, protected)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestCodexConfinedProxy_RealDaemonGateway(t *testing.T) {
 		t.Skipf("namespace unavailable: %v: %s", err, output)
 	}
 	cmd := exec.Command(command, args...)
-	cmd.Env = append(os.Environ(), "MUX_MCP_SERVERS=", config.MCPConfineRemoteEnv+"=1")
+	cmd.Env = append(os.Environ(), "TETHER_MCP_SERVERS=", config.MCPConfineRemoteEnv+"=1")
 	cmd.Stderr = os.Stderr
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -57,16 +57,16 @@ func TestCodexConfinedProxy_RealDaemonGateway(t *testing.T) {
 	}
 	found := false
 	for _, tool := range tools.Tools {
-		if tool.Name == "mux_session_list" {
+		if tool.Name == "tether_session_list" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatal("real confined proxy lost daemon gateway tools")
 	}
-	result, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "mux_session_list", Arguments: map[string]any{}})
+	result, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_session_list", Arguments: map[string]any{}})
 	if err != nil || result.IsError {
 		t.Fatalf("daemon-backed call: result=%+v err=%v", result, err)
 	}
-	t.Logf("real protected proxy: tools/list returned %d tools; mux_session_list succeeded over %s with read-only catalog/run/state", len(tools.Tools), d.SocketAddr)
+	t.Logf("real protected proxy: tools/list returned %d tools; tether_session_list succeeded over %s with read-only catalog/run/state", len(tools.Tools), d.SocketAddr)
 }

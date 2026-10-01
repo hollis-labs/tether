@@ -32,15 +32,15 @@ func Handler() http.Handler {
 	return gowebui.Handler(gowebui.Config{FS: dist, BasePath: BasePath})
 }
 
-// Mount registers the Sysop UI handler on mux. When BasePath is empty the
+// Mount registers the Sysop UI handler on router. When BasePath is empty the
 // handler is mounted at the site root; more specific patterns (e.g.
-// /api/*) registered on the same mux still take precedence.
-func Mount(mux *http.ServeMux) {
+// /api/*) registered on the same router still take precedence.
+func Mount(router *http.ServeMux) {
 	h := Handler()
 	if BasePath == "" {
-		mux.Handle("/", h)
+		router.Handle("/", h)
 		return
 	}
-	mux.Handle(BasePath+"/", h)
-	mux.Handle(BasePath, h)
+	router.Handle(BasePath+"/", h)
+	router.Handle(BasePath, h)
 }

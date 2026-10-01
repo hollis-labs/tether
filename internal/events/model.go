@@ -8,7 +8,7 @@ package events
 import "time"
 
 // Scope classifies an event's origin. Session events reference a
-// specific runtime session; daemon events describe muxd lifecycle;
+// specific runtime session; daemon events describe tetherd lifecycle;
 // broker events describe envelope delivery. The set is open-ended —
 // callers may introduce new scopes as needed; the types here are
 // conveniences, not an enum gate.

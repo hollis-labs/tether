@@ -10,8 +10,8 @@ Three layers, searched in order. Later layers override earlier ones on ID collis
 
 | Layer | Root | Use |
 |---|---|---|
-| `system` | `<catalogPath>` (default `~/.tether/catalog/`) | Tether bundled defaults; managed via `mux agents create --scope system`. |
-| `user` | `~/.tether/` | Personal customization. Default write target for `mux agents create`. |
+| `system` | `<catalogPath>` (default `~/.tether/catalog/`) | Tether bundled defaults; managed via `tether agents create --scope system`. |
+| `user` | `~/.tether/` | Personal customization. Default write target for `tether agents create`. |
 | `project` | `./.tether/` (CWD-relative) | Repo-local overrides. Highest precedence. |
 
 Each layer can contain three subdirectories:
@@ -23,7 +23,7 @@ Each layer can contain three subdirectories:
   skills/        # *.md   — Skill files (frontmatter + body)
 ```
 
-`mux agents list` shows the resolved view with a `LAYER` column.
+`tether agents list` shows the resolved view with a `LAYER` column.
 
 ## Agent schema
 
@@ -62,7 +62,7 @@ slots: { ... }                     # boot prompt slot sources (static / role_sum
 mcp_servers: [vanta, hadron]       # optional v005-08 — MCP allowlist for this profile
 ```
 
-`mcp_servers` empty / omitted means the default allow-list, `torque` and `tesseract`. A non-empty list replaces it, so name `torque` and `tesseract` too if the agent needs them. The launch path pipes the list into `MUX_MCP_SERVERS` and starts the spawned agent's `mux mcp --proxy` with `--confine`, so upstreams outside the list are not started and cannot be reached through `mux_call`. See [mcp.md](mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
+`mcp_servers` empty / omitted means the default allow-list, `torque` and `tesseract`. A non-empty list replaces it, so name `torque` and `tesseract` too if the agent needs them. The launch path pipes the list into `TETHER_MCP_SERVERS` and starts the spawned agent's `tether mcp --proxy` with `--confine`, so upstreams outside the list are not started and cannot be reached through `tether_tool_call`. See [mcp.md](mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
 
 Use `type: role_summary` for the `agent` slot when a full role markdown file should remain fetchable by path without being inlined into every boot prompt:
 
@@ -85,16 +85,16 @@ For Tier-1 (catalog-only) launches:
 
 For Tier-2 (caller-provided) launches, see `docs/caller-launched-sessions.md`.
 
-## `mux agents` CLI
+## `tether agents` CLI
 
 ```
-mux agents list                                   # layered listing
-mux agents create <id> --scope user|project|system \
+tether agents list                                   # layered listing
+tether agents create <id> --scope user|project|system \
                        --name "..." \
                        --system-prompt "..." \
                        --agent-prompt "..."       # writes a new agent YAML
-mux agents edit <id>                              # opens in $EDITOR
-mux agents show <id>                              # prints layer-annotated YAML
+tether agents edit <id>                              # opens in $EDITOR
+tether agents show <id>                              # prints layer-annotated YAML
 ```
 
 See ADR 0033 for full rationale.

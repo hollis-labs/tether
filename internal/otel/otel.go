@@ -48,7 +48,7 @@ func configureLogging() {
 // so wrapping it reinstates the cycle: the first log.Printf anywhere in the
 // process takes log.std's mutex, reaches the default handler through the
 // wrapper, and blocks forever trying to take the same mutex again. That hung
-// `mux mcp` before it emitted a single byte of protocol, because app.New logs
+// `tether mcp` before it emitted a single byte of protocol, because app.New logs
 // a deprecation warning for the claude-pty provider on the way up.
 //
 // So the chain terminates in a handler this process owns. stderr, because the

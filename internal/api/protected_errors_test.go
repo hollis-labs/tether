@@ -19,7 +19,7 @@ import (
 func TestProtectedPathRefusalsAreForbidden(t *testing.T) {
 	inside := fmt.Errorf("%w: the agent's work directory /c/p is inside /c, which Tether write-protects for every agent; move it out of that directory", launch.ErrLaunchInsideProtectedPath)
 	acp := fmt.Errorf("build runtime: %w", launch.ErrACPLaunchUnprotected)
-	noBwrap := fmt.Errorf("%w: bwrap not found: install bubblewrap, or set TETHER_SANDBOX_PROTECT=0 in muxd's environment to run agents unprotected", launch.ErrProtectionUnavailable)
+	noBwrap := fmt.Errorf("%w: bwrap not found: install bubblewrap, or set TETHER_SANDBOX_PROTECT=0 in tetherd's environment to run agents unprotected", launch.ErrProtectionUnavailable)
 	for _, refusal := range []struct {
 		err  error
 		want string

@@ -2,7 +2,7 @@
 // `tether_registry_binding_*` MCP tools (T08, messaging vNext), giving
 // MCP callers parity with T07's HTTP-only /registry/bindings surface
 // (internal/api/bindings.go) — CLI parity landed the same task under
-// `mux registry bindings ...` (cmd/mux/registry.go).
+// `tether registry bindings ...` (cmd/tether/registry.go).
 //
 // Every handler routes through a.client, matching the daemon-routing
 // convention established for registry/group tools in this same task
@@ -92,7 +92,7 @@ func (a *Adapter) handleBindingLease(ctx context.Context, args map[string]any) (
 	}
 	caps := stringSliceArg(args, "capabilities")
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_binding_lease requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_binding_lease requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Bindings().Lease(ctx, targetURN, sessionID, hostID, attemptID, caps, intArg(args, "ttl_seconds", 0))
 	if err != nil {
@@ -113,7 +113,7 @@ func (a *Adapter) handleBindingRenew(ctx context.Context, args map[string]any) (
 		return nil, toolError("invalid_request", "binding_id is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_binding_renew requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_binding_renew requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Bindings().Renew(ctx, bindingID, intArg(args, "ttl_seconds", 0))
 	if err != nil {
@@ -134,7 +134,7 @@ func (a *Adapter) handleBindingRevoke(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "binding_id is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_binding_revoke requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_binding_revoke requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.Bindings().Revoke(ctx, bindingID); err != nil {
 		if isDaemonUnreachable(err) {
@@ -151,7 +151,7 @@ func (a *Adapter) handleBindingCurrent(ctx context.Context, args map[string]any)
 		return nil, toolError("invalid_request", "target_urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_binding_current requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_binding_current requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Bindings().Current(ctx, targetURN)
 	if err != nil {
@@ -169,7 +169,7 @@ func (a *Adapter) handleBindingList(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "target_urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_binding_list requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_binding_list requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Bindings().ListForTarget(ctx, targetURN)
 	if err != nil {

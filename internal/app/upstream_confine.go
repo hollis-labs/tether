@@ -39,7 +39,7 @@ func ConfineMCPPlant(plan *launch.Plan, command string, args, protected []string
 }
 
 func confinedMCPEnv(plan *launch.Plan, protected []string) map[string]string {
-	env := muxEnvMap(plan.Env)
+	env := tetherEnvMap(plan.Env)
 	if plan.ProviderBrand == "codex" && len(protected) > 0 {
 		env[config.MCPConfineRemoteEnv] = "1"
 	}

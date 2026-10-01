@@ -13,7 +13,7 @@ import (
 
 // otelInjectForTest reproduces the PRE-0026 injection shape -- trace context
 // written into the arguments map -- using the same go-otel call the old code
-// used, so the legacy fixture cannot drift from what older muxes actually send.
+// used, so the legacy fixture cannot drift from what older Tether proxies actually send.
 func otelInjectForTest(ctx context.Context, args map[string]any) map[string]any {
 	return otelprop.InjectMCP(ctx, args)
 }
@@ -54,13 +54,13 @@ func TestExtractTraceContext_ReadsMeta(t *testing.T) {
 	}
 }
 
-// THE TRANSITION. Every mux built before this change writes trace context into
-// arguments. A newer mux receiving a call from an older one must still
+// THE TRANSITION. Every tether built before this change writes trace context into
+// arguments. A newer tether receiving a call from an older one must still
 // establish the parent span -- otherwise the link breaks silently, because a
 // lost parent and a genuinely-new trace look identical downstream.
 //
 // Scheduled for removal by CW-20260912-0072, on the condition that every
-// deployed mux is past CW-20260907-0026. When that lands, this test goes with
+// deployed tether is past CW-20260907-0026. When that lands, this test goes with
 // the fallback.
 func TestExtractTraceContext_FallsBackToLegacyArguments(t *testing.T) {
 	ctx, wantTraceID := fakeRemoteContext(t)
@@ -73,7 +73,7 @@ func TestExtractTraceContext_FallsBackToLegacyArguments(t *testing.T) {
 
 	got := trace.SpanContextFromContext(extractTraceContext(nil, legacyArgs))
 	if !got.IsValid() {
-		t.Fatal("legacy arguments-side trace context was not recovered; a call from an older mux would silently start a new trace")
+		t.Fatal("legacy arguments-side trace context was not recovered; a call from an older tether would silently start a new trace")
 	}
 	if got.TraceID().String() != wantTraceID {
 		t.Errorf("trace id = %s, want %s", got.TraceID(), wantTraceID)

@@ -16,7 +16,7 @@ through a contact channel published on the Hollis Labs organization or
 maintainer profile. Include:
 
 - the affected commit or version and operating system
-- how `muxd` was configured (Unix socket or TCP listener, MCP adapter flags)
+- how `tetherd` was configured (Unix socket or TCP listener, MCP adapter flags)
 - reproduction steps and the security impact
 - whether credentials or user data may have been exposed
 - a safe way to contact you about coordination
@@ -26,20 +26,20 @@ disclosure; response times are best effort during the pre-release period.
 
 ## Deployment boundary
 
-Tether is a **single-user, same-host** control plane. The `muxd` HTTP API has no
+Tether is a **single-user, same-host** control plane. The `tetherd` HTTP API has no
 authentication: trust is anchored to the filesystem permissions of the Unix
-domain socket (default `~/.tether/run/muxd.sock`). Anyone who can connect to
+domain socket (default `~/.tether/run/tetherd.sock`). Anyone who can connect to
 that socket can create, steer and stop sessions, send messages and read
 session output as the daemon's user.
 
 - Keep the socket and its parent directory owner-only.
 - If you set `daemon.listen_addr` to a TCP address, use a loopback address
-  (`tcp:127.0.0.1:PORT`). Do not bind `muxd` to a non-loopback interface; there
+  (`tcp:127.0.0.1:PORT`). Do not bind `tetherd` to a non-loopback interface; there
   is no TLS and no bearer-token check on the HTTP API.
 - Caller identity on messaging and group routes (the `as` / `from` URN) is
   provenance supplied by the caller, not an authenticated credential.
 
-The MCP stdio adapter (`mux mcp`) is the one surface with scopes. Read-only
+The MCP stdio adapter (`tether mcp`) is the one surface with scopes. Read-only
 tools need no token. Mutating tools require a token and the matching scope
 (`session.write`, `message.write`, `registry.write`, `groups.write`,
 `delivery.write`, `catalog.write`, `ai.invoke`); scopes are per capability
@@ -65,11 +65,11 @@ read-only for it (CW-20261001-0142, CW-20261001-0173):
 - the catalog root (`~/.tether/catalog/` by default), so an agent cannot
   rewrite the launch, provider, agent and MCP-server definitions it is run
   from, or the credentials the catalog holds;
-- the daemon's run directory (`~/.tether/run/`), which holds `muxd.pid` and
-  `muxd.sock`;
+- the daemon's run directory (`~/.tether/run/`), which holds `tetherd.pid` and
+  `tetherd.sock`;
 - the directory holding the state database (`~/.tether/state/` by default),
   where every session, message and event is kept. An agent Tether wraps cannot
-  write the database, or replace it or its WAL files. The `mux mcp` server
+  write the database, or replace it or its WAL files. The `tether mcp` server
   Tether plants in each agent never opens it: that server runs `--daemon-only`
   and reaches Tether's state only through the daemon.
 
@@ -105,12 +105,12 @@ catalog through MCP tools:
 The default MCP allow-list (`torque`, `tesseract`) is therefore not safe for a
 Codex agent either. **The structural fix is MCP upstreams that run daemon-side,
 outside the agent's reach (CW-20261001-0230).** Until then `GET /health`
-(`sandbox_protect.codex`), `mux doctor` (`sandbox-protect-codex`) and the
+(`sandbox_protect.codex`), `tether doctor` (`sandbox-protect-codex`) and the
 daemon's startup log say `codex: not protected (CW-20261001-0230)`, and
-`mux doctor` warns. A Codex agent that is also a hostile worker can write the
+`tether doctor` warns. A Codex agent that is also a hostile worker can write the
 catalog; treat Codex like the agents Tether did not protect before this change.
 
-What does hold for Codex: the `mux mcp` Tether plants is started with
+What does hold for Codex: the `tether mcp` Tether plants is started with
 `--protect-path` for the catalog root, run directory and state directory, and
 refuses to write under them (see below).
 
@@ -131,15 +131,15 @@ and cannot use `sudo`.
 On macOS the protection is not applied yet. go-sandbox's seatbelt protection
 has not been verified on a real Mac (CW-20261001-0138), so agents there can
 still write all three directories. The daemon logs a warning at startup and
-`mux doctor` reports one.
+`tether doctor` reports one.
 
-`mux doctor` asks the running daemon, whose environment decides protection,
+`tether doctor` asks the running daemon, whose environment decides protection,
 and reports a `sandbox-protect` check and a `sandbox-protect-codex` check; `GET
 /health` carries them as `sandbox_protect` (with `codex` and `codex_reason`).
 
 An operator can turn the protection off by setting `TETHER_SANDBOX_PROTECT=0`
-(or `false`) in muxd's environment. The daemon then logs a WARN line at
-startup, and `mux doctor` reports a `sandbox-protect` warning. Agents can
+(or `false`) in tetherd's environment. The daemon then logs a WARN line at
+startup, and `tether doctor` reports a `sandbox-protect` warning. Agents can
 write the catalog, run directory and state directory again, and ACP launches
 are allowed.
 Turning it off is a deliberate decision, never a silent default.
@@ -158,14 +158,14 @@ itself. It does not yet cover:
   agents Tether wraps. It is not for Codex, which Tether does not wrap: Codex's
   own sandbox keeps its shell out of the directory (unless `state_db` is in a
   directory that sandbox can write: `/tmp`, `$TMPDIR` or the work directory), and
-  the planted `mux mcp` never opens the database, but Codex's MCP servers run outside that sandbox,
+  the planted `tether mcp` never opens the database, but Codex's MCP servers run outside that sandbox,
   so an upstream whose tool writes a caller-chosen path can still reach it
   (CW-20261001-0230). Any agent can still ask the daemon, over the socket, to
   write on its behalf.
 - **The daemon socket.** A read-only directory does not stop `connect(2)` on
-  a Unix socket, so an agent can still call `muxd.sock`. The socket grants the
+  a Unix socket, so an agent can still call `tetherd.sock`. The socket grants the
   full, unauthenticated HTTP API, including writes the daemon makes on the
-  caller's behalf. Closing this relies on caller identity: `muxd` verifying
+  caller's behalf. Closing this relies on caller identity: `tetherd` verifying
   who is calling (CW-20260930-0253, CW-20260918-0037).
 - **Writes delegated to same-uid services.** On Linux the protecting sandbox
   is the host filesystem with the protected directories read-only, not an
@@ -180,15 +180,15 @@ itself. It does not yet cover:
   the protection without a sandbox policy. While protection is on, Tether
   refuses ACP launches with 403 `forbidden` until CW-20261001-0162 adds a
   protect-only sandbox for them.
-- **`mux_agent_create` and `mux_agent_edit` from inside an agent.** Planted
+- **`tether_agent_create` and `tether_agent_edit` from inside an agent.** Planted
   workers still carry the `catalog.write` scope, since it also gates
-  `scope=project`, which writes into the repo. The planted `mux mcp` is started with
+  `scope=project`, which writes into the repo. The planted `tether mcp` is started with
   `--protect-path` for the catalog root, the run directory and the state directory,
   and refuses to write under them, with a typed `catalog_read_only` error telling the agent to ask the
   operator. That is a **policy of the planted server, for every runtime**, not an
   effect of a read-only mount, which exists only inside Tether's sandbox: Codex
   spawns MCP servers itself, outside it, and a Codex agent called
-  `mux_agent_create scope=system` and wrote the catalog before the policy. The
+  `tether_agent_create scope=system` and wrote the catalog before the policy. The
   refusal holds against a symlink re-pointed while the call runs: on Linux the
   destination directory is opened once, judged by its identity and its ancestors',
   and the file is created relative to that open directory without following a
@@ -198,7 +198,7 @@ itself. It does not yet cover:
   protected one (`.tether`, `agents/`) is followed as before; an agent file that is
   itself a symlink is not written through while protected paths are in force, and
   the tool answers with a typed `agent_file_is_symlink` error ("edit the link's target, or replace the link with a regular file"), not an internal error. The scope is not a boundary: a
-  worker can start its own `mux mcp --scopes`, which a sandboxed agent finds
+  worker can start its own `tether mcp --scopes`, which a sandboxed agent finds
   read-only, and which a Codex agent runs under Codex's sandbox only.
 - **The spec launch engine** (`TETHER_LAUNCH_ENGINE=spec`, off by default) takes
   argv, environment and injection from `~/.tether/launch-specs/`, which an agent can
@@ -208,7 +208,7 @@ The in-process API stub starts no agent process, so it has nothing to
 protect.
 
 **These protections are advisory against a hostile worker until caller identity
-lands (CW-20260930-0253).** Any process that can reach `muxd.sock`, a worker
+lands (CW-20260930-0253).** Any process that can reach `tetherd.sock`, a worker
 included, can call `POST /sessions` with `agent_inline` (extra flags and
 environment per provider), `injection` and an MCP server list, and so shape the
 launch it asks for. The pin on a catalog agent's sandbox profile (#85) closes
@@ -230,9 +230,9 @@ editing the catalog itself; that is CW-20260930-0237.
 Two defaults narrow which MCP servers a launched agent is handed
 (CW-20261001-0227). Claude agents run with `--strict-mcp-config`, so they do not
 inherit servers from your `~/.claude.json`, project `.mcp.json` files or the
-claude.ai connectors (a launched agent has no connectors at all); `TETHER_CLAUDE_STRICT_MCP=0` in muxd's environment turns
-this off, and muxd then warns at startup and `mux doctor` warns. An agent's
-`mux` proxy is confined to an allow-list of upstreams, by default `torque` and
+claude.ai connectors (a launched agent has no connectors at all); `TETHER_CLAUDE_STRICT_MCP=0` in tetherd's environment turns
+this off, and tetherd then warns at startup and `tether doctor` warns. An agent's
+`tether` proxy is confined to an allow-list of upstreams, by default `torque` and
 `tesseract`. `cerberus` is never in the default. These stop an agent from being
 handed a server by accident. They do not stop one that goes looking: an agent
 can create a child session through the API with a wider list, or run an
@@ -272,7 +272,7 @@ environment and sends trace data to the endpoint you choose.
 - macOS sandboxing relies on a deprecated mechanism with a default-allow posture
 - MCP scopes are coarse capability guards, not multi-tenant isolation
 - caller URNs on messaging routes are unauthenticated provenance
-- tool-call records from the `mux mcp` Tether plants in an agent (`proxy_events`
+- tool-call records from the `tether mcp` Tether plants in an agent (`proxy_events`
   and the `tool_call_*` events in the event log) are asserted by the agent's own
   process. `POST /proxy/events` is the route an agent-side process uses to put
   its own `tool_call_*` events into the event log. The daemon checks the

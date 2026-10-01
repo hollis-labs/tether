@@ -79,7 +79,7 @@ type Deps struct {
 	Groups GroupsService
 
 	// LogsDir, when non-empty, enables GET /logs/daemon serving a bounded
-	// tail of LogsDir/muxd.log. Empty disables the endpoint (returns 404).
+	// tail of LogsDir/tetherd.log. Empty disables the endpoint (returns 404).
 	LogsDir string
 
 	// DeliveryClaims, when non-nil, enables POST /messages/{id}/claim|ack|nack
@@ -186,27 +186,27 @@ func NewHandler(deps Deps) http.Handler {
 		DeliveryRepair:      deps.DeliveryRepair,
 		Retention:           deps.Retention,
 	}
-	mux := http.NewServeMux()
-	s.registerSessionRoutes(mux)
-	s.registerAIRoutes(mux)
-	s.registerCheckpointRoutes(mux)
-	s.registerBrokerRoutes(mux)
-	s.registerEventRoutes(mux)
-	s.registerCatalogRoutes(mux)
-	s.registerSessionGroupRoutes(mux)
-	s.registerWorkstreamRoutes(mux)
-	s.registerMessageRoutes(mux)
-	s.registerProxyEventRoutes(mux)
-	s.registerRegistryRoutes(mux)
-	s.registerSettingsRoutes(mux)
-	s.registerGroupRoutes(mux)
-	s.registerWhoamiRoutes(mux)
-	s.registerSessionBootstrapRoutes(mux)
-	s.registerRetentionRoutes(mux)
-	s.registerScopedBindingRoutes(mux)
-	s.registerLogsRoutes(mux)
-	s.registerFSRoutes(mux)
-	return mux
+	router := http.NewServeMux()
+	s.registerSessionRoutes(router)
+	s.registerAIRoutes(router)
+	s.registerCheckpointRoutes(router)
+	s.registerBrokerRoutes(router)
+	s.registerEventRoutes(router)
+	s.registerCatalogRoutes(router)
+	s.registerSessionGroupRoutes(router)
+	s.registerWorkstreamRoutes(router)
+	s.registerMessageRoutes(router)
+	s.registerProxyEventRoutes(router)
+	s.registerRegistryRoutes(router)
+	s.registerSettingsRoutes(router)
+	s.registerGroupRoutes(router)
+	s.registerWhoamiRoutes(router)
+	s.registerSessionBootstrapRoutes(router)
+	s.registerRetentionRoutes(router)
+	s.registerScopedBindingRoutes(router)
+	s.registerLogsRoutes(router)
+	s.registerFSRoutes(router)
+	return router
 }
 
 // AIService is the narrow AI gateway seam exposed over /ai/*.

@@ -6,10 +6,10 @@ import (
 	"sync/atomic"
 )
 
-// Scope constants. ACP doesn't define scopes natively, but Mux mirrors
-// `mux mcp` token + scope gating so editors can be wired with a
+// Scope constants. ACP doesn't define scopes natively, but Tether mirrors
+// `tether mcp` token + scope gating so editors can be wired with a
 // least-privilege token. session.write covers create/launch/stop/etc.;
-// no message scope MVP since ACP doesn't expose Mux messaging.
+// no message scope MVP since ACP doesn't expose Tether messaging.
 const (
 	ScopeSessionWrite = "session.write"
 )
@@ -19,7 +19,7 @@ const (
 // authenticated requests gate on scope membership.
 //
 // Per the ACP spec, the editor calls `authenticate` with a method ID +
-// body. Mux advertises a single method id "token" whose body is
+// body. Tether advertises a single method id "token" whose body is
 // {"token": "<bearer>"}. Successful Authenticate() flips authed → true
 // and unblocks scope-gated handlers.
 //
@@ -65,7 +65,7 @@ func (g *AuthGate) AuthMethods() []AuthMethod {
 	return []AuthMethod{{
 		ID:          "token",
 		Name:        "Token",
-		Description: "Bearer token via AGENT_MUX_ACP_TOKEN env or --token flag.",
+		Description: "Bearer token via TETHER_ACP_TOKEN env or --token flag.",
 	}}
 }
 

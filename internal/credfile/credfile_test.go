@@ -230,7 +230,7 @@ func TestWithin(t *testing.T) {
 }
 
 // A FIFO at the credential path must be refused, not waited on. Opening one with
-// no writer blocks forever, which would hang `mux mcp --proxy` at startup.
+// no writer blocks forever, which would hang `tether mcp --proxy` at startup.
 func TestRead_RefusesAFIFOWithoutHanging(t *testing.T) {
 	dir := t.TempDir()
 	fifo := filepath.Join(dir, "fifo")

@@ -77,14 +77,14 @@ func IsAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-// daemonCmdRegex matches the command line of a running muxd: the mux binary
-// re-executed as `mux daemon run` by `mux daemon start`.
-var daemonCmdRegex = regexp.MustCompile(`(?:^|/)mux[^\s/]*\s+daemon\s+run(?:\s|$)`)
+// daemonCmdRegex matches the command line of a running tetherd: the tether binary
+// re-executed as `tether daemon run` by `tether daemon start`.
+var daemonCmdRegex = regexp.MustCompile(`(?:^|/)tether[^\s/]*\s+daemon\s+run(?:\s|$)`)
 
 // verifyCommand is localdaemon.VerifyCommand; tests replace it.
 var verifyCommand = localdaemon.VerifyCommand
 
-// IsDaemon reports whether pid is running as a muxd, by reading its command
+// IsDaemon reports whether pid is running as a tetherd, by reading its command
 // line. IsAlive only says some process holds that PID, which after a crash
 // (the PID file is removed only on graceful shutdown) may be an unrelated
 // process that was handed the recycled number. A nonexistent or non-matching
@@ -96,8 +96,8 @@ func IsDaemon(ctx context.Context, pid int) (bool, error) {
 	return verifyCommand(ctx, pid, daemonCmdRegex)
 }
 
-// IsDaemonAlive reports whether pid is a live muxd, for guards that refuse to
-// start a second daemon or report status. A live PID that is provably not muxd
+// IsDaemonAlive reports whether pid is a live tetherd, for guards that refuse to
+// start a second daemon or report status. A live PID that is provably not tetherd
 // is stale. When the identity check cannot be made it answers true, so a guard
 // errs toward "already running" and never toward starting over a live daemon.
 // Do not use it to decide whether to signal: use IsDaemon.

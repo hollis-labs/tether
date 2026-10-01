@@ -320,12 +320,12 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 	waitRuns(2)
 }
 
-// The planted `mux mcp` is told what to refuse writing, from the same decision
+// The planted `tether mcp` is told what to refuse writing, from the same decision
 // that registers the agent's ProtectedPaths, so a runtime that spawns it outside
 // Tether's sandbox gets the same refusal (CW-20261001-0142 blocker 1: real codex
-// called mux_agent_create scope=system and wrote the catalog).
-func TestMuxMCPPlant_ProtectPathArgs(t *testing.T) {
-	args := MuxMCPPlant("/catalog", "sess-1", false, "/c/catalog", "/c/run").Args
+// called tether_agent_create scope=system and wrote the catalog).
+func TestTetherMCPPlant_ProtectPathArgs(t *testing.T) {
+	args := TetherMCPPlant("/catalog", "sess-1", false, "/c/catalog", "/c/run").Args
 	got := ""
 	for i, a := range args {
 		if a == "--protect-path" && i+1 < len(args) {
@@ -335,11 +335,11 @@ func TestMuxMCPPlant_ProtectPathArgs(t *testing.T) {
 	if got != "/c/catalog;/c/run;" {
 		t.Fatalf("argv %v: --protect-path values = %q", args, got)
 	}
-	// The operator's own `mux boot` (no session) and an unprotected launch get none.
-	if args := MuxMCPPlant("/catalog", "", false, "/c/catalog").Args; contains(args, "--protect-path") {
+	// The operator's own `tether boot` (no session) and an unprotected launch get none.
+	if args := TetherMCPPlant("/catalog", "", false, "/c/catalog").Args; contains(args, "--protect-path") {
 		t.Fatalf("a sessionless plant carries --protect-path: %v", args)
 	}
-	if args := MuxMCPPlant("/catalog", "sess-1", false).Args; contains(args, "--protect-path") {
+	if args := TetherMCPPlant("/catalog", "sess-1", false).Args; contains(args, "--protect-path") {
 		t.Fatalf("a launch with nothing protected carries --protect-path: %v", args)
 	}
 }

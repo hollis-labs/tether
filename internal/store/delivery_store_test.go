@@ -11,7 +11,7 @@ package store_test
 //  3. TestDeliveryStore_ConcurrentClaimsAcrossIndependentConnections — TWO
 //     separate *sql.DB handles (not goroutines sharing one connection pool)
 //     racing Claim on the same delivery, simulating the real daemon-process
-//     vs. mux-mcp-subprocess topology (T01 contract §2.7) rather than only
+//     vs. tether-mcp-subprocess topology (T01 contract §2.7) rather than only
 //     an in-process Go race test.
 //  4. TestDeliveryStore_CrashInjection_PartialEnqueueRollsBack /
 //     TestDeliveryStore_CrashInjection_PartialClaimRollsBack — WithSQLiteMutationHook
@@ -138,7 +138,7 @@ func TestDeliveryStore_SurvivesRestart(t *testing.T) {
 // separate *sql.DB handles against the SAME database file -- not two
 // goroutines sharing one connection pool -- to prove the library's claim
 // exclusivity holds at the file/SQLite level, matching the real Tether
-// topology where the daemon process and the `mux mcp` subprocess each open
+// topology where the daemon process and the `tether mcp` subprocess each open
 // their own independent connection to the same ~/.tether/state/tether.db
 // (T01 contract §2.7). A plain in-process Go race test would not exercise
 // this: it would only prove goroutines-sharing-one-*sql.DB behave, which

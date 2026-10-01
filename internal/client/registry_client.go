@@ -46,7 +46,7 @@ func (c *Client) Registry() *RegistryClient {
 // Register POSTs a Profile under /registry/{kind}. The server mints the
 // URN; the server REJECTS a non-empty caller-supplied URN with
 // registry.ErrInvalidRequest (this is a contract, not a server-side
-// strip). Kind, MuxInstanceID, CreatedAt, UpdatedAt are server-assigned
+// strip). Kind, TetherInstanceID, CreatedAt, UpdatedAt are server-assigned
 // and the HTTP handler strips them defensively before storage. Returns
 // the canonical Profile.
 //

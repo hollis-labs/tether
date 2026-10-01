@@ -41,10 +41,10 @@ mcp:
   servers: [tesseract]
 injection:
   native_files:
-    - rel_path: .mux/context.md
+    - rel_path: .tether/context.md
       source: boot/context.md
       mode: 0644
-    - rel_path: .mux/inline.json
+    - rel_path: .tether/inline.json
       content: |
         {"source":"catalog"}
   boot_dir_overlay:
@@ -75,7 +75,7 @@ Three roots are easy to confuse — they are distinct:
 |---|---|---|
 | `repo_root` | The source checkout a launch derives from. | Never. Tether never edits or deletes `repo_root`. |
 | `work_root` | The editable/exec root the provider runs against. In `shared`/`hybrid` mode it aliases `repo_root`; in `worktree`/`isolated` mode it is a freshly materialized git worktree at `<base>/repo`. | In worktree mode only — see retention below. |
-| `workspace_dir` | The per-session bookkeeping directory (`logs/`, `prompts/`, `state/plan.json`, …) under the workspace root. Distinct from `work_root`. | Removed by `mux workspaces prune`. |
+| `workspace_dir` | The per-session bookkeeping directory (`logs/`, `prompts/`, `state/plan.json`, …) under the workspace root. Distinct from `work_root`. | Removed by `tether workspaces prune`. |
 
 `worktree_name` is a per-launch field. If set to a plain git ref (no spaces, no
 Go-template `{{ }}` markers) it becomes the branch name for the materialized
@@ -101,7 +101,7 @@ prune` remedy — it never clobbers an existing checkout.
   `failed`, `killed`) **keep their worktree and `workspace_dir`** — the work
   product and logs stay inspectable. Session teardown does *not* remove the
   worktree.
-- **Explicit reclaim** is `mux workspaces prune`: it removes `workspace_dir`s
+- **Explicit reclaim** is `tether workspaces prune`: it removes `workspace_dir`s
   for terminal/orphaned sessions older than `--older-than`, and for
   worktree/isolated-mode sessions it first runs `git worktree remove` against
   the source repo so the repo's worktree registry stays consistent — a bare
@@ -128,7 +128,7 @@ prepared launch:
 ```yaml
 injection:
   native_files:
-    - rel_path: .mux/handoff.md
+    - rel_path: .tether/handoff.md
       source: handoffs/current.md
     - kind: skill
       id: local-helper
@@ -186,37 +186,37 @@ slots:
     path: ~/.nanite/roles/domain/frontend.md
 ```
 
-`launch` is required when using `mux boot <profile>` or
-`mux boot-exec <profile>`. `mux boot-exec` and Tier-2 launch calls that provide
+`launch` is required when using `tether boot <profile>` or
+`tether boot-exec <profile>`. `tether boot-exec` and Tier-2 launch calls that provide
 `BootProfileFile` regenerate boot-profile prompts after the worktree exists, so
-`identity.work_root` can point at the materialized worktree. `mux boot` renders
+`identity.work_root` can point at the materialized worktree. `tether boot` renders
 the prompt client-side before creating the managed session.
 
-> **`boot-exec` is Claude-TUI-only.** `mux boot-exec` execs directly into the
+> **`boot-exec` is Claude-TUI-only.** `tether boot-exec` execs directly into the
 > native Claude PTY runtime; launch profiles whose provider is Codex or
 > Opencode are rejected with a clear error. This is a boundary of the
 > direct-exec convenience path, not a provider gap — Codex and Opencode are
 > fully supported as managed sessions. For those providers use
-> `mux boot <profile>` or `mux launch`, which create a daemon-managed session
+> `tether boot <profile>` or `tether launch`, which create a daemon-managed session
 > you attach to. See `docs/adr/0039-boot-exec-claude-only-scope.md`.
 
 Useful commands:
 
 ```bash
-mux list-boot-profiles
-mux generate-boot tether-launcher.frontend.tui
-mux boot tether-launcher.frontend.tui
-mux boot-exec tether-launcher.frontend.tui
-mux resolve --launch tether-launcher-claude-tui
+tether list-boot-profiles
+tether generate-boot tether-launcher.frontend.tui
+tether boot tether-launcher.frontend.tui
+tether boot-exec tether-launcher.frontend.tui
+tether resolve --launch tether-launcher-claude-tui
 ```
 
 ### Launch-time Torque task bundles
 
-`mux launch` can fetch one or more Torque tasks from the Torque HTTP API and
+`tether launch` can fetch one or more Torque tasks from the Torque HTTP API and
 plant them into the provider boot directory as ordinary caller injection:
 
 ```bash
-mux launch --launch my-codex-worker \
+tether launch --launch my-codex-worker \
   --torque-task CW-20260417-0011 \
   --torque-url http://127.0.0.1:8990
 ```

@@ -7,7 +7,7 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// TestMuxMCPPlant_ArgvAndAttributionCannotDisagree is the whole reason this
+// TestTetherMCPPlant_ArgvAndAttributionCannotDisagree is the whole reason this
 // function returns a struct instead of a []string.
 //
 // The failure it prevents is the recurring one this sprint kept finding: a
@@ -16,7 +16,7 @@ import (
 // one decision, and the two would drift the first time the flag changed. The
 // test asserts the pairing directly -- for each planting, the flags actually
 // emitted and the attribution reported must agree.
-func TestMuxMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
+func TestTetherMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
 	cases := []struct {
 		name            string
 		sessionID       string
@@ -27,7 +27,7 @@ func TestMuxMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
 	}{
 		{
 			name: "no session id means nothing can be attributed",
-			// `mux boot` execs into the native CLI and creates no session row.
+			// `tether boot` execs into the native CLI and creates no session row.
 			sessionID: "", extractRefs: false,
 			wantSession: false, wantExtract: false,
 			wantAttribution: store.RefAttributionUnlaunched,
@@ -48,7 +48,7 @@ func TestMuxMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			plan := MuxMCPPlant("/catalog", tc.sessionID, tc.extractRefs)
+			plan := TetherMCPPlant("/catalog", tc.sessionID, tc.extractRefs)
 
 			if got := slices.Contains(plan.Args, "--session"); got != tc.wantSession {
 				t.Errorf("--session present = %v, want %v (argv: %v)", got, tc.wantSession, plan.Args)
@@ -73,12 +73,12 @@ func TestMuxMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
 	}
 }
 
-// TestMuxMCPPlant_AlwaysCarriesTheProxyContract guards the parts every planting
+// TestTetherMCPPlant_AlwaysCarriesTheProxyContract guards the parts every planting
 // needs regardless of attribution -- a worker without them is not sandboxed,
 // it is broken.
-func TestMuxMCPPlant_AlwaysCarriesTheProxyContract(t *testing.T) {
+func TestTetherMCPPlant_AlwaysCarriesTheProxyContract(t *testing.T) {
 	for _, sessionID := range []string{"", "sess-1"} {
-		args := MuxMCPPlant("/catalog", sessionID, false).Args
+		args := TetherMCPPlant("/catalog", sessionID, false).Args
 		for _, want := range []string{"--catalog", "/catalog", "mcp", "--proxy", "--token", "--scopes"} {
 			if !slices.Contains(args, want) {
 				t.Errorf("sessionID=%q: argv missing %q: %v", sessionID, want, args)
@@ -90,13 +90,13 @@ func TestMuxMCPPlant_AlwaysCarriesTheProxyContract(t *testing.T) {
 // A launched session's server is daemon-only, so it never opens the state
 // database inside the agent's sandbox (CW-20261001-0173); boot-exec's, which
 // has no session and runs outside any sandbox, is not.
-func TestMuxMCPPlant_LaunchedSessionIsDaemonOnly(t *testing.T) {
+func TestTetherMCPPlant_LaunchedSessionIsDaemonOnly(t *testing.T) {
 	for _, extractRefs := range []bool{false, true} {
-		if args := MuxMCPPlant("/catalog", "sess-1", extractRefs).Args; !slices.Contains(args, "--daemon-only") {
+		if args := TetherMCPPlant("/catalog", "sess-1", extractRefs).Args; !slices.Contains(args, "--daemon-only") {
 			t.Errorf("extractRefs=%v: a launched session's argv lacks --daemon-only: %v", extractRefs, args)
 		}
 	}
-	if args := MuxMCPPlant("/catalog", "", false).Args; slices.Contains(args, "--daemon-only") {
+	if args := TetherMCPPlant("/catalog", "", false).Args; slices.Contains(args, "--daemon-only") {
 		t.Errorf("boot-exec's argv carries --daemon-only: %v", args)
 	}
 }

@@ -15,7 +15,7 @@ import (
 	messaging "github.com/hollis-labs/go-messaging"
 )
 
-// Adapter serves every AgentBinding in a Config. Mux() returns the full
+// Adapter serves every AgentBinding in a Config. Tether() returns the full
 // http.Handler tree; mount it under a namespaced prefix (e.g. "/a2a/")
 // in the daemon via http.StripPrefix. A nil *Adapter (or simply never
 // constructing one) means the A2A surface is absent entirely -- nothing
@@ -23,7 +23,7 @@ import (
 // #3: "the feature stays optional for local messaging").
 type Adapter struct {
 	coordinator *taskCoordinator
-	mux         *http.ServeMux
+	router      *http.ServeMux
 	persistence TaskPersistence // nil: the SDK's in-memory task store
 }
 
@@ -33,7 +33,7 @@ type Adapter struct {
 // (empty/duplicate ID, empty TargetURN/BaseURL, or an unparseable
 // TargetURN) rather than silently skipping it.
 func NewAdapter(cfg Config, sender MessageSender, opts ...Option) (*Adapter, error) {
-	a := &Adapter{coordinator: newTaskCoordinator(), mux: http.NewServeMux()}
+	a := &Adapter{coordinator: newTaskCoordinator(), router: http.NewServeMux()}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -83,11 +83,11 @@ func NewAdapter(cfg Config, sender MessageSender, opts ...Option) (*Adapter, err
 		rpcURL := strings.TrimSuffix(b.BaseURL, "/") + rpcPath
 		card := buildAgentCard(b, rpcURL)
 
-		a.mux.Handle("/agents/"+b.ID+a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
-		a.mux.Handle(rpcPath, a2asrv.NewJSONRPCHandler(reqHandler))
+		a.router.Handle("/agents/"+b.ID+a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
+		a.router.Handle(rpcPath, a2asrv.NewJSONRPCHandler(reqHandler))
 
 		taskPrefix := "/agents/" + b.ID + "/tasks/"
-		a.mux.HandleFunc(taskPrefix, a.transitionRouterFor(taskPrefix, b.ID, b.BearerToken))
+		a.router.HandleFunc(taskPrefix, a.transitionRouterFor(taskPrefix, b.ID, b.BearerToken))
 	}
 
 	return a, nil
@@ -110,7 +110,7 @@ func (a *Adapter) transitionRouterFor(prefix, bindingID, bearerToken string) htt
 	}
 }
 
-// Mux returns the full A2A HTTP surface for every configured binding.
-func (a *Adapter) Mux() http.Handler {
-	return a.mux
+// Tether returns the full A2A HTTP surface for every configured binding.
+func (a *Adapter) Tether() http.Handler {
+	return a.router
 }

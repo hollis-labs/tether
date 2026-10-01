@@ -45,7 +45,7 @@ func TestPlantedCodexConfig_CarriesThePosture(t *testing.T) {
 				Command: "codex", PermissionMode: tc.mode, BootPrompt: testBootPrompt,
 			}
 			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
-				MuxCommand: "mux", MuxArgs: []string{"mcp"},
+				TetherCommand: "tether", TetherArgs: []string{"mcp"},
 			})
 			if err != nil {
 				t.Fatalf("prepareSharedLaunch: %v", err)

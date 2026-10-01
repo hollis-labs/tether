@@ -17,7 +17,7 @@ func writeStateCatalog(t *testing.T, stateDir string) string {
 	return root
 }
 
-// The daemon-only `mux mcp` runs where the state directory is read-only
+// The daemon-only `tether mcp` runs where the state directory is read-only
 // (CW-20261001-0173). NewCatalogOnly must load the catalog and touch nothing
 // under it: no database, no WAL, no migration.
 func TestNewCatalogOnly_NeverTouchesTheStateDirectory(t *testing.T) {

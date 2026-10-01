@@ -79,36 +79,36 @@ type DerivedFields struct {
 // two stores share this shape. The owning substrate's operational config
 // lives behind Callback, not in Profile (D1 two-store model).
 type Profile struct {
-	URN           string               `json:"urn"`
-	Kind          Kind                 `json:"kind"`
-	Owner         string               `json:"owner,omitempty"`
-	MuxInstanceID string               `json:"mux_instance_id"`
-	DisplayName   string               `json:"display_name"`
-	Title         string               `json:"title,omitempty"`
-	Role          string               `json:"role,omitempty"`
-	Description   string               `json:"description,omitempty"`
-	Avatar        string               `json:"avatar,omitempty"`
-	Project       string               `json:"project,omitempty"`
-	Status        Status               `json:"status"`
-	Callback      *Callback            `json:"callback,omitempty"`
-	CachedAt      *time.Time           `json:"cached_at,omitempty"`
-	HealthStatus  string               `json:"health_status,omitempty"`
-	LastSeenAt    *time.Time           `json:"last_seen_at,omitempty"`
-	HostAddress   string               `json:"host_address,omitempty"`
-	MergedInto    string               `json:"merged_into,omitempty"`
-	KindMeta      json.RawMessage      `json:"kind_meta,omitempty"`
-	LastUpdatedBy string               `json:"last_updated_by,omitempty"`
-	Tags          []string             `json:"tags,omitempty"`
-	Guidelines    string               `json:"guidelines,omitempty"`
-	EntryPoints   []string             `json:"entry_points,omitempty"`
-	Props         map[string]string    `json:"props,omitempty"`
-	FieldMetadata map[string]FieldMeta `json:"field_metadata,omitempty"`
-	ExternalIDs   []ExternalID         `json:"external_ids,omitempty"`
-	Capabilities  []string             `json:"capabilities,omitempty"`
-	Skills        []Skill              `json:"skills,omitempty"`
-	Links         []Link               `json:"links,omitempty"`
-	CreatedAt     time.Time            `json:"created_at"`
-	UpdatedAt     time.Time            `json:"updated_at"`
+	URN              string               `json:"urn"`
+	Kind             Kind                 `json:"kind"`
+	Owner            string               `json:"owner,omitempty"`
+	TetherInstanceID string               `json:"tether_instance_id"`
+	DisplayName      string               `json:"display_name"`
+	Title            string               `json:"title,omitempty"`
+	Role             string               `json:"role,omitempty"`
+	Description      string               `json:"description,omitempty"`
+	Avatar           string               `json:"avatar,omitempty"`
+	Project          string               `json:"project,omitempty"`
+	Status           Status               `json:"status"`
+	Callback         *Callback            `json:"callback,omitempty"`
+	CachedAt         *time.Time           `json:"cached_at,omitempty"`
+	HealthStatus     string               `json:"health_status,omitempty"`
+	LastSeenAt       *time.Time           `json:"last_seen_at,omitempty"`
+	HostAddress      string               `json:"host_address,omitempty"`
+	MergedInto       string               `json:"merged_into,omitempty"`
+	KindMeta         json.RawMessage      `json:"kind_meta,omitempty"`
+	LastUpdatedBy    string               `json:"last_updated_by,omitempty"`
+	Tags             []string             `json:"tags,omitempty"`
+	Guidelines       string               `json:"guidelines,omitempty"`
+	EntryPoints      []string             `json:"entry_points,omitempty"`
+	Props            map[string]string    `json:"props,omitempty"`
+	FieldMetadata    map[string]FieldMeta `json:"field_metadata,omitempty"`
+	ExternalIDs      []ExternalID         `json:"external_ids,omitempty"`
+	Capabilities     []string             `json:"capabilities,omitempty"`
+	Skills           []Skill              `json:"skills,omitempty"`
+	Links            []Link               `json:"links,omitempty"`
+	CreatedAt        time.Time            `json:"created_at"`
+	UpdatedAt        time.Time            `json:"updated_at"`
 }
 
 // Authored returns the authored projection of this profile.

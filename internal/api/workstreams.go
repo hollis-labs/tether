@@ -79,12 +79,12 @@ func workstreamToDTO(w store.WorkstreamRow) WorkstreamDTO {
 // registerWorkstreamRoutes mounts workstream endpoints. No-op when
 // Workstreams is nil, matching registerSessionGroupRoutes so tests that do not
 // need them can skip the wiring.
-func (s *Server) registerWorkstreamRoutes(mux *http.ServeMux) {
+func (s *Server) registerWorkstreamRoutes(router *http.ServeMux) {
 	if s.Workstreams == nil {
 		return
 	}
-	mux.HandleFunc("/workstreams", s.handleWorkstreamsCollection)
-	mux.HandleFunc("/workstreams/", s.handleWorkstreamsItem)
+	router.HandleFunc("/workstreams", s.handleWorkstreamsCollection)
+	router.HandleFunc("/workstreams/", s.handleWorkstreamsItem)
 }
 
 func (s *Server) handleWorkstreamsCollection(w http.ResponseWriter, r *http.Request) {

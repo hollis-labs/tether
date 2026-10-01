@@ -6,7 +6,7 @@ The runtime contract that used to live here (`Runtime`, `Session`,
 `Capabilities`, `HealthStatus`, `LiveState`, `CheckpointHint`,
 `StartOptions`, `Registry`) moved to
 [`github.com/hollis-labs/go-agent-sessions/agentsessions`](https://github.com/hollis-labs/go-agent-sessions)
-in `v005-03`. Mux composes adapters via `agentsessions.NewFromAdapter`
+in `v005-03`. Tether composes adapters via `agentsessions.NewFromAdapter`
 (turn-based subprocess) or by implementing `agentsessions.Runtime`
 directly (PTY).
 

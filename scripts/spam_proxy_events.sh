@@ -78,13 +78,13 @@ SERVERS=(
   hadron hadron hadron hadron hadron
   clockwork clockwork clockwork clockwork clockwork
   vanta vanta vanta
-  mux mux mux mux mux mux mux mux mux mux
+  tether tether tether tether tether tether tether tether tether tether
 )
 TOOLS=(
   hadron_run_enqueue hadron_blueprints_list hadron_runs_list hadron_health hadron_runs
   clockwork_task_create clockwork_task_list clockwork_sprint_create clockwork_sprint_list clockwork_task_update
   vanta_recall vanta_memory_recall vanta_capture
-  mux_session_list mux_session_create mux_session_get mux_catalog_list_mcp_servers mux_events_tool_calls mux_discover mux_call mux_message_send mux_message_inbox mux_health
+  tether_session_list tether_session_create tether_session_get tether_catalog_list_mcp_servers tether_events_tool_calls tether_tool_search tether_tool_call tether_message_send tether_message_inbox tether_health
 )
 
 # A handful of args-schema fingerprints — 8 hex chars
@@ -98,13 +98,13 @@ SCHEMA_FPS=(
 HADRON_ERRS=("blueprint not found" "run timed out" "worker unavailable" "invalid blueprint YAML")
 CLOCKWORK_ERRS=("sprint not found" "task already closed" "rate limit exceeded" "invalid priority value")
 VANTA_ERRS=("namespace not found" "recall timeout" "conduit unreachable")
-MUX_ERRS=("session not found" "upstream error" "tool call rejected: no matching server" "invalid_request: missing required param")
+TETHER_ERRS=("session not found" "upstream error" "tool call rejected: no matching server" "invalid_request: missing required param")
 
 # Typical durations per server (ms)
 HADRON_DUR_MIN=80;   HADRON_DUR_MAX=4200
 CLOCKWORK_DUR_MIN=12; CLOCKWORK_DUR_MAX=380
 VANTA_DUR_MIN=20;   VANTA_DUR_MAX=900
-MUX_DUR_MIN=3;      MUX_DUR_MAX=120
+TETHER_DUR_MIN=3;      TETHER_DUR_MAX=120
 
 # ── Session ID pool ──────────────────────────────────────────────────────────
 # Pre-generate NUM_SESSIONS random UUIDs (v4 shape, bash-native)
@@ -183,7 +183,7 @@ build_event() {
     hadron)    dur=$(rand_int $HADRON_DUR_MIN $HADRON_DUR_MAX) ;;
     clockwork) dur=$(rand_int $CLOCKWORK_DUR_MIN $CLOCKWORK_DUR_MAX) ;;
     vanta)     dur=$(rand_int $VANTA_DUR_MIN $VANTA_DUR_MAX) ;;
-    *)         dur=$(rand_int $MUX_DUR_MIN $MUX_DUR_MAX) ;;
+    *)         dur=$(rand_int $TETHER_DUR_MIN $TETHER_DUR_MAX) ;;
   esac
 
   # Determine ok/error
@@ -198,7 +198,7 @@ build_event() {
       hadron)    err_msg=$(pick_random "${HADRON_ERRS[@]}") ;;
       clockwork) err_msg=$(pick_random "${CLOCKWORK_ERRS[@]}") ;;
       vanta)     err_msg=$(pick_random "${VANTA_ERRS[@]}") ;;
-      *)         err_msg=$(pick_random "${MUX_ERRS[@]}") ;;
+      *)         err_msg=$(pick_random "${TETHER_ERRS[@]}") ;;
     esac
     # Escape for JSON (backslash and double-quote)
     err_msg="${err_msg//\\/\\\\}"
@@ -243,7 +243,7 @@ post_event() {
 # ── Banner ────────────────────────────────────────────────────────────────────
 if ! $QUIET; then
   echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║           agent-mux  proxy-event spammer                ║"
+  echo "║           tether  proxy-event spammer                ║"
   echo "╚══════════════════════════════════════════════════════════╝"
   echo "  target:       ${BASE_URL}/proxy/events"
   echo "  rate:         ~${RATE} events/sec (jittered)"

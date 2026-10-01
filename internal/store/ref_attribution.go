@@ -57,7 +57,7 @@ func NormalizeRefAttribution(v string) string {
 // SetSessionRefAttribution records what was actually planted for a session.
 //
 // Called from the planting site with the value the planting itself produced,
-// never computed from the session row -- see app.MuxMCPPlant, which returns
+// never computed from the session row -- see app.TetherMCPPlant, which returns
 // the argv and the attribution together precisely so these two cannot be
 // derived independently and drift apart.
 func (s *Store) SetSessionRefAttribution(sessionID, attribution string) error {

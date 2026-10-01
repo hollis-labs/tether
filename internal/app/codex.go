@@ -7,11 +7,11 @@ import (
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 )
 
-// muxClientVersion is the value reported in the JSON-RPC initialize
+// tetherClientVersion is the value reported in the JSON-RPC initialize
 // clientInfo field. It's a build-time constant rather than wired from
 // the binary's version (no version package exists yet); the value is
 // used only for diagnostic identification by the Codex app-server.
-const muxClientVersion = "v005-07"
+const tetherClientVersion = "v005-07"
 
 // sendTurnJSONRPC implements Codex app-server turn delivery through the shared
 // go-agent-runtime protocol helper. Tether still owns the session lookup and
@@ -38,8 +38,8 @@ func (s *Service) codexThreadStartParams(sessionID string) map[string]any {
 
 func (s *Service) codexAppServerOptions(sessionID string) turn.CodexAppServerOptions {
 	opts := turn.CodexAppServerOptions{
-		ClientName:    "agent-mux",
-		ClientVersion: muxClientVersion,
+		ClientName:    "tether",
+		ClientVersion: tetherClientVersion,
 	}
 	if cwd, ok := s.codexThreadStartParams(sessionID)["cwd"].(string); ok {
 		opts.CWD = cwd

@@ -69,9 +69,14 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
-	prepared.PlantContext.SelfMCPCommand = plant.MuxCommand
-	prepared.PlantContext.SelfMCPArgs = append([]string(nil), plant.MuxArgs...)
-	prepared.PlantContext.SelfMCPEnv = copyMap(plant.MuxEnv)
+	// Use the neutral named-server contract: the provider library's self-MCP
+	// helper fixes a legacy server key, while this gateway is named tether.
+	if plant.TetherCommand != "" {
+		prepared.PlantContext.MCPServers = append(prepared.PlantContext.MCPServers, agentlaunch.MCPServerSpec{
+			Name: "tether", Command: plant.TetherCommand,
+			Args: append([]string(nil), plant.TetherArgs...), Env: copyMap(plant.TetherEnv),
+		})
+	}
 	if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver)); err != nil {
 		return nil, err
 	}
@@ -81,9 +86,9 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 }
 
 type plantContextInput struct {
-	MuxCommand string
-	MuxArgs    []string
-	MuxEnv     map[string]string
+	TetherCommand string
+	TetherArgs    []string
+	TetherEnv     map[string]string
 }
 
 // agentLaunchPlanFor produces the agentlaunch.LaunchPlan that feeds

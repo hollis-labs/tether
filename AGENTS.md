@@ -1,16 +1,16 @@
 # Tether
 
-Tether is the local agent session control plane: a per-user daemon (`muxd`) that
+Tether is the local agent session control plane: a per-user daemon (`tetherd`) that
 owns session lifecycle, PTY and process management, sandboxed execution,
 checkpoint/resume, brokered messaging and event streams for CLI-backed agents.
-Clients reach it over a Unix socket through the `mux` CLI, the HTTP API, the MCP
+Clients reach it over a Unix socket through the `tether` CLI, the HTTP API, the MCP
 stdio adapter, the ACP surface or `go-tether-client`. It is the runtime, not the
 orchestrator: it does not own tasks, workflows, agent authorship, or the business
 meaning of the messages it delivers.
 
 ## Start Here
 
-- `cmd/mux/root.go` wires the command tree; `main.go` only executes it.
+- `cmd/tether/root.go` wires the command tree; `main.go` only executes it.
 - `internal/app/` is the composition root (`Service`) — trace wiring from here.
 - `internal/api/` owns the HTTP/UDS surface and the typed error envelope
   (ADR 0010); `docs/api/README.md` is its reference.
@@ -42,7 +42,7 @@ maintainer will review the PR.
 ## Boundaries
 
 State lives under two roots, and the catalog decides which. `~/.tether/` holds
-`catalog/` and `run/muxd.sock`; the state DB, tmp and a second workspaces tree
+`catalog/` and `run/tetherd.sock`; the state DB, tmp and a second workspaces tree
 live under `~/tether/`, per `defaults.state_db` in `~/.tether/catalog/global.yaml`.
 Read that file rather than assuming a path — a stray 0-byte `state.db` under
 `~/.tether/` opens as an empty database instead of an error.

@@ -59,9 +59,9 @@ func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) 
 // back via gomcp.MetaFromContext) and falling back to arguments.
 //
 // THE ARGUMENTS FALLBACK IS A TRANSITION, AND IT HAS A SCHEDULED END:
-// CW-20260912-0072, which carries the condition (every deployed mux past
-// CW-20260907-0026) rather than a date. It is here because every mux built
-// before that change still writes to arguments, and a newer mux receiving a
+// CW-20260912-0072, which carries the condition (every deployed tether past
+// CW-20260907-0026) rather than a date. It is here because every tether built
+// before that change still writes to arguments, and a newer tether receiving a
 // call from an older one would otherwise silently lose the parent span --
 // silently, because a broken parent link and a genuinely-new trace are
 // indistinguishable downstream.

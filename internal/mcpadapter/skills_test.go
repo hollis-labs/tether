@@ -27,7 +27,7 @@ Prefer small, tested changes.
 
 	res := callSkillGetTool(t, a, map[string]any{"skill_id": "refactor-go"})
 	if res.IsError {
-		t.Fatalf("mux_skill_get returned error: %s", textOf(res))
+		t.Fatalf("tether_skill_get returned error: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	if body["id"] != "refactor-go" {
@@ -66,9 +66,9 @@ description: Plan work before editing.
 Plan first.
 `)
 
-	res := callSkillTool(t, a, "mux_skill_list", nil)
+	res := callSkillTool(t, a, "tether_skill_list", nil)
 	if res.IsError {
-		t.Fatalf("mux_skill_list returned error: %s", textOf(res))
+		t.Fatalf("tether_skill_list returned error: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	items, ok := body["items"].([]any)
@@ -83,7 +83,7 @@ Plan first.
 		t.Errorf("items sorted by id; first id = %v", first["id"])
 	}
 	if _, hasBody := first["body"]; hasBody {
-		t.Errorf("mux_skill_list should not return skill body: %v", first)
+		t.Errorf("tether_skill_list should not return skill body: %v", first)
 	}
 }
 
@@ -112,14 +112,14 @@ priority: 50
 Write down findings.
 `)
 
-	res := callSkillTool(t, a, "mux_skill_broker", map[string]any{
+	res := callSkillTool(t, a, "tether_skill_broker", map[string]any{
 		"query":    "refactor handler",
 		"role":     "backend",
 		"triggers": "refactor",
 		"limit":    2,
 	})
 	if res.IsError {
-		t.Fatalf("mux_skill_broker returned error: %s", textOf(res))
+		t.Fatalf("tether_skill_broker returned error: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	items, ok := body["items"].([]any)
@@ -133,11 +133,11 @@ Write down findings.
 	if first["id"] != "refactor-go" {
 		t.Fatalf("first id = %v; want refactor-go", first["id"])
 	}
-	if first["next"] != "mux_skill_get" {
-		t.Fatalf("next = %v; want mux_skill_get", first["next"])
+	if first["next"] != "tether_skill_get" {
+		t.Fatalf("next = %v; want tether_skill_get", first["next"])
 	}
 	if _, hasBody := first["body"]; hasBody {
-		t.Fatalf("mux_skill_broker should not return body: %v", first)
+		t.Fatalf("tether_skill_broker should not return body: %v", first)
 	}
 	score := first["score"].(map[string]any)
 	if score["query_matches"].(float64) == 0 {
@@ -175,12 +175,12 @@ User.
 		t.Fatal(err)
 	}
 
-	res := callSkillTool(t, a, "mux_skill_broker", map[string]any{
+	res := callSkillTool(t, a, "tether_skill_broker", map[string]any{
 		"role":   "backend",
 		"layers": "user",
 	})
 	if res.IsError {
-		t.Fatalf("mux_skill_broker returned error: %s", textOf(res))
+		t.Fatalf("tether_skill_broker returned error: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	items := body["items"].([]any)
@@ -200,7 +200,7 @@ func TestSkillTool_AcceptsSlashPrefixedID(t *testing.T) {
 
 	res := callSkillGetTool(t, a, map[string]any{"skill_id": "/plan"})
 	if res.IsError {
-		t.Fatalf("mux_skill_get returned error for slash-prefixed id: %s", textOf(res))
+		t.Fatalf("tether_skill_get returned error for slash-prefixed id: %s", textOf(res))
 	}
 	body := parseToolJSON(t, res)
 	if body["id"] != "plan" {
@@ -250,10 +250,10 @@ func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 	for _, tool := range resp.Tools {
 		found[tool.Name] = true
 	}
-	if !found["mux_skill_broker"] {
-		t.Fatalf("mux_skill_broker tool was not registered")
+	if !found["tether_skill_broker"] {
+		t.Fatalf("tether_skill_broker tool was not registered")
 	}
-	for _, name := range []string{"mux_skill_get", "mux_skill_list"} {
+	for _, name := range []string{"tether_skill_get", "tether_skill_list"} {
 		if !found[name] {
 			t.Fatalf("%s tool was not registered", name)
 		}
@@ -261,7 +261,7 @@ func TestSkillTool_RegisteredWithNativeTools(t *testing.T) {
 }
 
 func callSkillGetTool(t *testing.T, a *Adapter, args map[string]any) *mcpsdk.CallToolResult {
-	return callSkillTool(t, a, "mux_skill_get", args)
+	return callSkillTool(t, a, "tether_skill_get", args)
 }
 
 func callSkillTool(t *testing.T, a *Adapter, name string, args map[string]any) *mcpsdk.CallToolResult {

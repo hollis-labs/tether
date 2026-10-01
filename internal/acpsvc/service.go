@@ -1,9 +1,9 @@
-// Package acpsvc bridges internal/acpadapter.Service to the running mux
-// daemon over UDS. This is the mux-specific glue intentionally kept
+// Package acpsvc bridges internal/acpadapter.Service to the running tether
+// daemon over UDS. This is the tether-specific glue intentionally kept
 // outside internal/acpadapter so that package can extract cleanly to a
 // portfolio go-acp library (see Vanta `followup_portfolio_go_acp_extraction`).
 //
-// The Service maps each ACP session to one daemon-launched mux session
+// The Service maps each ACP session to one daemon-launched tether session
 // and one long-lived attach goroutine that parses the claudestream
 // NDJSON output. SendTurn registers a per-turn delta channel; the
 // attach goroutine routes deltas to the active turn's channel and
@@ -35,7 +35,7 @@ type DaemonClient interface {
 	GetSession(ctx context.Context, id string) (api.SessionDTO, error)
 }
 
-// Service implements acpadapter.Service against a running mux daemon.
+// Service implements acpadapter.Service against a running tether daemon.
 type Service struct {
 	client   DaemonClient
 	launchID string
@@ -46,8 +46,8 @@ type Service struct {
 }
 
 // New constructs a Service that creates sessions via launchID against
-// the daemon at dc. launchID is the mux launch profile name passed to
-// `mux acp --agent <launch_id>`. logger is used for warn-level events
+// the daemon at dc. launchID is the tether launch profile name passed to
+// `tether acp --agent <launch_id>`. logger is used for warn-level events
 // during attach/parse — wire to stderr so it doesn't pollute the ACP
 // stdout protocol stream.
 func New(dc DaemonClient, launchID string, logger *slog.Logger) *Service {
@@ -89,7 +89,7 @@ type turnState struct {
 	canceled bool
 }
 
-// LaunchSession creates a new mux session via the configured launch
+// LaunchSession creates a new tether session via the configured launch
 // profile and starts the long-lived attach goroutine that drives
 // streaming output for subsequent turns.
 //
@@ -101,7 +101,7 @@ func (s *Service) LaunchSession(ctx context.Context, params acpadapter.LaunchInp
 		return "", acpadapter.ErrUnsupported
 	}
 	if s.launchID == "" {
-		return "", fmt.Errorf("acpsvc: no launch profile configured (pass --agent on `mux acp`)")
+		return "", fmt.Errorf("acpsvc: no launch profile configured (pass --agent on `tether acp`)")
 	}
 	if params.CWD != "" {
 		s.logger.Info("acp: session/new cwd recorded but launch profile workspace applies",
@@ -332,7 +332,7 @@ func (s *Service) CloseSession(ctx context.Context, id acpadapter.SessionID) err
 	return nil
 }
 
-// ResumeSession reattaches to an existing mux session ID. Multi-client
+// ResumeSession reattaches to an existing tether session ID. Multi-client
 // scenario: another ACP connection (or the original) launched the
 // session; this connection joins by ID and starts receiving its
 // streaming output.
