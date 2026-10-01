@@ -180,6 +180,53 @@ func TestUpdateGuarded(t *testing.T) {
 	}
 }
 
+// A symlinked directory that does not lead into a protected one is followed, as
+// it always was: a repository whose .tether, or whose .tether/agents, is a
+// symlink (to a shared directory inside the repo, or elsewhere) can still create
+// and edit agents through it. Only a symlink in the agent file's own name is
+// refused.
+func TestGuarded_FollowsLegitimateSymlinkedDirectories(t *testing.T) {
+	catalog, outside := guardLayout(t)
+	repo := filepath.Join(outside, "repo")
+	shared := filepath.Join(repo, "shared-tether")
+	for _, d := range []string{filepath.Join(shared, "agents"), filepath.Join(repo, "team-agents")} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// <repo>/.tether -> shared-tether (a relative link inside the repo)
+	if err := os.Symlink("shared-tether", filepath.Join(repo, ".tether")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateGuarded(filepath.Join(repo, ".tether"), "viaroot", Params{Name: "R"}, []string{catalog}); err != nil {
+		t.Fatalf("create through a symlinked .tether: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, "agents", "viaroot.yaml")); err != nil {
+		t.Fatalf("the file did not land in the link's target: %v", err)
+	}
+
+	// <repo>/other/.tether/agents -> ../../team-agents (the agents directory itself)
+	other := filepath.Join(repo, "other", ".tether")
+	if err := os.MkdirAll(other, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "team-agents"), filepath.Join(other, "agents")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := CreateGuarded(other, "viaagents", Params{Name: "A", Roles: []string{"r"}}, []string{catalog})
+	if err != nil {
+		t.Fatalf("create through a symlinked agents/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "team-agents", "viaagents.yaml")); err != nil {
+		t.Fatalf("the file did not land in the link's target: %v", err)
+	}
+	got, err := UpdateGuarded(path, Params{Name: "Edited"}, []string{catalog})
+	if err != nil || got.Name != "Edited" {
+		t.Fatalf("edit through a symlinked agents/ = %+v, %v", got, err)
+	}
+	catalogUntouched(t, catalog)
+}
+
 // The race the review reproduced: a path judged and then written loses to a
 // symlink re-pointed in between (20000 project-scope creates with the layer
 // root flipped between two symlinks, one into the catalog, wrote there 3861

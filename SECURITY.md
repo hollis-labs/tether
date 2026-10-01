@@ -181,8 +181,9 @@ itself. It does not yet cover:
   and the file is created relative to that open directory without following a
   symlink (an earlier check-then-write version lost the race: 3861 of 20000
   project-scope creates with `.tether` flipped between two symlinks, one into the
-  catalog, wrote there). An agent file that is itself a symlink is not written
-  through while protected paths are in force. The scope is not a boundary: a
+  catalog, wrote there). A symlinked directory that does not lead into a
+  protected one (`.tether`, `agents/`) is followed as before; an agent file that is
+  itself a symlink is not written through while protected paths are in force. The scope is not a boundary: a
   worker can start its own `mux mcp --scopes`, which a sandboxed agent finds
   read-only, and which a Codex agent runs under Codex's sandbox only.
 - **The spec launch engine** (`TETHER_LAUNCH_ENGINE=spec`, off by default) takes

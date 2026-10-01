@@ -275,9 +275,10 @@ catalog). So on Linux the tools open the destination directory once, judge that
 open directory's identity and every ancestor's (device and inode, compared with the
 protected directories'), and create or rewrite the file relative to it with
 `O_NOFOLLOW`, so no path is resolved a second time. Missing directories are made
-relative to it without following a symlink, and each is judged as it is opened. An
-agent file that is itself a symlink is not written through while protected paths
-are in force. Off Linux the check is on the resolved path and the race is narrowed,
+relative to it without following a symlink, and each is judged as it is opened. A
+symlinked directory that does not lead into a protected one (`.tether`, `agents/`)
+is followed as before; an agent file that is itself a symlink is not written
+through while protected paths are in force. Off Linux the check is on the resolved path and the race is narrowed,
 not closed; the protection is not applied there yet (CW-20261001-0138). The race
 tests flip the symlink while calling the real tools thousands of times and assert
 nothing lands in the catalog (`internal/agentops`, `internal/mcpadapter`).
