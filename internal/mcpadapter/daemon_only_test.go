@@ -40,8 +40,10 @@ type daemonOnlyService struct {
 func (s *daemonOnlyService) ListSessions(o store.ListSessionsOptions) ([]store.SessionRow, error) {
 	return s.db.ListSessions(o)
 }
-func (s *daemonOnlyService) GetSession(id string) (*store.SessionRow, error) { return s.db.GetSession(id) }
-func (s *daemonOnlyService) AttachedClients(string) int                      { return 0 }
+func (s *daemonOnlyService) GetSession(id string) (*store.SessionRow, error) {
+	return s.db.GetSession(id)
+}
+func (s *daemonOnlyService) AttachedClients(string) int { return 0 }
 func (s *daemonOnlyService) RuntimeHealth(string) (api.RuntimeHealthResult, bool) {
 	return s.health, s.healthOK
 }
