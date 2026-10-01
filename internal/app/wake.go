@@ -40,7 +40,9 @@ package app
 //     over deliveries the delivery core already knows are ready (pending or
 //     past their retry backoff), so a busy/offline wake attempt is not lost
 //     -- it is retried later using the exact same AttemptWake path a fresh
-//     notify call uses, with no separate bespoke queue.
+//     notify call uses, with no separate bespoke queue. A delivery whose
+//     recipient has no live session is parked in memory with backoff
+//     (wakeParkSet) instead of being re-resolved every tick.
 //
 // Runtime interaction (RuntimeHealth/SendTurn) is threaded through the
 // small wakeRuntime seam rather than called on *Service directly inside the
@@ -57,6 +59,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -95,9 +98,110 @@ const (
 	wakeOfflineRetryBackoff = 30 * time.Second
 	// wakeSweepBatchLimit caps one RunWakeSweep pass so a large backlog
 	// cannot make a single sweep tick run unboundedly long. Uncapped
-	// remainder is picked up by the next tick, not dropped.
+	// remainder is picked up by the next tick, not dropped. Parked
+	// deliveries (see wakeParkSet) do not count against it.
 	wakeSweepBatchLimit = 50
+	// wakeParkBaseBackoff / wakeParkMaxBackoff bound how long the sweep
+	// leaves a delivery alone after finding no live session for its
+	// recipient: the first miss parks it for the base, each consecutive
+	// miss doubles that, up to the max. The max is also the longest a
+	// recipient that comes back online waits for the sweep to wake it.
+	wakeParkBaseBackoff = 30 * time.Second
+	wakeParkMaxBackoff  = 2 * time.Minute
+	// wakeParkMaxEntries bounds the park set's memory and the extra rows
+	// each sweep reads past it. Beyond it, an unresolvable delivery is
+	// simply re-checked every sweep, as before parking existed.
+	wakeParkMaxEntries = 4096
 )
+
+// wakeParkSet is the sweep's memory of deliveries whose recipient had no
+// live session the last time it looked (CW-20261001-0012). Without it the
+// sweep re-resolved the same unresolvable head rows every tick, and since
+// delivery IDs are time-ordered and listed oldest first, a backlog of 50
+// such rows starved every newer delivery behind them indefinitely.
+//
+// Parking is deliberately in memory rather than a Claim+Nack that pushes
+// next_attempt_at out: a delivery's next_attempt_at gates every Claim, not
+// just the sweep's, so a durable park would also refuse Consume's receipt
+// claim and a published-local bridge's own claim for as long as it lasted,
+// and each park would write an attempt and receipts for a recipient that
+// may never come back. A daemon restart forgets the set, which costs one
+// re-check of each parked delivery. The zero value is ready to use.
+type wakeParkSet struct {
+	mu      sync.Mutex
+	entries map[delivery.DeliveryID]wakeParkEntry
+}
+
+type wakeParkEntry struct {
+	until  time.Time
+	misses int
+}
+
+func (p *wakeParkSet) size() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.entries)
+}
+
+func (p *wakeParkSet) parked(id delivery.DeliveryID, now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[id]
+	return ok && now.Before(e.until)
+}
+
+// park records one more miss for id and reports whether it is now parked
+// (false only when the set is full and id was not already in it). It
+// returns the miss count so the caller can tell a first park from a
+// repeat one.
+func (p *wakeParkSet) park(id delivery.DeliveryID, now time.Time) (misses int, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, exists := p.entries[id]
+	if !exists && len(p.entries) >= wakeParkMaxEntries {
+		return 0, false
+	}
+	if p.entries == nil {
+		p.entries = map[delivery.DeliveryID]wakeParkEntry{}
+	}
+	e.misses++
+	backoff := wakeParkBaseBackoff
+	for i := 1; i < e.misses && backoff < wakeParkMaxBackoff; i++ {
+		backoff *= 2
+	}
+	if backoff > wakeParkMaxBackoff {
+		backoff = wakeParkMaxBackoff
+	}
+	e.until = now.Add(backoff)
+	p.entries[id] = e
+	return e.misses, true
+}
+
+func (p *wakeParkSet) release(id delivery.DeliveryID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.entries, id)
+}
+
+// retain drops every entry not in ready. Only call it with a complete
+// listing of ready deliveries: an entry missing from a truncated one may
+// simply lie past the listing's end.
+func (p *wakeParkSet) retain(ready []delivery.RecipientDelivery) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.entries) == 0 {
+		return
+	}
+	keep := make(map[delivery.DeliveryID]struct{}, len(ready))
+	for _, rd := range ready {
+		keep[rd.ID] = struct{}{}
+	}
+	for id := range p.entries {
+		if _, ok := keep[id]; !ok {
+			delete(p.entries, id)
+		}
+	}
+}
 
 // wakeRuntime is the OS-process-layer seam AttemptWake/ResolveActorSession
 // need: "is this session alive/idle/busy" and "hand it a turn." Production
@@ -132,7 +236,7 @@ func (s *Service) AttemptWake(ctx context.Context, messageID string, to messagin
 // RunWakeSweep is the shared pump's one bounded, non-blocking pass. See
 // the file doc comment.
 func (s *Service) RunWakeSweep(ctx context.Context) (int, error) {
-	return runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam())
+	return runWakeSweep(ctx, s.Store, s.Registry, s.runtimeSeam(), &s.wakePark)
 }
 
 func resolveActorSession(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, logicalAgentID string) (string, error) {
@@ -444,36 +548,72 @@ func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Servi
 	}
 }
 
-func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime) (int, error) {
+// runWakeSweep runs one pass. park carries parked deliveries across passes;
+// nil gives this pass a fresh, empty set.
+func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, park *wakeParkSet) (int, error) {
 	if st == nil {
 		return 0, nil
 	}
+	if park == nil {
+		park = &wakeParkSet{}
+	}
 	ds := st.DeliveryStore()
+	// At most park.size() of the listed rows can be parked, so reading
+	// that many past the batch guarantees a full batch of unparked rows
+	// whenever that many are ready: parked rows at the head of the queue
+	// can no longer hide the rows behind them.
+	limit := wakeSweepBatchLimit + park.size()
 	ready, err := ds.ListDeliveries(ctx, delivery.Filter{
 		Status:    []delivery.DeliveryStatus{delivery.DeliveryPending, delivery.DeliveryRetryScheduled},
 		ReadyOnly: true,
-		Limit:     wakeSweepBatchLimit,
+		Limit:     limit,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("run wake sweep: list deliveries: %w", err)
 	}
 
-	attempted := 0
+	now := time.Now()
+	attempted, processed, newlyParked, unparkable := 0, 0, 0, 0
+	more := false
+	parkRow := func(id delivery.DeliveryID) {
+		misses, ok := park.park(id, now)
+		switch {
+		case !ok:
+			unparkable++
+		case misses == 1:
+			newlyParked++
+		}
+	}
 	for _, rd := range ready {
 		if ctx.Err() != nil {
 			break
 		}
+		if park.parked(rd.ID, now) {
+			continue
+		}
+		if processed == wakeSweepBatchLimit {
+			more = true
+			break
+		}
+		processed++
 		sessionID, resolveErr := resolveWakeTarget(ctx, st, reg, rt, rd.Recipient)
 		if resolveErr != nil {
 			log.Printf("app: wake sweep: resolve session for %s failed: %v", rd.Recipient.URN(), resolveErr)
+			parkRow(rd.ID)
 			continue
 		}
 		if sessionID == "" {
-			continue // still offline; a later sweep will retry
+			// No live session for this recipient. Park it rather than
+			// re-resolve it every tick; it is re-checked once the park
+			// lapses, and Consume or a bridge can still claim it meanwhile.
+			parkRow(rd.ID)
+			continue
 		}
+		park.release(rd.ID)
 		msg, err := st.MessagingStore().Get(ctx, string(rd.MessageID))
 		if err != nil {
 			log.Printf("app: wake sweep: get message %s failed: %v", rd.MessageID, err)
+			parkRow(rd.ID)
 			continue
 		}
 		outcome := attemptWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, sweepWakeText(msg))
@@ -481,7 +621,18 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			attempted++
 		}
 	}
-	if len(ready) == wakeSweepBatchLimit {
+	if len(ready) < limit {
+		// The listing held every ready delivery: forget parked ones that
+		// have since been delivered, consumed or claimed elsewhere.
+		park.retain(ready)
+	}
+	if newlyParked > 0 {
+		log.Printf("app: wake sweep: parked %d deliveries with no live recipient session (%d parked in total)", newlyParked, park.size())
+	}
+	if unparkable > 0 {
+		log.Printf("app: wake sweep: park set full (%d); %d unresolvable deliveries will be re-checked every sweep", wakeParkMaxEntries, unparkable)
+	}
+	if more || (processed == wakeSweepBatchLimit && len(ready) == limit) {
 		log.Printf("app: wake sweep: batch limit %d reached; more ready deliveries may remain for the next sweep", wakeSweepBatchLimit)
 	}
 	return attempted, nil
