@@ -58,7 +58,13 @@ connect errors stored in a server's status and written to the log, the same way
 a keychain value is. A `url:` that came from a reference is scrubbed too, since
 a failed connect names the endpoint it tried.
 
-How a reference is recognised:
+How an MCP reference is recognised:
+
+- `keychain://` and `helper://` resolve only when the catalog YAML authored
+  that scheme in the field. A value that becomes either scheme through
+  `${VAR}` expansion stays literal and does not invoke a helper. Existing
+  operator-authored helper references still expand variables within the
+  reference, then resolve at spawn time.
 
 - A value is a file reference only if the catalog YAML says `file://…`. A value
   that merely *becomes* `file://…` through a `${VAR}` stays a literal: a launch's
