@@ -87,8 +87,8 @@ const (
 	// reached its inbox, and every successful wake fell into
 	// retry_scheduled. A wake nobody consumes within the window lapses into
 	// one retry, which re-wakes the recipient as a reminder. The lease also
-	// holds the delivery against other claimants (a T07 bridge claim waits
-	// up to this long).
+	// holds the delivery against other claimants: a T07 bridge claim gets
+	// ErrAlreadyClaimed for up to this long.
 	wakeConsumeWindow = 15 * time.Minute
 	// wakeBusyRetryBackoff / wakeOfflineRetryBackoff bound how soon a
 	// Nacked wake attempt becomes claimable again -- short for "try again

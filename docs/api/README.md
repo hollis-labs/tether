@@ -1171,7 +1171,8 @@ attempt finding the message consumed or read. If none happens within the
 window, the delivery is retried, which wakes the recipient again as a
 reminder. A wake that was not submitted (busy, offline, submit failed) is
 retried after a short backoff, as before. While the lease is held, another
-claimant of that delivery (a bridge's `POST /messages/{id}/claim`) waits for it.
+claimant of that delivery (a bridge's `POST /messages/{id}/claim`) gets 409
+`conflict` ("delivery already claimed") until it ends.
 
 ---
 
