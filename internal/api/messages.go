@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -451,7 +452,14 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request, id str
 	writeJSON(w, http.StatusOK, env)
 }
 
-// GET /messages/inbox?to=<urn>&as=<urn>[&kind=request,notice][&thread_id=X][&limit=N]
+// GET /messages/inbox?to=<urn>&as=<urn>[&as_session=<id>][&kind=request,notice][&thread_id=X][&limit=N]
+//
+// as_session names the Tether session making the call; the MCP proxy a
+// launched agent runs passes its own. When that session is the recipient
+// itself, the pull is the recipient receiving its messages, and each one is
+// consumed (CW-20261001-0016) -- which settles its delivery, including a
+// wake's lease left open awaiting consumption. Any other caller, such as an
+// operator listing someone else's mailbox, gets the listing only.
 func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -493,7 +501,38 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	if s.sessionIsRecipient(q.Get("as_session"), to) {
+		for _, env := range envs {
+			// Best-effort, like Consume's own receipt recording: the pull
+			// already succeeded and is the caller's contract.
+			if err := s.MessageStore.Consume(r.Context(), env.ID, to); err != nil {
+				log.Printf("api: inbox: consume message %s pulled by its recipient failed: %v", env.ID, err)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+}
+
+// sessionIsRecipient reports whether sessionID is a live session that is
+// itself the recipient to: the session address, or a session of the
+// recipient actor. It is checked against the daemon's own session table,
+// not the caller's claim alone.
+func (s *Server) sessionIsRecipient(sessionID string, to messaging.Address) bool {
+	if sessionID == "" || s.Service == nil {
+		return false
+	}
+	if _, ok := s.Service.RuntimeHealth(sessionID); !ok {
+		return false
+	}
+	switch to.Kind {
+	case messaging.KindSession:
+		return to.ID == sessionID
+	case messaging.KindAgent:
+		row, err := s.Service.GetSession(sessionID)
+		return err == nil && row.LogicalAgentID != "" && row.LogicalAgentID == to.ID
+	default:
+		return false
+	}
 }
 
 // GET /messages/list?to=<urn>[&kind=request,notice][&thread_id=X]
