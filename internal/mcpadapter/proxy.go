@@ -124,7 +124,11 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		injectTraceContextMeta(tCtx, params)
 		result, err := rt.Client.CallTool(tCtx, params)
 		if err != nil && r.pool != nil {
-			return nil, fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)
+			wrapped := fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)
+			return nil, &redactedError{
+				text: proxyRedactionSet(r.pool.entries).Redact(wrapped.Error()),
+				err:  wrapped,
+			}
 		}
 		return result, err
 	})
