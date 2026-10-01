@@ -73,6 +73,9 @@ func cachedBwrapProbe(dir string) error {
 // whether this host can.
 type ProtectionHealth struct {
 	ProtectionStatus
+	// Codex says how codex is protected: guarded by the allowlist, or not
+	// protected (the fallback). See codexProtectionMode.
+	Codex CodexProtectionState
 	// BwrapChecked is set when the host was probed: protection is on, on
 	// Linux.
 	BwrapChecked bool
@@ -84,7 +87,7 @@ type ProtectionHealth struct {
 // host. probe is called with the catalog root dir (the probe binds it
 // read-only) only when protection is on, on Linux.
 func ComputeProtectionHealth(st ProtectionStatus, goos, probeDir string, probe func(string) error) ProtectionHealth {
-	h := ProtectionHealth{ProtectionStatus: st}
+	h := ProtectionHealth{ProtectionStatus: st, Codex: codexProtectionState(st)}
 	if !st.Enabled || goos != "linux" {
 		return h
 	}
@@ -265,8 +268,8 @@ func codexPlanUnsafe(plan *launch.Plan) string {
 	if len(plan.CallerEnv) > 0 {
 		return "the launch carries environment variables from a caller or an agent definition (" + strings.Join(plan.CallerEnv, ", ") + "), and variables such as PATH, TMPDIR and LD_PRELOAD defeat codex's sandbox"
 	}
-	if id := unsandboxedUpstream(plan); id != "" {
-		return "the planted MCP allow-list names " + id + ", whose tools run outside codex's sandbox and give the agent an unsandboxed shell by design"
+	if id := unsafeMCPUpstream(plan); id != "" {
+		return "the planted MCP allow-list names " + id + ", which is not known to be free of host-exec and arbitrary file-write tools, and codex spawns MCP servers outside its sandbox (only " + strings.Join(codexSafeMCPUpstreams, " and ") + " are)"
 	}
 	if len(plan.BootDirOverlay) > 0 {
 		return "the launch injects boot_dir_overlay files, which can write codex's config.toml"
@@ -586,23 +589,39 @@ func (e *codexExemption) widened() string {
 	return ""
 }
 
-// unsandboxedUpstreams are the MCP upstreams whose tools, run by the planted
-// proxy (a child of codex, which spawns MCP servers itself, outside its
-// sandbox), give the agent a shell or infrastructure control by design:
-// nanite (dev_bash, dev_write) and cerberus. Every MCP child of an exempted
-// codex agent runs outside its sandbox; with the default allow-list (torque,
-// tesseract) that is acceptable, with these it is not. The real fix is daemon-
-// side upstreams (CW-20261001-0230).
-var unsandboxedUpstreams = []string{"nanite", "cerberus"}
+// codexSafeMCPUpstreams are the only MCP upstreams a guarded (and so exempted)
+// codex agent may be granted. Dormant with the rest of the guard: codex ships
+// as CodexNotProtected (see codexProtectionMode).
+//
+// Codex spawns the MCP servers it is configured with itself, outside its
+// sandbox, so the planted proxy and every upstream it starts run unsandboxed:
+// whatever tools an upstream has are tools the agent has, with the operator's
+// uid and none of codex's confinement. This list screens out upstreams with a
+// host-exec or arbitrary file-write tool, and it is NOT sufficient: torque and
+// tesseract are the default allow-list, yet `torque mcp` boots agents
+// in-process and torque_session_launch takes a caller-chosen workdir
+// (CW-20261001-0464), so a list of upstreams cannot make an exempted codex
+// sound. The real fix is upstreams that run daemon-side (CW-20261001-0230).
+//
+// EXTEND ONLY AFTER VERIFYING the upstream has no host-exec or arbitrary
+// file-write tools, since codex spawns MCP children unsandboxed. It is a
+// constant of its own and not launch.DefaultMCPServers on purpose: changing the
+// default must not silently widen what runs outside a sandbox.
+var codexSafeMCPUpstreams = []string{"torque", "tesseract"}
 
-// unsandboxedUpstream returns the first of unsandboxedUpstreams that the
-// launch's effective MCP allow-list names, or "".
-func unsandboxedUpstream(plan *launch.Plan) string {
+// unsafeMCPUpstream returns the first upstream on the launch's effective MCP
+// allow-list that is not in codexSafeMCPUpstreams, or "".
+func unsafeMCPUpstream(plan *launch.Plan) string {
 	for _, id := range launch.EffectiveMCPServers(plan.Env) {
-		for _, bad := range unsandboxedUpstreams {
-			if strings.EqualFold(id, bad) {
-				return bad
+		safe := false
+		for _, ok := range codexSafeMCPUpstreams {
+			if strings.EqualFold(id, ok) {
+				safe = true
+				break
 			}
+		}
+		if !safe {
+			return id
 		}
 	}
 	return ""

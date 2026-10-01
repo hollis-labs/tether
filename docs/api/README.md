@@ -446,7 +446,9 @@ Response:
   "sessions": 2,
   "sandbox_protect": {
     "enabled": true,
-    "reason": "on: agents cannot write the catalog or run/ (Codex relies on its own workspace-write sandbox instead)",
+    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
+    "codex": "not protected",
+    "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
     "bwrap_checked": true,
     "bwrap_usable": true
   }
@@ -460,8 +462,14 @@ own shell. `enabled` says whether launches are protected; `disabled_by_operator`
 is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the
 state means for an agent. On Linux with protection on, the daemon probes
 bubblewrap: `bwrap_usable` is false, with `bwrap_error`, when it cannot build the
-sandbox, in which case every launch except Codex's is refused. An older daemon
-omits the field.
+sandbox, in which case every launch except Codex's is refused. `codex` is how
+Codex is protected: `not protected` as shipped (Codex runs as it did before
+protection, under its own sandbox, and spawns MCP servers outside it, so an MCP
+tool can reach the catalog; the catalog-writing `mux` tools are still refused for
+it), `guarded` only if the dormant guard is switched on, or `not applicable`
+(protection is off); `codex_reason` says what that means and names
+CW-20261001-0230, the structural reason (Codex spawns MCP servers outside its
+sandbox). An older daemon omits the field.
 
 ---
 

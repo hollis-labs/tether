@@ -149,6 +149,7 @@ var daemonRunCmd = &cobra.Command{
 		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
 		logControlPlaneProtection(log.Printf, svc.ProtectionHealth())
+		logCodexProtection(log.Printf, svc.ProtectionHealth())
 		// Sweep stale sessions ONLY at daemon startup, never from short-
 		// lived subcommands (`mux mcp`, `mux agents`, etc.) — those may
 		// run concurrently with the daemon (e.g. as an MCP subprocess

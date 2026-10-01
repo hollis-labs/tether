@@ -27,12 +27,12 @@ func TestHandleHealth_SandboxProtect(t *testing.T) {
 		t.Fatalf("a server with no protection view reported one: %s", raw)
 	}
 
-	want := SandboxProtectHealth{Enabled: true, Reason: "on", BwrapChecked: true, BwrapError: "uid map: Permission denied"}
+	want := SandboxProtectHealth{Enabled: true, Reason: "on", Codex: "not protected", CodexReason: "not protected (CW-20261001-0230): codex runs as before", BwrapChecked: true, BwrapError: "uid map: Permission denied"}
 	h, raw = get(&Server{SandboxProtect: func() *SandboxProtectHealth { return &want }})
 	if h.SandboxProtect == nil || *h.SandboxProtect != want {
 		t.Fatalf("sandbox_protect = %+v, want %+v (%s)", h.SandboxProtect, want, raw)
 	}
-	for _, field := range []string{`"enabled":true`, `"bwrap_checked":true`, `"bwrap_error":"uid map: Permission denied"`} {
+	for _, field := range []string{`"enabled":true`, `"bwrap_checked":true`, `"bwrap_error":"uid map: Permission denied"`, `"codex":"not protected"`, `"codex_reason":"not protected (CW-20261001-0230): codex runs as before"`} {
 		if !strings.Contains(raw, field) {
 			t.Errorf("/health body lacks %s: %s", field, raw)
 		}

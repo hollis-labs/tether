@@ -43,23 +43,70 @@ only effect is the protection: the host filesystem under `bwrap`, writable
 except the protected directories. The daemon is not sandboxed and still
 writes both.
 
-### Codex uses its own sandbox
+### Codex is not protected
 
-Codex is the exception: Tether does not wrap it, and registers no protected
-paths for it, **when nothing that shapes its sandbox can widen it**. Tether
-starts Codex (`exec` and `app-server`) under the accept-edits posture, which
-gives it `sandbox_mode = "workspace-write"`, and that sandbox is bubblewrap too.
+**Tether's write-protection does not cover Codex.** Tether does not wrap Codex in
+its sandbox, and registers no protected paths for it. Tether starts Codex (`exec`
+and `app-server`) under the accept-edits posture, which gives it
+`sandbox_mode = "workspace-write"`, and that sandbox is bubblewrap too.
 Bubblewrap cannot nest where unprivileged user namespaces are restricted
 (AppArmor's `kernel.apparmor_restrict_unprivileged_userns=1`, the Ubuntu
 default), so wrapping Codex in Tether's sandbox would stop it running any shell
-command (`bwrap: No permissions to create a new namespace`).
+command (`bwrap: No permissions to create a new namespace`). Codex runs exactly
+as it did before control-plane protection existed.
 
-Codex's `workspace-write` sandbox makes the whole filesystem read-only except
+Codex's own `workspace-write` sandbox makes the whole filesystem read-only except
 its writable roots: its working directory, `/tmp` and `$TMPDIR`, and whatever is
 configured. The catalog and run directory are outside those, so a shell command
 that writes them fails (CW-20261001-0142 live evidence: a Codex turn's
 `touch <catalog>/x` is denied and `touch <workdir>/ok` succeeds, in both `exec`
-and `app-server`).
+and `app-server`). **That is not protection from Tether**, and it does not hold
+against the rest of what a Codex agent can reach:
+
+**Codex spawns every MCP server it is given outside its sandbox.** The planted
+`mux` proxy and every upstream it starts run unsandboxed, with the operator's uid,
+so a Codex agent can reach the catalog through MCP tools:
+
+- `torque_session_launch` (`torque mcp`) takes a caller-chosen `workdir`, so
+  `workdir=<catalog>` boots a Codex whose own workspace-write root is the catalog.
+  Inferred from the real tool, not demonstrated end to end (CW-20261001-0464).
+- `loom_export_bundle(dir=…)` (`loom mcp`) wrote `index.md` and `log.md` into an
+  arbitrary directory in a reproduction (CW-20261001-0465).
+- `nanite` (`dev_bash`, `dev_write`) and `cerberus` are host shells and
+  infrastructure control by design, and `tangent.runner_launch` runs any host
+  command the caller names, if a project grants them.
+
+So the default MCP allow-list (`torque`, `tesseract`) is not safe for a Codex agent
+either. **The structural fix is MCP upstreams that run daemon-side, outside the
+agent's reach, or that confine what they write (CW-20261001-0230).** Until it
+lands, `GET /health` (`sandbox_protect.codex`), `mux doctor`
+(`sandbox-protect-codex`, a warning) and the daemon's startup log all say
+`codex: not protected (CW-20261001-0230)`. Claude, OpenCode and every other agent
+Tether wraps stay protected, and one guard still holds for Codex: the planted `mux`
+server refuses to write the catalog and run directory (see below).
+
+*History.* Earlier revisions of this change left Codex to its own sandbox under an
+allowlist and reported it as guarded. Three adversarial reviews found it could not
+be made sound while Codex spawns MCP servers outside its sandbox, and that claim is
+withdrawn.
+
+**Operator notes.**
+
+- A session already running keeps the MCP configuration planted when it was
+  launched until it is relaunched or resumed.
+- A session planned before this change carries no record of which environment keys
+  came from a caller (`caller_env`), so its plan counts as having none. Nothing
+  reads it while Codex is unprotected; it matters only if the dormant guard is
+  switched on.
+
+### The dormant Codex guard
+
+The guard Tether built to leave Codex to its own sandbox safely stays in the tree,
+**dormant**, behind one switch (`codexProtectionMode`,
+`internal/app/protected_codex_mode.go`, `CodexNotProtected` as shipped). It does
+nothing until CW-20261001-0230 makes it sound; it is documented here so that
+switching it on is a decision with its gaps in view. What follows is what it
+checks.
 
 That holds only while the sandbox is Codex's default. Real Codex 0.159.x widens
 its own sandbox from each of these, all of them demonstrated: a
@@ -87,12 +134,10 @@ wraps Codex like any other agent unless all of this holds:
   the operator's own catalog launch env does not count. Also no `CODEX_*` variable
   except `CODEX_HOME`, which is the session's own boot dir, and no relative
   `TMPDIR` anywhere.
-- **MCP upstreams.** Codex spawns MCP servers itself, outside its sandbox, so
-  every MCP child of an exempted Codex agent runs unsandboxed (see below). The
-  planted allow-list must not name `nanite` (`dev_bash`, `dev_write`) or
-  `cerberus`, which hand the agent an unsandboxed shell or infrastructure control
-  by design. With the default allow-list (`torque`, `tesseract`) that is
-  acceptable.
+- **MCP upstreams.** The planted allow-list must name only `torque` and `tesseract`
+  (`codexSafeMCPUpstreams`, `internal/app/protected_sandbox.go`), the two upstreams
+  with no host-exec and no arbitrary file-write tool; any other upstream wraps the
+  agent. This screen is not sufficient (B1 below).
 - **Injection and `CODEX_HOME`.** No `boot_dir_overlay`, and no native file outside
   `skills/`. The `config.toml` in `CODEX_HOME` has only the shape Tether plants
   (`approval_policy`, a `sandbox_mode` of `workspace-write` or `read-only`,
@@ -145,13 +190,22 @@ database lies inside a protected directory is refused like any other. Paths are
 resolved through symlinks, including the existing prefix of one that does not
 exist yet, so `link-to-the-catalog/new` is judged as the catalog.
 
-**Every MCP child of an exempted Codex agent runs outside its sandbox.** Codex
-spawns the MCP servers it is configured with, and Tether does not wrap an exempted
-Codex. The planted `mux` proxy therefore runs unsandboxed, and so does every
-upstream it starts. That is why the catalog refusal below is a policy of the
-planted server and not an effect of a read-only mount, and why an allow-list that
-names `nanite` or `cerberus` wraps the agent. The real fix is upstreams that run
-daemon-side (CW-20261001-0230).
+
+**What it would need before it is switched on** (the third review's findings; the
+guard passes its own tests and none of these is caught by them):
+
+- **B1: the default `{torque, tesseract}` list is not safe.** An exempted Codex's
+  `torque mcp` boots agents in-process with a caller-chosen `workdir`
+  (CW-20261001-0464), and `loom_export_bundle` writes where it is told
+  (CW-20261001-0465). An allowlist of upstreams cannot be sound until upstreams run
+  daemon-side or confine what they write (CW-20261001-0230). The list is one
+  constant, `codexSafeMCPUpstreams`, which screens out upstreams with a host-exec or
+  arbitrary file-write tool and is not sufficient.
+- **SF4: the per-turn check accepts any content inside `[mcp_servers.*]`.** A
+  co-located wrapped agent can add `[mcp_servers.evil] command="sh" args=[…]`,
+  drop `--protect-path` from the planted `mux` args, or add `LD_PRELOAD` to its
+  environment, and Codex spawns it unsandboxed. The planted shape is known at launch
+  and would have to be pinned.
 
 **Known limit: the spec launch engine.** With `TETHER_LAUNCH_ENGINE=spec` (off by
 default) argv, environment and injection come from files under
@@ -202,9 +256,9 @@ protected, and it is not a boundary anyway (a worker can start its own
 started with `--protect-path` for each directory Tether protects from the agent
 (the catalog root and the run directory), from the same decision that registers
 the agent's protected paths. `mux_agent_create` and `mux_agent_edit` go through one
-guard, which resolves the target through symlinks and refuses one under a protected
-directory with a typed `catalog_read_only` error telling the agent to ask the
-operator, whether or not a sandbox also makes it read-only. That matters because a
+guard, which refuses a write under a protected directory with a typed
+`catalog_read_only` error telling the agent to ask the operator, whether or not a
+sandbox also makes it read-only. That matters because a
 read-only mount only exists inside Tether's sandbox: Codex spawns MCP servers
 itself, outside it, and a Codex agent calling `mux_agent_create scope=system`
 wrote `<catalog>/agents/x.yaml` before this guard. Those two are the only native
@@ -212,6 +266,21 @@ tools that write a file into the catalog tree (audited); the rest read it, or wr
 the database or the daemon. An operator creates and edits agents with
 `mux agents` or by editing the files. The unprotected `scope=project` and
 `scope=user` still work (the user layer is CW-20261001-0192).
+
+**The refusal holds against a symlink re-pointed while the call runs.** Resolving a
+path, checking it, and writing it later loses that race: an agent whose repository
+root is writable can flip `<repo>/.tether` between two symlinks, one into the
+catalog, in a shell loop (3861 of 20000 project-scope creates wrote into the
+catalog). So on Linux the tools open the destination directory once, judge that
+open directory's identity and every ancestor's (device and inode, compared with the
+protected directories'), and create or rewrite the file relative to it with
+`O_NOFOLLOW`, so no path is resolved a second time. Missing directories are made
+relative to it without following a symlink, and each is judged as it is opened. An
+agent file that is itself a symlink is not written through while protected paths
+are in force. Off Linux the check is on the resolved path and the race is narrowed,
+not closed; the protection is not applied there yet (CW-20261001-0138). The race
+tests flip the symlink while calling the real tools thousands of times and assert
+nothing lands in the catalog (`internal/agentops`, `internal/mcpadapter`).
 
 ### macOS, status and the off switch
 
@@ -223,7 +292,9 @@ protection, and reports a `sandbox-protect` check: ok when protection is on and
 usable, a warning when it is off, a failure when it is on but bubblewrap cannot
 build a namespace. The daemon logs the same at startup, and `GET /health`
 carries it as `sandbox_protect`. Without a daemon to ask, `mux doctor` says it
-is reporting its own shell's environment.
+is reporting its own shell's environment. A second check, `sandbox-protect-codex`,
+reports how Codex is protected: a warning, `codex: not protected
+(CW-20261001-0230)`, as shipped, and ok only if the dormant guard is switched on.
 
 **Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in muxd's
 environment and restart the daemon. The daemon logs `WARN: control-plane

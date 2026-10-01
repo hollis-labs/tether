@@ -134,13 +134,13 @@ func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any
 	if refusal := a.refuseProtectedWrite(agentops.PathFor(root, id)); refusal != nil {
 		return nil, refusal
 	}
-	path, err := agentops.Create(root, id, agentops.Params{
+	path, err := agentops.CreateGuarded(root, id, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
 		Skills:       csvArgPresent(args, "skills"),
 		SystemPrompt: str(args, "system_prompt"),
 		AgentPrompt:  str(args, "agent_prompt"),
-	})
+	}, a.protected)
 	if err != nil {
 		// An already-exists is a caller error (conflict); anything else
 		// (permission denied, bad layer root, write failure) is internal.
@@ -176,13 +176,13 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 	if refusal := a.refuseProtectedWrite(la.Path); refusal != nil {
 		return nil, refusal
 	}
-	updated, err := agentops.Update(la.Path, agentops.Params{
+	updated, err := agentops.UpdateGuarded(la.Path, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
 		Skills:       csvArgPresent(args, "skills"),
 		SystemPrompt: str(args, "system_prompt"),
 		AgentPrompt:  str(args, "agent_prompt"),
-	})
+	}, a.protected)
 	if err != nil {
 		return nil, agentWriteError(err)
 	}
@@ -225,6 +225,14 @@ func (a *Adapter) ProtectedPaths() []string { return append([]string(nil), a.pro
 // returns a typed catalog_read_only error when target, resolved through
 // symlinks, lies in a protected directory, and nil otherwise. A tool that
 // writes under the catalog root must call it before writing.
+//
+// This is the early, path-based refusal, and it is NOT what makes the refusal
+// hold: a symlink re-pointed between this check and the write defeats it (20000
+// project-scope creates with `.tether` flipped between two symlinks, one into
+// the catalog, wrote there 3861 times). The write itself goes through
+// agentops.CreateGuarded and UpdateGuarded, which open the destination
+// directory once, judge that directory's identity and its ancestors', and write
+// relative to it.
 func (a *Adapter) refuseProtectedWrite(target string) *budget.ToolError {
 	if len(a.protected) == 0 {
 		return nil
@@ -243,7 +251,7 @@ func (a *Adapter) refuseProtectedWrite(target string) *budget.ToolError {
 // the agents it launches (CW-20261001-0142), so it answers with a typed error
 // that says what to do instead of a raw EROFS.
 func agentWriteError(err error) *budget.ToolError {
-	if errors.Is(err, syscall.EROFS) {
+	if errors.Is(err, syscall.EROFS) || errors.Is(err, agentops.ErrProtected) {
 		return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
 	}
 	return toolError("internal_error", err.Error())

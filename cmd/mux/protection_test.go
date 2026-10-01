@@ -58,7 +58,7 @@ func TestCheckSandboxProtect(t *testing.T) {
 		want       string
 		message    string
 	}{
-		{"on", healthFor("linux", nil, nil), true, statusOK, "on: agents cannot write the catalog or run/"},
+		{"on", healthFor("linux", nil, nil), true, statusOK, "cannot write the catalog or run/"},
 		{"on, unusable", healthFor("linux", nil, fmt.Errorf("bwrap: No permissions to create a new namespace")), true, statusFail, "No permissions to create a new namespace"},
 		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "false"}, nil), true, statusWarn, "DISABLED by TETHER_SANDBOX_PROTECT=false"},
 		{"darwin", healthFor("darwin", nil, nil), true, statusWarn, "CW-20261001-0138"},
@@ -82,8 +82,61 @@ func TestCheckSandboxProtect(t *testing.T) {
 // The daemon's /health carries the same fields the check reads.
 func TestSandboxProtectHealth(t *testing.T) {
 	h := sandboxProtectHealth(healthFor("linux", nil, fmt.Errorf("denied")))
-	want := daemon.SandboxProtectHealth{Enabled: true, Reason: h.Reason, BwrapChecked: true, BwrapUsable: false, BwrapError: "denied"}
+	want := daemon.SandboxProtectHealth{Enabled: true, Reason: h.Reason, Codex: "not protected", CodexReason: h.CodexReason, BwrapChecked: true, BwrapUsable: false, BwrapError: "denied"}
 	if *h != want {
 		t.Fatalf("health = %+v, want %+v", *h, want)
+	}
+}
+
+// The daemon says how codex is protected at startup, naming CW-20261001-0230 in
+// both states. The build ships codex as not protected, which is a WARN so it is
+// never silent; the dormant guard, switched on, is an ordinary line.
+func TestLogCodexProtection(t *testing.T) {
+	logged := func(h app.ProtectionHealth) []string {
+		var lines []string
+		logCodexProtection(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, h)
+		return lines
+	}
+	shipped := healthFor("linux", nil, nil)
+	if got := logged(shipped); len(got) != 1 || !strings.HasPrefix(got[0], "WARN: codex protection not protected (CW-20261001-0230)") {
+		t.Fatalf("shipped log = %q; want a WARN naming CW-20261001-0230", got)
+	}
+	guarded := shipped
+	guarded.Codex = app.CodexProtectionState{State: "guarded", Reason: "guarded (dormant guard switched on): codex runs under its own sandbox (CW-20261001-0230)"}
+	if got := logged(guarded); len(got) != 1 || !strings.HasPrefix(got[0], "codex protection guarded") || strings.HasPrefix(got[0], "WARN") || !strings.Contains(got[0], "CW-20261001-0230") {
+		t.Fatalf("guarded log = %q", got)
+	}
+	// With control-plane protection off the main line already says so.
+	if got := logged(healthFor("linux", map[string]string{app.ProtectEnv: "0"}, nil)); len(got) != 0 {
+		t.Fatalf("protection off still logged a codex line: %q", got)
+	}
+}
+
+// mux doctor reports codex's protection as the daemon says it: a warning that
+// names CW-20261001-0230 when not protected (as the build ships), ok when
+// guarded (the dormant guard switched on), and honest about a daemon that does
+// not report it.
+func TestCheckCodexProtection(t *testing.T) {
+	shipped := sandboxProtectHealth(healthFor("linux", nil, nil))
+	r := checkCodexProtection(shipped, true)
+	if r.Name != "sandbox-protect-codex" || r.Status != statusWarn || !strings.Contains(r.Message, "not protected (CW-20261001-0230)") || !strings.Contains(r.Message, "(daemon)") || !strings.Contains(r.Remedy, "CW-20261001-0230") {
+		t.Fatalf("shipped check = %+v; want a warning naming CW-20261001-0230", r)
+	}
+
+	guarded := *shipped
+	guarded.Codex, guarded.CodexReason = "guarded", "guarded (dormant guard switched on): codex runs under its own sandbox (CW-20261001-0230)"
+	r = checkCodexProtection(&guarded, true)
+	if r.Status != statusOK || !strings.Contains(r.Message, "guarded") || !strings.Contains(r.Message, "(daemon)") || !strings.Contains(r.Message, "CW-20261001-0230") {
+		t.Fatalf("guarded check = %+v", r)
+	}
+
+	r = checkCodexProtection(&daemon.SandboxProtectHealth{Enabled: true}, true)
+	if r.Status != statusOK || !strings.Contains(r.Message, "not reported by the daemon") {
+		t.Fatalf("a daemon that predates the report: %+v", r)
+	}
+
+	r = checkCodexProtection(shipped, false)
+	if !strings.Contains(r.Message, "this shell's environment") {
+		t.Fatalf("a local answer must say so: %+v", r)
 	}
 }

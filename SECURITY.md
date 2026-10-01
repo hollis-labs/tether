@@ -58,8 +58,9 @@ containment aid, not a hardened boundary against a hostile agent.
 ## Agents run as your user
 
 Agent sessions launched by Tether run under the operator's own uid. On
-Linux, every agent Tether launches runs inside a sandbox that makes two of
-Tether's own directories read-only for it (CW-20261001-0142):
+Linux, Claude, OpenCode and every other agent Tether launches, **except
+Codex**, runs inside a sandbox that makes two of Tether's own directories
+read-only for it (CW-20261001-0142):
 
 - the catalog root (`~/.tether/catalog/` by default), so an agent cannot
   rewrite the launch, provider, agent and MCP-server definitions it is run
@@ -76,40 +77,46 @@ rather than run unprotected. A launch whose work directory, workspace or
 state database lies inside a protected directory is refused with 403
 `forbidden` too.
 
-**Codex is protected by its own sandbox instead.** Tether does not wrap Codex
-in its sandbox, because Codex's own `workspace-write` sandbox is bubblewrap
-too and cannot nest inside it where unprivileged user namespaces are
+**Codex is NOT protected by Tether's write-protection.** Tether does not wrap
+Codex in its sandbox, because Codex's own `workspace-write` sandbox is
+bubblewrap too and cannot nest inside it where unprivileged user namespaces are
 restricted (the Ubuntu default), which would stop Codex running any shell
-command. That sandbox makes the filesystem read-only except Codex's working
-directories, `/tmp`, `$TMPDIR` and any configured writable root, and the
-catalog and run directory are outside them: a Codex turn's `touch <catalog>/x`
-is denied (see [`docs/sandboxing.md`](docs/sandboxing.md#codex-uses-its-own-sandbox)).
+command. Codex relies on its own sandbox, which makes the filesystem read-only
+except Codex's working directories, `/tmp`, `$TMPDIR` and any configured
+writable root, and a Codex turn's `touch <catalog>/x` is denied. But **Codex
+spawns every MCP server it is given outside that sandbox**, with the
+operator's uid and none of Codex's confinement, so a Codex agent can reach the
+catalog through MCP tools:
 
-So that protection is Codex's, not Tether's, and Codex's sandbox can be
-widened from several places: its flags, its environment, a `config.toml` in
-`CODEX_HOME` or a project `.codex/config.toml`, and its working directory. The
-exemption is therefore an **allowlist**. Tether leaves Codex to its own sandbox
-only while everything that shapes it is known-safe: the flags are the model and
-a short list of overrides that keep the sandbox as it is, no environment came from
-a caller or an agent definition (`PATH`, `TMPDIR` and `LD_PRELOAD` each defeat it),
-the environment has no `CODEX_*` variable but Tether's own `CODEX_HOME`, the
-planted MCP allow-list names neither `nanite` nor `cerberus`, nothing is injected into
-`CODEX_HOME`, no project `.codex/config.toml` is in the work directory or up to its
-project root, and no work directory, workspace or temp directory contains a
-protected one. Anything else, or anything it does not recognise, and Tether wraps
-Codex like every other agent; where that sandbox cannot start, the launch fails
-loudly. Tether cannot see inside Codex's sandbox, so a defect in it would leave
-the catalog writable to Codex.
+- `torque_session_launch` over `torque mcp`, with a caller-chosen `workdir`:
+  `workdir=<catalog>` boots a Codex whose own workspace-write root is the
+  catalog (inferred from the real tool, not demonstrated end to end;
+  CW-20261001-0464);
+- `loom_export_bundle(dir=…)` over `loom mcp`, which wrote `index.md` and
+  `log.md` into an arbitrary directory in a reproduction (CW-20261001-0465);
+- the `nanite` (`dev_bash`, `dev_write`) and `cerberus` host shells, if a
+  project grants them.
 
-The allowlist is judged at launch, and Codex starts a new process every turn, so it
-is **re-checked before each turn** on an exempted session: Codex keeps `.codex`
-read-only only from itself, so another agent sharing the project directory, a
-checkout or an operator can plant a `.codex/config.toml` (or change the
-`CODEX_HOME` `config.toml`) between turns. If one appears, the turn is refused
-with 403 `forbidden`, naming the file. This narrows the window and does not close
-it: the file could appear between the check and Codex reading its configuration.
-Closing it takes caller identity (CW-20260930-0253) and a way to make `.codex`
-unwritable to other agents.
+The default MCP allow-list (`torque`, `tesseract`) is therefore not safe for a
+Codex agent either. **The structural fix is MCP upstreams that run daemon-side,
+outside the agent's reach (CW-20261001-0230).** Until then `GET /health`
+(`sandbox_protect.codex`), `mux doctor` (`sandbox-protect-codex`) and the
+daemon's startup log say `codex: not protected (CW-20261001-0230)`, and
+`mux doctor` warns. A Codex agent that is also a hostile worker can write the
+catalog; treat Codex like the agents Tether did not protect before this change.
+
+What does hold for Codex: the `mux mcp` Tether plants is started with
+`--protect-path` for the catalog root and run directory, and refuses to write
+under them (see below).
+
+*History.* Earlier revisions of this change left Codex to its own sandbox under
+an allowlist of flags, environment, injection, project config and MCP list,
+re-checked before every turn, and called it guarded. Three adversarial reviews
+found it could not be made sound while Codex spawns MCP servers outside its
+sandbox, and that claim is withdrawn. The code stays in the tree, dormant behind
+one switch (`codexProtectionMode`, `internal/app/protected_codex_mode.go`) until
+CW-20261001-0230 makes it sound; [`docs/sandboxing.md`](docs/sandboxing.md#the-dormant-codex-guard)
+lists what it would need.
 
 Agents run under Tether's sandbox see a private PID namespace, lose
 background processes when a per-turn CLI's turn ends, find `/home`, `~` and
@@ -122,8 +129,8 @@ still write both directories. The daemon logs a warning at startup and
 `mux doctor` reports one.
 
 `mux doctor` asks the running daemon, whose environment decides protection,
-and reports a `sandbox-protect` check; `GET /health` carries it as
-`sandbox_protect`.
+and reports a `sandbox-protect` check and a `sandbox-protect-codex` check; `GET
+/health` carries them as `sandbox_protect` (with `codex` and `codex_reason`).
 
 An operator can turn the protection off by setting `TETHER_SANDBOX_PROTECT=0`
 (or `false`) in muxd's environment. The daemon then logs a WARN line at
@@ -131,9 +138,12 @@ startup, and `mux doctor` reports a `sandbox-protect` warning. Agents can
 write the catalog and run directory again, and ACP launches are allowed.
 Turning it off is a deliberate decision, never a silent default.
 
-Where it applies, that stops an agent from writing those directories
+Where it applies, that stops an agent Tether wraps from writing those directories
 itself. It does not yet cover:
 
+- **Codex.** Not protected, as above: Codex's own sandbox keeps it out of the
+  catalog, and Codex's MCP servers, which run outside that sandbox, do not
+  (CW-20261001-0230).
 - **The state database.** This change leaves the state directory writable.
   The `mux mcp` server Tether plants in each agent used to open the state
   database from inside the agent's sandbox, which is why; it no longer does
@@ -166,21 +176,18 @@ itself. It does not yet cover:
   effect of a read-only mount, which exists only inside Tether's sandbox: Codex
   spawns MCP servers itself, outside it, and a Codex agent called
   `mux_agent_create scope=system` and wrote the catalog before the policy. The
-  scope is not a boundary: a worker can start its own `mux mcp --scopes`, which a
-  sandboxed agent finds read-only and an exempted Codex agent finds writable only
-  where Codex's own sandbox allows.
-- **Every MCP child of an exempted Codex agent runs outside its sandbox.** Codex
-  spawns MCP servers itself, so the planted proxy and every upstream it starts are
-  unsandboxed. With the default allow-list (`torque`, `tesseract`) that is
-  acceptable. An allow-list that names `nanite` (`dev_bash`, `dev_write`) or
-  `cerberus` hands the agent an unsandboxed shell or infrastructure control by
-  design, so Tether wraps such a Codex agent instead (it fails loudly where Tether's
-  sandbox cannot start). The real fix is upstreams that run daemon-side
-  (CW-20261001-0230).
+  refusal holds against a symlink re-pointed while the call runs: on Linux the
+  destination directory is opened once, judged by its identity and its ancestors',
+  and the file is created relative to that open directory without following a
+  symlink (an earlier check-then-write version lost the race: 3861 of 20000
+  project-scope creates with `.tether` flipped between two symlinks, one into the
+  catalog, wrote there). An agent file that is itself a symlink is not written
+  through while protected paths are in force. The scope is not a boundary: a
+  worker can start its own `mux mcp --scopes`, which a sandboxed agent finds
+  read-only, and which a Codex agent runs under Codex's sandbox only.
 - **The spec launch engine** (`TETHER_LAUNCH_ENGINE=spec`, off by default) takes
   argv, environment and injection from `~/.tether/launch-specs/`, which an agent can
-  write; the Codex allowlist inspects only the plan's flags. Do not enable it for
-  agents left to Codex's own sandbox.
+  write. Do not enable it where an agent can write them.
 
 The in-process API stub starts no agent process, so it has nothing to
 protect.
@@ -189,9 +196,9 @@ protect.
 lands (CW-20260930-0253).** Any process that can reach `muxd.sock`, a worker
 included, can call `POST /sessions` with `agent_inline` (extra flags and
 environment per provider), `injection` and an MCP server list, and so shape the
-launch it asks for. The Codex allowlist above, and the pin on a catalog agent's
-sandbox profile (#85), close what that route can reach today; they do not make the
-route itself authenticated.
+launch it asks for. The pin on a catalog agent's sandbox profile (#85) closes
+what that route can reach for the agents Tether wraps today; it does not make the
+route itself authenticated, and it does nothing for Codex, which is not protected.
 
 Until the socket and the state database are covered, treat any agent Tether
 launches as able to do anything in Tether that you can do through the

@@ -73,7 +73,7 @@ func PathFor(layerRoot, id string) string {
 // Update instead of clobbering. Returns the written path.
 func Create(layerRoot, id string, p Params) (string, error) {
 	if !ValidID(id) {
-		return "", fmt.Errorf("invalid agent id %q: must be a single name with no path separators", id)
+		return "", invalidIDError(id)
 	}
 	path := PathFor(layerRoot, id)
 	if _, err := os.Stat(path); err == nil {
@@ -81,18 +81,7 @@ func Create(layerRoot, id string, p Params) (string, error) {
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	name := p.Name
-	if name == "" {
-		name = id
-	}
-	a := launchprofile.LaunchProfile{
-		ID:           id,
-		Name:         name,
-		Roles:        p.Roles,
-		Skills:       p.Skills,
-		SystemPrompt: p.SystemPrompt,
-		AgentPrompt:  p.AgentPrompt,
-	}
+	a := newAgent(id, p)
 	if err := writeAgent(path, a); err != nil {
 		return "", err
 	}
@@ -117,6 +106,39 @@ func Update(path string, p Params) (launchprofile.LaunchProfile, error) {
 	if err != nil {
 		return launchprofile.LaunchProfile{}, err
 	}
+	a, err := patchAgent(path, data, p)
+	if err != nil {
+		return launchprofile.LaunchProfile{}, err
+	}
+	if err := writeAgent(path, a); err != nil {
+		return launchprofile.LaunchProfile{}, err
+	}
+	return a, nil
+}
+
+func invalidIDError(id string) error {
+	return fmt.Errorf("invalid agent id %q: must be a single name with no path separators", id)
+}
+
+// newAgent is the agent file Create seeds from p.
+func newAgent(id string, p Params) launchprofile.LaunchProfile {
+	name := p.Name
+	if name == "" {
+		name = id
+	}
+	return launchprofile.LaunchProfile{
+		ID:           id,
+		Name:         name,
+		Roles:        p.Roles,
+		Skills:       p.Skills,
+		SystemPrompt: p.SystemPrompt,
+		AgentPrompt:  p.AgentPrompt,
+	}
+}
+
+// patchAgent parses the agent file in data (read from path) and applies the
+// populated fields of p, as Update documents.
+func patchAgent(path string, data []byte, p Params) (launchprofile.LaunchProfile, error) {
 	var a launchprofile.LaunchProfile
 	if err := yaml.Unmarshal(data, &a); err != nil {
 		return launchprofile.LaunchProfile{}, fmt.Errorf("parse %s: %w", path, err)
@@ -136,17 +158,16 @@ func Update(path string, p Params) (launchprofile.LaunchProfile, error) {
 	if p.AgentPrompt != "" {
 		a.AgentPrompt = p.AgentPrompt
 	}
-	if err := writeAgent(path, a); err != nil {
-		return launchprofile.LaunchProfile{}, err
-	}
 	return a, nil
 }
+
+func marshalAgent(a launchprofile.LaunchProfile) ([]byte, error) { return yaml.Marshal(a) }
 
 func writeAgent(path string, a launchprofile.LaunchProfile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	body, err := yaml.Marshal(a)
+	body, err := marshalAgent(a)
 	if err != nil {
 		return err
 	}

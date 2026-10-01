@@ -153,6 +153,9 @@ func TestLaunchSession_CodexWithCallerEnvIsWrappedNotExempted(t *testing.T) {
 		"nanite on the planted MCP allow-list": func(p *launch.Plan) {
 			p.Env = map[string]string{launch.MCPServersEnv: "torque,nanite"}
 		},
+		"loom on the planted MCP allow-list: not known safe either": func(p *launch.Plan) {
+			p.Env = map[string]string{launch.MCPServersEnv: "torque,loom"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := launchFakeCodex(t, svc, script, mod)
@@ -173,24 +176,33 @@ func TestLaunchSession_CodexWithCallerEnvIsWrappedNotExempted(t *testing.T) {
 }
 
 // Every MCP child of an exempted codex agent runs outside its sandbox, because
-// codex spawns MCP servers itself. With the default allow-list (torque,
-// tesseract) that is acceptable; with nanite (dev_bash, dev_write) or cerberus
-// it is an unsandboxed shell by design, so those wrap the agent (and fail loudly
-// where Tether's sandbox cannot start). CW-20261001-0230 is the real fix.
-func TestCodexOwnsSandbox_UnsandboxedUpstreamsWrapTheAgent(t *testing.T) {
+// codex spawns MCP servers itself. Only the default allow-list's upstreams
+// (torque, tesseract) are known to have no host-exec or arbitrary file-write
+// tool, so a planted list that is a subset of them keeps the exemption and
+// anything else wraps the agent, which fails loudly where Tether's sandbox
+// cannot start: nanite (dev_bash, dev_write), cerberus, and equally loom,
+// hadron, sigil, fragments-engine, tangent and any upstream added later.
+// CW-20261001-0230 is the real fix.
+func TestCodexOwnsSandbox_OnlyKnownSafeUpstreamsKeepTheExemption(t *testing.T) {
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
 	for _, tc := range []struct {
 		list string
-		bad  string
+		bad  string // the upstream named in the refusal; "" keeps the exemption
 	}{
 		{"", ""}, // the default: torque, tesseract
 		{"torque,tesseract", ""},
-		{"loom,hadron", ""},
+		{"tesseract", ""},
+		{"torque", ""},
+		{" Torque , TESSERACT ", ""},
 		{"torque,nanite", "nanite"},
 		{"nanite", "nanite"},
-		{"Cerberus", "cerberus"},
-		{" torque , cerberus ", "cerberus"},
+		{"Cerberus", "Cerberus"},
+		{"loom,hadron", "loom"},
+		{"torque,tesseract,tangent", "tangent"}, // the live tangent-codex-app-server-worktree launch
+		{"sigil", "sigil"},
+		{"fragments-engine", "fragments-engine"},
+		{"some-upstream-added-later", "some-upstream-added-later"},
 	} {
 		t.Run("allow-list "+tc.list, func(t *testing.T) {
 			plan := codexPlan()
@@ -202,8 +214,8 @@ func TestCodexOwnsSandbox_UnsandboxedUpstreamsWrapTheAgent(t *testing.T) {
 			if tc.bad == "" && !ok {
 				t.Fatalf("refused: %s", why)
 			}
-			if tc.bad != "" && (ok || !strings.Contains(why, tc.bad) || !strings.Contains(why, "unsandboxed shell")) {
-				t.Fatalf("codexOwnsSandbox = %v, %q; want the agent wrapped, naming %s", ok, why, tc.bad)
+			if tc.bad != "" && (ok || !strings.Contains(why, tc.bad) || !strings.Contains(why, "outside its sandbox") || !strings.Contains(why, "torque and tesseract")) {
+				t.Fatalf("codexOwnsSandbox = %v, %q; want the agent wrapped, naming %s and what is allowed", ok, why, tc.bad)
 			}
 			if _, outer, err := svc.protectionPlan(plan, "cli", &opts, false); err != nil || outer != (tc.bad != "") {
 				t.Fatalf("outer = %v, err = %v", outer, err)
@@ -212,9 +224,21 @@ func TestCodexOwnsSandbox_UnsandboxedUpstreamsWrapTheAgent(t *testing.T) {
 	}
 	// The boot profile's list reaches the plan through the real function.
 	plan := codexPlan()
-	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque", "nanite"}})
-	if got := unsandboxedUpstream(plan); got != "nanite" {
-		t.Fatalf("unsandboxedUpstream after a boot profile naming nanite = %q", got)
+	applyMCPAllowlist(plan, bootgen.Profile{MCPServers: []string{"torque", "loom"}})
+	if got := unsafeMCPUpstream(plan); got != "loom" {
+		t.Fatalf("unsafeMCPUpstream after a boot profile naming loom = %q", got)
+	}
+	// The safe set is a constant of its own, not the default list, so changing
+	// the default cannot silently widen what runs outside a sandbox. The default
+	// must stay inside it, or every default codex launch would be wrapped.
+	for _, id := range launch.DefaultMCPServers {
+		found := false
+		for _, safe := range codexSafeMCPUpstreams {
+			found = found || strings.EqualFold(id, safe)
+		}
+		if !found {
+			t.Fatalf("the default MCP allow-list names %s, which is not in codexSafeMCPUpstreams", id)
+		}
 	}
 }
 

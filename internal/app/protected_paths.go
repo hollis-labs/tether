@@ -47,7 +47,10 @@ func ControlPlaneProtection(goos string, getenv func(string) string) ProtectionS
 	if goos != "linux" {
 		return ProtectionStatus{Reason: fmt.Sprintf("not applied on %s until go-sandbox's seatbelt protection is verified on a real Mac (CW-20261001-0138), so agents can write the catalog and run/", goos)}
 	}
-	return ProtectionStatus{Enabled: true, Reason: "on: agents cannot write the catalog or run/ (Codex relies on its own workspace-write sandbox instead)"}
+	if codexProtectionMode == CodexNotProtected {
+		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
+	}
+	return ProtectionStatus{Enabled: true, Reason: "on: agents cannot write the catalog or run/ (Codex relies on its own workspace-write sandbox, under Tether's guard)"}
 }
 
 // defaultProtectionStatus is the daemon's protection decision, taken from
@@ -97,6 +100,11 @@ func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsess
 	}
 	if kind == acp.Kind {
 		return nil, false, launch.ErrACPLaunchUnprotected
+	}
+	if plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
+		// The fallback: codex runs as it did before protection existed, with
+		// none of the guard (see codexProtectionMode).
+		return nil, false, nil
 	}
 	dirs, err = s.controlPlaneDirs()
 	if err != nil {
@@ -291,11 +299,11 @@ func containsPath(paths []string, path string) bool {
 // protection off, or Tether wraps it). It runs after applyControlPlaneProtection
 // accepted the launch, and re-asks the same question without logging.
 func (s *Service) codexExemptionFor(plan *launch.Plan, kind string, opts *agentsessions.StartOptions) *codexExemption {
-	if plan == nil || plan.ProviderBrand != "codex" {
+	if plan == nil || plan.ProviderBrand != "codex" || codexProtectionMode != CodexGuarded {
 		return nil
 	}
 	dirs, outer, err := s.protectionPlan(plan, kind, opts, false)
-	if err != nil || outer {
+	if err != nil || outer || len(dirs) == 0 {
 		return nil
 	}
 	ex := &codexExemption{home: codexHomeFromEnv(opts.Env), protected: dirs}

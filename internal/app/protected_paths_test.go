@@ -35,6 +35,17 @@ func envOf(kv map[string]string) func(string) string {
 // it plus the real catalog and run paths.
 func tetherLayout(t *testing.T) (svc *Service, catalog, run string) {
 	t.Helper()
+	// The guard these tests exercise is dormant in the shipped build (codex is
+	// CodexNotProtected, CW-20261001-0230), so they switch it on; the tests of
+	// the shipped state use tetherLayoutKeepingMode.
+	setCodexProtectionMode(t, CodexGuarded)
+	return tetherLayoutKeepingMode(t)
+}
+
+// tetherLayoutKeepingMode is tetherLayout with the codex protection mode left as
+// the build ships it.
+func tetherLayoutKeepingMode(t *testing.T) (svc *Service, catalog, run string) {
+	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "tether")
 	for _, d := range []string{"catalog", "run", "state"} {

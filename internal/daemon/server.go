@@ -457,6 +457,12 @@ type SandboxProtectHealth struct {
 	DisabledByOperator bool `json:"disabled_by_operator,omitempty"`
 	// Reason says, in a sentence, what the state means for an agent.
 	Reason string `json:"reason"`
+	// Codex is how codex is protected: "guarded", "not protected" (the
+	// fallback) or "not applicable" (protection is off). CodexReason says what
+	// that means, and names CW-20261001-0230, the structural reason (codex
+	// spawns MCP servers outside its sandbox).
+	Codex       string `json:"codex,omitempty"`
+	CodexReason string `json:"codex_reason,omitempty"`
 	// BwrapChecked is true when the host was probed (protection on, Linux).
 	BwrapChecked bool `json:"bwrap_checked,omitempty"`
 	// BwrapUsable is true when bubblewrap can build the protecting sandbox.
