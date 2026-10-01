@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/credfile"
 	"github.com/hollis-labs/tether/internal/llm/secrets"
 	"gopkg.in/yaml.v3"
 )
@@ -17,9 +18,16 @@ import (
 // Files live at <catalogDir>/mcp-servers/*.yaml.
 //
 // Credential-bearing fields (Args, Env, Token, URL) accept a secret reference
-// — keychain://<authority>/<path> or helper://<name>/<path> — in place of a
-// literal value. References are resolved only by LoadMCPServers, at spawn
-// time; see resolveEntrySecrets.
+// in place of a literal value:
+//
+//   - keychain://<authority>/<path> or helper://<name>/<path>, resolved through
+//     a helper program;
+//   - file:///<absolute path> or file://~/<path under home>, read from a private
+//     file (mode 0600, owned by the current user; see package credfile), so the
+//     catalog YAML does not carry the secret.
+//
+// References are resolved only by LoadMCPServers, at spawn time; see
+// resolveEntrySecrets. A catalog listing shows the reference, never the value.
 type MCPServerEntry struct {
 	ID        string            `yaml:"id"`
 	Transport string            `yaml:"transport"` // "stdio" | "sse" | "http"
@@ -35,6 +43,10 @@ type MCPServerEntry struct {
 	// argumentRedactionValues carries resolved argument secret material to the
 	// stdio process owner without exposing it through YAML serialization.
 	argumentRedactionValues []string
+
+	// catalogDir is the catalog this entry was read from. A file:// credential
+	// that is a symlink may resolve only into it or the operator's home.
+	catalogDir string
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
@@ -87,6 +99,33 @@ func isSecretRef(s string) bool {
 	return strings.HasPrefix(s, "keychain://") || strings.HasPrefix(s, "helper://")
 }
 
+// fileRefPrefix marks a credential stored in a private file.
+const fileRefPrefix = "file://"
+
+// isFileRef reports whether s names a credential file. It is separate from
+// isSecretRef: the A2A config also resolves through resolveSecretRef, and a
+// file:// there stays a literal.
+func isFileRef(s string) bool {
+	return strings.HasPrefix(s, fileRefPrefix)
+}
+
+// resolveFileRef reads the credential file s names. The path is whatever follows
+// file://: absolute, or ~/ for the operator's home.
+//
+// Like resolveSecretRef, the value never reaches the returned error: only the
+// field and the path (the reference), which are non-sensitive by construction.
+func resolveFileRef(field, s, catalogDir string) (string, error) {
+	roots := []string{catalogDir}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, home)
+	}
+	value, err := credfile.Read(strings.TrimPrefix(s, fileRefPrefix), credfile.Options{Roots: roots})
+	if err != nil {
+		return "", fmt.Errorf("%s: resolve %s: %w", field, s, err)
+	}
+	return value, nil
+}
+
 // resolveSecretRef resolves s when it is a secret reference and returns it
 // unchanged otherwise.
 //
@@ -114,18 +153,24 @@ func resolveSecretRef(ctx context.Context, field, s string) (string, error) {
 // cause. The operator ordering that follows from this is "populate the keychain
 // entry, then switch the catalog to the reference" — never the reverse.
 func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
+	resolve := func(field, s string) (string, error) {
+		if isFileRef(s) {
+			return resolveFileRef(field, s, entry.catalogDir)
+		}
+		return resolveSecretRef(ctx, field, s)
+	}
 	var err error
-	if entry.Token, err = resolveSecretRef(ctx, "token", entry.Token); err != nil {
+	if entry.Token, err = resolve("token", entry.Token); err != nil {
 		return err
 	}
-	if entry.URL, err = resolveSecretRef(ctx, "url", entry.URL); err != nil {
+	if entry.URL, err = resolve("url", entry.URL); err != nil {
 		return err
 	}
 	if len(entry.Args) > 0 {
 		args := make([]string, len(entry.Args))
 		for i, arg := range entry.Args {
-			secretRef := isSecretRef(arg)
-			if args[i], err = resolveSecretRef(ctx, fmt.Sprintf("args[%d]", i), arg); err != nil {
+			secretRef := isSecretRef(arg) || isFileRef(arg)
+			if args[i], err = resolve(fmt.Sprintf("args[%d]", i), arg); err != nil {
 				return err
 			}
 			if secretRef {
@@ -137,7 +182,7 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	if len(entry.Env) > 0 {
 		env := make(map[string]string, len(entry.Env))
 		for key, value := range entry.Env {
-			if env[key], err = resolveSecretRef(ctx, "env."+key, value); err != nil {
+			if env[key], err = resolve("env."+key, value); err != nil {
 				return err
 			}
 		}
@@ -211,6 +256,8 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		if err := yaml.Unmarshal(b, &entry); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
+
+		entry.catalogDir = catalogDir
 
 		// Expand ${VAR} references at load time.
 		entry.URL = expandEnvRefs(entry.URL)
