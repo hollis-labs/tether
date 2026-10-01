@@ -63,44 +63,18 @@ const minimumConfigBag = "tether-minimum"
 // with it.
 var upstreamStaleExpected = map[string]bool{
 	"expected-old-error hollislabs-web-writer-claude": true,
-}
-
-// agentTetherRepointed is the tether launches NOT in the harness's
-// built-in expected-diff registry. The built-in registry covers the five
-// S4.4-sample tether bags; Tether's full corpus has ten. Every
-// tether bag correctly scopes to project tether while the legacy
-// launches/tether-*.yaml carry project:tether (cloned, never
-// re-pointed — see limitations.tether.live_catalog_data_defects Defect 2),
-// so all ten diff old-vs-new on project + work_dir. These five need a
-// caller-side registration; the other five the harness already knows.
-var agentTetherRepointed = []string{
-	"tether-claude-stream",
-	"tether-claude-worktree",
-	"tether-codex-app-server-worktree",
-	"tether-codex-launch-worktree",
-	"tether-opencode-worktree",
-}
-
-// expectedAgentTetherDiffs builds the project + work_dir ExpectedDiff pair
-// for each tether launch in agentTetherRepointed.
-func expectedAgentTetherDiffs() []parity.ExpectedDiff {
-	const rationale = "tether-project-repoint: legacy launch carries project:tether " +
-		"(cloned, never re-pointed); the S4.4/S5 bag correctly scopes to tether"
-	var diffs []parity.ExpectedDiff
-	for _, launch := range agentTetherRepointed {
-		diffs = append(diffs,
-			parity.ExpectedDiff{
-				Launch: launch, Field: "project",
-				Old: "tether", New: "tether", Rationale: rationale,
-			},
-			parity.ExpectedDiff{
-				Launch: launch, Field: "work_dir",
-				Old: "~/dev/hollis-labs/apps/tether", New: "~/dev/hollis-labs/apps/tether",
-				Rationale: rationale,
-			},
-		)
-	}
-	return diffs
+	// agentkit v0.21.0 still registers the pre-rename built-in launch IDs.
+	// Remove these when its parity registry follows the Tether rename.
+	"expected-diff agent-mux-claude/project":                  true,
+	"expected-diff agent-mux-claude/work_dir":                 true,
+	"expected-diff agent-mux-codex-launch/project":            true,
+	"expected-diff agent-mux-codex-launch/work_dir":           true,
+	"expected-diff agent-mux-codex-app-server/project":        true,
+	"expected-diff agent-mux-codex-app-server/work_dir":       true,
+	"expected-diff agent-mux-opencode/project":                true,
+	"expected-diff agent-mux-opencode/work_dir":               true,
+	"expected-diff agent-mux-claude-stream-worktree/project":  true,
+	"expected-diff agent-mux-claude-stream-worktree/work_dir": true,
 }
 
 // fullCorpus builds the parity corpus from every bag file on disk. Each
@@ -159,7 +133,6 @@ func TestFullCorpusParity(t *testing.T) {
 	}
 	report, err := parity.RunParity(catalogRoot, specsRoot,
 		parity.WithCorpus(corpus),
-		parity.WithExpectedDiffs(expectedAgentTetherDiffs()...),
 	)
 	if err != nil {
 		t.Fatalf("RunParity: %v", err)
@@ -198,4 +171,36 @@ func mentionsAny(s string, ids []string) bool {
 		}
 	}
 	return false
+}
+
+// Exercise the host-only gate without depending on an operator's live catalog.
+// Both canonical and renamed unprofiled bags resolve independently; no equal-
+// value expected divergences are needed after the product rename.
+func TestFullCorpusParitySimulatedCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, ".tether", "catalog")
+	files := map[string]string{
+		"global.yaml":                "version: 1.0.0\ncatalog:\n  roots:\n    projects: projects\n    agents: agents\n    providers: providers\n    launches: launches\n",
+		"projects/tether.yaml":       "id: tether\nrepo_root: ~/dev/hollis-labs/apps/tether\nworkspace:\n  default_mode: hybrid\n",
+		"agents/general.yaml":        "id: general\nname: General\nroles: [general]\n",
+		"providers/claude-code.yaml": "id: claude-code\ntype: cli\ncommand: claude\nbootstrap:\n  mode: streaming-stdio\n",
+	}
+	for _, id := range []string{"tether-claude", "tether-claude-worktree", "tether-claude-unprofiled", "tether-claude-unprofiled-worktree"} {
+		mode := "hybrid"
+		if strings.HasSuffix(id, "worktree") {
+			mode = "worktree"
+		}
+		files["launches/"+id+".yaml"] = "id: " + id + "\nproject: tether\nagent: general\nprovider: claude-code\nworkspace:\n  mode: " + mode + "\n"
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	TestFullCorpusParity(t)
 }

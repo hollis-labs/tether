@@ -1,8 +1,5 @@
 # Changelog
 
-- CW-20260926-0007: clean break from mux to tether (CLI, MCP tool/server names, environment and socket paths); no compatibility aliases. Durable identity authorities and historical SQL are retained.
-
-
 All notable changes to Tether are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0: minor bumps for additive surface, patch bumps for fixes — breaking changes can land in any minor.
@@ -26,6 +23,8 @@ Changes on `main` since v0.6.0.
 - **MCP proxy:** typed identifier extraction from proxied calls into session refs, and bounded workstream provenance on forwarded calls.
 
 ### Changed
+
+- CW-20260926-0007: clean break from mux to tether (CLI, MCP tool/server names, environment and socket paths); no compatibility aliases. Durable identity authorities and historical SQL are retained.
 
 - **Library bump: go-agent-wrapper v0.25.6, agentkit v0.21.0, go-providers v0.42.0, go-sandbox v0.6.0, go-runner v0.8.2, go-llm-contracts v0.4.0** (go-llm-types stays at v0.5.1). (CW-20261001-0210) Every first-turn argv, and every other runtime's argv, is byte-identical to before, because Tether launches through the prepared launch template and agentkit v0.21.0 changes only the path without one. The one argv that changes is a codex exec turn that resumes a thread, which gains `resume <id>` (first bullet below). What changes, as measured on a live daemon with the real codex-cli 0.159.3:
   - **A codex exec session resumes its thread from turn 2.** Within one session, turn 2 runs `exec … --cd <project> resume <id> -- <prompt>`, with every exec option in front of `resume`, in the same `CODEX_HOME`, and both turns end up in one codex thread (one rollout file holding both prompts). Before, every turn started a new thread.
@@ -92,9 +91,9 @@ Changes on `main` since v0.6.0.
 
 ### Added
 
-- Three-layer catalog discovery with schema extensions, a skills package with Claude and Codex compilers, and `tether agents create|edit|show`.
+- Three-layer catalog discovery with schema extensions, a skills package with Claude and Codex compilers, and `mux agents create|edit|show`.
 - A caller-provided launch surface and session-mutating MCP tools routed through the daemon.
-- An ACP server (`tether acp`) bridging to the session service.
+- An ACP server (`mux acp`) bridging to the session service.
 
 ### Fixed
 
@@ -113,17 +112,17 @@ Changes on `main` since v0.6.0.
 - Codex CLI support (boot, launch); ephemeral temp-dir model for Claude sessions; selective flat MCP proxy with a `--servers` filter (`--broker` deprecated).
 - Message routing contract and durable messaging store with `/messages/*` HTTP routes; event durability and an observation query surface; a provider compliance suite and capability matrix.
 - Sandbox profile registry integrated with the catalog; checkpoint/resume with logical-agent resume.
-- `tether_tool_search` returns `totalMatches` so callers can detect truncation.
+- `mux_discover` returns `totalMatches` so callers can detect truncation.
 
 ### Fixed
 
-- MCP event forwarder and proxy-polling bugs; `tether_message_inbox` kind filter description aligned with the valid enum.
+- MCP event forwarder and proxy-polling bugs; `mux_message_inbox` kind filter description aligned with the valid enum.
 
 ## [0.1.0] - 2026-04-21
 
 ### Added
 
-- Initial release: the `tetherd` daemon with session lifecycle, PTY/process management, an attach broker with ring-buffer fan-out and `since_seq` resume, session lifecycle events, an API/stub runtime, launch resolution with boot-prompt composition, the `tether` CLI, and golangci-lint-gated quality checks.
+- Initial release: the `muxd` daemon with session lifecycle, PTY/process management, an attach broker with ring-buffer fan-out and `since_seq` resume, session lifecycle events, an API/stub runtime, launch resolution with boot-prompt composition, the `mux` CLI, and golangci-lint-gated quality checks.
 
 [Unreleased]: https://github.com/hollis-labs/tether/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/hollis-labs/tether/compare/v0.3.0...v0.6.0

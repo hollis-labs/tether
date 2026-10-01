@@ -226,6 +226,10 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
 
+	if err := rejectLegacyMCPPlan(plan); err != nil {
+		return nil, err
+	}
+
 	factory, ok := s.factories[plan.ProviderID]
 	if !ok {
 		return nil, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
@@ -707,4 +711,19 @@ func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
 		Caps:         snap.Caps,
 		Health:       snap.Health,
 	}, true
+}
+
+// rejectLegacyMCPPlan checks keys only: legacy grants must never be ignored
+// in favor of the default allow-list when a created session crosses cutover.
+func rejectLegacyMCPPlan(plan *launch.Plan) error {
+	for key := range plan.Env {
+		if strings.HasPrefix(key, "MUX_MCP_") || strings.HasPrefix(key, "AGENT_MUX_MCP_") {
+			suffix := strings.TrimPrefix(strings.TrimPrefix(key, "AGENT_"), "MUX_")
+			replacement := "TETHER_" + suffix
+			if _, ok := plan.Env[replacement]; !ok {
+				return fmt.Errorf("stored launch plan contains legacy MCP setting %s without %s; recreate the session with current Tether configuration", key, replacement)
+			}
+		}
+	}
+	return nil
 }

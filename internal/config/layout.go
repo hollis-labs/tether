@@ -11,15 +11,14 @@ import (
 // ~/.config/tether) and the TETHER_* env-var prefix go-apppaths reads
 // natively (TETHER_DB_PATH, TETHER_WORKSPACE).
 //
-// The binary is `tether`, but the app identity is `tether` — matching the
-// catalog dir ~/.tether/ and the module path. Naming the app `tether` would
-// diverge the XDG roots and env prefix from the rest of Tether's surface.
+// The binary and application identity are both `tether`, matching the
+// catalog directory ~/.tether/ and the module path.
 const appName = "tether"
 
 // ResolveLayout resolves Tether's on-disk layout via go-apppaths in the
 // default (XDG) mode.
 //
-// No WithLegacyNames: Tether's pre-rename DB at ~/tether/state/tether.db
+// No WithLegacyNames: Tether's pre-rename DB at ~/tether/state/agent-mux.db
 // is a hand-made path, not an XDG root, so the adoption migration (which only
 // moves ~/.local/share/<legacy> -> ~/.local/share/<app>) cannot reach it.
 //

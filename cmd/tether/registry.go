@@ -871,7 +871,7 @@ func printProfile(p registry.Profile) {
 	if p.Description != "" {
 		fmt.Printf("description:     %s\n", p.Description)
 	}
-	fmt.Printf("tether_instance:    %s\n", p.TetherInstanceID)
+	fmt.Printf("tether_instance: %s\n", p.TetherInstanceID)
 	if p.HostAddress != "" {
 		fmt.Printf("host_address:    %s\n", p.HostAddress)
 	}
