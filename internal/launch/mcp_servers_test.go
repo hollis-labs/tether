@@ -45,7 +45,7 @@ func TestDefaultMCPServers_IsExactlyTorqueAndTesseract(t *testing.T) {
 func TestEffectiveMCPServers_DefaultIsACopy(t *testing.T) {
 	got := EffectiveMCPServers(nil)
 	got[0] = "cerberus"
-	got = append(got, "nanite")
+	_ = append(got, "nanite")
 	if !slices.Equal(DefaultMCPServers, []string{"torque", "tesseract"}) {
 		t.Fatalf("mutating a returned default changed DefaultMCPServers: %q", DefaultMCPServers)
 	}
