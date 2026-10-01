@@ -43,8 +43,9 @@ resources:
         - daemon
         - run
         - --catalog
-        - /Users/chrispian/.tether/catalog
-      dir: /Users/chrispian/dev/hollis-labs/apps/tether
+        - ~/.tether/catalog
+      # Relative to this file: the checkout, wherever it is on the host.
+      dir: .
       env:
         # PREFIX redirects `make install` away from /usr/local/bin.
         # Cerberus's artifact install step always runs `make install` when a
@@ -58,13 +59,15 @@ resources:
         # inside the directory Cerberus already owns. Deliberately NOT
         # ~/.local, which precedes ~/go/bin on PATH here and would shadow
         # the `mux` CLI with a copy deploy happens to have built.
-        PREFIX: /Users/chrispian/.cerberus/apps/tether/tether-daemon-service
-        HOME: /Users/chrispian
-        PATH: /Users/chrispian/.local/bin:/Users/chrispian/.bun/bin:/Users/chrispian/go/bin:/Users/chrispian/.opencode/bin:/Users/chrispian/bin:/Users/chrispian/helpers:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrispian/.cargo/bin:/Users/chrispian/.orbstack/bin
-        SHELL: /bin/zsh
+        PREFIX: ~/.cerberus/apps/tether/tether-daemon-service
+        # No HOME, PATH or SHELL: the supervisor provides HOME and the
+        # user's login SHELL, and Cerberus gives the plist or unit the PATH
+        # its daemon runs with (composed by `cerberus install` from the
+        # installing shell), so agent CLIs resolve on whichever host this is
+        # registered.
       mode: os_service
       run_from: artifact
-      supervisor: launchd
+      supervisor: auto
     tags:
       - daemon
       - mcp
@@ -82,7 +85,7 @@ resources:
       command:
         - make
         - run
-      dir: /Users/chrispian/dev/hollis-labs/apps/tether/apps/sysop
+      dir: apps/sysop
       mode: dev_session
       port: 8947
       run_from: workspace
@@ -104,7 +107,7 @@ resources:
       command:
         - make
         - ui-dev
-      dir: /Users/chrispian/dev/hollis-labs/apps/tether/apps/sysop
+      dir: apps/sysop
       mode: dev_session
       port: 5177
       run_from: workspace
