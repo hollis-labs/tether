@@ -346,7 +346,7 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
-		mcpCommand, mcpArgs, err := confineMCPPlant(plan, muxCommandPath(), mcpPlan.Args, mcpProtected)
+		mcpCommand, mcpArgs, err := ConfineMCPPlant(plan, muxCommandPath(), mcpPlan.Args, mcpProtected)
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)

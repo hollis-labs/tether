@@ -19,7 +19,7 @@ func TestConfineMCPPlant_UnchangedOtherLaunches(t *testing.T) {
 		if brand != "codex" {
 			protected = []string{t.TempDir()}
 		}
-		command, args, err := confineMCPPlant(plan, "mux", []string{"mcp"}, protected)
+		command, args, err := ConfineMCPPlant(plan, "mux", []string{"mcp"}, protected)
 		if err != nil || command != "mux" || len(args) != 1 || args[0] != "mcp" {
 			t.Fatalf("%s: command=%q args=%v err=%v", brand, command, args, err)
 		}
@@ -53,7 +53,7 @@ func TestConfineMCPPlant_LocalUpstreamDescendantWrites(t *testing.T) {
 		}
 	}
 	plan := &launch.Plan{ProviderBrand: "codex", RepoRoot: root}
-	probeCommand, probeArgs, err := confineMCPPlant(plan, "/bin/true", nil, protected)
+	probeCommand, probeArgs, err := ConfineMCPPlant(plan, "/bin/true", nil, protected)
 	if err != nil {
 		t.Skipf("sandbox backend unavailable: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestConfineMCPPlant_LocalUpstreamDescendantWrites(t *testing.T) {
  if echo changed > "$dir/existing"; then exit 2; fi
  if touch "$dir/new"; then exit 3; fi
  done' upstream "$@"`
-	command, args, err := confineMCPPlant(plan, "/bin/sh", append([]string{"-c", script, "proxy"}, protected...), protected)
+	command, args, err := ConfineMCPPlant(plan, "/bin/sh", append([]string{"-c", script, "proxy"}, protected...), protected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestConfineMCPPlant_LocalUpstreamDescendantWrites(t *testing.T) {
 		t.Fatalf("descendant writes: %v: %s", err, output)
 	}
 	// Ordinary upstream output outside the protected trees remains writable.
-	command, args, err = confineMCPPlant(plan, "/bin/sh", []string{"-c", `echo allowed > "$1"`, "upstream", filepath.Join(root, "output")}, protected)
+	command, args, err = ConfineMCPPlant(plan, "/bin/sh", []string{"-c", `echo allowed > "$1"`, "upstream", filepath.Join(root, "output")}, protected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestConfineMCPPlant_FailsClosed(t *testing.T) {
 		t.Skip("Linux backend")
 	}
 	t.Setenv("PATH", t.TempDir())
-	command, args, err := confineMCPPlant(&launch.Plan{ProviderBrand: "codex", RepoRoot: t.TempDir()}, "/bin/true", nil, []string{t.TempDir()})
+	command, args, err := ConfineMCPPlant(&launch.Plan{ProviderBrand: "codex", RepoRoot: t.TempDir()}, "/bin/true", nil, []string{t.TempDir()})
 	if err == nil || command != "" || args != nil {
 		t.Fatalf("unconfined fallback: %q %v %v", command, args, err)
 	}

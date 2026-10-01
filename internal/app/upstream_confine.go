@@ -9,7 +9,7 @@ import (
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
-// confineMCPPlant protects the whole local MCP process tree, rather than
+// ConfineMCPPlant protects the whole local MCP process tree, rather than
 // trusting individual tools to reject writes. Codex spawns its MCP servers
 // outside its own sandbox; wrapping only its proxy avoids nesting bubblewrap
 // around Codex itself or around Claude's already-wrapped proxy. A failed
@@ -19,7 +19,7 @@ import (
 // retain host reads, network access and writes outside the protected trees.
 // HTTP/SSE servers cannot inherit this namespace and are refused separately
 // by a protected proxy. The Codex config/caller-identity guard remains dormant.
-func confineMCPPlant(plan *launch.Plan, command string, args, protected []string) (string, []string, error) {
+func ConfineMCPPlant(plan *launch.Plan, command string, args, protected []string) (string, []string, error) {
 	if plan == nil || plan.ProviderBrand != "codex" || len(protected) == 0 {
 		return command, args, nil
 	}
