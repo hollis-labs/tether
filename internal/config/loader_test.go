@@ -137,14 +137,14 @@ func TestValidate_UnknownSandboxProfile(t *testing.T) {
 	cat := &Catalog{
 		Projects: map[string]Project{"proj": {ID: "proj"}},
 		Agents: map[string]Agent{
-			"bad":  {ID: "bad", Permissions: AgentPermissions{DefaultSandbox: "no-such-profile"}},
-			"good": {ID: "good", Permissions: AgentPermissions{DefaultSandbox: "workspace-only"}},
+			"bad":         {ID: "bad", Permissions: AgentPermissions{DefaultSandbox: "no-such-profile"}},
+			"good":        {ID: "good", Permissions: AgentPermissions{DefaultSandbox: "workspace-only"}},
 			"unsandboxed": {ID: "unsandboxed"},
 		},
 		Providers: map[string]Provider{"prov": {ID: "prov", Type: "cli", Command: "echo"}},
 		Launches: map[string]Launch{
-			"bad-launch":  {ID: "bad-launch", Project: "proj", Agent: "bad", Provider: "prov"},
-			"good-launch": {ID: "good-launch", Project: "proj", Agent: "good", Provider: "prov"},
+			"bad-launch":         {ID: "bad-launch", Project: "proj", Agent: "bad", Provider: "prov"},
+			"good-launch":        {ID: "good-launch", Project: "proj", Agent: "good", Provider: "prov"},
 			"unsandboxed-launch": {ID: "unsandboxed-launch", Project: "proj", Agent: "unsandboxed", Provider: "prov"},
 		},
 		SandboxProfiles: map[string]sandbox.Profile{
