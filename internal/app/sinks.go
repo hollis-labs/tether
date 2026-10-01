@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sync"
 	"time"
 
@@ -102,7 +103,27 @@ func terminalState(state agentsessions.State, stopRequested bool) string {
 }
 
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
-	return a.db.UpdateSessionState(id, terminalState(state, a.stops.requested(id)), pid, exit)
+	if err := a.db.UpdateSessionState(id, terminalState(state, a.stops.requested(id)), pid, exit); err != nil {
+		return err
+	}
+	if state == agentsessions.StateRunning && pid > 0 {
+		recordProcessStart(a.db, id, pid)
+	}
+	return nil
+}
+
+// recordProcessStart stores when the session's process started, so the next
+// daemon's startup sweep can tell it from a later process that reuses its
+// pid (CW-20260912-0085). Best effort: without it the sweep falls back to a
+// weaker check.
+func recordProcessStart(db *store.Store, id string, pid int) {
+	started, ok := osProcessInspector{}.startTime(pid)
+	if !ok {
+		return
+	}
+	if err := db.SetSessionProcessStart(id, pid, started); err != nil {
+		log.Printf("app: record process start for session %s (pid %d) failed: %v", id, pid, err)
+	}
 }
 
 // attachmentSinkAdapter adapts *store.Store to agentsessions.AttachmentSink.

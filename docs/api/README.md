@@ -697,7 +697,7 @@ created ──launch──▶ launching ──▶ running ──┬──▶ com
    │                    │                   └──▶ killed      ended by POST /sessions/{id}/stop
    └────────────────────┴──▶ failed   the launch failed, exit code 1
 
-launching | running ──daemon restart──▶ failed   exit code -1
+launching | running ──daemon restart, process gone──▶ failed   exit code -1
 ```
 
 | State       | Terminal | Reached by                                                        | `exit_code`                         |
@@ -706,8 +706,34 @@ launching | running ──daemon restart──▶ failed   exit code -1
 | `launching` | no       | `POST /sessions/{id}/launch`                                      | —                                   |
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
-| `failed`    | yes      | exited on its own non-zero; the launch failed; or a daemon restart | the process's code; `1` for a failed launch; `-1` after a restart |
+| `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
 | `killed`    | yes      | `POST /sessions/{id}/stop` (also `mux sessions stop`, MCP `mux_session_stop`, ACP session close) | whatever the stopped process returned |
+
+**`exit_code` -1 from the startup sweep means "swept at daemon start", not an
+observed failure.** When the daemon starts, it settles every session the
+previous daemon left `launching` or `running`:
+- A session whose own process is still alive keeps its state. "Its own"
+  means the recorded pid is alive and has the start time recorded at launch,
+  not a later process that reused the pid.
+- Every other session becomes `failed` with `exit_code` -1 and `ended_at` set
+  to the restart. Tether did not see these processes exit; their outcome is
+  unknown.
+
+Each sweep that acts publishes one `daemon.sessions_swept` event that names
+both sets.
+
+A spared session is still `running`, but the new daemon holds no runtime
+handle for it, so it cannot be steered or stopped through Tether. A state
+that says so is CW-20260912-0086.
+
+Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
+liveness and are not backfilled. Treat their `exit_code` -1 the same way.
+
+On a Linux host running the daemon as a systemd unit with the default
+`KillMode=control-group`, agent processes share the daemon's cgroup and are
+killed with it, so a restart there sweeps every session. Sessions survive a
+restart only when the daemon runs outside such a unit, for example
+`mux daemon start` or launchd.
 
 Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
 handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
@@ -1144,6 +1170,7 @@ Current (v0.0.2):
 | daemon   | `daemon.started`              | muxd at listener-up                    | `{version, pid, listener}`                                   |
 | daemon   | `daemon.shutdown_started`     | muxd on ctx cancel                     | empty                                                        |
 | daemon   | `daemon.shutdown_completed`   | muxd after runtime drain, before Close | empty                                                        |
+| daemon   | `daemon.sessions_swept`       | the startup sweep, when it settles any session | `{swept, swept_session_ids, spared, spared_session_ids}` — swept sessions were failed with `exit_code` -1; spared ones still had their own process alive (see [Session states](#session-states)) |
 | daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
