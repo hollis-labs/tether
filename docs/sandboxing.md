@@ -28,21 +28,25 @@ If the profile is missing or the platform can't enforce it, the launch **fails h
 ## Control-plane protection (every agent Tether wraps)
 
 Separately from profiles, on Linux every agent Tether wraps, which is every
-agent but Codex (see [Codex is not protected](#codex-is-not-protected)), gets two
-of Tether's own directories as read-only protected paths (CW-20261001-0142):
+agent but Codex (see [Codex is not protected](#codex-is-not-protected)), gets
+three of Tether's own directories as read-only protected paths
+(CW-20261001-0142, CW-20261001-0173):
 
 - the catalog root;
 - the daemon's run directory, which is the directory of `daemon.pid_file` and
   of a `unix:` `daemon.listen_addr`, when it lies inside a Tether root: the
   catalog root's parent, or `~/.tether`. A pid file configured into a shared
   directory such as `/tmp` is skipped, so that directory does not become
-  read-only for every agent.
+  read-only for every agent;
+- the directory of the state database (`defaults.state_db`, `~/.tether/state/`
+  in the seeded catalog), wherever it is. It holds every session, message and
+  event, so it is never skipped.
 
-Both are registered by their real paths. An agent with a profile gets them
-added to its profile. An agent without one runs under a minimal profile whose
-only effect is the protection: the host filesystem under `bwrap`, writable
-except the protected directories. The daemon is not sandboxed and still
-writes both.
+All three are registered by their real paths. An agent with a profile gets
+them added to its profile. An agent without one runs under a minimal profile
+whose only effect is the protection: the host filesystem under `bwrap`,
+writable except the protected directories. The daemon is not sandboxed and
+still writes all three.
 
 ### Codex is not protected
 
@@ -58,7 +62,7 @@ as it did before control-plane protection existed.
 
 Codex's own `workspace-write` sandbox makes the whole filesystem read-only except
 its writable roots: its working directory, `/tmp` and `$TMPDIR`, and whatever is
-configured. The catalog and run directory are outside those, so a shell command
+configured. The catalog, run and state directories are outside those, so a shell command
 that writes them fails (CW-20261001-0142 live evidence: a Codex turn's
 `touch <catalog>/x` is denied and `touch <workdir>/ok` succeeds, in both `exec`
 and `app-server`). **That is not protection from Tether**, and it does not hold
@@ -191,7 +195,7 @@ the key to the allowlist in `codexConfigUnsafe` (`internal/app/protected_sandbox
 once it is known not to widen the sandbox. Where Tether's sandbox cannot start either, as on a
 host that cannot nest bubblewrap, the launch fails loudly: the fail-closed
 outcome. With the dormant guard switched on, a Codex launch whose work directory,
-project root, workspace or state database lies inside a protected directory is
+project root or workspace lies inside a protected directory is
 refused like any other; while Codex is not protected (as shipped) it is not. Paths are
 resolved through symlinks, including the existing prefix of one that does not
 exist yet, so `link-to-the-catalog/new` is judged as the catalog.
@@ -222,8 +226,9 @@ default) argv, environment and injection come from files under
 
 These launches are refused with 403 `forbidden`:
 
-- a launch (not Codex's, which is not protected) whose work directory, workspace or
-  state database lies inside a protected directory (move it out of that directory);
+- a launch (not Codex's, which is not protected) whose work directory or workspace
+  lies inside a protected directory, the state directory included (move it out of
+  that directory);
 - any launch Tether must sandbox, while `bwrap` is not installed or cannot
   build a namespace (install bubblewrap and allow unprivileged user
   namespaces, or turn protection off);
@@ -248,10 +253,20 @@ slightly different machine:
 
 ### The state directory
 
-This change does not protect the state directory. The `mux mcp` server planted in
-each agent used to open the state database from inside the sandbox, which is why;
-it no longer does (CW-20261001-0173), so the directory can now be protected, in a
-change of its own. Until then an agent can still write it directly.
+An agent Tether wraps cannot write the state database, nor replace it or its WAL
+files. The `mux mcp` server planted in each agent never opens the database: it
+runs `--daemon-only` and reads and writes Tether's state through the daemon (see
+[mcp.md](mcp.md#daemon-only-mode---daemon-only)). A `mux` command such an agent
+runs by hand that opens the database itself, such as `mux resolve`, fails inside
+the sandbox with `attempt to write a readonly database`. The tools the agent
+calls through its MCP server are unaffected.
+
+**For Codex this holds only in part**, because Tether does not wrap Codex. Its
+shell is kept out of the directory by Codex's own sandbox, and its planted `mux
+mcp` holds no handle on the database. But Codex spawns its MCP servers outside
+that sandbox, so an upstream whose tool writes a caller-chosen path can still
+reach the state directory (CW-20261001-0230), and any agent can ask the daemon,
+over the socket, to write for it.
 
 Planted workers keep the `catalog.write` MCP scope: it also gates
 `mux_agent_create` with `scope=project`, which writes into the repo and is not
@@ -307,7 +322,7 @@ reports how Codex is protected: a warning, `codex: not protected
 **Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in muxd's
 environment and restart the daemon. The daemon logs `WARN: control-plane
 protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the
-catalog and run/` at startup, and `mux doctor` reports a `sandbox-protect`
+catalog, run/ and state/` at startup, and `mux doctor` reports a `sandbox-protect`
 warning. Agents then run as they did before protection, ACP launches
 included. See [SECURITY.md](../SECURITY.md) for what protection stops and
 what it does not.
@@ -449,7 +464,7 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 | Profile name set but platform has no enforcement tool | Launch fails with `conflict` error |
 | Sandbox application error (SBPL syntax, bwrap arg error) | Launch fails with `conflict` error |
 | Agent has no `default_sandbox` field | No profile; on Linux the session runs under control-plane protection only |
-| Work directory, workspace or state database inside a protected directory | Launch refused with 403 `forbidden` (not for Codex, which is not protected) |
+| Work directory or workspace inside a protected directory, the state directory included | Launch refused with 403 `forbidden` (not for Codex, which is not protected) |
 | Control-plane protection on and `bwrap` not installed or unable to build a namespace | Launch refused with 403 `forbidden` (not for Codex) |
 
 ## Follow-ups

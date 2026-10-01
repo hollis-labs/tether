@@ -72,15 +72,17 @@ func tetherLayoutKeepingMode(t *testing.T) (svc *Service, catalog, run string) {
 	return svc, filepath.Join(realRoot, "catalog"), filepath.Join(realRoot, "run")
 }
 
-// The catalog root and the daemon's run directory are protected by their
-// real paths, even when configured through a symlink.
+// The catalog root, the daemon's run directory and the state database's
+// directory are protected by their real paths, even when configured through
+// a symlink.
 func TestControlPlaneDirs(t *testing.T) {
 	svc, catalog, run := tetherLayout(t)
+	state := filepath.Join(filepath.Dir(catalog), "state")
 	dirs, err := svc.controlPlaneDirs()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{catalog, run}; !slices.Equal(dirs, want) {
+	if want := []string{catalog, run, state}; !slices.Equal(dirs, want) {
 		t.Fatalf("dirs = %q, want %q", dirs, want)
 	}
 
@@ -89,15 +91,36 @@ func TestControlPlaneDirs(t *testing.T) {
 	shared := t.TempDir()
 	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(shared, "muxd.pid")
 	svc.Catalog.Global.Daemon.ListenAddr = "tcp:127.0.0.1:0"
-	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog}) {
-		t.Fatalf("pid file outside the root: dirs = %q, %v; want only the catalog", dirs, err)
+	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog, state}) {
+		t.Fatalf("pid file outside the root: dirs = %q, %v; want the catalog and the state directory", dirs, err)
 	}
 
 	// A run directory that does not exist yet is skipped.
 	svc.Catalog.Global.Daemon.PIDFile = filepath.Join(filepath.Dir(catalog), "absent", "muxd.pid")
-	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog}) {
-		t.Fatalf("missing run dir: dirs = %q, %v; want only the catalog", dirs, err)
+	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog, state}) {
+		t.Fatalf("missing run dir: dirs = %q, %v; want the catalog and the state directory", dirs, err)
 	}
+
+	// The state directory is protected wherever it is, not only inside
+	// Tether's root: it holds every session, message and event.
+	elsewhere := t.TempDir()
+	prevDB := svc.Catalog.Global.Catalog.Defaults.StateDB
+	svc.Catalog.Global.Catalog.Defaults.StateDB = filepath.Join(elsewhere, "main.db")
+	realElsewhere, err := filepath.EvalSymlinks(elsewhere)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog, realElsewhere}) {
+		t.Fatalf("state db outside the root: dirs = %q, %v; want the catalog and %s", dirs, err, realElsewhere)
+	}
+
+	// A state directory that does not exist yet is skipped, like a run
+	// directory: the daemon has nothing in it.
+	svc.Catalog.Global.Catalog.Defaults.StateDB = filepath.Join(elsewhere, "absent", "main.db")
+	if dirs, err = svc.controlPlaneDirs(); err != nil || !slices.Equal(dirs, []string{catalog}) {
+		t.Fatalf("missing state dir: dirs = %q, %v; want only the catalog", dirs, err)
+	}
+	svc.Catalog.Global.Catalog.Defaults.StateDB = prevDB
 
 	// A catalog root that does not resolve fails closed.
 	svc.CatalogRoot = filepath.Join(t.TempDir(), "gone")
@@ -114,7 +137,8 @@ func TestApplyControlPlaneProtection(t *testing.T) {
 	if err := svc.applyControlPlaneProtection(cliPlan, "cli", &opts); err != nil {
 		t.Fatalf("launch outside the protected dirs: %v", err)
 	}
-	if want := []string{catalog, run}; !slices.Equal(opts.ProtectedPaths, want) {
+	state := filepath.Join(filepath.Dir(catalog), "state")
+	if want := []string{catalog, run, state}; !slices.Equal(opts.ProtectedPaths, want) {
 		t.Fatalf("ProtectedPaths = %q, want %q", opts.ProtectedPaths, want)
 	}
 
@@ -126,7 +150,8 @@ func TestApplyControlPlaneProtection(t *testing.T) {
 	}{
 		{"workdir in catalog", agentsessions.StartOptions{Workdir: filepath.Join(catalog, "repo"), WorkspaceDir: outside}, "", "work directory"},
 		{"workspace in run", agentsessions.StartOptions{Workdir: outside, WorkspaceDir: run}, "", "workspace"},
-		{"state db in catalog", agentsessions.StartOptions{Workdir: outside, WorkspaceDir: outside}, filepath.Join(catalog, "state.db"), "state database directory"},
+		{"workdir in state", agentsessions.StartOptions{Workdir: filepath.Join(state, "work"), WorkspaceDir: outside}, "", "work directory"},
+		{"workspace in state", agentsessions.StartOptions{Workdir: outside, WorkspaceDir: state}, "", "workspace"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.stateDB != "" {
@@ -144,6 +169,20 @@ func TestApplyControlPlaneProtection(t *testing.T) {
 			}
 		})
 	}
+
+	// A state database inside the catalog no longer refuses a launch: the
+	// agent does not write it (its `mux mcp` is daemon-only), and the catalog
+	// is protected already.
+	prevDB := svc.Catalog.Global.Catalog.Defaults.StateDB
+	svc.Catalog.Global.Catalog.Defaults.StateDB = filepath.Join(catalog, "state.db")
+	inCatalog := agentsessions.StartOptions{Workdir: outside, WorkspaceDir: outside}
+	if err := svc.applyControlPlaneProtection(cliPlan, "cli", &inCatalog); err != nil {
+		t.Fatalf("state db in the catalog: %v", err)
+	}
+	if want := []string{catalog, run}; !slices.Equal(inCatalog.ProtectedPaths, want) {
+		t.Fatalf("state db in the catalog: ProtectedPaths = %q, want %q", inCatalog.ProtectedPaths, want)
+	}
+	svc.Catalog.Global.Catalog.Defaults.StateDB = prevDB
 
 	// The in-process API stub starts no agent process.
 	stubOpts := agentsessions.StartOptions{Workdir: outside}
@@ -240,11 +279,11 @@ func TestRefuseUnprotectable_NoBwrap(t *testing.T) {
 }
 
 // fakeCodexWriter stands in for `codex exec`: each turn tries to create a
-// file in the catalog, the run directory and its own work directory, and
-// reports which writes succeeded as its agent message.
+// file in the catalog, the run directory, the state directory and its own work
+// directory, and reports which writes succeeded as its agent message.
 const fakeCodexWriter = `#!/bin/sh
 try() { if touch "$1/agent-wrote-this" 2>/dev/null; then echo wrote; else echo denied; fi; }
-msg="catalog=$(try %q) run=$(try %q) work=$(try "$PWD")"
+msg="catalog=$(try %q) run=$(try %q) state=$(try %q) work=$(try "$PWD")"
 echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"$msg\"}}"
 echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 `
@@ -326,32 +365,36 @@ func launchFakeCodex(t *testing.T, svc *Service, script string, mod func(*launch
 
 // CW-20261001-0142 acceptance, end to end through LaunchSession and
 // agentkit's adapter runtime under bubblewrap: an agent launched by Tether
-// cannot create a file in the catalog or the run directory, can still write
-// its own work directory, and the daemon can still write the catalog. The
+// cannot create a file in the catalog, the run directory or the state
+// directory (CW-20261001-0173), can still write its own work directory, and
+// the daemon can still write the catalog and the state directory. The
 // stand-in is a codex launched with codex's own sandbox switched off, which
 // is when Tether's protection applies to codex.
 func TestProtectedLaunch_AgentCannotWriteCatalogOrRunDir(t *testing.T) {
 	svc, catalog, run := tetherLayout(t)
+	state := filepath.Join(filepath.Dir(catalog), "state")
 	clearWritableRoots(t)
 	if err := ProbeBwrap(catalog); err != nil {
 		t.Skipf("bubblewrap cannot build a protecting sandbox on this host: %v", err)
 	}
-	sessID, ws := startFakeCodex(t, svc, fmt.Sprintf(fakeCodexWriter, catalog, run), "--sandbox", "danger-full-access")
+	sessID, ws := startFakeCodex(t, svc, fmt.Sprintf(fakeCodexWriter, catalog, run, state), "--sandbox", "danger-full-access")
 
 	if err := svc.SendTurn(context.Background(), sessID, "write everywhere"); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
 	logData := waitForLog(t, ws.LogPath, "catalog=")
-	if !strings.Contains(logData, "catalog=denied run=denied work=wrote") {
-		t.Fatalf("agent writes = %q; want catalog and run denied, work dir written", logData)
+	if !strings.Contains(logData, "catalog=denied run=denied state=denied work=wrote") {
+		t.Fatalf("agent writes = %q; want catalog, run and state denied, work dir written", logData)
 	}
-	for _, dir := range []string{catalog, run} {
+	for _, dir := range []string{catalog, run, state} {
 		if _, err := os.Stat(filepath.Join(dir, "agent-wrote-this")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("the agent created a file in %s (stat err = %v)", dir, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(catalog, "daemon-wrote-this"), []byte("ok"), 0o600); err != nil {
-		t.Fatalf("the daemon can no longer write its catalog: %v", err)
+	for _, dir := range []string{catalog, state} {
+		if err := os.WriteFile(filepath.Join(dir, "daemon-wrote-this"), []byte("ok"), 0o600); err != nil {
+			t.Fatalf("the daemon can no longer write %s: %v", dir, err)
+		}
 	}
 }
 
@@ -588,6 +631,7 @@ func TestApplyControlPlaneProtection_CodexSandboxWeakened(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, catalog, run := tetherLayout(t)
+			state := filepath.Join(filepath.Dir(catalog), "state")
 			clearWritableRoots(t)
 			if !codexSandboxWeakened(tc.args) {
 				t.Fatalf("codexSandboxWeakened(%q) = false", tc.args)
@@ -596,7 +640,7 @@ func TestApplyControlPlaneProtection_CodexSandboxWeakened(t *testing.T) {
 			if err := svc.applyControlPlaneProtection(codexPlan(tc.args...), "cli", &opts); err != nil {
 				t.Fatal(err)
 			}
-			if want := []string{catalog, run}; !slices.Equal(opts.ProtectedPaths, want) {
+			if want := []string{catalog, run, state}; !slices.Equal(opts.ProtectedPaths, want) {
 				t.Fatalf("ProtectedPaths = %q, want Tether's protection %q", opts.ProtectedPaths, want)
 			}
 		})
@@ -619,7 +663,7 @@ func TestApplyControlPlaneProtection_CodexSandboxWeakened(t *testing.T) {
 	if err := svc.applyControlPlaneProtection(codexPlan(), "cli", &opts); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{catalog, run}; !slices.Equal(opts.ProtectedPaths, want) {
+	if want := []string{catalog, run, filepath.Join(filepath.Dir(catalog), "state")}; !slices.Equal(opts.ProtectedPaths, want) {
 		t.Fatalf("protected dir under TMPDIR: ProtectedPaths = %q, want %q", opts.ProtectedPaths, want)
 	}
 }

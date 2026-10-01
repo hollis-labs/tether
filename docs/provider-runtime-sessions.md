@@ -64,8 +64,8 @@ What an ACP launch does in this stage:
   one to an ACP agent.
 - On Linux, while [control-plane protection](sandboxing.md#control-plane-protection-every-agent-tether-wraps)
   is on, every ACP launch is refused with 403 `forbidden`.
-  go-agent-wrapper's ACP launcher cannot write-protect Tether's catalog and
-  run directory until CW-20261001-0162. With `TETHER_SANDBOX_PROTECT=0`, or
+  go-agent-wrapper's ACP launcher cannot write-protect Tether's catalog, run
+  and state directories until CW-20261001-0162. With `TETHER_SANDBOX_PROTECT=0`, or
   on macOS, ACP launches run unprotected.
 
 ## Smoke Checklist
