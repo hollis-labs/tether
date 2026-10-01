@@ -39,7 +39,7 @@ type CreateSessionInput struct {
 	LaunchID string
 
 	// BootPromptOverride replaces the composed boot prompt verbatim. Same as
-	// the pre-v005-08 surface that backed `mux boot <profile>`.
+	// the pre-v005-08 surface that backed `tether boot <profile>`.
 	BootPromptOverride string
 
 	// AgentFile is a filesystem path to an agent YAML matching the
@@ -51,7 +51,7 @@ type CreateSessionInput struct {
 	AgentInline string
 
 	// BootProfileFile is a filesystem path to a bootgen.Profile YAML.
-	// When supplied, the profile's MCPServers populates MUX_MCP_SERVERS for
+	// When supplied, the profile's MCPServers populates TETHER_MCP_SERVERS for
 	// the spawned session.
 	BootProfileFile string
 
@@ -426,7 +426,7 @@ func markCallerEnv(plan *launch.Plan, key string) {
 	slices.Sort(plan.CallerEnv)
 }
 
-// applyMCPAllowlist threads the boot profile's MCP allowlist into MUX_MCP_SERVERS.
+// applyMCPAllowlist threads the boot profile's MCP allowlist into TETHER_MCP_SERVERS.
 // Precedence: boot profile (this call) > catalog (launch/project). No-op when
 // the boot profile is empty.
 func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
@@ -436,7 +436,7 @@ func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
 	if plan.Env == nil {
 		plan.Env = map[string]string{}
 	}
-	plan.Env["MUX_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
+	plan.Env["TETHER_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
 }
 
 // applyPermissionMode reconciles the resolved permission mode against the

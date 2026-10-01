@@ -49,7 +49,7 @@ launches/                One LaunchBag per concrete legacy launch — 64
 | `history` | `cmd`          | `cmd`  | `git -C {{ inputs.work_dir }} log --oneline -15` |
 | `status`  | `cmd`          | `cmd`  | `git status --short -b` (workdir = `{{ inputs.work_dir }}`) |
 | `memory`  | `http`         | `call` (http) | `${TESSERACT_URL}/v1/recall` — memory namespace, project tags |
-| `skills`  | `skill_index`  | `cmd`  | `mux skills index ...` — see GAP below |
+| `skills`  | `skill_index`  | `cmd`  | `tether skills index ...` — see GAP below |
 
 ### `skills` GAP
 
@@ -59,7 +59,7 @@ there is **no native `skill_index` source kind**. The legacy
 profile-aware ranking (`internal/bootgen/profile.go` `resolveSkillIndex`
 -> `skills.DiscoverLayered`). No off-the-shelf S4.2 source reproduces the
 ranking. The closest faithful S4.2 source is `cmd`: this corpus models
-the slot as a `cmd` source invoking a `mux skills index` subcommand. The
+the slot as a `cmd` source invoking a `tether skills index` subcommand. The
 var name and template wiring are preserved; the ranking-fidelity gap is
 a known limitation surfaced for S5.
 

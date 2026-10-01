@@ -1,13 +1,13 @@
 package e2e
 
 // split_brain_test.go — T11 durability review evidence (CW-20260906-0042):
-// a live-reproduced bug where a second `mux daemon run` invocation
+// a live-reproduced bug where a second `tether daemon run` invocation
 // against the same state root could (a) mutate the live daemon's
 // database (ReconcileStaleState + registry bootstrap) before its own
 // PID-file check ever ran, and (b), if the PID file was missing or
 // stale-looking for any reason, actually steal the live daemon's socket
 // and run fully split-brain against the same state.db. Fixed by an
-// early pre-flight liveness check in cmd/mux/daemon.go and by hardening
+// early pre-flight liveness check in cmd/tether/daemon.go and by hardening
 // internal/daemon/listener_unix.go's removeStaleSocket to refuse
 // stealing a socket something is still actually listening on. This test
 // reproduces both scenarios against the real built binary.
@@ -23,7 +23,7 @@ import (
 func TestSplitBrain_SecondDaemonRunAgainstSameStateRootIsRefused(t *testing.T) {
 	first := StartFixtureDaemon(t)
 
-	second := exec.Command(muxBinary(t), "daemon", "run", "--catalog", first.CatalogDir) //nolint:gosec // G204: our own just-built test binary
+	second := exec.Command(tetherBinary(t), "daemon", "run", "--catalog", first.CatalogDir) //nolint:gosec // G204: our own just-built test binary
 	out, err := second.CombinedOutput()
 	if err == nil {
 		t.Fatalf("second daemon run unexpectedly exited 0 against a live state root; output:\n%s", out)
@@ -42,12 +42,12 @@ func TestSplitBrain_DeletedPIDFileStillRefusesToStealTheSocket(t *testing.T) {
 	// Simulate an external actor removing the PID file out from under a
 	// live daemon (a cleanup script, a disk hiccup) -- the exact scenario
 	// the durability review used to defeat the PID-file-only guard.
-	pidFile := filepath.Join(first.StateRoot, "run", "muxd.pid")
+	pidFile := filepath.Join(first.StateRoot, "run", "tetherd.pid")
 	if err := os.Remove(pidFile); err != nil {
 		t.Fatalf("remove pid file: %v", err)
 	}
 
-	second := exec.Command(muxBinary(t), "daemon", "run", "--catalog", first.CatalogDir) //nolint:gosec // G204: our own just-built test binary
+	second := exec.Command(tetherBinary(t), "daemon", "run", "--catalog", first.CatalogDir) //nolint:gosec // G204: our own just-built test binary
 	// This second process will hang serving (or fail immediately) rather
 	// than exit cleanly if the bug is present, since a stolen socket
 	// means it thinks it started successfully. Give it a bounded window,

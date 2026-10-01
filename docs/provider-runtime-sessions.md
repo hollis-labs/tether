@@ -1,6 +1,6 @@
 # Provider Runtime Sessions
 
-Mux separates catalog launch IDs from boot profile IDs.
+Tether separates catalog launch IDs from boot profile IDs.
 
 For setup instructions and current live smoke status across Claude, Codex, and
 Opencode, see [`launches/setup-guide.md`](launches/setup-guide.md) and
@@ -23,22 +23,22 @@ feed the resolved launch plan without duplicating prompt text in launch YAML.
 
 ## When to use each runtime
 
-Use managed streaming when another tool will send turns through Mux:
+Use managed streaming when another tool will send turns through Tether:
 
 ```sh
-mux launch --launch torque-claude
-mux sessions attach <session-id>
+tether launch --launch torque-claude
+tether sessions attach <session-id>
 ```
 
-`mux sessions turn`, MCP `mux_session_send_turn`, and the local API send framed
+`tether sessions turn`, MCP `tether_session_send_turn`, and the local API send framed
 NDJSON user messages to Claude's long-lived streaming-stdio process. This is
 the default for automation and delegated agents.
 
 Use Claude TUI when a human wants to drive the live terminal UI:
 
 ```sh
-mux launch --launch torque-claude-tui
-mux sessions attach <session-id>
+tether launch --launch torque-claude-tui
+tether sessions attach <session-id>
 ```
 
 Attach sends raw terminal input to the PTY and resize events flow through the
@@ -48,18 +48,18 @@ session manager. Detach leaves the session running under the daemon.
 
 A provider with `runtime_kind: acp-stdio` runs an Agent Client Protocol
 agent, launched through go-agent-wrapper's registry-driven `launch.Select`
-(CW-20260930-0106 stage 1). `mux init` seeds `providers/copilot.yaml` and
-`providers/pi.yaml`, and `mux detect` and `mux doctor` find their CLIs
+(CW-20260930-0106 stage 1). `tether init` seeds `providers/copilot.yaml` and
+`providers/pi.yaml`, and `tether detect` and `tether doctor` find their CLIs
 (`copilot`, `pi-acp`) the registry's way.
 
 What an ACP launch does in this stage:
 
-- The boot prompt is the agent's first prompt; `mux sessions turn` sends
+- The boot prompt is the agent's first prompt; `tether sessions turn` sends
   later prompts. A prompt returns once the agent accepts it; the turn's end
-  shows in `mux sessions tail` as `[turn_done]` (or `[error] …`).
+  shows in `tether sessions tail` as `[turn_done]` (or `[error] …`).
 - A turn sent while one is in flight, or while the session is still booting,
   is refused with 409 `conflict`.
-- No mux MCP server is planted for the agent yet.
+- No tether MCP server is planted for the agent yet.
 - An agent with a sandbox profile is refused: go-agent-wrapper cannot apply
   one to an ACP agent.
 - On Linux, while [control-plane protection](sandboxing.md#control-plane-protection-every-agent-tether-wraps)
@@ -78,22 +78,22 @@ worktree isolation — lives in
 Managed streaming:
 
 ```sh
-mux launch --launch torque-claude
-mux sessions attach <session-id>
+tether launch --launch torque-claude
+tether sessions attach <session-id>
 ```
 
-- `mux sessions inspect <session-id>` reports provider `claude-code`.
+- `tether sessions inspect <session-id>` reports provider `claude-code`.
 - Attach shows managed session output.
 - The event log includes the boot-dir planted event.
 
 Claude TUI:
 
 ```sh
-mux launch --launch torque-claude-tui
-mux sessions attach <session-id>
+tether launch --launch torque-claude-tui
+tether sessions attach <session-id>
 ```
 
-- `mux sessions inspect <session-id>` reports provider `claude-pty`.
+- `tether sessions inspect <session-id>` reports provider `claude-pty`.
 - The Claude TUI accepts stdin through attach.
 - Terminal resize changes are reflected in the TUI.
 - Detach exits the client attachment without stopping the session.

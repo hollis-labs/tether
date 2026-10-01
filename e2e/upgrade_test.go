@@ -4,7 +4,7 @@ package e2e
 // Unit-level migration coverage already exists (internal/store's own
 // migrator_test.go: TestMigrate_AdoptsExistingV001 and friends) but only
 // ever exercises store.Migrate() directly against an in-memory/temp
-// *sql.DB, never the actual production startup path a real `mux daemon
+// *sql.DB, never the actual production startup path a real `tether daemon
 // run` process takes. This seeds a real SQLite file with the exact
 // pre-migrations v0.0.1 schema (mirroring migrator_test.go's own fixture)
 // PLUS a real row, places it at the isolated fixture's real state-db

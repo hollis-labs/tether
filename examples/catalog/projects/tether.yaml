@@ -1,0 +1,10 @@
+id: tether
+name: Tether
+repo_root: ~/dev/hollis-labs/apps/tether
+tracking_root: ~/dev/hollis-labs/agent-workspaces/execution/tether/
+boot_fragments:
+  - boot/common.md
+  - boot/tether.md
+workspace:
+  default_mode: hybrid
+  session_root: ~/.tether/workspaces/tether

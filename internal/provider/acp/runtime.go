@@ -281,7 +281,7 @@ func (s *session) CheckpointHints() (agentsessions.CheckpointHint, bool) {
 func (s *session) ProviderSessionID() string { return s.w.ProviderSessionID() }
 
 // output turns the wrapper's event stream into the session's readable
-// output: logs/session.log (what `mux sessions tail` reads) and the attach
+// output: logs/session.log (what `tether sessions tail` reads) and the attach
 // fan-out. Every event kind is either rendered or deliberately dropped:
 // the wrapper emits lifecycle, raw-IO, heartbeat and policy kinds that a
 // reader of the transcript does not need, and new kinds may appear.

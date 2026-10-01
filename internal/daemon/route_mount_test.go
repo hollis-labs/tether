@@ -2,9 +2,9 @@ package daemon
 
 // route_mount_test.go — CW-20260912-0059 regression.
 //
-// WHAT SHIPPED BROKEN. internal/api registered /workstreams on its own mux,
-// cmd/mux/daemon.go wired Deps.Workstreams, and every handler was correct. The
-// outer mux in Handler() never routed the path, so the entire S1 HTTP surface
+// WHAT SHIPPED BROKEN. internal/api registered /workstreams on its own tether,
+// cmd/tether/daemon.go wired Deps.Workstreams, and every handler was correct. The
+// outer tether in Handler() never routed the path, so the entire S1 HTTP surface
 // 404'd in production while 1732 tests passed.
 //
 // WHY EVERY TEST MISSED IT. They all build api.NewHandler directly. Nothing
@@ -27,10 +27,10 @@ import (
 )
 
 // apiTopLevelPaths is every top-level path internal/api registers on its own
-// mux. Maintained by hand because Go's ServeMux exposes no way to enumerate
+// tether. Maintained by hand because Go's ServeMux exposes no way to enumerate
 // registered patterns; regenerate with:
 //
-//	grep -rhoE 'mux\.HandleFunc\("(/[^"]*)"' internal/api/*.go |
+//	grep -rhoE 'tether\.HandleFunc\("(/[^"]*)"' internal/api/*.go |
 //	  sed -E 's/.*"(\/[^"]*)"/\1/' | sort -u
 var apiTopLevelPaths = []string{
 	"/ai/audit", "/ai/budgets", "/ai/chat", "/ai/chat/stream", "/ai/embeddings",

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-claude-unprofiled-worktree.yaml.
+# Boot-profile folded: (no boot-profile; uses spec default role)
+# Legacy: project=tether / agent=general / provider=claude-code / workspace.mode=worktree.
+spec: tether.launch
+name: tether-claude-unprofiled-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: claude-code
+  isolation: worktree
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tether — Backend (Worktree)"

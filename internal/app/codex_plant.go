@@ -25,7 +25,7 @@ import (
 // argv (a manual resume, a tool) would run under "never". Under "never" codex
 // refuses every MCP tool call outright ("MCP tool call requires approval, but
 // approval policy is never", see codex_approval.go), so the agent would lose its
-// mux tools. plantResolver makes the file say what the argv says, from the same
+// tether tools. plantResolver makes the file say what the argv says, from the same
 // registry mapping, so the two cannot drift apart.
 
 // plantResolver is providerplant.DefaultResolver, with a codex adapter's

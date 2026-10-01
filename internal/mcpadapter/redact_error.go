@@ -23,7 +23,7 @@ func (e *redactedError) Unwrap() error { return e.err }
 // sse/http upstream whose url came from a file:// or keychain:// reference, or
 // carries a ${VAR} token, the raw error would put the secret into the
 // "upstream unavailable" log line and into ServerStatus.Error, which
-// mux_health and the sysop API return. Errors with nothing to scrub are
+// tether_health and the sysop API return. Errors with nothing to scrub are
 // returned as they were.
 //
 // This is error text, which is whole, so it uses internal/redact (exact matches

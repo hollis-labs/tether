@@ -24,7 +24,7 @@ import (
 // limit.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "mux-*")
+	d, err := os.MkdirTemp("/tmp", "tether-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestListener_UnknownSchemeRejected(t *testing.T) {
 }
 
 func TestPIDFile_RoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run", "muxd.pid")
+	path := filepath.Join(t.TempDir(), "run", "tetherd.pid")
 	if err := WritePIDFile(path, 12345); err != nil {
 		t.Fatalf("WritePIDFile: %v", err)
 	}
@@ -161,8 +161,8 @@ func TestPIDFile_RoundTrip(t *testing.T) {
 }
 
 func TestPIDFile_RejectsLiveDaemon(t *testing.T) {
-	stubVerify(t, true, nil) // the live PID is a muxd
-	path := filepath.Join(t.TempDir(), "muxd.pid")
+	stubVerify(t, true, nil) // the live PID is a tetherd
+	path := filepath.Join(t.TempDir(), "tetherd.pid")
 	if err := WritePIDFile(path, os.Getpid()); err != nil {
 		t.Fatalf("WritePIDFile: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestPIDFile_RejectsLiveDaemon(t *testing.T) {
 }
 
 func TestPIDFile_OverwritesStale(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "muxd.pid")
+	path := filepath.Join(t.TempDir(), "tetherd.pid")
 	// Pick a PID very unlikely to exist.
 	stale := 1
 	for i := 99999; i < 100100; i++ {
@@ -348,7 +348,7 @@ func TestServer_RunRefusesSecondInstance(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket test requires unix")
 	}
-	stubVerify(t, true, nil) // the first server, in this process, stands in for a live muxd
+	stubVerify(t, true, nil) // the first server, in this process, stands in for a live tetherd
 	dir := shortTempDir(t)
 	cfg := Config{
 		ListenAddr:      "unix:" + filepath.Join(dir, "s.sock"),
@@ -377,14 +377,14 @@ func stubVerify(t *testing.T, ok bool, err error) {
 
 func TestDaemonCmdRegex(t *testing.T) {
 	for cmdline, want := range map[string]bool{
-		"/Users/x/go/bin/mux daemon run --catalog /Users/x/.tether": true,
-		"mux daemon run": true,
-		"/usr/local/bin/muxd daemon run --catalog c":    true,
-		"/Users/x/go/bin/mux mcp --proxy --servers a":   false,
-		"/Users/x/go/bin/mux daemon start":              false,
-		"/usr/bin/vim mux daemon run":                   false,
-		"sleep 300":                                     false,
-		"/Applications/Slack.app/slack --type=renderer": false,
+		"/Users/x/go/bin/tether daemon run --catalog /Users/x/.tether": true,
+		"tether daemon run":                              true,
+		"/usr/local/bin/tetherd daemon run --catalog c":  true,
+		"/Users/x/go/bin/tether mcp --proxy --servers a": false,
+		"/Users/x/go/bin/tether daemon start":            false,
+		"/usr/bin/vim tether daemon run":                 false,
+		"sleep 300":                                      false,
+		"/Applications/Slack.app/slack --type=renderer":  false,
 	} {
 		if got := daemonCmdRegex.MatchString(cmdline); got != want {
 			t.Errorf("daemonCmdRegex.MatchString(%q) = %v, want %v", cmdline, got, want)
@@ -392,19 +392,19 @@ func TestDaemonCmdRegex(t *testing.T) {
 	}
 }
 
-// A PID that is alive but is not muxd is what a recycled PID looks like after
+// A PID that is alive but is not tetherd is what a recycled PID looks like after
 // a crash left the pidfile behind. It must not count as a running daemon.
-func TestIsDaemonAlive_LivePIDThatIsNotMuxdIsStale(t *testing.T) {
+func TestIsDaemonAlive_LivePIDThatIsNotTetherdIsStale(t *testing.T) {
 	stubVerify(t, false, nil)
 	if IsDaemonAlive(os.Getpid()) {
-		t.Fatal("a live process that is not muxd was reported as a live daemon")
+		t.Fatal("a live process that is not tetherd was reported as a live daemon")
 	}
-	path := filepath.Join(t.TempDir(), "muxd.pid")
+	path := filepath.Join(t.TempDir(), "tetherd.pid")
 	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := WritePIDFile(path, os.Getpid()+1); err != nil {
-		t.Fatalf("a pidfile naming a non-muxd process should be overwritten: %v", err)
+		t.Fatalf("a pidfile naming a non-tetherd process should be overwritten: %v", err)
 	}
 }
 
@@ -424,13 +424,13 @@ func TestIsDaemonAlive_DeadPIDIsNotAlive(t *testing.T) {
 	}
 }
 
-// IsDaemon against the real ps: this test process is not a muxd.
+// IsDaemon against the real ps: this test process is not a tetherd.
 func TestIsDaemon_RealPSRejectsAnUnrelatedProcess(t *testing.T) {
 	ok, err := IsDaemon(context.Background(), os.Getpid())
 	if err != nil {
 		t.Skipf("ps unavailable: %v", err)
 	}
 	if ok {
-		t.Fatal("the test binary was identified as muxd")
+		t.Fatal("the test binary was identified as tetherd")
 	}
 }

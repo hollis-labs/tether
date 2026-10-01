@@ -118,17 +118,17 @@ func checkpointToDTO(c checkpoint.Checkpoint) CheckpointDTO {
 }
 
 // registerCheckpointRoutes wires the checkpoint and logical-agent
-// checkpoint routes onto mux. No-op when Service is nil —
+// checkpoint routes onto router. No-op when Service is nil —
 // lets tests build partial servers.
-func (s *Server) registerCheckpointRoutes(mux *http.ServeMux) {
+func (s *Server) registerCheckpointRoutes(router *http.ServeMux) {
 	if s.Service == nil {
 		return
 	}
 	// POST /sessions/{id}/checkpoint is parameterised but shares the
 	// /sessions/ prefix owned by the sessions handler — it's dispatched
 	// from handleSessionsItem's action switch.
-	mux.HandleFunc("/logical-agents", s.handleLogicalAgentsCollection)
-	mux.HandleFunc("/logical-agents/", s.handleLogicalAgentsItem)
+	router.HandleFunc("/logical-agents", s.handleLogicalAgentsCollection)
+	router.HandleFunc("/logical-agents/", s.handleLogicalAgentsItem)
 }
 
 // handleLogicalAgentsCollection handles GET /logical-agents.

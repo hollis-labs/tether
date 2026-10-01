@@ -1,7 +1,7 @@
 package mcpadapter
 
 // delivery_repair_tools_test.go — end-to-end coverage for
-// mux_message_trace / mux_message_redrive (T09). Mirrors
+// tether_message_trace / tether_message_redrive (T09). Mirrors
 // sanitize_integration_test.go's newTestAdapterWithDaemon pattern (a real
 // internal/api HTTP test server wired with DeliveryTrace/DeliveryRepair).
 
@@ -67,7 +67,7 @@ func TestMessageTraceTool_ReturnsAttempts(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	res := callDeliveryRepairTool(t, a, "mux_message_trace", map[string]any{"message_id": sent.ID})
+	res := callDeliveryRepairTool(t, a, "tether_message_trace", map[string]any{"message_id": sent.ID})
 	if res.IsError {
 		t.Fatalf("trace: %v", res.Content)
 	}
@@ -91,7 +91,7 @@ func TestMessageRedriveTool_RequiresScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	res := callDeliveryRepairTool(t, a, "mux_message_redrive", map[string]any{
+	res := callDeliveryRepairTool(t, a, "tether_message_redrive", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if !res.IsError {
@@ -125,7 +125,7 @@ func TestMessageRedriveTool_HappyPathAndIdempotent(t *testing.T) {
 		t.Fatalf("nack: %v", err)
 	}
 
-	res := callDeliveryRepairTool(t, a, "mux_message_redrive", map[string]any{
+	res := callDeliveryRepairTool(t, a, "tether_message_redrive", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if res.IsError {
@@ -137,7 +137,7 @@ func TestMessageRedriveTool_HappyPathAndIdempotent(t *testing.T) {
 		t.Fatalf("result = %+v, want Redriven=true", result)
 	}
 
-	res2 := callDeliveryRepairTool(t, a, "mux_message_redrive", map[string]any{
+	res2 := callDeliveryRepairTool(t, a, "tether_message_redrive", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if res2.IsError {
@@ -165,7 +165,7 @@ func TestMessageRetentionCandidatesTool_ListsMessage(t *testing.T) {
 		t.Fatalf("backdate: %v", err)
 	}
 
-	res := callDeliveryRepairTool(t, a, "mux_message_retention_candidates", map[string]any{"older_than_hours": float64(1)})
+	res := callDeliveryRepairTool(t, a, "tether_message_retention_candidates", map[string]any{"older_than_hours": float64(1)})
 	if res.IsError {
 		t.Fatalf("candidates: %v", res.Content)
 	}
@@ -198,7 +198,7 @@ func TestMessagePurgeTool_RequiresScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	res := callDeliveryRepairTool(t, a, "mux_message_purge", map[string]any{
+	res := callDeliveryRepairTool(t, a, "tether_message_purge", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if !res.IsError {
@@ -220,7 +220,7 @@ func TestMessagePurgeTool_PendingDelivery_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	res := callDeliveryRepairTool(t, a, "mux_message_purge", map[string]any{
+	res := callDeliveryRepairTool(t, a, "tether_message_purge", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if !res.IsError {
@@ -241,7 +241,7 @@ func TestMessagePurgeTool_DeliveredMessage_HappyPathAndIdempotent(t *testing.T) 
 		t.Fatalf("consume: %v", err)
 	}
 
-	res := callDeliveryRepairTool(t, a, "mux_message_purge", map[string]any{
+	res := callDeliveryRepairTool(t, a, "tether_message_purge", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if res.IsError {
@@ -253,7 +253,7 @@ func TestMessagePurgeTool_DeliveredMessage_HappyPathAndIdempotent(t *testing.T) 
 		t.Fatalf("result = %+v, want purged=true", result)
 	}
 
-	res2 := callDeliveryRepairTool(t, a, "mux_message_purge", map[string]any{
+	res2 := callDeliveryRepairTool(t, a, "tether_message_purge", map[string]any{
 		"message_id": sent.ID, "authorized_by": "msg://agent/test/operator",
 	})
 	if res2.IsError {

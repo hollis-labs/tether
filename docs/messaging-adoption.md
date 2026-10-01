@@ -52,8 +52,8 @@ below either attaches it for you or requires you to supply it:
 | Path | How `?as=` gets attached |
 |---|---|
 | `go-tether-client` | `Inbox`/`Subscribe` derive it from the recipient argument; `Get`/`Thread` read it from `WithSelfURN`. |
-| CLI | Positional `<to-urn>` argument, or the `--as` flag on `mux whoami`. |
-| MCP | A parameter on the tool, but **the name varies**: `mux_message_inbox` and `mux_message_list` take `to`; `mux_message_get`, `mux_message_thread`, `mux_message_consume`, `mux_message_mark_read`, `mux_message_archive`, `mux_message_unarchive`, `tether_group_read` and `tether_group_mentions` take `as`; `tether_whoami` takes `as`. Repair tools (`mux_message_redrive`, `mux_message_purge`) take `authorized_by` instead, recorded as provenance. |
+| CLI | Positional `<to-urn>` argument, or the `--as` flag on `tether whoami`. |
+| MCP | A parameter on the tool, but **the name varies**: `tether_message_inbox` and `tether_message_list` take `to`; `tether_message_get`, `tether_message_thread`, `tether_message_consume`, `tether_message_mark_read`, `tether_message_archive`, `tether_message_unarchive`, `tether_group_read` and `tether_group_mentions` take `as`; `tether_whoami` takes `as`. Repair tools (`tether_message_redrive`, `tether_message_purge`) take `authorized_by` instead, recorded as provenance. |
 | Raw HTTP | You append it yourself. |
 
 Writes (`send`, `consume`, `cancel`) carry the identity in the body instead.
@@ -90,29 +90,29 @@ are **not** wrapped in the typed client yet — use raw HTTP for those
 
 ---
 
-## Path B — the `mux` CLI
+## Path B — the `tether` CLI
 
 Register once. `--file` points at a YAML or JSON document matching
 `registry.Profile`; `display_name` is the only required field.
 
 ```bash
-mux registry register --kind agent --file ./my-actor.yaml --print-urn-only
+tether registry register --kind agent --file ./my-actor.yaml --print-urn-only
 # → msg://agent/agent-mux/agt_x9k2p4qrst
 ```
 
 Then read and send:
 
 ```bash
-mux messages inbox msg://agent/agent-mux/agt_x9k2p4qrst
-mux messages send --from <urn> --to <urn> --kind notice --body "hello"
-mux whoami --as msg://agent/agent-mux/agt_x9k2p4qrst
+tether messages inbox msg://agent/agent-mux/agt_x9k2p4qrst
+tether messages send --from <urn> --to <urn> --kind notice --body "hello"
+tether whoami --as msg://agent/agent-mux/agt_x9k2p4qrst
 ```
 
 To have a live session woken on arrival, lease a binding. `pull-only` is the
 only capability the public lease endpoint accepts:
 
 ```bash
-mux registry bindings lease \
+tether registry bindings lease \
   --target-urn msg://agent/agent-mux/agt_x9k2p4qrst \
   --session-id sess-1 --host-id host-1 --attempt-id attempt-1 \
   --capabilities pull-only --ttl-seconds 3600
@@ -124,7 +124,7 @@ mux registry bindings lease \
 
 **Yes, this works today, and it needs no code.** Tether's MCP adapter exposes
 the whole messaging surface — 99 tools, including the full registry, bindings,
-groups and delivery-trace sets. Point any MCP client at `mux mcp` and an
+groups and delivery-trace sets. Point any MCP client at `tether mcp` and an
 ordinary interactive session becomes a first-class messaging participant.
 
 ### 1. Add the server
@@ -133,11 +133,11 @@ ordinary interactive session becomes a first-class messaging participant.
 {
   "mcpServers": {
     "tether": {
-      "command": "/path/to/bin/mux",
+      "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "AGENT_MUX_MCP_TOKEN": "any-opaque-string",
-        "AGENT_MUX_MCP_SCOPES": "message.write,registry.write"
+        "TETHER_MCP_TOKEN": "any-opaque-string",
+        "TETHER_MCP_SCOPES": "message.write,registry.write"
       }
     }
   }
@@ -149,7 +149,7 @@ ordinary interactive session becomes a first-class messaging participant.
 to send and consume. Add `groups.write` only if it will create, administer, or
 post to group rooms. **Scopes are per capability group, not a hierarchy** — one
 does not imply another. Reads need no token or scope at all, so a read-only
-observer can just run `mux mcp` bare.
+observer can just run `tether mcp` bare.
 
 The token is opaque. Tether checks that one is present, not what it says.
 
@@ -177,13 +177,13 @@ Keep the returned URN. That is the address others send to.
 | To | Call |
 |---|---|
 | Confirm identity, bindings and group memberships | `tether_whoami` |
-| Browse mail (non-destructive, repeatable) | `mux_message_list` |
-| Pull mail, taking delivery of it | `mux_message_inbox` — **destructive**: what it returns is marked delivered and will not appear in a later inbox call |
-| Mark handled | `mux_message_consume` |
-| Send | `mux_message_send` |
-| Send and wake a live recipient | `mux_message_notify` |
+| Browse mail (non-destructive, repeatable) | `tether_message_list` |
+| Pull mail, taking delivery of it | `tether_message_inbox` — **destructive**: what it returns is marked delivered and will not appear in a later inbox call |
+| Mark handled | `tether_message_consume` |
+| Send | `tether_message_send` |
+| Send and wake a live recipient | `tether_message_notify` |
 | Find someone to write to | `tether_registry_search` |
-| Diagnose a message that did not arrive | `mux_message_trace` |
+| Diagnose a message that did not arrive | `tether_message_trace` |
 
 `tether_whoami` is the self-discovery call — it answers "who am I, and is
 anything currently bound to me?" and tolerates being unregistered rather than
@@ -195,7 +195,7 @@ A manually-driven session can register, send, read, consume, join groups and
 trace delivery immediately. What it does **not** get for free is *push*: being
 woken mid-session by incoming mail requires a runtime binding against a session
 the daemon is hosting. A session you launched yourself outside Tether is not
-one of those, so treat it as **poll-and-read** — call `mux_message_list` when
+one of those, so treat it as **poll-and-read** — call `tether_message_list` when
 you want to check. Use `list`, not `inbox`: `inbox` marks what it returns as
 delivered, so polling with it quietly consumes your own mail. That is a real limitation, not a misconfiguration.
 
@@ -204,12 +204,12 @@ delivered, so polling with it quietly consumes your own mail. That is a real lim
 ## Verifying it worked
 
 ```bash
-mux registry search --kind agent          # your profile is listed
-mux whoami --as <your-urn>                # identity resolves
-mux messages inbox <your-urn>             # reads without a 400
+tether registry search --kind agent          # your profile is listed
+tether whoami --as <your-urn>                # identity resolves
+tether messages inbox <your-urn>             # reads without a 400
 ```
 
-If a message does not arrive, `mux_message_trace` (or
+If a message does not arrive, `tether_message_trace` (or
 `GET /messages/{id}/trace`) shows its full delivery state, and §5 of the T12
 handoff walks the diagnosis end to end.
 
@@ -226,5 +226,5 @@ handoff walks the diagnosis end to end.
 
 Reference entries for the identity, binding and group HTTP routes are not yet
 in [api/README.md](./api/README.md); [messaging.md](./messaging.md) carries the
-surface map in the meantime, and `mux <command> --help` plus `mux mcp` are
+surface map in the meantime, and `tether <command> --help` plus `tether mcp` are
 always authoritative.

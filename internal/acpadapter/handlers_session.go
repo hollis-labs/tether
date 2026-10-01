@@ -43,7 +43,7 @@ func (a *Adapter) handleInitialize(_ context.Context, params json.RawMessage) (a
 		},
 		AgentInfo: Implementation{
 			Name:    a.agentName,
-			Title:   "Agent Mux",
+			Title:   "Tether",
 			Version: version,
 		},
 		AuthMethods: a.auth.AuthMethods(),
@@ -64,7 +64,7 @@ func (a *Adapter) handleAuthenticate(_ context.Context, params json.RawMessage) 
 	return nil, nil
 }
 
-// handleSessionNew creates a new mux session for the editor's CWD.
+// handleSessionNew creates a new tether session for the editor's CWD.
 // Returns the session ID. Editor-supplied mcpServers are ignored per
 // v005-09 §2 lock (boot-profile MCPs apply); the raw payload is logged.
 func (a *Adapter) handleSessionNew(_ *Dispatcher) HandlerFunc {
@@ -198,7 +198,7 @@ func (a *Adapter) handleSessionClose(ctx context.Context, params json.RawMessage
 	return CloseSessionResult{}, nil
 }
 
-// handleSessionResume reattaches to an existing mux session by ID.
+// handleSessionResume reattaches to an existing tether session by ID.
 // Used for multi-client attach (a second editor joins a session that
 // was created by the first). Editor-supplied mcpServers are ignored
 // per v005-09 §2 lock.

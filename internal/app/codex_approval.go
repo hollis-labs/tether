@@ -26,7 +26,7 @@ package app
 //
 // Per-tool `[mcp_servers.<server>.tools.<tool>] approval_mode = "auto"` does
 // NOT bypass either path (verified against codex-cli 0.154.0), and would be
-// unusable here anyway: the planted server is the mux PROXY, which fronts
+// unusable here anyway: the planted server is the tether PROXY, which fronts
 // several hundred tools whose names Tether does not know at plant time.
 //
 // So both halves are required, and neither works alone:
@@ -39,7 +39,7 @@ package app
 //
 // Policy: a launched worker gets open MCP access by default. An agent that
 // cannot call the tools its own launch planted for it is not sandboxed, it
-// is broken — the same reasoning MuxMCPArgs already states about scopes.
+// is broken — the same reasoning TetherMCPArgs already states about scopes.
 // Approval here is a per-call human-in-the-loop gate, and a Tether-launched
 // worker has no human in its loop by construction; leaving the gate closed
 // does not make it safer, it makes it inert. Real authorization belongs in

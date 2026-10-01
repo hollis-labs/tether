@@ -26,7 +26,7 @@ import (
 // tool. It is the shared foundation for every tool registered directly
 // against the SDK server (bypassing go-mcp's RegisterTool) because it must
 // relay an upstream's *mcpsdk.CallToolResult verbatim -- addProxyTools and
-// registerCallTool (mux_call), the two paths that forward to a ProxyRouter.
+// registerCallTool (tether_tool_call), the two paths that forward to a ProxyRouter.
 func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error)) mcpsdk.ToolHandler {
 	return func(handlerCtx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		var args map[string]any
@@ -130,7 +130,7 @@ func (c *liveProxyCatalog) addProxyTools(defs ...*mcpsdk.Tool) {
 		// Span creation mirrors addTool (adapter.go) deliberately: until
 		// CW-20260912-0068 this was the ONLY registration path in the
 		// package that did not create one, so every call every session
-		// made to Torque, Tesseract and Cerberus through `mux mcp --proxy`
+		// made to Torque, Tesseract and Cerberus through `tether mcp --proxy`
 		// was absent from tracing.
 		//
 		// Note what is NOT changed to fix that: proxy.go's InjectMCP call
@@ -151,7 +151,7 @@ func (c *liveProxyCatalog) addProxyTools(defs ...*mcpsdk.Tool) {
 		// bug this block fixed: the upstream receives its arguments with
 		// no _traceparent, exactly as it did before the span existed.
 		//
-		// cmd/mux/main.go calls internalotel.Init, so the daemon is fine.
+		// cmd/tether/main.go calls internalotel.Init, so the daemon is fine.
 		// That is precisely why this bites somewhere else — a test, a
 		// short-lived tool, an embedding of this package — and looks
 		// impossible when it does.
@@ -178,27 +178,27 @@ type ProxyOptions struct {
 	Bus events.Bus
 
 	// Publisher, when non-nil and Bus is nil, is where the LoggingMiddleware
-	// publishes instead: a daemon-only `mux mcp` has no bus of its own and
+	// publishes instead: a daemon-only `tether mcp` has no bus of its own and
 	// passes a DaemonToolCallPublisher.
 	Publisher events.Publisher
 
 	// EventStore, when non-nil, is subscribed to the Bus to accumulate
 	// tool call events for the live TUI Activity feed (in-memory ring buffer).
 	// See ADR 0021. The TUI reads from this store; the MCP tool
-	// mux_events_tool_calls reads from the durable ProxyStore instead.
+	// tether_events_tool_calls reads from the durable ProxyStore instead.
 	EventStore *ToolCallEventStore
 
-	// ProxyStore, when non-nil, is used by mux_events_tool_calls to query the
+	// ProxyStore, when non-nil, is used by tether_events_tool_calls to query the
 	// durable proxy_events SQLite table (ADR 0024 §4). When both EventStore
 	// and ProxyStore are set, EventStore feeds the TUI and ProxyStore feeds
 	// the MCP tool.
 	ProxyStore ProxyEventQuerier
 
 	// BrokerMode, when true, enables progressive tool discovery instead of
-	// registering every upstream tool at startup. Only mux_discover,
-	// mux_call, and mux_catalog_list_mcp_servers are registered with the MCP
-	// server. The LLM queries mux_discover to receive tool schemas on demand,
-	// then calls mux_call to execute them. This reduces per-request context
+	// registering every upstream tool at startup. Only tether_tool_search,
+	// tether_tool_call, and tether_catalog_list_mcp_servers are registered with the MCP
+	// server. The LLM queries tether_tool_search to receive tool schemas on demand,
+	// then calls tether_tool_call to execute them. This reduces per-request context
 	// size by an order of magnitude for large upstream catalogs.
 	//
 	// Deprecated: use ServerFilter instead. BrokerMode is kept for backward
@@ -207,23 +207,23 @@ type ProxyOptions struct {
 
 	// ServerFilter, when non-empty, limits which upstream servers are registered
 	// as native flat tools. Servers not in the list are still reachable via
-	// mux_discover + mux_call. Empty means all servers (firehose). Only
+	// tether_tool_search + tether_tool_call. Empty means all servers (firehose). Only
 	// consulted when BrokerMode is false.
 	ServerFilter []string
 
 	// Confine restricts the proxy to ServerFilter: only those upstreams are
 	// loaded (their secrets resolved), started and registered, and
-	// mux_discover, mux_call and the catalog introspection tools cannot see
+	// tether_tool_search, tether_tool_call and the catalog introspection tools cannot see
 	// or reach any other. Without it ServerFilter only chooses which tools
 	// are registered as flat tools, every upstream is started, and the rest
-	// stay reachable through mux_discover + mux_call. Tether's planted proxy
+	// stay reachable through tether_tool_search + tether_tool_call. Tether's planted proxy
 	// sets it, so a launched agent's proxy holds only the upstreams it was
 	// granted (CW-20261001-0227). An empty ServerFilter confines to none.
 	Confine bool
 
 	// Only enables curated external-client mode. Only upstream tools from
-	// ServerFilter are registered. Native Tether mux_* tools, mux_discover,
-	// mux_discover_tools, mux_call, and proxy catalog tools are suppressed.
+	// ServerFilter are registered. Native Tether tether_* tools, tether_tool_search,
+	// tether_tool_list, tether_tool_call, and proxy catalog tools are suppressed.
 	Only bool
 }
 
@@ -273,7 +273,7 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 //  1. Loads MCPServerEntry definitions from <catalogDir>/mcp-servers/
 //  2. Starts a ClientPool (spawning stdio subprocesses / SSE connections)
 //  3. Registers each upstream tool via AddTool with a ProxyRouter handler
-//  4. Registers the mux_catalog_list_mcp_servers introspection tool
+//  4. Registers the tether_catalog_list_mcp_servers introspection tool
 //  5. Wires LoggingMiddleware + ToolCallEventStore when opts.Bus is set (ADR 0021)
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
@@ -317,9 +317,9 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 	// Register LoggingMiddleware as a server-level receiving middleware (over
 	// every tools/call dispatch, regardless of registration path) so that ALL
-	// tool calls — native mux tools and proxied upstream tools alike — emit
+	// tool calls — native tether tools and proxied upstream tools alike — emit
 	// tool_call_start / tool_call_end events. This covers native tools
-	// (mux_health, mux_session_list, mux_message_*, etc.) which previously
+	// (tether_health, tether_session_list, tether_message_*, etc.) which previously
 	// bypassed the ProxyRouter and were never recorded.
 	//
 	// Because the server-level middleware now observes every call, we build a
@@ -343,14 +343,14 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		return fmt.Errorf("curated proxy --only cannot be combined with broker mode")
 	}
 
-	// Register native mux tools unless curated mode asks for only the selected
+	// Register native tether tools unless curated mode asks for only the selected
 	// upstream surface.
 	if !opts.Only {
 		a.registerTools(s)
 	}
 
 	// Build discovery index for proxy modes. Normal and broker modes expose it
-	// through mux_discover/mux_discover_tools; curated --only mode keeps the
+	// through tether_tool_search/tether_tool_list; curated --only mode keeps the
 	// index internal so the selected upstream tools are the entire surface.
 	serverTags := make(map[string][]string, len(entries))
 	for _, e := range entries {
@@ -359,9 +359,9 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	idx := NewDiscoveryIndex()
 
 	// Build allowed-server set. Empty = all servers (firehose).
-	// Threaded into mux_discover and mux_catalog_list_mcp_servers so their
+	// Threaded into tether_tool_search and tether_catalog_list_mcp_servers so their
 	// responses can mark which tools/servers are reachable directly vs. only
-	// via mux_call.
+	// via tether_tool_call.
 	allowed := make(map[string]struct{}, len(opts.ServerFilter))
 	for _, id := range opts.ServerFilter {
 		allowed[id] = struct{}{}
@@ -392,7 +392,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		// Pure discovery: no upstream tools registered natively.
 		// Kept for backward compatibility; --servers filtering is preferred.
 		slog.Warn("mcp-proxy: --broker is deprecated; use --proxy with optional --servers instead")
-		slog.Info("mcp-proxy: broker mode — registering mux_discover + mux_call only",
+		slog.Info("mcp-proxy: broker mode — registering tether_tool_search + tether_tool_call only",
 			"upstream_tools", len(registry.AllDefinitions()))
 		// In broker mode no upstream tool is registered natively: pass an empty
 		// allowed set with firehose=false so every tool reports native=false.
@@ -427,7 +427,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		liveCatalog.addProxyTools(proxied...)
 
 		if !opts.Only {
-			// Always register mux_discover + mux_call as a safety hatch so agents
+			// Always register tether_tool_search + tether_tool_call as a safety hatch so agents
 			// can reach undeclared servers without needing a restart.
 			a.registerDiscoverTool(s, idx, allowed, firehose)
 			a.registerSemanticDiscoverTool(s, idx, allowed, firehose)
@@ -443,7 +443,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 		a.registerCatalogRefreshTool(s, pool)
 	}
 
-	// Register mux_events_tool_calls when a durable proxy store is wired.
+	// Register tether_events_tool_calls when a durable proxy store is wired.
 	// Falls back to EventStore for backwards compatibility when ProxyStore
 	// is not set (e.g. tests that only wire the in-memory store).
 	switch {
@@ -457,7 +457,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	return s.Run(ctx)
 }
 
-// registerDiscoverTool registers mux_discover on s. It lets the LLM search the
+// registerDiscoverTool registers tether_tool_search on s. It lets the LLM search the
 // upstream tool catalog by intent, category, or tags without receiving every
 // tool schema upfront. Returns up to `limit` matching tool schemas as JSON.
 //
@@ -465,7 +465,7 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 // natively at startup (the --servers filter). When firehose is true, every
 // server's tools are native and nativeServers is ignored. The discover handler
 // uses these to mark each result with native: bool so the LLM knows whether
-// to call the tool directly or wrap it in mux_call.
+// to call the tool directly or wrap it in tether_tool_call.
 func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
 	isNative := func(serverID string) bool {
 		if firehose {
@@ -476,20 +476,20 @@ func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nat
 	}
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_discover",
+		Name: "tether_tool_search",
 		Description: "Search the upstream tool catalog by intent, category, or tags. " +
 			"Returns matching tool names, descriptions, input schemas, and a `native` flag.\n\n" +
 			"How to use the result:\n" +
 			"  • If a result has `native: true`, the tool is already in your tool list — " +
-			"call it directly by its `tool_name` (do NOT wrap it in mux_call).\n" +
+			"call it directly by its `tool_name` (do NOT wrap it in tether_tool_call).\n" +
 			"  • If a result has `native: false`, the tool is reachable only via " +
-			"mux_call(tool_name, arguments).\n" +
+			"tether_tool_call(tool_name, arguments).\n" +
 			"  • If the response includes `truncated: true`, narrow your query (more " +
 			"specific intent/category/tags) or raise `limit` (max 50).\n\n" +
 			"Examples:\n" +
-			"  mux_discover(intent=\"create a task\")\n" +
-			"  mux_discover(category=\"memory\")\n" +
-			"  mux_discover(intent=\"list sessions\", limit=20)",
+			"  tether_tool_search(intent=\"create a task\")\n" +
+			"  tether_tool_search(category=\"memory\")\n" +
+			"  tether_tool_search(intent=\"list sessions\", limit=20)",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("intent", "Free-text description of what you want to do (e.g. 'create a sprint', 'run a blueprint')", false),
 			gomcp.StringProp("category", "Exact category/tag to filter by (e.g. 'tasks', 'automation', 'memory', 'services')", false),
@@ -534,7 +534,7 @@ func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nat
 				"truncated":         truncated,
 				"tools":             tools,
 				"hint": "Tools with native: true are in your tool list — call them directly by tool_name. " +
-					"Tools with native: false require mux_call(tool_name, arguments).",
+					"Tools with native: false require tether_tool_call(tool_name, arguments).",
 			}
 			if truncated {
 				payload["more_hint"] = fmt.Sprintf(
@@ -548,8 +548,8 @@ func (a *Adapter) registerDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nat
 	}, Reads("searches the merged tool catalog").OpenWorld())
 }
 
-// registerSemanticDiscoverTool registers mux_discover_tools. It is the
-// low-token, task-shaped companion to mux_discover: ranked recommendations are
+// registerSemanticDiscoverTool registers tether_tool_list. It is the
+// low-token, task-shaped companion to tether_tool_search: ranked recommendations are
 // grouped by server and point callers to schema/detail refs instead of inlining
 // full input schemas.
 func (a *Adapter) registerSemanticDiscoverTool(s *gomcp.Server, idx *DiscoveryIndex, nativeServers map[string]struct{}, firehose bool) {
@@ -562,9 +562,9 @@ func (a *Adapter) registerSemanticDiscoverTool(s *gomcp.Server, idx *DiscoveryIn
 	}
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_discover_tools",
+		Name: "tether_tool_list",
 		Description: "Find upstream tools for a task intent. Returns concise, ranked recommendations grouped by server/domain. " +
-			"Use this before mux_discover when you need tool selection help without full schemas.",
+			"Use this before tether_tool_search when you need tool selection help without full schemas.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("intent", "Free-text description of the task you want to accomplish", true),
 			gomcp.StringProp("category", "Optional exact category/tag filter such as tasks, automation, memory, or services", false),
@@ -641,7 +641,7 @@ func semanticDiscoveryPayload(intent string, results []SearchResult, totalMatche
 			Score:    r.Score,
 			Refs: map[string]any{
 				"schema":   "tools/list:" + r.ToolName,
-				"detail":   "mux_discover?intent=" + r.ToolName,
+				"detail":   "tether_tool_search?intent=" + r.ToolName,
 				"catalog":  "mcp-servers/" + r.ServerID,
 				"examples": "tool-docs:" + r.ToolName + "#examples",
 			},
@@ -659,7 +659,7 @@ func semanticDiscoveryPayload(intent string, results []SearchResult, totalMatche
 		"total_match_count": totalMatches,
 		"truncated":         totalMatches > len(results),
 		"groups":            groups,
-		"hint":              "Call native recommendations directly. For native=false, use mux_call, or use mux_discover for full schemas.",
+		"hint":              "Call native recommendations directly. For native=false, use tether_tool_call, or use tether_tool_search for full schemas.",
 	}
 }
 
@@ -711,7 +711,7 @@ func recommendationWhy(intent string, r SearchResult) string {
 	}
 }
 
-// registerCallTool registers mux_call on s. It accepts a tool name and
+// registerCallTool registers tether_tool_call on s. It accepts a tool name and
 // arguments object, looks the tool up in the registry, and forwards it
 // through the ProxyRouter.
 //
@@ -723,23 +723,23 @@ func recommendationWhy(intent string, r SearchResult) string {
 // flow here so they are recorded in the event store.
 func (a *Adapter) registerCallTool(s *gomcp.Server, router *ProxyRouter) {
 	s.SDKServer().AddTool(&mcpsdk.Tool{
-		Name: "mux_call",
+		Name: "tether_tool_call",
 		Description: "Fallback dispatcher for upstream MCP tools that are NOT in your native tool list. " +
 			"If the tool you need already appears in your tool list (e.g. memory_recall, " +
-			"clockwork_task_create), call it directly — do NOT wrap it in mux_call.\n\n" +
-			"Use mux_call only when:\n" +
-			"  • A tool's `native: false` flag was returned by mux_discover, OR\n" +
+			"clockwork_task_create), call it directly — do NOT wrap it in tether_tool_call.\n\n" +
+			"Use tether_tool_call only when:\n" +
+			"  • A tool's `native: false` flag was returned by tether_tool_search, OR\n" +
 			"  • You need a tool from a server outside the current --servers filter.\n\n" +
-			"Run mux_discover first if you don't know the exact tool name or input schema. " +
+			"Run tether_tool_search first if you don't know the exact tool name or input schema. " +
 			"Arguments must match the tool's input schema exactly.\n\n" +
 			"Example:\n" +
-			"  mux_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
+			"  tether_tool_call(tool_name=\"some_unlisted_tool\", arguments={\"key\":\"value\"})",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("tool_name", "The exact tool name to call (as returned by mux_discover)", true),
+			gomcp.StringProp("tool_name", "The exact tool name to call (as returned by tether_tool_search)", true),
 			gomcp.ObjectProp("arguments", "Arguments object matching the tool's input schema", false),
 		),
 		Annotations: Writes().OpenWorld().annotations().sdk(),
-	}, a.rawProxyHandler("mux_call", func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+	}, a.rawProxyHandler("tether_tool_call", func(handlerCtx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 		toolName := str(args, "tool_name")
 		if toolName == "" {
 			return errorResult("tool_name is required"), nil
@@ -767,13 +767,13 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, router *ProxyRouter) {
 	}))
 }
 
-// registerMCPServersTool adds the mux_catalog_list_mcp_servers native tool to s.
+// registerMCPServersTool adds the tether_catalog_list_mcp_servers native tool to s.
 // It uses the pool for live status and the original entries slice for disabled entries.
 //
 // nativeServers is the set of server IDs whose tools were registered natively
 // at startup. firehose=true means every server is native. Each server entry in
 // the response carries `surface: "native_flat"` (call tools directly) or
-// `surface: "proxy_only"` (only reachable via mux_discover/mux_call).
+// `surface: "proxy_only"` (only reachable via tether_tool_search/tether_tool_call).
 func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allEntries []config.MCPServerEntry, nativeServers map[string]struct{}, firehose bool) {
 	// Build a set of IDs that are enabled (present in pool).
 	enabledIDs := make(map[string]struct{})
@@ -797,13 +797,13 @@ func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allE
 	}
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_catalog_list_mcp_servers",
-		Description: "List all upstream MCP servers configured in the agent-mux catalog.\n\n" +
+		Name: "tether_catalog_list_mcp_servers",
+		Description: "List all upstream MCP servers configured in the tether catalog.\n\n" +
 			"Each server reports `surface`:\n" +
 			"  • \"native_flat\" — this server's tools are in your tool list; call them directly.\n" +
-			"  • \"proxy_only\"  — this server's tools are reachable only via mux_discover + mux_call.\n" +
+			"  • \"proxy_only\"  — this server's tools are reachable only via tether_tool_search + tether_tool_call.\n" +
 			"  • \"disabled\"    — server is configured but not connected.\n\n" +
-			"Use mux_discover to search the catalog by intent/category when you don't know a tool name.",
+			"Use tether_tool_search to search the catalog by intent/category when you don't know a tool name.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler: func(_ context.Context, _ map[string]any) (any, error) {
 			live := pool.StatusSummary()
@@ -847,7 +847,7 @@ func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allE
 				"servers":  out,
 				"count":    len(out),
 				"firehose": firehose,
-				"hint":     "Servers with surface=native_flat have their tools in your tool list — call them directly. Use mux_discover + mux_call for proxy_only servers.",
+				"hint":     "Servers with surface=native_flat have their tools in your tool list — call them directly. Use tether_tool_search + tether_tool_call for proxy_only servers.",
 			}), nil
 		},
 	}, Reads("configured upstream listing"))
@@ -855,9 +855,9 @@ func (a *Adapter) registerMCPServersTool(s *gomcp.Server, pool *ClientPool, allE
 
 func (a *Adapter) registerCatalogRefreshTool(s *gomcp.Server, pool *ClientPool) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_catalog_refresh",
-		Description: "Refresh one upstream MCP server's tools/list cache in the running mux process, or all upstreams when no server is specified. " +
-			"Use this when an upstream added or removed tools and you want mux to rescan immediately without restarting.",
+		Name: "tether_catalog_refresh",
+		Description: "Refresh one upstream MCP server's tools/list cache in the running tether process, or all upstreams when no server is specified. " +
+			"Use this when an upstream added or removed tools and you want tether to rescan immediately without restarting.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("server", "Optional upstream server ID to refresh. Empty refreshes every connected upstream.", false),
 		),

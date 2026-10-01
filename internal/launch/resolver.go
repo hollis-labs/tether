@@ -66,14 +66,14 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	}
 
 	// Resolve MCP server filter: project wins over launch. Injected as
-	// MUX_MCP_SERVERS so the spawned agent's mux mcp --proxy process picks it
+	// TETHER_MCP_SERVERS so the spawned agent's tether mcp --proxy process picks it
 	// up without requiring per-agent ~/.claude.json changes.
 	mcpServers := proj.MCP.Servers
 	if len(mcpServers) == 0 {
 		mcpServers = l.MCP.Servers
 	}
 	if len(mcpServers) > 0 {
-		overrides["MUX_MCP_SERVERS"] = strings.Join(mcpServers, ",")
+		overrides["TETHER_MCP_SERVERS"] = strings.Join(mcpServers, ",")
 	}
 
 	mode := prov.Env.Mode

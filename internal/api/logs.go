@@ -22,8 +22,8 @@ type DaemonLogsResponse struct {
 	Clamped bool     `json:"clamped,omitempty"` // true when the requested tail was capped
 }
 
-func (s *Server) registerLogsRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/logs/daemon", s.handleDaemonLogs)
+func (s *Server) registerLogsRoutes(router *http.ServeMux) {
+	router.HandleFunc("/logs/daemon", s.handleDaemonLogs)
 }
 
 func (s *Server) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +50,7 @@ func (s *Server) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 		tail = n
 	}
 
-	logPath := filepath.Join(s.LogsDir, "muxd.log") //nolint:gosec // path from trusted config
+	logPath := filepath.Join(s.LogsDir, "tetherd.log") //nolint:gosec // path from trusted config
 	lines, err := tailFile(logPath, tail)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -71,7 +71,7 @@ func (s *Server) handleDaemonLogs(w http.ResponseWriter, r *http.Request) {
 
 // tailFile returns the last n lines of path. Lines are returned in
 // chronological order (oldest first). It reads the whole file, which is safe
-// because muxd.log is rotation-bounded at 10 MiB.
+// because tetherd.log is rotation-bounded at 10 MiB.
 func tailFile(path string, n int) ([]string, error) {
 	//nolint:gosec // G304: path from trusted config (LogsDir), not user input.
 	f, err := os.Open(path)

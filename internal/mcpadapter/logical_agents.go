@@ -13,14 +13,14 @@ import (
 
 func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_logical_agent_list",
-		Description: "List all logical agents registered in the agent-mux store. Logical agents are durable identities that persist across sessions and accumulate checkpoints.",
+		Name:        "tether_logical_agent_list",
+		Description: "List all logical agents registered in the tether store. Logical agents are durable identities that persist across sessions and accumulate checkpoints.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleLogicalAgentList,
 	}, Reads("GET /logical-agents"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_logical_agent_resume",
+		Name:        "tether_logical_agent_resume",
 		Description: "Resume a logical agent: starts a new session using its most recent checkpoint as the boot context. Requires session.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("logical_agent_id", "Logical agent ID", true),

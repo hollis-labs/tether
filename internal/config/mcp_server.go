@@ -93,7 +93,7 @@ func envRefValues(s string) []string {
 }
 
 // secretRefTimeout bounds one helper invocation. Resolution shells out to
-// mux-apikey-helper, which on macOS may block on a keychain ACL prompt.
+// tether-apikey-helper, which on macOS may block on a keychain ACL prompt.
 const secretRefTimeout = 15 * time.Second
 
 // secretRefResolver is the resolution surface used by resolveSecretRef.

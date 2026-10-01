@@ -19,7 +19,7 @@
 //
 // This package is intentionally placed outside internal/ so it can be
 // promoted to `~/Projects-apps/framework/libs/go-claudestream` (or a
-// standalone repo) once agent-mux validates the shape. A second
+// standalone repo) once tether validates the shape. A second
 // consumer (Nanite) will migrate to the promoted package and retire
 // its own copy. See README.md for the promotion plan.
 //

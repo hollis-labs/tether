@@ -56,12 +56,12 @@ func groupToDTO(g store.SessionGroupRow) SessionGroupDTO {
 
 // registerSessionGroupRoutes mounts session group endpoints. No-op when
 // GroupStore is nil so tests that don't need groups can skip wiring it.
-func (s *Server) registerSessionGroupRoutes(mux *http.ServeMux) {
+func (s *Server) registerSessionGroupRoutes(router *http.ServeMux) {
 	if s.GroupStore == nil {
 		return
 	}
-	mux.HandleFunc("/session-groups", s.handleSessionGroupsCollection)
-	mux.HandleFunc("/session-groups/", s.handleSessionGroupsItem)
+	router.HandleFunc("/session-groups", s.handleSessionGroupsCollection)
+	router.HandleFunc("/session-groups/", s.handleSessionGroupsItem)
 }
 
 func (s *Server) handleSessionGroupsCollection(w http.ResponseWriter, r *http.Request) {

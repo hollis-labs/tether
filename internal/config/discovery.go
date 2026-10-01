@@ -11,7 +11,7 @@ import (
 type Layer int
 
 const (
-	// LayerSystem is the bundled Mux catalog (the existing single-root catalog).
+	// LayerSystem is the bundled Tether catalog (the existing single-root catalog).
 	LayerSystem Layer = iota
 	// LayerUser is ~/.tether/ — personal customization.
 	LayerUser
@@ -57,7 +57,7 @@ func DefaultLayers(systemRoot, workingDir string) []LayerSpec {
 }
 
 // LayeredAgent wraps an Agent with its origin metadata so callers (notably
-// `mux agents list`) can display which layer the entry came from.
+// `tether agents list`) can display which layer the entry came from.
 type LayeredAgent struct {
 	Agent LaunchProfile
 	Layer Layer

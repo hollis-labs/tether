@@ -20,7 +20,7 @@ type ToolCallEventFilter struct {
 	// ToolName filters by prefix match on the tool name (e.g. "hadron_" matches all hadron tools).
 	ToolName string
 
-	// SessionID filters by exact mux session ID match.
+	// SessionID filters by exact tether session ID match.
 	SessionID string
 
 	// Limit caps the number of returned events. Zero means no cap.

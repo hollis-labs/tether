@@ -22,13 +22,13 @@ import (
 // registerScopedBindingRoutes mounts /registry/scoped-bindings. Only
 // attached when Server.Registry is non-nil, matching the bindings
 // routes' nil-disables-route convention.
-func (s *Server) registerScopedBindingRoutes(mux *http.ServeMux) {
+func (s *Server) registerScopedBindingRoutes(router *http.ServeMux) {
 	if s.Registry == nil {
 		return
 	}
-	mux.HandleFunc("/registry/scoped-bindings", s.handleScopedBindingsCollection)
-	mux.HandleFunc("/registry/scoped-bindings/resolve", s.handleScopedBindingResolve)
-	mux.HandleFunc("/registry/scoped-bindings/revisions", s.handleScopedBindingRevisions)
+	router.HandleFunc("/registry/scoped-bindings", s.handleScopedBindingsCollection)
+	router.HandleFunc("/registry/scoped-bindings/resolve", s.handleScopedBindingResolve)
+	router.HandleFunc("/registry/scoped-bindings/revisions", s.handleScopedBindingRevisions)
 }
 
 type scopedBindingSetRequest struct {

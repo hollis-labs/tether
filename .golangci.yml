@@ -1,4 +1,4 @@
-# agent-mux — golangci-lint configuration (v2 format)
+# tether — golangci-lint configuration (v2 format)
 #
 # Starter set mirrored from the portfolio shared config (Nanite et al.),
 # trimmed of project-specific adoption rules (forbidigo-based worklists).

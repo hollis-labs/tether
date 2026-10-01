@@ -902,7 +902,7 @@ func TestHandleAttach_SessionNotRunning(t *testing.T) {
 }
 
 func TestSessionRoutes_NotRegisteredWithoutService(t *testing.T) {
-	// Nil service means NewHandler returns a mux with no /sessions
+	// Nil service means NewHandler returns a tether with no /sessions
 	// routes; requests to them fall through to ServeMux's default 404.
 	h := NewHandler(Deps{Service: nil})
 

@@ -1,6 +1,6 @@
 id: torque-claude-tui
-project: agent-mux
-agent: agent-mux-engineer
+project: tether
+agent: tether-engineer
 provider: claude-pty
 workspace:
   mode: hybrid

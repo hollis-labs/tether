@@ -221,24 +221,24 @@ type AIUsageBudgetsResponse struct {
 	Count   int                     `json:"count"`
 }
 
-func (s *Server) registerAIRoutes(mux *http.ServeMux) {
+func (s *Server) registerAIRoutes(router *http.ServeMux) {
 	if s.AI == nil {
 		return
 	}
-	mux.HandleFunc("/ai/chat", s.handleAIChat)
-	mux.HandleFunc("/ai/chat/stream", s.handleAIChatStream)
-	mux.HandleFunc("/ai/embeddings", s.handleAIEmbeddings)
-	mux.HandleFunc("/ai/providers", s.handleAIProviders)
-	mux.HandleFunc("/ai/models", s.handleAIModels)
-	mux.HandleFunc("/ai/routes", s.handleAIRoutes)
-	mux.HandleFunc("/ai/routes/explain", s.handleAIRouteExplain)
-	mux.HandleFunc("/ai/routes/preview", s.handleAIRoutePreview)
+	router.HandleFunc("/ai/chat", s.handleAIChat)
+	router.HandleFunc("/ai/chat/stream", s.handleAIChatStream)
+	router.HandleFunc("/ai/embeddings", s.handleAIEmbeddings)
+	router.HandleFunc("/ai/providers", s.handleAIProviders)
+	router.HandleFunc("/ai/models", s.handleAIModels)
+	router.HandleFunc("/ai/routes", s.handleAIRoutes)
+	router.HandleFunc("/ai/routes/explain", s.handleAIRouteExplain)
+	router.HandleFunc("/ai/routes/preview", s.handleAIRoutePreview)
 	if s.AIUsage != nil {
-		mux.HandleFunc("/ai/usage", s.handleAIUsage)
-		mux.HandleFunc("/ai/budgets", s.handleAIBudgets)
+		router.HandleFunc("/ai/usage", s.handleAIUsage)
+		router.HandleFunc("/ai/budgets", s.handleAIBudgets)
 	}
 	if s.AIAudit != nil {
-		mux.HandleFunc("/ai/audit", s.handleAIAudit)
+		router.HandleFunc("/ai/audit", s.handleAIAudit)
 	}
 }
 

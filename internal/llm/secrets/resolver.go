@@ -56,7 +56,7 @@ func ParseRef(raw string) (Ref, error) {
 
 type commandRunner func(context.Context, string, ...string) ([]byte, []byte, error)
 
-// Resolver resolves secret references through mux-apikey-helper or an explicit
+// Resolver resolves secret references through tether-apikey-helper or an explicit
 // helper named in a helper:// reference.
 type Resolver struct {
 	resolveDefaultHelper func() string
@@ -67,7 +67,7 @@ type Resolver struct {
 // Option customizes a Resolver.
 type Option func(*Resolver)
 
-// WithDefaultHelperPath overrides mux-apikey-helper resolution.
+// WithDefaultHelperPath overrides tether-apikey-helper resolution.
 func WithDefaultHelperPath(path string) Option {
 	return func(r *Resolver) {
 		r.resolveDefaultHelper = func() string { return path }
@@ -131,7 +131,7 @@ func (r *Resolver) helperPath(ref Ref) (string, error) {
 		if path := r.resolveDefaultHelper(); path != "" {
 			return path, nil
 		}
-		return "", fmt.Errorf("%w: mux-apikey-helper", ErrHelperNotFound)
+		return "", fmt.Errorf("%w: tether-apikey-helper", ErrHelperNotFound)
 	case "helper":
 		if path := r.resolveNamedHelper(ref.Authority); path != "" {
 			return path, nil
@@ -146,7 +146,7 @@ func helperLabel(ref Ref) string {
 	if ref.Scheme == "helper" {
 		return ref.Authority
 	}
-	return "mux-apikey-helper"
+	return "tether-apikey-helper"
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {

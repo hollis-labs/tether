@@ -13,10 +13,10 @@ import (
 
 func (a *Adapter) registerBootTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_boot_generate",
+		Name:        "tether_boot_generate",
 		Description: "Generate a boot prompt for an agent by profile ID. The boot prompt assembles slot content from static files, role summaries, skill indexes, shell commands, and HTTP endpoints as defined in the profile YAML. Pipe the output to a CLI tool or capture it for an API provider.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("profile_id", "Boot profile ID (see mux_catalog_list_boot_profiles)", true),
+			gomcp.StringProp("profile_id", "Boot profile ID (see tether_catalog_list_boot_profiles)", true),
 		),
 		Handler: a.handleBootGenerate,
 	}, Reads("bootgen.Generate renders to an io.Writer and creates no file"))

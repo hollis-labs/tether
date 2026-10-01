@@ -120,7 +120,7 @@ func TestClaudeStrictMCP_EveryTurnOfTheLaunchTemplate(t *testing.T) {
 				RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared", Command: "claude",
 				BootPrompt: testBootPrompt,
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux", MuxArgs: []string{"mcp"}})
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether", TetherArgs: []string{"mcp"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +155,7 @@ func TestClaudeStrictMCP_KillSwitchLeavesTheArgvAlone(t *testing.T) {
 		ProviderID: "claude-code", ProviderBrand: "claude", RuntimeKind: config.RuntimeKindStreamingStdio,
 		RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared", Command: "claude", BootPrompt: testBootPrompt,
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{MuxCommand: "mux", MuxArgs: []string{"mcp"}})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether", TetherArgs: []string{"mcp"}})
 	if err != nil {
 		t.Fatal(err)
 	}

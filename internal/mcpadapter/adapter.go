@@ -1,17 +1,17 @@
-// Package mcpadapter exposes the agent-mux runtime as an MCP stdio server.
+// Package mcpadapter exposes the tether runtime as an MCP stdio server.
 //
 // Start the server with:
 //
-//	mux mcp [--token <tok>] [--scopes session.write,message.write]
+//	tether mcp [--token <tok>] [--scopes session.write,message.write]
 //
 // The adapter wraps app.Service for catalog reads and read-only session
 // inspection. Session-mutating tools (create, launch, stop, send, resize,
 // wait, logical-agent resume) AND all message tools (send/notify/get/
 // inbox/list/thread/consume/cancel/mark_read/archive/unarchive) route
-// through the running muxd daemon over UDS via internal/client.Client to
+// through the running tetherd daemon over UDS via internal/client.Client to
 // avoid the split-brain that an in-process app.New() instance would
 // otherwise produce against daemon-owned session/message state — this
-// process (`mux mcp`) always opens its own separate SQLite connection to
+// process (`tether mcp`) always opens its own separate SQLite connection to
 // the same database file for catalog/session-read purposes, so any tool
 // that WRITES messaging state must not touch that connection directly
 // (T05, messaging vNext: closed the pre-T05 gap where message tools called
@@ -62,7 +62,7 @@ const (
 	ScopeCatalogWrite = "catalog.write"
 )
 
-// Adapter exposes the agent-mux runtime as MCP tools over stdio.
+// Adapter exposes the tether runtime as MCP tools over stdio.
 type Adapter struct {
 	runtime   RuntimeObservation // captured from this process, never the installed path
 	upstreams *ClientPool        // set before proxy handlers start
@@ -73,7 +73,7 @@ type Adapter struct {
 	scopes    map[string]struct{}
 
 	// protected is the set of directories this adapter must not write, as real
-	// paths (SetProtectedPaths). Tether sets it for the `mux mcp` it plants into
+	// paths (SetProtectedPaths). Tether sets it for the `tether mcp` it plants into
 	// a launched agent, from the same decision that registers the agent's
 	// ProtectedPaths (CW-20261001-0142). It is a POLICY, not a side effect of a
 	// read-only mount: a runtime that runs the planted server outside Tether's
@@ -89,7 +89,7 @@ type Adapter struct {
 	Logger *slog.Logger
 
 	// SessionID is the Tether session this adapter process serves, from
-	// `mux mcp --session`. Empty when the proxy is reached by something with
+	// `tether mcp --session`. Empty when the proxy is reached by something with
 	// no Tether session — a hand-launched client, or boot-exec — which is a
 	// legitimate state, not a misconfiguration.
 	//
@@ -121,7 +121,7 @@ type Adapter struct {
 // tools; pass an empty token to disable auth (development only).
 //
 // In this mode session-mutating tools execute against svc directly
-// in-process. Use NewWithDaemon for the production "mux mcp" path so
+// in-process. Use NewWithDaemon for the production "tether mcp" path so
 // session ownership stays with the daemon.
 func New(svc *app.Service, token string, scopes []string) *Adapter {
 	scopeSet := make(map[string]struct{}, len(scopes))
@@ -140,11 +140,11 @@ func New(svc *app.Service, token string, scopes []string) *Adapter {
 }
 
 // NewWithDaemon constructs an Adapter that routes session-mutating tools
-// AND all message tools through the running muxd daemon at dc, while
+// AND all message tools through the running tetherd daemon at dc, while
 // keeping catalog reads and read-only session inspection in-process via
 // svc.
 //
-// Use this for the production "mux mcp" subcommand. dc must not be nil
+// Use this for the production "tether mcp" subcommand. dc must not be nil
 // — pass New for in-process-only mode (message tools then return a clear
 // "requires daemon routing" error rather than silently touching a second,
 // unfan-out'd SQLite connection).
@@ -169,7 +169,7 @@ func (a *Adapter) Run(ctx context.Context) error {
 // different tool set on top of it.
 func (a *Adapter) newBareServer() *gomcp.Server {
 	s := gomcp.NewServer(
-		"agent-mux",
+		"tether",
 		a.runtime.Build.Version,
 		gomcp.WithCapabilities(&mcpsdk.ServerCapabilities{
 			Experimental: map[string]any{RuntimeObservationCapability: a.runtime},
@@ -253,11 +253,11 @@ func toolError(code, message string) *budget.ToolError {
 // ADR 0010's typed error envelope conventions; the message is actionable.
 func daemonUnreachableError(err error) *budget.ToolError {
 	return toolError("daemon_unavailable",
-		"muxd daemon is not reachable; start it with `mux daemon up` ("+err.Error()+")")
+		"tetherd daemon is not reachable; start it with `tether daemon up` ("+err.Error()+")")
 }
 
 // readsViaDaemon reports whether the adapter reads the state database over
-// the daemon API rather than in-process. A daemon-only adapter (`mux mcp
+// the daemon API rather than in-process. A daemon-only adapter (`tether mcp
 // --daemon-only`, the server Tether plants in each agent) has a client and no
 // Store: it never opens the database, so an agent's sandbox can keep the
 // state directory read-only (CW-20261001-0173).
@@ -442,7 +442,7 @@ func (a *Adapter) withSessionID(ctx context.Context) context.Context {
 }
 
 // SetRefAttacher wires where extracted session refs are written. Separate from
-// the constructors because extraction is opt-in and only the `mux mcp` command
+// the constructors because extraction is opt-in and only the `tether mcp` command
 // has the daemon client to supply.
 func (a *Adapter) SetRefAttacher(r refAttacher) { a.refs = r }
 

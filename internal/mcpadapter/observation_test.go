@@ -34,7 +34,7 @@ func TestObservationTools_EventsHistory(t *testing.T) {
 	}
 
 	a := New(&app.Service{Store: db}, "", nil)
-	res := callObservationTool(t, a, "mux_events_history", map[string]any{
+	res := callObservationTool(t, a, "tether_events_history", map[string]any{
 		"scope":      "session,broker",
 		"kind":       "session.state_changed,broker.envelope_sent",
 		"session_id": "sess-1",
@@ -92,7 +92,7 @@ func TestObservationTools_EventsHistoryViaDaemon(t *testing.T) {
 	hostport := srv.URL[len("http://"):]
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", nil)
 
-	res := callObservationTool(t, a, "mux_events_history", map[string]any{
+	res := callObservationTool(t, a, "tether_events_history", map[string]any{
 		"scope":      "session,broker",
 		"kind":       "session.state_changed,broker.envelope_sent",
 		"session_id": "sess-1",
@@ -150,7 +150,7 @@ func TestObservationTools_EventsWait(t *testing.T) {
 	hostport := srv.URL[len("http://"):]
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:"+hostport), "test-token", nil)
 
-	res := callObservationTool(t, a, "mux_events_wait", map[string]any{
+	res := callObservationTool(t, a, "tether_events_wait", map[string]any{
 		"scope":      "daemon,session",
 		"kind":       "ai.budget_rejected,session.state_changed",
 		"session_id": "sess-1",
@@ -180,7 +180,7 @@ func TestObservationTools_EventsWait(t *testing.T) {
 
 func TestObservationTools_EventsWaitRejectsInvalidScope(t *testing.T) {
 	a := NewWithDaemon(&app.Service{}, client.New("tcp:127.0.0.1:1"), "test-token", nil)
-	res := callObservationTool(t, a, "mux_events_wait", map[string]any{"scope": "nope"})
+	res := callObservationTool(t, a, "tether_events_wait", map[string]any{"scope": "nope"})
 	if !res.IsError {
 		t.Fatal("expected invalid scope error")
 	}
@@ -192,7 +192,7 @@ func TestObservationTools_EventsWaitRejectsInvalidScope(t *testing.T) {
 
 func TestObservationTools_EventsHistoryRejectsInvalidScope(t *testing.T) {
 	a := New(&app.Service{}, "", nil)
-	res := callObservationTool(t, a, "mux_events_history", map[string]any{"scope": "nope"})
+	res := callObservationTool(t, a, "tether_events_history", map[string]any{"scope": "nope"})
 	if !res.IsError {
 		t.Fatal("expected invalid scope error")
 	}

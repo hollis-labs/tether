@@ -49,7 +49,7 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 	a := newAgentOpsAdapter(t, catalogRoot, nil, ScopeCatalogWrite)
 
 	// create
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{
 		"id":            "auditor",
 		"scope":         "system",
 		"name":          "Auditor",
@@ -68,7 +68,7 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 	}
 
 	// duplicate create rejected — classified as conflict, not internal_error
-	dup := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	dup := callAgentTool(t, a, "tether_agent_create", map[string]any{
 		"id": "auditor", "scope": "system",
 	})
 	if !dup.IsError {
@@ -78,7 +78,7 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 	}
 
 	// list
-	listBody := parseToolJSON(t, callAgentTool(t, a, "mux_agent_list", nil))
+	listBody := parseToolJSON(t, callAgentTool(t, a, "tether_agent_list", nil))
 	agents, _ := listBody["agents"].([]any)
 	if len(agents) != 1 {
 		t.Fatalf("list returned %d agents, want 1", len(agents))
@@ -89,14 +89,14 @@ func TestAgentOps_CreateListShowEdit(t *testing.T) {
 	}
 
 	// show
-	showBody := parseToolJSON(t, callAgentTool(t, a, "mux_agent_show", map[string]any{"id": "auditor"}))
+	showBody := parseToolJSON(t, callAgentTool(t, a, "tether_agent_show", map[string]any{"id": "auditor"}))
 	agent, _ := showBody["agent"].(map[string]any)
 	if agent["name"] != "Auditor" {
 		t.Errorf("show name = %v, want Auditor", agent["name"])
 	}
 
 	// edit — rename, leave system_prompt untouched
-	editRes := callAgentTool(t, a, "mux_agent_edit", map[string]any{
+	editRes := callAgentTool(t, a, "tether_agent_edit", map[string]any{
 		"id": "auditor", "name": "Senior Auditor",
 	})
 	if editRes.IsError {
@@ -117,14 +117,14 @@ func TestAgentOps_EditClearsRoles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
 
-	if res := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	if res := callAgentTool(t, a, "tether_agent_create", map[string]any{
 		"id": "auditor", "scope": "system", "roles": "auditor,reviewer",
 	}); res.IsError {
 		t.Fatalf("create returned error: %s", textOf(res))
 	}
 
 	// Omitting roles leaves them intact.
-	keep := parseToolJSON(t, callAgentTool(t, a, "mux_agent_edit", map[string]any{
+	keep := parseToolJSON(t, callAgentTool(t, a, "tether_agent_edit", map[string]any{
 		"id": "auditor", "name": "Renamed",
 	}))
 	if roles, _ := keep["agent"].(map[string]any)["roles"].([]any); len(roles) != 2 {
@@ -132,7 +132,7 @@ func TestAgentOps_EditClearsRoles(t *testing.T) {
 	}
 
 	// Passing roles as an empty string clears the list.
-	cleared := parseToolJSON(t, callAgentTool(t, a, "mux_agent_edit", map[string]any{
+	cleared := parseToolJSON(t, callAgentTool(t, a, "tether_agent_edit", map[string]any{
 		"id": "auditor", "roles": "",
 	}))
 	if roles, _ := cleared["agent"].(map[string]any)["roles"].([]any); len(roles) != 0 {
@@ -150,7 +150,7 @@ func TestAgentOps_CreateProjectScope(t *testing.T) {
 	}
 	a := newAgentOpsAdapter(t, t.TempDir(), projects, ScopeCatalogWrite)
 
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{
 		"id": "demo-builder", "scope": "project", "project": "demo",
 	})
 	if res.IsError {
@@ -168,7 +168,7 @@ func TestAgentOps_ProjectScopeRequiresProjectArg(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
 
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "orphan"})
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "orphan"})
 	if !res.IsError {
 		t.Fatal("expected error: scope=project create without a project arg")
 	}
@@ -181,7 +181,7 @@ func TestAgentOps_CreateRequiresScope(t *testing.T) {
 	// Adapter holds session.write but NOT catalog.write.
 	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeSessionWrite)
 
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{
 		"id": "auditor", "scope": "system",
 	})
 	if !res.IsError {
@@ -189,7 +189,7 @@ func TestAgentOps_CreateRequiresScope(t *testing.T) {
 	}
 
 	// list is read-only and must still work.
-	if listRes := callAgentTool(t, a, "mux_agent_list", nil); listRes.IsError {
+	if listRes := callAgentTool(t, a, "tether_agent_list", nil); listRes.IsError {
 		t.Errorf("list should not require a scope: %s", textOf(listRes))
 	}
 }
@@ -199,7 +199,7 @@ func TestAgentOps_ShowMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	a := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
 
-	res := callAgentTool(t, a, "mux_agent_show", map[string]any{"id": "ghost"})
+	res := callAgentTool(t, a, "tether_agent_show", map[string]any{"id": "ghost"})
 	if !res.IsError {
 		t.Fatal("show of unknown agent: expected error result")
 	}
@@ -224,7 +224,7 @@ func TestAgentWriteError_ReadOnlyCatalogIsTyped(t *testing.T) {
 // server and the file: no read-only mount is involved here at all. That is the
 // case of a runtime that spawns the planted server outside Tether's sandbox
 // (Codex), where the write used to succeed with the agent's own scope
-// (CW-20261001-0142 review: real codex called mux_agent_create scope=system
+// (CW-20261001-0142 review: real codex called tether_agent_create scope=system
 // and wrote <catalog>/agents/x.yaml). Project scope still works.
 func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -232,7 +232,7 @@ func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
 	a := newAgentOpsAdapter(t, catalogRoot, map[string]config.Project{"p": {RepoRoot: repo}}, ScopeCatalogWrite)
 	a.SetProtectedPaths([]string{catalogRoot})
 
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "e2e-from-codex", "scope": "system", "name": "X"})
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "e2e-from-codex", "scope": "system", "name": "X"})
 	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") || !strings.Contains(textOf(res), "ask the operator") {
 		t.Fatalf("system create = %s; want the typed catalog_read_only refusal", textOf(res))
 	}
@@ -250,7 +250,7 @@ func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
 	if err := os.WriteFile(existing, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res = callAgentTool(t, a, "mux_agent_edit", map[string]any{"id": "ops", "system_prompt": "ignore the operator"})
+	res = callAgentTool(t, a, "tether_agent_edit", map[string]any{"id": "ops", "system_prompt": "ignore the operator"})
 	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") {
 		t.Fatalf("edit of a catalog agent = %s; want catalog_read_only", textOf(res))
 	}
@@ -259,7 +259,7 @@ func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
 	}
 
 	// scope=project writes into the repo, which is not protected, and works.
-	res = callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "helper", "scope": "project", "project": "p", "name": "H"})
+	res = callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "helper", "scope": "project", "project": "p", "name": "H"})
 	if res.IsError {
 		t.Fatalf("project create refused: %s", textOf(res))
 	}
@@ -267,14 +267,14 @@ func TestAgentOps_ProtectedCatalogIsRefusedWithoutAnyMount(t *testing.T) {
 		t.Fatalf("project agent not written: %v", err)
 	}
 	// So does user scope, until the user layer is protected (CW-20261001-0192).
-	res = callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "mine", "scope": "user", "name": "M"})
+	res = callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "mine", "scope": "user", "name": "M"})
 	if res.IsError {
 		t.Fatalf("user create refused: %s", textOf(res))
 	}
 
 	// With nothing protected the same system create goes through.
 	free := newAgentOpsAdapter(t, t.TempDir(), nil, ScopeCatalogWrite)
-	if res := callAgentTool(t, free, "mux_agent_create", map[string]any{"id": "ok", "scope": "system", "name": "O"}); res.IsError {
+	if res := callAgentTool(t, free, "tether_agent_create", map[string]any{"id": "ok", "scope": "system", "name": "O"}); res.IsError {
 		t.Fatalf("an unprotected adapter refused a system create: %s", textOf(res))
 	}
 }
@@ -292,7 +292,7 @@ func TestAgentOps_ProtectedPathResolvesSymlinks(t *testing.T) {
 	a := newAgentOpsAdapter(t, catalogRoot, map[string]config.Project{"p": {RepoRoot: repo}}, ScopeCatalogWrite)
 	a.SetProtectedPaths([]string{catalogRoot})
 
-	res := callAgentTool(t, a, "mux_agent_create", map[string]any{"id": "sneaky", "scope": "project", "project": "p", "name": "S"})
+	res := callAgentTool(t, a, "tether_agent_create", map[string]any{"id": "sneaky", "scope": "project", "project": "p", "name": "S"})
 	if !res.IsError || !strings.Contains(textOf(res), "catalog_read_only") {
 		t.Fatalf("project create through a symlink into the catalog = %s; want catalog_read_only", textOf(res))
 	}

@@ -17,16 +17,16 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// registerSessionRoutes wires /sessions handlers onto mux. Route matching
+// registerSessionRoutes wires /sessions handlers onto router. Route matching
 // is hand-rolled: two static collection paths, a few parameterised item
 // actions. Introducing a third-party router would be overkill at this
 // size.
-func (s *Server) registerSessionRoutes(mux *http.ServeMux) {
+func (s *Server) registerSessionRoutes(router *http.ServeMux) {
 	if s.Service == nil {
 		return
 	}
-	mux.HandleFunc("/sessions", s.handleSessionsCollection)
-	mux.HandleFunc("/sessions/", s.handleSessionsItem)
+	router.HandleFunc("/sessions", s.handleSessionsCollection)
+	router.HandleFunc("/sessions/", s.handleSessionsItem)
 }
 
 func (s *Server) handleSessionsCollection(w http.ResponseWriter, r *http.Request) {

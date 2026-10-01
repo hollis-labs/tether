@@ -49,7 +49,7 @@ import (
 )
 
 // RefKind mirrors store.SessionRefRow.Kind without importing the store: this
-// package runs inside `mux mcp`, a separate process that reaches the daemon
+// package runs inside `tether mcp`, a separate process that reaches the daemon
 // over HTTP and never opens the DB.
 const (
 	refKindTorqueTask        = "torque_task"

@@ -1,0 +1,13 @@
+# Reproduces legacy ~/.tether/catalog/launches/tether-claude-stream-worktree.yaml.
+# Boot-profile folded: tether.engineer.main.worktree.yaml
+# Legacy: project=tether / agent=general / provider=claude-stream / workspace.mode=worktree.
+spec: tether.launch
+name: tether-claude-stream-worktree
+inputs:
+  work_dir: ~/dev/hollis-labs/apps/tether
+  runner: claude-stream
+  isolation: worktree
+  project: tether
+  agent: general
+  agent_role: domain/backend/worker
+  display_name: "Tether — Backend (Stream, Worktree)"

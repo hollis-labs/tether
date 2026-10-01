@@ -585,7 +585,7 @@ func TestClient_AttachSession_DaemonUnreachable(t *testing.T) {
 }
 
 func TestClient_UnreachableUnixSocket(t *testing.T) {
-	c := New("unix:/tmp/mux-nonexistent-" + t.Name() + ".sock")
+	c := New("unix:/tmp/tether-nonexistent-" + t.Name() + ".sock")
 	if err := c.Ping(context.Background()); !errors.Is(err, ErrDaemonUnreachable) {
 		t.Errorf("expected ErrDaemonUnreachable; got %v", err)
 	}

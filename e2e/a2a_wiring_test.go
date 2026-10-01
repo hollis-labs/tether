@@ -5,7 +5,7 @@ package e2e
 // adapter's own protocol/auth correctness via a real a2a-go SDK client
 // against a real Adapter — but always in-process (httptest.NewServer),
 // never through the actual <catalogRoot>/a2a/*.yaml catalog loader
-// (internal/config.LoadA2ABindings) feeding a genuinely running `mux
+// (internal/config.LoadA2ABindings) feeding a genuinely running `tether
 // daemon run` process. This test proves that specific wiring path end to
 // end: write a real binding YAML file, boot the real daemon against it,
 // and drive it with a real a2a-go client (over the daemon's real UDS

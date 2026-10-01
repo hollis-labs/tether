@@ -29,10 +29,10 @@ bags rely on the spec default rather than restating it).
 
 ## Notes on the mapping
 
-- **agent-mux launches** carry legacy `project: tether` (the legacy
+- **tether launches** carry legacy `project: tether` (the legacy
   files literally say so) — the bags preserve that. `work_dir` is the
   tether `repo_root` accordingly.
-- **Launches with no matching boot-profile** (e.g. `agent-mux-claude`,
+- **Launches with no matching boot-profile** (e.g. `tether-claude`,
   `nanite-claude-stream`, `tesseract-claude-stream`, `torque-claude-stream`,
   the codex-app-server variants) fall back to the spec-default role
   `domain/backend/worker`. Their header comment records this.

@@ -17,7 +17,7 @@ func newLogsServer(t *testing.T, logsDir string) *httptest.Server {
 	return httptest.NewServer(h)
 }
 
-// TestLogsEndpointMissingFile verifies that a missing muxd.log returns empty lines, not an error.
+// TestLogsEndpointMissingFile verifies that a missing tetherd.log returns empty lines, not an error.
 func TestLogsEndpointMissingFile(t *testing.T) {
 	logsDir := t.TempDir()
 	srv := newLogsServer(t, logsDir)
@@ -50,7 +50,7 @@ func TestLogsEndpointDefaultTail(t *testing.T) {
 		_ = i
 		sb.WriteByte('\n')
 	}
-	if err := os.WriteFile(filepath.Join(logsDir, "muxd.log"), []byte(sb.String()), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(logsDir, "tetherd.log"), []byte(sb.String()), 0o640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestLogsEndpointTailParam(t *testing.T) {
 	for range 50 {
 		sb.WriteString("line\n")
 	}
-	if err := os.WriteFile(filepath.Join(logsDir, "muxd.log"), []byte(sb.String()), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(logsDir, "tetherd.log"), []byte(sb.String()), 0o640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestLogsEndpointClampedOverMax(t *testing.T) {
 	for range maxTailLines + 100 {
 		sb.WriteString("line\n")
 	}
-	if err := os.WriteFile(filepath.Join(logsDir, "muxd.log"), []byte(sb.String()), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(logsDir, "tetherd.log"), []byte(sb.String()), 0o640); err != nil {
 		t.Fatal(err)
 	}
 

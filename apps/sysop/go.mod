@@ -34,22 +34,22 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0 // indirect
-	github.com/hollis-labs/agentkit v0.19.1 // indirect
-	github.com/hollis-labs/go-agent-wrapper v0.23.0 // indirect
+	github.com/hollis-labs/agentkit v0.21.0 // indirect
+	github.com/hollis-labs/go-agent-wrapper v0.25.6 // indirect
 	github.com/hollis-labs/go-apppaths v0.1.0 // indirect
 	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
-	github.com/hollis-labs/go-llm-contracts v0.3.0 // indirect
+	github.com/hollis-labs/go-llm-contracts v0.4.0 // indirect
 	github.com/hollis-labs/go-llm-types v0.5.1 // indirect
 	github.com/hollis-labs/go-localdaemon v0.1.0 // indirect
 	github.com/hollis-labs/go-materialize v0.1.0 // indirect
 	github.com/hollis-labs/go-mcp v0.14.1 // indirect
 	github.com/hollis-labs/go-otel v0.6.1 // indirect
 	github.com/hollis-labs/go-permission v0.1.0 // indirect
-	github.com/hollis-labs/go-providers v0.39.0 // indirect
-	github.com/hollis-labs/go-runner v0.7.0 // indirect
+	github.com/hollis-labs/go-providers v0.42.0 // indirect
+	github.com/hollis-labs/go-runner v0.8.2 // indirect
 	github.com/hollis-labs/go-runtime-events v0.2.1 // indirect
 	github.com/hollis-labs/go-safefs v0.1.0 // indirect
-	github.com/hollis-labs/go-sandbox v0.5.1 // indirect
+	github.com/hollis-labs/go-sandbox v0.6.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

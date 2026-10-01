@@ -18,12 +18,12 @@ import (
 const plantedConfig = `approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
-[mcp_servers.mux]
-command = "/opt/mux"
+[mcp_servers.tether]
+command = "/opt/tether"
 args = ["--catalog", "/c", "mcp", "--proxy", "--session", "s1"]
 
-[mcp_servers.mux.env]
-MUX_MCP_SERVERS = "a,b"
+[mcp_servers.tether.env]
+TETHER_MCP_SERVERS = "a,b"
 `
 
 const codexTrust = `
@@ -44,7 +44,7 @@ func TestCodexConfigUnsafe(t *testing.T) {
 		{"planted shape plus codex's trust entry", plantedConfig + codexTrust, ""},
 		{"CRLF, comments and blanks", "# planted\r\n\r\napproval_policy = \"never\" # asks nothing\r\nsandbox_mode = \"read-only\"\r\n", ""},
 		{"empty file", "", ""},
-		{"an MCP server with a tool table", plantedConfig + "\n[mcp_servers.mux.tools.x]\napproval_mode = \"auto\"\n", ""},
+		{"an MCP server with a tool table", plantedConfig + "\n[mcp_servers.tether.tools.x]\napproval_mode = \"auto\"\n", ""},
 
 		{"[sandbox_workspace_write] table", plantedConfig + "\n[sandbox_workspace_write]\nwritable_roots = [\"/cat\"]\n", "opens the table [sandbox_workspace_write"},
 		{"table with spaces", plantedConfig + "\n[ sandbox_workspace_write ]\nwritable_roots = [\"/cat\"]\n", "opens the table"},

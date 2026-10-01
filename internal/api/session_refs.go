@@ -137,10 +137,10 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 	// here is self-asserted and unverified by design, the same as ?as=. So
 	// the guard blocked nothing an impersonator would do.
 	//
-	// And it blocked the one caller telling the truth. `mux mcp --proxy` runs
+	// And it blocked the one caller telling the truth. `tether mcp --proxy` runs
 	// in a SEPARATE PROCESS from the daemon and cannot reach the store; it
 	// writes through this endpoint like everyone else (the same route
-	// proxy_events already takes, cmd/mux/mcp.go). A guard that cannot detect
+	// proxy_events already takes, cmd/tether/mcp.go). A guard that cannot detect
 	// impersonation but does stop the honest caller is strictly worse than no
 	// guard: it costs a real obstacle and buys a false assurance.
 	//

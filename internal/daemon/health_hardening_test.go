@@ -20,7 +20,7 @@ func healthBody(t *testing.T, s *Server) (Health, string) {
 }
 
 // /health reports the launch-hardening state the daemon decided
-// (CW-20261001-0227), so `mux doctor` can say what muxd does.
+// (CW-20261001-0227), so `tether doctor` can say what tetherd does.
 func TestHealth_ReportsLaunchHardening(t *testing.T) {
 	s := &Server{Hardening: func() *HealthHardening {
 		return &HealthHardening{ClaudeStrictMCP: false, ClaudeStrictMCPReason: "DISABLED by test"}

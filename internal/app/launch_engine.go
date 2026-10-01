@@ -111,7 +111,7 @@ func (s *Service) LaunchEngineIsSpec() bool {
 // SpecResolveLaunchPlan resolves launchID to an agentlaunch.LaunchPlan via
 // the S5 Spec engine (internal/specresolve). It is the public entry point
 // for front-ends that produce the agentlaunch.LaunchPlan themselves
-// (boot-exec, mux resolve) rather than going through compileSharedLaunch.
+// (boot-exec, tether resolve) rather than going through compileSharedLaunch.
 //
 // onMissing selects missing-required-input handling and the stamped launch
 // mode: pass agentlaunch.PolicyCollect for the interactive

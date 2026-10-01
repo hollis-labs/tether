@@ -1,5 +1,5 @@
 // Package e2e exercises the complete messaging-vnext implementation
-// through REAL public daemon/client surfaces — a genuinely spawned `mux
+// through REAL public daemon/client surfaces — a genuinely spawned `tether
 // daemon run` OS process, driven via internal/client.Client over its
 // real UDS socket — in isolated temporary state roots. This is T11
 // (CW-20260906-0042)'s own scope text: "Exercise the complete
@@ -45,9 +45,9 @@ var (
 	buildErr  error
 )
 
-// muxBinary builds cmd/mux exactly once per test process (subsequent
+// tetherBinary builds cmd/tether exactly once per test process (subsequent
 // FixtureDaemons reuse the same binary) and returns its path.
-func muxBinary(t *testing.T) string {
+func tetherBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "tether-e2e-bin-")
@@ -55,16 +55,16 @@ func muxBinary(t *testing.T) string {
 			buildErr = fmt.Errorf("mkdir temp: %w", err)
 			return
 		}
-		binPath = filepath.Join(dir, "mux")
-		cmd := exec.Command("go", "build", "-o", binPath, "./cmd/mux/")
+		binPath = filepath.Join(dir, "tether")
+		cmd := exec.Command("go", "build", "-o", binPath, "./cmd/tether/")
 		cmd.Dir = repoRoot(t)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			buildErr = fmt.Errorf("go build ./cmd/mux: %w\n%s", err, out)
+			buildErr = fmt.Errorf("go build ./cmd/tether: %w\n%s", err, out)
 		}
 	})
 	if buildErr != nil {
-		t.Fatalf("build mux binary: %v", buildErr)
+		t.Fatalf("build tether binary: %v", buildErr)
 	}
 	return binPath
 }
@@ -84,7 +84,7 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
-// FixtureDaemon is one isolated, genuinely running `mux daemon run`
+// FixtureDaemon is one isolated, genuinely running `tether daemon run`
 // process. Construct with StartFixtureDaemon.
 type FixtureDaemon struct {
 	t          *testing.T
@@ -97,7 +97,7 @@ type FixtureDaemon struct {
 }
 
 // StartFixtureDaemon builds (once, shared across all fixtures in this
-// test process) and spawns a real mux daemon process against a fresh,
+// test process) and spawns a real tether daemon process against a fresh,
 // fully isolated state root. Blocks until the daemon answers a real
 // GET /health over its real socket, or fails the test after a bounded
 // timeout. Registers cleanup to terminate the process.
@@ -106,7 +106,7 @@ func StartFixtureDaemon(t *testing.T) *FixtureDaemon {
 	// Deliberately NOT t.TempDir(): it nests the full test name into the
 	// path (".../TestSomeVeryDescriptiveName12345/001"), which routinely
 	// blows macOS's ~104-byte sockaddr_un limit for the unix socket this
-	// state root will hold at <root>/run/muxd.sock ("bind: invalid
+	// state root will hold at <root>/run/tetherd.sock ("bind: invalid
 	// argument" is exactly that limit, not a real daemon bug). A short,
 	// random, flat directory avoids it.
 	stateRoot, err := os.MkdirTemp("", "te2e")
@@ -126,10 +126,10 @@ func startFixtureDaemonAt(t *testing.T, stateRoot string) *FixtureDaemon {
 	t.Helper()
 	d := &FixtureDaemon{
 		t:          t,
-		bin:        muxBinary(t),
+		bin:        tetherBinary(t),
 		StateRoot:  stateRoot,
 		CatalogDir: filepath.Join(stateRoot, "catalog"),
-		SocketAddr: "unix:" + filepath.Join(stateRoot, "run", "muxd.sock"),
+		SocketAddr: "unix:" + filepath.Join(stateRoot, "run", "tetherd.sock"),
 	}
 	d.start()
 	t.Cleanup(d.Stop)
@@ -180,7 +180,7 @@ func (d *FixtureDaemon) waitHealthy(timeout time.Duration) error {
 }
 
 // Client returns a fresh internal/client.Client pointed at this
-// fixture's real UDS socket -- the same typed client every mux CLI
+// fixture's real UDS socket -- the same typed client every tether CLI
 // command and every production consumer uses, exercising the real
 // public daemon surface end to end.
 func (d *FixtureDaemon) Client() *client.Client {
@@ -199,7 +199,7 @@ func (d *FixtureDaemon) Kill() {
 	_, _ = d.cmd.Process.Wait()
 }
 
-// Restart starts a fresh `mux daemon run` process against the exact same
+// Restart starts a fresh `tether daemon run` process against the exact same
 // state root (same catalog, same state.db, same socket path) -- proving
 // data survives a crash+restart cycle, not merely that a fresh process
 // can be spawned. Safe to call after Kill or Stop.

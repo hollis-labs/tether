@@ -31,11 +31,11 @@ func TestToolRegistry_RegisterAndLookup(t *testing.T) {
 
 func TestToolRegistry_RegisterNative(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
-	rt, ok := r.Lookup("mux_health")
+	rt, ok := r.Lookup("tether_health")
 	if !ok {
-		t.Fatal("expected mux_health to be found")
+		t.Fatal("expected tether_health to be found")
 	}
 	if rt.ServerID != "" {
 		t.Errorf("native tool should have empty ServerID, got %q", rt.ServerID)
@@ -75,7 +75,7 @@ func TestToolRegistry_Collision(t *testing.T) {
 
 func TestToolRegistry_AllDefinitions(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("mux_z"), makeTool("mux_a")})
+	r.RegisterNative([]*mcpsdk.Tool{makeTool("tether_z"), makeTool("tether_a")})
 	r.Register("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")})
 
 	defs := r.AllDefinitions()
@@ -83,7 +83,7 @@ func TestToolRegistry_AllDefinitions(t *testing.T) {
 		t.Fatalf("expected 3 definitions, got %d", len(defs))
 	}
 	// Must be sorted by name.
-	if defs[0].Name != "mux_a" || defs[1].Name != "mux_z" || defs[2].Name != "srv_tool" {
+	if defs[0].Name != "srv_tool" || defs[1].Name != "tether_a" || defs[2].Name != "tether_z" {
 		names := make([]string, len(defs))
 		for i, d := range defs {
 			names[i] = d.Name

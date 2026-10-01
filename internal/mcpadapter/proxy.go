@@ -89,7 +89,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 	// Record WHICH upstream on the span. This is the dimension that makes a
 	// proxied span worth creating at all -- without it, Torque latency cannot
 	// be separated from Tesseract latency, and the tool name is not a reliable
-	// substitute (proxy_events records server "mux" for Torque tools today, so
+	// substitute (proxy_events records server "tether" for Torque tools today, so
 	// name-to-server is already not a mapping anything should lean on).
 	//
 	// Set here rather than at span creation because this is the one place the
@@ -97,8 +97,8 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 	// mean a second lookup and a second thing that can disagree. A no-op when
 	// no span is recording, so this is safe on every path.
 	//
-	// mux_call also reaches Handle, and its span (created natively by addTool)
-	// picks the attribute up here too. That is intended: mux_call forwards to
+	// tether_tool_call also reaches Handle, and its span (created natively by addTool)
+	// picks the attribute up here too. That is intended: tether_tool_call forwards to
 	// an upstream as well and should carry which one.
 	trace.SpanFromContext(ctx).SetAttributes(attribute.String("hollis.tool.server", rt.ServerID))
 

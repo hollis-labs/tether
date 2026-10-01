@@ -178,8 +178,8 @@ export function SessionDetailDialog({
                 <Radio className="h-3.5 w-3.5" />
                 Live
               </Button>
-              <CopyCommandButton text={`mux sessions attach ${s.id}`} label="Attach" />
-              <CopyCommandButton text={`mux sessions tail --follow ${s.id}`} label="Tail" />
+              <CopyCommandButton text={`tether sessions attach ${s.id}`} label="Attach" />
+              <CopyCommandButton text={`tether sessions tail --follow ${s.id}`} label="Tail" />
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <Button

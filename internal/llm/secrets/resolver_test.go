@@ -31,11 +31,11 @@ func TestParseRef(t *testing.T) {
 		},
 		{
 			name: "helper",
-			raw:  "helper://mux-apikey-helper/openai/default",
+			raw:  "helper://tether-apikey-helper/openai/default",
 			want: Ref{
-				Raw:       "helper://mux-apikey-helper/openai/default",
+				Raw:       "helper://tether-apikey-helper/openai/default",
 				Scheme:    "helper",
-				Authority: "mux-apikey-helper",
+				Authority: "tether-apikey-helper",
 				Path:      []string{"openai", "default"},
 			},
 		},

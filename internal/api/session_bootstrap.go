@@ -76,11 +76,11 @@ type sessionBootstrapResponse struct {
 // registerSessionBootstrapRoutes mounts POST /sessions/bootstrap. Only
 // attached when Server.SessionBootstrap is non-nil, matching every other
 // optional dependency's nil-disables-route convention.
-func (s *Server) registerSessionBootstrapRoutes(mux *http.ServeMux) {
+func (s *Server) registerSessionBootstrapRoutes(router *http.ServeMux) {
 	if s.SessionBootstrap == nil {
 		return
 	}
-	mux.HandleFunc("/sessions/bootstrap", s.handleSessionBootstrap)
+	router.HandleFunc("/sessions/bootstrap", s.handleSessionBootstrap)
 }
 
 func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +115,7 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 			Intent:         intent,
 			Publication:    req.Publication,
 			// This endpoint records identity and launches nothing, so no
-			// .mcp.json is planted and no `mux mcp --session` carries this
+			// .mcp.json is planted and no `tether mcp --session` carries this
 			// id. The session's proxied calls therefore cannot be attributed
 			// to it however much work it does.
 			//
