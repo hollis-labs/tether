@@ -210,16 +210,19 @@ func TestRedactUpstreamError_KeepsTheCause(t *testing.T) {
 	if !errors.Is(got, cause) {
 		t.Fatal("the cause was lost")
 	}
-	// Nothing to scrub: the same error back, untouched.
+	// Nothing to scrub: the error comes back as it was, not rewrapped.
 	plain := errors.New("connection refused")
-	if redactUpstreamError(plain, entry) != plain {
-		t.Fatal("an error with nothing to scrub was rewrapped")
+	untouched := func(label string, got error) {
+		t.Helper()
+		var rewrapped *redactedError
+		if errors.As(got, &rewrapped) || !errors.Is(got, plain) || got.Error() != plain.Error() {
+			t.Fatalf("%s: an error with nothing to scrub was rewritten: %v", label, got)
+		}
 	}
+	untouched("no credential in the text", redactUpstreamError(plain, entry))
+	// An entry with no credentials at all has nothing to scrub either.
+	untouched("empty credential values", redactUpstreamError(plain, config.MCPServerEntry{ID: "y"}))
 	if redactUpstreamError(nil, entry) != nil {
 		t.Fatal("nil must stay nil")
-	}
-	// An entry with no credentials at all has nothing to scrub either.
-	if redactUpstreamError(plain, config.MCPServerEntry{ID: "y"}) != plain {
-		t.Fatal("empty credential values must not rewrite the text")
 	}
 }
