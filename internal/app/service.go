@@ -83,6 +83,10 @@ type Service struct {
 	specResolverOnce sync.Once
 	specResolver     *specresolve.Resolver
 	specResolverErr  error
+
+	// wakePark carries the wake sweep's parked deliveries between ticks.
+	// See wakeParkSet in wake.go.
+	wakePark wakeParkSet
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the
