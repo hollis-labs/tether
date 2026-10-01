@@ -82,6 +82,14 @@ Two planned changes close this:
 Until both land, treat any agent Tether launches as able to do anything in
 Tether that you can.
 
+One interim guard is in place for the sandbox: a session-create override
+(`agent_file` or `agent_inline`) may not change a catalog agent's pinned
+sandbox profile. It may only tighten an agent that has none. An agent holding
+`session.write` therefore cannot loosen its own sandbox by creating a child
+session through the API. The guard is removed when CW-20260930-0253 lands and
+the daemon can tell an operator from an agent. It does not stop an agent from
+editing the catalog itself; that is CW-20260930-0237.
+
 ## Data at rest
 
 Tether has no built-in at-rest encryption. The state database, session logs,

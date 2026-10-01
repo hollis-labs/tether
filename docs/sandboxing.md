@@ -123,6 +123,22 @@ permissions:
 
 Restart the daemon to pick up the new profile.
 
+An `agent_file` or `agent_inline` override on session create can name a
+profile. The override's profile is the one applied at launch; if the catalog
+doesn't define it, the session is refused with 404. It never silently falls
+back to the catalog agent's profile.
+
+**Interim rule: an override can tighten, but not change, a pinned profile.**
+- If the catalog agent names no profile, an override may name any defined
+  profile.
+- If the catalog agent is pinned to a profile, an override may name only that
+  same profile. Any other profile is refused with 403 `forbidden`.
+
+The reason: an agent Tether launches holds `session.write` through its `mux`
+MCP, so without this rule it could create a child session that loosens its
+own sandbox. Tether cannot yet tell an operator from an agent caller. The rule
+is lifted when per-caller identity (CW-20260930-0253) lands.
+
 ## Failure modes
 
 | Scenario | Behavior |

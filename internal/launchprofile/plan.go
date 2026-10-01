@@ -23,6 +23,13 @@ type Plan struct {
 	// concrete CLI flags into Args; this field records the decision for
 	// inspection and for non-claude providers that may map it differently.
 	PermissionMode string `json:"permission_mode,omitempty"`
+	// SandboxProfile is the sandbox profile an agent_file or agent_inline
+	// override set at create, when it differs from the catalog agent's
+	// default_sandbox. LaunchSession applies it instead of the catalog
+	// agent's, so an override is never silently dropped (CW-20261001-0145).
+	// Empty means no override: the catalog agent's profile applies, as for
+	// every plan created before this field existed.
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	// ExtractRefs records whether proxy-side identifier extraction (--extract-refs)
 	// was enabled for this launch plan.
 	ExtractRefs     bool     `json:"extract_refs,omitempty"`

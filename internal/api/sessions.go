@@ -264,6 +264,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
 		}
+		if errors.Is(err, config.ErrSandboxOverrideRefused) {
+			writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
@@ -338,6 +342,10 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 		}
 		if errors.Is(err, config.ErrUnknownSandboxProfile) {
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, config.ErrSandboxOverrideRefused) {
+			writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

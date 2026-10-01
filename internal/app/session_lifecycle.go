@@ -247,8 +247,22 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// sandbox would be a silent downgrade (CW-20261001-0130). Session create
 	// refuses this first; this covers a session created before the catalog
 	// changed.
+	// An agent_file/agent_inline override's profile, recorded on the plan at
+	// create, wins over the catalog agent's (CW-20261001-0145).
 	var profile sandbox.Profile
-	sp, hasProfile, err := s.Catalog.AgentSandbox(plan.LogicalAgentID)
+	var (
+		sp         sandbox.Profile
+		hasProfile bool
+	)
+	if plan.SandboxProfile != "" {
+		sp, hasProfile, err = s.Catalog.SandboxProfile(plan.LogicalAgentID, plan.SandboxProfile)
+		if err == nil {
+			// The catalog agent may have been pinned since create.
+			err = s.Catalog.CheckSandboxOverride(plan.LogicalAgentID, plan.SandboxProfile)
+		}
+	} else {
+		sp, hasProfile, err = s.Catalog.AgentSandbox(plan.LogicalAgentID)
+	}
 	if err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
