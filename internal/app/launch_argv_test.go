@@ -35,9 +35,13 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 		providerID  string
 		brand       string
 		runtimeKind string
+		mode        string // Tether permission mode
 		args        []string
 		wantPairs   [][2]string // flag, root ("boot" | "project")
 		wantOnce    []string
+		wantValues  [][2]string // flag, the value that follows it
+		wantAbsent  []string
+		wantNoEnv   []string
 		wantPrompt  string // "" when the turn goes over stdin, not argv
 	}{
 		{
@@ -45,19 +49,23 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			providerID:  "claude-code",
 			brand:       "claude",
 			runtimeKind: config.RuntimeKindStreamingStdio,
-			// launch.Resolve's claude args.
-			args:      []string{"--dangerously-skip-permissions"},
-			wantPairs: [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
-			wantOnce:  []string{"-p", "--input-format", "--output-format", "--mcp-config", "--dangerously-skip-permissions"},
+			mode:        config.PermissionModeBypass,
+			wantPairs:   [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
+			wantOnce:    []string{"-p", "--input-format", "--output-format", "--mcp-config", "--permission-mode"},
+			// The posture owns the permission flag (CW-20261001-0156).
+			wantValues: [][2]string{{"--permission-mode", "bypassPermissions"}},
+			wantAbsent: []string{"--dangerously-skip-permissions"},
 		},
 		{
 			name:        "claude print turn",
 			providerID:  "claude-sub",
 			brand:       "claude",
 			runtimeKind: config.RuntimeKindSubprocess,
-			args:        []string{"--dangerously-skip-permissions"},
+			mode:        config.PermissionModeDefault,
 			wantPairs:   [][2]string{{"--mcp-config", "boot"}, {"--add-dir", "project"}},
-			wantOnce:    []string{"-p", "--output-format", "--mcp-config", "--dangerously-skip-permissions"},
+			wantOnce:    []string{"-p", "--output-format", "--mcp-config", "--permission-mode"},
+			wantValues:  [][2]string{{"--permission-mode", "default"}},
+			wantAbsent:  []string{"--dangerously-skip-permissions"},
 			wantPrompt:  turnPrompt,
 		},
 		{
@@ -65,15 +73,19 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			providerID:  "codex-app-server",
 			brand:       "codex",
 			runtimeKind: config.RuntimeKindJSONRPCStdio,
-			wantOnce:    []string{"app-server"},
+			mode:        config.PermissionModeBypass,
+			// accept-edits in either Tether mode: approval "never" would
+			// refuse every MCP tool call (codex_approval.go).
+			wantOnce: []string{"app-server", `sandbox_mode="workspace-write"`, `approval_policy="on-request"`},
 		},
 		{
 			name:        "codex exec turn",
 			providerID:  "codex-cli",
 			brand:       "codex",
 			runtimeKind: config.RuntimeKindSubprocess,
+			mode:        config.PermissionModeDefault,
 			wantPairs:   [][2]string{{"--cd", "project"}},
-			wantOnce:    []string{"exec", "--json", "--skip-git-repo-check", "--cd"},
+			wantOnce:    []string{"exec", "--json", "--skip-git-repo-check", "--cd", `sandbox_mode="workspace-write"`, `approval_policy="on-request"`},
 			wantPrompt:  turnPrompt,
 		},
 		{
@@ -82,10 +94,13 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			providerID:  "opencode",
 			brand:       "opencode",
 			runtimeKind: config.RuntimeKindSubprocess,
+			mode:        config.PermissionModeBypass,
 			args:        []string{"run"},
 			wantPairs:   [][2]string{{"--dir", "project"}},
 			wantOnce:    []string{"run", "--format", "--agent", "tether-agent"},
-			wantPrompt:  turnPrompt,
+			// No posture: opencode keeps its own defaults.
+			wantNoEnv:  []string{"OPENCODE_PERMISSION"},
+			wantPrompt: turnPrompt,
 		},
 		{
 			// Catalog flags other than the leading run reach argv once, at
@@ -104,8 +119,19 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			providerID:  "agy",
 			brand:       "antigravity",
 			runtimeKind: config.RuntimeKindSubprocess,
+			mode:        config.PermissionModeBypass,
 			wantPairs:   [][2]string{{"--add-dir", "project"}},
-			wantOnce:    []string{"--output-format", "-p=" + turnPrompt},
+			wantOnce:    []string{"--output-format", "-p=" + turnPrompt, "--dangerously-skip-permissions"},
+		},
+		{
+			name:        "antigravity turn, default mode",
+			providerID:  "agy",
+			brand:       "antigravity",
+			runtimeKind: config.RuntimeKindSubprocess,
+			mode:        config.PermissionModeDefault,
+			wantPairs:   [][2]string{{"--add-dir", "project"}},
+			wantValues:  [][2]string{{"--mode", "accept-edits"}},
+			wantAbsent:  []string{"--dangerously-skip-permissions"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,6 +153,7 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 				WorkspaceMode:  "shared",
 				Command:        tc.brand,
 				Args:           tc.args,
+				PermissionMode: tc.mode,
 				BootPrompt:     testBootPrompt,
 			}
 			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
@@ -151,6 +178,21 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			for _, tok := range tc.wantOnce {
 				if n := countToken(argv, tok); n != 1 {
 					t.Errorf("%q appears %d times, want 1: %q", tok, n, argv)
+				}
+			}
+			for _, pair := range tc.wantValues {
+				if i := slices.Index(argv, pair[0]); i < 0 || i+1 >= len(argv) || argv[i+1] != pair[1] {
+					t.Errorf("want %s %s: %q", pair[0], pair[1], argv)
+				}
+			}
+			for _, tok := range tc.wantAbsent {
+				if slices.Contains(argv, tok) {
+					t.Errorf("%q in argv: %q", tok, argv)
+				}
+			}
+			for _, name := range tc.wantNoEnv {
+				if v, ok := prepared.Env[name]; ok {
+					t.Errorf("%s=%q in the launch env", name, v)
 				}
 			}
 			if tc.wantPrompt != "" {
@@ -244,7 +286,7 @@ func TestLaunchSession_StreamingStdioClaudeArgvAndBootTurn(t *testing.T) {
 		WriteHome:      wsRoot,
 		WorkspaceMode:  "shared",
 		Command:        fake,
-		Args:           []string{"--dangerously-skip-permissions"},
+		PermissionMode: config.PermissionModeBypass,
 		BootPrompt:     testBootPrompt,
 		// What launch.Resolve copies from a claude-code provider's bootstrap.mode.
 		BootMode: config.RuntimeKindStreamingStdio,
@@ -279,10 +321,13 @@ func TestLaunchSession_StreamingStdioClaudeArgvAndBootTurn(t *testing.T) {
 		t.Errorf("boot prompt passed in argv: %q", argv)
 	}
 	assertNoRepeatedFlags(t, argv)
-	for _, flag := range []string{"--input-format", "--mcp-config", "--add-dir"} {
+	for _, flag := range []string{"--input-format", "--mcp-config", "--add-dir", "--permission-mode"} {
 		if !slices.Contains(argv, flag) {
 			t.Errorf("spawned argv missing %s: %q", flag, argv)
 		}
+	}
+	if i := slices.Index(argv, "--permission-mode"); i < 0 || i+1 >= len(argv) || argv[i+1] != "bypassPermissions" {
+		t.Errorf("spawned argv does not run under bypassPermissions: %q", argv)
 	}
 	assertStreamJSONUserTurn(t, waitForFile(t, stdinFile), testBootPrompt)
 }
@@ -412,6 +457,11 @@ func assertNoRepeatedFlags(t *testing.T, argv []string) {
 	t.Helper()
 	seen := map[string]bool{}
 	for _, tok := range argv {
+		// codex's -c is one config override per occurrence (the posture
+		// sets sandbox_mode and approval_policy with two).
+		if tok == "-c" {
+			continue
+		}
 		if strings.HasPrefix(tok, "-") && !seen[tok] && countToken(argv, tok) > 1 {
 			t.Errorf("flag %q repeated in argv: %q", tok, argv)
 		}

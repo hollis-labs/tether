@@ -257,9 +257,6 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeIdempotencyConflict(w, err) {
 			return
 		}
-		if writeACPLaunchDisabled(w, err) {
-			return
-		}
 		if errors.Is(err, launch.ErrLaunchNotFound) || errors.Is(err, config.ErrUnknownSandboxProfile) {
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
@@ -331,9 +328,6 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 	if err != nil {
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
-			return
-		}
-		if writeACPLaunchDisabled(w, err) {
 			return
 		}
 		if errors.Is(err, session.ErrNotCreated) {
@@ -530,15 +524,4 @@ func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Req
 		out = append(out, checkpointToDTO(c))
 	}
 	writeJSON(w, http.StatusOK, CheckpointListResponse{Checkpoints: out})
-}
-
-// writeACPLaunchDisabled answers a launch the daemon refuses by policy: an
-// ACP-mode launch while the ACP gate is closed (launch.ErrACPLaunchDisabled).
-// 403: the request is fine and the daemon will not do it until opted in.
-func writeACPLaunchDisabled(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, launch.ErrACPLaunchDisabled) {
-		return false
-	}
-	writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
-	return true
 }

@@ -40,7 +40,7 @@ Defined codes:
 | Code                | HTTP | Meaning                                       |
 |---------------------|------|-----------------------------------------------|
 | `invalid_request`   | 400  | malformed body, missing required param        |
-| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy (an ACP-mode launch while `TETHER_ENABLE_ACP` is unset, see [provider runtime sessions](../provider-runtime-sessions.md)) |
+| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |

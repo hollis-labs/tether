@@ -170,11 +170,11 @@ type Defaults struct {
 	WorkspaceRoot string `yaml:"workspace_root"`
 	StateDB       string `yaml:"state_db"`
 	TempRoot      string `yaml:"temp_root"`
-	// PermissionMode is the fleet-wide default Claude Code permission
-	// posture for launched agents: "bypass" (start the agent with
-	// --dangerously-skip-permissions) or "default" (prompt). Empty
-	// resolves to "default". An agent's permissions.permission_mode
-	// overrides this per-agent. See config.EffectivePermissionMode.
+	// PermissionMode is the fleet-wide default permission posture for
+	// launched agents: "bypass" (no tool-permission prompts) or "default"
+	// (refused what needs approval). Empty resolves to "default". An
+	// agent's permissions.permission_mode overrides this per-agent. See
+	// config.EffectivePermissionMode and config.ProviderPosture.
 	PermissionMode string `yaml:"permission_mode"`
 	// LaunchEngine selects how the agentlaunch.LaunchPlan that feeds
 	// launcher.Compile is produced: "catalog" (default — the legacy

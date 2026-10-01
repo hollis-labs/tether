@@ -707,21 +707,6 @@ func TestHandleSendTurn_BusyIsConflict(t *testing.T) {
 	}
 }
 
-// An ACP-mode launch while the ACP gate is closed is refused by policy: 403.
-func TestHandleLaunchSession_ACPDisabledIsForbidden(t *testing.T) {
-	svc := &fakeLaunchService{launchErr: fmt.Errorf("build runtime: %w", launch.ErrACPLaunchDisabled)}
-	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/launch", nil)
-	rr := httptest.NewRecorder()
-	newTestHandler(svc).ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rr.Code)
-	}
-	env := decodeErr(t, rr)
-	if env.Error.Code != CodeForbidden || !strings.Contains(env.Error.Message, "TETHER_ENABLE_ACP") {
-		t.Fatalf("error = %+v", env.Error)
-	}
-}
-
 func TestHandleSendInput_TooLarge(t *testing.T) {
 	svc := &fakeLaunchService{}
 	body := bytes.Repeat([]byte{'x'}, maxInputBytes+1)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/hollis-labs/agentkit/agentlaunch"
@@ -20,17 +19,18 @@ import (
 // headless-launch smoke. It drives the full spec path —
 // specresolve.Resolve -> launcher.Compile -> Prepare ->
 // providerplant.Plant — for a claude and a codex launch and asserts the
-// approval/permission contract survives the flip into the *planted*
-// boot-dir content:
+// approval/permission contract survives into the prepared launch's argv,
+// where agentkit puts the posture's flags (CW-20261001-0156):
 //
-//   - claude: planted .claude/settings.json carries permissions.defaultMode
-//     (catalog default permission_mode: bypass -> "bypassPermissions").
-//   - codex:  planted config.toml carries an approval_policy.
+//   - claude: --permission-mode bypassPermissions (catalog default
+//     permission_mode: bypass -> posture yolo).
+//   - codex:  -c approval_policy="on-request" (posture accept-edits, so
+//     MCP tool calls are asked for rather than refused).
 //
 // It does NOT execute an agent — that is the live half of the smoke. This
 // half is what the orchestrator-s5 amendment is really about: a launch
-// that shows parity-green must not silently drop the boot-dir approval
-// posture. providerplant.Plant here runs with no WithAdapter, so it goes
+// that shows parity-green must not silently drop the approval posture.
+// providerplant.Plant here runs with no WithAdapter, so it goes
 // through DefaultResolver — the same path the daemon session-launch uses.
 //
 // Skips cleanly when the live catalog or the deployed LaunchSpec corpus is
@@ -61,20 +61,17 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 	tests := []struct {
 		name     string
 		launchID string
-		wantFile string   // planted file, relative to the boot dir
-		wantAny  []string // the planted file must contain at least one
+		wantFlag [2]string // a flag and the value that follows it in argv
 	}{
 		{
-			name:     "claude carries permissions.defaultMode",
+			name:     "claude carries --permission-mode",
 			launchID: "tether-claude",
-			wantFile: ".claude/settings.json",
-			wantAny:  []string{"bypassPermissions"},
+			wantFlag: [2]string{"--permission-mode", "bypassPermissions"},
 		},
 		{
 			name:     "codex carries approval_policy",
 			launchID: "agent-mux-codex-launch",
-			wantFile: "config.toml",
-			wantAny:  []string{"approval_policy"},
+			wantFlag: [2]string{"-c", `approval_policy="on-request"`},
 		},
 	}
 
@@ -108,23 +105,17 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 				t.Fatalf("Plant(%s): %v", tc.launchID, err)
 			}
 
-			planted := filepath.Join(prepared.PlantedBootDir, tc.wantFile)
-			body, err := os.ReadFile(planted)
-			if err != nil {
-				t.Fatalf("planted %s not found: %v", tc.wantFile, err)
-			}
 			ok := false
-			for _, want := range tc.wantAny {
-				if strings.Contains(string(body), want) {
+			for i := 0; i+1 < len(prepared.Argv); i++ {
+				if prepared.Argv[i] == tc.wantFlag[0] && prepared.Argv[i+1] == tc.wantFlag[1] {
 					ok = true
 					break
 				}
 			}
 			if !ok {
-				t.Errorf("planted %s does not carry the approval posture %v\n--- content ---\n%s",
-					tc.wantFile, tc.wantAny, body)
+				t.Errorf("prepared argv does not carry the approval posture %s %s: %q", tc.wantFlag[0], tc.wantFlag[1], prepared.Argv)
 			} else {
-				t.Logf("%s: planted %s carries the approval posture", tc.launchID, tc.wantFile)
+				t.Logf("%s: prepared argv carries the approval posture", tc.launchID)
 			}
 		})
 	}

@@ -178,9 +178,9 @@ func TestRender_DeliberateKinds(t *testing.T) {
 		{ev(runtimeevents.KindAgentToolUse, `{"tool_use":{"name":"read_file"}}`), "\n[tool_use:read_file]\n"},
 		{ev(runtimeevents.KindTurnCompleted, `{}`), "\n[turn_done]\n"},
 		{ev(runtimeevents.KindTurnFailed, `{"error":"boom"}`), "\n[error] boom\n"},
-		{ev(runtimeevents.KindAgentPermissionDenied, `{"display_name":"Bash"}`), "\n[permission_denied:Bash]\n"},
-		{ev(runtimeevents.KindSessionAuthFailed, `{"error":"x"}`), "\n[auth_failed]\n"},
-		{ev(runtimeevents.KindSessionLost, `{}`), "\n[session_lost]\n"},
+		{ev(runtimeevents.KindAgentPermissionDenied, `{"action":"execute","display_name":"Bash"}`), "\n[permission_denied:execute] Bash\n"},
+		{ev(runtimeevents.KindSessionAuthFailed, `{"error":"not logged in"}`), "\n[auth_failed] not logged in\n"},
+		{ev(runtimeevents.KindSessionLost, `{"requested_id":"a","actual_id":"b","reason":"replaced"}`), "\n[session_lost] requested=a actual=b: replaced\n"},
 		{ev(runtimeevents.KindSessionHeartbeat, `{}`), ""},
 		{ev(runtimeevents.KindStdinWrite, `{"bytes":"x"}`), ""},
 	} {
