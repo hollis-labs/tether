@@ -31,6 +31,7 @@ import (
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
+	"github.com/hollis-labs/tether/internal/identity"
 	llm "github.com/hollis-labs/tether/internal/llm"
 	llmanthropic "github.com/hollis-labs/tether/internal/llm/anthropic"
 	llmgemini "github.com/hollis-labs/tether/internal/llm/gemini"
@@ -202,7 +203,16 @@ var daemonRunCmd = &cobra.Command{
 		}
 
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
+		var identities *identity.Store
+		if cfg.IdentityMode != identity.Off {
+			identities = identity.NewStore(svc.Store.DB())
+			if err := identities.EnsureOperator(ctx, filepath.Join(stateRoot, "run", "operator.token")); err != nil {
+				_ = svc.Store.Close()
+				return fmt.Errorf("initialize daemon identity: %w", err)
+			}
+		}
 		server := &daemon.Server{
+			Identity:            identities,
 			Config:              cfg,
 			Manager:             svc.Manager,
 			Service:             &serviceAdapter{svc: svc},
@@ -990,7 +1000,12 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 	if err != nil {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
+	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
+	if err := identity.ValidateBind(expandListenAddr(d.ListenAddr), mode); err != nil {
+		return daemon.Config{}, err
+	}
 	return daemon.Config{
+		IdentityMode:    mode,
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),
 		ShutdownTimeout: timeout,

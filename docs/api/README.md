@@ -1257,6 +1257,7 @@ Current (v0.0.2):
 
 | Scope    | Kind                          | Emitted by                             | Payload                                                      |
 |----------|-------------------------------|----------------------------------------|--------------------------------------------------------------|
+| daemon   | `identity.observed` | daemon identity middleware (observe/enforce, except health) | `{at, principal_id?, session_id?, mode, authentication, method, route}` — metadata only, no credentials or query/body |
 | daemon   | `daemon.started`              | tetherd at listener-up                    | `{version, pid, listener}`                                   |
 | daemon   | `daemon.shutdown_started`     | tetherd on ctx cancel                     | empty                                                        |
 | daemon   | `daemon.shutdown_completed`   | tetherd after runtime drain, before Close | empty                                                        |

@@ -17,6 +17,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // tetherVersion labels daemon.started events. Bumped per release.
@@ -26,6 +27,7 @@ const tetherVersion = "0.2.0"
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
 type Config struct {
+	IdentityMode    identity.Mode
 	ListenAddr      string
 	PIDFile         string
 	ShutdownTimeout time.Duration
@@ -35,8 +37,9 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
-	Config  Config
-	Manager *agentsessions.Manager
+	Identity *identity.Store
+	Config   Config
+	Manager  *agentsessions.Manager
 	// SandboxProtect, when set, fills /health's sandbox_protect field. It
 	// runs on each /health request, so it must be cheap or cache.
 	SandboxProtect func() *SandboxProtectHealth
@@ -260,6 +263,9 @@ func (s *Server) publishDaemon(kind, payloadJSON string) {
 // state. Listener errors (e.g., socket already bound) likewise abort
 // before the PID file is written.
 func (s *Server) Run(ctx context.Context) error {
+	if err := identity.ValidateBind(s.Config.ListenAddr, s.Config.IdentityMode); err != nil {
+		return err
+	}
 	s.startedAt = time.Now()
 
 	// Pre-flight: refuse to start if the PID file references a live process.
@@ -416,7 +422,7 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 	}
-	return otelprop.HTTPMiddleware(router)
+	return otelprop.HTTPMiddleware(identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, router))
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —

@@ -13,15 +13,28 @@ import (
 )
 
 type Global struct {
-	Version string       `yaml:"version"`
-	Catalog CatalogRoots `yaml:"catalog"`
-	Daemon  DaemonConfig `yaml:"daemon"`
-	AI      AIConfig     `yaml:"ai"`
+	Version  string         `yaml:"version"`
+	Catalog  CatalogRoots   `yaml:"catalog"`
+	Daemon   DaemonConfig   `yaml:"daemon"`
+	AI       AIConfig       `yaml:"ai"`
+	Identity IdentityConfig `yaml:"identity"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+}
+
+// IdentityConfig rolls out verified attribution before authorization policy.
+type IdentityConfig struct {
+	Mode string `yaml:"mode"`
+}
+
+func (c IdentityConfig) EffectiveMode() string {
+	if c.Mode == "" {
+		return "observe"
+	}
+	return c.Mode
 }
 
 // AIConfig controls the in-process AI gateway surface. The first schema slice

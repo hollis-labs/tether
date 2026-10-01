@@ -1,4 +1,6 @@
 version: 1.0.0
+identity:
+  mode: observe # verifies and attributes; never enables enforcement by default
 catalog:
   roots:
     projects: projects

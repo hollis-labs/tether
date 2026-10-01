@@ -4,6 +4,10 @@ package events
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/events.md alongside their payload schema.
 const (
+	// KindIdentityObserved carries metadata-only daemon authentication results:
+	// at, principal_id, session_id, mode, authentication, method and route family.
+	// Authorization headers, query strings and bodies are never recorded.
+	KindIdentityObserved = "identity.observed"
 	// KindSessionStateChanged is emitted by the eventSinkAdapter wired
 	// into agentsessions.Manager on each session lifecycle transition
 	// (created → launching → running → completed|failed|killed; the
