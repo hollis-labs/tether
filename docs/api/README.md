@@ -1210,6 +1210,28 @@ retried after a short backoff, as before. While the lease is held, another
 claimant of that delivery (a bridge's `POST /messages/{id}/claim`) gets 409
 `conflict` ("delivery already claimed") until it ends.
 
+#### `wake_reason` values
+
+When no wake was delivered for a reason that is not an error, `wake_reason`
+says which. The message is stored in every case. Its delivery is retried by
+the daemon's wake sweep, except `already-handled`, which is settled.
+go-tether-client mirrors these as `WakeReason*` constants.
+
+| `wake_reason` | Meaning |
+|---|---|
+| `busy` | The session was mid-turn. Retried after a short backoff. |
+| `offline` | No live session to wake. |
+| `offline-race` | The session stopped between resolution and the wake. |
+| `stale-generation` | The actor moved to a newer session while the wake was in flight. |
+| `claim-unavailable` | Another attempt already holds the delivery; this one stood down rather than wake twice. |
+| `marker-write-failed` | The daemon could not record the attempt's bookkeeping and released the delivery for retry. |
+| `already-handled` | The recipient had already consumed or read the message, so it was settled without a wake. Comes from retries rather than a fresh notify. |
+| `settle-failed` | Settling an already-handled message failed; it is retried. |
+| `session-not-running` | The agent recipient's binding names a session that is not running. Nothing is woken until a live session owns the address. |
+
+A wake that was attempted and failed is reported in `wake_error` instead,
+which carries the error's text (for example, submitting the turn failed).
+
 ---
 
 ## Registry
