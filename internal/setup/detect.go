@@ -3,46 +3,47 @@ package setup
 import (
 	"os"
 
-	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-providers/registry"
 )
 
 // DetectResult holds the outcome of one provider detection attempt.
 type DetectResult struct {
-	// Brand is the provider product name: "claude", "codex", "opencode" or
-	// "antigravity".
+	// Brand is the runtime's registry id: "claude", "codex", "opencode",
+	// "copilot", "pi", "antigravity", ...
 	Brand string
 	// Found is true when the binary was located.
 	Found bool
 	// Path is the resolved absolute path when Found is true.
 	Path string
-	// Source describes how the binary was found: "env:CLAUDE_CLI_PATH",
-	// "env:CODEX_CLI_PATH", "env:OPENCODE_CLI_PATH", "env:AGY_CLI_PATH",
-	// "PATH", or "unset".
+	// Source describes how the binary was found: "env:<VAR>" for the
+	// runtime's env override (CLAUDE_CLI_PATH, COPILOT_CLI_PATH, ...),
+	// "PATH" otherwise, or "unset".
 	Source string
 }
 
-// DetectProviders probes the known CLI providers using the same
-// Detect() plumbing as go-providers' adapters: $<BRAND>_CLI_PATH env var
-// first, then exec.LookPath. Returns one DetectResult per brand in a fixed
-// order: claude, codex, opencode, antigravity.
+// DetectProviders probes every runtime in the go-providers registry the way
+// its launch does: the descriptor's env override first, then PATH and the
+// install directories (registry.Descriptor.LookPath). One result per
+// runtime, in the registry's order, so a runtime added to the registry is
+// detected with no Tether change (CW-20260930-0106).
 func DetectProviders() []DetectResult {
-	return []DetectResult{
-		detect("claude", gop.NewClaudeAdapter(), "CLAUDE_CLI_PATH"),
-		detect("codex", gop.NewCodexAdapter(), "CODEX_CLI_PATH"),
-		detect("opencode", gop.NewOpencodeAdapter(), "OPENCODE_CLI_PATH"),
-		detect("antigravity", gop.NewAntigravityAdapter(), "AGY_CLI_PATH"),
+	all := registry.All()
+	out := make([]DetectResult, 0, len(all))
+	for _, d := range all {
+		out = append(out, detect(d))
 	}
+	return out
 }
 
-// detect calls the adapter's Detect() and annotates the result with Source.
-func detect(brand string, adapter gop.CLIAdapter, envVar string) DetectResult {
-	path, ok := adapter.Detect()
-	if !ok {
+func detect(d registry.Descriptor) DetectResult {
+	brand := string(d.ID)
+	path, err := d.LookPath()
+	if err != nil || path == "" {
 		return DetectResult{Brand: brand, Found: false, Source: "unset"}
 	}
 	source := "PATH"
-	if os.Getenv(envVar) != "" {
-		source = "env:" + envVar
+	if d.EnvOverride != "" && os.Getenv(d.EnvOverride) != "" {
+		source = "env:" + d.EnvOverride
 	}
 	return DetectResult{Brand: brand, Found: true, Path: path, Source: source}
 }

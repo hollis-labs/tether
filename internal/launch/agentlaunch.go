@@ -76,16 +76,16 @@ func CatalogFlags(plan *Plan) []string {
 }
 
 // mapRuntime maps a plan's runtime-kind token onto the shared plan's mode.
-// Only the four modes Tether launches pass through; anything else (api,
-// serve-http, pty-debug, unknown) falls back to subprocess-per-turn, as it
-// did before the leaf vocabulary.
+// Only the modes Tether launches pass through (the four native ones and
+// acp-stdio); anything else (api, serve-http, pty-debug, unknown) falls back
+// to subprocess-per-turn, as it did before the leaf vocabulary.
 func mapRuntime(runtime string) runtimes.Mode {
 	mode, debug, ok := config.RuntimeMode(runtime)
 	if !ok || debug {
 		return runtimes.ModeSubprocessPerTurn
 	}
 	switch mode {
-	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn:
+	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn, runtimes.ModeACPStdio:
 		return mode
 	default:
 		return runtimes.ModeSubprocessPerTurn

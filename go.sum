@@ -64,8 +64,12 @@ github.com/hollis-labs/agent-contracts-leaf v0.3.0 h1:tOAbq1y2Qtkk/S81hpSTlE3ZIs
 github.com/hollis-labs/agent-contracts-leaf v0.3.0/go.mod h1:Yp3iEG7I1qHxGL+Ad085RDVP5xUM/dbL0nFxzCAQ9/w=
 github.com/hollis-labs/agentkit v0.12.2 h1:i3OV0YODMlp2TlU9ciLDSWCpDSNt1ongtNishtpxWz8=
 github.com/hollis-labs/agentkit v0.12.2/go.mod h1:qqM7Fi3KX/41iMuGczqrc+bSoUGTqiLvTkmOmsGwsPY=
+github.com/hollis-labs/go-agent-wrapper v0.15.0 h1:KajcNh6r7r/++nk/5hwIlvE8oyNrI3GZ0Or9g+s8324=
+github.com/hollis-labs/go-agent-wrapper v0.15.0/go.mod h1:vYz+80A/EmY6Z9SdCcSdaVvR9tIJgh4Z8oz7033KqT8=
 github.com/hollis-labs/go-apppaths v0.1.0 h1:LJQv483BhOoizLL4qKwsLcCbM0lQoVrNvksJ1thycd4=
 github.com/hollis-labs/go-apppaths v0.1.0/go.mod h1:b3gOdAFgSYY9ZT7VUooAczFdb6o0C2xSGQa7ktcyw30=
+github.com/hollis-labs/go-harness-filters v0.1.1 h1:uTAF+ejKhje+rXMEOwTHsO7ig2fCAQnkANXgZBAyYZA=
+github.com/hollis-labs/go-harness-filters v0.1.1/go.mod h1:84dThT2Ro93bk7Lzpr9KNsRDY4hUcIvYoBtmIB6IEzM=
 github.com/hollis-labs/go-llm-contracts v0.3.0 h1:qVKulEixvxf5iJmUMzDfRoL00gfS6/r0TmAJ1zNX0Dc=
 github.com/hollis-labs/go-llm-contracts v0.3.0/go.mod h1:VIbzjZk7U+NCYuHdfa++ZwcaYI09om5xVxYTGd6cuw8=
 github.com/hollis-labs/go-llm-types v0.3.0 h1:QR4RX0F1zX0fYBh7sDVxnsFxmQ/vjlvc7bC6FWx+8s0=
@@ -88,6 +92,8 @@ github.com/hollis-labs/go-providers v0.34.1 h1:Ewr5Z7BOpkWZMg3aveV5Z6DI/WxVxWDGV
 github.com/hollis-labs/go-providers v0.34.1/go.mod h1:eDiOX1hTWT60bO+2PVtOoJnTwqz4tKawsw7X0S5B9M0=
 github.com/hollis-labs/go-runner v0.7.0 h1:nJIDnZHBVn1Ii8hITTxLsGMVaEI9AWipar85qo8QkY8=
 github.com/hollis-labs/go-runner v0.7.0/go.mod h1:+PgCa0CxAImd63sZgLb8Zw0uasyDWyHRdcE2sH8Zc7Q=
+github.com/hollis-labs/go-runtime-events v0.1.2 h1:ChyjCVidjeAVf+dUJjiJTdX/LYujkJILKuLi+cTDNJM=
+github.com/hollis-labs/go-runtime-events v0.1.2/go.mod h1:QLoJ1xs+P2KoVuiz4wi+r+JZdE4dqm28I0YfauXAUs0=
 github.com/hollis-labs/go-safefs v0.1.0 h1:DOlOS/0OnLKgUXON9YiPTzZZyYhqogNUo9RoYpa7UOY=
 github.com/hollis-labs/go-safefs v0.1.0/go.mod h1:cy6lXh6KhPuIoQ9hGQSL+sd4N1dhJ1hE3sSCMXNB6JA=
 github.com/hollis-labs/go-sandbox v0.4.1 h1:Ul2hSUK5f8shvpORBuy33GEUelD7bu9v4tNKVqzmn9k=

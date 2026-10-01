@@ -24,6 +24,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider"
+	"github.com/hollis-labs/tether/internal/provider/acp"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -293,55 +294,70 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	if !extractRefs && s.Catalog != nil {
 		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
 	}
-	mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs)
-	prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
-		MuxCommand: muxCommandPath(),
-		MuxArgs:    mcpPlan.Args,
-		MuxEnv:     muxEnvMap(plan.Env),
-	})
-	if err != nil {
-		exit := 1
-		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
-		return nil, fmt.Errorf("prepare shared launch: %w", err)
-	}
-	// Stamped AFTER the planting succeeded, not before: the column records
-	// what was planted, and a failed prepare planted nothing. Best-effort --
-	// a launch must not fail because an audit field could not be written, and
-	// the column's NULL state already means "unknown", which is the truth if
-	// this write is the thing that failed.
-	if err := s.Store.SetSessionRefAttribution(sessionID, mcpPlan.Attribution); err != nil {
-		log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
-	}
-
-	onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	onBootDirPlanted(prepared.PlantedBootDir)
-	sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
-	if err != nil {
-		exit := 1
-		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
-		return nil, fmt.Errorf("prepare session launch: %w", err)
-	}
-
-	startOpts := sessionLaunch.Options
-	startOpts.LogPath = ws.LogPath
-	startOpts.WorkspaceDir = ws.Root
-	startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
-	startOpts.Env, err = withBrowserShim(plan.ProviderBrand, ws.Root, startOpts.Env)
-	if err != nil {
-		exit := 1
-		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
-		return nil, err
-	}
-	// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
-	// A runtime that takes them per session places them before a turn's
-	// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
-	// StartOptions.ExtraArgs would land after the prompt.
-	extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
-	if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
-		er.SetExtraArgs(extraArgs)
-		startOpts.ExtraArgs = nil
+	var startOpts agentsessions.StartOptions
+	if rt.Kind() == acp.Kind {
+		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
+		// launch does its own setup, and agentkit's planting has no
+		// constructor for an ACP mode (providerplant.ErrNoNativeAdapter), so
+		// there is no shared launch to prepare and no mux MCP server is
+		// planted for it in this stage.
+		startOpts, err = acpStartOptions(plan, ws, profile)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
 	} else {
-		startOpts.ExtraArgs = extraArgs
+		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs)
+		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
+			MuxCommand: muxCommandPath(),
+			MuxArgs:    mcpPlan.Args,
+			MuxEnv:     muxEnvMap(plan.Env),
+		})
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, fmt.Errorf("prepare shared launch: %w", err)
+		}
+		// Stamped AFTER the planting succeeded, not before: the column records
+		// what was planted, and a failed prepare planted nothing. Best-effort --
+		// a launch must not fail because an audit field could not be written, and
+		// the column's NULL state already means "unknown", which is the truth if
+		// this write is the thing that failed.
+		if err := s.Store.SetSessionRefAttribution(sessionID, mcpPlan.Attribution); err != nil {
+			log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
+		}
+
+		onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
+		onBootDirPlanted(prepared.PlantedBootDir)
+		sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, fmt.Errorf("prepare session launch: %w", err)
+		}
+
+		startOpts = sessionLaunch.Options
+		startOpts.LogPath = ws.LogPath
+		startOpts.WorkspaceDir = ws.Root
+		startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
+		startOpts.Env, err = withBrowserShim(plan.ProviderBrand, ws.Root, startOpts.Env)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+		// Interim until CW-20260930-0135 / CW-20260930-0106: see sharedExtraArgs.
+		// A runtime that takes them per session places them before a turn's
+		// end-of-options "--" (claudestream.PlanScopedAdapter.SetExtraArgs);
+		// StartOptions.ExtraArgs would land after the prompt.
+		extraArgs := sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args)
+		if er, ok := rt.(interface{ SetExtraArgs([]string) }); ok {
+			er.SetExtraArgs(extraArgs)
+			startOpts.ExtraArgs = nil
+		} else {
+			startOpts.ExtraArgs = extraArgs
+		}
 	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
@@ -431,6 +447,30 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		Wait: func(ctx context.Context) (int, error) {
 			return s.Manager.WaitSession(ctx, sessionID)
 		},
+	}, nil
+}
+
+// acpStartOptions builds an ACP session's start options from the plan alone:
+// the agent works in the project's work root, the boot prompt is its first
+// prompt, and its environment follows the plan's env policy. A sandbox
+// profile is refused rather than dropped: go-agent-wrapper cannot apply one
+// to an ACP agent, and running an agent meant to be sandboxed without one
+// would be a silent weakening.
+func acpStartOptions(plan *launch.Plan, ws *workspace.Session, profile sandbox.Profile) (agentsessions.StartOptions, error) {
+	if profile.ID != "" {
+		return agentsessions.StartOptions{}, fmt.Errorf("acp: sandbox profile %q cannot be applied to an ACP agent", profile.ID)
+	}
+	workdir := plan.EffectiveWorkRoot()
+	if workdir == "" {
+		workdir = plan.RepoRoot
+	}
+	return agentsessions.StartOptions{
+		Workdir:      workdir,
+		WorkspaceDir: ws.Root,
+		LogPath:      ws.LogPath,
+		Env:          provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()),
+		BootPrompt:   plan.BootPrompt,
+		BootMode:     plan.BootMode,
 	}, nil
 }
 

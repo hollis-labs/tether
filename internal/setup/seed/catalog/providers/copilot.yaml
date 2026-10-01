@@ -1,0 +1,19 @@
+id: copilot
+type: cli
+provider: copilot
+# GitHub Copilot CLI over the Agent Client Protocol, launched through
+# go-agent-wrapper (`copilot --acp`).
+runtime_kind: acp-stdio
+# Leave command empty to resolve copilot the registry's way
+# ($COPILOT_CLI_PATH, then PATH and the usual install directories). Set an
+# absolute path if copilot is not on your daemon's PATH.
+command: ""
+# The ACP client owns copilot's flags.
+args: []
+bootstrap:
+  mode: prepend
+  prompt_prefix: ""
+env:
+  # Copilot reads its sign-in from HOME (or a GitHub token in the
+  # environment), so the daemon's environment passes through.
+  mode: merge

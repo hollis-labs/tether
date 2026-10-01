@@ -28,6 +28,8 @@ func TestRuntimeMode(t *testing.T) {
 		{"streaming-stdio", runtimes.ModeStreamingStdio, false},
 		{"claude-code", runtimes.ModeStreamingStdio, false},
 		{"Streaming_Stdio", runtimes.ModeStreamingStdio, false},
+		{"acp-stdio", runtimes.ModeACPStdio, false},
+		{"acp", runtimes.ModeACPStdio, false},
 	} {
 		mode, debug, ok := RuntimeMode(tc.token)
 		if !ok || mode != tc.mode || debug != tc.debug {
@@ -72,4 +74,31 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Catalog spellings the registry's aliases do not cover still name their
+// runtime (CW-20260930-0106, lead's note), and claude-*/antigravity-* keep
+// the prefix match agentkit's runtimebind dropped.
+func TestProviderBrand_CanonicalSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		p    Provider
+		want string
+	}{
+		{Provider{ID: "x", Provider: "codex-cli"}, "codex"},
+		{Provider{ID: "x", Provider: "opencode-cli"}, "opencode"},
+		{Provider{ID: "x", Provider: "antigravity-cli"}, "antigravity"},
+		{Provider{ID: "x", Provider: "agy"}, "antigravity"},
+		{Provider{ID: "x", Provider: "claude-code"}, "claude"},
+		{Provider{ID: "x", Provider: "Claude-Nightly"}, "claude"},
+		{Provider{ID: "x", Adapter: "codex"}, "codex"},
+		{Provider{ID: "x", Provider: "copilot"}, "copilot"},
+		{Provider{ID: "x", Provider: "pi"}, "pi"},
+		{Provider{ID: "claude-code"}, "claude"},
+		{Provider{ID: "codex-cli"}, "codex"},
+		{Provider{ID: "copilot"}, "copilot"},
+	} {
+		if got := tc.p.ProviderBrand(); got != tc.want {
+			t.Errorf("ProviderBrand(%+v) = %q, want %q", tc.p, got, tc.want)
+		}
+	}
 }
