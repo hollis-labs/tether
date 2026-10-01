@@ -73,7 +73,7 @@ What this does and does not do:
   same uid, and so is the file itself. Closing that needs the upstreams to run
   outside an agent's reach (CW-20260930-0237, CW-20260930-0253).
 - The file and symlink checks catch a misconfigured or misdirected credential.
-  They are not a defence against another process running as you.
+  They are not a defense against another process running as you.
 
 ## Populating a keychain entry
 

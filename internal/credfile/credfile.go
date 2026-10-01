@@ -17,7 +17,7 @@
 // file's contents.
 //
 // These checks catch a misconfigured or misdirected file. They are not a
-// defence against another process running as the same user, which can read the
+// defense against another process running as the same user, which can read the
 // file and the environment the credential is passed in; see docs/mcp.md.
 package credfile
 
