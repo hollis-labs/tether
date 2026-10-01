@@ -75,6 +75,8 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err := providerplant.Plant(ctx, prepared); err != nil {
 		return nil, err
 	}
+	// Interim until CW-20260930-0106: see linkCodexHostAuth.
+	linkCodexHostAuth(plan.ProviderBrand, prepared)
 	return prepared, nil
 }
 
