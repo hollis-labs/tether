@@ -129,3 +129,6 @@ environment and sends trace data to the endpoint you choose.
 
 These are deployment constraints, not hidden roadmap promises. Operate within
 them or place Tether behind controls that provide the missing boundary.
+
+For which layer protects which resource, and what an agent can still reach,
+see [docs/agent-reach.md](docs/agent-reach.md).
