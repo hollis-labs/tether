@@ -265,7 +265,20 @@ a list you wrote earlier still names `torque` and `tesseract` if its agents
 use them. `cerberus` can reach hosts and containers, so it is never in
 the default; an agent that needs it must be given it by name.
 
-tether's own native tools (`tether_*`) are not upstreams and are not affected.
+An explicit `mcp.servers: []` (project or launch), `mcp_servers: []` (boot
+profile), or empty `TETHER_MCP_SERVERS` grants **no upstreams** to a confined
+session. Omitted or null lists inherit: boot profile > project > launch >
+default. Empty lists replace lower-precedence lists just like nonempty lists.
+Tether's own native tools (`tether_*`) remain available.
+
+Catalog load and reload reject unknown, wrong-case, or disabled upstream names
+in declared grants, including shadowed declarations and agent environment
+settings. `tether doctor` reports a failing `catalog-mcp-grants` finding naming
+the owner and bad entry. Fix the reference or enable that upstream under
+`mcp-servers/`; validation never starts it or resolves its secret references.
+Caller-supplied boot-profile and effective environment grants are also checked
+before session creation. Implicit defaults are checked by proxy startup rather
+than treated as authored catalog declarations.
 
 A resumed session (`POST /logical-agents/{id}/resume`) gets the project's
 `mcp.servers` list, or the default, not the list the original launch had. A

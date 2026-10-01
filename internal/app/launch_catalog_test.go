@@ -120,3 +120,11 @@ func TestResolve_BrokenCatalog_FallsBackToStartupLaunches(t *testing.T) {
 		t.Fatalf("message should carry the reload failure: %v", err)
 	}
 }
+
+func TestResolve_InvalidMCPGrantDoesNotFallBack(t *testing.T) {
+	svc, write := newLaunchCatalogService(t)
+	write("launches/first.yaml", "id: first\nproject: p\nagent: a\nprovider: cli\nmcp:\n  servers: [missing]\n")
+	if _, err := svc.Resolve("first"); !errors.Is(err, config.ErrInvalidMCPGrant) {
+		t.Fatalf("must refuse an invalid reloaded grant, not fall back: %v", err)
+	}
+}

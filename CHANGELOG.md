@@ -24,6 +24,8 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
+- **MCP grants fail loudly.** Catalog load/reload and session overrides reject unknown or disabled upstream IDs; doctor names the owner and bad grant. Explicit empty project/launch `mcp.servers`, boot-profile `mcp_servers`, and environment grants now mean no upstreams; omitted/null lists still inherit. Native Tether tools remain available. (CW-20261001-0443)
+
 - **Retention is on by default for 90 days.** `daemon.events_retention` now governs `events`, `proxy_events` and `ai_events` by age; proxy/AI inserts no longer evict rows above 2,000. Set `days` below 1 or `enabled: false` to disable. **On existing installs the first sweep deletes old rows unless explicitly disabled; back up the state database before cutover.** Every deletion batch writes an atomic durable audit receipt, and the sweep exposes per-table counts for future consumers. The API reference lists lifecycle tables retained outside this policy; archiving remains out of scope. (CW-20261001-0545)
 - CW-20260926-0007: clean break from mux to tether (CLI, MCP tool/server names, environment and socket paths); no compatibility aliases. Durable identity authorities and historical SQL are retained.
 

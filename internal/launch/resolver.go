@@ -36,6 +36,15 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	agent := cat.Agents[l.Agent]
 	prov := cat.Providers[l.Provider]
 
+	for owner, ids := range map[string][]string{
+		fmt.Sprintf("project %q mcp.servers", l.Project): proj.MCP.Servers,
+		fmt.Sprintf("launch %q mcp.servers", l.ID):       l.MCP.Servers,
+	} {
+		if err := cat.ValidateMCPGrant(owner, ids); err != nil {
+			return nil, err
+		}
+	}
+
 	var fragments []string
 	if !in.SkipPromptFragments {
 		if l.Prompt.IncludeProjectBoot {
@@ -69,11 +78,17 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	// TETHER_MCP_SERVERS so the spawned agent's tether mcp --proxy process picks it
 	// up without requiring per-agent ~/.claude.json changes.
 	mcpServers := proj.MCP.Servers
-	if len(mcpServers) == 0 {
+	if mcpServers == nil {
 		mcpServers = l.MCP.Servers
 	}
-	if len(mcpServers) > 0 {
+	if mcpServers != nil {
 		overrides["TETHER_MCP_SERVERS"] = strings.Join(mcpServers, ",")
+	}
+
+	if value, set := overrides[MCPServersEnv]; set {
+		if err := cat.ValidateMCPGrantEnv(fmt.Sprintf("launch %q effective grant", l.ID), value); err != nil {
+			return nil, err
+		}
 	}
 
 	mode := prov.Env.Mode

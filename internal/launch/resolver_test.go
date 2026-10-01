@@ -127,6 +127,7 @@ func TestResolve_EnvPolicyCarriedIntoPlan(t *testing.T) {
 func TestResolve_MCPServerChain(t *testing.T) {
 	base := func() *config.Catalog {
 		return &config.Catalog{
+			MCPServerEnabled: map[string]bool{"hadron": true, "vanta": true, "cerberus": true},
 			Projects: map[string]config.Project{
 				"proj": {ID: "proj", RepoRoot: "/tmp/p", Workspace: config.WorkspaceSpec{SessionRoot: "/tmp/ws"}},
 			},
@@ -521,5 +522,21 @@ func TestResolve_UnknownLaunch_IsErrLaunchNotFound(t *testing.T) {
 	_, err = Resolve(many, Input{LaunchID: "nope"})
 	if !errors.Is(err, ErrLaunchNotFound) || !strings.Contains(err.Error(), "and 3 more") {
 		t.Fatalf("many launches: err = %v", err)
+	}
+}
+
+func TestResolve_ExplicitEmptyProjectGrantWins(t *testing.T) {
+	cat := &config.Catalog{
+		MCPServerEnabled: map[string]bool{"torque": true},
+		Projects:         map[string]config.Project{"p": {ID: "p", MCP: config.MCPConfig{Servers: []string{}}}},
+		Launches:         map[string]config.Launch{"l": {ID: "l", Project: "p", MCP: config.MCPConfig{Servers: []string{"torque"}}}},
+	}
+	plan, err := Resolve(cat, Input{LaunchID: "l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, present := plan.Env[MCPServersEnv]
+	if !present || value != "" || len(EffectiveMCPServers(plan.Env)) != 0 {
+		t.Fatalf("empty grant lost: %v", plan.Env)
 	}
 }

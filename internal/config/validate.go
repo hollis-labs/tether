@@ -20,6 +20,9 @@ var ErrUnknownSandboxProfile = errors.New("unknown sandbox profile")
 // for one bad agent entry. SandboxIssues reports those, and ValidateLaunch
 // and AgentSandbox refuse the affected launches.
 func (c *Catalog) Validate() error {
+	if err := c.ValidateMCPGrants(); err != nil {
+		return err
+	}
 	for id := range c.Launches {
 		if err := c.validateLaunchRefs(id); err != nil {
 			return err

@@ -71,6 +71,29 @@ func Load(catalogRoot string) (*Catalog, error) {
 		return nil, err
 	}
 
+	entries, err := LoadMCPServerCatalog(catalogRoot)
+	if err != nil {
+		return nil, err
+	}
+	cat.MCPServerEnabled = make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		cat.MCPServerEnabled[entry.ID] = entry.IsEnabled()
+	}
+	cat.BootMCPGrants = map[string][]string{}
+	if err := loadDir(filepath.Join(catalogRoot, "boot-profiles"), func(path string) error {
+		var p struct {
+			ID      string   `yaml:"id"`
+			Servers []string `yaml:"mcp_servers"`
+		}
+		if err := loadYAML(path, &p); err != nil {
+			return err
+		}
+		cat.BootMCPGrants[p.ID] = p.Servers
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
 	// Sandbox profiles are optional — missing dir is not an error.
 	profiles, err := sandbox.LoadProfiles(filepath.Join(catalogRoot, "sandbox-profiles"))
 	if err != nil {
@@ -91,6 +114,9 @@ func Load(catalogRoot string) (*Catalog, error) {
 	}
 	cat.Paths = layout
 
+	if err := cat.ValidateMCPGrants(); err != nil {
+		return nil, err
+	}
 	return cat, nil
 }
 
@@ -142,6 +168,9 @@ func LoadLayered(catalogRoot string) (*Catalog, error) {
 	}
 	for id, la := range layered.Agents {
 		cat.Agents[id] = la.Agent
+	}
+	if err := cat.ValidateMCPGrants(); err != nil {
+		return nil, err
 	}
 	return cat, nil
 }

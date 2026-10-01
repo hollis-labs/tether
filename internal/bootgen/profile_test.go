@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/hollis-labs/tether/internal/bootgen"
 )
 
@@ -568,5 +570,25 @@ func writeBootgenSkillFixture(t *testing.T, root, id, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEmptyMCPGrantRoundTrip(t *testing.T) {
+	for _, body := range []string{"id: inherit\n", "id: none\nmcp_servers: []\n"} {
+		var profile bootgen.Profile
+		if err := yaml.Unmarshal([]byte(body), &profile); err != nil {
+			t.Fatal(err)
+		}
+		data, err := yaml.Marshal(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored bootgen.Profile
+		if err := yaml.Unmarshal(data, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if (profile.MCPServers == nil) != (restored.MCPServers == nil) {
+			t.Fatalf("grant lost via %s", data)
+		}
 	}
 }

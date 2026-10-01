@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -75,7 +76,7 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 // edited under launches/ takes effect without a daemon restart
 // (CW-20261001-0018).
 //
-// Only launches are refreshed. Projects, agents, providers and sandbox
+// Launches and upstream enablement are refreshed. Projects, agents, providers and sandbox
 // profiles stay as loaded at startup, because session creation reads the
 // agent's permission mode and sandbox profile from s.Catalog directly; a
 // fresh agent here would reach that code with no sandbox entry to find. A
@@ -84,7 +85,8 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 //
 // A catalog that no longer loads (a YAML error anywhere in it) falls back
 // to the startup launches, so one bad edit does not stop every launch. The
-// load error is logged, and added to the not-found error when the startup
+// Grant-validation errors always refuse; they never use stale grants. Other
+// load errors are logged, and added to the not-found error when the startup
 // launches do not have launchID either.
 func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 	if s.Catalog == nil || s.CatalogRoot == "" {
@@ -92,6 +94,9 @@ func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 	}
 	fresh, err := config.LoadLayered(s.CatalogRoot)
 	if err != nil {
+		if errors.Is(err, config.ErrInvalidMCPGrant) {
+			return nil, err
+		}
 		log.Printf("app: launch %q: re-reading catalog launches failed, using the launches loaded at startup: %v", launchID, err)
 		if _, ok := s.Catalog.Launches[launchID]; !ok {
 			return nil, fmt.Errorf("launch %q %w in the launches loaded at startup, and re-reading the catalog failed: %w", launchID, launch.ErrLaunchNotFound, err)
@@ -100,6 +105,7 @@ func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 	}
 	cat := *s.Catalog
 	cat.Launches = fresh.Launches
+	cat.MCPServerEnabled = fresh.MCPServerEnabled
 	if _, ok := cat.Launches[launchID]; !ok {
 		return &cat, nil // launch.Resolve reports the not-found
 	}
