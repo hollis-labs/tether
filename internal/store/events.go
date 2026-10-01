@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -44,6 +46,44 @@ func (s *Store) InsertEvent(scope events.Scope, sessionID, kind, payloadJSON str
 		return 0, time.Time{}, err
 	}
 	return id, at, nil
+}
+
+// DeleteEventsBefore deletes up to limit events whose at is before
+// cutoff, oldest first, and returns how many it deleted (CW-20260930-0008,
+// the events retention sweep). One bounded statement per call, so a caller
+// clearing a large backlog releases the write lock between batches; a
+// return below limit means nothing older is left.
+//
+// It first checks the oldest row (lowest id) and returns without the DELETE
+// when that row is inside the window: at is not indexed on its own, so the
+// common nothing-to-do case would otherwise scan the whole table. Ids are
+// assigned in insert order and at is stamped at insert, so the lowest id is
+// the oldest row. at holds RFC3339Nano UTC strings and compares as text;
+// trailing-zero trimming makes that imprecise below one second, which does
+// not matter at a retention window measured in days.
+func (s *Store) DeleteEventsBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, fmt.Errorf("delete events: limit must be positive")
+	}
+	c := cutoff.UTC().Format(time.RFC3339Nano)
+	var oldest string
+	err := s.db.QueryRowContext(ctx, `SELECT at FROM events ORDER BY id LIMIT 1`).Scan(&oldest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("delete events: oldest: %w", err)
+	}
+	if oldest >= c {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM events WHERE id IN (SELECT id FROM events WHERE at < ? ORDER BY id LIMIT ?)`,
+		c, limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete events: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // ListEventsBySession returns events bound to a single session in
