@@ -81,11 +81,15 @@ type messageNotifyResponse struct {
 	WakeError     string             `json:"wake_error,omitempty"`
 	// WakeReason carries an observational, non-error wake disposition
 	// (T06, messaging vNext): "busy", "offline", "offline-race",
-	// "stale-generation", or "claim-unavailable". The delivery was
-	// released for retry via the shared pump (internal/app/wake.go's
-	// RunWakeSweep) in every one of these cases, not lost. Distinct from
+	// "stale-generation", "claim-unavailable", "marker-write-failed",
+	// "already-handled", "settle-failed" (internal/app/wake.go's
+	// attemptWake), or "session-not-running" (the actor is bound to a
+	// session that is not running, CW-20260912-0134). The message is never
+	// lost: its delivery is retried by the shared pump (RunWakeSweep), or,
+	// for already-handled, settled. docs/api lists them, and
+	// go-tether-client mirrors them as WakeReason* constants. Distinct from
 	// WakeError, which is reserved for an actual failure (SendTurn itself
-	// erroring).
+	// erroring) and carries that error's text.
 	WakeReason string `json:"wake_reason,omitempty"`
 }
 
