@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
@@ -256,7 +257,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		if writeIdempotencyConflict(w, err) {
 			return
 		}
-		if errors.Is(err, launch.ErrLaunchNotFound) {
+		if errors.Is(err, launch.ErrLaunchNotFound) || errors.Is(err, config.ErrUnknownSandboxProfile) {
 			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
 		}
@@ -327,6 +328,10 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id 
 		}
 		if errors.Is(err, session.ErrNotCreated) {
 			writeError(w, http.StatusConflict, CodeConflict, err.Error())
+			return
+		}
+		if errors.Is(err, config.ErrUnknownSandboxProfile) {
+			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

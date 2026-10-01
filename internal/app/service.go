@@ -120,6 +120,11 @@ func New(catalogRoot string) (*Service, error) {
 	if err := cat.Validate(); err != nil {
 		return nil, err
 	}
+	// An agent naming an undefined sandbox profile does not stop the daemon;
+	// its launches are refused (CW-20261001-0130). Say so at startup.
+	for _, issue := range cat.SandboxIssues() {
+		log.Printf("catalog: %v; launches of this agent will be refused until the profile exists", issue)
+	}
 	// Explicit catalog state_db wins; the go-apppaths Layout (cat.Paths)
 	// supplies the fallback only when global.yaml omits the key.
 	dbPath := config.ResolveStateDB(cat.Global.Catalog.Defaults, cat.Paths)

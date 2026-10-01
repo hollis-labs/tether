@@ -1,15 +1,27 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hollis-labs/agentkit/agentruntime/bootdir"
+	"github.com/hollis-labs/go-sandbox/sandbox"
 )
 
+// ErrUnknownSandboxProfile means an agent names a sandbox profile the
+// catalog does not define. A launch of that agent is refused rather than
+// run with no sandbox (CW-20261001-0130).
+var ErrUnknownSandboxProfile = errors.New("unknown sandbox profile")
+
+// Validate checks the whole catalog at load. It does not fail on an agent
+// that names an unknown sandbox profile: that would take down every launch
+// for one bad agent entry. SandboxIssues reports those, and ValidateLaunch
+// and AgentSandbox refuse the affected launches.
 func (c *Catalog) Validate() error {
 	for id := range c.Launches {
-		if err := c.ValidateLaunch(id); err != nil {
+		if err := c.validateLaunchRefs(id); err != nil {
 			return err
 		}
 	}
@@ -52,11 +64,6 @@ func (c *Catalog) Validate() error {
 		return err
 	}
 	for id, a := range c.Agents {
-		if name := a.Permissions.DefaultSandbox; name != "" {
-			if _, ok := c.SandboxProfiles[name]; !ok {
-				return fmt.Errorf("agent %q references unknown sandbox profile %q", id, name)
-			}
-		}
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}
@@ -65,10 +72,67 @@ func (c *Catalog) Validate() error {
 }
 
 // ValidateLaunch checks one launch entry against the rest of the catalog:
-// the project, agent and provider it names must exist, and its injection
-// block must be well formed. Validate runs it for every launch; the launch
-// path runs it alone for a launch re-read after startup.
+// the project, agent and provider it names must exist, its injection block
+// must be well formed, and its agent's sandbox profile, if it names one,
+// must be defined. The launch path runs it for the launch being created.
 func (c *Catalog) ValidateLaunch(id string) error {
+	if err := c.validateLaunchRefs(id); err != nil {
+		return err
+	}
+	if _, _, err := c.AgentSandbox(c.Launches[id].Agent); err != nil {
+		return fmt.Errorf("launch %q: %w", id, err)
+	}
+	return nil
+}
+
+// AgentSandbox resolves agentID's default sandbox profile. ok is false when
+// the agent names none, or is not in the catalog; the error wraps
+// ErrUnknownSandboxProfile when it names a profile the catalog does not
+// define.
+func (c *Catalog) AgentSandbox(agentID string) (profile sandbox.Profile, ok bool, err error) {
+	a, found := c.Agents[agentID]
+	if !found {
+		return sandbox.Profile{}, false, nil
+	}
+	return c.SandboxProfile(agentID, a.Permissions.DefaultSandbox)
+}
+
+// SandboxProfile resolves a sandbox profile name an agent names. An empty
+// name is no sandbox (ok false, no error), as it has always been; a name
+// the catalog does not define is an error wrapping ErrUnknownSandboxProfile.
+func (c *Catalog) SandboxProfile(agentID, name string) (profile sandbox.Profile, ok bool, err error) {
+	if name == "" {
+		return sandbox.Profile{}, false, nil
+	}
+	sp, found := c.SandboxProfiles[name]
+	if !found {
+		return sandbox.Profile{}, false, fmt.Errorf("%w: agent %q names sandbox profile %q, which is not defined under sandbox-profiles/; refusing to launch it without a sandbox",
+			ErrUnknownSandboxProfile, agentID, name)
+	}
+	return sp, true, nil
+}
+
+// SandboxIssues returns one error for each agent that names a sandbox
+// profile the catalog does not define, sorted by agent id.
+func (c *Catalog) SandboxIssues() []error {
+	ids := make([]string, 0, len(c.Agents))
+	for id := range c.Agents {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var issues []error
+	for _, id := range ids {
+		if _, _, err := c.AgentSandbox(id); err != nil {
+			issues = append(issues, err)
+		}
+	}
+	return issues
+}
+
+// validateLaunchRefs is ValidateLaunch without the sandbox check: the
+// project, agent and provider must exist and the injection must be well
+// formed. Validate runs it for every launch at load.
+func (c *Catalog) validateLaunchRefs(id string) error {
 	l, ok := c.Launches[id]
 	if !ok {
 		return fmt.Errorf("launch %q not in catalog", id)

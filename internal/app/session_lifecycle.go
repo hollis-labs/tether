@@ -242,16 +242,22 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		return nil, err
 	}
 
-	// Resolve sandbox profile if the agent specifies one.
+	// Resolve sandbox profile if the agent specifies one. A profile it names
+	// but the catalog does not define fails the launch: running it with no
+	// sandbox would be a silent downgrade (CW-20261001-0130). Session create
+	// refuses this first; this covers a session created before the catalog
+	// changed.
 	var profile sandbox.Profile
-	if a, ok := s.Catalog.Agents[plan.LogicalAgentID]; ok {
-		if name := a.Permissions.DefaultSandbox; name != "" {
-			if sp, ok := s.Catalog.SandboxProfiles[name]; ok {
-				profile = sp
-				if profile.ID == "workspace-plus-net" {
-					profile.AllowLoopback = true
-				}
-			}
+	sp, hasProfile, err := s.Catalog.AgentSandbox(plan.LogicalAgentID)
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, err
+	}
+	if hasProfile {
+		profile = sp
+		if profile.ID == "workspace-plus-net" {
+			profile.AllowLoopback = true
 		}
 	}
 
