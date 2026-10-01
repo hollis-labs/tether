@@ -93,6 +93,20 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 			wantOnce:    []string{"-p", "--mcp-config", "--output-format", "--dangerously-skip-permissions"},
 		},
 		{
+			// The live catalog's opencode: `args: [run]`, a boot prompt and
+			// the planted agent. --agent once, naming the planted agent;
+			// the turn is the only argument after "--".
+			name:        "opencode run turn",
+			providerID:  "opencode",
+			brand:       "opencode",
+			runtimeKind: config.RuntimeKindSubprocess,
+			args:        []string{"run"},
+			adapter:     func() gop.CLIAdapter { a := gop.NewOpencodeAdapter(); a.Agent = "agent"; return a }(),
+			turnPrompt:  "Reply with exactly OK",
+			wantPairs:   [][2]string{{"--dir", "project"}},
+			wantOnce:    []string{"run", "--agent", "agent", "--format"},
+		},
+		{
 			name:        "codex-cli exec",
 			providerID:  "codex-cli",
 			brand:       "codex",
@@ -133,7 +147,7 @@ func TestSharedExtraArgs_ComposesArgvOnce(t *testing.T) {
 			}
 
 			// Composed the way LaunchSession hands the extras to the runtime.
-			scoped := &claudestream.PlanScopedAdapter{Inner: tc.adapter, BaseArgs: plan.Args}
+			scoped := &claudestream.PlanScopedAdapter{Inner: tc.adapter, BaseArgs: launch.CatalogFlags(plan)}
 			scoped.SetExtraArgs(sharedExtraArgs(plan.ProviderBrand, prepared, plan.Args))
 			argv := scoped.BuildArgs(tc.turnPrompt, "", "")
 			assertPromptLast(t, argv, tc.turnPrompt)
@@ -192,18 +206,18 @@ func TestSharedExtraArgs_CodexAppServerIsOneSubcommand(t *testing.T) {
 	}
 }
 
-// Providers outside claude/codex keep the old pass-through until the single
-// argv owner (CW-20260930-0135) lands.
+// antigravity keeps the old pass-through until CW-20261001-0095 retires
+// sharedExtraArgs.
 func TestSharedExtraArgs_OtherProvidersPassThrough(t *testing.T) {
-	prepared := preparedWithArgv("opencode", "run", "--agent", "agent", "--dir", "/p", "boot")
-	got := sharedExtraArgs("opencode", prepared, nil)
-	want := []string{"run", "--agent", "agent", "--dir", "/p", "boot"}
+	prepared := preparedWithArgv("agy", "--output-format", "stream-json", "--add-dir", "/p", "-p=boot")
+	got := sharedExtraArgs("antigravity", prepared, nil)
+	want := []string{"--output-format", "stream-json", "--add-dir", "/p", "-p=boot"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("sharedExtraArgs = %q, want %q", got, want)
 	}
-	got = sharedExtraArgs("opencode", preparedWithArgv("opencode", "--x", "run"), []string{"--x"})
-	if !slices.Equal(got, []string{"run"}) {
-		t.Fatalf("sharedExtraArgs with base args = %q, want [run]", got)
+	got = sharedExtraArgs("antigravity", preparedWithArgv("agy", "--x", "-p=boot"), []string{"--x"})
+	if !slices.Equal(got, []string{"-p=boot"}) {
+		t.Fatalf("sharedExtraArgs with base args = %q, want [-p=boot]", got)
 	}
 }
 

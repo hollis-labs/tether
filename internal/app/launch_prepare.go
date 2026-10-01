@@ -153,15 +153,14 @@ func withBrowserShim(providerBrand, workspaceRoot string, env []string) ([]strin
 // claude's projected --add-dir <project> arrives in every mode and is kept
 // here as a root-bound arg.
 //
-// Only claude and codex take the narrowed path. opencode's projection also
-// carries `--agent <name>`, naming the agent file it planted, which its
-// runtime adapter does not know; those providers keep the old pass-through
-// until the single argv owner lands rather than change unverified here.
+// claude, codex and opencode take the narrowed path; opencode's runtime
+// adapter carries the planted --agent itself (opencode.New). antigravity
+// keeps the old pass-through until CW-20261001-0095 retires this.
 func sharedExtraArgs(providerBrand string, prepared *agentlaunch.PreparedLaunch, baseArgs []string) []string {
 	if prepared == nil || len(prepared.Argv) < 2 {
 		return nil
 	}
-	if providerBrand != "claude" && providerBrand != "codex" {
+	if providerBrand != "claude" && providerBrand != "codex" && providerBrand != "opencode" {
 		return passThroughExtraArgs(prepared.Argv, baseArgs)
 	}
 	binding := prepared.Argv[1:]

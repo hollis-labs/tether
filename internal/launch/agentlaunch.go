@@ -20,10 +20,7 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 	if projectID == "" {
 		projectID = "project"
 	}
-	agentID := plan.LogicalAgentID
-	if agentID == "" {
-		agentID = "agent"
-	}
+	agentID := AgentName(plan)
 	return agentlaunch.LaunchPlan{
 		Project: agentlaunch.ProjectSpec{
 			ID:   projectID,
@@ -67,6 +64,17 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 			},
 		},
 	}
+}
+
+// AgentName is the agent id the shared launch is planned under, and so the
+// name the providers' planted agent files take (opencode's
+// agents/<name>.md, selected with --agent <name>): the plan's logical agent,
+// else "agent".
+func AgentName(plan *Plan) string {
+	if plan.LogicalAgentID != "" {
+		return plan.LogicalAgentID
+	}
+	return "agent"
 }
 
 // CatalogFlags is plan.Args less what the provider's own argv convention
