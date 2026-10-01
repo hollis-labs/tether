@@ -55,7 +55,7 @@ type Skill struct {
 	// Populated by Parse; not declared in the YAML schema.
 	Body string `yaml:"-"`
 	// Path is the absolute path the skill was loaded from, when known.
-	// Useful for `mux agents show` diagnostics. Empty for inline parses.
+	// Useful for `tether agents show` diagnostics. Empty for inline parses.
 	Path string `yaml:"-"`
 }
 
@@ -327,7 +327,7 @@ func sortByID(in []Skill) []Skill {
 	return out
 }
 
-// WriteSkillFile is a small convenience for tests and `mux agents create`
+// WriteSkillFile is a small convenience for tests and `tether agents create`
 // scaffolding. It writes the canonical frontmatter+body shape so authored
 // files round-trip through Parse.
 func WriteSkillFile(w io.Writer, s Skill) error {

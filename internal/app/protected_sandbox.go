@@ -160,7 +160,7 @@ var codexExtraWritableRoots = func(env []string) []string {
 //     becomes a writable root (real codex with cwd above the catalog wrote
 //     it), and so do /tmp and $TMPDIR.
 //
-// A caller with session.write can reach all of these through mux_session_create
+// A caller with session.write can reach all of these through tether_session_create
 // (agent_inline provider_overrides, injection, override.env), so none of them
 // may be trusted to be absent: each is checked, and the launch is wrapped in
 // Tether's own sandbox when any is present. Where that sandbox cannot start,

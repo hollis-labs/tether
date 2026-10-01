@@ -52,13 +52,13 @@ type ProxyEventQuerier interface {
 	QueryProxyEvents(f store.ProxyEventFilter) ([]store.ProxyEvent, error)
 }
 
-// registerToolCallEventsTool registers the mux_events_tool_calls native tool
+// registerToolCallEventsTool registers the tether_events_tool_calls native tool
 // on s. The tool queries the durable proxy_events SQLite table and returns
 // results as JSON.
 //
 // This tool is only registered in proxy mode when a store is wired.
 // The in-memory ToolCallEventStore is retained for the live TUI feed (ADR 0021)
-// but mux_events_tool_calls now reads from the durable proxy_events table
+// but tether_events_tool_calls now reads from the durable proxy_events table
 // (ADR 0024 §4).
 //
 // Sanitize protection applies via the global receiving middleware installed
@@ -66,14 +66,14 @@ type ProxyEventQuerier interface {
 // the adapter exposes regardless of registration path.
 func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEventQuerier) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_events_tool_calls",
-		Description: "Query recent proxied tool call events recorded by agent-mux. " +
+		Name: "tether_events_tool_calls",
+		Description: "Query recent proxied tool call events recorded by tether. " +
 			"Returns up to `limit` events (default 50, max 500), newest last. " +
 			"Available only in --proxy mode.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("server", "Filter by upstream server ID (exact match, e.g. 'hadron')", false),
 			gomcp.StringProp("tool_name", "Filter by tool name prefix (e.g. 'hadron_' matches all hadron tools)", false),
-			gomcp.StringProp("session_id", "Filter by mux session ID (exact match)", false),
+			gomcp.StringProp("session_id", "Filter by tether session ID (exact match)", false),
 			gomcp.StringProp("limit", "Max events to return (default 50, max 500) — pass as a number or numeric string", false),
 			gomcp.StringProp("since", "RFC3339 lower-bound timestamp; excludes events at or before this time", false),
 			gomcp.BooleanProp("errors_only", "When true, return only events where the tool call failed", false),

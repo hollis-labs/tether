@@ -2,7 +2,7 @@ package registry
 
 // bootstrap.go — catalog importer (T-v060-01-08). Walks
 // ~/.tether/catalog/{agents,projects}/*.yaml on first daemon start (and on
-// operator demand via `mux registry bootstrap --force`) and lands a thin
+// operator demand via `tether registry bootstrap --force`) and lands a thin
 // public-identity row per file. Source YAMLs remain the truth; the
 // registry holds only the identity projection + a file:// callback that
 // Sync re-reads on demand (D18).
@@ -72,7 +72,7 @@ import (
 // many were skipped as already-imported, how many were refreshed on a
 // force=true run, and per-file errors. Returned by both the package-level
 // BootstrapFromCatalog and Service.BootstrapFromCatalog wrappers; consumed
-// by the daemon log on startup and by the `mux registry bootstrap` CLI.
+// by the daemon log on startup and by the `tether registry bootstrap` CLI.
 type BootstrapReport struct {
 	// Imported is the count of fresh rows registered this pass.
 	Imported int

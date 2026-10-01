@@ -60,14 +60,14 @@ func TestLaunchConfigSeam_PlantedMCPJSON(t *testing.T) {
 				ExtractRefs:    tc.extractRefs,
 			}
 
-			mcpPlan := MuxMCPPlant(svc.CatalogRoot, sessionID, plan.ExtractRefs)
+			mcpPlan := TetherMCPPlant(svc.CatalogRoot, sessionID, plan.ExtractRefs)
 			if mcpPlan.Attribution != tc.wantAttr {
 				t.Fatalf("mcpPlan.Attribution = %q, want %q", mcpPlan.Attribution, tc.wantAttr)
 			}
 
 			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, wsRoot, plantContextInput{
-				MuxCommand: muxCommandPath(),
-				MuxArgs:    mcpPlan.Args,
+				TetherCommand: tetherCommandPath(),
+				TetherArgs:    mcpPlan.Args,
 			})
 			if err != nil {
 				t.Fatalf("prepareSharedLaunch: %v", err)
@@ -90,7 +90,7 @@ func TestLaunchConfigSeam_PlantedMCPJSON(t *testing.T) {
 				t.Fatalf("unmarshal planted .mcp.json: %v\ncontent:\n%s", err, string(data))
 			}
 
-			// Find tether/mux server in mcpServers
+			// Find tether/tether server in mcpServers
 			var plantedArgs []string
 			for _, srv := range planted.MCPServers {
 				if slices.Contains(srv.Args, "mcp") && slices.Contains(srv.Args, "--proxy") {

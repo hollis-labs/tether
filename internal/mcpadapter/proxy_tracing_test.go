@@ -4,11 +4,11 @@ package mcpadapter
 //
 // The bug these lock in: proxied MCP calls created no span, so every call
 // every session made to Torque, Tesseract and Cerberus through
-// `mux mcp --proxy` was absent from tracing. Tesseract measured it with an
+// `tether mcp --proxy` was absent from tracing. Tesseract measured it with an
 // out-of-process probe that dumped what the upstream actually received:
 //
 //	direct proxied call  ->  {"keys":["input"]}                 <- nothing injected
-//	via mux_call         ->  {"keys":["_traceparent","input"]}  <- injected
+//	via tether_tool_call         ->  {"keys":["_traceparent","input"]}  <- injected
 //
 // These are that probe, in process. They assert on what the UPSTREAM received
 // rather than on whether a span object exists, because a span nothing
@@ -151,10 +151,10 @@ func TestProxiedCall_NoTracerMeansNoInjection(t *testing.T) {
 	}
 }
 
-// mux_call is native (addTool creates its span) and calls router.Handle
-// DIRECTLY at proxy_adapter.go's mux_call handler, bypassing the proxied
+// tether_tool_call is native (addTool creates its span) and calls router.Handle
+// DIRECTLY at proxy_adapter.go's tether_tool_call handler, bypassing the proxied
 // handler registered by addProxyTools. So adding a span to the proxied path
-// must not give mux_call a second one. "Did this double-count?" is the first
+// must not give tether_tool_call a second one. "Did this double-count?" is the first
 // question worth asking about adding a span to a proxy path, so it is asserted
 // rather than reasoned about.
 func TestProxyRouter_HandleCreatesNoSpanOfItsOwn(t *testing.T) {
@@ -180,14 +180,14 @@ func TestProxyRouter_HandleCreatesNoSpanOfItsOwn(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 	if innerSpanID != callerSpanID {
-		t.Errorf("Handle started a span of its own (caller %s, upstream saw %s); the proxied span belongs to addProxyTools, and a second one here would double-count mux_call",
+		t.Errorf("Handle started a span of its own (caller %s, upstream saw %s); the proxied span belongs to addProxyTools, and a second one here would double-count tether_tool_call",
 			callerSpanID, innerSpanID)
 	}
 }
 
 // The upstream dimension is what makes a proxied span worth creating -- Torque
 // latency has to be separable from Tesseract latency, and the tool name is not
-// a reliable substitute (proxy_events records server "mux" for Torque tools).
+// a reliable substitute (proxy_events records server "tether" for Torque tools).
 func TestProxyRouter_RecordsUpstreamServerOnTheSpan(t *testing.T) {
 	recordingTracer(t)
 

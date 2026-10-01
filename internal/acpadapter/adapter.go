@@ -15,11 +15,11 @@ const version = "0.1.0"
 // Adapter is the top-level ACP server. It composes:
 //
 //   - A Dispatcher (bidirectional JSON-RPC engine over stdio)
-//   - An AuthGate (token + scope enforcement mirroring `mux mcp`)
+//   - An AuthGate (token + scope enforcement mirroring `tether mcp`)
 //   - A Service (the host integration seam)
 //   - Per-connection session ownership tracking for clean shutdown
 //
-// Adapter is constructed once per `mux acp` subprocess invocation; the
+// Adapter is constructed once per `tether acp` subprocess invocation; the
 // editor spawns one subprocess per session-graph it wants to drive.
 type Adapter struct {
 	svc       Service
@@ -32,7 +32,7 @@ type Adapter struct {
 	// is supported by the daemon side: if another ACP connection
 	// resumes the same session, both will independently track it,
 	// and either disconnecting only closes its own bookkeeping —
-	// the underlying mux session stays alive until all references
+	// the underlying tether session stays alive until all references
 	// drop. (Detailed reference counting lives host-side; the
 	// adapter just tracks "this connection's responsibility".)
 	ownedMu       sync.Mutex
@@ -43,12 +43,12 @@ type Adapter struct {
 type Option func(*Adapter)
 
 // WithAgentName overrides the agentInfo.name returned by initialize.
-// Default is "mux".
+// Default is "tether".
 func WithAgentName(name string) Option { return func(a *Adapter) { a.agentName = name } }
 
 // WithLogger sets the slog logger used for adapter-internal warnings.
 // Default is slog.Default(). The logger is wired to stderr by the
-// `mux acp` subcommand so warn lines don't pollute the stdout protocol
+// `tether acp` subcommand so warn lines don't pollute the stdout protocol
 // stream.
 func WithLogger(l *slog.Logger) Option { return func(a *Adapter) { a.logger = l } }
 
@@ -58,7 +58,7 @@ func New(svc Service, token string, scopes []string, opts ...Option) *Adapter {
 	a := &Adapter{
 		svc:           svc,
 		auth:          NewAuthGate(token, scopes),
-		agentName:     "mux",
+		agentName:     "tether",
 		logger:        slog.Default(),
 		ownedSessions: map[SessionID]struct{}{},
 	}

@@ -316,9 +316,9 @@ mcp_servers: [vanta, clockwork, cerberus]
 	if err := svc.applyAgentOps(plan, in); err != nil {
 		t.Fatal(err)
 	}
-	got := plan.Env["MUX_MCP_SERVERS"]
+	got := plan.Env["TETHER_MCP_SERVERS"]
 	if got != "vanta,clockwork,cerberus" {
-		t.Errorf("MUX_MCP_SERVERS = %q; want vanta,clockwork,cerberus", got)
+		t.Errorf("TETHER_MCP_SERVERS = %q; want vanta,clockwork,cerberus", got)
 	}
 }
 
@@ -430,7 +430,7 @@ func TestApplyAgentOps_PreservesLaunchNativeFiles(t *testing.T) {
 	}, tmp)
 	plan := basePlan()
 	plan.NativeFiles = []launch.NativeFile{
-		{Kind: "raw", RelPath: ".mux/context.md", Content: "profile file\n"},
+		{Kind: "raw", RelPath: ".tether/context.md", Content: "profile file\n"},
 	}
 	if err := svc.applyAgentOps(plan, CreateSessionInput{LaunchID: "test-launch"}); err != nil {
 		t.Fatalf("applyAgentOps: %v", err)
@@ -438,7 +438,7 @@ func TestApplyAgentOps_PreservesLaunchNativeFiles(t *testing.T) {
 	if len(plan.NativeFiles) != 2 {
 		t.Fatalf("NativeFiles len = %d, want profile file + compiled skill", len(plan.NativeFiles))
 	}
-	if plan.NativeFiles[0].RelPath != ".mux/context.md" {
+	if plan.NativeFiles[0].RelPath != ".tether/context.md" {
 		t.Fatalf("profile native file was not preserved first: %#v", plan.NativeFiles)
 	}
 	if plan.NativeFiles[1].Kind != "skill" || plan.NativeFiles[1].ID != "refactor" {
@@ -464,7 +464,7 @@ func TestApplyAgentOps_CallerInjection_Precedence(t *testing.T) {
 	plan := basePlan()
 	// Catalog native file already in the plan (as resolveInjection would leave it).
 	plan.NativeFiles = []launch.NativeFile{
-		{Kind: "raw", RelPath: ".mux/catalog.md", Content: "catalog file\n"},
+		{Kind: "raw", RelPath: ".tether/catalog.md", Content: "catalog file\n"},
 	}
 	in := CreateSessionInput{
 		LaunchID:  "test-launch",
@@ -476,7 +476,7 @@ func TestApplyAgentOps_CallerInjection_Precedence(t *testing.T) {
 	if len(plan.NativeFiles) != 3 {
 		t.Fatalf("NativeFiles len = %d, want catalog + caller + skill", len(plan.NativeFiles))
 	}
-	if plan.NativeFiles[0].RelPath != ".mux/catalog.md" {
+	if plan.NativeFiles[0].RelPath != ".tether/catalog.md" {
 		t.Errorf("NativeFiles[0] = %#v; want catalog file first", plan.NativeFiles[0])
 	}
 	if plan.NativeFiles[1].RelPath != "NOTES.md" || plan.NativeFiles[1].Content != "caller note\n" {

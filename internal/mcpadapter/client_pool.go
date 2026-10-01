@@ -337,7 +337,7 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		return connectFn(ctx, entry)
 	}
 
-	impl := &mcpsdk.Implementation{Name: "agent-mux-proxy", Version: p.runtime.Build.Version}
+	impl := &mcpsdk.Implementation{Name: "tether-proxy", Version: p.runtime.Build.Version}
 	opts := &mcpsdk.ClientOptions{
 		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
 			go func() { _, _ = p.RefreshServer(ctx, entry.ID) }()
@@ -375,7 +375,7 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		// two transports -- see the remoteClients field doc. It has no
 		// ToolListChangedHandler equivalent (dialSDK always passes nil
 		// ClientOptions), so unlike stdio, a notification-driven refresh from
-		// an sse/http upstream is not wired here; mux_catalog_refresh and the
+		// an sse/http upstream is not wired here; tether_catalog_refresh and the
 		// periodic paths remain the way those two transports pick up a
 		// changed tool list. Worth a go-mcp follow-up if a remote upstream
 		// that relies on the notification shows up.
@@ -414,7 +414,7 @@ func (p *ClientPool) remoteClientPool() *gomcpclient.Pool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.remoteClients == nil {
-		p.remoteClients = gomcpclient.NewPool(gomcpclient.WithIdentity("agent-mux-proxy", p.runtime.Build.Version))
+		p.remoteClients = gomcpclient.NewPool(gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version))
 	}
 	return p.remoteClients
 }
@@ -573,7 +573,7 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 		if callerErr == nil || !errors.Is(err, callerErr) {
 			p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
 		}
-		// The caller (mux_catalog_refresh, a sysop probe) shows this text.
+		// The caller (tether_catalog_refresh, a sysop probe) shows this text.
 		return ToolRefreshResult{}, redactUpstreamError(err, entry)
 	}
 	return p.publish(ctx, id, client, result.Tools, true)

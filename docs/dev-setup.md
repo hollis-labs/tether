@@ -22,7 +22,7 @@ cd tether
 # Add ~/go/bin to PATH if it isn't already.
 make tools-install
 
-# Build the binary into bin/mux.
+# Build the binary into bin/tether.
 make build
 
 # Run the full gate to confirm the environment is clean.
@@ -38,7 +38,7 @@ make check
 ## Layout at a glance
 
 ```
-cmd/mux/          CLI entrypoint (Cobra) + daemon sub-commands
+cmd/tether/          CLI entrypoint (Cobra) + daemon sub-commands
 internal/
   agent/          LogicalAgent type (durable agent identity)
   api/            HTTP handlers + typed error envelope
@@ -68,14 +68,14 @@ examples/catalog/ Minimal catalog used by tests + demos
 
 Tether splits into two parts:
 
-1. **`mux daemon`** — a long-lived process that owns running sessions,
+1. **`tether daemon`** — a long-lived process that owns running sessions,
    exposes a local HTTP API over a Unix domain socket, and publishes
    lifecycle / broker events.
-2. **`mux ...` (other commands)** — a thin CLI that talks to the daemon
+2. **`tether ...` (other commands)** — a thin CLI that talks to the daemon
    over the socket, with read-only SQLite fallbacks when the daemon is
    down.
 
-Default transport: `unix:~/.tether/run/muxd.sock`. Override via the
+Default transport: `unix:~/.tether/run/tetherd.sock`. Override via the
 `daemon.listen_addr` field in `~/.tether/catalog/global.yaml`.
 
 ## Running a demo launch
@@ -86,25 +86,25 @@ CLI.
 
 ```bash
 # Create a throwaway catalog dir.
-export AGENT_MUX_CATALOG=$(mktemp -d)
-cp -R examples/catalog/* "$AGENT_MUX_CATALOG/"
+export TETHER_CATALOG=$(mktemp -d)
+cp -R examples/catalog/* "$TETHER_CATALOG/"
 
 # Start the daemon.
-./bin/mux daemon start --catalog "$AGENT_MUX_CATALOG"
-./bin/mux daemon status --catalog "$AGENT_MUX_CATALOG"
+./bin/tether daemon start --catalog "$TETHER_CATALOG"
+./bin/tether daemon status --catalog "$TETHER_CATALOG"
 
 # Create + launch a demo session against the api-stub provider.
-./bin/mux launch --catalog "$AGENT_MUX_CATALOG" --launch api-stub-launch
+./bin/tether launch --catalog "$TETHER_CATALOG" --launch api-stub-launch
 
 # List sessions.
-./bin/mux sessions list --catalog "$AGENT_MUX_CATALOG"
+./bin/tether sessions list --catalog "$TETHER_CATALOG"
 
 # Stop the daemon (also stops all sessions it owns).
-./bin/mux daemon stop --catalog "$AGENT_MUX_CATALOG"
+./bin/tether daemon stop --catalog "$TETHER_CATALOG"
 ```
 
 All artifacts (SQLite state DB, session workspaces, logs, PID file,
-socket) land under `$AGENT_MUX_CATALOG` so cleanup is `rm -rf`.
+socket) land under `$TETHER_CATALOG` so cleanup is `rm -rf`.
 
 ## OpenTelemetry
 
@@ -226,16 +226,16 @@ Routing notes:
 - If `routing.routes` is omitted, the daemon falls back to
   `default_provider_order` plus each provider's configured model order.
 
-Secrets are resolved at runtime through `mux-apikey-helper`, not stored in
+Secrets are resolved at runtime through `tether-apikey-helper`, not stored in
 the SQLite state DB. Supported refs include `keychain://...` and
 `helper://...`.
 
 Common keychain setup:
 
 ```bash
-printf '%s\n' "$OPENAI_API_KEY" | mux-apikey-helper set keychain://openai/work
-printf '%s\n' "$GEMINI_API_KEY" | mux-apikey-helper set keychain://gemini/work
-printf '%s\n' "$ANTHROPIC_API_KEY" | mux-apikey-helper set keychain://anthropic/work
+printf '%s\n' "$OPENAI_API_KEY" | tether-apikey-helper set keychain://openai/work
+printf '%s\n' "$GEMINI_API_KEY" | tether-apikey-helper set keychain://gemini/work
+printf '%s\n' "$ANTHROPIC_API_KEY" | tether-apikey-helper set keychain://anthropic/work
 ```
 
 Once configured and the daemon is running, the typed AI surfaces are
@@ -243,25 +243,25 @@ available through:
 
 - HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
   `/ai/chat/stream`, `/ai/embeddings`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
-- CLI: `mux ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
-- MCP: `mux_ai_list_providers`, `mux_ai_list_models`,
-  `mux_ai_list_routes`, `mux_ai_route_preview`, `mux_ai_route_explain`, `mux_ai_chat`,
-  `mux_ai_chat_stream`, `mux_ai_embeddings`,
-  `mux_ai_usage`, `mux_ai_budgets`, `mux_ai_audit`
+- CLI: `tether ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
+- MCP: `tether_ai_list_providers`, `tether_ai_list_models`,
+  `tether_ai_list_routes`, `tether_ai_route_preview`, `tether_ai_route_explain`, `tether_ai_chat`,
+  `tether_ai_chat_stream`, `tether_ai_embeddings`,
+  `tether_ai_usage`, `tether_ai_budgets`, `tether_ai_audit`
 
-For live alerting instead of polling, `mux ai watch-budgets` subscribes to the
+For live alerting instead of polling, `tether ai watch-budgets` subscribes to the
 daemon event bus and prints `ai.budget_rejected` events as they arrive. The
 underlying stream is `GET /events/stream?scope=daemon&kind=ai.budget_rejected`.
 
-For incremental model output, `mux ai chat --stream "..."` uses
+For incremental model output, `tether ai chat --stream "..."` uses
 `POST /ai/chat/stream` and prints normalized text deltas as they arrive, then
 the final provider/model/usage summary once `response.completed` lands.
 
 For multimodal shorthand, these commands also accept image flags:
 
-- `mux ai chat "describe this" --image-file ./photo.png`
-- `mux ai chat "what's in this?" --image-url https://example.com/cat.jpg`
-- `mux ai route-preview --image-file ./diagram.png`
+- `tether ai chat "describe this" --image-file ./photo.png`
+- `tether ai chat "what's in this?" --image-url https://example.com/cat.jpg`
+- `tether ai route-preview --image-file ./diagram.png`
 
 Those flags append normalized `image` content parts to the shorthand user
 message. Full normalized request JSON/YAML still works when you need more
@@ -272,11 +272,11 @@ More generally, the daemon exposes:
 - durable event history via `GET /events`
 - live SSE via `GET /events/stream`
 
-The CLI mirrors the durable path as `mux events history`, which supports
+The CLI mirrors the durable path as `tether events history`, which supports
 repeatable `--scope` and `--kind` filters plus `--session-id`, `--since-seq`,
 `--cursor`, and `--limit`.
 
-For live operator tailing, use `mux events watch` with the same `--scope`,
+For live operator tailing, use `tether events watch` with the same `--scope`,
 `--kind`, `--session-id`, and `--since-seq` filters. That command streams the
 daemon SSE surface directly instead of querying durable history.
 
@@ -297,17 +297,17 @@ daemon SSE surface directly instead of querying durable history.
 
 ### "daemon already running" but no process is alive
 
-The PID file is stale. If `mux daemon status` reports "stale PID",
-`mux daemon start` will clear it and proceed; otherwise delete the
+The PID file is stale. If `tether daemon status` reports "stale PID",
+`tether daemon start` will clear it and proceed; otherwise delete the
 pidfile manually:
 
 ```bash
-rm ~/.tether/run/muxd.pid
+rm ~/.tether/run/tetherd.pid
 ```
 
 ### SQLite "no such column" after editing migrations
 
-The migrations are `//go:embed`'d into the `mux` binary. A stale
+The migrations are `//go:embed`'d into the `tether` binary. A stale
 binary (built before you added a new `.sql`) will silently skip the
 new migration, so `schema_migrations` drifts from the catalog state
 DB. Rebuild:
@@ -340,18 +340,18 @@ manager is the usual suspect.
 
 ## MCP adapter
 
-`mux mcp` starts an MCP stdio server so LLM-based tools can call Tether
+`tether mcp` starts an MCP stdio server so LLM-based tools can call Tether
 capabilities as tool calls. It connects directly to the catalog (no daemon
 required) and gates mutating operations behind a token + scope.
 
 ```bash
 # Read-only access (no auth):
-mux mcp
+tether mcp
 
 # With mutating tool access:
-AGENT_MUX_MCP_TOKEN=dev-token \
-AGENT_MUX_MCP_SCOPES=session.write,message.write \
-mux mcp
+TETHER_MCP_TOKEN=dev-token \
+TETHER_MCP_SCOPES=session.write,message.write \
+tether mcp
 ```
 
 Add to Claude Desktop / Claude Code:
@@ -360,11 +360,11 @@ Add to Claude Desktop / Claude Code:
 {
   "mcpServers": {
     "tether": {
-      "command": "/path/to/bin/mux",
+      "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "AGENT_MUX_MCP_TOKEN": "your-token",
-        "AGENT_MUX_MCP_SCOPES": "session.write,message.write"
+        "TETHER_MCP_TOKEN": "your-token",
+        "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }
   }

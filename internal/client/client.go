@@ -1,5 +1,5 @@
-// Package client is the thin HTTP client used by the mux CLI to talk to a
-// running muxd daemon. It wraps the transport helpers in internal/daemon
+// Package client is the thin HTTP client used by the tether CLI to talk to a
+// running tetherd daemon. It wraps the transport helpers in internal/daemon
 // and the JSON payload types defined in internal/api, so CLI subcommands
 // stay free of HTTP plumbing.
 package client
@@ -31,7 +31,7 @@ import (
 // local path (e.g., `sessions list` hitting SQLite directly).
 var ErrDaemonUnreachable = errors.New("daemon unreachable")
 
-// Client talks to a muxd daemon listening at ListenAddr.
+// Client talks to a tetherd daemon listening at ListenAddr.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -975,7 +975,7 @@ func (c *Client) MessageGet(ctx context.Context, id, as string) (MessageEnvelope
 	return env, nil
 }
 
-// MessageThread loads all messages in a Mux message thread that involve as
+// MessageThread loads all messages in a Tether message thread that involve as
 // as sender or recipient (T05 / ADR 0045: same-host trust model). kind, when
 // non-empty, is a comma-separated kind filter (matches the HTTP route's
 // ?kind= parameter); pass "" for no filter.

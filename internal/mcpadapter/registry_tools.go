@@ -4,10 +4,10 @@
 //
 // T08 (messaging vNext, CW-20260906-0039): every handler here now routes
 // through a.client (the daemon HTTP client), not a.svc.Registry
-// in-process. `mux mcp` opens its OWN separate SQLite connection to
+// in-process. `tether mcp` opens its OWN separate SQLite connection to
 // ~/.tether/state/tether.db, distinct from the running daemon's
 // in-process Registry instance (internal/mcpadapter/adapter.go's package
-// doc) -- a `mux mcp` registry write previously landed on a DIFFERENT
+// doc) -- a `tether mcp` registry write previously landed on a DIFFERENT
 // connection than the live daemon's, invisible to it until the next
 // catalog reload, the exact split-brain bug class T05 closed for message
 // tools. The original comment here cited "ADR 0034's 'MCP shares the same
@@ -17,9 +17,9 @@
 // and its "Messages stays in-process" carve-out is what T05 later overrode
 // for messages. This is the same override applied to registry/group tools.
 //
-// Tool-prefix choice. Names use the `tether_` prefix (not `mux_`) per D14
+// Tool-prefix choice. Names use the `tether_` prefix (not `tether_`) per D14
 // and the sprint spec — the directory service is the first surface where
-// "Tether" is the user-facing name. Internal Go packages still say `mux`
+// "Tether" is the user-facing name. Internal Go packages still say `tether`
 // in places; the prefix divergence is intentional.
 //
 // Scope. Read tools (`lookup`, `search`) are unauthenticated — same-host
@@ -231,7 +231,7 @@ func (a *Adapter) handleRegistryRegister(ctx context.Context, args map[string]an
 	}
 
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_register requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Registry().Register(ctx, kind, profile)
 	if err != nil {
@@ -272,7 +272,7 @@ func (a *Adapter) handleRegistryLookup(ctx context.Context, args map[string]any)
 		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_lookup requires daemon routing; start MCP with tether mcp")
 	}
 	include := str(args, "include")
 	if requiresRegistryWriteScope(include) {
@@ -308,7 +308,7 @@ func (a *Adapter) handleRegistryLookupBy(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "external_id is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_lookup_by requires daemon routing; start MCP with tether mcp")
 	}
 	include := str(args, "include")
 	if requiresRegistryWriteScope(include) {
@@ -347,7 +347,7 @@ func (a *Adapter) handleRegistrySearch(ctx context.Context, args map[string]any)
 		Tag:        str(args, "tag"),
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_search requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Registry().Search(ctx, kind, f)
 	if err != nil {
@@ -379,7 +379,7 @@ func (a *Adapter) handleRegistryUpdateSelf(ctx context.Context, args map[string]
 		return nil, err
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_update_self requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Registry().UpdateSelf(ctx, urn, patch)
 	if err != nil {
@@ -401,7 +401,7 @@ func (a *Adapter) handleRegistryDeregister(ctx context.Context, args map[string]
 		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_deregister requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_deregister requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Registry().Deregister(ctx, urn)
 	if err != nil {
@@ -424,7 +424,7 @@ func (a *Adapter) handleRegistryMerge(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "urn and into are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_merge requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_merge requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.Registry().Merge(ctx, urn, into)
 	if err != nil {
@@ -451,7 +451,7 @@ func (a *Adapter) handleRegistrySync(ctx context.Context, args map[string]any) (
 		return nil, toolError("invalid_request", "urn is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "tether_registry_sync requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_registry_sync requires daemon routing; start MCP with tether mcp")
 	}
 	out, synced, err := a.client.Registry().Sync(ctx, urn)
 	if err != nil {

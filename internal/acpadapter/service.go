@@ -2,9 +2,9 @@ package acpadapter
 
 import "context"
 
-// Service is the contract this package needs from a host (Mux). It is
+// Service is the contract this package needs from a host (Tether). It is
 // the extraction seam: when this package promotes to a portfolio go-acp
-// library, this interface stays unchanged and Mux supplies the
+// library, this interface stays unchanged and Tether supplies the
 // implementation. No host-internal types leak into the package.
 //
 // The four lifecycle methods mirror the daemon-routed shape used by
@@ -22,7 +22,7 @@ type Service interface {
 	// LaunchSession creates and starts a session for the given launch
 	// profile + workspace, returning the new session ID. The agent ID
 	// for the launch is decided by the host (typically via a
-	// command-line flag passed to `mux acp`). The cwd is the editor's
+	// command-line flag passed to `tether acp`). The cwd is the editor's
 	// current working directory.
 	//
 	// Returns ErrUnsupported if the host can't satisfy the launch

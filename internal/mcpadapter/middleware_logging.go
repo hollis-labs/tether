@@ -70,11 +70,11 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	sessionID := sessionIDFromContext(ctx)
 
 	// Look up the server ID for this tool from the registry via context, if available.
-	// Native mux tools never set WithServerID, so default to "mux" to keep the
+	// Native tether tools never set WithServerID, so default to "tether" to keep the
 	// TUI feed readable and satisfy the POST /proxy/events tool_name-only validation.
 	serverID := serverIDFromContext(ctx)
 	if serverID == "" {
-		serverID = "mux"
+		serverID = "tether"
 	}
 
 	m.publish(ctx, events.EventTypeToolCallStart, events.ToolCallEvent{
@@ -156,7 +156,7 @@ const (
 	contextKeyServerID
 )
 
-// WithSessionID attaches a mux session ID to ctx for the middleware chain.
+// WithSessionID attaches a tether session ID to ctx for the middleware chain.
 func WithSessionID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, contextKeySessionID, id)
 }

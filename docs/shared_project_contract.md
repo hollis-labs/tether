@@ -18,7 +18,7 @@ Per design record `CW-20260912-0075`:
 
 | Role | Owner | Responsibility |
 |---|---|---|
-| **Store & Contract** | **Tether** (`muxd`) | Enforces profile schema, mints canonical URNs, manages cross-substrate external ID mappings, executes callback syncs, and preserves authored metadata. **Tether never calls external APIs** (no Torque/Cerberus/Tesseract REST calls). |
+| **Store & Contract** | **Tether** (`tetherd`) | Enforces profile schema, mints canonical URNs, manages cross-substrate external ID mappings, executes callback syncs, and preserves authored metadata. **Tether never calls external APIs** (no Torque/Cerberus/Tesseract REST calls). |
 | **Process & Orchestration** | **agent-setup** | Owns onboarding workflows, guides human/agent onboarding decisions, and supplies explicit cross-substrate ID mappings. |
 | **Substrates** | **Torque / Cerberus / etc.** | Each substrate mints and owns its own internal IDs (e.g. Torque `PRJ-xxxx`, Cerberus site name, GitHub repo). |
 
@@ -48,15 +48,15 @@ tether_registry_deregister     urn=
 tether_registry_sync           urn=
 tether_registry_merge          urn= into=
 
-mux registry register          --kind project --file project.json
-mux registry lookup            <urn> [--include external_ids] [--full] [--json]
-mux registry lookup-by         --kind project --external-id <id> [--substrate <s>] [--include external_ids] [--full] [--json]
-mux registry search            --kind project [--tag <tag>] [--status <status>] [--json]
-mux registry update-self       --file patch.json
-mux registry deregister        <urn>
-mux registry sync              <urn>
-mux registry merge             <src_urn> <dst_urn>
-mux registry reonboard
+tether registry register          --kind project --file project.json
+tether registry lookup            <urn> [--include external_ids] [--full] [--json]
+tether registry lookup-by         --kind project --external-id <id> [--substrate <s>] [--include external_ids] [--full] [--json]
+tether registry search            --kind project [--tag <tag>] [--status <status>] [--json]
+tether registry update-self       --file patch.json
+tether registry deregister        <urn>
+tether registry sync              <urn>
+tether registry merge             <src_urn> <dst_urn>
+tether registry reonboard
 ```
 
 ---
@@ -71,7 +71,7 @@ orchestration workflow that guides human or agent decisions (per `CW-20260912-00
 
 #### Step 1: Mint Canonical Identity (MVP Core Path)
 The bare-minimum entry point: register the project with its display name, optional description, optional owner,
-and optional derivation pointer/callback. This mints a canonical URN (`msg://project/project-mux/prj_...`) in `status: active`.
+and optional derivation pointer/callback. This mints a canonical URN (`msg://project/project-tether/prj_...`) in `status: active`.
 Everything else can be layered on incrementally.
 
 ##### Request (HTTP)
@@ -84,7 +84,7 @@ Content-Type: application/json
   "description": "Local agent session control plane daemon and CLI",
   "callback": {
     "scheme": "cli",
-    "target": "mux describe --json"
+    "target": "tether describe --json"
   }
 }
 ```
@@ -96,7 +96,7 @@ profile, err := client.Registry().OnboardProject(ctx, client.OnboardProjectParam
     Description: "Local agent session control plane daemon and CLI",
     Callback: &registry.Callback{
         Scheme: "cli",
-        Target: "mux describe --json",
+        Target: "tether describe --json",
     },
 })
 ```
@@ -107,7 +107,7 @@ HTTP/1.1 201 Created
 Content-Type: application/json
 
 {
-  "urn": "msg://project/project-mux/prj_01m2gtwv16",
+  "urn": "msg://project/project-tether/prj_01m2gtwv16",
   "kind": "project",
   "display_name": "Tether Control Plane",
   "description": "Local agent session control plane daemon and CLI",
@@ -123,7 +123,7 @@ guidelines, tags, or entry points via `PATCH /registry/projects/{urn}` (`UpdateS
 Authored fields are protected against sync clobbering.
 
 ```http
-PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_01m2gtwv16 HTTP/1.1
 Content-Type: application/json
 
 {
@@ -141,11 +141,11 @@ Link external substrate IDs (e.g. Torque `PRJ-xxxx`, Cerberus site name, GitHub 
 Substrate IDs can be supplied either during initial registration or subsequently via deduplicating `Merge`:
 
 ```http
-POST /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_tmp/merge HTTP/1.1
+POST /registry/projects/msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_tmp/merge HTTP/1.1
 Content-Type: application/json
 
 {
-  "into": "msg://project/project-mux/prj_01m2gtwv16"
+  "into": "msg://project/project-tether/prj_01m2gtwv16"
 }
 ```
 Enforces 1:1 mapping per substrate (`(urn, substrate)` uniqueness) and enables reverse lookup (`LookupBy`).
@@ -155,7 +155,7 @@ Record the project's Tesseract namespace (e.g. `user/chrispian/knowledge/tether`
 or `links`. Tether sessions and CLI agents use this to recall architectural decisions, investigations, and skills:
 
 ```http
-PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_01m2gtwv16 HTTP/1.1
 Content-Type: application/json
 
 {
@@ -171,12 +171,12 @@ The actual authorization boundary is enforced at session launch; this step recor
 declaratively in `props` without requiring immediate auth implementation:
 
 ```http
-PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16 HTTP/1.1
+PATCH /registry/projects/msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_01m2gtwv16 HTTP/1.1
 Content-Type: application/json
 
 {
   "props": {
-    "mcp_opt_in": "torque,mux,tesseract",
+    "mcp_opt_in": "torque,tether,tesseract",
     "llm_policy": "claude-3-5-sonnet"
   }
 }
@@ -199,7 +199,7 @@ and a closest-wins resolution cascade (`internal/settings`, `CW-20260914-0042`):
 
 #### Resolution Endpoint
 ```http
-GET /settings/onboarding?project=msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01&user=msg%3A%2F%2Fagent%2Fagent-mux%2Fusr_01 HTTP/1.1
+GET /settings/onboarding?project=msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_01&user=msg%3A%2F%2Fagent%2Ftether%2Fusr_01 HTTP/1.1
 ```
 ##### Response
 ```json
@@ -226,7 +226,7 @@ across every registered substrate.
 
 #### Request (HTTP)
 ```http
-GET /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16?include=external_ids HTTP/1.1
+GET /registry/projects/msg%3A%2F%2Fproject%2Fproject-tether%2Fprj_01m2gtwv16?include=external_ids HTTP/1.1
 ```
 
 #### Request (MCP)
@@ -234,7 +234,7 @@ GET /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16?includ
 {
   "name": "tether_registry_lookup",
   "arguments": {
-    "urn": "msg://project/project-mux/prj_01m2gtwv16",
+    "urn": "msg://project/project-tether/prj_01m2gtwv16",
     "include": "external_ids"
   }
 }
@@ -242,13 +242,13 @@ GET /registry/projects/msg%3A%2F%2Fproject%2Fproject-mux%2Fprj_01m2gtwv16?includ
 
 #### Request (CLI)
 ```bash
-mux registry lookup msg://project/project-mux/prj_01m2gtwv16 --include external_ids
+tether registry lookup msg://project/project-tether/prj_01m2gtwv16 --include external_ids
 ```
 
 #### Response
 ```json
 {
-  "urn": "msg://project/project-mux/prj_01m2gtwv16",
+  "urn": "msg://project/project-tether/prj_01m2gtwv16",
   "kind": "project",
   "display_name": "Tether Control Plane",
   "status": "active",
@@ -299,14 +299,14 @@ GET /registry/projects?external_id=PRJ-TETHER-01&substrate=torque&include=extern
 
 #### Request (CLI)
 ```bash
-mux registry lookup-by --kind project --external-id PRJ-TETHER-01 --substrate torque --include external_ids
+tether registry lookup-by --kind project --external-id PRJ-TETHER-01 --substrate torque --include external_ids
 ```
 
 #### Response
 ```json
 {
   "project": {
-    "urn": "msg://project/project-mux/prj_01m2gtwv16",
+    "urn": "msg://project/project-tether/prj_01m2gtwv16",
     "kind": "project",
     "display_name": "Tether Control Plane",
     "status": "active",
@@ -324,7 +324,7 @@ mux registry lookup-by --kind project --external-id PRJ-TETHER-01 --substrate to
 Existing project rows originally seeded by passive catalog bootstrap importers are explicitly migrated to the modern contract via:
 - **HTTP**: `POST /registry/reonboard`
 - **Go Client**: `client.Registry().Reonboard(ctx)`
-- **CLI**: `mux registry reonboard`
+- **CLI**: `tether registry reonboard`
 
 The re-onboarding operation:
 1. Scans catalog project definitions (if configured) and updates or registers project profiles under the new contract.
@@ -361,7 +361,7 @@ A project may declare a callback URI that provides live status and metadata:
 ```json
 "callback": {
   "scheme": "cli",
-  "target": "mux describe --json"
+  "target": "tether describe --json"
 }
 ```
 
@@ -415,7 +415,7 @@ Under `CW-20260912-0053`, `CW-20260912-0096`, `CW-20260914-0038`, and `CW-202609
 ### Access Rules Across Surfaces
 1. **Default Queries**: Returns public profile with authored fields (including `props`), dropping `callback`, `host_address`, `kind_meta`, and `external_ids`.
 2. **HTTP Surface**: Callers can selectively include fields via `?include=external_ids` (read scope) or `?full=true` / sensitive includes (write scope).
-3. **CLI Surface**: `mux registry lookup` and `mux registry lookup-by` accept `--include <fields>` and `--full`.
+3. **CLI Surface**: `tether registry lookup` and `tether registry lookup-by` accept `--include <fields>` and `--full`.
 4. **MCP Surface**:
    - Including `external_ids` is **accessible with read scope** (no elevated scope required).
    - Including `callback`, `host_address`, `kind_meta`, or `all` requires the `registry.write` scope.
@@ -427,12 +427,12 @@ Under `CW-20260912-0053`, `CW-20260912-0096`, `CW-20260914-0038`, and `CW-202609
 Offboarding does not delete rows; it records unambiguous terminal states:
 
 ### 1. Deregister (Deprecation)
-- Invoked via `DELETE /registry/projects/{urn}`, MCP `tether_registry_deregister`, or `mux registry deregister`.
+- Invoked via `DELETE /registry/projects/{urn}`, MCP `tether_registry_deregister`, or `tether registry deregister`.
 - Flips `status` to `"deprecated"`.
 - Deprecated rows are excluded from default search, but **remain resolvable by direct URN lookup** for auditability.
 
 ### 2. Merge (Deduplication)
-- Invoked via `POST /registry/projects/{urnSrc}/merge {"into": "{urnDst}"}`, MCP `tether_registry_merge`, or `mux registry merge`.
+- Invoked via `POST /registry/projects/{urnSrc}/merge {"into": "{urnDst}"}`, MCP `tether_registry_merge`, or `tether registry merge`.
 - Source profile transitions to `status: "merged"` and records `merged_into: "<dstURN>"`.
 - Destination profile absorbs all external ID mappings and array fields from the source.
 - Reverse lookups for any of the source's external IDs immediately resolve to the destination URN.

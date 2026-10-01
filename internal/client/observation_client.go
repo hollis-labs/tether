@@ -11,7 +11,7 @@ import (
 )
 
 // The read side of a session and the proxy's call log, over the daemon API.
-// The daemon-only `mux mcp` Tether plants in an agent has no state database
+// The daemon-only `tether mcp` Tether plants in an agent has no state database
 // of its own and reads these here (CW-20261001-0173).
 
 // SessionEvents fetches a session's event history from

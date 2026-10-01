@@ -137,7 +137,7 @@ func (l *lockedBuffer) String() string {
 
 // An sse/http upstream whose url comes from a credential file: a failed connect
 // names the endpoint, so the raw error carries the secret. It must not reach the
-// "upstream unavailable" log line or ServerStatus.Error, which mux_health and the
+// "upstream unavailable" log line or ServerStatus.Error, which tether_health and the
 // sysop API return (CW-20261001-0229 review).
 func TestFileCredentialURL_IsRedactedFromStatusAndLogs(t *testing.T) {
 	home := t.TempDir()

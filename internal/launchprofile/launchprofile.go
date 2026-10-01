@@ -2,8 +2,8 @@ package launchprofile
 
 // MCPConfig holds per-project or per-launch MCP proxy settings that are
 // injected into agent sessions at launch time. Servers lists the upstream MCP
-// server IDs to expose as native tools (sets MUX_MCP_SERVERS). Empty means
-// MUX_MCP_SERVERS is not injected; the proxy defaults to exposing all servers.
+// server IDs to expose as native tools (sets TETHER_MCP_SERVERS). Empty means
+// TETHER_MCP_SERVERS is not injected; the proxy defaults to exposing all servers.
 // ExtractRefs enables proxy-side identifier extraction (--extract-refs).
 type MCPConfig struct {
 	Servers     []string `yaml:"servers" json:"servers,omitempty"`

@@ -97,8 +97,8 @@ func TestService_Register_AgentHappyPath(t *testing.T) {
 	if got.Status != registry.StatusActive {
 		t.Errorf("Status = %q, want %q (default)", got.Status, registry.StatusActive)
 	}
-	if got.MuxInstanceID != "agent-mux" {
-		t.Errorf("MuxInstanceID = %q, want %q", got.MuxInstanceID, "agent-mux")
+	if got.TetherInstanceID != "agent-mux" {
+		t.Errorf("TetherInstanceID = %q, want %q", got.TetherInstanceID, "agent-mux")
 	}
 	if got.LastUpdatedBy != "system:register" {
 		t.Errorf("LastUpdatedBy = %q, want %q (placeholder)", got.LastUpdatedBy, "system:register")

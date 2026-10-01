@@ -63,7 +63,7 @@ const (
 // SourceProxy means OBSERVED, not validated, and that the absence of a
 // proxy-sourced ref is never evidence of anything.
 const (
-	// SourceProxy — the mux proxy saw this session make this call carrying
+	// SourceProxy — the tether proxy saw this session make this call carrying
 	// this identifier. Not forgeable by the calling agent; not validated
 	// either.
 	SourceProxy = "proxy"

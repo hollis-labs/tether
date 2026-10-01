@@ -1,6 +1,6 @@
 // Package mcpadapter — delivery_repair_tools.go wires the native
-// mux_message_trace / mux_message_redrive / mux_message_retention_candidates /
-// mux_message_purge MCP tools (T09, messaging vNext), giving MCP callers
+// tether_message_trace / tether_message_redrive / tether_message_retention_candidates /
+// tether_message_purge MCP tools (T09, messaging vNext), giving MCP callers
 // parity with GET /messages/{id}/trace, POST /messages/{id}/redrive, GET
 // /messages/retention/candidates and POST /messages/{id}/purge
 // (internal/api/trace.go, repair.go, retention.go).
@@ -23,7 +23,7 @@ const ScopeDeliveryWrite = "delivery.write"
 
 func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_message_trace",
+		Name: "tether_message_trace",
 		Description: "Show the structured delivery trace for a message: who sent to whom, why a " +
 			"binding resolved, which host accepted, which turn was submitted, and why " +
 			"retry/expiry occurred. Read-only; no scope required.",
@@ -34,11 +34,11 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 	}, Reads("GET /messages/{id}/trace"))
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_message_redrive",
+		Name: "tether_message_redrive",
 		Description: "Authorized retry of a dead-lettered delivery. Idempotent: calling this again " +
 			"on an already-retryable delivery reports redriven=false, not an error. " +
 			"message_id may be a literal delivery id to address one specific group-fanout " +
-			"recipient's delivery (use mux_message_trace or an operator's own inspection " +
+			"recipient's delivery (use tether_message_trace or an operator's own inspection " +
 			"to find it). Requires the delivery.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID, or a literal delivery id for a group-fanout recipient.", true),
@@ -49,11 +49,11 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_message_retention_candidates",
+		Name: "tether_message_retention_candidates",
 		Description: "Preview messages eligible for a body purge -- read-only, mutates nothing. " +
-			"Use this before mux_message_purge to check a message's eligibility " +
+			"Use this before tether_message_purge to check a message's eligibility " +
 			"(a pending, leased, retry_scheduled or dead-lettered delivery is never " +
-			"eligible; see mux_message_purge's description for why dead-lettered is " +
+			"eligible; see tether_message_purge's description for why dead-lettered is " +
 			"excluded). No scope required.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.NumberProp("older_than_hours", "Lookback window in hours; 0 or omitted uses the daemon's default.", false),
@@ -62,11 +62,11 @@ func (a *Adapter) registerDeliveryRepairTools(s *gomcp.Server) {
 	}, Reads("GET /messages/retention/candidates: reports, deletes nothing"))
 
 	a.addTool(s, gomcp.Tool{
-		Name: "mux_message_purge",
+		Name: "tether_message_purge",
 		Description: "Clear one message's body/metadata, leaving its structural/trace fields " +
 			"(id, kind, from, to, thread, timestamps) intact. Irreversible. Refuses " +
 			"with an error when the message has a pending delivery obligation -- " +
-			"including dead-lettered, which remains repairable via mux_message_redrive " +
+			"including dead-lettered, which remains repairable via tether_message_redrive " +
 			"and would resend an empty message if purged first. Idempotent: purging " +
 			"an already-purged message reports purged=false, not an error. Requires " +
 			"the delivery.write scope.",
@@ -84,7 +84,7 @@ func (a *Adapter) handleMessageTraceTool(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "message_id is required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_trace requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_trace requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.MessageTrace(ctx, id)
 	if err != nil {
@@ -106,7 +106,7 @@ func (a *Adapter) handleMessageRedriveTool(ctx context.Context, args map[string]
 		return nil, toolError("invalid_request", "message_id and authorized_by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_redrive requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_redrive requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.MessageRedrive(ctx, id, authorizedBy, intArg(args, "new_deadline_seconds", 0))
 	if err != nil {
@@ -120,7 +120,7 @@ func (a *Adapter) handleMessageRedriveTool(ctx context.Context, args map[string]
 
 func (a *Adapter) handleMessageRetentionCandidatesTool(ctx context.Context, args map[string]any) (any, error) {
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_retention_candidates requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_retention_candidates requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.MessageRetentionCandidates(ctx, intArg(args, "older_than_hours", 0))
 	if err != nil {
@@ -142,7 +142,7 @@ func (a *Adapter) handleMessagePurgeTool(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "message_id and authorized_by are required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_purge requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_purge requires daemon routing; start MCP with tether mcp")
 	}
 	out, err := a.client.MessagePurge(ctx, id, authorizedBy)
 	if err != nil {

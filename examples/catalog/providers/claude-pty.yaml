@@ -8,7 +8,7 @@ bootstrap:
   # pty: the daemon launches Claude as its interactive TUI under a long-lived
   # PTY. Boot context is planted into the boot dir and initial stdin path by
   # go-agent-sessions/go-providers; attach sends raw terminal bytes and resize
-  # flows through `mux sessions attach`.
+  # flows through `tether sessions attach`.
   mode: stdin
   prompt_prefix: ""
 env:

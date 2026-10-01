@@ -239,7 +239,7 @@ vars:
   # There is no off-the-shelf S4.2 source that reproduces the RANKING.
   #
   # Closest faithful S4.2 source is `cmd`: invoke Tether's own skill-index
-  # path as an external command. Tether exposes `mux generate-boot` /
+  # path as an external command. Tether exposes `tether generate-boot` /
   # skill discovery via the CLI; here we model the slot as a `cmd` source
   # running the skill-index subcommand. This preserves the var name + the
   # template wiring; the ranking fidelity gap is surfaced in the S5 report.
@@ -247,7 +247,7 @@ vars:
     source:
       kind: cmd
       cmd:
-        argv: ["mux", "skills", "index", "--limit", "5", "--project", "{{ inputs.project }}", "--role", "{{ inputs.agent_role }}"]
+        argv: ["tether", "skills", "index", "--limit", "5", "--project", "{{ inputs.project }}", "--role", "{{ inputs.agent_role }}"]
         workdir: "{{ inputs.work_dir }}"
         timeout: 10s
         gate:

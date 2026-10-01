@@ -34,9 +34,9 @@ GET  /workstreams?ref=<kind>:<ref_id>
 tether_workstream_digest      session_id= | workstream_id=
 tether_workstreams_for_ref    ref=
 
-mux workstreams digest --session <id>
-mux workstreams digest --workstream <id>
-mux workstreams digest --for-ref torque_task:CW-20260911-0039
+tether workstreams digest --session <id>
+tether workstreams digest --workstream <id>
+tether workstreams digest --for-ref torque_task:CW-20260911-0039
 ```
 
 Both grains return **the same response shape**, so a consumer writes one
@@ -106,7 +106,7 @@ session in the span carries `ref_attribution`:
 `coverage.proxy_attributable` counts how many sessions in the span could
 produce one, and `coverage.note` says so in prose when the answer is zero.
 
-> **Today that answer is always zero.** `MuxMCPPlant` does not emit
+> **Today that answer is always zero.** `TetherMCPPlant` does not emit
 > `--extract-refs` and there is no config seam that would make it
 > (`CW-20260912-0112`). So `ref_attribution` reads `none` for every launched
 > session and `source=proxy` is unreachable by construction. A uniform column
@@ -156,7 +156,7 @@ You are picking up an effort that spanned a compaction and you have the
 workstream id.
 
 ```
-$ mux workstreams digest --workstream 01a09759-f4fa-7a6f-8738-d702b1330fa5
+$ tether workstreams digest --workstream 01a09759-f4fa-7a6f-8738-d702b1330fa5
 ```
 
 ```
@@ -186,7 +186,7 @@ COVERAGE  limit=500 truncated=false  attribution: none=3
 ```
 
 > **This sample is generated from a fixture, not from production.** It is the
-> real output of the renderer — `cmd/mux/workstream_digest_test.go` fails if
+> real output of the renderer — `cmd/tether/workstream_digest_test.go` fails if
 > the two diverge — but the data in it is constructed. Measured 2026-09-12:
 > the live database holds 129 sessions, every one `intent=fresh`, none with a
 > parent, and one workstream containing zero sessions. No production workstream
@@ -207,7 +207,7 @@ Read it in this order:
 To start from an identifier instead of a workstream:
 
 ```
-$ mux workstreams digest --for-ref torque_task:CW-20260911-0039
+$ tether workstreams digest --for-ref torque_task:CW-20260911-0039
 ```
 
 ## What the digest does not do

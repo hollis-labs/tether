@@ -41,7 +41,7 @@ func TestMintProjectURN_format(t *testing.T) {
 
 // TestMintGroupURN_format verifies the 3-segment group URN shape with
 // the URN-kind segment switched from `agent` to `group`. Default
-// authority is `agent-mux` to match v060-01 deployments.
+// authority is `tether` to match v060-01 deployments.
 func TestMintGroupURN_format(t *testing.T) {
 	src := bytes.NewReader(make([]byte, idSuffixLen))
 	urn, err := mintURN(context.Background(), src, urnKindGroup, defaultAuthority, groupIDPrefix, neverCollides)
@@ -182,7 +182,7 @@ func TestParseRegistryURN(t *testing.T) {
 		{name: "project URN", urn: "msg://agent/agent-mux/prj_xyz1234567", wantKind: "agent", wantAuth: "agent-mux", wantID: "prj_xyz1234567"},
 		{name: "group URN", urn: "msg://group/agent-mux/grp_q1w2e3r4t5", wantKind: "group", wantAuth: "agent-mux", wantID: "grp_q1w2e3r4t5"},
 		{name: "group URN non-default authority", urn: "msg://group/tether-east/grp_q1w2e3r4t5", wantKind: "group", wantAuth: "tether-east", wantID: "grp_q1w2e3r4t5"},
-		{name: "missing scheme", urn: "agent/agent-mux/agt_abc1234567", wantErr: true, errSubstr: "missing scheme"},
+		{name: "missing scheme", urn: "agent/tether/agt_abc1234567", wantErr: true, errSubstr: "missing scheme"},
 		{name: "too few segments", urn: "msg://group/grp_q1w2e3r4t5", wantErr: true, errSubstr: "want 3 path segments"},
 		{name: "too many segments", urn: "msg://agent/agent-mux/agt_x/sub", wantErr: true, errSubstr: "want 3 path segments"},
 		{name: "empty authority", urn: "msg://agent//agt_abc1234567", wantErr: true, errSubstr: "empty authority"},

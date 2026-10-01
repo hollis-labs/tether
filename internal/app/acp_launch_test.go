@@ -22,7 +22,7 @@ import (
 // CW-20260930-0106 stage 1: a catalog provider with runtime_kind acp-stdio
 // launches through LaunchSession and go-agent-wrapper's launch.Select, with
 // no shared-launch planting. The boot prompt is the agent's first prompt; a
-// later prompt goes through SendTurn as `mux sessions turn` sends it. Both
+// later prompt goes through SendTurn as `tether sessions turn` sends it. Both
 // replies land in the session's logs/session.log. The fakes replay captured
 // ACP turns, so Copilot and Pi need not be installed.
 func TestLaunchSession_ACPProviders(t *testing.T) {

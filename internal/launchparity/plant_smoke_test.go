@@ -70,7 +70,7 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 		},
 		{
 			name:     "codex carries approval_policy",
-			launchID: "agent-mux-codex-launch",
+			launchID: "tether-codex-launch",
 			wantFlag: [2]string{"-c", `approval_policy="on-request"`},
 		},
 	}

@@ -88,10 +88,10 @@ func TestProxyRouter_DeadUpstream(t *testing.T) {
 
 func TestProxyRouter_NativeTool_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("mux_health")})
+	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
 
 	router := NewProxyRouter(reg)
-	_, err := router.Handle(context.Background(), callReq("mux_health"))
+	_, err := router.Handle(context.Background(), callReq("tether_health"))
 	if err == nil {
 		t.Error("expected non-nil error when native tool reaches ProxyRouter")
 	}

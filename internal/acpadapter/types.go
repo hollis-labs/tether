@@ -1,4 +1,4 @@
-// Package acpadapter exposes the agent-mux service layer as an Agent Client
+// Package acpadapter exposes the tether service layer as an Agent Client
 // Protocol (ACP) server over stdio. ACP is a JSON-RPC 2.0 protocol used by
 // editors (Zed, JetBrains, Avante.nvim, CodeCompanion.nvim) to drive AI
 // agent sessions.
@@ -8,13 +8,13 @@
 // This package is designed for future extraction to a portfolio go-acp
 // library (see Vanta `followup_portfolio_go_acp_extraction`). Therefore:
 //
-//   - No direct imports of mux-internal types. Mux integrates via the
+//   - No direct imports of tether-internal types. Tether integrates via the
 //     Service interface declared in service.go.
 //   - Stdio framing, bidirectional JSON-RPC dispatcher, request-response
 //     correlator, and auth middleware live in their own files with no
-//     mux-specific cruft.
-//   - Mux-specific glue (boot profile selection, MCP server resolution,
-//     sandbox profile lookup) lives in cmd/mux/acp.go and internal/app/,
+//     tether-specific cruft.
+//   - Tether-specific glue (boot profile selection, MCP server resolution,
+//     sandbox profile lookup) lives in cmd/tether/acp.go and internal/app/,
 //     NOT inside this package.
 //
 // MVP scope per the v005-09 method-mapping doc:
@@ -62,7 +62,7 @@ type Implementation struct {
 	Version string `json:"version"`
 }
 
-// ClientCapabilities describes what the editor supports. Mux accepts
+// ClientCapabilities describes what the editor supports. Tether accepts
 // whatever the editor advertises but doesn't call back into the editor
 // for fs/terminal in MVP, so the values don't gate any agent-side work.
 type ClientCapabilities struct {
@@ -76,7 +76,7 @@ type FileSystemCapabilities struct {
 	WriteTextFile bool `json:"writeTextFile,omitempty"`
 }
 
-// AgentCapabilities describes what Mux as an ACP agent supports.
+// AgentCapabilities describes what Tether as an ACP agent supports.
 // Per v005-09 §1 lock: loadSession=false (no history-replay), resume=true
 // (no-replay reconnect for multi-client). All prompt + MCP capabilities
 // are off MVP — text-only prompts, MCP via boot-profile (not editor-supplied).
@@ -95,7 +95,7 @@ type PromptCapabilities struct {
 }
 
 // McpCapabilities advertises agent-supported MCP transports for
-// editor-supplied `mcpServers` in `session/new`. Mux declines MVP — see §2 lock.
+// editor-supplied `mcpServers` in `session/new`. Tether declines MVP — see §2 lock.
 type McpCapabilities struct {
 	HTTP bool `json:"http"`
 	SSE  bool `json:"sse"`
@@ -109,7 +109,7 @@ type AgentSessionCapabilities struct {
 }
 
 // AuthMethod is one entry in the agent's advertised authentication menu.
-// Mux mirrors `mux mcp` token auth: a single method with id "token" that
+// Tether mirrors `tether mcp` token auth: a single method with id "token" that
 // expects the bearer token in `authenticate` params.
 type AuthMethod struct {
 	ID          string `json:"id"`
@@ -133,8 +133,8 @@ type AuthenticateTokenBody struct {
 // ─── session lifecycle ────────────────────────────────────────────────────────
 
 // SessionID is the unique identifier for an ACP conversation session.
-// Mux returns its own session UUIDs verbatim — no separate ACP session id
-// space — so editors can cross-reference with `mux sessions get <id>`.
+// Tether returns its own session UUIDs verbatim — no separate ACP session id
+// space — so editors can cross-reference with `tether sessions get <id>`.
 type SessionID string
 
 // NewSessionParams is the params object on `session/new`.
@@ -168,7 +168,7 @@ type CloseSessionParams struct {
 type CloseSessionResult struct{}
 
 // McpServerConfig is one entry in the editor-supplied MCP server list.
-// Per v005-09 §2 lock: Mux ignores this MVP and uses boot-profile MCPs
+// Per v005-09 §2 lock: Tether ignores this MVP and uses boot-profile MCPs
 // only. Type stays defined so the wire payload can be parsed and logged.
 type McpServerConfig struct {
 	// Discriminator field per the union types in the schema (stdio | http | sse).

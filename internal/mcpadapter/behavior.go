@@ -77,7 +77,7 @@ type Behavior struct {
 // Reads declares a tool that does not modify anything.
 //
 // THE CLAIM MUST BE EARNED, which is what `why` is for: name the read that
-// establishes it, not the tool's own name. `mux_message_inbox` is the standing
+// establishes it, not the tool's own name. `tether_message_inbox` is the standing
 // counterexample -- its name, its handler's callee, its HTTP verb (a GET) and
 // its API handler all read as a read, and four layers down the store does
 // UPDATE ... SET delivered_at inside a write transaction. Anything short of
@@ -136,7 +136,7 @@ func (b Behavior) annotations() toolAnnotations {
 }
 
 // sdk converts to the official SDK's own *mcpsdk.ToolAnnotations shape, for
-// the handful of tools (mux_call) registered directly against the SDK server
+// the handful of tools (tether_tool_call) registered directly against the SDK server
 // rather than through go-mcp's RegisterTool -- which already does this
 // conversion internally for every tool addTool registers. DestructiveHint
 // and OpenWorldHint are always explicit pointers, never left nil: the SDK

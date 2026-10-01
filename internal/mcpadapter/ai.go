@@ -23,27 +23,27 @@ import (
 func (a *Adapter) registerAITools(s *gomcp.Server) {
 	a.mcp = s
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_list_providers",
-		Description: "List configured AI gateway providers exposed by the running muxd daemon.",
+		Name:        "tether_ai_list_providers",
+		Description: "List configured AI gateway providers exposed by the running tetherd daemon.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleAIProviders,
 	}, Reads("configured provider listing from the catalog"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_list_models",
-		Description: "List AI models visible through configured providers on the running muxd daemon.",
+		Name:        "tether_ai_list_models",
+		Description: "List AI models visible through configured providers on the running tetherd daemon.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("provider_id", "Optional configured provider id filter", false),
 		),
 		Handler: a.handleAIModels,
 	}, Reads("configured model listing from the catalog"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_list_routes",
-		Description: "List the configured AI planner routes exposed by the running muxd daemon.",
+		Name:        "tether_ai_list_routes",
+		Description: "List the configured AI planner routes exposed by the running tetherd daemon.",
 		InputSchema: gomcp.EmptyObjectSchema(),
 		Handler:     a.handleAIRoutes,
 	}, Reads("configured route listing from the catalog"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_route_preview",
+		Name:        "tether_ai_route_preview",
 		Description: "Preview which provider/model the AI gateway would route a chat request to, without invoking a model.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("text", "Primary user message text for the shorthand request form", false),
@@ -68,7 +68,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIRoutePreview,
 	}, Reads("route resolution is computed and persisted nowhere"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_route_explain",
+		Name:        "tether_ai_route_explain",
 		Description: "Explain why each configured AI route matched, failed, or was skipped for a normalized chat request.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("text", "Primary user message text for the shorthand request form", false),
@@ -93,7 +93,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIRouteExplain,
 	}, Reads("route resolution is computed and persisted nowhere"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_chat",
+		Name:        "tether_ai_chat",
 		Description: "Invoke the AI gateway with a simple normalized chat request and return the final normalized response. Requires the ai.invoke scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("text", "Primary user message text for the shorthand request form", false),
@@ -118,7 +118,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIChat,
 	}, Writes().OpenWorld())
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_embeddings",
+		Name:        "tether_ai_embeddings",
 		Description: "Generate embedding vectors through the AI gateway. Requires the ai.invoke scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("text", "Input text for the shorthand embedding request form", false),
@@ -138,7 +138,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIEmbeddings,
 	}, Writes().OpenWorld())
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_chat_stream",
+		Name:        "tether_ai_chat_stream",
 		Description: "Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("text", "Primary user message text for the shorthand request form", false),
@@ -163,8 +163,8 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIChatStream,
 	}, Writes().OpenWorld())
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_usage",
-		Description: "Query durable AI usage aggregates recorded by the running muxd daemon.",
+		Name:        "tether_ai_usage",
+		Description: "Query durable AI usage aggregates recorded by the running tetherd daemon.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("provider", "Filter by configured provider id", false),
 			gomcp.StringProp("model", "Filter by model id", false),
@@ -176,7 +176,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIUsage,
 	}, Reads("GET /ai/usage"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_budgets",
+		Name:        "tether_ai_budgets",
 		Description: "List live durable AI usage budgets and current spend for routed providers/models.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("provider", "Filter by configured provider id", false),
@@ -187,8 +187,8 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIBudgets,
 	}, Reads("GET /ai/budgets"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_audit",
-		Description: "Query durable sanitized AI audit events recorded by the running muxd daemon.",
+		Name:        "tether_ai_audit",
+		Description: "Query durable sanitized AI audit events recorded by the running tetherd daemon.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("event_type", "Filter by event type, e.g. chat or route_preview", false),
 			gomcp.StringProp("provider", "Filter by configured provider id", false),
@@ -202,8 +202,8 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIAudit,
 	}, Reads("GET /ai/audit"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_budget_alerts",
-		Description: "Query durable AI budget_rejection audit events recorded by the running muxd daemon.",
+		Name:        "tether_ai_budget_alerts",
+		Description: "Query durable AI budget_rejection audit events recorded by the running tetherd daemon.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("provider", "Filter by configured provider id", false),
 			gomcp.StringProp("model", "Filter by model id", false),
@@ -215,7 +215,7 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIBudgetAlerts,
 	}, Reads("budget alert listing"))
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_ai_wait_budget_alerts",
+		Name:        "tether_ai_wait_budget_alerts",
 		Description: "Wait briefly for live ai.budget_rejected daemon events and return any matching alerts.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("provider", "Filter by configured provider id", false),
@@ -629,7 +629,7 @@ done:
 // test), matching the original's `a.mcp == nil` guard.
 func (a *Adapter) emitAIStreamNotification(ctx context.Context, progressToken any, eventCount int, ev llm.StreamEvent) {
 	payload := map[string]any{
-		"source": "mux_ai_chat_stream",
+		"source": "tether_ai_chat_stream",
 		"event":  ev,
 	}
 	// notifications/message: go-mcp's session bridge reads params["level"]
@@ -883,7 +883,7 @@ func imagePartFromToolBase64(rawBase64, mimeType string) (llm.ContentPart, error
 
 func (a *Adapter) requireAIClient() (*client.Client, error) {
 	if a.client == nil {
-		return nil, toolError("daemon_unavailable", "AI tools require muxd daemon routing; start muxd and run mux mcp against that catalog")
+		return nil, toolError("daemon_unavailable", "AI tools require tetherd daemon routing; start tetherd and run tether mcp against that catalog")
 	}
 	return a.client, nil
 }

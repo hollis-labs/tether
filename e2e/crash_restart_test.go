@@ -3,7 +3,7 @@ package e2e
 // crash_restart_test.go — T11 "crashes/restarts" scenario. Unit-level
 // crash injection already exists (internal/store/delivery_store_test.go's
 // TestDeliveryStore_SurvivesRestart / _CrashInjection_*), but nothing
-// SIGKILLs a genuinely separate `muxd` OS process mid-operation and
+// SIGKILLs a genuinely separate `tetherd` OS process mid-operation and
 // restarts it. This is that proof: a message is sent and claimed (but
 // not yet acked) against a real daemon, the process is killed outright,
 // a fresh process is started against the exact same state root, and the

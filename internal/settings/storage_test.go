@@ -134,7 +134,7 @@ func TestStorage_ResolveEffectiveOnboarding(t *testing.T) {
 	}
 
 	// 2. Set Project onboarding config
-	projectID := "msg://project/project-mux/prj_001"
+	projectID := "msg://project/project-tether/prj_001"
 	err = s.SetOnboarding(ctx, settings.ScopeProject, projectID, settings.OnboardingSettings{
 		RequiredProps:    []string{"docs_url", "project_root"},
 		MCPOptInOffered:  boolPtr(true),

@@ -29,7 +29,7 @@ import (
 	"github.com/hollis-labs/tether/apps/sysop/internal/webui"
 	"github.com/hollis-labs/tether/internal/agent"
 	tetherapi "github.com/hollis-labs/tether/internal/api"
-	muxclient "github.com/hollis-labs/tether/internal/client"
+	tetherclient "github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	launchplan "github.com/hollis-labs/tether/internal/launch"
@@ -583,64 +583,64 @@ func main() {
 	flag.Parse()
 
 	server := &appServer{catalogRoot: config.Expand(*catalogRoot), addr: *addr, startedAt: time.Now()}
-	mux := http.NewServeMux()
+	router := http.NewServeMux()
 
-	mux.HandleFunc("/api/health", server.handleHealth)
-	mux.HandleFunc("/api/settings", server.handleSettings)
-	mux.HandleFunc("/api/settings/global/save", server.handleGlobalSettingsSave)
-	mux.HandleFunc("/api/settings/providers/save", server.handleProviderSave)
-	mux.HandleFunc("/api/settings/providers/delete", server.handleProviderDelete)
-	mux.HandleFunc("/api/ai/settings", server.handleAISettings)
-	mux.HandleFunc("/api/ai/settings/save", server.handleAISettingsSave)
-	mux.HandleFunc("/api/ai/catalog/models", server.handleAICatalogModels)
-	mux.HandleFunc("/api/ai/runtime", server.handleAIRuntime)
-	mux.HandleFunc("/api/ai/usage", server.handleAIUsage)
-	mux.HandleFunc("/api/ai/audit", server.handleAIAudit)
-	mux.HandleFunc("/api/ai/budgets", server.handleAIBudgets)
-	mux.HandleFunc("/api/system/resource/action", server.handleSystemResourceAction)
-	mux.HandleFunc("/api/overview", server.handleOverview)
-	mux.HandleFunc("/api/catalog", server.handleCatalog)
-	mux.HandleFunc("/api/launches/save", server.handleLaunchSave)
-	mux.HandleFunc("/api/launches/preview", server.handleLaunchPreview)
-	mux.HandleFunc("/api/launches/delete", server.handleLaunchDelete)
-	mux.HandleFunc("/api/launches/launch", server.handleLaunchProfile)
-	mux.HandleFunc("/api/sessions", server.handleSessions)
-	mux.HandleFunc("/api/sessions/stop", server.handleSessionStop)
-	mux.HandleFunc("/api/sessions/turn", server.handleSessionTurn)
-	mux.HandleFunc("/api/sessions/input", server.handleSessionInput)
-	mux.HandleFunc("/api/sessions/resize", server.handleSessionResize)
-	mux.HandleFunc("/api/sessions/wait", server.handleSessionWait)
-	mux.HandleFunc("/api/sessions/checkpoint", server.handleSessionCheckpoint)
-	mux.HandleFunc("/api/logical-agents/resume", server.handleLogicalAgentResume)
-	mux.HandleFunc("/api/logical-agents/policy", server.handleLogicalAgentPolicy)
-	mux.HandleFunc("/api/sessions/attach", server.handleSessionAttach)
-	mux.HandleFunc("/api/sessions/cleanup", server.handleSessionCleanup)
-	mux.HandleFunc("/api/sessions/detail", server.handleSessionDetail)
-	mux.HandleFunc("/api/messages", server.handleMessages)
-	mux.HandleFunc("/api/messages/archive", server.handleMessageArchive)
-	mux.HandleFunc("/api/messages/read", server.handleMessageMarkRead)
-	mux.HandleFunc("/api/messages/groups", server.handleMessageGroups)
-	mux.HandleFunc("/api/messages/groups/create", server.handleMessageGroupCreate)
-	mux.HandleFunc("/api/messages/agents", server.handleMessageAgents)
-	mux.HandleFunc("/api/broker/envelopes", server.handleBrokerEnvelopes)
-	mux.HandleFunc("/api/activity/events", server.handleActivityEvents)
-	mux.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
-	mux.HandleFunc("/api/mcp/servers", server.handleMCPServers)
-	mux.HandleFunc("/api/mcp/servers/save", server.handleMCPServerSave)
-	mux.HandleFunc("/api/mcp/servers/delete", server.handleMCPServerDelete)
-	mux.HandleFunc("/api/mcp/servers/toggle", server.handleMCPServerToggle)
-	mux.HandleFunc("/api/mcp/tools", server.handleMCPTools)
-	mux.HandleFunc("/api/registry", server.handleRegistryList)
-	mux.HandleFunc("/api/registry/save", server.handleRegistrySave)
-	mux.HandleFunc("/api/registry/deregister", server.handleRegistryDeregister)
-	mux.HandleFunc("/api/registry/sync", server.handleRegistrySync)
-	mux.HandleFunc("/api/registry/bootstrap", server.handleRegistryBootstrap)
+	router.HandleFunc("/api/health", server.handleHealth)
+	router.HandleFunc("/api/settings", server.handleSettings)
+	router.HandleFunc("/api/settings/global/save", server.handleGlobalSettingsSave)
+	router.HandleFunc("/api/settings/providers/save", server.handleProviderSave)
+	router.HandleFunc("/api/settings/providers/delete", server.handleProviderDelete)
+	router.HandleFunc("/api/ai/settings", server.handleAISettings)
+	router.HandleFunc("/api/ai/settings/save", server.handleAISettingsSave)
+	router.HandleFunc("/api/ai/catalog/models", server.handleAICatalogModels)
+	router.HandleFunc("/api/ai/runtime", server.handleAIRuntime)
+	router.HandleFunc("/api/ai/usage", server.handleAIUsage)
+	router.HandleFunc("/api/ai/audit", server.handleAIAudit)
+	router.HandleFunc("/api/ai/budgets", server.handleAIBudgets)
+	router.HandleFunc("/api/system/resource/action", server.handleSystemResourceAction)
+	router.HandleFunc("/api/overview", server.handleOverview)
+	router.HandleFunc("/api/catalog", server.handleCatalog)
+	router.HandleFunc("/api/launches/save", server.handleLaunchSave)
+	router.HandleFunc("/api/launches/preview", server.handleLaunchPreview)
+	router.HandleFunc("/api/launches/delete", server.handleLaunchDelete)
+	router.HandleFunc("/api/launches/launch", server.handleLaunchProfile)
+	router.HandleFunc("/api/sessions", server.handleSessions)
+	router.HandleFunc("/api/sessions/stop", server.handleSessionStop)
+	router.HandleFunc("/api/sessions/turn", server.handleSessionTurn)
+	router.HandleFunc("/api/sessions/input", server.handleSessionInput)
+	router.HandleFunc("/api/sessions/resize", server.handleSessionResize)
+	router.HandleFunc("/api/sessions/wait", server.handleSessionWait)
+	router.HandleFunc("/api/sessions/checkpoint", server.handleSessionCheckpoint)
+	router.HandleFunc("/api/logical-agents/resume", server.handleLogicalAgentResume)
+	router.HandleFunc("/api/logical-agents/policy", server.handleLogicalAgentPolicy)
+	router.HandleFunc("/api/sessions/attach", server.handleSessionAttach)
+	router.HandleFunc("/api/sessions/cleanup", server.handleSessionCleanup)
+	router.HandleFunc("/api/sessions/detail", server.handleSessionDetail)
+	router.HandleFunc("/api/messages", server.handleMessages)
+	router.HandleFunc("/api/messages/archive", server.handleMessageArchive)
+	router.HandleFunc("/api/messages/read", server.handleMessageMarkRead)
+	router.HandleFunc("/api/messages/groups", server.handleMessageGroups)
+	router.HandleFunc("/api/messages/groups/create", server.handleMessageGroupCreate)
+	router.HandleFunc("/api/messages/agents", server.handleMessageAgents)
+	router.HandleFunc("/api/broker/envelopes", server.handleBrokerEnvelopes)
+	router.HandleFunc("/api/activity/events", server.handleActivityEvents)
+	router.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
+	router.HandleFunc("/api/mcp/servers", server.handleMCPServers)
+	router.HandleFunc("/api/mcp/servers/save", server.handleMCPServerSave)
+	router.HandleFunc("/api/mcp/servers/delete", server.handleMCPServerDelete)
+	router.HandleFunc("/api/mcp/servers/toggle", server.handleMCPServerToggle)
+	router.HandleFunc("/api/mcp/tools", server.handleMCPTools)
+	router.HandleFunc("/api/registry", server.handleRegistryList)
+	router.HandleFunc("/api/registry/save", server.handleRegistrySave)
+	router.HandleFunc("/api/registry/deregister", server.handleRegistryDeregister)
+	router.HandleFunc("/api/registry/sync", server.handleRegistrySync)
+	router.HandleFunc("/api/registry/bootstrap", server.handleRegistryBootstrap)
 
 	// The Agent Ops UI — served from the embedded frontend build by go-webui.
-	webui.Mount(mux)
+	webui.Mount(router)
 
 	log.Printf("TetherSysop listening on http://localhost%s%s/", *addr, webui.BasePath)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := http.ListenAndServe(*addr, router); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -1081,7 +1081,7 @@ func (s *appServer) handleAIUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	out, err := client.AIUsage(ctx, muxclient.AIUsageQuery{
+	out, err := client.AIUsage(ctx, tetherclient.AIUsageQuery{
 		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
 		Model:     strings.TrimSpace(r.URL.Query().Get("model")),
 		SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
@@ -1113,7 +1113,7 @@ func (s *appServer) handleAIAudit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
-	out, err := client.AIAudit(ctx, muxclient.AIAuditQuery{
+	out, err := client.AIAudit(ctx, tetherclient.AIAuditQuery{
 		EventType:  strings.TrimSpace(r.URL.Query().Get("event_type")),
 		Provider:   strings.TrimSpace(r.URL.Query().Get("provider")),
 		Model:      strings.TrimSpace(r.URL.Query().Get("model")),
@@ -1147,7 +1147,7 @@ func (s *appServer) handleAIBudgets(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	out, err := client.AIBudgets(ctx, muxclient.AIBudgetsQuery{
+	out, err := client.AIBudgets(ctx, tetherclient.AIBudgetsQuery{
 		Provider:  strings.TrimSpace(r.URL.Query().Get("provider")),
 		Model:     strings.TrimSpace(r.URL.Query().Get("model")),
 		SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
@@ -1303,7 +1303,7 @@ func (s *appServer) handleLaunchProfile(w http.ResponseWriter, r *http.Request) 
 	res, err := daemonClient.Launch(r.Context(), req.LaunchID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, muxclient.ErrDaemonUnreachable) {
+		if errors.Is(err, tetherclient.ErrDaemonUnreachable) {
 			status = http.StatusServiceUnavailable
 		}
 		writeJSON(w, status, actionResponse{Error: err.Error()})
@@ -1743,7 +1743,7 @@ func (s *appServer) handleLogicalAgentPolicy(w http.ResponseWriter, r *http.Requ
 		res, err := daemonClient.GetLogicalAgentPolicy(r.Context(), id)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, muxclient.ErrDaemonUnreachable) {
+			if errors.Is(err, tetherclient.ErrDaemonUnreachable) {
 				status = http.StatusServiceUnavailable
 			}
 			writeJSON(w, status, logicalAgentPolicyResponse{Error: err.Error()})
@@ -1774,7 +1774,7 @@ func (s *appServer) handleLogicalAgentPolicy(w http.ResponseWriter, r *http.Requ
 		})
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, muxclient.ErrDaemonUnreachable) {
+			if errors.Is(err, tetherclient.ErrDaemonUnreachable) {
 				status = http.StatusServiceUnavailable
 			}
 			writeJSON(w, status, logicalAgentPolicyResponse{Error: err.Error()})
@@ -4430,19 +4430,19 @@ func configAIFromDTO(in aiConfigDTO) (config.AIConfig, error) {
 	return out, nil
 }
 
-func (s *appServer) daemonClient() (*muxclient.Client, error) {
+func (s *appServer) daemonClient() (*tetherclient.Client, error) {
 	cat, err := config.Load(s.catalogRoot)
 	if err != nil {
 		return nil, err
 	}
 	listenAddr := cat.Global.Daemon.ListenAddr
 	if listenAddr == "" {
-		listenAddr = "unix:~/.tether/run/muxd.sock"
+		listenAddr = "unix:~/.tether/run/tetherd.sock"
 	}
 	if strings.HasPrefix(listenAddr, "unix:") {
 		listenAddr = "unix:" + config.Expand(strings.TrimPrefix(listenAddr, "unix:"))
 	}
-	return muxclient.New(listenAddr), nil
+	return tetherclient.New(listenAddr), nil
 }
 
 func registryKindFromString(raw string) (registry.Kind, error) {
@@ -5098,7 +5098,7 @@ func decodeJSONBody(r *http.Request, out any, allowEmpty bool) error {
 
 func writeDaemonActionError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	if errors.Is(err, muxclient.ErrDaemonUnreachable) {
+	if errors.Is(err, tetherclient.ErrDaemonUnreachable) {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, actionResponse{Error: err.Error()})

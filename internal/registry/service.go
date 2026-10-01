@@ -270,7 +270,7 @@ func NewService(s *Storage, opts ...ServiceOption) *Service {
 // Register validates the inbound Profile, mints a URN of the correct
 // prefix, and inserts the row. The returned Profile is the canonical
 // reloaded row (with all storage-layer defaults applied — status,
-// mux_instance_id, created_at/updated_at, child arrays populated to their
+// tether_instance_id, created_at/updated_at, child arrays populated to their
 // inserted state).
 //
 // For kind=group (v060-05 T-02): Profile.LastUpdatedBy carries the

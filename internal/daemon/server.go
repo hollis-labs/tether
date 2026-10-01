@@ -19,8 +19,8 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 )
 
-// muxVersion labels daemon.started events. Bumped per release.
-const muxVersion = "0.2.0"
+// tetherVersion labels daemon.started events. Bumped per release.
+const tetherVersion = "0.2.0"
 
 // Config bundles the resolved daemon runtime parameters. Callers are
 // expected to have already run path expansion (config.Expand) on
@@ -106,8 +106,8 @@ type Server struct {
 	// Publisher receives daemon.started / daemon.shutdown_started /
 	// daemon.shutdown_completed events. Nil is a no-op.
 	Publisher events.Publisher
-	// LogsDir is the directory containing muxd.log. When set, the
-	// GET /api/logs/daemon endpoint reads from LogsDir/muxd.log.
+	// LogsDir is the directory containing tetherd.log. When set, the
+	// GET /api/logs/daemon endpoint reads from LogsDir/tetherd.log.
 	// Empty disables the endpoint (returns 404).
 	LogsDir string
 	// SessionBootstrap is optional; when set, POST /sessions/bootstrap is
@@ -118,23 +118,23 @@ type Server struct {
 	SessionBootstrap api.SessionBootstrapStore
 	// DeliveryTrace is optional; when set, GET /messages/{id}/trace is
 	// enabled (T09, messaging vNext) -- served through the already-
-	// mounted /messages/ subtree, so no separate mux.Handle entry is
+	// mounted /messages/ subtree, so no separate router.Handle entry is
 	// needed here (only the api.Deps wiring below).
 	DeliveryTrace api.DeliveryTraceStore
 	// DeliveryRepair is optional; when set, POST /messages/{id}/redrive
 	// is enabled (T09, messaging vNext) -- same /messages/ subtree, same
-	// no-separate-mux-entry reasoning as DeliveryTrace.
+	// no-separate-router-entry reasoning as DeliveryTrace.
 	DeliveryRepair api.DeliveryTraceStore
 	// Retention is optional; when set, GET /messages/retention/candidates
 	// and POST /messages/{id}/purge are enabled (T09, messaging vNext) --
-	// same /messages/ subtree, same no-separate-mux-entry reasoning as
+	// same /messages/ subtree, same no-separate-router-entry reasoning as
 	// DeliveryTrace.
 	Retention api.RetentionStore
 	// A2A is optional; when non-nil, its handler is mounted at "/a2a/"
 	// (prefix stripped) -- the bounded, explicitly namespaced A2A
 	// interoperability adapter (T10, messaging vNext). Held as a bare
 	// http.Handler (constructed from internal/a2aadapter.NewAdapter at
-	// composition time, see cmd/mux/daemon.go) rather than that
+	// composition time, see cmd/router/daemon.go) rather than that
 	// package's concrete type, so this package's import set doesn't grow
 	// for what is, from here, just another optional mounted handler --
 	// matching the deliberately minimal set of internal packages this
@@ -290,7 +290,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Version  string `json:"version"`
 		PID      int    `json:"pid"`
 		Listener string `json:"listener"`
-	}{muxVersion, os.Getpid(), s.Config.ListenAddr}); err == nil {
+	}{tetherVersion, os.Getpid(), s.Config.ListenAddr}); err == nil {
 		s.publishDaemon(events.KindDaemonStarted, string(b))
 	}
 
@@ -370,14 +370,14 @@ func (s *Server) Run(ctx context.Context) error {
 // /health is always registered; api routes are delegated to the api
 // package when Service is non-nil.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
+	router := http.NewServeMux()
+	router.HandleFunc("/health", s.handleHealth)
 	if s.A2A != nil {
 		// A totally separate handler tree from api.NewHandler -- A2A has
 		// its own wire format (JSON-RPC/well-known-card), not Tether's
 		// writeJSON/CodeXxx envelope, so it is deliberately NOT routed
 		// through apiHandler below (T10, messaging vNext).
-		mux.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
+		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
 	if s.Service != nil || s.Catalog != nil || s.AI != nil {
 		apiHandler := api.NewHandler(api.Deps{
@@ -412,11 +412,11 @@ func (s *Server) Handler() http.Handler {
 		// explicit avoids a catch-all "/" that would shadow /health.
 		for _, m := range s.apiMounts() {
 			if m.enabled {
-				mux.Handle(m.path, apiHandler)
+				router.Handle(m.path, apiHandler)
 			}
 		}
 	}
-	return otelprop.HTTPMiddleware(mux)
+	return otelprop.HTTPMiddleware(router)
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —
@@ -428,13 +428,13 @@ type Health struct {
 	Listener  string `json:"listener"`
 	Sessions  int    `json:"sessions"`
 	// Hardening reports the launch-hardening switches the running daemon
-	// decided from its own environment, so `mux doctor` can report what
-	// muxd does rather than what the doctor's environment would do. Absent
+	// decided from its own environment, so `tether doctor` can report what
+	// tetherd does rather than what the doctor's environment would do. Absent
 	// from a daemon that predates it.
 	Hardening *HealthHardening `json:"hardening,omitempty"`
 
 	// SandboxProtect is the daemon's own view of control-plane protection
-	// (CW-20261001-0142): decided from the daemon's environment, which `mux
+	// (CW-20261001-0142): decided from the daemon's environment, which `tether
 	// doctor` cannot see from its shell. Absent from an older daemon.
 	SandboxProtect *SandboxProtectHealth `json:"sandbox_protect,omitempty"`
 }
@@ -523,7 +523,7 @@ func BaseURL(addr string) string {
 	return ""
 }
 
-// apiMount is one entry in the outer mux's allowlist: a top-level path
+// apiMount is one entry in the outer router's allowlist: a top-level path
 // internal/api owns, and whether this Server has the dependency that makes it
 // serviceable.
 type apiMount struct {
@@ -535,7 +535,7 @@ type apiMount struct {
 // for both Handler() and the regression test that checks it against what
 // internal/api actually registers.
 //
-// It used to be a run of mux.Handle calls inline in Handler(), which meant the
+// It used to be a run of router.Handle calls inline in Handler(), which meant the
 // only way to check it was to make an HTTP request per path with every
 // optional dependency stubbed. That is why CW-20260912-0059 shipped with
 // /workstreams registered in api, wired in Deps, and never routed here: the

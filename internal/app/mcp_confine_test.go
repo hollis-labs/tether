@@ -45,9 +45,9 @@ func plantFor(t *testing.T, brand, providerID, runtimeKind string, env map[strin
 		BootPrompt: testBootPrompt, Env: env,
 	}
 	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
-		MuxCommand: "mux",
-		MuxArgs:    MuxMCPPlant("/catalog", "sess-1", false).Args,
-		MuxEnv:     muxEnvMap(plan.Env),
+		TetherCommand: "tether",
+		TetherArgs:    TetherMCPPlant("/catalog", "sess-1", false).Args,
+		TetherEnv:     tetherEnvMap(plan.Env),
 	})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
@@ -55,21 +55,21 @@ func plantFor(t *testing.T, brand, providerID, runtimeKind string, env map[strin
 	return prepared.PlantedBootDir
 }
 
-func TestMuxMCPPlant_ConfinesOnlySessionProxies(t *testing.T) {
-	sess := MuxMCPPlant("/catalog", "sess-1", false).Args
+func TestTetherMCPPlant_ConfinesOnlySessionProxies(t *testing.T) {
+	sess := TetherMCPPlant("/catalog", "sess-1", false).Args
 	if !slices.Contains(sess, "--confine") {
 		t.Fatalf("a session's proxy is not confined: %v", sess)
 	}
 	if slices.Index(sess, "--confine") > slices.Index(sess, "--session") {
 		t.Fatalf("--confine should precede --session: %v", sess)
 	}
-	// `mux boot` plants for the operator's own terminal, with no session.
-	if boot := MuxMCPPlant("/catalog", "", false).Args; slices.Contains(boot, "--confine") {
+	// `tether boot` plants for the operator's own terminal, with no session.
+	if boot := TetherMCPPlant("/catalog", "", false).Args; slices.Contains(boot, "--confine") {
 		t.Fatalf("the operator's boot-exec proxy is confined: %v", boot)
 	}
 }
 
-func TestMuxEnvMap_DefaultAndExplicit(t *testing.T) {
+func TestTetherEnvMap_DefaultAndExplicit(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		env  map[string]string
@@ -77,15 +77,15 @@ func TestMuxEnvMap_DefaultAndExplicit(t *testing.T) {
 	}{
 		{"no env: the default", nil, "torque,tesseract"},
 		{"no list: the default", map[string]string{"X": "y"}, "torque,tesseract"},
-		{"explicit list replaces the default", map[string]string{"MUX_MCP_SERVERS": "loom"}, "loom"},
-		{"an explicit list can include more", map[string]string{"MUX_MCP_SERVERS": "torque,tesseract,nanite"}, "torque,tesseract,nanite"},
+		{"explicit list replaces the default", map[string]string{"TETHER_MCP_SERVERS": "loom"}, "loom"},
+		{"an explicit list can include more", map[string]string{"TETHER_MCP_SERVERS": "torque,tesseract,nanite"}, "torque,tesseract,nanite"},
 	} {
-		got := muxEnvMap(tc.env)
-		if len(got) != 1 || got["MUX_MCP_SERVERS"] != tc.want {
-			t.Fatalf("%s: muxEnvMap = %v; want only MUX_MCP_SERVERS=%s", tc.name, got, tc.want)
+		got := tetherEnvMap(tc.env)
+		if len(got) != 1 || got["TETHER_MCP_SERVERS"] != tc.want {
+			t.Fatalf("%s: tetherEnvMap = %v; want only TETHER_MCP_SERVERS=%s", tc.name, got, tc.want)
 		}
 	}
-	if got := muxEnvMap(nil)["MUX_MCP_SERVERS"]; strings.Contains(got, "cerberus") {
+	if got := tetherEnvMap(nil)["TETHER_MCP_SERVERS"]; strings.Contains(got, "cerberus") {
 		t.Fatalf("cerberus is in the default: %q", got)
 	}
 }
@@ -98,7 +98,7 @@ func TestPlantedClaudeMCPJSON_CarriesConfineAndAllowList(t *testing.T) {
 		want string
 	}{
 		{"default", nil, "torque,tesseract"},
-		{"explicit", map[string]string{"MUX_MCP_SERVERS": "torque,loom"}, "torque,loom"},
+		{"explicit", map[string]string{"TETHER_MCP_SERVERS": "torque,loom"}, "torque,loom"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bootDir := plantFor(t, "claude", "claude-code", config.RuntimeKindStreamingStdio, tc.env)
@@ -116,17 +116,17 @@ func TestPlantedClaudeMCPJSON_CarriesConfineAndAllowList(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(planted.MCPServers) != 1 {
-				t.Fatalf("planted %d MCP servers, want exactly the mux proxy: %s", len(planted.MCPServers), data)
+				t.Fatalf("planted %d MCP servers, want exactly the tether proxy: %s", len(planted.MCPServers), data)
 			}
-			mux, ok := planted.MCPServers["mux"]
+			tether, ok := planted.MCPServers["tether"]
 			if !ok {
-				t.Fatalf("no mux entry: %s", data)
+				t.Fatalf("no tether entry: %s", data)
 			}
-			if !slices.Contains(mux.Args, "--confine") || !slices.Contains(mux.Args, "--proxy") {
-				t.Fatalf("planted mux args %v lack --proxy --confine", mux.Args)
+			if !slices.Contains(tether.Args, "--confine") || !slices.Contains(tether.Args, "--proxy") {
+				t.Fatalf("planted tether args %v lack --proxy --confine", tether.Args)
 			}
-			if got := mux.Env["MUX_MCP_SERVERS"]; got != tc.want {
-				t.Fatalf("planted MUX_MCP_SERVERS = %q; want %q", got, tc.want)
+			if got := tether.Env["TETHER_MCP_SERVERS"]; got != tc.want {
+				t.Fatalf("planted TETHER_MCP_SERVERS = %q; want %q", got, tc.want)
 			}
 		})
 	}
@@ -140,7 +140,7 @@ func TestPlantedCodexConfig_CarriesConfineAndAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := string(data)
-	for _, want := range []string{`"--confine"`, `"MUX_MCP_SERVERS" = "torque,tesseract"`} {
+	for _, want := range []string{`"--confine"`, `"TETHER_MCP_SERVERS" = "torque,tesseract"`} {
 		if !strings.Contains(cfg, want) {
 			t.Fatalf("planted config.toml lacks %s:\n%s", want, cfg)
 		}
@@ -153,14 +153,14 @@ func TestPlantedCodexConfig_CarriesConfineAndAllowList(t *testing.T) {
 // upstream it was not granted while the state directory stays protected: a merge
 // that drops either flag must fail here, and the boot-exec path, which plants
 // for the operator's own terminal, must carry neither.
-func TestMuxMCPPlant_LaunchedSessionIsConfinedAndDaemonOnly(t *testing.T) {
-	sess := MuxMCPPlant("/catalog", "sess-1", false).Args
+func TestTetherMCPPlant_LaunchedSessionIsConfinedAndDaemonOnly(t *testing.T) {
+	sess := TetherMCPPlant("/catalog", "sess-1", false).Args
 	for _, want := range []string{"--proxy", "--confine", "--daemon-only", "--session", "sess-1"} {
 		if !slices.Contains(sess, want) {
 			t.Fatalf("a launched session's planted argv lacks %q: %v", want, sess)
 		}
 	}
-	boot := MuxMCPPlant("/catalog", "", false).Args
+	boot := TetherMCPPlant("/catalog", "", false).Args
 	for _, bad := range []string{"--confine", "--daemon-only"} {
 		if slices.Contains(boot, bad) {
 			t.Fatalf("boot-exec plants for the operator's own terminal and must not carry %s: %v", bad, boot)

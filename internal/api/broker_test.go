@@ -335,7 +335,7 @@ func TestBrokerRoutes_NotRegisteredWithoutBroker(t *testing.T) {
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("%s: code = %d, want 404", path, rr.Code)
 		}
-		// Body should be a well-formed error envelope (default mux 404 has
+		// Body should be a well-formed error envelope (default tether 404 has
 		// no body, but since the route is unregistered it does return plain
 		// 404). Either way, status is enough here.
 		if strings.Contains(rr.Body.String(), "envelope id required") {

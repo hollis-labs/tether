@@ -45,7 +45,7 @@ func startProcess(t *testing.T, dbPath string, durable bool, bindings ...a2aadap
 	if err != nil {
 		t.Fatalf("NewAdapter: %v", err)
 	}
-	srv.Config.Handler = adapter.Mux()
+	srv.Config.Handler = adapter.Tether()
 	p := &process{db: db, adapter: adapter, baseURL: srv.URL}
 	t.Cleanup(func() { srv.Close(); _ = db.Close() })
 	return p

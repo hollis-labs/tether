@@ -60,7 +60,7 @@ func TestAgentLaunchPlanCarriesInjection(t *testing.T) {
 		WorkspaceMode:  "worktree",
 		Command:        "claude",
 		NativeFiles: []launch.NativeFile{
-			{Kind: "raw", RelPath: ".mux/context.md", Content: "context\n", Mode: 0o600},
+			{Kind: "raw", RelPath: ".tether/context.md", Content: "context\n", Mode: 0o600},
 		},
 		BootDirOverlay: map[string]string{"extra.md": "overlay\n"},
 	}
@@ -69,7 +69,7 @@ func TestAgentLaunchPlanCarriesInjection(t *testing.T) {
 	if len(lp.Injection.NativeFiles) != 1 {
 		t.Fatalf("NativeFiles len = %d, want 1", len(lp.Injection.NativeFiles))
 	}
-	if lp.Injection.NativeFiles[0].RelPath != ".mux/context.md" {
+	if lp.Injection.NativeFiles[0].RelPath != ".tether/context.md" {
 		t.Fatalf("NativeFiles[0] = %#v", lp.Injection.NativeFiles[0])
 	}
 	if lp.Injection.BootDirOverlay["extra.md"] != "overlay\n" {

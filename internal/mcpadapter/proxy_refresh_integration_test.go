@@ -43,7 +43,7 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	defer pool.Shutdown()
 
 	adapter := newTestAdapter(t)
-	local := gomcp.NewServer("agent-mux", "test")
+	local := gomcp.NewServer("tether", "test")
 	adapter.registerTools(local)
 
 	idx := NewDiscoveryIndex()
@@ -83,13 +83,13 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 		ReadOnlyHint: true,
 	})
 
-	refreshRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{Name: "mux_catalog_refresh"})
+	refreshRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{Name: "tether_catalog_refresh"})
 	if err != nil {
-		t.Fatalf("CallTool(mux_catalog_refresh): %v", err)
+		t.Fatalf("CallTool(tether_catalog_refresh): %v", err)
 	}
 	refreshBody := parseToolJSON(t, refreshRes)
 	if ok, _ := refreshBody["ok"].(bool); !ok {
-		t.Fatalf("mux_catalog_refresh failed: %v", refreshBody)
+		t.Fatalf("tether_catalog_refresh failed: %v", refreshBody)
 	}
 	waitForTool(ctx, t, downstream, "clockwork_beta")
 
@@ -102,16 +102,16 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	}
 
 	discoverRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{
-		Name:      "mux_discover",
+		Name:      "tether_tool_search",
 		Arguments: map[string]any{"intent": "beta inbox ordering"},
 	})
 	if err != nil {
-		t.Fatalf("CallTool(mux_discover): %v", err)
+		t.Fatalf("CallTool(tether_tool_search): %v", err)
 	}
 	body := parseToolJSON(t, discoverRes)
 	tools, _ := body["tools"].([]any)
 	if len(tools) == 0 {
-		t.Fatal("mux_discover did not return the refreshed tool")
+		t.Fatal("tether_tool_search did not return the refreshed tool")
 	}
 }
 

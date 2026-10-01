@@ -117,8 +117,8 @@ func TestACP_HandshakeAndSessionCreate(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &initResult); err != nil {
 		t.Fatalf("decode init result: %v", err)
 	}
-	if initResult.AgentInfo.Name != "mux" {
-		t.Errorf("agent name = %q, want mux", initResult.AgentInfo.Name)
+	if initResult.AgentInfo.Name != "tether" {
+		t.Errorf("agent name = %q, want tether", initResult.AgentInfo.Name)
 	}
 	if !initResult.AgentCapabilities.SessionCapabilities.Resume {
 		t.Error("expected resume capability advertised")

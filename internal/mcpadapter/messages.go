@@ -11,7 +11,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 )
 
-// validMsgKinds is the closed set of allowed kind values for mux_message_send.
+// validMsgKinds is the closed set of allowed kind values for tether_message_send.
 // Wire names match go-messaging Kind constants; "response" is the wire name
 // for replies (human docs say "reply" but the wire says "response").
 var validMsgKinds = map[messaging.Kind]struct{}{
@@ -25,8 +25,8 @@ var validMsgKinds = map[messaging.Kind]struct{}{
 
 func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_send",
-		Description: "Send a message envelope via the agent-mux messaging store. Requires message.write scope.",
+		Name:        "tether_message_send",
+		Description: "Send a message envelope via the tether messaging store. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
 			gomcp.StringProp("to", "Recipient URN (e.g. msg://agent/agent-mux/worker)", true),
@@ -39,7 +39,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_notify",
+		Name:        "tether_message_notify",
 		Description: "Send a message envelope and best-effort wake a live recipient session with a mailbox notification turn. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("from", "Sender URN (e.g. msg://agent/agent-mux/orchestrator)", true),
@@ -57,7 +57,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_get",
+		Name:        "tether_message_get",
 		Description: "Get a message envelope by ID.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
@@ -67,8 +67,8 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Reads("GET /messages/{id}"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_inbox",
-		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use mux_message_list instead.",
+		Name:        "tether_message_inbox",
+		Description: "Pull a recipient's undelivered messages (atomic-delivery agent pull model). DESTRUCTIVE: returned messages are marked delivered and will not appear in a future inbox call; when the calling session is the recipient itself, they are also marked consumed. For a non-destructive, repeatable listing use tether_message_list instead.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("to", "Recipient URN", true),
 			gomcp.StringProp("kind", "Comma-separated kind filter: request, response, notice, status_update, handoff, escalation", false),
@@ -78,7 +78,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_list",
+		Name:        "tether_message_list",
 		Description: "List a recipient's messages non-destructively. Repeatable: no delivered_at/read_at side effects. Each message carries read_at/archived_at state and a subject/body payload projection. Archived messages are excluded unless include_archived is set.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("to", "Recipient URN", true),
@@ -93,7 +93,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Reads("GET /messages/list: does NOT mark delivered, unlike inbox"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_thread",
+		Name:        "tether_message_thread",
 		Description: "List all messages in a thread by thread ID, scoped to the ones involving the claimed identity.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("thread_id", "Thread ID", true),
@@ -104,7 +104,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Reads("GET /messages/thread/{id}"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_consume",
+		Name:        "tether_message_consume",
 		Description: "Mark a message as consumed by the recipient. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
@@ -114,7 +114,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_cancel",
+		Name:        "tether_message_cancel",
 		Description: "Cancel a pending message. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
@@ -123,7 +123,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Destroys("sets canceled_at one-way; the message can never be delivered and there is no uncancel"))
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_mark_read",
+		Name:        "tether_message_mark_read",
 		Description: "Mark a message as read by its recipient (idempotent). Does not consume or delete it. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
@@ -133,8 +133,8 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_archive",
-		Description: "Archive (soft-delete) a message for its recipient (idempotent). Archived messages drop out of default mux_message_list results. Requires message.write scope.",
+		Name:        "tether_message_archive",
+		Description: "Archive (soft-delete) a message for its recipient (idempotent). Archived messages drop out of default tether_message_list results. Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
 			gomcp.StringProp("as", "Recipient URN archiving the message", true),
@@ -143,7 +143,7 @@ func (a *Adapter) registerMessageTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
-		Name:        "mux_message_unarchive",
+		Name:        "tether_message_unarchive",
 		Description: "Restore an archived message for its recipient (idempotent). Requires message.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("message_id", "Message ID", true),
@@ -180,7 +180,7 @@ func (a *Adapter) handleMessageSend(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "invalid to URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_send requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_send requires daemon routing; start MCP with tether mcp")
 	}
 	sendReq := client.MessageSendRequest{
 		From:      fromURN,
@@ -227,7 +227,7 @@ func (a *Adapter) handleMessageNotify(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "invalid to URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_notify requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_notify requires daemon routing; start MCP with tether mcp")
 	}
 	wake := !boolArg(args, "no_wake")
 	notifyReq := client.MessageNotifyRequest{
@@ -267,7 +267,7 @@ func (a *Adapter) handleMessageGet(ctx context.Context, args map[string]any) (an
 		return nil, toolError("invalid_request", "invalid as URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_get requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_get requires daemon routing; start MCP with tether mcp")
 	}
 	env, err := a.client.MessageGet(ctx, id, asURN)
 	if err != nil {
@@ -288,7 +288,7 @@ func (a *Adapter) handleMessageInbox(ctx context.Context, args map[string]any) (
 		return nil, toolError("invalid_request", "invalid to URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_inbox requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_inbox requires daemon routing; start MCP with tether mcp")
 	}
 	// Pass this proxy's own session: when it is the recipient, the daemon
 	// consumes what it pulls, settling the deliveries (CW-20261001-0016).
@@ -312,7 +312,7 @@ func (a *Adapter) handleMessageThread(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "invalid as URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_thread requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_thread requires daemon routing; start MCP with tether mcp")
 	}
 	envs, err := a.client.MessageThread(ctx, threadID, asURN, str(args, "kind"))
 	if err != nil {
@@ -337,7 +337,7 @@ func (a *Adapter) handleMessageConsume(ctx context.Context, args map[string]any)
 		return nil, toolError("invalid_request", "invalid as URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_consume requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_consume requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.MessageConsume(ctx, id, asURN); err != nil {
 		if isDaemonUnreachable(err) {
@@ -357,7 +357,7 @@ func (a *Adapter) handleMessageCancel(ctx context.Context, args map[string]any) 
 		return nil, toolError("invalid_request", "message_id required")
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_cancel requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_cancel requires daemon routing; start MCP with tether mcp")
 	}
 	if err := a.client.MessageCancel(ctx, id); err != nil {
 		if isDaemonUnreachable(err) {
@@ -377,7 +377,7 @@ func (a *Adapter) handleMessageList(ctx context.Context, args map[string]any) (a
 		return nil, toolError("invalid_request", "invalid to URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", "mux_message_list requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", "tether_message_list requires daemon routing; start MCP with tether mcp")
 	}
 	page, err := a.client.MessageList(ctx, toURN, str(args, "kind"), str(args, "thread_id"),
 		boolArg(args, "include_archived"), boolArg(args, "unread_only"),
@@ -399,21 +399,21 @@ func (a *Adapter) handleMessageList(ctx context.Context, args map[string]any) (a
 }
 
 func (a *Adapter) handleMessageMarkRead(ctx context.Context, args map[string]any) (any, error) {
-	return a.messageRecipientAction(ctx, args, "mux_message_mark_read", a.client.MessageMarkRead)
+	return a.messageRecipientAction(ctx, args, "tether_message_mark_read", a.client.MessageMarkRead)
 }
 
 func (a *Adapter) handleMessageArchive(ctx context.Context, args map[string]any) (any, error) {
-	return a.messageRecipientAction(ctx, args, "mux_message_archive", a.client.MessageArchive)
+	return a.messageRecipientAction(ctx, args, "tether_message_archive", a.client.MessageArchive)
 }
 
 func (a *Adapter) handleMessageUnarchive(ctx context.Context, args map[string]any) (any, error) {
-	return a.messageRecipientAction(ctx, args, "mux_message_unarchive", a.client.MessageUnarchive)
+	return a.messageRecipientAction(ctx, args, "tether_message_unarchive", a.client.MessageUnarchive)
 }
 
 // messageRecipientAction is the shared body for the recipient-scoped,
 // idempotent state transitions (mark_read / archive / unarchive), now
 // routed through the daemon HTTP client rather than the in-process store
-// (T05: closes the mux-mcp-subprocess bypass, see internal/store's
+// (T05: closes the tether-mcp-subprocess bypass, see internal/store's
 // T01/T03 findings on the separate-SQLite-connection gap). Each requires
 // message.write scope plus message_id + as arguments.
 func (a *Adapter) messageRecipientAction(ctx context.Context, args map[string]any, toolName string,
@@ -430,7 +430,7 @@ func (a *Adapter) messageRecipientAction(ctx context.Context, args map[string]an
 		return nil, toolError("invalid_request", "invalid as URN: "+parseErr.Error())
 	}
 	if a.client == nil {
-		return nil, toolError("internal_error", toolName+" requires daemon routing; start MCP with mux mcp")
+		return nil, toolError("internal_error", toolName+" requires daemon routing; start MCP with tether mcp")
 	}
 	if err := fn(ctx, id, asURN); err != nil {
 		if isDaemonUnreachable(err) {
