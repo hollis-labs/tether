@@ -20,17 +20,15 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 	if projectID == "" {
 		projectID = "project"
 	}
-	agentID := plan.LogicalAgentID
-	if agentID == "" {
-		agentID = "agent"
-	}
+	agentID := AgentName(plan)
 	return agentlaunch.LaunchPlan{
 		Project: agentlaunch.ProjectSpec{
 			ID:   projectID,
 			Root: plan.RepoRoot,
 		},
 		Agent: agentlaunch.AgentSpec{
-			ID: agentID,
+			ID:   agentID,
+			Name: plantedAgentName(plan),
 		},
 		Provider: agentlaunch.ProviderSpec{
 			ID:         plan.ProviderBrand,
@@ -69,6 +67,38 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 	}
 }
 
+// AgentName is the agent id the shared launch is planned under, and so the
+// name the providers' planted agent files take (opencode's
+// agents/<name>.md, selected with --agent <name>): the plan's logical agent,
+// else "agent".
+func AgentName(plan *Plan) string {
+	if plan.LogicalAgentID != "" {
+		return plan.LogicalAgentID
+	}
+	return "agent"
+}
+
+// OpencodeAgentName is the name of the agent file the shared launch plants
+// for opencode (agents/<name>.md) and selects with --agent. It is namespaced
+// because opencode merges a planted agent file into its built-in agent of the
+// same name: a Tether agent called general, plan or explore would otherwise
+// run as opencode's own agent of that name with its mode and permissions
+// (plan is edit-deny, explore denies everything).
+func OpencodeAgentName(plan *Plan) string {
+	return "tether-" + AgentName(plan)
+}
+
+// plantedAgentName is the agent display name the providers' planters use
+// (agentkit takes AgentSpec.Name before ID). Only opencode turns it into a
+// file and a flag that can collide, so only opencode's is namespaced; the
+// other providers keep the agent id.
+func plantedAgentName(plan *Plan) string {
+	if plan.ProviderBrand == "opencode" {
+		return OpencodeAgentName(plan)
+	}
+	return ""
+}
+
 // CatalogFlags is plan.Args less what the provider's own argv convention
 // already emits; see config.CatalogFlags.
 func CatalogFlags(plan *Plan) []string {
@@ -76,16 +106,16 @@ func CatalogFlags(plan *Plan) []string {
 }
 
 // mapRuntime maps a plan's runtime-kind token onto the shared plan's mode.
-// Only the four modes Tether launches pass through; anything else (api,
-// serve-http, pty-debug, unknown) falls back to subprocess-per-turn, as it
-// did before the leaf vocabulary.
+// Only the modes Tether launches pass through (the four native ones and
+// acp-stdio); anything else (api, serve-http, pty-debug, unknown) falls back
+// to subprocess-per-turn, as it did before the leaf vocabulary.
 func mapRuntime(runtime string) runtimes.Mode {
 	mode, debug, ok := config.RuntimeMode(runtime)
 	if !ok || debug {
 		return runtimes.ModeSubprocessPerTurn
 	}
 	switch mode {
-	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn:
+	case runtimes.ModePTY, runtimes.ModeStreamingStdio, runtimes.ModeJSONRPCStdio, runtimes.ModeSubprocessPerTurn, runtimes.ModeACPStdio:
 		return mode
 	default:
 		return runtimes.ModeSubprocessPerTurn

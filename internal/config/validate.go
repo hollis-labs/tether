@@ -31,7 +31,7 @@ func (c *Catalog) Validate() error {
 			typ = "cli"
 		}
 		switch p.EffectiveRuntimeKind() {
-		case RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio, RuntimeKindSubprocess, RuntimeKindAPI:
+		case RuntimeKindPTY, RuntimeKindStreamingStdio, RuntimeKindJSONRPCStdio, RuntimeKindSubprocess, RuntimeKindAPI, RuntimeKindACPStdio:
 		default:
 			return fmt.Errorf("provider %q has unsupported runtime_kind %q", id, p.EffectiveRuntimeKind())
 		}
