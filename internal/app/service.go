@@ -71,6 +71,11 @@ type Service struct {
 
 	factories map[string]RuntimeFactory
 
+	// stops is shared with the Manager's state and event sinks; see
+	// stopRequests. Nil when the Manager was built without
+	// newSessionManager, in which case a stop is recorded as "completed".
+	stops *stopRequests
+
 	// codexThreads caches Codex app-server JSON-RPC thread state per
 	// Tether session id. Populated lazily on the first SendTurn call.
 	codexThreads turn.CodexAppServerCache
@@ -136,11 +141,7 @@ func New(catalogRoot string) (*Service, error) {
 	}
 	bus := events.NewBus(events.BusOptions{Persister: db})
 
-	evSink := &eventSinkAdapter{bus: bus}
-	mgr := agentsessions.NewManager(stateSinkAdapter{db: db}).
-		WithAttachmentSink(attachmentSinkAdapter{db: db}).
-		WithEventSink(evSink)
-	evSink.SetManager(mgr)
+	mgr, stops := newSessionManager(db, bus)
 
 	brk := broker.NewService(db, bus)
 
@@ -183,6 +184,7 @@ func New(catalogRoot string) (*Service, error) {
 		Catalog:     cat,
 		Store:       db,
 		Manager:     mgr,
+		stops:       stops,
 		Bus:         bus,
 		Broker:      brk,
 		Federation:  fedRouter,
@@ -190,6 +192,19 @@ func New(catalogRoot string) (*Service, error) {
 		Settings:    setSvc,
 		factories:   factories,
 	}, nil
+}
+
+// newSessionManager wires an agentsessions.Manager to db and bus through
+// the state, attachment and event sinks, sharing one stopRequests between
+// the sinks and Service.StopSession so a stop is recorded as "killed".
+func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Manager, *stopRequests) {
+	stops := &stopRequests{}
+	evSink := &eventSinkAdapter{bus: bus, stops: stops}
+	mgr := agentsessions.NewManager(stateSinkAdapter{db: db, stops: stops}).
+		WithAttachmentSink(attachmentSinkAdapter{db: db}).
+		WithEventSink(evSink)
+	evSink.SetManager(mgr)
+	return mgr, stops
 }
 
 // ReconcileStaleState sweeps any sessions stuck in launching/running and
