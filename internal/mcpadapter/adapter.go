@@ -295,6 +295,18 @@ func (a *Adapter) checkScope(scope string) error {
 	return nil
 }
 
+// checkToken verifies only that a token is configured, returning the same
+// auth_required error checkScope does. It gates the AI usage, budget and
+// audit reads (CW-20260930-0011): those must not be open to a tokenless
+// caller, but have no scope of their own, and no client configured today
+// holds ai.invoke, so requiring it would lock them all out.
+func (a *Adapter) checkToken() error {
+	if a.token == "" {
+		return toolError("auth_required", "no token configured; pass --token to read AI usage, budget and audit data")
+	}
+	return nil
+}
+
 // str extracts a string argument from a tool call's decoded arguments,
 // returning "" if the key is absent or not a string.
 func str(args map[string]any, key string) string {

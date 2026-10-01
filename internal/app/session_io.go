@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/agentkit/agentruntime/runtimekind"
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
 )
@@ -68,7 +68,7 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 func frameUserMessage(text string) ([]byte, error) {
 	payload, err := turn.Frame(text, turn.Options{
 		Provider: "claude",
-		Runtime:  runtimekind.StreamingStdio,
+		Runtime:  runtimes.ModeStreamingStdio,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode user message: %w", err)

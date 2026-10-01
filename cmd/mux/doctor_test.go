@@ -209,26 +209,18 @@ func TestDoctorLogsDir(t *testing.T) {
 }
 
 func TestDoctorProviderAuthAntigravity(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
 	cat := &config.Catalog{Providers: map[string]config.Provider{
 		"antigravity": {ID: "antigravity", Type: "cli", Provider: "antigravity"},
 		"claude-code": {ID: "claude-code", Type: "cli", Provider: "claude"},
 	}}
 
+	// agy's login lives in the keychain, which doctor cannot read: it warns
+	// that it did not check, and never fails a doctor run over it.
 	got := checkProviderAuth(cat)
-	if len(got) != 1 || got[0].Name != "provider-auth:antigravity" || got[0].Status != statusFail {
-		t.Fatalf("without credentials: %+v", got)
+	if len(got) != 1 || got[0].Name != "provider-auth:antigravity" || got[0].Status != statusWarn {
+		t.Fatalf("checkProviderAuth = %+v; want one warn for antigravity", got)
 	}
-
-	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".gemini", "oauth_creds.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got = checkProviderAuth(cat)
-	if len(got) != 1 || got[0].Status == statusFail || !strings.Contains(got[0].Message, "expired or revoked") {
-		t.Fatalf("with credentials: %+v", got)
+	if !strings.Contains(got[0].Message, "keychain") {
+		t.Fatalf("message does not say why it was not checked: %q", got[0].Message)
 	}
 }
