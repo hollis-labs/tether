@@ -90,6 +90,17 @@ session through the API. The guard is removed when CW-20260930-0253 lands and
 the daemon can tell an operator from an agent. It does not stop an agent from
 editing the catalog itself; that is CW-20260930-0237.
 
+Two defaults narrow which MCP servers a launched agent is handed
+(CW-20261001-0227). Claude agents run with `--strict-mcp-config`, so they do not
+inherit servers from your `~/.claude.json`, project `.mcp.json` files or the
+claude.ai connectors; `TETHER_CLAUDE_STRICT_MCP=0` in muxd's environment turns
+this off, and muxd then warns at startup and `mux doctor` warns. An agent's
+`mux` proxy is confined to an allow-list of upstreams, by default `torque` and
+`tesseract`. `cerberus` is never in the default. These stop an agent from being
+handed a server by accident. They do not stop one that goes looking: an agent
+can create a child session through the API with a wider list, or run an
+upstream's binary itself, until CW-20260930-0253 and CW-20260930-0237 land.
+
 ## Data at rest
 
 Tether has no built-in at-rest encryption. The state database, session logs,

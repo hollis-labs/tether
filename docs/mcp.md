@@ -215,6 +215,50 @@ Tether `mux_*` tools, `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`,
 explicit `--only` flag uses its own comma-separated value and does not widen
 from the environment.
 
+### Agents Tether launches: strict config and an allow-list
+
+Two defaults limit which MCP servers a launched agent sees.
+
+**Claude loads only the planted proxy.** Claude Code merges servers from
+`--mcp-config`, the operator's `~/.claude.json`, project `.mcp.json` files and
+the claude.ai connectors on the logged-in account. Tether plants one config per
+agent (its own `mux` proxy), and every Claude launch adds
+`--strict-mcp-config`, so nothing else loads. This covers the first turn and
+every later turn and resume. It does not cover `mux boot`, which runs your own
+Claude in your own terminal.
+
+To turn it off, set `TETHER_CLAUDE_STRICT_MCP=0` (or `false`) in **muxd's**
+environment and restart the daemon. It is on by default. When it is off:
+
+- muxd logs `WARN` at startup;
+- `GET /health` reports `hardening.claude_strict_mcp: false` with a reason;
+- `mux doctor` shows `claude-strict-mcp` as a warning. It asks the running
+  daemon, so it reflects what the daemon runs with, not doctor's own shell.
+
+An older daemon that has no `hardening` field makes doctor warn too, because it
+cannot say strict MCP is on.
+
+This is an interim flag. It goes when go-agent-wrapper has an option that does
+the same.
+
+**The proxy reaches only a granted list of upstreams.** A launched agent's
+`mux mcp --proxy` runs with `--confine`. With `--confine`, `--servers` /
+`MUX_MCP_SERVERS` is an allow-list: upstreams outside it are not started, their
+secrets are not resolved into the agent's proxy, and `mux_call` and
+`mux_discover` cannot reach them. Without `--confine` (an operator's own proxy)
+`--servers` only chooses which tools are listed natively, as above.
+
+The default list is `torque` and `tesseract`. Grant others per project
+(`mcp.servers` in the project YAML) or per launch (`mcp_servers` in a boot
+profile). A list you set **replaces** the default, so keep `torque` and
+`tesseract` in it. `cerberus` can reach hosts and containers, so it is never in
+the default; an agent that needs it must be given it by name.
+
+mux's own native tools (`mux_*`) are not upstreams and are not affected.
+
+The allow-list limits what an agent's own proxy offers. It is not a boundary
+against a hostile agent: see [SECURITY.md](../SECURITY.md#agents-run-as-your-user).
+
 ### Upstream failures and recovery
 
 Each stdio upstream has its own supervisor. After a confirmed process exit,
