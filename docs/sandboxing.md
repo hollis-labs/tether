@@ -42,6 +42,15 @@ three of Tether's own directories as read-only protected paths
   in the seeded catalog), wherever it is. It holds every session, message and
   event, so it is never skipped.
 
+Because the state database's directory is protected wherever it is, a
+`defaults.state_db` in a shared directory (`$HOME`, `/tmp`, `/`) makes that
+**whole directory** read-only for every agent Tether wraps, unlike the run
+directory, which is skipped in a shared directory. It fails closed and visibly:
+writes there fail with `Read-only file system`, and a launch whose work directory
+or workspace lies inside it is refused with 403 `forbidden`, naming the
+directory. It is still a footgun. Give the state database its own directory, as
+the seeded `~/.tether/state/` does.
+
 All three are registered by their real paths. An agent with a profile gets
 them added to its profile. An agent without one runs under a minimal profile
 whose only effect is the protection: the host filesystem under `bwrap`,
@@ -65,7 +74,9 @@ its writable roots: its working directory, `/tmp` and `$TMPDIR`, and whatever is
 configured. The catalog, run and state directories are outside those, so a shell command
 that writes them fails (CW-20261001-0142 live evidence: a Codex turn's
 `touch <catalog>/x` is denied and `touch <workdir>/ok` succeeds, in both `exec`
-and `app-server`). **That is not protection from Tether**, and it does not hold
+and `app-server`), unless `state_db` is in a directory that sandbox can write
+(`/tmp`, `$TMPDIR` or the work directory), where Codex's shell can write the
+database too. **That is not protection from Tether**, and it does not hold
 against the rest of what a Codex agent can reach:
 
 **Codex spawns every MCP server it is given outside its sandbox.** The planted
@@ -88,9 +99,11 @@ lands, `GET /health` (`sandbox_protect.codex`), `mux doctor`
 (`sandbox-protect-codex`, a warning) and the daemon's startup log all say
 `codex: not protected (CW-20261001-0230)`. Claude, OpenCode and every other agent
 Tether wraps stay protected, and one guard still holds for Codex: the planted `mux`
-server refuses to write the catalog and run directory (see below). The planted
-Codex `config.toml` carries `--protect-path <catalog> --protect-path <run>` on its
-`mux` server's arguments, so the `mux_agent_create`/`mux_agent_edit` refusal applies
+server refuses to write the catalog, run and state directories (see below). The
+planted Codex `config.toml` carries `--protect-path <catalog> --protect-path <run>
+--protect-path <state>` on its `mux` server's arguments (one per directory
+protection registers, so no `<run>` when the run directory is in a shared
+directory), so the `mux_agent_create`/`mux_agent_edit` refusal applies
 to Codex too (seen live: `catalog_read_only`, nothing written). Otherwise "exactly
 as on `main`" is true for Codex's sandbox and for wrapping.
 
@@ -257,16 +270,21 @@ An agent Tether wraps cannot write the state database, nor replace it or its WAL
 files. The `mux mcp` server planted in each agent never opens the database: it
 runs `--daemon-only` and reads and writes Tether's state through the daemon (see
 [mcp.md](mcp.md#daemon-only-mode---daemon-only)). A `mux` command such an agent
-runs by hand that opens the database itself, such as `mux resolve`, fails inside
-the sandbox with `attempt to write a readonly database`. The tools the agent
-calls through its MCP server are unaffected.
+runs by hand that opens the database itself fails inside the sandbox (see
+[`mux` commands that do not work inside the sandbox](#mux-commands-that-do-not-work-inside-the-sandbox)).
+The tools the agent calls through its MCP server are unaffected.
 
 **For Codex this holds only in part**, because Tether does not wrap Codex. Its
-shell is kept out of the directory by Codex's own sandbox, and its planted `mux
-mcp` holds no handle on the database. But Codex spawns its MCP servers outside
+shell is kept out of the directory by Codex's own sandbox (unless `state_db` is in
+a directory that sandbox can write: `/tmp`, `$TMPDIR` or the work directory), and
+its planted `mux mcp` holds no handle on the database. But Codex spawns its MCP servers outside
 that sandbox, so an upstream whose tool writes a caller-chosen path can still
 reach the state directory (CW-20261001-0230), and any agent can ask the daemon,
 over the socket, to write for it.
+
+**Every agent can still read the state database**, as it can read the catalog: the
+directory is read-only, not hidden, so the sessions, messages and events in it
+stay readable to an agent that opens the file directly (CW-20261001-0263).
 
 Planted workers keep the `catalog.write` MCP scope: it also gates
 `mux_agent_create` with `scope=project`, which writes into the repo and is not
@@ -275,7 +293,7 @@ protected, and it is not a boundary anyway (a worker can start its own
 
 **The catalog refusal is a policy, for every runtime.** The planted `mux mcp` is
 started with `--protect-path` for each directory Tether protects from the agent
-(the catalog root and the run directory), from the same decision that registers
+(the catalog root, the run directory and the state directory), from the same decision that registers
 the agent's protected paths. `mux_agent_create` and `mux_agent_edit` go through one
 guard, which refuses a write under a protected directory with a typed
 `catalog_read_only` error telling the agent to ask the operator, whether or not a
@@ -304,6 +322,28 @@ through while protected paths are in force, and the tool answers with a typed
 not closed; the protection is not applied there yet (CW-20261001-0138). The race
 tests flip the symlink while calling the real tools thousands of times and assert
 nothing lands in the catalog (`internal/agentops`, `internal/mcpadapter`).
+
+### `mux` commands that do not work inside the sandbox
+
+The `mux` commands that open the state database in-process cannot, because its
+directory is read-only: `mux projects list`, `mux resolve`, `mux acp`,
+`mux workspaces prune` and the migrations check of `mux doctor`. Each exits 1 with
+`apply delivery schema: attempt to write a readonly database (8)` (prefixed by the
+command's step, such as `open state db:`), or, when the daemon is down and the
+WAL files that SQLite would have to create are gone, with `migrate: create
+schema_migrations: unable to open database file (14)`. `mux init` fails earlier, on
+the read-only catalog (`read-only file system`). None of these messages says why,
+or what to use instead.
+
+Use the tools the agent already has: `mux_catalog_list_projects` (and
+`mux_catalog_list_launches`, `_agents`, `_providers`) for the catalog, and
+`mux_health` or `GET /health` for what `mux doctor` reports about the daemon. The
+`mux` commands that go through the daemon (`mux messages`, `mux sessions`,
+`mux events`, `mux registry`, `mux launch`, `mux ai`, `mux group`) and the planted
+`mux mcp` work, as does `mux path`, which opens no database. `mux resolve` has no
+daemon route: its plan is a function of the catalog. That `mux resolve`, `mux
+projects list` and `mux acp` open the database at all, when they need only the
+catalog, and the unhelpful messages are tracked in CW-20261001-0470.
 
 ### macOS, status and the off switch
 

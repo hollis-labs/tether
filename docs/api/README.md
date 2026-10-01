@@ -446,7 +446,7 @@ Response:
   "sessions": 2,
   "sandbox_protect": {
     "enabled": true,
-    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
+    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog, run/ or state/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
     "codex": "not protected",
     "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
     "bwrap_checked": true,

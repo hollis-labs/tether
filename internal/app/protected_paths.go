@@ -204,6 +204,13 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 // protect. A directory that also holds an agent's work directory or
 // workspace refuses that launch (applyControlPlaneProtection) rather than
 // leaving the state database writable.
+//
+// Protecting it wherever it is has a consequence the run directory does not:
+// a defaults.state_db in a shared directory ($HOME, /tmp, /) makes that whole
+// directory read-only for every wrapped agent. That fails closed and visibly
+// (writes there fail, and a launch whose work directory or workspace is
+// inside it is refused), but it is a footgun: the state database belongs in a
+// directory of its own, as the seeded ~/.tether/state/ is.
 func (s *Service) controlPlaneDirs() ([]string, error) {
 	catalogRoot := config.Expand(s.CatalogRoot)
 	if catalogRoot == "" {

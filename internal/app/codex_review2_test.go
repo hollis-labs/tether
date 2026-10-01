@@ -345,8 +345,8 @@ func TestMuxMCPPlant_ProtectPathArgs(t *testing.T) {
 }
 
 // Through LaunchSession, the planted codex config.toml carries --protect-path
-// for the catalog root and the run directory while protection is on, and none
-// while it is off.
+// for the catalog root, the run directory and the state directory while
+// protection is on, and none while it is off.
 func TestLaunchSession_PlantsProtectPathsInTheMCPConfig(t *testing.T) {
 	plantedArgs := func(t *testing.T, svc *Service, wantProtection bool) string {
 		t.Helper()
@@ -363,9 +363,10 @@ func TestLaunchSession_PlantsProtectPathsInTheMCPConfig(t *testing.T) {
 	}
 
 	svc, catalog, run := tetherLayout(t)
+	state := filepath.Join(filepath.Dir(catalog), "state")
 	clearWritableRoots(t)
 	on := plantedArgs(t, svc, true)
-	for _, want := range []string{`"--protect-path", "` + catalog + `"`, `"--protect-path", "` + run + `"`} {
+	for _, want := range []string{`"--protect-path", "` + catalog + `"`, `"--protect-path", "` + run + `"`, `"--protect-path", "` + state + `"`} {
 		if !strings.Contains(on, want) {
 			t.Errorf("planted config.toml lacks %s:\n%s", want, on)
 		}

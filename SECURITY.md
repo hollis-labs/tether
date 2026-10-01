@@ -111,8 +111,8 @@ daemon's startup log say `codex: not protected (CW-20261001-0230)`, and
 catalog; treat Codex like the agents Tether did not protect before this change.
 
 What does hold for Codex: the `mux mcp` Tether plants is started with
-`--protect-path` for the catalog root and run directory, and refuses to write
-under them (see below).
+`--protect-path` for the catalog root, run directory and state directory, and
+refuses to write under them (see below).
 
 *History.* Earlier revisions of this change left Codex to its own sandbox under
 an allowlist of flags, environment, injection, project config and MCP list,
@@ -152,11 +152,13 @@ itself. It does not yet cover:
   (CW-20261001-0230).
 - **Reads.** The directories are made read-only, not hidden: every agent, wrapped
   or not, can still read the catalog, including plaintext credentials in catalog
-  YAML (CW-20261001-0263).
+  YAML, and the state database, which holds every session, message and event
+  (CW-20261001-0263).
 - **The state database, for Codex.** The state directory is read-only for the
   agents Tether wraps. It is not for Codex, which Tether does not wrap: Codex's
-  own sandbox keeps its shell out of the directory, and the planted `mux mcp`
-  never opens the database, but Codex's MCP servers run outside that sandbox,
+  own sandbox keeps its shell out of the directory (unless `state_db` is in a
+  directory that sandbox can write: `/tmp`, `$TMPDIR` or the work directory), and
+  the planted `mux mcp` never opens the database, but Codex's MCP servers run outside that sandbox,
   so an upstream whose tool writes a caller-chosen path can still reach it
   (CW-20261001-0230). Any agent can still ask the daemon, over the socket, to
   write on its behalf.
@@ -181,8 +183,8 @@ itself. It does not yet cover:
 - **`mux_agent_create` and `mux_agent_edit` from inside an agent.** Planted
   workers still carry the `catalog.write` scope, since it also gates
   `scope=project`, which writes into the repo. The planted `mux mcp` is started with
-  `--protect-path` for the catalog root and the run directory, and refuses to write
-  under them, with a typed `catalog_read_only` error telling the agent to ask the
+  `--protect-path` for the catalog root, the run directory and the state directory,
+  and refuses to write under them, with a typed `catalog_read_only` error telling the agent to ask the
   operator. That is a **policy of the planted server, for every runtime**, not an
   effect of a read-only mount, which exists only inside Tether's sandbox: Codex
   spawns MCP servers itself, outside it, and a Codex agent called
