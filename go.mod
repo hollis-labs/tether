@@ -9,6 +9,7 @@ require (
 	github.com/hollis-labs/agentkit v0.8.0
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.3.0
+	github.com/hollis-labs/go-localdaemon v0.1.0
 	github.com/hollis-labs/go-mcp v0.7.0
 	github.com/hollis-labs/go-messaging v0.5.2
 	github.com/hollis-labs/go-modelsdev v0.2.0

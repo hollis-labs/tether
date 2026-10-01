@@ -208,7 +208,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Pre-flight: refuse to start if the PID file references a live process.
 	// A stale PID file (dead PID or missing file) is fine and will be
 	// overwritten by WritePIDFile below.
-	if pid, err := ReadPIDFile(s.Config.PIDFile); err == nil && IsAlive(pid) {
+	if pid, err := ReadPIDFile(s.Config.PIDFile); err == nil && IsDaemonAlive(pid) {
 		return fmt.Errorf("%w (pid %d, pidfile %s)", ErrAlreadyRunning, pid, s.Config.PIDFile)
 	}
 

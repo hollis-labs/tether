@@ -62,7 +62,7 @@ var daemonStartCmd = &cobra.Command{
 
 		// Pre-flight: reject if another daemon is already live so we don't
 		// fork a child that will immediately bail with ErrAlreadyRunning.
-		if pid, err := daemon.ReadPIDFile(cfg.PIDFile); err == nil && daemon.IsAlive(pid) {
+		if pid, err := daemon.ReadPIDFile(cfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
 			return fmt.Errorf("daemon already running (pid %d, pidfile %s)", pid, cfg.PIDFile)
 		}
 
@@ -98,7 +98,7 @@ var daemonStartCmd = &cobra.Command{
 		// Poll for the PID file to appear as a startup-complete signal.
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			if pid, err := daemon.ReadPIDFile(cfg.PIDFile); err == nil && daemon.IsAlive(pid) {
+			if pid, err := daemon.ReadPIDFile(cfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
 				fmt.Fprintf(os.Stderr, "muxd started\n  pid: %d\n  listener: %s\n  pidfile: %s\n",
 					pid, cfg.ListenAddr, cfg.PIDFile)
 				return nil
@@ -136,7 +136,7 @@ var daemonRunCmd = &cobra.Command{
 		// still actually listening on, independent of PID-file integrity.
 		if cat, cfgErr := config.Load(catalogPath); cfgErr == nil {
 			if daemonCfg, err := daemonConfigFromCatalog(cat); err == nil {
-				if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsAlive(pid) {
+				if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
 					return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
 				}
 			}
@@ -854,6 +854,17 @@ var daemonStopCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "muxd not running; removing stale pidfile %s\n", cfg.PIDFile)
 			return daemon.RemovePIDFile(cfg.PIDFile)
 		}
+		// A live PID is not proof of a live muxd: after a crash the pidfile
+		// survives and the number may belong to an unrelated process. Signal
+		// only what is verified to be muxd.
+		isMuxd, err := daemon.IsDaemon(cmd.Context(), pid)
+		if err != nil {
+			return fmt.Errorf("could not verify that pid %d is muxd, not signaling it: %w", pid, err)
+		}
+		if !isMuxd {
+			fmt.Fprintf(os.Stderr, "pid %d in %s is not a muxd process; not signaling it, removing stale pidfile\n", pid, cfg.PIDFile)
+			return daemon.RemovePIDFile(cfg.PIDFile)
+		}
 
 		proc, err := os.FindProcess(pid)
 		if err != nil {
@@ -866,7 +877,7 @@ var daemonStopCmd = &cobra.Command{
 		// Poll: daemon removes its own PID file on clean shutdown.
 		deadline := time.Now().Add(cfg.ShutdownTimeout + 2*time.Second)
 		for time.Now().Before(deadline) {
-			if !daemon.IsAlive(pid) {
+			if !daemon.IsDaemonAlive(pid) {
 				fmt.Fprintf(os.Stderr, "muxd stopped (pid %d)\n", pid)
 				return nil
 			}
@@ -892,7 +903,7 @@ var daemonStatusCmd = &cobra.Command{
 			}
 			return err
 		}
-		if !daemon.IsAlive(pid) {
+		if !daemon.IsDaemonAlive(pid) {
 			fmt.Fprintf(os.Stderr, "muxd: stale pid %d in %s\n", pid, cfg.PIDFile)
 			os.Exit(2)
 		}
