@@ -215,6 +215,36 @@ Tether `mux_*` tools, `mux_catalog_list_mcp_servers`, `mux_catalog_refresh`,
 explicit `--only` flag uses its own comma-separated value and does not widen
 from the environment.
 
+### Daemon-only mode (`--daemon-only`)
+
+`mux mcp --daemon-only` never opens Tether's state database. Tether plants it
+in every agent it launches, where the server runs inside the agent's sandbox:
+the agent can then be kept from writing the state directory. In this mode:
+
+- Every read and write of Tether state goes to the running daemon over its API
+  (`muxd.sock`). The server loads the catalog from disk and nothing else.
+- Each tool call is recorded by the daemon. The server posts a start and an end
+  record to `POST /proxy/events` with `publish`, and the daemon writes
+  `proxy_events` and the `events` log itself.
+- It refuses to start unless the daemon answers, with the error `tether daemon
+  unreachable; mux tools unavailable`. An agent launched while `muxd` is down
+  therefore has no mux tools. Nothing falls back to opening the database.
+- Reads of the daemon's own state are the daemon's answers: `mux_session_health`
+  now reports the daemon's live sessions, and `mux_session_list` and
+  `mux_session_get` carry the daemon's `attached_clients`. `mux_logical_agent_list`
+  returns the daemon's summary (`id`, `name`, `launch_id`, `checkpoint_policy`,
+  `checkpoint_status`), which has fewer fields than the table row an ordinary
+  `mux mcp` returns.
+
+An operator's own `mux mcp` (in `~/.claude.json`, say) is unchanged: it opens
+the database as before. `mux boot-exec` plants the same ordinary server, since
+it runs in the operator's terminal outside any Tether sandbox.
+
+Records the daemon-only server posts are asserted by the agent's process. The
+daemon checks their shape, caps their size and stamps their time, but the
+tool name, server and outcome are the caller's word until `muxd` verifies who is
+calling (CW-20260930-0253).
+
 ### Upstream failures and recovery
 
 Each stdio upstream has its own supervisor. After a confirmed process exit,
@@ -1502,10 +1532,11 @@ answer.
   output requires the daemon's attach endpoint or `go-tether-client`. A
   polling pattern (send input → wait → read session state) works for short
   interactions.
-- **In-process SQLite.** The adapter opens its own DB connection. If the daemon
-  is also running, both use SQLite WAL mode — concurrent reads work fine;
-  writes serialize at the DB. For heavy concurrent write workloads, run the
-  daemon and use `go-tether-client` instead.
+- **In-process SQLite.** Unless it runs with `--daemon-only` (see above), the
+  adapter opens its own DB connection. If the daemon is also running, both use
+  SQLite WAL mode — concurrent reads work fine; writes serialize at the DB. For
+  heavy concurrent write workloads, run the daemon and use `go-tether-client`
+  instead.
 - **No MCP resources.** Only tools are exposed; MCP resources (for streaming
   file content, etc.) are not yet wired.
 

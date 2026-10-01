@@ -577,7 +577,8 @@ it back as `?cursor=` to continue.
 
 Fetch a single session. 404 when not found.
 
-Response (200): single `SessionDTO` as above.
+Response (200): single `SessionDTO` as above, plus `workstream_id` when the
+session is assigned to a workstream.
 
 ### `POST /sessions/{id}/stop`
 
@@ -1073,6 +1074,49 @@ Response (200):
 ```
 
 `next_cursor` is emitted only when the page filled the limit.
+
+### `GET /proxy/events`
+
+Tool calls the MCP proxy has recorded, newest first. 404 when the daemon has no
+proxy-event store.
+
+| Query param   | Type    | Description                                  |
+|---------------|---------|----------------------------------------------|
+| `server`      | string  | exact upstream server id                     |
+| `tool_name`   | string  | tool name prefix                             |
+| `session_id`  | string  | exact session id                             |
+| `limit`       | int     | default 100, max 500                         |
+| `since`       | RFC3339 | exclude events at or before this time        |
+| `errors_only` | bool    | `true` returns only failed calls             |
+
+Response (200): `{"events": [{"id", "session_id", "server", "tool_name",
+"args_schema_fp", "duration_ms", "ok", "error", "timestamp"}], "count": N}`.
+
+### `POST /proxy/events`
+
+Record a proxied tool call. Body:
+
+| Field            | Type   | Description                                                     |
+|------------------|--------|-----------------------------------------------------------------|
+| `tool_name`      | string | required, at most 256 bytes                                     |
+| `server`         | string | upstream server id; empty for a native mux tool                 |
+| `session_id`     | string | the calling session                                             |
+| `args_schema_fp` | string | fingerprint of the argument names, at most 64 bytes             |
+| `duration_ms`    | int    | not negative                                                    |
+| `ok`, `error`    | bool, string | outcome; `error` is truncated at 4 KiB                    |
+| `timestamp`      | RFC3339 | the call's time; defaults to now                               |
+| `phase`          | string | `end` (default) records the call in `proxy_events`; `start` records nothing there and needs `publish` |
+| `publish`        | bool   | also publish the call on the daemon's event bus as `tool_call_start` or `tool_call_end` |
+
+Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
+`publish`, a missing or over-long field, or a body over 64 KiB; 404 for
+`publish` when the daemon has no event bus.
+
+With `publish` the daemon stamps the time itself and ignores `timestamp`: the
+caller is the `mux mcp --daemon-only` server Tether plants in an agent, which
+cannot write the daemon's state, and its clock is not recorded. The other
+fields are the caller's assertion until `muxd` verifies who is calling
+(CW-20260930-0253).
 
 ---
 

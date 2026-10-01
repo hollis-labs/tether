@@ -123,6 +123,9 @@ environment and sends trace data to the endpoint you choose.
 - macOS sandboxing relies on a deprecated mechanism with a default-allow posture
 - MCP scopes are coarse capability guards, not multi-tenant isolation
 - caller URNs on messaging routes are unauthenticated provenance
+- tool-call records from the `mux mcp` Tether plants in an agent (`proxy_events`
+  and the event log) are asserted by the agent's own process: the daemon checks
+  their shape and stamps their time, but not who sent them (CW-20260930-0253)
 - agents run as the operator's uid and can read and write Tether's catalog,
   state database, socket and MCP token (see "Agents run as your user")
 - pre-1.0 contracts and migration guarantees
