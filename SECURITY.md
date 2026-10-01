@@ -90,6 +90,17 @@ session through the API. The guard is removed when CW-20260930-0253 lands and
 the daemon can tell an operator from an agent. It does not stop an agent from
 editing the catalog itself; that is CW-20260930-0237.
 
+Two defaults narrow which MCP servers a launched agent is handed
+(CW-20261001-0227). Claude agents run with `--strict-mcp-config`, so they do not
+inherit servers from your `~/.claude.json`, project `.mcp.json` files or the
+claude.ai connectors (a launched agent has no connectors at all); `TETHER_CLAUDE_STRICT_MCP=0` in muxd's environment turns
+this off, and muxd then warns at startup and `mux doctor` warns. An agent's
+`mux` proxy is confined to an allow-list of upstreams, by default `torque` and
+`tesseract`. `cerberus` is never in the default. These stop an agent from being
+handed a server by accident. They do not stop one that goes looking: an agent
+can create a child session through the API with a wider list, or run an
+upstream's binary itself, until CW-20260930-0253 and CW-20260930-0237 land.
+
 ## Data at rest
 
 Tether has no built-in at-rest encryption. The state database, session logs,
@@ -101,8 +112,9 @@ encryption controls.
 
 Catalog YAML can hold credentials in plaintext (for example
 `resources[].config.env` and MCP server `env:`/`token:` fields). Prefer secret
-references (`keychain://…`, `helper://…`) over literal values; see
-[`docs/secrets.md`](docs/secrets.md). The federation registry stores identity
+references (`keychain://…`, `helper://…`, or `file://` for a 0600 file) over
+literal values; see [`docs/secrets.md`](docs/secrets.md), including what a
+file reference does not hide. The federation registry stores identity
 and a callback URI only, and deliberately does not cache catalog payloads.
 Do not commit catalog files containing real tokens.
 
@@ -123,6 +135,17 @@ environment and sends trace data to the endpoint you choose.
 - macOS sandboxing relies on a deprecated mechanism with a default-allow posture
 - MCP scopes are coarse capability guards, not multi-tenant isolation
 - caller URNs on messaging routes are unauthenticated provenance
+- tool-call records from the `mux mcp` Tether plants in an agent (`proxy_events`
+  and the `tool_call_*` events in the event log) are asserted by the agent's own
+  process. `POST /proxy/events` is the route an agent-side process uses to put
+  its own `tool_call_*` events into the event log. The daemon checks the
+  record's shape, caps its size, stamps its time and refuses a session that does
+  not exist, but it cannot tell which session is calling, so an agent can record
+  a call for another existing session (CW-20260930-0253). This is no worse than
+  before for the system as a whole, since the agent's own process used to write
+  those tables directly, but it is not claimed to be safe as a route: other
+  routes, such as `POST /broker/envelopes`, also write events with
+  caller-supplied fields
 - agents run as the operator's uid and can read and write Tether's catalog,
   state database, socket and MCP token (see "Agents run as your user")
 - pre-1.0 contracts and migration guarantees

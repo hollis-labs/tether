@@ -177,6 +177,11 @@ type ProxyOptions struct {
 	// tool_call_start / tool_call_end events for every proxied call.
 	Bus events.Bus
 
+	// Publisher, when non-nil and Bus is nil, is where the LoggingMiddleware
+	// publishes instead: a daemon-only `mux mcp` has no bus of its own and
+	// passes a DaemonToolCallPublisher.
+	Publisher events.Publisher
+
 	// EventStore, when non-nil, is subscribed to the Bus to accumulate
 	// tool call events for the live TUI Activity feed (in-memory ring buffer).
 	// See ADR 0021. The TUI reads from this store; the MCP tool
@@ -205,6 +210,16 @@ type ProxyOptions struct {
 	// mux_discover + mux_call. Empty means all servers (firehose). Only
 	// consulted when BrokerMode is false.
 	ServerFilter []string
+
+	// Confine restricts the proxy to ServerFilter: only those upstreams are
+	// loaded (their secrets resolved), started and registered, and
+	// mux_discover, mux_call and the catalog introspection tools cannot see
+	// or reach any other. Without it ServerFilter only chooses which tools
+	// are registered as flat tools, every upstream is started, and the rest
+	// stay reachable through mux_discover + mux_call. Tether's planted proxy
+	// sets it, so a launched agent's proxy holds only the upstreams it was
+	// granted (CW-20261001-0227). An empty ServerFilter confines to none.
+	Confine bool
 
 	// Only enables curated external-client mode. Only upstream tools from
 	// ServerFilter are registered. Native Tether mux_* tools, mux_discover,
@@ -263,7 +278,18 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
 func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts ProxyOptions) error {
-	entries, err := config.LoadMCPServers(catalogDir)
+	var entries []config.MCPServerEntry
+	var err error
+	if opts.Confine {
+		var unknown []string
+		entries, unknown, err = config.LoadMCPServersConfined(catalogDir, opts.ServerFilter)
+		if len(unknown) > 0 {
+			slog.Warn("mcp-proxy: confined to servers that are not enabled in the catalog; they are skipped", "servers", unknown)
+		}
+		slog.Info("mcp-proxy: confined to the granted upstreams", "granted", opts.ServerFilter, "loaded", len(entries))
+	} else {
+		entries, err = config.LoadMCPServers(catalogDir)
+	}
 	if err != nil {
 		return fmt.Errorf("load mcp-servers catalog: %w", err)
 	}
@@ -273,10 +299,13 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	pool.runtime = a.runtime
 	a.upstreams = pool
 
-	// Wire LoggingMiddleware when a Bus is provided.
+	// Wire LoggingMiddleware when a Bus or a Publisher is provided.
 	var mws []ToolCallMiddleware
-	if opts.Bus != nil {
+	switch {
+	case opts.Bus != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))
+	case opts.Publisher != nil:
+		mws = append(mws, NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(entries)))
 	}
 
 	// Subscribe EventStore to Bus so it receives tool_call_end events.
@@ -303,17 +332,8 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 	plainRouter := NewProxyRouter(registry)
 	plainRouter.pool = pool
 	plainRouter.SetLogger(a.logger())
-	if a.svc != nil && a.svc.Store != nil {
-		plainRouter.SetWorkstreamResolver(func(ctx context.Context, sessionID string) (string, error) {
-			row, err := a.svc.Store.GetSession(sessionID)
-			if err != nil {
-				return "", err
-			}
-			if row.WorkstreamID.Valid {
-				return row.WorkstreamID.String, nil
-			}
-			return "", nil
-		})
+	if a.readsViaDaemon() || (a.svc != nil && a.svc.Store != nil) {
+		plainRouter.SetWorkstreamResolver(a.sessionWorkstreamID)
 	}
 
 	if opts.Only && len(opts.ServerFilter) == 0 {

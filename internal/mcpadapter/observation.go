@@ -47,7 +47,7 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 			gomcp.NumberProp("limit", "Max events to return (default 100, max 1000)", false),
 			gomcp.NumberProp("cursor", "Pagination cursor: smallest seq from previous page; omit on first page", false),
 		),
-		Handler: func(_ context.Context, args map[string]any) (any, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
 				return nil, toolError("invalid_request", "session_id required")
@@ -71,9 +71,9 @@ func (a *Adapter) registerSessionEventsTool(s *gomcp.Server) {
 				}
 			}
 
-			evs, err := a.svc.Store.ListEventsBySession(sessionID, limit, cursor)
+			evs, err := a.sessionEvents(ctx, sessionID, limit, cursor)
 			if err != nil {
-				return nil, toolError("internal_error", "list events: "+err.Error())
+				return nil, err
 			}
 
 			// Build DTO slice to expose consistent field names over the wire.
@@ -122,23 +122,15 @@ func (a *Adapter) registerSessionCheckpointsTool(s *gomcp.Server) {
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 		),
-		Handler: func(_ context.Context, args map[string]any) (any, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
 				return nil, toolError("invalid_request", "session_id required")
 			}
 
-			row, err := a.svc.Store.GetSession(sessionID)
+			cps, err := a.sessionCheckpoints(ctx, sessionID)
 			if err != nil {
-				if isNotFound(err) {
-					return nil, toolError("not_found", "session not found: "+sessionID)
-				}
-				return nil, toolError("internal_error", err.Error())
-			}
-
-			cps, err := a.svc.Store.ListCheckpointsByLogicalAgent(row.LogicalAgentID)
-			if err != nil {
-				return nil, toolError("internal_error", "list checkpoints: "+err.Error())
+				return nil, err
 			}
 
 			return toolJSON(map[string]any{
@@ -159,15 +151,15 @@ func (a *Adapter) registerSessionAttachmentsTool(s *gomcp.Server) {
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("session_id", "Session UUID", true),
 		),
-		Handler: func(_ context.Context, args map[string]any) (any, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			sessionID := str(args, "session_id")
 			if sessionID == "" {
 				return nil, toolError("invalid_request", "session_id required")
 			}
 
-			rows, err := a.svc.Store.ListClientAttachments(sessionID)
+			rows, err := a.sessionAttachments(ctx, sessionID)
 			if err != nil {
-				return nil, toolError("internal_error", "list attachments: "+err.Error())
+				return nil, err
 			}
 
 			type attachmentDTO struct {
@@ -245,8 +237,11 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 				f.Since = t
 			}
 
-			evs, err := a.svc.Store.QueryProxyEvents(f)
+			evs, err := a.proxyEventQuerier().QueryProxyEvents(f)
 			if err != nil {
+				if isDaemonUnreachable(err) {
+					return nil, daemonUnreachableError(err)
+				}
 				return nil, toolError("internal_error", "query proxy events: "+err.Error())
 			}
 

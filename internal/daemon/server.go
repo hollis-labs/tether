@@ -162,6 +162,10 @@ type Server struct {
 	// app.Service at daemon startup.
 	EventRetention EventRetention
 
+	// Hardening is optional; when set, /health reports what it returns. The
+	// composition root points it at the Service's launch-hardening status.
+	Hardening func() *HealthHardening
+
 	startedAt time.Time
 }
 
@@ -420,6 +424,19 @@ type Health struct {
 	UptimeSec int64  `json:"uptime_sec"`
 	Listener  string `json:"listener"`
 	Sessions  int    `json:"sessions"`
+	// Hardening reports the launch-hardening switches the running daemon
+	// decided from its own environment, so `mux doctor` can report what
+	// muxd does rather than what the doctor's environment would do. Absent
+	// from a daemon that predates it.
+	Hardening *HealthHardening `json:"hardening,omitempty"`
+}
+
+// HealthHardening is the launch-hardening state in GET /health.
+type HealthHardening struct {
+	// ClaudeStrictMCP is whether Claude agents load only the MCP servers
+	// Tether plants (--strict-mcp-config, CW-20261001-0227).
+	ClaudeStrictMCP       bool   `json:"claude_strict_mcp"`
+	ClaudeStrictMCPReason string `json:"claude_strict_mcp_reason,omitempty"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +448,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Manager != nil {
 		h.Sessions = len(s.Manager.List())
+	}
+	if s.Hardening != nil {
+		h.Hardening = s.Hardening()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h)

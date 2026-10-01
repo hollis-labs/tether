@@ -62,7 +62,7 @@ slots: { ... }                     # boot prompt slot sources (static / role_sum
 mcp_servers: [vanta, hadron]       # optional v005-08 — MCP allowlist for this profile
 ```
 
-`mcp_servers` empty / omitted means the proxy default (all servers). The launch path pipes the list into `MUX_MCP_SERVERS` so the spawned agent's `mux mcp --proxy` sees it.
+`mcp_servers` empty / omitted means the default allow-list, `torque` and `tesseract`. A non-empty list replaces it, so name `torque` and `tesseract` too if the agent needs them. The launch path pipes the list into `MUX_MCP_SERVERS` and starts the spawned agent's `mux mcp --proxy` with `--confine`, so upstreams outside the list are not started and cannot be reached through `mux_call`. See [mcp.md](mcp.md#agents-tether-launches-strict-config-and-an-allow-list).
 
 Use `type: role_summary` for the `agent` slot when a full role markdown file should remain fetchable by path without being inlined into every boot prompt:
 
