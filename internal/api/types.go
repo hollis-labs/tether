@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -53,7 +54,9 @@ type LaunchService interface {
 	// ResolveActorSession answers "which session currently owns delivery
 	// for this logical agent" (T06, messaging vNext): the T02 RuntimeBinding
 	// primitive when one has been leased, else the legacy newest-running-
-	// session compatibility heuristic. See internal/app/wake.go.
+	// session compatibility heuristic. See internal/app/wake.go. When the
+	// actor is bound to a session that is not running it returns ("",
+	// ErrBoundSessionNotRunning): an honest offline, never a reroute.
 	ResolveActorSession(ctx context.Context, logicalAgentID string) (string, error)
 	// AttemptWake drives one Claim/Ack/Nack wake attempt for messageID/to
 	// against an already-resolved sessionID, recording real host_accepted/
@@ -62,6 +65,12 @@ type LaunchService interface {
 	// messaging vNext). See internal/app/wake.go.
 	AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) WakeOutcome
 }
+
+// ErrBoundSessionNotRunning is ResolveActorSession's answer when the actor's
+// current binding names a session that is not running (CW-20260912-0134).
+// Notify reports it as wake_reason "session-not-running" instead of
+// declining the wake without saying why.
+var ErrBoundSessionNotRunning = errors.New("bound session is not running")
 
 // WakeOutcome is AttemptWake's disposition. See internal/app/wake.go's
 // WakeOutcome doc comment for the full Reason vocabulary and rationale —

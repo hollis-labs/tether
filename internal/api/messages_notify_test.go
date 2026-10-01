@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -197,5 +198,39 @@ func TestMessageNotify_StoresWhenNoLiveSession(t *testing.T) {
 	}
 	if len(svc.inputLog) != 0 {
 		t.Fatalf("unexpected wake input: %q", svc.inputLog)
+	}
+}
+
+// CW-20260912-0134: notify to an actor whose only binding names a session
+// that is not running stores the message and says why it did not wake,
+// rather than returning wake_attempted=false with nothing else.
+func TestMessageNotify_BoundSessionNotRunningReportsReason(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "notify.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	svc := &fakeLaunchService{resolveActorErr: fmt.Errorf("%w: s-dead", ErrBoundSessionNotRunning)}
+	h := NewHandler(Deps{Service: svc, MessageStore: db.MessagingStore()})
+
+	body := []byte(`{"from":"msg://user/local/operator","to":"msg://agent/local/worker","kind":"notice","payload":{"body":"check inbox"}}`)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/messages/notify", bytes.NewReader(body)))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out messageNotifyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Message.ID == "" {
+		t.Fatalf("message not stored: %+v", out)
+	}
+	if out.WakeAttempted || out.WakeReason != "session-not-running" || out.WakeError != "" {
+		t.Fatalf("wake fields = attempted=%v reason=%q error=%q; want no attempt, reason session-not-running, no error", out.WakeAttempted, out.WakeReason, out.WakeError)
+	}
+	if len(svc.attemptWakeLog) != 0 {
+		t.Fatalf("AttemptWake called %d times; want 0", len(svc.attemptWakeLog))
 	}
 }

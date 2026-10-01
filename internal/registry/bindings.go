@@ -287,6 +287,48 @@ func (s *Storage) RevokeBinding(ctx context.Context, bindingID string) error {
 	return nil
 }
 
+// RevokeSessionBindings revokes every binding sessionID still holds, on any
+// target and at any generation, and returns how many it revoked. It is for
+// when the session has ended (CW-20260912-0134): a binding whose session is
+// gone can never be served, and left unrevoked it is promoted back to
+// current as soon as the generations above it are revoked. Revoking a
+// superseded generation never touches the bindings above it.
+func (s *Storage) RevokeSessionBindings(ctx context.Context, sessionID string) (int, error) {
+	now := formatTime(time.Now().UTC())
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE runtime_bindings SET revoked_at = ?, updated_at = ? WHERE session_id = ? AND revoked_at IS NULL`,
+		now, now, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("registry: revoke session bindings: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("registry: revoke session bindings: %w", err)
+	}
+	return int(n), nil
+}
+
+// BoundSessionIDs returns the distinct session IDs that hold at least one
+// unrevoked binding, expired leases included -- the candidates a startup
+// sweep checks against the sessions that are no longer running.
+func (s *Storage) BoundSessionIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT session_id FROM runtime_bindings WHERE revoked_at IS NULL ORDER BY session_id`)
+	if err != nil {
+		return nil, fmt.Errorf("registry: bound session ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("registry: bound session ids: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // CurrentBinding returns the highest-generation, non-revoked binding for
 // targetURN whose lease has not expired (lease_expires_at IS NULL means no
 // expiry). Returns ErrBindingNotFound if no such binding exists -- either

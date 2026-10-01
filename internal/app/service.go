@@ -27,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/settings"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/specresolve"
@@ -222,6 +223,45 @@ func (s *Service) ReconcileStaleState() {
 	if swept, err := s.Store.SweepStaleAttachments(now); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
 	}
+	if revoked := s.revokeEndedSessionBindings(context.Background()); revoked > 0 {
+		log.Printf("registry: revoked %d binding(s) held by ended sessions", revoked)
+	}
+}
+
+// revokeEndedSessionBindings revokes the bindings of every Tether session
+// that has ended -- including those the sweep above just failed -- so a
+// restart does not leave an actor bound to a session that no longer exists
+// (CW-20260912-0134). It also clears bindings orphaned before session exit
+// revoked them. A binding whose session_id is not a Tether session (a
+// published-local bridge) is left alone. Returns how many it revoked.
+func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
+	if s.Registry == nil {
+		return 0
+	}
+	ids, err := s.Registry.BoundSessionIDs(ctx)
+	if err != nil {
+		log.Printf("registry: list bound sessions for the startup sweep failed: %v", err)
+		return 0
+	}
+	revoked := 0
+	for _, id := range ids {
+		row, err := s.Store.GetSession(id)
+		if err != nil {
+			continue // not a Tether session, or unreadable: not ours to revoke
+		}
+		switch session.State(row.State) {
+		case session.StateCompleted, session.StateFailed, session.StateKilled:
+		default:
+			continue
+		}
+		n, err := s.Registry.RevokeSessionBindings(ctx, id)
+		if err != nil {
+			log.Printf("registry: revoke bindings of ended session %q failed: %v", id, err)
+			continue
+		}
+		revoked += n
+	}
+	return revoked
 }
 
 // Close shuts down the agentsessions.Manager and closes the store. Safe
