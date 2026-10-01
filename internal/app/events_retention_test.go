@@ -42,9 +42,9 @@ func publishAged(t *testing.T, svc *Service, bus events.Bus, at time.Time) int64
 
 func intPtr(n int) *int { return &n }
 
-// Retention ships off: with no config, nothing is deleted.
-func TestRunEventRetention_DisabledByDefault(t *testing.T) {
-	svc, bus := retentionService(t, config.EventsRetentionConfig{})
+// Explicit disable preserves all history.
+func TestRunEventRetention_Disabled(t *testing.T) {
+	svc, bus := retentionService(t, config.EventsRetentionConfig{Days: intPtr(0)})
 	publishAged(t, svc, bus, time.Now().Add(-400*24*time.Hour))
 
 	if n, err := svc.RunEventRetention(context.Background()); err != nil || n != 0 {
@@ -63,7 +63,7 @@ func TestRunEventRetention_DeletesOldInBatchesAndKeepsReplay(t *testing.T) {
 	eventsRetentionBatch, eventsRetentionBatchPause = 2, 0
 	t.Cleanup(func() { eventsRetentionBatch, eventsRetentionBatchPause = prevBatch, prevPause })
 
-	svc, bus := retentionService(t, config.EventsRetentionConfig{Enabled: true, Days: intPtr(90)})
+	svc, bus := retentionService(t, config.EventsRetentionConfig{Days: intPtr(90)})
 	now := time.Now()
 	for i := 0; i < 5; i++ {
 		publishAged(t, svc, bus, now.Add(-120*24*time.Hour+time.Duration(i)*time.Minute))
@@ -117,5 +117,29 @@ func TestRunEventRetention_DeletesOldInBatchesAndKeepsReplay(t *testing.T) {
 	}
 	if n, err := svc.RunEventRetention(context.Background()); err != nil || n != 0 {
 		t.Fatalf("second pass deleted %d, %v; want 0", n, err)
+	}
+}
+
+func TestSweepEventRetention_DefaultAndStructuredResult(t *testing.T) {
+	svc, bus := retentionService(t, config.EventsRetentionConfig{})
+	old := time.Now().Add(-120 * 24 * time.Hour)
+	publishAged(t, svc, bus, old)
+	if err := svc.Store.AppendProxyEvent(store.ProxyEvent{Server: "s", ToolName: "t", Timestamp: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.RecordAIAuditEvent(store.AIEvent{EventType: "chat", Operation: "chat", Timestamp: old}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.SweepEventRetention(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total() != 3 || len(result.Batches) != 3 {
+		t.Fatalf("result: %+v", result)
+	}
+	for _, table := range []string{"events", "proxy_events", "ai_events"} {
+		if result.Removed[table] != 1 {
+			t.Fatalf("%s: %+v", table, result)
+		}
 	}
 }

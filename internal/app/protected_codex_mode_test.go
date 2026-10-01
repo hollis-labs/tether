@@ -226,18 +226,14 @@ func TestCodexProtectionMode_FallbackThroughLaunchSession(t *testing.T) {
 	}
 }
 
-// Codex while it ships as not protected launches as it did on main, so failing
-// to name the protected directories (a catalog root that cannot be resolved)
-// must not fail its launch: it gets no --protect-path and a WARN. Every other
-// runtime still fails, as it does for its ProtectedPaths, and so does codex once
-// the dormant guard is switched on.
-func TestMCPProtectedPaths_UnnameableDirsDoNotFailAnUnprotectedCodexLaunch(t *testing.T) {
+// Even the dormant Codex agent guard requires a confined planted proxy.
+func TestMCPProtectedPaths_UnnameableDirsFailEveryProtectedLaunch(t *testing.T) {
 	svc, _, _ := tetherLayoutKeepingMode(t)
 	svc.CatalogRoot = filepath.Join(t.TempDir(), "no-such-catalog")
 	codex := &launch.Plan{LaunchID: "c", ProviderBrand: "codex"}
 
-	if dirs, err := svc.mcpProtectedPaths(codex); err != nil || dirs != nil {
-		t.Fatalf("shipped codex: dirs = %q, err = %v; want no dirs and no error", dirs, err)
+	if dirs, err := svc.mcpProtectedPaths(codex); err == nil || dirs != nil {
+		t.Fatalf("shipped codex: dirs = %q, err = %v; want no dirs and an error", dirs, err)
 	}
 	if _, err := svc.mcpProtectedPaths(cliPlan); err == nil {
 		t.Fatal("claude's launch did not fail when the protected directories cannot be named")

@@ -366,6 +366,9 @@ func TestLaunchSession_PlantsProtectPathsInTheMCPConfig(t *testing.T) {
 	state := filepath.Join(filepath.Dir(catalog), "state")
 	clearWritableRoots(t)
 	on := plantedArgs(t, svc, true)
+	if !strings.Contains(on, `"TETHER_MCP_CONFINE_REMOTE" = "1"`) || !strings.Contains(on, `"--ro-bind"`) {
+		t.Fatalf("Codex proxy lacks local wrapper or remote confinement: %s", on)
+	}
 	for _, want := range []string{`"--protect-path", "` + catalog + `"`, `"--protect-path", "` + run + `"`, `"--protect-path", "` + state + `"`} {
 		if !strings.Contains(on, want) {
 			t.Errorf("planted config.toml lacks %s:\n%s", want, on)

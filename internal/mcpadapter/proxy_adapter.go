@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -292,6 +293,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		}
 	}
 	pool := NewClientPool(entries, registry)
+	pool.confineRemote = len(a.protected) > 0 && os.Getenv(config.MCPConfineRemoteEnv) == "1"
 	pool.runtime = a.runtime
 	a.upstreams = pool
 	defer pool.Shutdown()
