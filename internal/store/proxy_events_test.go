@@ -104,16 +104,13 @@ func TestProxyEventOKRoundtrip(t *testing.T) {
 	}
 }
 
-func TestProxyEventsRingBuffer(t *testing.T) {
+func TestProxyEventsAppend(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "proxy.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 
-	// Override max for this test by inserting slightly more than the real
-	// ring buffer capacity. We just verify that Append doesn't error and
-	// that the count stays sane; a full ring-buffer test at 2000 rows would
-	// be slow, so we test the trim logic with a modest count.
+	// Every append is retained until an age-based sweep.
 	const total = 10
 	for i := 0; i < total; i++ {
 		ev := ProxyEvent{

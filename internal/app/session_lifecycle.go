@@ -350,10 +350,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 		mcpPlan := TetherMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
+		mcpCommand, mcpArgs, err := ConfineMCPPlant(plan, tetherCommandPath(), mcpPlan.Args, mcpProtected)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
-			TetherCommand: tetherCommandPath(),
-			TetherArgs:    mcpPlan.Args,
-			TetherEnv:     tetherEnvMap(plan.Env),
+			TetherCommand: mcpCommand,
+			TetherArgs:    mcpArgs,
+			TetherEnv:     confinedMCPEnv(plan, mcpProtected),
 		})
 		if err != nil {
 			exit := 1

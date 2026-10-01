@@ -15,6 +15,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MCPConfineRemoteEnv marks a planted Codex proxy whose local process tree is protected.
+const MCPConfineRemoteEnv = "TETHER_MCP_CONFINE_REMOTE"
+
 // MCPServerEntry describes one upstream MCP server in the catalog.
 // Files live at <catalogDir>/mcp-servers/*.yaml.
 //
@@ -30,16 +33,19 @@ import (
 // References are resolved only by LoadMCPServers, at spawn time; see
 // resolveEntrySecrets. A catalog listing shows the reference, never the value.
 type MCPServerEntry struct {
-	ID        string            `yaml:"id"`
-	Transport string            `yaml:"transport"` // "stdio" | "sse" | "http"
-	Command   string            `yaml:"command"`   // stdio: binary path
-	Args      []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
-	Env       map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
-	URL       string            `yaml:"url"`       // sse, http: endpoint URL
-	Token     string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
-	Scopes    []string          `yaml:"scopes"`
-	Enabled   *bool             `yaml:"enabled"` // nil → defaults to true
-	Tags      []string          `yaml:"tags"`
+	// AllowUnconfinedRemote is an operator opt-in for HTTP/SSE upstreams that
+	// cannot inherit a protected Codex proxy's local filesystem confinement.
+	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`
+	ID                    string            `yaml:"id"`
+	Transport             string            `yaml:"transport"` // "stdio" | "sse" | "http"
+	Command               string            `yaml:"command"`   // stdio: binary path
+	Args                  []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
+	Env                   map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
+	URL                   string            `yaml:"url"`       // sse, http: endpoint URL
+	Token                 string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
+	Scopes                []string          `yaml:"scopes"`
+	Enabled               *bool             `yaml:"enabled"` // nil → defaults to true
+	Tags                  []string          `yaml:"tags"`
 
 	// argumentRedactionValues carries resolved argument and URL secret material
 	// to the process owner without exposing it through YAML serialization.
@@ -55,6 +61,10 @@ type MCPServerEntry struct {
 	// author wrote counts: a value that merely becomes file://... through an
 	// environment variable (which a launch's caller can set) stays a literal.
 	fileRefs map[string]bool
+
+	// secretRefs marks keychain/helper references as authored in the catalog,
+	// before environment substitution can produce a reference-looking value.
+	secretRefs map[string]bool
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
@@ -194,11 +204,14 @@ func resolveSecretRef(ctx context.Context, field, s string) (string, error) {
 // entry, then switch the catalog to the reference" — never the reverse.
 func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 	resolve := func(field, s string) (string, error) {
-		// Only a reference the operator wrote in the YAML is a file reference.
+		// Resolve only references the operator wrote in the YAML.
 		if entry.fileRefs[field] && isFileRef(s) {
 			return resolveFileRef(field, s, entry.catalogDir)
 		}
-		return resolveSecretRef(ctx, field, s)
+		if entry.secretRefs[field] {
+			return resolveSecretRef(ctx, field, s)
+		}
+		return s, nil
 	}
 	var err error
 	if entry.Token, err = resolve("token", entry.Token); err != nil {
@@ -218,7 +231,7 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 		args := make([]string, len(entry.Args))
 		for i, arg := range entry.Args {
 			field := fmt.Sprintf("args[%d]", i)
-			secretRef := isSecretRef(arg) || entry.fileRefs[field]
+			secretRef := entry.secretRefs[field] || entry.fileRefs[field]
 			if args[i], err = resolve(field, arg); err != nil {
 				return err
 			}
@@ -352,15 +365,19 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 
 		entry.catalogDir = catalogDir
 		entry.fileRefs = map[string]bool{}
+		entry.secretRefs = map[string]bool{}
 
 		// Expand ${VAR} references at load time, except inside a file://
-		// reference. Whether a field is a file reference is decided here, from
-		// what the operator wrote, before any expansion: a value that only
-		// becomes file://... after substitution is a literal.
+		// reference. Record every reference scheme before expansion: a value
+		// that only becomes file://, keychain:// or helper:// through an
+		// environment variable stays a literal.
 		expand := func(field, raw string) string {
 			if isFileRef(raw) {
 				entry.fileRefs[field] = true
 				return raw
+			}
+			if isSecretRef(raw) {
+				entry.secretRefs[field] = true
 			}
 			return expandEnvRefs(raw)
 		}
