@@ -206,6 +206,16 @@ type ProxyOptions struct {
 	// consulted when BrokerMode is false.
 	ServerFilter []string
 
+	// Confine restricts the proxy to ServerFilter: only those upstreams are
+	// loaded (their secrets resolved), started and registered, and
+	// mux_discover, mux_call and the catalog introspection tools cannot see
+	// or reach any other. Without it ServerFilter only chooses which tools
+	// are registered as flat tools, every upstream is started, and the rest
+	// stay reachable through mux_discover + mux_call. Tether's planted proxy
+	// sets it, so a launched agent's proxy holds only the upstreams it was
+	// granted (CW-20261001-0227). An empty ServerFilter confines to none.
+	Confine bool
+
 	// Only enables curated external-client mode. Only upstream tools from
 	// ServerFilter are registered. Native Tether mux_* tools, mux_discover,
 	// mux_discover_tools, mux_call, and proxy catalog tools are suppressed.
@@ -263,7 +273,18 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware) mcpsdk.Middleware {
 //
 // Without --proxy the caller uses Run and upstream MCP servers are not touched.
 func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts ProxyOptions) error {
-	entries, err := config.LoadMCPServers(catalogDir)
+	var entries []config.MCPServerEntry
+	var err error
+	if opts.Confine {
+		var unknown []string
+		entries, unknown, err = config.LoadMCPServersConfined(catalogDir, opts.ServerFilter)
+		if len(unknown) > 0 {
+			slog.Warn("mcp-proxy: confined to servers that are not enabled in the catalog; they are skipped", "servers", unknown)
+		}
+		slog.Info("mcp-proxy: confined to the granted upstreams", "granted", opts.ServerFilter, "loaded", len(entries))
+	} else {
+		entries, err = config.LoadMCPServers(catalogDir)
+	}
 	if err != nil {
 		return fmt.Errorf("load mcp-servers catalog: %w", err)
 	}

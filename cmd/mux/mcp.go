@@ -67,6 +67,7 @@ var (
 	mcpBroker      bool
 	mcpServers     string
 	mcpOnly        string
+	mcpConfine     bool
 )
 
 func init() {
@@ -78,6 +79,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpBroker, "broker", false, "enable broker mode (requires --proxy): register mux_discover+mux_call instead of all upstream tools; reduces per-request context size")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: MUX_MCP_SERVERS); empty = all servers when --proxy is set")
 	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "curated proxy mode: expose only these comma-separated upstream server IDs as native tools; suppress Tether mux_* and discovery/call tools")
+	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / MUX_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, mux_call included; the rest of the catalog is invisible. Set automatically in a launched worker's .mcp.json")
 	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
@@ -97,6 +99,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	serverFilter, curatedOnly, err := resolveMCPProxyConfig(mcpProxy, mcpBroker, mcpServers, mcpOnly, os.Getenv("MUX_MCP_SERVERS"), onlySet)
 	if err != nil {
 		return err
+	}
+	if mcpConfine && !mcpProxy {
+		return fmt.Errorf("--confine requires --proxy")
 	}
 
 	svc, err := app.New(expandCatalogPath())
@@ -148,6 +153,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 			BrokerMode:   mcpBroker, //nolint:staticcheck // SA1019: deliberate; --broker flag still maps to the deprecated field until ServerFilter fully replaces it
 			ServerFilter: serverFilter,
 			Only:         curatedOnly,
+			Confine:      mcpConfine,
 		}
 
 		// Forward tool_call_end events to the running muxd daemon's event bus so

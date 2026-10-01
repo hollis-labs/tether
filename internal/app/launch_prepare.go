@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -16,11 +17,14 @@ func muxCommandPath() string {
 	return "mux"
 }
 
+// muxEnvMap is the environment the planted `mux mcp` is started with: its
+// upstream allow-list. The plan's own list, or the default when it has none
+// (launch.DefaultMCPServers), so a launched agent's proxy always carries one
+// and, with --confine, never holds an upstream it was not granted. Only the
+// daemon's session launches use it; `mux boot` plants for the operator's own
+// terminal and keeps its own (cmd/mux muxEnvFromPlan).
 func muxEnvMap(env map[string]string) map[string]string {
-	if env == nil || env["MUX_MCP_SERVERS"] == "" {
-		return nil
-	}
-	return map[string]string{"MUX_MCP_SERVERS": env["MUX_MCP_SERVERS"]}
+	return map[string]string{launch.MCPServersEnv: strings.Join(launch.EffectiveMCPServers(env), ",")}
 }
 
 // MuxMCPPlan is what a planting decided: the argv to write into the worker's
@@ -74,7 +78,12 @@ func MuxMCPPlant(catalogRoot, sessionID string, extractRefs bool) MuxMCPPlan {
 	if sessionID == "" {
 		return MuxMCPPlan{Args: args, Attribution: store.RefAttributionUnlaunched}
 	}
-	args = append(args, "--session", sessionID)
+	// A session's proxy is confined to the upstreams it was granted
+	// (MUX_MCP_SERVERS, see muxEnvMap): it loads, starts and exposes only
+	// those, and mux_call cannot reach the rest (CW-20261001-0227). The
+	// sessionless caller, `mux boot`, plants for an operator's own terminal
+	// and is not confined.
+	args = append(args, "--confine", "--session", sessionID)
 	if !extractRefs {
 		return MuxMCPPlan{Args: args, Attribution: store.RefAttributionNone}
 	}
