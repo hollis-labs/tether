@@ -697,7 +697,8 @@ created ──launch──▶ launching ──▶ running ──┬──▶ com
    │                    │                   └──▶ killed      ended by POST /sessions/{id}/stop
    └────────────────────┴──▶ failed   the launch failed, exit code 1
 
-launching | running ──daemon restart, process gone──▶ failed   exit code -1
+launching | running ──planned daemon shutdown──▶ killed   reason daemon-shutdown
+launching | running ──crash, then restart, process gone──▶ failed   exit code -1
 ```
 
 | State       | Terminal | Reached by                                                        | `exit_code`                         |
@@ -707,7 +708,7 @@ launching | running ──daemon restart, process gone──▶ failed   exit co
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
 | `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
-| `killed`    | yes      | `POST /sessions/{id}/stop` (also `mux sessions stop`, MCP `mux_session_stop`, ACP session close) | whatever the stopped process returned |
+| `killed`    | yes      | `POST /sessions/{id}/stop` (also `mux sessions stop`, MCP `mux_session_stop`, ACP session close), or a planned daemon shutdown | whatever the stopped process returned |
 
 **`exit_code` -1 from the startup sweep means "swept at daemon start", not an
 observed failure.** When the daemon starts, it settles every session the
@@ -729,11 +730,31 @@ that says so is CW-20260912-0086.
 Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
 liveness and are not backfilled. Treat their `exit_code` -1 the same way.
 
+**`killed` with reason `daemon-shutdown` means the daemon was stopped on
+purpose.** On a graceful shutdown (SIGTERM or SIGINT to `muxd`,
+`mux daemon stop`, `systemctl stop`/`restart`), the daemon marks every live
+session as stopping before it drains them. Any session the daemon sees exit
+during the drain (`daemon.shutdown_timeout`, default 10s) gets two records:
+- its row is `killed`, with the process's own `exit_code`;
+- its terminal `session.state_changed` event has `reason`
+  `"daemon-shutdown"`.
+
+The daemon does not signal sessions itself. A session that has not exited when
+the drain ends is left `launching`/`running`, and the next start's sweep
+settles it:
+- spared if its own process is still alive;
+- `failed` with `exit_code` -1 if it is gone.
+
+A crash leaves no shutdown record, so its sessions are always settled by that
+sweep. One `daemon.shutdown_sessions_ended` event names the sessions that
+ended during the drain and those still running.
+
 On a Linux host running the daemon as a systemd unit with the default
-`KillMode=control-group`, agent processes share the daemon's cgroup and are
-killed with it, so a restart there sweeps every session. Sessions survive a
-restart only when the daemon runs outside such a unit, for example
-`mux daemon start` or launchd.
+`KillMode=control-group`, agent processes share the daemon's cgroup and get
+the same SIGTERM. A planned `systemctl restart` therefore normally records
+them `killed` / `daemon-shutdown`. A crash, or an agent that outlasts the
+drain, is swept at the next start. Sessions survive a restart only when the
+daemon runs outside such a unit, for example `mux daemon start` or launchd.
 
 Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
 handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
@@ -1170,6 +1191,7 @@ Current (v0.0.2):
 | daemon   | `daemon.started`              | muxd at listener-up                    | `{version, pid, listener}`                                   |
 | daemon   | `daemon.shutdown_started`     | muxd on ctx cancel                     | empty                                                        |
 | daemon   | `daemon.shutdown_completed`   | muxd after runtime drain, before Close | empty                                                        |
+| daemon   | `daemon.shutdown_sessions_ended` | muxd after the graceful-shutdown session drain, when any session was live | `{ended, ended_session_ids, still_running, still_running_session_ids}` — ended sessions were recorded `killed` with reason `daemon-shutdown`; still-running ones are left for the next start's sweep (see [Session states](#session-states)) |
 | daemon   | `daemon.sessions_swept`       | the startup sweep, when it settles any session | `{swept, swept_session_ids, spared, spared_session_ids}` — swept sessions were failed with `exit_code` -1; spared ones still had their own process alive (see [Session states](#session-states)) |
 | daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |

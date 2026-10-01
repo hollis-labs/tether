@@ -31,11 +31,20 @@ import (
 // Methods are nil-safe: a composition without a stopRequests (tests that
 // build a Manager by hand) records stops the old way, as "completed".
 type stopRequests struct {
-	mu  sync.Mutex
-	ids map[string]int
+	mu      sync.Mutex
+	ids     map[string]int
+	reasons map[string]string
 }
 
 func (r *stopRequests) mark(id string) {
+	r.markWithReason(id, "")
+}
+
+// markWithReason is mark that also names why the session is being stopped.
+// The reason becomes the `reason` of its terminal session.state_changed
+// event, as ShutdownStopReason does for a planned daemon shutdown. An empty
+// reason leaves any earlier one in place.
+func (r *stopRequests) markWithReason(id, reason string) {
 	if r == nil {
 		return
 	}
@@ -45,6 +54,12 @@ func (r *stopRequests) mark(id string) {
 		r.ids = make(map[string]int)
 	}
 	r.ids[id]++
+	if reason != "" {
+		if r.reasons == nil {
+			r.reasons = make(map[string]string)
+		}
+		r.reasons[id] = reason
+	}
 }
 
 func (r *stopRequests) clear(id string) {
@@ -55,9 +70,20 @@ func (r *stopRequests) clear(id string) {
 	defer r.mu.Unlock()
 	if r.ids[id] <= 1 {
 		delete(r.ids, id)
+		delete(r.reasons, id)
 		return
 	}
 	r.ids[id]--
+}
+
+// reason returns the reason a pending stop of id was given, or "".
+func (r *stopRequests) reason(id string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reasons[id]
 }
 
 func (r *stopRequests) requested(id string) bool {
@@ -178,11 +204,17 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 		return
 	}
 	from, to := mapLifecycleStates(ev, a.stops.requested(ev.SessionID))
+	reason := ev.Reason
+	if to == string(session.StateKilled) {
+		if r := a.stops.reason(ev.SessionID); r != "" {
+			reason = r
+		}
+	}
 	payload, err := json.Marshal(sessionStateChangedPayload{
 		From:     from,
 		To:       to,
 		ExitCode: ev.ExitCode,
-		Reason:   ev.Reason,
+		Reason:   reason,
 	})
 	if err != nil {
 		return
