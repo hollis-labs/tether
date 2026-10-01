@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,10 +17,20 @@ type Input struct {
 	SkipPromptFragments bool
 }
 
+// ErrLaunchNotFound is wrapped by every error Resolve returns for a launch
+// ID the catalog does not define, so callers can map it to a not-found
+// response with errors.Is. Its own text reads as the tail of that error
+// ("launch \"x\" not found").
+var ErrLaunchNotFound = errors.New("not found")
+
+// maxKnownLaunchesInError caps how many known launch IDs a not-found error
+// lists.
+const maxKnownLaunchesInError = 20
+
 func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	l, ok := cat.Launches[in.LaunchID]
 	if !ok {
-		return nil, fmt.Errorf("launch %q not found", in.LaunchID)
+		return nil, launchNotFound(cat, in.LaunchID)
 	}
 	proj := cat.Projects[l.Project]
 	agent := cat.Agents[l.Agent]
@@ -223,4 +234,24 @@ func resolveInjectedContent(catalogRoot string, f config.InjectedFile) (string, 
 		return "", fmt.Errorf("read injected source %s: %w", path, err)
 	}
 	return string(b), nil
+}
+
+// launchNotFound builds the ErrLaunchNotFound error for id, naming the
+// launches the catalog does define so a typo or a stale catalog is obvious
+// from the message alone.
+func launchNotFound(cat *config.Catalog, id string) error {
+	known := make([]string, 0, len(cat.Launches))
+	for k := range cat.Launches {
+		known = append(known, k)
+	}
+	slices.Sort(known)
+	switch {
+	case len(known) == 0:
+		return fmt.Errorf("launch %q %w (the catalog defines no launches)", id, ErrLaunchNotFound)
+	case len(known) > maxKnownLaunchesInError:
+		return fmt.Errorf("launch %q %w (known launches: %s, and %d more)", id, ErrLaunchNotFound,
+			strings.Join(known[:maxKnownLaunchesInError], ", "), len(known)-maxKnownLaunchesInError)
+	default:
+		return fmt.Errorf("launch %q %w (known launches: %s)", id, ErrLaunchNotFound, strings.Join(known, ", "))
+	}
 }

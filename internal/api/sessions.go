@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -253,6 +254,10 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if writeIdempotencyConflict(w, err) {
+			return
+		}
+		if errors.Is(err, launch.ErrLaunchNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

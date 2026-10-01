@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -318,6 +319,27 @@ func TestHandleCreateSession_ServiceError(t *testing.T) {
 	env := decodeErr(t, rr)
 	if env.Error.Code != CodeInternalError || env.Error.Message == "" {
 		t.Errorf("envelope = %+v", env)
+	}
+}
+
+// An unknown launch ID is the caller's error, not the daemon's: 404
+// not_found with the resolver's message (CW-20261001-0018), on both the
+// plain and the input-carrying create paths.
+func TestHandleCreateSession_UnknownLaunchIs404(t *testing.T) {
+	notFound := fmt.Errorf("launch %q %w (known launches: demo)", "nope", launch.ErrLaunchNotFound)
+	for _, body := range []string{`{"launch":"nope"}`, `{"launch":"nope","prompt_append":"x"}`} {
+		svc := &fakeLaunchService{createErr: notFound}
+		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader([]byte(body)))
+		rr := httptest.NewRecorder()
+		newTestHandler(svc).ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", body, rr.Code)
+			continue
+		}
+		env := decodeErr(t, rr)
+		if env.Error.Code != CodeNotFound || !strings.Contains(env.Error.Message, `launch "nope" not found`) {
+			t.Errorf("%s: envelope = %+v", body, env)
+		}
 	}
 }
 
