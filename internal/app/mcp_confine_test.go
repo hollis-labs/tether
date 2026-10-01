@@ -146,3 +146,24 @@ func TestPlantedCodexConfig_CarriesConfineAndAllowList(t *testing.T) {
 		}
 	}
 }
+
+// A launched session's planted server is BOTH confined to its granted upstreams
+// (CW-20261001-0227) and daemon-only (CW-20261001-0173). The two were written
+// independently and their combination is what keeps an agent from reaching an
+// upstream it was not granted while the state directory stays protected: a merge
+// that drops either flag must fail here, and the boot-exec path, which plants
+// for the operator's own terminal, must carry neither.
+func TestMuxMCPPlant_LaunchedSessionIsConfinedAndDaemonOnly(t *testing.T) {
+	sess := MuxMCPPlant("/catalog", "sess-1", false).Args
+	for _, want := range []string{"--proxy", "--confine", "--daemon-only", "--session", "sess-1"} {
+		if !slices.Contains(sess, want) {
+			t.Fatalf("a launched session's planted argv lacks %q: %v", want, sess)
+		}
+	}
+	boot := MuxMCPPlant("/catalog", "", false).Args
+	for _, bad := range []string{"--confine", "--daemon-only"} {
+		if slices.Contains(boot, bad) {
+			t.Fatalf("boot-exec plants for the operator's own terminal and must not carry %s: %v", bad, boot)
+		}
+	}
+}
