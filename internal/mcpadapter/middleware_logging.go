@@ -8,7 +8,9 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/redact"
 )
 
 // LoggingMiddleware emits tool_call_start and tool_call_end events to the
@@ -16,13 +18,37 @@ import (
 // the sorted arg key names only — values are never logged. See ADR 0021
 // §Decision 3.
 type LoggingMiddleware struct {
-	bus events.Bus
+	bus     events.Bus
+	secrets *redact.Set
 }
 
 // NewLoggingMiddleware creates a LoggingMiddleware backed by bus.
 // bus may be nil; when nil the middleware is a no-op pass-through.
 func NewLoggingMiddleware(bus events.Bus) *LoggingMiddleware {
 	return &LoggingMiddleware{bus: bus}
+}
+
+// RedactWith makes the middleware scrub secrets from a call's error text
+// before the event is published, and so before it reaches
+// proxy_events.error (CW-20260930-0009). An upstream server's validation
+// error can echo an argument value back verbatim, and argument values are
+// otherwise never recorded (ADR 0021 Decision 3).
+func (m *LoggingMiddleware) RedactWith(secrets *redact.Set) *LoggingMiddleware {
+	m.secrets = secrets
+	return m
+}
+
+// proxyRedactionSet collects the values scrubbed from tool-call error text:
+// every configured server's token, resolved argument secrets and env values,
+// the same set upstream stderr is scrubbed with. It spans all servers, not
+// only the one called, because an agent can pass one server's credential to
+// another server's tool, which may echo it back in an error.
+func proxyRedactionSet(entries []config.MCPServerEntry) *redact.Set {
+	secrets := &redact.Set{}
+	for _, e := range entries {
+		secrets.Add(stderrRedactionValues(e)...)
+	}
+	return secrets
 }
 
 // Handle records start time, emits tool_call_start, calls next, then
@@ -71,12 +97,12 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 		Timestamp:    time.Now(),
 	}
 	if err != nil {
-		ev.Error = err.Error()
+		ev.Error = m.secrets.Redact(err.Error())
 	} else if result != nil && result.IsError {
 		// Extract error text from the first text content block, if present.
 		for _, c := range result.Content {
 			if tc, ok := c.(*mcpsdk.TextContent); ok {
-				ev.Error = tc.Text
+				ev.Error = m.secrets.Redact(tc.Text)
 				break
 			}
 		}
