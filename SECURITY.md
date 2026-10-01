@@ -90,8 +90,10 @@ widened from several places: its flags, its environment, a `config.toml` in
 `CODEX_HOME` or a project `.codex/config.toml`, and its working directory. The
 exemption is therefore an **allowlist**. Tether leaves Codex to its own sandbox
 only while everything that shapes it is known-safe: the flags are the model and
-a short list of overrides that keep the sandbox as it is, the environment has no
-`CODEX_*` variable but Tether's own `CODEX_HOME`, nothing is injected into
+a short list of overrides that keep the sandbox as it is, no environment came from
+a caller or an agent definition (`PATH`, `TMPDIR` and `LD_PRELOAD` each defeat it),
+the environment has no `CODEX_*` variable but Tether's own `CODEX_HOME`, the
+planted MCP allow-list names neither `nanite` nor `cerberus`, nothing is injected into
 `CODEX_HOME`, no project `.codex/config.toml` is in the work directory or up to its
 project root, and no work directory, workspace or temp directory contains a
 protected one. Anything else, or anything it does not recognise, and Tether wraps
@@ -157,10 +159,28 @@ itself. It does not yet cover:
   protect-only sandbox for them.
 - **`mux_agent_create` and `mux_agent_edit` from inside an agent.** Planted
   workers still carry the `catalog.write` scope, since it also gates
-  `scope=project`, which writes into the repo. A write into the protected catalog
-  or `~/.tether/run` fails with a typed `catalog_read_only` error telling the agent
-  to ask the operator, not a raw read-only-filesystem error. The scope is not a
-  boundary: a worker can start its own `mux mcp --scopes`.
+  `scope=project`, which writes into the repo. The planted `mux mcp` is started with
+  `--protect-path` for the catalog root and the run directory, and refuses to write
+  under them, with a typed `catalog_read_only` error telling the agent to ask the
+  operator. That is a **policy of the planted server, for every runtime**, not an
+  effect of a read-only mount, which exists only inside Tether's sandbox: Codex
+  spawns MCP servers itself, outside it, and a Codex agent called
+  `mux_agent_create scope=system` and wrote the catalog before the policy. The
+  scope is not a boundary: a worker can start its own `mux mcp --scopes`, which a
+  sandboxed agent finds read-only and an exempted Codex agent finds writable only
+  where Codex's own sandbox allows.
+- **Every MCP child of an exempted Codex agent runs outside its sandbox.** Codex
+  spawns MCP servers itself, so the planted proxy and every upstream it starts are
+  unsandboxed. With the default allow-list (`torque`, `tesseract`) that is
+  acceptable. An allow-list that names `nanite` (`dev_bash`, `dev_write`) or
+  `cerberus` hands the agent an unsandboxed shell or infrastructure control by
+  design, so Tether wraps such a Codex agent instead (it fails loudly where Tether's
+  sandbox cannot start). The real fix is upstreams that run daemon-side
+  (CW-20261001-0230).
+- **The spec launch engine** (`TETHER_LAUNCH_ENGINE=spec`, off by default) takes
+  argv, environment and injection from `~/.tether/launch-specs/`, which an agent can
+  write; the Codex allowlist inspects only the plan's flags. Do not enable it for
+  agents left to Codex's own sandbox.
 
 The in-process API stub starts no agent process, so it has nothing to
 protect.

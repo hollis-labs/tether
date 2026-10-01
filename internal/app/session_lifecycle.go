@@ -335,7 +335,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 	} else {
-		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs)
+		// The planted server refuses to write what Tether protects from this
+		// agent, whichever runtime spawns it (CW-20261001-0142). Protection that
+		// cannot name those directories fails the launch, as it does below.
+		mcpProtected, err := s.mcpProtectedPaths()
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 			MuxCommand: muxCommandPath(),
 			MuxArgs:    mcpPlan.Args,

@@ -131,6 +131,9 @@ func (a *Adapter) handleAgentCreate(_ context.Context, args map[string]any) (any
 	if err != nil {
 		return nil, err
 	}
+	if refusal := a.refuseProtectedWrite(agentops.PathFor(root, id)); refusal != nil {
+		return nil, refusal
+	}
 	path, err := agentops.Create(root, id, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
@@ -170,6 +173,9 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 	if !ok {
 		return nil, toolError("not_found", fmt.Sprintf("agent %q not found in any discovery layer", id))
 	}
+	if refusal := a.refuseProtectedWrite(la.Path); refusal != nil {
+		return nil, refusal
+	}
 	updated, err := agentops.Update(la.Path, agentops.Params{
 		Name:         str(args, "name"),
 		Roles:        csvArgPresent(args, "roles"),
@@ -188,9 +194,49 @@ func (a *Adapter) handleAgentEdit(_ context.Context, args map[string]any) (any, 
 	}), nil
 }
 
-// codeCatalogReadOnly is the tool error code for a write into a layer the
-// agent's sandbox makes read-only.
+// codeCatalogReadOnly is the tool error code for a write into a directory
+// Tether protects from the agent it launched.
 const codeCatalogReadOnly = "catalog_read_only"
+
+// catalogReadOnlyMessage is what an agent is told, whichever way the write was
+// stopped.
+const catalogReadOnlyMessage = "the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo"
+
+// SetProtectedPaths sets the directories this adapter refuses to write: the
+// protected directories the launch registered for the agent. It resolves each
+// to its real path, so a symlink into one does not get around it.
+func (a *Adapter) SetProtectedPaths(paths []string) {
+	a.protected = a.protected[:0]
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" {
+			a.protected = append(a.protected, config.RealPath(config.Expand(p)))
+		}
+	}
+}
+
+// ProtectedPaths returns the directories this adapter refuses to write, as
+// real paths.
+func (a *Adapter) ProtectedPaths() []string { return append([]string(nil), a.protected...) }
+
+// refuseProtectedWrite is the ONE guard every native tool that writes a file
+// into the catalog tree goes through, today mux_agent_create and mux_agent_edit
+// (the audit of internal/mcpadapter found no other native tool that writes
+// there: the rest read the catalog, or write to the database or the daemon). It
+// returns a typed catalog_read_only error when target, resolved through
+// symlinks, lies in a protected directory, and nil otherwise. A tool that
+// writes under the catalog root must call it before writing.
+func (a *Adapter) refuseProtectedWrite(target string) *budget.ToolError {
+	if len(a.protected) == 0 {
+		return nil
+	}
+	resolved := config.RealPath(target)
+	for _, dir := range a.protected {
+		if config.PathWithin(dir, resolved) {
+			return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
+		}
+	}
+	return nil
+}
 
 // agentWriteError turns a failed agent-file write into a tool error. A
 // read-only file system is not a defect: Tether write-protects the catalog for
@@ -198,8 +244,7 @@ const codeCatalogReadOnly = "catalog_read_only"
 // that says what to do instead of a raw EROFS.
 func agentWriteError(err error) *budget.ToolError {
 	if errors.Is(err, syscall.EROFS) {
-		return toolError(codeCatalogReadOnly,
-			"the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo")
+		return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
 	}
 	return toolError("internal_error", err.Error())
 }

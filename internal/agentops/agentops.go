@@ -61,6 +61,13 @@ func ValidID(id string) bool {
 	return filepath.Base(id) == id && !strings.ContainsAny(id, `/\`)
 }
 
+// PathFor is where Create writes the agent id under layerRoot:
+// <layerRoot>/agents/<id>.yaml. A caller that must decide whether a write is
+// allowed asks for the path first.
+func PathFor(layerRoot, id string) string {
+	return filepath.Join(layerRoot, "agents", id+".yaml")
+}
+
 // Create writes a brand-new agent file at <layerRoot>/agents/<id>.yaml. It
 // returns an error if a file already exists there — callers must edit via
 // Update instead of clobbering. Returns the written path.
@@ -68,7 +75,7 @@ func Create(layerRoot, id string, p Params) (string, error) {
 	if !ValidID(id) {
 		return "", fmt.Errorf("invalid agent id %q: must be a single name with no path separators", id)
 	}
-	path := filepath.Join(layerRoot, "agents", id+".yaml")
+	path := PathFor(layerRoot, id)
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("%w at %s", ErrExists, path)
 	} else if !os.IsNotExist(err) {

@@ -76,8 +76,23 @@ wraps Codex like any other agent unless all of this holds:
   `model_reasoning_effort`, `model_reasoning_summary`, `approval_policy` and a
   `sandbox_mode` of `workspace-write` or `read-only`. Any other flag, attached
   short forms included, is unrecognised.
-- **Environment.** No `CODEX_*` variable except `CODEX_HOME`, and `CODEX_HOME` is
-  the session's own boot dir.
+- **Environment.** **None from a caller or an agent definition at all.** Variables
+  such as `PATH` (a fake `bwrap` swaps Codex's read-only root for a writable one),
+  `TMPDIR` (a relative one resolves against Codex's cwd; one above `CODEX_HOME`
+  lets the agent plant its own `config.toml`) and `LD_PRELOAD` each keep an
+  exemption and defeat the sandbox, so an environment cannot be judged variable by
+  variable. The plan records which keys came from `override.env` or from any
+  `provider_overrides.env` in the effective agent (an agent definition in a user or
+  project layer is a file an agent can write, so none counts as the operator's);
+  the operator's own catalog launch env does not count. Also no `CODEX_*` variable
+  except `CODEX_HOME`, which is the session's own boot dir, and no relative
+  `TMPDIR` anywhere.
+- **MCP upstreams.** Codex spawns MCP servers itself, outside its sandbox, so
+  every MCP child of an exempted Codex agent runs unsandboxed (see below). The
+  planted allow-list must not name `nanite` (`dev_bash`, `dev_write`) or
+  `cerberus`, which hand the agent an unsandboxed shell or infrastructure control
+  by design. With the default allow-list (`torque`, `tesseract`) that is
+  acceptable.
 - **Injection and `CODEX_HOME`.** No `boot_dir_overlay`, and no native file outside
   `skills/`. The `config.toml` in `CODEX_HOME` has only the shape Tether plants
   (`approval_policy`, a `sandbox_mode` of `workspace-write` or `read-only`,
@@ -104,8 +119,11 @@ create `.codex/config.toml`, write into an existing `.codex/`, or symlink it awa
 sharing the project directory, a `git checkout` or an operator can. So before each
 turn on an exempted session, whichever way it is delivered (`SendTurn`,
 `SendInput`, the app-server `turn/start`, the wake sweep, the HTTP and MCP routes),
-Tether looks again for a project `.codex/config.toml` in the work directories and
-re-checks the `CODEX_HOME` `config.toml`. If one has appeared, the turn is refused
+Tether looks again for a project `.codex/config.toml` in the work directories,
+re-checks the `CODEX_HOME` `config.toml`, and re-resolves each work directory, so a
+project root that is a symlink retargeted since the launch (to a directory holding a
+project config, or one that now contains the catalog) is judged by where it points
+now. If one has appeared, the turn is refused
 with 403 `forbidden`, naming the file; remove it, or relaunch the session so Tether
 wraps the agent instead. A running session cannot be re-wrapped, so refusing is
 the fail-closed choice. This **narrows** a window and does not close it: the file
@@ -123,7 +141,22 @@ the key to the allowlist in `codexConfigUnsafe` (`internal/app/protected_sandbox
 once it is known not to widen the sandbox. Where Tether's sandbox cannot start either, as on a
 host that cannot nest bubblewrap, the launch fails loudly: the fail-closed
 outcome. A Codex launch whose work directory, project root, workspace or state
-database lies inside a protected directory is refused like any other.
+database lies inside a protected directory is refused like any other. Paths are
+resolved through symlinks, including the existing prefix of one that does not
+exist yet, so `link-to-the-catalog/new` is judged as the catalog.
+
+**Every MCP child of an exempted Codex agent runs outside its sandbox.** Codex
+spawns the MCP servers it is configured with, and Tether does not wrap an exempted
+Codex. The planted `mux` proxy therefore runs unsandboxed, and so does every
+upstream it starts. That is why the catalog refusal below is a policy of the
+planted server and not an effect of a read-only mount, and why an allow-list that
+names `nanite` or `cerberus` wraps the agent. The real fix is upstreams that run
+daemon-side (CW-20261001-0230).
+
+**Known limit: the spec launch engine.** With `TETHER_LAUNCH_ENGINE=spec` (off by
+default) argv, environment and injection come from files under
+`~/.tether/launch-specs/`, which an agent can write, and the guard inspects only
+`plan.Args`. Do not enable it for agents left to Codex's own sandbox.
 
 ### Refusals
 
@@ -163,10 +196,22 @@ change of its own. Until then an agent can still write it directly.
 Planted workers keep the `catalog.write` MCP scope: it also gates
 `mux_agent_create` with `scope=project`, which writes into the repo and is not
 protected, and it is not a boundary anyway (a worker can start its own
-`mux mcp --scopes`). A `mux_agent_create` or `mux_agent_edit` that writes into the
-protected catalog fails with a typed `catalog_read_only` error telling the agent to
-ask the operator, instead of a raw read-only-filesystem error. An operator creates
-and edits agents with `mux agents` or by editing the files.
+`mux mcp --scopes`).
+
+**The catalog refusal is a policy, for every runtime.** The planted `mux mcp` is
+started with `--protect-path` for each directory Tether protects from the agent
+(the catalog root and the run directory), from the same decision that registers
+the agent's protected paths. `mux_agent_create` and `mux_agent_edit` go through one
+guard, which resolves the target through symlinks and refuses one under a protected
+directory with a typed `catalog_read_only` error telling the agent to ask the
+operator, whether or not a sandbox also makes it read-only. That matters because a
+read-only mount only exists inside Tether's sandbox: Codex spawns MCP servers
+itself, outside it, and a Codex agent calling `mux_agent_create scope=system`
+wrote `<catalog>/agents/x.yaml` before this guard. Those two are the only native
+tools that write a file into the catalog tree (audited); the rest read it, or write
+the database or the daemon. An operator creates and edits agents with
+`mux agents` or by editing the files. The unprotected `scope=project` and
+`scope=user` still work (the user layer is CW-20261001-0192).
 
 ### macOS, status and the off switch
 

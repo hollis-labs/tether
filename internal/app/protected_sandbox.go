@@ -262,6 +262,12 @@ func codexPlanUnsafe(plan *launch.Plan) string {
 	if flag, bad := codexUnrecognisedArg(plan.Args); bad {
 		return fmt.Sprintf("the launch passes %s, which is not known to leave codex's sandbox intact", flag)
 	}
+	if len(plan.CallerEnv) > 0 {
+		return "the launch carries environment variables from a caller or an agent definition (" + strings.Join(plan.CallerEnv, ", ") + "), and variables such as PATH, TMPDIR and LD_PRELOAD defeat codex's sandbox"
+	}
+	if id := unsandboxedUpstream(plan); id != "" {
+		return "the planted MCP allow-list names " + id + ", whose tools run outside codex's sandbox and give the agent an unsandboxed shell by design"
+	}
 	if len(plan.BootDirOverlay) > 0 {
 		return "the launch injects boot_dir_overlay files, which can write codex's config.toml"
 	}
@@ -365,6 +371,13 @@ func codexEnvUnsafe(env []string, workspaceDir string) string {
 			home = v
 		case strings.HasPrefix(k, "CODEX_"):
 			return "the environment sets " + k
+		}
+	}
+	// codex resolves a relative TMPDIR against its working directory, so the
+	// directory it makes writable is one this check cannot name.
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "TMPDIR="); ok && v != "" && !filepath.IsAbs(v) {
+			return "TMPDIR is relative, so the directory codex makes writable is not one Tether can check"
 		}
 	}
 	if home == "" || workspaceDir == "" {
@@ -547,19 +560,50 @@ func codexConfigUnsafe(path string) string {
 // can plant a .codex/config.toml (or change CODEX_HOME/config.toml) between
 // turns, and codex exec reads it afresh each turn.
 type codexExemption struct {
-	workDirs []string // the launch's work directories, where codex looks for .codex/config.toml
-	home     string   // CODEX_HOME, whose config.toml codex reads
+	workDirs  []string // the launch's work directories, where codex looks for .codex/config.toml
+	home      string   // CODEX_HOME, whose config.toml codex reads
+	protected []string // the directories Tether protects, which no work directory may contain
 }
 
-// widened returns why the exemption no longer holds, or "".
+// widened returns why the exemption no longer holds, or "". It resolves every
+// path afresh, so a work root that is a symlink retargeted since the launch is
+// judged by where it points now.
 func (e *codexExemption) widened() string {
 	for _, d := range e.workDirs {
+		resolved := realPathOrClean(d)
+		for _, p := range e.protected {
+			if pathWithin(resolved, p) || pathWithin(p, resolved) {
+				return fmt.Sprintf("the work directory %s now resolves to %s, which overlaps the protected directory %s", d, resolved, p)
+			}
+		}
 		if why := codexProjectConfigPresent(d); why != "" {
 			return why
 		}
 	}
 	if e.home != "" {
 		return codexConfigUnsafe(filepath.Join(e.home, "config.toml"))
+	}
+	return ""
+}
+
+// unsandboxedUpstreams are the MCP upstreams whose tools, run by the planted
+// proxy (a child of codex, which spawns MCP servers itself, outside its
+// sandbox), give the agent a shell or infrastructure control by design:
+// nanite (dev_bash, dev_write) and cerberus. Every MCP child of an exempted
+// codex agent runs outside its sandbox; with the default allow-list (torque,
+// tesseract) that is acceptable, with these it is not. The real fix is daemon-
+// side upstreams (CW-20261001-0230).
+var unsandboxedUpstreams = []string{"nanite", "cerberus"}
+
+// unsandboxedUpstream returns the first of unsandboxedUpstreams that the
+// launch's effective MCP allow-list names, or "".
+func unsandboxedUpstream(plan *launch.Plan) string {
+	for _, id := range launch.EffectiveMCPServers(plan.Env) {
+		for _, bad := range unsandboxedUpstreams {
+			if strings.EqualFold(id, bad) {
+				return bad
+			}
+		}
 	}
 	return ""
 }

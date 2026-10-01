@@ -1282,12 +1282,16 @@ Edit an existing agent profile. Only fields present in the call are changed.
 | `system_prompt` | string | — | New system prompt (optional). |
 
 **Read-only catalog.** Tether write-protects its catalog and run directory for the
-agents it launches ([control-plane protection](sandboxing.md#control-plane-protection-every-launch)).
-From inside such an agent, `mux_agent_create` or `mux_agent_edit` that writes into
-the protected catalog (a `system`-scope create, or an edit of a catalog agent)
-returns the typed error `catalog_read_only`, telling the agent to ask the operator
-(`mux agents create` / `edit`) or to use `scope=project`, which writes into the
-repo. It is not a raw read-only-filesystem error.
+agents it launches ([control-plane protection](sandboxing.md#control-plane-protection-every-launch)),
+and starts the `mux mcp` it plants with `--protect-path <dir>` for each. From inside
+such an agent, `mux_agent_create` or `mux_agent_edit` that would write under one
+(a `system`-scope create, an edit of a catalog agent, or a path that reaches it
+through a symlink) returns the typed error `catalog_read_only`, telling the agent to
+ask the operator (`mux agents create` / `edit`) or to use `scope=project`, which
+writes into the repo. This is a policy of the server, enforced for every runtime
+whether or not a sandbox also makes the directory read-only, and it is not a raw
+read-only-filesystem error. `--protect-path` is repeatable and is set only on a
+launched agent's server, never on `mux boot` or your own `mux mcp`.
 
 ---
 

@@ -69,6 +69,7 @@ var (
 	mcpOnly        string
 	mcpConfine     bool
 	mcpDaemonOnly  bool
+	mcpProtect     []string
 )
 
 func init() {
@@ -82,6 +83,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "curated proxy mode: expose only these comma-separated upstream server IDs as native tools; suppress Tether mux_* and discovery/call tools")
 	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / MUX_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, mux_call included; the rest of the catalog is invisible. Set automatically in a launched worker's .mcp.json")
 	mcpCmd.Flags().BoolVar(&mcpDaemonOnly, "daemon-only", false, "never open the state database: read and write Tether state only through the running daemon, and refuse to start without one (set in a launched worker's .mcp.json)")
+	mcpCmd.Flags().StringArrayVar(&mcpProtect, "protect-path", nil, "a directory this server must not write (repeatable): mux_agent_create and mux_agent_edit refuse a target under it with catalog_read_only, whether or not a sandbox also makes it read-only. Set automatically in a launched worker's .mcp.json, from the same decision that protects the agent's catalog and run directory")
 	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
@@ -169,6 +171,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 // configureMCPAdapter applies the flags every `mux mcp` mode shares.
 func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
 	adapter.SessionID = mcpSession
+	// Wired here, where both the in-process and the daemon-only server pass,
+	// so the refusal cannot be a control that quietly does nothing on one.
+	adapter.SetProtectedPaths(mcpProtect)
 	adapter.SetBuildMetadata(version, commit, buildDate)
 	if mcpExtractRefs {
 		if listenAddr == "" {

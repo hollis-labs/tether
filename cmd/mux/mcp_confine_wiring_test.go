@@ -141,3 +141,51 @@ func TestProxyOptionsFor_CarriesEverySwitchThatDecidesReach(t *testing.T) {
 		t.Fatalf("proxyOptionsFor dropped a switch: %+v", got)
 	}
 }
+
+// The planted server is told what to protect with --protect-path, in the mode
+// every launched agent takes (--daemon-only) and in the operator's in-process
+// one. A switch wired into one path only is a control that quietly does
+// nothing on the other (CW-20261001-0227 was exactly that), so this drives the
+// real command entry in both modes and reads the adapter it serves
+// (CW-20261001-0142).
+func TestRunMCP_ProtectPathReachesTheAdapterInBothModes(t *testing.T) {
+	catalog := stubDaemon(t)
+	old := catalogPath
+	catalogPath = catalog
+	t.Cleanup(func() { catalogPath = old })
+	protected := t.TempDir()
+
+	for _, tc := range []struct {
+		name       string
+		daemonOnly bool
+	}{
+		{"daemon-only, as a launched agent's", true},
+		{"in-process, as the operator's", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setMCPFlags(t, true, tc.daemonOnly, true, "torque")
+			oldProtect := mcpProtect
+			t.Cleanup(func() { mcpProtect = oldProtect })
+			mcpProtect = []string{protected}
+
+			var served *mcpadapter.Adapter
+			oldRun := runProxy
+			t.Cleanup(func() { runProxy = oldRun })
+			runProxy = func(_ context.Context, a *mcpadapter.Adapter, _ string, _ mcpadapter.ProxyOptions) error {
+				served = a
+				return nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			cmd := &cobra.Command{}
+			cmd.SetContext(ctx)
+			if err := runMCP(cmd, nil); err != nil {
+				t.Fatalf("runMCP: %v", err)
+			}
+			want, _ := filepath.EvalSymlinks(protected)
+			if got := served.ProtectedPaths(); !reflect.DeepEqual(got, []string{want}) {
+				t.Fatalf("the served adapter protects %q, want [%q]: --protect-path is ignored on this path", got, want)
+			}
+		})
+	}
+}

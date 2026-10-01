@@ -243,6 +243,24 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 // the session id and workspace.
 func startFakeCodex(t *testing.T, svc *Service, script string, args ...string) (string, *workspace.Session) {
 	t.Helper()
+	return startFakeCodexWith(t, svc, script, nil, args...)
+}
+
+// startFakeCodexWith is startFakeCodex with a hook to shape the launch plan
+// first (caller environment, a repo root that is a symlink, an MCP allow-list).
+func startFakeCodexWith(t *testing.T, svc *Service, script string, mod func(*launch.Plan), args ...string) (string, *workspace.Session) {
+	t.Helper()
+	sessID, ws, err := launchFakeCodex(t, svc, script, mod, args...)
+	if err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	return sessID, ws
+}
+
+// launchFakeCodex launches the stand-in and returns LaunchSession's error
+// rather than failing the test, for a test that expects a refusal.
+func launchFakeCodex(t *testing.T, svc *Service, script string, mod func(*launch.Plan), args ...string) (string, *workspace.Session, error) {
+	t.Helper()
 	fake := filepath.Join(t.TempDir(), "codex")
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil { //nolint:gosec // test stand-in must be executable
 		t.Fatal(err)
@@ -267,6 +285,9 @@ func startFakeCodex(t *testing.T, svc *Service, script string, args ...string) (
 		Command:        fake,
 		Args:           args,
 	}
+	if mod != nil {
+		mod(plan)
+	}
 	ws, err := workspace.Create(plan.WriteHome, sessID, plan)
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -286,10 +307,10 @@ func startFakeCodex(t *testing.T, svc *Service, script string, args ...string) (
 	svc.Manager = agentsessions.NewManager(stateSinkAdapter{db: db})
 	svc.factories = map[string]RuntimeFactory{"codex-cli": factory}
 	if _, err := svc.LaunchSession(sessID); err != nil {
-		t.Fatalf("LaunchSession: %v", err)
+		return sessID, ws, err
 	}
 	t.Cleanup(func() { _ = svc.Manager.Stop(context.Background(), sessID) })
-	return sessID, ws
+	return sessID, ws, nil
 }
 
 // CW-20261001-0142 acceptance, end to end through LaunchSession and
@@ -464,6 +485,8 @@ func TestApplyControlPlaneProtection_RefusesProjectRootInsideProtectedDir(t *tes
 		{"claude work root in run", &launch.Plan{ProviderBrand: "claude"}, func(p *launch.Plan, d string) { p.WorkRoot = d }, filepath.Join(run, "w")},
 		{"codex repo root in catalog", codexPlan(), func(p *launch.Plan, d string) { p.RepoRoot = d }, filepath.Join(catalog, "repo")},
 		{"codex work root in catalog", codexPlan(), func(p *launch.Plan, d string) { p.WorkRoot = d }, filepath.Join(catalog, "w")},
+		{"claude repo root through a symlink into the catalog, to a path that does not exist yet", &launch.Plan{ProviderBrand: "claude"}, func(p *launch.Plan, d string) { p.RepoRoot = d }, filepath.Join(symlinkInto(t, catalog), "newsub")},
+		{"codex work root through a symlink into the catalog, to a path that does not exist yet", codexPlan(), func(p *launch.Plan, d string) { p.WorkRoot = d }, filepath.Join(symlinkInto(t, catalog), "newsub")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.set(tc.plan, tc.dir)
@@ -899,4 +922,14 @@ func TestComputeProtectionHealth(t *testing.T) {
 			t.Errorf("%s: probed the host: %+v", name, h)
 		}
 	}
+}
+
+// symlinkInto returns a new symlink, in its own temp dir, to dir.
+func symlinkInto(t *testing.T, dir string) string {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
 }

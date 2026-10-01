@@ -269,24 +269,13 @@ func realDir(path string) (string, error) {
 	return resolved, nil
 }
 
-// realPathOrClean resolves path through symlinks when it exists and
-// otherwise returns it cleaned, so a containment check compares like with
-// like.
-func realPathOrClean(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
-}
+// realPathOrClean resolves path through symlinks, the existing prefix of a
+// path that does not exist yet included (config.RealPath), so a containment
+// check compares like with like.
+func realPathOrClean(path string) string { return config.RealPath(path) }
 
 // pathWithin reports whether path is dir or lies beneath it.
-func pathWithin(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
+func pathWithin(dir, path string) bool { return config.PathWithin(dir, path) }
 
 func containsPath(paths []string, path string) bool {
 	for _, p := range paths {
@@ -305,12 +294,12 @@ func (s *Service) codexExemptionFor(plan *launch.Plan, kind string, opts *agents
 	if plan == nil || plan.ProviderBrand != "codex" {
 		return nil
 	}
-	if _, outer, err := s.protectionPlan(plan, kind, opts, false); err != nil || outer {
+	dirs, outer, err := s.protectionPlan(plan, kind, opts, false)
+	if err != nil || outer {
 		return nil
 	}
-	dirs := launchDirs(plan, opts)
-	ex := &codexExemption{home: codexHomeFromEnv(opts.Env)}
-	for _, d := range dirs {
+	ex := &codexExemption{home: codexHomeFromEnv(opts.Env), protected: dirs}
+	for _, d := range launchDirs(plan, opts) {
 		if d.what != "workspace" {
 			ex.workDirs = append(ex.workDirs, d.path)
 		}
@@ -341,4 +330,15 @@ func (s *Service) refuseWidenedCodex(sessionID string) error {
 	}
 	log.Printf("app: refusing a turn on session %s: %s", sessionID, why)
 	return fmt.Errorf("%w: %s; remove it, or relaunch the session so Tether wraps the agent instead of relying on codex's own sandbox", launch.ErrCodexSandboxWidened, why)
+}
+
+// mcpProtectedPaths are the directories the planted `mux mcp` must refuse to
+// write: the ones protection registers for the agent, or none while
+// protection is off. An agent that is not protected (the kill switch, darwin)
+// gets no protect-path either, so the server behaves as it did.
+func (s *Service) mcpProtectedPaths() ([]string, error) {
+	if !s.protectsControlPlane() {
+		return nil, nil
+	}
+	return s.controlPlaneDirs()
 }
