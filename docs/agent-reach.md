@@ -52,7 +52,7 @@ page is the inventory.
 | CW-20261001-0227 (#88) | A launched Claude agent loads only the MCP servers Tether plants (`--strict-mcp-config`), and every launched agent's `mux` proxy is confined (`--confine`) to an allow-list of upstreams, in the daemon-only proxy as well as the in-process one | merged |
 | CW-20261001-0229 (#90) | An MCP-server catalog entry can take a credential from a 0600 file (`file://`) instead of carrying it in the YAML or on a command line | merged |
 | CW-20261001-0142 (#87) | On Linux, the catalog root and the daemon's run directory are read-only for every agent Tether wraps, under `bwrap`; ACP launches are refused while it is on. **Codex is not wrapped and not protected**, and is flagged as such. The planted `mux mcp` refuses `mux_agent_create` and `mux_agent_edit` writes under the catalog and run directory for every runtime, Codex included | open (head 7a9c0c4) |
-| CW-20261001-0173, second PR | The state directory joins the read-only set for the agents Tether wraps. Lands after #87, never before it | not yet opened |
+| CW-20261001-0173, second PR | The state directory joins the read-only set for the agents Tether wraps. Lands after #87, never before it | open, draft (#93), stacked on #87's branch |
 
 ## The matrix
 
