@@ -1640,3 +1640,38 @@ answer.
 - [`docs/dev-setup.md`](dev-setup.md) — catalog schema and dev workflow
 - `go-tether-client` — Go client library for external consumers (`github.com/hollis-labs/go-tether-client`)
 - `examples/catalog/boot-profiles/` — example boot-profile YAMLs
+
+## Codex proxy write protection
+
+With control-plane protection enabled on Linux, Tether plants Codex's local
+MCP proxy under a protect-only sandbox. Its stdio upstreams and descendants
+inherit read-only catalog, run and state directories. Reads, networking, and
+writes elsewhere remain available. Claude and OpenCode keep their existing
+agent sandbox; this change does not add a second sandbox around their proxies.
+If the protected directories cannot be resolved or the wrapper cannot be
+constructed, the launch fails; if the OS cannot start the wrapper, the proxy
+cannot start. There is no unconfined fallback.
+
+HTTP/SSE upstreams cannot inherit those mounts. The protected Codex proxy skips
+them by default, logs `cannot be confined locally`, and reports `status:
+excluded` plus the reason through its upstream status/health tools. Other
+upstreams still start. An operator can deliberately re-enable a remote upstream
+in its catalog YAML:
+
+```yaml
+id: tangent
+transport: http
+url: http://127.0.0.1:8080/mcp
+allow_unconfined_remote: true
+```
+
+`allow_unconfined_remote` defaults to false and affects protected Codex proxies
+only. Opting in trusts the remote server's tools with host-side effects outside
+the local sandbox, including possible writes to the control plane; it is logged
+at startup. It does not expand the session's upstream grant list.
+
+This protects the planted local process tree, not every Codex configuration or
+host service. Codex remains reported as not protected: its dormant per-turn
+config guard and caller identity are still pending (CW-20261001-0230 and
+CW-20260930-0253). A tampered/replaced MCP configuration or a host service
+performing writes on a tool's behalf remains outside this fix.
