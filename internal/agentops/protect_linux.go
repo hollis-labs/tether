@@ -176,6 +176,11 @@ func createFileGuarded(path string, body []byte, protected []string) error {
 	fd, err := openat(dfd, filepath.Base(path), syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		if errors.Is(err, syscall.EEXIST) {
+			// Only to choose the message: a name that is a symlink (dangling or
+			// not) is refused as one, and any other is an agent that exists.
+			if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("%w: %s", ErrSymlinkedFile, path)
+			}
 			return fmt.Errorf("%w at %s", ErrExists, path)
 		}
 		return &fs.PathError{Op: "open", Path: path, Err: err}
@@ -231,7 +236,7 @@ func updateFileGuarded(path string, p Params, protected []string) (launchprofile
 
 func symlinkAware(path string, err error) error {
 	if errors.Is(err, syscall.ELOOP) {
-		return fmt.Errorf("%s is a symlink, and a write that must stay out of the protected directories does not follow one: %w", path, err)
+		return fmt.Errorf("%w: %s", ErrSymlinkedFile, path)
 	}
 	return &fs.PathError{Op: "open", Path: path, Err: err}
 }

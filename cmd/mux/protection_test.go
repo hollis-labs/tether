@@ -39,8 +39,8 @@ func TestLogControlPlaneProtection(t *testing.T) {
 			if len(lines) != 1 || !strings.HasPrefix(lines[0], tc.want) || strings.HasPrefix(lines[0], "WARN") != tc.warn {
 				t.Fatalf("logged %q; want one line starting %q", lines, tc.want)
 			}
-			if tc.name == "on but unusable" && !strings.Contains(lines[0], "except Codex") {
-				t.Fatalf("unusable warning does not say Codex still runs: %q", lines[0])
+			if tc.name == "on but unusable" && !strings.Contains(lines[0], "Codex launches are not affected") {
+				t.Fatalf("unusable warning does not say Codex launches are unaffected: %q", lines[0])
 			}
 		})
 	}
@@ -48,7 +48,7 @@ func TestLogControlPlaneProtection(t *testing.T) {
 
 // mux doctor reports what the daemon says, since the daemon's environment
 // decides protection. It warns when protection is off, and fails when it is on
-// but bubblewrap cannot build a namespace, since every launch except Codex's
+// but bubblewrap cannot build a namespace, since every launch Tether wraps (not Codex's)
 // is then refused. Without a daemon it says its answer is its own shell's.
 func TestCheckSandboxProtect(t *testing.T) {
 	for _, tc := range []struct {
@@ -59,13 +59,16 @@ func TestCheckSandboxProtect(t *testing.T) {
 		message    string
 	}{
 		{"on", healthFor("linux", nil, nil), true, statusOK, "cannot write the catalog or run/"},
-		{"on, unusable", healthFor("linux", nil, fmt.Errorf("bwrap: No permissions to create a new namespace")), true, statusFail, "No permissions to create a new namespace"},
+		{"on, unusable", healthFor("linux", nil, fmt.Errorf("bwrap: No permissions to create a new namespace")), true, statusFail, "Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected"},
 		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "false"}, nil), true, statusWarn, "DISABLED by TETHER_SANDBOX_PROTECT=false"},
 		{"darwin", healthFor("darwin", nil, nil), true, statusWarn, "CW-20261001-0138"},
 		{"no daemon", healthFor("linux", nil, nil), false, statusOK, "this shell's environment"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := checkSandboxProtect(sandboxProtectHealth(tc.health), tc.fromDaemon)
+			if tc.name == "on, unusable" && !strings.Contains(r.Message, "No permissions to create a new namespace") {
+				t.Fatalf("the failure does not carry bwrap's error: %q", r.Message)
+			}
 			if r.Name != "sandbox-protect" || r.Status != tc.want || !strings.Contains(r.Message, tc.message) {
 				t.Fatalf("check = %+v; want %s with a message containing %q", r, tc.want, tc.message)
 			}

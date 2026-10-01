@@ -344,9 +344,20 @@ func (s *Service) refuseWidenedCodex(sessionID string) error {
 // write: the ones protection registers for the agent, or none while
 // protection is off. An agent that is not protected (the kill switch, darwin)
 // gets no protect-path either, so the server behaves as it did.
-func (s *Service) mcpProtectedPaths() ([]string, error) {
+//
+// Codex while it ships as not protected (codexProtectionMode) launches as it did
+// on main, so failing to name the directories must not fail its launch: it gets a
+// WARN and no --protect-path, which only means the planted server does not refuse
+// catalog writes for that one launch. Every other runtime fails, as it does when
+// the directories cannot be named for its ProtectedPaths.
+func (s *Service) mcpProtectedPaths(plan *launch.Plan) ([]string, error) {
 	if !s.protectsControlPlane() {
 		return nil, nil
 	}
-	return s.controlPlaneDirs()
+	dirs, err := s.controlPlaneDirs()
+	if err != nil && plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
+		log.Printf("app: WARN launch %s: %v; codex is not protected (CW-20261001-0230), so its planted mux server gets no --protect-path for this launch and will not refuse catalog writes", plan.LaunchID, err)
+		return nil, nil
+	}
+	return dirs, err
 }

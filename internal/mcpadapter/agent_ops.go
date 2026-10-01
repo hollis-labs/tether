@@ -202,6 +202,14 @@ const codeCatalogReadOnly = "catalog_read_only"
 // stopped.
 const catalogReadOnlyMessage = "the catalog is read-only to agents launched by Tether; ask the operator to create or edit this agent (mux agents create/edit), or use scope=project to write it into the repo"
 
+// codeAgentFileIsSymlink is the tool error code for an agent file whose own name
+// is a symlink, which a launched agent's write does not follow while Tether
+// protects its catalog.
+const codeAgentFileIsSymlink = "agent_file_is_symlink"
+
+// agentFileIsSymlinkMessage says what to do instead.
+const agentFileIsSymlinkMessage = "the agent file is a symlink, and a launched agent's write does not follow one while Tether protects its catalog; edit the link's target, or replace the link with a regular file"
+
 // SetProtectedPaths sets the directories this adapter refuses to write: the
 // protected directories the launch registered for the agent. It resolves each
 // to its real path, so a symlink into one does not get around it.
@@ -253,6 +261,9 @@ func (a *Adapter) refuseProtectedWrite(target string) *budget.ToolError {
 func agentWriteError(err error) *budget.ToolError {
 	if errors.Is(err, syscall.EROFS) || errors.Is(err, agentops.ErrProtected) {
 		return toolError(codeCatalogReadOnly, catalogReadOnlyMessage)
+	}
+	if errors.Is(err, agentops.ErrSymlinkedFile) {
+		return toolError(codeAgentFileIsSymlink, agentFileIsSymlinkMessage)
 	}
 	return toolError("internal_error", err.Error())
 }

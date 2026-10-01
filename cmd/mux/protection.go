@@ -33,13 +33,13 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 // operator's TETHER_SANDBOX_PROTECT=0 or because the platform is not yet
 // covered, is logged as a warning so it is never silent. So is protection
 // that is on but cannot work, because bubblewrap is missing or cannot build a
-// namespace: every launch Tether must sandbox is then refused.
+// namespace: every launch Tether must sandbox (not Codex's) is then refused.
 func logControlPlaneProtection(logf func(string, ...any), h app.ProtectionHealth) {
 	switch {
 	case !h.Enabled:
 		logf("WARN: control-plane protection %s", h.Reason)
 	case h.BwrapChecked && !h.BwrapUsable:
-		logf("WARN: control-plane protection is on but unusable: %s. Launches of every agent except Codex, which has its own sandbox, will be refused until bubblewrap works, or %s=0 is set in this daemon's environment to run agents unprotected", h.BwrapError, app.ProtectEnv)
+		logf("WARN: control-plane protection is on but unusable: %s. Launches of Claude, OpenCode and every agent Tether wraps will be refused until bubblewrap works, or %s=0 is set in this daemon's environment to run agents unprotected; Codex launches are not affected", h.BwrapError, app.ProtectEnv)
 	default:
 		logf("control-plane protection %s", h.Reason)
 	}
@@ -99,7 +99,7 @@ func checkSandboxProtect(h *daemon.SandboxProtectHealth, fromDaemon bool) checkR
 	case !h.Enabled:
 		return warn(name, fmt.Sprintf("%s (%s)", h.Reason, source), "")
 	case h.BwrapChecked && !h.BwrapUsable:
-		return fail(name, fmt.Sprintf("on, but bubblewrap cannot build the sandbox, so every launch except Codex's is refused (%s): %s", source, h.BwrapError),
+		return fail(name, fmt.Sprintf("on, but bubblewrap cannot build the sandbox, so Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected (%s): %s", source, h.BwrapError),
 			fmt.Sprintf("install bubblewrap and allow unprivileged user namespaces, or set %s=0 in muxd's environment to run agents unprotected", app.ProtectEnv))
 	}
 	return ok(name, fmt.Sprintf("%s (%s)", h.Reason, source))

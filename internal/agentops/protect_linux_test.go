@@ -126,14 +126,21 @@ func TestGuarded_NeverWritesThroughAFinalSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := CreateGuarded(root, "linked", Params{Name: "X"}, []string{catalog}); !errors.Is(err, ErrExists) {
-		t.Fatalf("create over a symlink = %v; want ErrExists", err)
+	if _, err := CreateGuarded(root, "linked", Params{Name: "X"}, []string{catalog}); !errors.Is(err, ErrSymlinkedFile) || errors.Is(err, ErrExists) {
+		t.Fatalf("create over a symlink = %v; want ErrSymlinkedFile", err)
 	}
-	if _, err := CreateGuarded(root, "dangling", Params{Name: "X"}, []string{catalog}); !errors.Is(err, ErrExists) {
-		t.Fatalf("create over a dangling symlink = %v; want ErrExists", err)
+	if _, err := CreateGuarded(root, "dangling", Params{Name: "X"}, []string{catalog}); !errors.Is(err, ErrSymlinkedFile) {
+		t.Fatalf("create over a dangling symlink = %v; want ErrSymlinkedFile", err)
 	}
-	if _, err := UpdateGuarded(filepath.Join(root, "agents", "linked.yaml"), Params{Name: "pwned"}, []string{catalog}); err == nil {
-		t.Fatal("update through a symlink succeeded")
+	if _, err := UpdateGuarded(filepath.Join(root, "agents", "linked.yaml"), Params{Name: "pwned"}, []string{catalog}); !errors.Is(err, ErrSymlinkedFile) {
+		t.Fatalf("update through a symlink = %v; want ErrSymlinkedFile", err)
+	}
+	// A regular file that exists is still just an agent that exists.
+	if _, err := Create(root, "regular", Params{Name: "R"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateGuarded(root, "regular", Params{Name: "X"}, []string{catalog}); !errors.Is(err, ErrExists) || errors.Is(err, ErrSymlinkedFile) {
+		t.Fatalf("create over a regular file = %v; want ErrExists", err)
 	}
 	catalogUntouched(t, catalog)
 }

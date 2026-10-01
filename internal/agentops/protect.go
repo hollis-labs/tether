@@ -11,6 +11,12 @@ import (
 // created, in that case.
 var ErrProtected = errors.New("the destination is inside a protected directory")
 
+// ErrSymlinkedFile is returned by CreateGuarded and UpdateGuarded when the agent
+// file's own name is a symlink: where it points is not something a guarded write
+// can judge, so it is not written through. A symlinked directory above the file
+// is followed as it always was.
+var ErrSymlinkedFile = errors.New("the agent file is a symlink")
+
 // CreateGuarded is Create for a caller that must not write into the protected
 // directories (real paths), such as the `mux mcp` Tether plants into a launched
 // agent: the catalog root and the run directory are the operator's, not the

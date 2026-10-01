@@ -337,8 +337,9 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	} else {
 		// The planted server refuses to write what Tether protects from this
 		// agent, whichever runtime spawns it (CW-20261001-0142). Protection that
-		// cannot name those directories fails the launch, as it does below.
-		mcpProtected, err := s.mcpProtectedPaths()
+		// cannot name those directories fails the launch, as it does below, except
+		// for codex while it ships as not protected.
+		mcpProtected, err := s.mcpProtectedPaths(plan)
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)

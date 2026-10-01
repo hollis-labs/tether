@@ -144,6 +144,9 @@ itself. It does not yet cover:
 - **Codex.** Not protected, as above: Codex's own sandbox keeps it out of the
   catalog, and Codex's MCP servers, which run outside that sandbox, do not
   (CW-20261001-0230).
+- **Reads.** The directories are made read-only, not hidden: every agent, wrapped
+  or not, can still read the catalog, including plaintext credentials in catalog
+  YAML (CW-20261001-0263).
 - **The state database.** This change leaves the state directory writable.
   The `mux mcp` server Tether plants in each agent used to open the state
   database from inside the agent's sandbox, which is why; it no longer does
@@ -183,7 +186,8 @@ itself. It does not yet cover:
   project-scope creates with `.tether` flipped between two symlinks, one into the
   catalog, wrote there). A symlinked directory that does not lead into a
   protected one (`.tether`, `agents/`) is followed as before; an agent file that is
-  itself a symlink is not written through while protected paths are in force. The scope is not a boundary: a
+  itself a symlink is not written through while protected paths are in force, and
+  the tool answers with a typed `agent_file_is_symlink` error ("edit the link's target, or replace the link with a regular file"), not an internal error. The scope is not a boundary: a
   worker can start its own `mux mcp --scopes`, which a sandboxed agent finds
   read-only, and which a Codex agent runs under Codex's sandbox only.
 - **The spec launch engine** (`TETHER_LAUNCH_ENGINE=spec`, off by default) takes
@@ -269,10 +273,13 @@ environment and sends trace data to the endpoint you choose.
   those tables directly, but it is not claimed to be safe as a route: other
   routes, such as `POST /broker/envelopes`, also write events with
   caller-supplied fields
-- agents run as the operator's uid. On Linux they cannot write Tether's
-  catalog or run directory themselves, but they can write its state database
-  and call its socket. On macOS nothing stops them writing any of it yet (see
-  "Agents run as your user")
+- agents run as the operator's uid. On Linux, Claude and OpenCode agents (every
+  agent Tether wraps) cannot write Tether's catalog or run directory themselves;
+  Codex is not protected (CW-20261001-0230). Every agent, wrapped or not, can
+  still read the catalog, including plaintext credentials in catalog YAML
+  (CW-20261001-0263), and can write Tether's state database and call its socket.
+  On macOS nothing stops them writing any of it yet (see "Agents run as your
+  user")
 - pre-1.0 contracts and migration guarantees
 
 These are deployment constraints, not hidden roadmap promises. Operate within

@@ -40,7 +40,7 @@ Defined codes:
 | Code                | HTTP | Meaning                                       |
 |---------------------|------|-----------------------------------------------|
 | `invalid_request`   | 400  | malformed body, missing required param        |
-| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory, workspace or state database lies inside a write-protected directory; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-launch)) |
+| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory, workspace or state database lies inside a write-protected directory; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps)) |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
@@ -456,7 +456,7 @@ Response:
 ```
 
 `sandbox_protect` is the daemon's own view of [control-plane
-protection](../sandboxing.md#control-plane-protection-every-launch), decided from
+protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps), decided from
 the daemon's environment, which `mux doctor` reads from here and not from its
 own shell. `enabled` says whether launches are protected; `disabled_by_operator`
 is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the

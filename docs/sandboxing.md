@@ -25,9 +25,10 @@ When the daemon launches a session for that agent:
 
 If the profile is missing or the platform can't enforce it, the launch **fails hard** — there is no silent downgrade.
 
-## Control-plane protection (every launch)
+## Control-plane protection (every agent Tether wraps)
 
-Separately from profiles, on Linux every agent the daemon launches gets two
+Separately from profiles, on Linux every agent Tether wraps, which is every
+agent but Codex (see [Codex is not protected](#codex-is-not-protected)), gets two
 of Tether's own directories as read-only protected paths (CW-20261001-0142):
 
 - the catalog root;
@@ -83,7 +84,11 @@ lands, `GET /health` (`sandbox_protect.codex`), `mux doctor`
 (`sandbox-protect-codex`, a warning) and the daemon's startup log all say
 `codex: not protected (CW-20261001-0230)`. Claude, OpenCode and every other agent
 Tether wraps stay protected, and one guard still holds for Codex: the planted `mux`
-server refuses to write the catalog and run directory (see below).
+server refuses to write the catalog and run directory (see below). The planted
+Codex `config.toml` carries `--protect-path <catalog> --protect-path <run>` on its
+`mux` server's arguments, so the `mux_agent_create`/`mux_agent_edit` refusal applies
+to Codex too (seen live: `catalog_read_only`, nothing written). Otherwise "exactly
+as on `main`" is true for Codex's sandbox and for wrapping.
 
 *History.* Earlier revisions of this change left Codex to its own sandbox under an
 allowlist and reported it as guarded. Three adversarial reviews found it could not
@@ -278,7 +283,8 @@ protected directories'), and create or rewrite the file relative to it with
 relative to it without following a symlink, and each is judged as it is opened. A
 symlinked directory that does not lead into a protected one (`.tether`, `agents/`)
 is followed as before; an agent file that is itself a symlink is not written
-through while protected paths are in force. Off Linux the check is on the resolved path and the race is narrowed,
+through while protected paths are in force, and the tool answers with a typed
+`agent_file_is_symlink` error ("edit the link's target, or replace the link with a regular file"), not an internal error. Off Linux the check is on the resolved path and the race is narrowed,
 not closed; the protection is not applied there yet (CW-20261001-0138). The race
 tests flip the symlink while calling the real tools thousands of times and assert
 nothing lands in the catalog (`internal/agentops`, `internal/mcpadapter`).
@@ -365,7 +371,7 @@ dnf install bubblewrap
 
 If `bwrap` is absent, or cannot build a namespace, every launch Tether must
 sandbox is refused with 403 `forbidden`, because
-[control-plane protection](#control-plane-protection-every-launch) needs it,
+[control-plane protection](#control-plane-protection-every-agent-tether-wraps) needs it,
 unless the operator has turned that off with `TETHER_SANDBOX_PROTECT=0`.
 Codex, which uses its own sandbox, is not refused. Any
 agent with `default_sandbox` set also fails to launch. `bwrap` needs
@@ -386,7 +392,7 @@ Not supported. Agents with a non-empty `default_sandbox` will fail to launch on 
 
 ## Opting out
 
-To run an agent without a sandbox profile, omit `default_sandbox` from the agent's YAML (or set it to `""`). The agent then runs with no profile's restrictions, but still, on Linux, under [control-plane protection](#control-plane-protection-every-launch).
+To run an agent without a sandbox profile, omit `default_sandbox` from the agent's YAML (or set it to `""`). The agent then runs with no profile's restrictions, but still, on Linux, under [control-plane protection](#control-plane-protection-every-agent-tether-wraps).
 
 ## Adding a custom profile
 
