@@ -118,3 +118,8 @@ helper reads through the `security` CLI, which has no such contract, so it
 implements the same decode (`decodeKeyringValue`). Entries written by either
 tool are therefore readable by both. Without it, a go-keyring-written entry
 reads back as the marker string — credential-shaped, and wrong.
+
+`tether doctor` checks catalog-authored `file://` credentials for enabled MCP
+servers before a proxy is started. It uses the spawn-time file checks, reports
+unusable files as failures, and never prints their contents or runs secret
+helpers. Disabled entries are skipped.
