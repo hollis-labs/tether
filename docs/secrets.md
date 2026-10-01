@@ -44,7 +44,8 @@ Tether checks the file before using it, and refuses, naming the file and the
 rule, when:
 
 - the path is relative (use an absolute path or `~/`);
-- it is not a regular file, or is owned by another user;
+- it is not a regular file (a directory, a device or a FIFO is refused before
+  it is opened, so a FIFO cannot hang the load), or is owned by another user;
 - group or others can read it (the mode must be 0600 or tighter; `chmod 600`);
 - the path goes through a symlink whose target is outside the catalog directory
   and your home directory. A symlink that stays inside either is followed;
@@ -52,10 +53,22 @@ rule, when:
 
 Leading and trailing whitespace, such as the newline an editor adds, is
 trimmed. Errors never include the file's contents, and the value is scrubbed
-from an upstream's stderr tail, tool-call error text and launch records the
-same way a keychain value is. A literal value that begins with `file://` in an
-MCP server entry's `args:`, `env:`, `token:` or `url:` is now read as a
-credential file.
+from an upstream's stderr tail, tool-call error text, launch records, and the
+connect errors stored in a server's status and written to the log, the same way
+a keychain value is. A `url:` that came from a reference is scrubbed too, since
+a failed connect names the endpoint it tried.
+
+How a reference is recognised:
+
+- A value is a file reference only if the catalog YAML says `file://…`. A value
+  that merely *becomes* `file://…` through a `${VAR}` stays a literal: a launch's
+  caller can set environment variables, and they must not choose which file the
+  proxy reads.
+- `${VAR}` is not expanded inside a `file://` reference. Write an absolute path
+  or `~/`; a path with `${VAR}` in it is refused as relative.
+- A literal value written as `file://…` in an MCP entry's `args:`, `env:`,
+  `token:` or `url:` is read as a credential file, so one that is not a
+  credential file fails the load. No entry in the live catalog has one.
 
 What this does and does not do:
 
@@ -74,6 +87,10 @@ What this does and does not do:
   outside an agent's reach (CW-20260930-0237, CW-20260930-0253).
 - The file and symlink checks catch a misconfigured or misdirected credential.
   They are not a defense against another process running as you.
+- Only the credential file itself is checked. A parent directory that others can
+  write to is accepted (a 0770 parent passes), and so is a race in which an
+  ancestor directory is swapped for a symlink between the checks and the open;
+  winning that race needs write access to an ancestor directory.
 
 ## Populating a keychain entry
 
