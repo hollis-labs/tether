@@ -40,7 +40,7 @@ require (
 	github.com/hollis-labs/go-llm-types v0.3.0 // indirect
 	github.com/hollis-labs/go-localdaemon v0.1.0 // indirect
 	github.com/hollis-labs/go-materialize v0.1.0 // indirect
-	github.com/hollis-labs/go-mcp v0.7.0 // indirect
+	github.com/hollis-labs/go-mcp v0.14.1 // indirect
 	github.com/hollis-labs/go-otel v0.6.1 // indirect
 	github.com/hollis-labs/go-permission v0.1.0 // indirect
 	github.com/hollis-labs/go-providers v0.34.1 // indirect
