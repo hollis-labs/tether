@@ -23,15 +23,6 @@ func insertEventAt(t *testing.T, s *Store, at time.Time) int64 {
 	return id
 }
 
-func eventCount(t *testing.T, s *Store) int {
-	t.Helper()
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
 // DeleteEventsBefore removes only rows older than the cutoff, oldest first,
 // at most limit per call (CW-20260930-0008).
 func TestDeleteEventsBefore_BoundedAndOldestFirst(t *testing.T) {
