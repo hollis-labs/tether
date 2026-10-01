@@ -78,9 +78,18 @@ func (p profileCapture) Start(ctx context.Context, opts agentsessions.StartOptio
 	return p.Runtime.Start(ctx, opts)
 }
 
+// sandboxLaunch is what launchWithSandbox observed.
+type sandboxLaunch struct {
+	svc     *Service
+	sessID  string
+	err     error
+	started bool
+	profile sandbox.Profile
+}
+
 // launchWithSandbox creates a session for agent-1 and launches it against a
 // catalog whose agent names sandboxName.
-func launchWithSandbox(t *testing.T, sandboxName string) (*Service, string, error, bool, sandbox.Profile) {
+func launchWithSandbox(t *testing.T, sandboxName string) sandboxLaunch {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -126,43 +135,43 @@ func launchWithSandbox(t *testing.T, sandboxName string) (*Service, string, erro
 		_ = mgr.Shutdown(context.Background())
 	})
 	_, err = svc.LaunchSession(sessID)
-	return svc, sessID, err, started, got
+	return sandboxLaunch{svc: svc, sessID: sessID, err: err, started: started, profile: got}
 }
 
 func TestLaunchSession_KnownSandboxProfileApplied(t *testing.T) {
-	_, _, err, started, got := launchWithSandbox(t, "workspace-only")
-	if err != nil {
-		t.Fatalf("LaunchSession: %v", err)
+	l := launchWithSandbox(t, "workspace-only")
+	if l.err != nil {
+		t.Fatalf("LaunchSession: %v", l.err)
 	}
-	if !started || got.ID != "workspace-only" {
-		t.Fatalf("runtime started=%v with profile %q; want workspace-only", started, got.ID)
+	if !l.started || l.profile.ID != "workspace-only" {
+		t.Fatalf("runtime started=%v with profile %q; want workspace-only", l.started, l.profile.ID)
 	}
 }
 
 func TestLaunchSession_EmptySandboxUnchanged(t *testing.T) {
-	_, _, err, started, got := launchWithSandbox(t, "")
-	if err != nil {
-		t.Fatalf("LaunchSession: %v", err)
+	l := launchWithSandbox(t, "")
+	if l.err != nil {
+		t.Fatalf("LaunchSession: %v", l.err)
 	}
-	if !started || got.ID != "" {
-		t.Fatalf("runtime started=%v with profile %q; want no profile", started, got.ID)
+	if !l.started || l.profile.ID != "" {
+		t.Fatalf("runtime started=%v with profile %q; want no profile", l.started, l.profile.ID)
 	}
 }
 
 // A session created while the profile existed, launched after the catalog
 // lost it, is refused and marked failed; the runtime never starts.
 func TestLaunchSession_UnknownSandboxProfileRefused(t *testing.T) {
-	svc, sessID, err, started, _ := launchWithSandbox(t, "no-such-profile")
-	if !errors.Is(err, config.ErrUnknownSandboxProfile) {
-		t.Fatalf("LaunchSession err = %v; want ErrUnknownSandboxProfile", err)
+	l := launchWithSandbox(t, "no-such-profile")
+	if !errors.Is(l.err, config.ErrUnknownSandboxProfile) {
+		t.Fatalf("LaunchSession err = %v; want ErrUnknownSandboxProfile", l.err)
 	}
-	if !strings.Contains(err.Error(), `"no-such-profile"`) {
-		t.Fatalf("error %q does not name the profile", err)
+	if !strings.Contains(l.err.Error(), `"no-such-profile"`) {
+		t.Fatalf("error %q does not name the profile", l.err)
 	}
-	if started {
+	if l.started {
 		t.Fatal("runtime started without its sandbox")
 	}
-	row, gerr := svc.Store.GetSession(sessID)
+	row, gerr := l.svc.Store.GetSession(l.sessID)
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
