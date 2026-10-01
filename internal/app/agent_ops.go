@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -344,6 +345,7 @@ func applyOverride(plan *launch.Plan, composedPrompt, overrideJSON string) (stri
 		}
 		for k, v := range ov.Env {
 			plan.Env[k] = v
+			markCallerEnv(plan, k)
 		}
 	}
 	return composedPrompt, nil
@@ -405,10 +407,23 @@ func applyProviderOverrides(plan *launch.Plan, overrides map[string]config.Provi
 	}
 	for k, v := range po.Env {
 		plan.Env[k] = v
+		// Whoever wrote the agent definition did: a caller, or a file in a layer
+		// an agent can write. Either way it is not the operator's catalog launch.
+		markCallerEnv(plan, k)
 	}
 	if len(po.ExtraArgs) > 0 {
 		plan.Args = append(plan.Args, po.ExtraArgs...)
 	}
+}
+
+// markCallerEnv records that an env key on the plan came from a caller or an
+// agent definition, not the operator's catalog launch (see Plan.CallerEnv).
+func markCallerEnv(plan *launch.Plan, key string) {
+	if key == "" || slices.Contains(plan.CallerEnv, key) {
+		return
+	}
+	plan.CallerEnv = append(plan.CallerEnv, key)
+	slices.Sort(plan.CallerEnv)
 }
 
 // applyMCPAllowlist threads the boot profile's MCP allowlist into MUX_MCP_SERVERS.

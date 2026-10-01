@@ -9,6 +9,8 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-runner/runner"
+
+	"github.com/hollis-labs/tether/internal/launch"
 )
 
 // maxInputBytes caps the per-request body size for POST /sessions/{id}/input
@@ -41,7 +43,7 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request, id stri
 			writeError(w, http.StatusConflict, CodeConflict, "session has no input channel")
 			return
 		}
-		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) {
+		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) || writeSandboxWidened(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -62,6 +64,18 @@ func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	writeError(w, http.StatusConflict, CodeProviderSessionLost, err.Error())
+	return true
+}
+
+// writeSandboxWidened answers a turn Tether refuses on a codex session it left
+// to codex's own sandbox, because that sandbox may have been widened since the
+// launch (launch.ErrCodexSandboxWidened, CW-20261001-0142): 403, like the
+// launch-time refusals. The message names the file and how to recover.
+func writeSandboxWidened(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, launch.ErrCodexSandboxWidened) {
+		return false
+	}
+	writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
 	return true
 }
 
@@ -109,7 +123,7 @@ func (s *Server) handleSendTurn(w http.ResponseWriter, r *http.Request, id strin
 			writeError(w, http.StatusConflict, CodeConflict, err.Error())
 			return
 		}
-		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) {
+		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) || writeSandboxWidened(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

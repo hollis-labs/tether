@@ -1,0 +1,363 @@
+package app
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/hollis-labs/agentkit/agentsessions"
+
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/provider/acp"
+)
+
+// ProtectEnv names the daemon environment variable that turns control-plane
+// protection off: "0" or "false" in muxd's environment. Protection is on by
+// default; turning it off is an operator decision the daemon logs at startup
+// and `mux doctor` reports, never a silent one.
+const ProtectEnv = "TETHER_SANDBOX_PROTECT"
+
+// ProtectionStatus says whether the agents Tether launches get its own
+// directories as ProtectedPaths, and why.
+type ProtectionStatus struct {
+	Enabled bool
+	// DisabledByOperator is set when ProtectEnv turned protection off.
+	DisabledByOperator bool
+	// Reason says what the status means for an agent, for logs and doctor.
+	Reason string
+}
+
+// ControlPlaneProtection decides control-plane protection for an OS and a
+// daemon environment (CW-20261001-0142). It applies on Linux only for now:
+// go-sandbox's seatbelt protection on macOS is unverified on a real Mac
+// (CW-20261001-0138) and fails closed, so darwin launches stay unprotected
+// until that is verified rather than risk refusing every launch there.
+func ControlPlaneProtection(goos string, getenv func(string) string) ProtectionStatus {
+	raw := getenv(ProtectEnv)
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "false":
+		return ProtectionStatus{DisabledByOperator: true, Reason: fmt.Sprintf("DISABLED by %s=%s, so agents can write the catalog and run/", ProtectEnv, raw)}
+	}
+	if goos != "linux" {
+		return ProtectionStatus{Reason: fmt.Sprintf("not applied on %s until go-sandbox's seatbelt protection is verified on a real Mac (CW-20261001-0138), so agents can write the catalog and run/", goos)}
+	}
+	if codexProtectionMode == CodexNotProtected {
+		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
+	}
+	return ProtectionStatus{Enabled: true, Reason: "on: agents Tether wraps cannot write the catalog or run/; Codex is left to its own workspace-write sandbox under Tether's dormant guard, and its MCP servers run outside that sandbox (CW-20261001-0230)"}
+}
+
+// defaultProtectionStatus is the daemon's protection decision, taken from
+// its OS and environment. Only this package's TestMain replaces it, once
+// before any test runs, so unit tests that launch a stand-in CLI do not need
+// bubblewrap; a test of protection sets Service.protectionStatus instead.
+var defaultProtectionStatus = func() ProtectionStatus {
+	return ControlPlaneProtection(runtime.GOOS, os.Getenv)
+}
+
+// bwrapAvailable reports whether this host can build the sandbox protection
+// uses, around dir: bubblewrap on PATH that can create the namespaces. A
+// variable so the refusal can be tested.
+var bwrapAvailable = func(dir string) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	return cachedBwrapProbe(dir)
+}
+
+func (s *Service) protectsControlPlane() bool {
+	if s.protectionStatus != nil {
+		return s.protectionStatus().Enabled
+	}
+	return defaultProtectionStatus().Enabled
+}
+
+// protectionPlan decides what protecting one launch means: the directories
+// to protect, and whether Tether's own sandbox must wrap the agent to do it.
+// A nil error with no directories means the launch needs nothing (protection
+// off, or the in-process API stub). It refuses an ACP runtime, which cannot
+// be protected until CW-20261001-0162: go-agent-wrapper's ACP launcher
+// refuses ProtectedPaths without a resolved sandbox policy, and running the
+// agent unprotected instead would be fail-open.
+//
+// Codex is the one runtime that may not need Tether's sandbox: it runs inside
+// its own workspace-write sandbox, which is bubblewrap too, and bubblewrap
+// cannot nest where unprivileged user namespaces are restricted (AppArmor's
+// kernel.apparmor_restrict_unprivileged_userns=1, the Ubuntu default). Its
+// sandbox makes the whole filesystem read-only except its writable roots,
+// which exclude the protected directories. That holds only while everything
+// that shapes the sandbox is known-safe; see codexOwnsSandbox, an allowlist.
+// opts is nil at session create and resume, where only the plan can be judged.
+func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsessions.StartOptions, announce bool) (dirs []string, outer bool, err error) {
+	if kind == "api" || !s.protectsControlPlane() {
+		return nil, false, nil
+	}
+	if kind == acp.Kind {
+		return nil, false, launch.ErrACPLaunchUnprotected
+	}
+	if plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
+		// The fallback: codex runs as it did before protection existed, with
+		// none of the guard (see codexProtectionMode).
+		return nil, false, nil
+	}
+	dirs, err = s.controlPlaneDirs()
+	if err != nil {
+		return nil, false, err
+	}
+	if plan != nil && plan.ProviderBrand == "codex" {
+		ok, why := codexOwnsSandbox(plan, opts, dirs)
+		if ok {
+			return dirs, false, nil
+		}
+		if announce && opts != nil {
+			// Wrapping codex is the fail-closed outcome, and where the
+			// sandbox cannot nest it fails loudly: say why it is happening.
+			log.Printf("app: codex launch %s is wrapped in Tether's sandbox instead of relying on codex's own: %s", plan.LaunchID, why)
+		}
+	}
+	return dirs, true, nil
+}
+
+// refuseUnprotectable refuses, while protection is on, a launch that could
+// not be protected: an ACP runtime, and any runtime Tether must sandbox on a
+// host where bubblewrap is missing or cannot build a namespace. Session
+// create, resume and launch all call it, so a refused launch fails before it
+// starts, with the reason.
+func (s *Service) refuseUnprotectable(plan *launch.Plan, kind string) error {
+	dirs, outer, err := s.protectionPlan(plan, kind, nil, false)
+	if err != nil || !outer {
+		return err
+	}
+	return protectionUnavailable(dirs)
+}
+
+// protectionUnavailable is nil when this host can sandbox a launch around
+// the first protected directory, and otherwise the refusal.
+func protectionUnavailable(dirs []string) error {
+	if len(dirs) == 0 {
+		return nil
+	}
+	if err := bwrapAvailable(dirs[0]); err != nil {
+		return fmt.Errorf("%w: %w: install bubblewrap and allow unprivileged user namespaces, or set %s=0 in muxd's environment to run agents unprotected", launch.ErrProtectionUnavailable, err, ProtectEnv)
+	}
+	return nil
+}
+
+// applyControlPlaneProtection sets opts.ProtectedPaths to the directories no
+// agent may write: the catalog root, and the daemon's run directory (pid file
+// and control socket) when it lies inside Tether's root. Each is registered
+// by its real path, as go-sandbox requires. A launch whose work directory,
+// workspace or state database lies inside one of them is refused with
+// launch.ErrLaunchInsideProtectedPath: the agent could not work there, and
+// the planted mux MCP server, which runs inside the agent's sandbox, must
+// write the state database. A codex launch is refused the same way even
+// though Tether does not wrap it (see protectionPlan): its own sandbox would
+// let it write its work directory.
+//
+// The state directory is not protected here. The planted `mux mcp` used to
+// open the database from inside the agent's sandbox, which is why; it no
+// longer does (CW-20261001-0173), so the directory can join in its own change.
+//
+// The in-process API stub starts no agent process, so there is nothing to
+// protect it from.
+func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, opts *agentsessions.StartOptions) error {
+	dirs, outer, err := s.protectionPlan(plan, kind, opts, true)
+	if err != nil || len(dirs) == 0 {
+		return err
+	}
+	writable := launchDirs(plan, opts)
+	if s.Catalog != nil {
+		db := config.ResolveStateDB(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths)
+		if db != "" {
+			writable = append(writable, launchDir{"state database directory", filepath.Dir(db)})
+		}
+	}
+	for _, w := range writable {
+		resolved := realPathOrClean(w.path)
+		for _, dir := range dirs {
+			if pathWithin(dir, resolved) {
+				return fmt.Errorf("%w: the agent's %s %s is inside %s, which Tether write-protects for every agent; move it out of that directory", launch.ErrLaunchInsideProtectedPath, w.what, w.path, dir)
+			}
+		}
+	}
+	if !outer {
+		return nil
+	}
+	if err := protectionUnavailable(dirs); err != nil {
+		return err
+	}
+	opts.ProtectedPaths = dirs
+	return nil
+}
+
+// controlPlaneDirs returns the real paths of the directories to protect.
+// The catalog root must resolve: protection that cannot name the catalog
+// fails closed. The run directories (the daemon's pid file and unix socket)
+// are protected when they exist and lie inside a Tether root: the catalog
+// root's parent, or the default ~/.tether, whichever the run directory is
+// in. A pid file configured into a shared directory such as /tmp is skipped:
+// it must not make that directory read-only for every agent.
+func (s *Service) controlPlaneDirs() ([]string, error) {
+	catalogRoot := config.Expand(s.CatalogRoot)
+	if catalogRoot == "" {
+		return nil, errors.New("protect control plane: the catalog root is not set")
+	}
+	catalog, err := realDir(catalogRoot)
+	if err != nil {
+		return nil, fmt.Errorf("protect control plane: catalog root: %w", err)
+	}
+	dirs := []string{catalog}
+	if s.Catalog == nil {
+		return dirs, nil
+	}
+	roots := []string{filepath.Dir(catalog)}
+	if home, err := os.UserHomeDir(); err == nil {
+		if tetherHome, err := realDir(filepath.Join(home, ".tether")); err == nil && !containsPath(roots, tetherHome) {
+			roots = append(roots, tetherHome)
+		}
+	}
+	for _, candidate := range runDirs(s.Catalog.Global.Daemon) {
+		dir, err := realDir(candidate)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("protect control plane: run directory: %w", err)
+		}
+		if containsPath(dirs, dir) || !insideAnyRoot(roots, dir) {
+			continue
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs, nil
+}
+
+// insideAnyRoot reports whether dir lies strictly beneath one of roots.
+func insideAnyRoot(roots []string, dir string) bool {
+	for _, root := range roots {
+		if dir != root && pathWithin(root, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// runDirs names the directories holding the daemon's pid file and, for a
+// unix listen address, its control socket.
+func runDirs(d config.DaemonConfig) []string {
+	var out []string
+	if d.PIDFile != "" {
+		out = append(out, filepath.Dir(config.Expand(d.PIDFile)))
+	}
+	if sock, ok := strings.CutPrefix(d.ListenAddr, "unix:"); ok && sock != "" {
+		out = append(out, filepath.Dir(config.Expand(sock)))
+	}
+	return out
+}
+
+// realDir resolves path through any symlinks and requires a directory.
+func realDir(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", resolved)
+	}
+	return resolved, nil
+}
+
+// realPathOrClean resolves path through symlinks, the existing prefix of a
+// path that does not exist yet included (config.RealPath), so a containment
+// check compares like with like.
+func realPathOrClean(path string) string { return config.RealPath(path) }
+
+// pathWithin reports whether path is dir or lies beneath it.
+func pathWithin(dir, path string) bool { return config.PathWithin(dir, path) }
+
+func containsPath(paths []string, path string) bool {
+	for _, p := range paths {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+// codexExemptionFor returns what to re-check before each turn when a launch is
+// left to codex's own sandbox, and nil when it is not (another provider,
+// protection off, or Tether wraps it). It runs after applyControlPlaneProtection
+// accepted the launch, and re-asks the same question without logging.
+func (s *Service) codexExemptionFor(plan *launch.Plan, kind string, opts *agentsessions.StartOptions) *codexExemption {
+	if plan == nil || plan.ProviderBrand != "codex" || codexProtectionMode != CodexGuarded {
+		return nil
+	}
+	dirs, outer, err := s.protectionPlan(plan, kind, opts, false)
+	if err != nil || outer || len(dirs) == 0 {
+		return nil
+	}
+	ex := &codexExemption{home: codexHomeFromEnv(opts.Env), protected: dirs}
+	for _, d := range launchDirs(plan, opts) {
+		if d.what != "workspace" {
+			ex.workDirs = append(ex.workDirs, d.path)
+		}
+	}
+	return ex
+}
+
+// refuseWidenedCodex refuses a turn on a codex session Tether left to its own
+// sandbox when something that shapes that sandbox has since changed: a project
+// .codex/config.toml in a work directory, or a CODEX_HOME config.toml no longer
+// of the shape Tether planted. Every way a turn is delivered (SendTurn,
+// SendInput, and so the app-server turn/start, the wake sweep and the MCP and
+// HTTP routes) calls it first. A session that was wrapped, or never exempt,
+// is not in the registry and passes.
+//
+// It narrows a window, it does not close it: the file could appear between this
+// check and codex reading its configuration, which takes a co-located writer.
+// What closes it is caller identity (CW-20260930-0253) plus a way to make .codex
+// unwritable to other agents.
+func (s *Service) refuseWidenedCodex(sessionID string) error {
+	v, ok := s.codexExempt.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	why := v.(*codexExemption).widened()
+	if why == "" {
+		return nil
+	}
+	log.Printf("app: refusing a turn on session %s: %s", sessionID, why)
+	return fmt.Errorf("%w: %s; remove it, or relaunch the session so Tether wraps the agent instead of relying on codex's own sandbox", launch.ErrCodexSandboxWidened, why)
+}
+
+// mcpProtectedPaths are the directories the planted `mux mcp` must refuse to
+// write: the ones protection registers for the agent, or none while
+// protection is off. An agent that is not protected (the kill switch, darwin)
+// gets no protect-path either, so the server behaves as it did.
+//
+// Codex while it ships as not protected (codexProtectionMode) launches as it did
+// on main, so failing to name the directories must not fail its launch: it gets a
+// WARN and no --protect-path, which only means the planted server does not refuse
+// catalog writes for that one launch. Every other runtime fails, as it does when
+// the directories cannot be named for its ProtectedPaths.
+func (s *Service) mcpProtectedPaths(plan *launch.Plan) ([]string, error) {
+	if !s.protectsControlPlane() {
+		return nil, nil
+	}
+	dirs, err := s.controlPlaneDirs()
+	if err != nil && plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
+		log.Printf("app: WARN launch %s: %v; codex is not protected (CW-20261001-0230), so its planted mux server gets no --protect-path for this launch and will not refuse catalog writes", plan.LaunchID, err)
+		return nil, nil
+	}
+	return dirs, err
+}

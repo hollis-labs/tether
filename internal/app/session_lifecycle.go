@@ -175,6 +175,9 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 		return nil, err
 	}
 	providerKind := probe.Kind()
+	if err = s.refuseUnprotectable(plan, providerKind); err != nil {
+		return nil, err
+	}
 
 	row := store.SessionRow{
 		ID:             sessID,
@@ -232,6 +235,11 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, fmt.Errorf("build runtime: %w", err)
+	}
+	if err := s.refuseUnprotectable(plan, rt.Kind()); err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, err
 	}
 
 	ws := workspace.Open(row.Workspace, sessionID)
@@ -327,7 +335,17 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 	} else {
-		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs)
+		// The planted server refuses to write what Tether protects from this
+		// agent, whichever runtime spawns it (CW-20261001-0142). Protection that
+		// cannot name those directories fails the launch, as it does below, except
+		// for codex while it ships as not protected.
+		mcpProtected, err := s.mcpProtectedPaths(plan)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+		mcpPlan := MuxMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 			MuxCommand: muxCommandPath(),
 			MuxArgs:    mcpPlan.Args,
@@ -385,6 +403,16 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	// codex_approval.go.
 	startOpts.JsonRpcRequestHook = jsonRPCRequestHook(sessionID)
 
+	// No agent may write Tether's catalog or run directory
+	// (CW-20261001-0142). Applied last, once the work directory and
+	// workspace are final, since a launch inside a protected directory is
+	// refused.
+	if err := s.applyControlPlaneProtection(plan, rt.Kind(), &startOpts); err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, err
+	}
+
 	deferPTYStdinBootPrompt(rt.Caps(), &startOpts)
 
 	// A subprocess runtime writes no session.log and drops stderr unless
@@ -417,6 +445,15 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			_ = procLog.Close()
 		}
 		return nil, err
+	}
+	// A codex session left to codex's own sandbox is re-checked before each
+	// turn: what shapes that sandbox can change after this launch.
+	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {
+		s.codexExempt.Store(sessionID, ex)
+		go func() {
+			_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+			s.codexExempt.Delete(sessionID)
+		}()
 	}
 	if procLog != nil {
 		s.subprocessLogs.Store(sessionID, procLog)

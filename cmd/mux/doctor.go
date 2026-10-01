@@ -140,6 +140,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
 	}
+	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
 
 	// 3. Daemon reachable (requires catalog for listen addr).
 	checks = append(checks, checkDaemon(cat))

@@ -40,7 +40,7 @@ Defined codes:
 | Code                | HTTP | Meaning                                       |
 |---------------------|------|-----------------------------------------------|
 | `invalid_request`   | 400  | malformed body, missing required param        |
-| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient |
+| `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory, workspace or state database lies inside a write-protected directory; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps)) |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
@@ -443,9 +443,33 @@ Response:
   "pid": 12345,
   "uptime_sec": 42,
   "listener": "unix:/Users/me/.tether/run/muxd.sock",
-  "sessions": 2
+  "sessions": 2,
+  "sandbox_protect": {
+    "enabled": true,
+    "reason": "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog or run/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox",
+    "codex": "not protected",
+    "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
+    "bwrap_checked": true,
+    "bwrap_usable": true
+  }
 }
 ```
+
+`sandbox_protect` is the daemon's own view of [control-plane
+protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps), decided from
+the daemon's environment, which `mux doctor` reads from here and not from its
+own shell. `enabled` says whether launches are protected; `disabled_by_operator`
+is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the
+state means for an agent. On Linux with protection on, the daemon probes
+bubblewrap: `bwrap_usable` is false, with `bwrap_error`, when it cannot build the
+sandbox, in which case every launch except Codex's is refused. `codex` is how
+Codex is protected: `not protected` as shipped (Codex runs as it did before
+protection, under its own sandbox, and spawns MCP servers outside it, so an MCP
+tool can reach the catalog; the catalog-writing `mux` tools are still refused for
+it), `guarded` only if the dormant guard is switched on, or `not applicable`
+(protection is off); `codex_reason` says what that means and names
+CW-20261001-0230, the structural reason (Codex spawns MCP servers outside its
+sandbox). An older daemon omits the field.
 
 ---
 

@@ -47,6 +47,14 @@ type Plan struct {
 	// The adapter applies these last, after composing the base environment
 	// per EnvMode. Parent-inherited values are NOT materialized here.
 	Env map[string]string `json:"env"`
+	// CallerEnv names (never the values) the Env keys that came from somewhere
+	// an operator's catalog does not control: a caller's override JSON, or any
+	// provider_overrides env in the effective agent, which may come from an
+	// agent_file, an inline agent, or an agent definition in a user or project
+	// layer that an agent can write (CW-20261001-0142). A launch with any is
+	// not left to codex's own sandbox: variables such as PATH, TMPDIR and
+	// LD_PRELOAD defeat it. Sorted, no duplicates.
+	CallerEnv []string `json:"caller_env,omitempty"`
 	// EnvMode selects the env composition strategy; "merge" (default) or
 	// "whitelist". See internal/provider/env.go for semantics.
 	EnvMode string `json:"env_mode"`

@@ -77,6 +77,9 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if !liveLaunchPresent(catalogRoot, tc.launchID) {
+				t.Skipf("launch %q is not in the live catalog %s (host drift, not a failure)", tc.launchID, catalogRoot)
+			}
 			plan, err := res.Resolve(tc.launchID, agentlaunch.PolicyError)
 			if err != nil {
 				t.Fatalf("Resolve(%s): %v", tc.launchID, err)
