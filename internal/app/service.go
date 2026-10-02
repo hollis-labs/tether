@@ -55,6 +55,7 @@ type Service struct {
 	InterruptDoneTimeout   time.Duration
 	Channels               *channels.Service // constructed before starting any channel publisher
 	turnOutputTimeout      time.Duration     // tests may shorten the default persistence deadline
+	turnOutputStore        turnOutputStore
 	turnRouter             *turnrouting.Router
 	turnFeeds              map[string]turnFeedRegistration
 	outputRetries          outputRetryState

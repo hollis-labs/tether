@@ -177,7 +177,7 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
+	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
 	if err := job.persist(o.service); err != nil {
 		log.Printf("ERROR session %q turn %q: output persistence deferred: %v", o.row.ID, result.TurnID, err)
 		o.route, o.routeUnread = job.route, job.routeUnread
@@ -190,7 +190,14 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 // A successful stage is retained across event retries: publishing must never
 // create a second durable body for the same output. Each SQL/bus operation has
 // its own budget so a slow metadata read cannot spend the staging budget.
+type turnOutputStore interface {
+	GetSessionContext(context.Context, string) (*store.SessionRow, error)
+	SessionRoute(context.Context, string) (*launchprofile.Route, error)
+	StageTurnOutput(context.Context, messaging.Envelope) (messaging.Envelope, error)
+}
+
 type turnOutputWrite struct {
+	storage     turnOutputStore
 	row         store.SessionRow
 	route       *launchprofile.Route
 	routeUnread bool
@@ -199,17 +206,25 @@ type turnOutputWrite struct {
 }
 
 func (w *turnOutputWrite) persist(s *Service) error {
+	storage := w.storage
+	if storage == nil {
+		storage = s.Store
+	}
 	workstream := ""
 	ctx, cancel := s.outputPersistenceContext()
-	current, err := s.Store.GetSessionContext(ctx, w.row.ID)
+	current, err := storage.GetSessionContext(ctx, w.row.ID)
 	cancel()
-	if err != nil {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return err
 	}
-	workstream = current.WorkstreamID.String
+	if err != nil {
+		log.Printf("ERROR session %q: read output workstream: %v", w.row.ID, err)
+	} else {
+		workstream = current.WorkstreamID.String
+	}
 	if w.routeUnread {
 		ctx, cancel = s.outputPersistenceContext()
-		route, routeErr := s.Store.SessionRoute(ctx, w.row.ID)
+		route, routeErr := storage.SessionRoute(ctx, w.row.ID)
 		cancel()
 		if errors.Is(routeErr, context.DeadlineExceeded) || errors.Is(routeErr, context.Canceled) {
 			return routeErr
@@ -229,7 +244,7 @@ func (w *turnOutputWrite) persist(s *Service) error {
 			Text string `json:"text"`
 		}{result.Text})
 		ctx, cancel = s.outputPersistenceContext()
-		env, stageErr := s.Store.StageTurnOutput(ctx, messaging.Envelope{
+		env, stageErr := storage.StageTurnOutput(ctx, messaging.Envelope{
 			From:     messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: w.row.ID},
 			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
 			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
