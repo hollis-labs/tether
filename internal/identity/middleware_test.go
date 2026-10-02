@@ -115,3 +115,30 @@ func TestIdentityValidateBind(t *testing.T) {
 		t.Fatal("invalid mode accepted")
 	}
 }
+
+func TestIdentitySelfObservationAuthenticatesWithoutDuplicateAudit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	verify := verifierFunc(func(_ context.Context, token string) (identity.Principal, error) {
+		if token != "good" {
+			return identity.Principal{}, identity.ErrInvalidToken
+		}
+		return identity.Principal{ID: "session:A", Kind: "session", SessionID: "A"}, nil
+	})
+	for _, route := range []struct{ method, path string }{{http.MethodGet, "/auth/context"}, {http.MethodPost, "/proxy/events"}} {
+		for _, valid := range []bool{true, false} {
+			records := 0
+			carried := false
+			h := identity.Middleware(identity.Observe, verify, func(context.Context, identity.Observation) error { records++; return nil }, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { _, carried = identity.FromContext(r.Context()) }))
+			req := httptest.NewRequest(route.method, route.path, nil)
+			token := "bad"
+			if valid {
+				token = "good"
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			if carried != valid || valid && records != 0 || !valid && records != 1 {
+				t.Fatal("self-observation exemption bypassed authentication or hid invalid credentials")
+			}
+		}
+	}
+}

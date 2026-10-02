@@ -114,7 +114,7 @@ func (a *Adapter) proxyEventQuerier() ProxyEventQuerier {
 	return a.svc.Store
 }
 
-// sessionWorkstreamID is the workstream sessionID is assigned to, or "".
+// sessionWorkstreamID resolves legacy, unverified schema-1 correlation only.
 func (a *Adapter) sessionWorkstreamID(ctx context.Context, sessionID string) (string, error) {
 	if a.readsViaDaemon() {
 		dto, err := a.client.GetSession(ctx, sessionID)
@@ -159,6 +159,7 @@ func (d DaemonProxyEvents) QueryProxyEvents(f store.ProxyEventFilter) ([]store.P
 	for _, e := range dtos {
 		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
 		out = append(out, store.ProxyEvent{
+			Attribution: e.Attribution, ClaimedSessionID: e.ClaimedSessionID,
 			ID: e.ID, SessionID: e.SessionID, Server: e.Server, ToolName: e.ToolName,
 			ArgsSchemaFP: e.ArgsSchemaFP, DurationMs: e.DurationMs, OK: e.OK, Error: e.Error, Timestamp: ts,
 		})
@@ -205,12 +206,13 @@ func (p *DaemonToolCallPublisher) Publish(_ context.Context, e events.Event) err
 		return err
 	}
 	req := api.ProxyEventIngestRequest{
-		SessionID:    tce.SessionID,
-		Server:       tce.Server,
-		ToolName:     tce.ToolName,
-		ArgsSchemaFP: tce.ArgsSchemaFP,
-		DurationMs:   tce.DurationMs,
-		OK:           tce.OK,
+		ClaimedSessionID: tce.ClaimedSessionID,
+		SessionID:        tce.SessionID,
+		Server:           tce.Server,
+		ToolName:         tce.ToolName,
+		ArgsSchemaFP:     tce.ArgsSchemaFP,
+		DurationMs:       tce.DurationMs,
+		OK:               tce.OK,
 		// The daemon refuses a body over its limit whole, and an upstream
 		// error can be far larger than that: send what a record keeps, so a
 		// failing call is not left as a start with no end.

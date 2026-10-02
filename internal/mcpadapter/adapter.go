@@ -44,7 +44,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // Scope constants for mutating tool groups.
@@ -64,13 +66,16 @@ const (
 
 // Adapter exposes the tether runtime as MCP tools over stdio.
 type Adapter struct {
-	runtime   RuntimeObservation // captured from this process, never the installed path
-	upstreams *ClientPool        // set before proxy handlers start
-	svc       *app.Service
-	client    *client.Client // optional; when set, session-mutating tools route through the daemon
-	mcp       *gomcp.Server
-	token     string
-	scopes    map[string]struct{}
+	runtime               RuntimeObservation                          // captured from this process, never the installed path
+	upstreams             interface{ StatusSummary() []ServerStatus } // scoped source for daemon views; legacy pool otherwise
+	svc                   *app.Service
+	client                *client.Client // optional; when set, session-mutating tools route through the daemon
+	mcp                   *gomcp.Server
+	token                 string
+	scopes                map[string]struct{}
+	principal             *identity.Principal // daemon view only; derived from verified middleware
+	callerContextResolver func(context.Context) (callcontext.Snapshot, error)
+	callerContextCache    callerContextCache
 
 	// protected is the set of directories this adapter must not write, as real
 	// paths (SetProtectedPaths). Tether sets it for the `tether mcp` it plants into
@@ -206,7 +211,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	name := t.Name
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
-		ctx = a.withSessionID(ctx)
+		ctx = a.withClaimedSessionID(ctx)
 		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
@@ -309,6 +314,11 @@ func classifyClientErr(err error, id string) *budget.ToolError {
 func (a *Adapter) checkScope(scope string) error {
 	if a.token == "" {
 		return toolError("auth_required", "no token configured; pass --token to enable mutating tools")
+	}
+	if a.principal != nil {
+		if _, all := a.scopes["*"]; all {
+			return nil
+		}
 	}
 	if _, ok := a.scopes[scope]; !ok {
 		return toolError("insufficient_scope", "token missing required scope: "+scope)
@@ -429,8 +439,29 @@ func strSliceArg(args map[string]any, key string) []string {
 // answering "" exactly as it did before -- an absent attribution rather than
 // a wrong one.
 func (a *Adapter) withSessionID(ctx context.Context) context.Context {
+	if a.principal != nil {
+		ctx = a.verifiedCallerContext(ctx)
+		return WithSessionID(ctx, a.principal.SessionID)
+	}
+	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
+	ctx = a.withCallerContext(ctx)
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
+		return WithSessionID(ctx, snapshot.SessionID)
+	}
 	if a.SessionID == "" {
 		return ctx
+	}
+	return WithSessionID(ctx, a.SessionID)
+}
+
+// Native tools that neither forward nor log need no daemon attribution lookup.
+func (a *Adapter) withClaimedSessionID(ctx context.Context) context.Context {
+	if a.principal != nil {
+		return a.withSessionID(ctx)
+	}
+	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
+		return WithSessionID(ctx, snapshot.SessionID)
 	}
 	return WithSessionID(ctx, a.SessionID)
 }

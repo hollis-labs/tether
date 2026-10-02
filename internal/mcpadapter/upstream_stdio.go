@@ -72,6 +72,13 @@ func (r *eofReader) Read(b []byte) (int, error) {
 // itself and exposes no hook to intercept reads for "lost" detection or to
 // attach our own Stderr/WaitDelay configuration.
 func spawnStdioUpstream(entry config.MCPServerEntry, lifetime ...context.Context) (*stdioUpstream, *mcpsdk.IOTransport, error) {
+	return spawnStdioUpstreamConfined(entry, nil, false, lifetime...)
+}
+
+func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string, requireConfinement bool, lifetime ...context.Context) (*stdioUpstream, *mcpsdk.IOTransport, error) {
+	if requireConfinement && len(protected) == 0 {
+		return nil, nil, fmt.Errorf("daemon MCP upstream confinement requires protected roots")
+	}
 	if entry.Command == "" {
 		return nil, nil, fmt.Errorf("stdio transport requires command")
 	}
@@ -103,6 +110,12 @@ func spawnStdioUpstream(entry config.MCPServerEntry, lifetime ...context.Context
 	u.stderr.Secrets = stderrRedactionValues(entry)
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
+	}
+	if requireConfinement {
+		u.cmd.Env = daemonUpstreamEnvironment(os.Environ(), entry.Env)
+		if err := confineDaemonUpstream(u.cmd, protected); err != nil {
+			return nil, nil, err
+		}
 	}
 	u.cmd.Stderr = &u.stderr
 	// Bound waiting for inherited stderr pipes after the process itself exits.

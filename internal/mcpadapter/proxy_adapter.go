@@ -193,8 +193,9 @@ type ProxyOptions struct {
 
 	// ModeInputs are resolved once before any upstream starts. The profile
 	// tier is a typed hook; selecting/filtering profiles belongs to CW-0008.
-	ModeInputs mcpgateway.ModeInputs
-	Profile    mcpgateway.ProfileSelection
+	ModeInputs        mcpgateway.ModeInputs
+	Profile           mcpgateway.ProfileSelection
+	AuthorityProfiles []mcpgateway.ProfileSelection // daemon-only immutable launch floors
 	// ServerFilter is a strict upstream restriction in both discovery modes.
 	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
@@ -375,6 +376,11 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		mws = append(mws, NewLoggingMiddleware(opts.Bus).RedactWith(proxyRedactionSet(entries)))
 	case opts.Publisher != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(entries)))
+	}
+	for _, mw := range mws {
+		if logging, ok := mw.(*LoggingMiddleware); ok {
+			logging.contextDecorator = a.withSessionID
+		}
 	}
 	if opts.Bus != nil && opts.EventStore != nil {
 		opts.EventStore.Subscribe(ctx, opts.Bus)

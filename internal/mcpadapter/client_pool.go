@@ -79,6 +79,8 @@ func (e *RefreshAllError) Error() string {
 type ClientPool struct {
 	confineRemote      bool
 	probe              bool
+	protectedPaths     []string // daemon pools wrap every stdio child; legacy proxies inherit their wrapper
+	requireConfinement bool
 	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
@@ -241,15 +243,23 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		if err != nil && !first {
 			var collision *mcpgateway.CollisionError
 			if errors.As(err, &collision) {
+				p.catalogMu.Lock()
 				p.mu.Lock()
+				handler := p.toolRefreshHandler
+				var rebound *ToolRefreshResult
 				if s.accepted {
 					p.registry.RebindServer(entry.ID, client)
 					s.state = "connected"
 					s.degraded = true
 					s.err = err
 					err = nil
+					rebound = &ToolRefreshResult{ServerID: entry.ID, ToolCount: s.toolCount}
 				}
 				p.mu.Unlock()
+				if rebound != nil && handler != nil {
+					handler(*rebound)
+				}
+				p.catalogMu.Unlock()
 			}
 		}
 		if err != nil {
@@ -390,7 +400,7 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 	if s := p.statuses[id]; s != nil && s.client == client && s.state != "reconnecting" && !s.exhausted {
 		// Scrub before the error is stored (ServerStatus.Error) or logged: an
 		// endpoint in the text may be a secret.
-		err = redactUpstreamError(err, s.entry)
+		err = p.redactError(err, s.entry)
 		if p.probe {
 			err = &redactedError{text: redactProbeText(probeRedactor([]config.MCPServerEntry{s.entry}), err.Error()), err: err}
 		}
@@ -433,7 +443,7 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		if p.probe {
 			lifetime = []context.Context{ctx}
 		}
-		u, upTransport, err := spawnStdioUpstream(entry, lifetime...)
+		u, upTransport, err := spawnStdioUpstreamConfined(entry, p.protectedPaths, p.requireConfinement, lifetime...)
 		if err != nil {
 			return nil, err
 		}
@@ -638,7 +648,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 			ss.RestartLimit = p.policy.Limit()
 		}
 		if s.err != nil {
-			ss.Error = s.err.Error()
+			ss.Error = p.redactError(s.err, s.entry).Error()
 		}
 		if !s.nextRetry.IsZero() {
 			next := s.nextRetry
@@ -678,7 +688,7 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 			p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
 		}
 		// The caller (tether_catalog_refresh, a sysop probe) shows this text.
-		return ToolRefreshResult{}, redactUpstreamError(err, entry)
+		return ToolRefreshResult{}, p.redactError(err, entry)
 	}
 	return p.publish(ctx, id, client, result.Tools, true)
 }

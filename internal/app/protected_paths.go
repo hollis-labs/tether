@@ -220,7 +220,10 @@ func (s *Service) controlPlaneDirs() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("protect control plane: catalog root: %w", err)
 	}
-	dirs := []string{catalog}
+	dirs, err := config.CatalogProtectionDirs(catalog, s.Catalog)
+	if err != nil {
+		return nil, err
+	}
 	if s.Catalog == nil {
 		return dirs, nil
 	}

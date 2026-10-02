@@ -1001,7 +1001,8 @@ daemon:
 ```
 
 This is daemon-wide app configuration, not the project/user onboarding settings
-cascade. The same window applies to all three event histories and credential audit; inserts no longer
+cascade. The same window applies to all three event histories, credential audit
+and terminal A2A tasks; inserts no longer
 evict proxy or AI records at 2,000 rows. Query limits still bound response size.
 `tether doctor` and `tether settings` (also `--json`) show the effective catalog
 value. They report catalog configuration, which the daemon applies on restart,
@@ -1013,11 +1014,12 @@ does not open the state database.
 | `events` | Shared age window, default 90 days | Session/daemon/broker replay history |
 | `proxy_events` | Shared age window, default 90 days | Durable tool-call history; no row-count eviction |
 | `ai_events` | Shared age window, default 90 days | AI summaries and usage; usage totals cover retained history only |
-| `a2a_tasks` | Indefinite; outside automatic sweep | Durable peer task lookup and repair; no automatic expiry contract |
-| `broker_envelopes` | Indefinite; outside automatic sweep | Delivery obligations and correlation history must survive event expiry |
+| `a2a_tasks` | Shared age window since last update, default 90 days; terminal states only | Completed, failed, canceled and rejected tasks expire; submitted, working, input-required, auth-required and unknown states are preserved regardless of age. Expired tasks are no longer available through peer task lookup |
+| `broker_envelopes` | Indefinite, including bodies; permanently outside the messages purge and automatic sweep | No broker-specific safe-purge contract; delivery obligations and request/reply correlation history must survive expiry |
 | `session_refs` | Indefinite; outside automatic sweep | Provenance pointers; dangling refs after session deletion are retained (FK cascades are not enforced) |
 | `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
 | `messages` | Indefinite structural rows; explicit manual body purge only | `/messages/retention/candidates` and `/messages/{id}/purge` preserve pending/repairable obligations; this knob does not purge bodies |
+| `message_purge_audit` | Indefinite; outside automatic sweep | Atomic manual body-purge receipts: table, message ID, self-asserted `authorized_by` URN and timestamp; no body copy |
 | `retention_audit` | Indefinite; outside automatic sweep | Durable sweep receipts, independent of expiring event history |
 | `principals` | Indefinite; outside automatic sweep | Identity and revocation history; no automatic credential/principal deletion |
 | `identity_audit` | Same `daemon.events_retention` window (default 90 days) | Credential-bearing request receipts; purge is audited, queue overflow/failure counters are in health/doctor |
@@ -1036,6 +1038,17 @@ or error. This is the integration hook for future post-sweep consumers; it does
 not contain deleted bodies or provide an archive-before-delete guarantee.
 Replay is unaffected for a `since_seq` inside the window. Resuming from an older
 event returns retained events after it, without the deleted gap.
+
+Manual `POST /messages/{id}/purge` requires `authorized_by` (a valid,
+self-asserted URN). Every actual content removal writes a durable
+`message_purge_audit` row in the same transaction; a failed receipt write leaves
+payload and metadata intact. Already-purged retries return `purged: false`
+without another receipt. Receipts remain queryable by `message_id` even after
+structural message deletion and are independent of the shared age window.
+Pending, leased, dead-lettered and group-fanout obligations remain protected.
+Legacy `broker_envelopes` has no purge path and is permanently outside this
+messages-only mechanism; a separate broker policy would require its own safe
+completion contract.
 
 ### `GET /events`
 
@@ -1129,7 +1142,21 @@ Response (200):
 
 `next_cursor` is emitted only when the page filled the limit.
 
+### `GET /auth/context`
+
+`GET /auth/context` returns secret-free session attribution derived only from
+the middleware-verified principal and daemon session/binding state. It ignores
+query/body/header session selectors. A missing principal, non-session principal,
+or missing session returns an unverified context. It grants no authorization.
+See [trusted session context](../trusted-session-context.md) for the wire fields
+and provenance/forwarded-metadata contract.
+
 ### `GET /proxy/events`
+
+Rows include an `attribution` object and an optional `claimed_session_id`.
+`attribution.verified` describes a credential-derived session context;
+legacy/anonymous top-level session IDs remain claims. See the
+[trusted session context contract](../trusted-session-context.md).
 
 Tool calls the MCP proxy has recorded, newest first. 404 when the daemon has no
 proxy-event store.
@@ -1169,9 +1196,10 @@ Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
 The daemon stamps the time of every record itself and ignores `timestamp`, so
 a record cannot be back-dated. The caller of a published record is the
 `tether mcp --daemon-only` server Tether plants in an agent, which cannot write
-the daemon's state. Its other fields are the caller's assertion: a session that
-exists is accepted whoever names it, until `tetherd` verifies who is calling
-(CW-20260930-0253).
+the daemon's state. Identity fields are recomputed from the verified principal;
+`claimed_session_id` records a bounded unverified claim and client-supplied
+`attribution` is ignored. Anonymous/off calls retain their legacy session claim
+with `attribution.verified: false`; other call details remain caller assertions.
 
 ---
 

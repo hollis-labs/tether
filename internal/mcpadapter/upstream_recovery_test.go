@@ -47,6 +47,12 @@ func TestUpstreamFixture(t *testing.T) {
 		_ = f.Close()
 	}
 	appendEvent("start")
+	callIdentity := strconv.Itoa(os.Getpid())
+	if os.Getenv("TETHER_UPSTREAM_CALL_INSTANCE") == "1" {
+		// A confined child can have the same namespace-local PID after a
+		// restart. Tests that compare boots need a per-process identity.
+		callIdentity = strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
 	if os.Getenv("TETHER_UPSTREAM_RECORD_TOKEN") == "1" {
 		if err := os.WriteFile(filepath.Join(dir, name+".token"), []byte(os.Getenv("TETHER_TOKEN")), 0600); err != nil {
 			os.Exit(93)
@@ -136,7 +142,7 @@ func TestUpstreamFixture(t *testing.T) {
 				appendEvent("side_effect")
 				select {}
 			}
-			result = map[string]any{"content": []map[string]any{{"type": "text", "text": strconv.Itoa(os.Getpid())}}}
+			result = map[string]any{"content": []map[string]any{{"type": "text", "text": callIdentity}}}
 		default:
 			result = map[string]any{}
 		}

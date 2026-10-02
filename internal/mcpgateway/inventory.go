@@ -336,7 +336,7 @@ func (s *Service) Status(name string) Status {
 	}
 	unavailable, ids := availability(snapshot)
 	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name}
-	if s.Policy != nil && s.Policy.Selection.Profile != nil {
+	if s.Policy != nil && (s.Policy.Selection.Profile != nil || len(s.Policy.Floors) > 0) {
 		visible := map[string]Entry{}
 		for _, entry := range snapshot.Entries {
 			visible[entry.Tool.Name] = entry
@@ -384,6 +384,9 @@ func (s *Service) Status(name string) Status {
 		}
 	}
 	for _, origin := range snapshot.Origins {
+		if origin.Degraded {
+			out.Complete = false
+		}
 		out.CatalogedTools += origin.ToolCount
 	}
 	for _, entry := range snapshot.Entries {
