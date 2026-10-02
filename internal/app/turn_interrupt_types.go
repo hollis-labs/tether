@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 )
@@ -10,18 +12,22 @@ import (
 // reducer output. ACP may use a runtime output ID distinct from the stable
 // Tether submission ID.
 type TurnInterruptResult struct {
-	TurnID       string `json:"turn_id"`
-	OutputTurnID string `json:"output_turn_id"`
+	TurnID       string          `json:"turn_id"`
+	OutputTurnID string          `json:"output_turn_id"`
+	OutputKind   turnoutput.Kind `json:"output_kind"`
+	StopReason   string          `json:"stop_reason"`
 }
 
 // TurnInterruptRefusalReason is a machine-readable refusal to interrupt.
 type TurnInterruptRefusalReason string
 
 const (
-	TurnInterruptUnsupported TurnInterruptRefusalReason = "unsupported"
-	TurnInterruptNoTurn      TurnInterruptRefusalReason = "no_turn_in_progress"
-	TurnInterruptNotStarted  TurnInterruptRefusalReason = "turn_not_yet_started"
-	TurnInterruptSuperseded  TurnInterruptRefusalReason = "turn_superseded"
+	TurnInterruptUnsupported  TurnInterruptRefusalReason = "unsupported"
+	TurnInterruptNoTurn       TurnInterruptRefusalReason = "no_turn_in_progress"
+	TurnInterruptNotStarted   TurnInterruptRefusalReason = "turn_not_yet_started"
+	TurnInterruptSuperseded   TurnInterruptRefusalReason = "turn_superseded"
+	TurnInterruptSessionEnded TurnInterruptRefusalReason = "session_ended"
+	TurnInterruptTimeout      TurnInterruptRefusalReason = "interrupt_timeout"
 )
 
 // TurnInterruptRefusal means cancellation could not safely target the intended
@@ -42,6 +48,12 @@ func (e *TurnInterruptRefusal) Error() string {
 func (e *TurnInterruptRefusal) Unwrap() error {
 	if e.Reason == TurnInterruptUnsupported {
 		return agentsessions.ErrInterruptUnsupported
+	}
+	if e.Reason == TurnInterruptSessionEnded {
+		return agentsessions.ErrSessionNotRunning
+	}
+	if e.Reason == TurnInterruptTimeout {
+		return context.DeadlineExceeded
 	}
 	return nil
 }

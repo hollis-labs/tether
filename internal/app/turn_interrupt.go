@@ -27,6 +27,24 @@ func (s *Service) RoutingInterruptWired(providerID string) bool {
 // Runtime acknowledgement alone is insufficient: completion must belong to
 // the captured marker. Call from a caller goroutine, never a runtime callback.
 func (s *Service) CancelTurnAndWait(ctx context.Context, sessionID, actor string) (result TurnInterruptResult, err error) {
+	defer func() {
+		outcome := "completed"
+		if err != nil {
+			outcome = "error"
+			var refusal *TurnInterruptRefusal
+			if errors.As(err, &refusal) {
+				outcome = string(refusal.Reason)
+			}
+		}
+		payload := events.TurnInterruptEvent{Actor: actor, SessionID: sessionID, TurnID: result.TurnID,
+			OutputTurnID: result.OutputTurnID, OutputKind: string(result.OutputKind), StopReason: result.StopReason, Result: outcome}
+		if err != nil {
+			payload.Error = err.Error()
+		}
+		if auditErr := s.auditTurnInterrupt(events.KindSessionTurnInterruptCompleted, payload); auditErr != nil {
+			err = errors.Join(err, fmt.Errorf("audit turn interruption result: %w", auditErr))
+		}
+	}()
 	if strings.TrimSpace(actor) == "" {
 		return result, errors.New("turn interruption requires a caller identity")
 	}
@@ -40,24 +58,6 @@ func (s *Service) CancelTurnAndWait(ctx context.Context, sessionID, actor string
 	if ok {
 		result.TurnID, _ = state.CurrentTurn()
 	}
-	defer func() {
-		outcome := "completed"
-		if err != nil {
-			outcome = "error"
-			var refusal *TurnInterruptRefusal
-			if errors.As(err, &refusal) {
-				outcome = string(refusal.Reason)
-			}
-		}
-		payload := events.TurnInterruptEvent{Actor: actor, SessionID: sessionID, TurnID: result.TurnID,
-			OutputTurnID: result.OutputTurnID, Result: outcome}
-		if err != nil {
-			payload.Error = err.Error()
-		}
-		if auditErr := s.auditTurnInterrupt(events.KindSessionTurnInterruptCompleted, payload); auditErr != nil {
-			err = errors.Join(err, fmt.Errorf("audit turn interruption result: %w", auditErr))
-		}
-	}()
 	if !ok || result.TurnID == "" {
 		return result, &TurnInterruptRefusal{Reason: TurnInterruptNoTurn, SessionID: sessionID}
 	}
@@ -73,8 +73,22 @@ func (s *Service) cancelTurnAndWait(ctx context.Context, sessionID, actor string
 func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, actor string, state TurnOutputState, intended string, clock interruptClock) (TurnInterruptResult, error) {
 	result := TurnInterruptResult{TurnID: intended}
 	var done <-chan struct{}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := s.auditTurnInterrupt(events.KindSessionTurnInterruptRequested, events.TurnInterruptEvent{
+		Actor: actor, SessionID: sessionID, TurnID: intended, Result: "requested",
+	}); err != nil {
+		return result, fmt.Errorf("audit turn interruption request: %w", err)
+	}
+
 	err := func() error {
-		unlock := state.LockSubmission()
+		cancelCtx, cancel := context.WithTimeout(ctx, s.interruptCancelTimeout())
+		defer cancel()
+		unlock, err := state.LockSubmissionContext(cancelCtx)
+		if err != nil {
+			return s.interruptWaitError(ctx, err, sessionID, intended)
+		}
 		defer unlock()
 		if err := ctx.Err(); err != nil {
 			return err
@@ -99,11 +113,6 @@ func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, act
 			return &TurnInterruptRefusal{Reason: TurnInterruptNotStarted, SessionID: sessionID, TurnID: intended}
 		}
 		done = ch
-		if err := s.auditTurnInterrupt(events.KindSessionTurnInterruptRequested, events.TurnInterruptEvent{
-			Actor: actor, SessionID: sessionID, TurnID: intended, Result: "requested",
-		}); err != nil {
-			return fmt.Errorf("audit turn interruption request: %w", err)
-		}
 		deadline := clock.Now().Add(2 * time.Second)
 		for {
 			if err := ctx.Err(); err != nil {
@@ -116,35 +125,59 @@ func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, act
 			if current != intended {
 				return &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
 			}
-			err := s.Manager.InterruptTurn(ctx, sessionID)
+			err := s.interruptRuntimeCall(cancelCtx, sessionID)
 			if errors.Is(err, agentsessions.ErrInterruptUnsupported) {
 				return &TurnInterruptRefusal{Reason: TurnInterruptUnsupported, SessionID: sessionID, TurnID: intended}
 			}
 			if !errors.Is(err, agentsessions.ErrTurnNotStarted) {
-				return err
+				if err != nil {
+					return s.interruptWaitError(ctx, err, sessionID, intended)
+				}
+				current, _ = state.CurrentTurn()
+				if current != "" && current != intended {
+					return &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
+				}
+				return nil
 			}
 			remaining := deadline.Sub(clock.Now())
 			if remaining <= 0 {
 				return &TurnInterruptRefusal{Reason: TurnInterruptNotStarted, SessionID: sessionID, TurnID: intended}
 			}
-			if err := clock.Wait(ctx, min(10*time.Millisecond, remaining)); err != nil {
-				return err
+			if err := clock.Wait(cancelCtx, min(10*time.Millisecond, remaining)); err != nil {
+				if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+					return &TurnInterruptRefusal{Reason: TurnInterruptNotStarted, SessionID: sessionID, TurnID: intended}
+				}
+				return s.interruptWaitError(ctx, err, sessionID, intended)
 			}
 		}
 	}()
 	if err != nil {
 		return result, err
 	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, s.interruptDoneTimeout())
+	defer waitCancel()
 	select {
 	case <-done:
-		id, matched := state.CompletedTurn(intended)
+		completion, matched := state.CompletedTurnDetails(intended)
 		if !matched {
 			return result, &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
 		}
-		result.OutputTurnID = id
+		if completion.Superseded {
+			return result, &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
+		}
+		result.OutputTurnID = completion.OutputTurnID
+		result.OutputKind = completion.OutputKind
+		result.StopReason = completion.StopReason
+		if completion.SessionEnded {
+			return result, &TurnInterruptRefusal{Reason: TurnInterruptSessionEnded, SessionID: sessionID, TurnID: intended}
+		}
+		current, _ := state.CurrentTurn()
+		if current != "" && current != intended {
+			return result, &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
+		}
 		return result, nil
-	case <-ctx.Done():
-		return result, ctx.Err()
+	case <-waitCtx.Done():
+		return result, s.interruptWaitError(ctx, waitCtx.Err(), sessionID, intended)
 	}
 }
 
@@ -162,4 +195,26 @@ func (s *Service) auditTurnInterrupt(kind string, payload events.TurnInterruptEv
 		return err
 	}
 	return errors.New("turn interruption audit storage is unavailable")
+}
+
+func (s *Service) interruptCancelTimeout() time.Duration {
+	if s.InterruptCancelTimeout > 0 {
+		return s.InterruptCancelTimeout
+	}
+	return 2 * time.Second
+}
+func (s *Service) interruptDoneTimeout() time.Duration {
+	if s.InterruptDoneTimeout > 0 {
+		return s.InterruptDoneTimeout
+	}
+	return 30 * time.Second
+}
+func (*Service) interruptWaitError(caller context.Context, err error, sessionID, turnID string) error {
+	if caller.Err() != nil {
+		return caller.Err()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &TurnInterruptRefusal{Reason: TurnInterruptTimeout, SessionID: sessionID, TurnID: turnID}
+	}
+	return err
 }
