@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -173,5 +174,41 @@ func TestSettings_ValidationErrors(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /settings/onboarding status = %d, want 405", rec.Code)
+	}
+}
+
+func TestSettingsMCPPersistenceValidationAndClear(t *testing.T) {
+	svc, h := newSettingsServer(t)
+	for _, body := range []string{`{"discovery_mode":""}`, `{"discovery_mode":"directory"}`} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/settings/mcp", strings.NewReader(body)))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid mode %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	for _, body := range []string{`{"discovery_mode":"search"}`, `{}`} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/settings/mcp", strings.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("put: %d %s", w.Code, w.Body.String())
+		}
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/settings/mcp", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: %d", w.Code)
+		}
+		var out settings.MCPSettings
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if body == `{}` && out.DiscoveryMode != nil {
+			t.Fatal("omission did not clear persisted fallback")
+		}
+		if body != `{}` && (out.DiscoveryMode == nil || *out.DiscoveryMode != "search") {
+			t.Fatalf("mode not persisted %+v", out)
+		}
+	}
+	if err := svc.SetSetting(context.Background(), settings.Setting{Scope: settings.ScopeGlobal, Key: settings.KeyMCPDiscoveryMode, ValueJSON: `"bad"`}); err == nil {
+		t.Fatal("generic persistence bypassed mode validation")
 	}
 }

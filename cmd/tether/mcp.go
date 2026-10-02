@@ -19,6 +19,7 @@ import (
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 var mcpCmd = &cobra.Command{
@@ -59,17 +60,17 @@ Example MCP client config (mcp.json):
 }
 
 var (
-	mcpExtractRefs bool
-	mcpSession     string
-	mcpToken       string
-	mcpScopes      string
-	mcpProxy       bool
-	mcpBroker      bool
-	mcpServers     string
-	mcpOnly        string
-	mcpConfine     bool
-	mcpDaemonOnly  bool
-	mcpProtect     []string
+	mcpExtractRefs   bool
+	mcpSession       string
+	mcpToken         string
+	mcpScopes        string
+	mcpProxy         bool
+	mcpDiscoveryMode string
+	mcpServers       string
+	mcpOnly          string
+	mcpConfine       bool
+	mcpDaemonOnly    bool
+	mcpProtect       []string
 )
 
 func init() {
@@ -77,14 +78,13 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpSession, "session", "", "Tether session id this proxy serves; attributes proxied tool calls to it (set automatically in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: TETHER_MCP_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
+	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
-	mcpCmd.Flags().BoolVar(&mcpBroker, "broker", false, "enable broker mode (requires --proxy): register tether_tool_search+tether_tool_call instead of all upstream tools; reduces per-request context size")
-	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs to surface as native tools (env: TETHER_MCP_SERVERS); empty = all servers when --proxy is set")
-	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "curated proxy mode: expose only these comma-separated upstream server IDs as native tools; suppress Tether tether_* and discovery/call tools")
-	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / TETHER_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, tether_tool_call included; the rest of the catalog is invisible. Set automatically in a launched worker's .mcp.json")
+	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs permitted in every discovery mode (env: TETHER_MCP_SERVERS); omitted = all enabled upstreams")
+	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "restrict to these upstream server IDs and omit native Tether targets; gateway status/discovery infrastructure follows the selected mode")
+	mcpCmd.Flags().BoolVar(&mcpConfine, "confine", false, "confine the proxy to the --servers / TETHER_MCP_SERVERS list (requires --proxy): only those upstreams are loaded, started and reachable, tether_tool_call included; every --servers list now restricts loading and reachability; an omitted list with --confine selects none. Set automatically in a launched worker's .mcp.json")
 	mcpCmd.Flags().BoolVar(&mcpDaemonOnly, "daemon-only", false, "never open the state database: read and write Tether state only through the running daemon, and refuse to start without one (set in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringArrayVar(&mcpProtect, "protect-path", nil, "a directory this server must not write (repeatable): tether_agent_create and tether_agent_edit refuse a target under it with catalog_read_only, whether or not a sandbox also makes it read-only. Set automatically in a launched worker's .mcp.json, from the same decision that protects the agent's catalog, run and state directories")
-	_ = mcpCmd.Flags().MarkDeprecated("broker", "broker mode is superseded by --servers filtering; use --proxy with optional --servers instead")
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
@@ -100,9 +100,18 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	scopes := splitScopes(scopeStr)
 
 	onlySet := cmd.Flags().Changed("only")
-	serverFilter, curatedOnly, err := resolveMCPProxyConfig(mcpProxy, mcpBroker, mcpServers, mcpOnly, os.Getenv("TETHER_MCP_SERVERS"), onlySet)
+	serverFilter, curatedOnly, err := resolveMCPProxyConfig(mcpProxy, mcpServers, mcpOnly, os.Getenv("TETHER_MCP_SERVERS"), onlySet)
 	if err != nil {
 		return err
+	}
+	// Explicit empty server lists restrict to none; they never fall back to env.
+	if cmd.Flags().Changed("servers") && strings.TrimSpace(mcpServers) == "" {
+		serverFilter = []string{}
+	}
+	if !cmd.Flags().Changed("servers") && !onlySet {
+		if value, present := os.LookupEnv("TETHER_MCP_SERVERS"); present && strings.TrimSpace(value) == "" {
+			serverFilter = []string{}
+		}
 	}
 	if mcpConfine && !mcpProxy {
 		return fmt.Errorf("--confine requires --proxy")
@@ -137,12 +146,17 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
 		return err
 	}
+	modeInputs, err := resolveMCPModeInputs(cmd, svc, nil)
+	if err != nil {
+		return err
+	}
 	if mcpProxy {
 		// Wire observability — LoggingMiddleware + in-memory ToolCallEventStore
 		// (consumed by anyone subscribing to the event bus) + durable proxy_events
 		// table (queryable via the tether_events_tool_calls MCP tool).
 		eventStore := mcpadapter.NewToolCallEventStore(1000)
-		opts := inProcessProxyOptions(svc, eventStore, mcpBroker, serverFilter, curatedOnly, mcpConfine)
+		opts := inProcessProxyOptions(svc, eventStore, serverFilter, curatedOnly, mcpConfine)
+		opts.ModeInputs = modeInputs
 
 		// Forward tool_call_end events to the running tetherd daemon's event bus so
 		// any consumer (HTTP /events SSE, MCP tools, downstream subscribers) can
@@ -165,7 +179,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 	}
-	return adapter.Run(cmd.Context())
+	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs}, false)
 }
 
 // configureMCPAdapter applies the flags every `tether mcp` mode shares.
@@ -226,10 +240,16 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
 		return err
 	}
-	if !mcpProxy {
-		return adapter.Run(cmd.Context())
+	modeInputs, err := resolveMCPModeInputs(cmd, svc, dc)
+	if err != nil {
+		return err
 	}
-	return runProxy(cmd.Context(), adapter, expandCatalogPath(), daemonOnlyProxyOptions(cmd.Context(), dc, mcpBroker, serverFilter, curatedOnly, mcpConfine))
+	if !mcpProxy {
+		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs}, false)
+	}
+	opts := daemonOnlyProxyOptions(cmd.Context(), dc, serverFilter, curatedOnly, mcpConfine)
+	opts.ModeInputs = modeInputs
+	return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 }
 
 // runProxy serves the proxy with the options a path built. It is a variable so a
@@ -246,9 +266,8 @@ var runProxy = func(ctx context.Context, adapter *mcpadapter.Adapter, catalog st
 // quietly does nothing on the other: that is how --confine (CW-20261001-0227)
 // was once accepted and ignored in daemon-only mode. The callers add the fields
 // that depend on where state lives.
-func proxyOptionsFor(broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+func proxyOptionsFor(serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
 	return mcpadapter.ProxyOptions{
-		BrokerMode:   broker, //nolint:staticcheck // SA1019: deliberate; the --broker flag still maps to the deprecated field until ServerFilter fully replaces it
 		ServerFilter: serverFilter,
 		Only:         curatedOnly,
 		Confine:      confine,
@@ -257,8 +276,8 @@ func proxyOptionsFor(broker bool, serverFilter []string, curatedOnly, confine bo
 
 // inProcessProxyOptions is proxyOptionsFor plus the event wiring of a server that
 // opens the state database itself.
-func inProcessProxyOptions(svc *app.Service, eventStore *mcpadapter.ToolCallEventStore, broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
-	opts := proxyOptionsFor(broker, serverFilter, curatedOnly, confine)
+func inProcessProxyOptions(svc *app.Service, eventStore *mcpadapter.ToolCallEventStore, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+	opts := proxyOptionsFor(serverFilter, curatedOnly, confine)
 	opts.Bus = svc.Bus
 	opts.EventStore = eventStore
 	opts.ProxyStore = svc.Store // durable SQLite store for tether_events_tool_calls
@@ -267,8 +286,8 @@ func inProcessProxyOptions(svc *app.Service, eventStore *mcpadapter.ToolCallEven
 
 // daemonOnlyProxyOptions is proxyOptionsFor plus the event wiring of a server that
 // never opens the database: the daemon records each call.
-func daemonOnlyProxyOptions(ctx context.Context, dc *client.Client, broker bool, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
-	opts := proxyOptionsFor(broker, serverFilter, curatedOnly, confine)
+func daemonOnlyProxyOptions(ctx context.Context, dc *client.Client, serverFilter []string, curatedOnly, confine bool) mcpadapter.ProxyOptions {
+	opts := proxyOptionsFor(serverFilter, curatedOnly, confine)
 	opts.Publisher = mcpadapter.NewDaemonToolCallPublisher(ctx, dc)
 	opts.ProxyStore = mcpadapter.DaemonProxyEvents{Client: dc}
 	return opts
@@ -291,15 +310,9 @@ func resolveDaemonAddr() (listenAddr, baseURL string) {
 	return addr, daemon.BaseURL(addr)
 }
 
-func resolveMCPProxyConfig(proxy, broker bool, serversFlag, onlyFlag, serversEnv string, onlySet bool) ([]string, bool, error) {
-	if broker && !proxy {
-		return nil, false, fmt.Errorf("--broker requires --proxy")
-	}
+func resolveMCPProxyConfig(proxy bool, serversFlag, onlyFlag, serversEnv string, onlySet bool) ([]string, bool, error) {
 	if onlySet && !proxy {
 		return nil, false, fmt.Errorf("--only requires --proxy")
-	}
-	if onlySet && broker {
-		return nil, false, fmt.Errorf("--only cannot be combined with --broker")
 	}
 	if onlySet && strings.TrimSpace(serversFlag) != "" {
 		return nil, false, fmt.Errorf("--only cannot be combined with --servers")
@@ -435,4 +448,34 @@ func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind
 		Kind: kind, RefID: refID, URI: uri, Relation: relation, Source: source, ParentItemID: parentItemID,
 	})
 	return err
+}
+
+// The stdio client's environment is a distinct precedence tier, not a daemon
+// environment guessed by an HTTP caller. Resolution is immutable for this run.
+func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Client) (mcpgateway.ModeInputs, error) {
+	if err := svc.Catalog.Global.MCP.Validate(); err != nil {
+		return mcpgateway.ModeInputs{}, err
+	}
+	in := mcpgateway.ModeInputs{Gateway: svc.Catalog.Global.MCP.DiscoveryMode}
+	if cmd.Flags().Changed("discovery-mode") {
+		in.Explicit = []mcpgateway.Selector{{Value: mcpDiscoveryMode, Source: "argument"}}
+	}
+	if value, present := os.LookupEnv("TETHER_MCP_DISCOVERY_MODE"); present {
+		in.Environment = &value
+	}
+	if dc != nil {
+		stored, err := dc.GetMCPSettings(cmd.Context())
+		if err != nil {
+			return in, fmt.Errorf("load daemon MCP setting: %w", err)
+		}
+		in.Setting = stored.DiscoveryMode
+	} else if svc.Settings != nil {
+		stored, err := svc.Settings.GetMCP(cmd.Context())
+		if err != nil {
+			return in, err
+		}
+		in.Setting = stored.DiscoveryMode
+	}
+	_, err := mcpgateway.ResolveMode(in)
+	return in, err
 }

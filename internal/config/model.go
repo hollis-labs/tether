@@ -10,13 +10,15 @@ import (
 
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 type Global struct {
-	Version string       `yaml:"version"`
-	Catalog CatalogRoots `yaml:"catalog"`
-	Daemon  DaemonConfig `yaml:"daemon"`
-	AI      AIConfig     `yaml:"ai"`
+	MCP     mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
+	Version string            `yaml:"version"`
+	Catalog CatalogRoots      `yaml:"catalog"`
+	Daemon  DaemonConfig      `yaml:"daemon"`
+	AI      AIConfig          `yaml:"ai"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation

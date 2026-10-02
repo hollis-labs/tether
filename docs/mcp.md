@@ -127,7 +127,7 @@ the owner will launch next. This v1 observation does not publish that private
 environment or provide an owner-resolution query. A consumer that cannot
 resolve the actual next candidate must report unknown.
 
-`tether_health.upstream_servers` and `tether_catalog_list_mcp_servers` expose
+`tether_health.upstream_servers` and `tether_gateway_status` expose
 `last_launch` and a current `recovery` snapshot. Initialize's snapshot is only
 for that handshake; it does not update when the retry budget resets or is
 consumed. **No snapshot reserves a replacement attempt or permits exit.**
@@ -199,21 +199,50 @@ tools.
 
 | Command | Tool surface |
 |---|---|
-| `tether mcp` | Tether native `tether_*` tools only |
-| `tether mcp --proxy` | Tether native tools, all upstream tools, `tether_tool_list`, `tether_tool_search`, and `tether_tool_call` |
-| `tether mcp --proxy --servers vanta,clockwork` | Tether native tools, selected upstream tools, and discovery/call tools for hidden upstreams |
-| `tether mcp --proxy --only vanta,clockwork` | Only tools from the selected upstream servers |
+| `tether mcp` | Native Tether targets plus gateway status; flat by default |
+| `tether mcp --proxy` | Native targets and every enabled upstream tool, plus status |
+| `tether mcp --proxy --servers torque,tesseract` | Native targets and only those upstreams, plus status |
+| `tether mcp --proxy --discovery-mode search` | `tether_tool_search`, `tether_tool_list`, `tether_tool_call`, `tether_gateway_status` |
+| `tether mcp --proxy --only torque,tesseract` | Only those upstream targets plus gateway infrastructure for the selected mode |
 
-Use `--servers` for Tether-launched agents that may still need the control-plane
-tools or the `tether_tool_call` fallback. Use `--only` for external MCP clients where
-the operator expects the named servers to be the complete native tool list.
-`--only` requires `--proxy` and a non-empty server list; it suppresses native
-Tether `tether_*` tools, `tether_catalog_list_mcp_servers`, `tether_catalog_refresh`,
-`tether_tool_list`, `tether_tool_search`, and `tether_tool_call`.
+`--servers` is an upstream restriction in **both** modes. Excluded servers are
+not started, their credentials are not resolved, and no discovery, hydration,
+dispatch or refresh path can reach them. Unknown or disabled IDs are hard errors.
+Omission selects every enabled upstream; an explicitly empty list selects none.
+`TETHER_MCP_SERVERS` is the environment fallback; `--only` uses its own nonempty
+list and omits native Tether targets. `--confine` also makes an omitted list select
+none (the generated agent configs retain this explicit grant boundary).
 
-`TETHER_MCP_SERVERS` remains the environment fallback for `--servers` mode. The
-explicit `--only` flag uses its own comma-separated value and does not widen
-from the environment.
+There is no hybrid surface or hidden fallback. `--broker` is removed and fails
+as an unknown flag. Flat mode preserves each real tool's client-visible identity
+for permissions and hooks. Search mode reduces the initial schema surface, but
+client rules/hooks see **`tether_tool_call`**, rather than its downstream name.
+The dispatcher may mutate or irreversibly remove state, so it advertises destructive behavior rather than read-only safety. Its inner arguments receive the same sanitization as direct calls; tool-call events record the target name and origin.
+
+### Selecting discovery mode
+
+Precedence (highest first): `--discovery-mode` → `TETHER_MCP_DISCOVERY_MODE` →
+profile hook → `global.yaml` `mcp.discovery_mode` → persisted Tether setting →
+`flat`. Only `flat` and `search` are valid; explicit empty/unknown values are
+errors, **even in an overridden tier**. Same-tier explicit selectors must agree;
+an argument can legitimately override a different environment value.
+
+```yaml
+# catalog/global.yaml
+mcp:
+  discovery_mode: flat
+```
+
+The global persisted fallback is read/written at `GET` / `PUT /settings/mcp`:
+`{"discovery_mode":"search"}` sets it and `{}` clears it. It lives in the existing
+settings store; daemon-only proxies read it over the daemon API, never by opening
+the state DB. Mode/source resolve once at startup; edits affect newly started
+endpoints. An older daemon returning 404 for this setting means no persisted fallback; other errors fail startup. Invalid gateway mode values fail gateway startup and appear in `tether doctor`, while generic catalog loading and daemon startup remain available. `tether_gateway_status` reports the effective mode and its source.
+
+The profile tier is a typed `mcp.profiles.<id>.discovery_mode` hook in this change;
+profile selection/filtering is CW-20260926-0008. No profile is selected yet.
+HTTP MCP endpoint/query/header selectors belong to CW-20261001-0539. No client
+brand or inventory-size heuristic changes the selected mode.
 
 ### Agents Tether launches: strict config and an allow-list
 
@@ -250,11 +279,11 @@ This is an interim flag. It goes when go-agent-wrapper has an option that does
 the same.
 
 **The proxy reaches only a granted list of upstreams.** A launched agent's
-`tether mcp --proxy` runs with `--confine`. With `--confine`, `--servers` /
-`TETHER_MCP_SERVERS` is an allow-list: upstreams outside it are not started, their
+`tether mcp --proxy` runs with `--confine`. `--servers` /
+`TETHER_MCP_SERVERS` is always an allow-list: upstreams outside it are not started, their
 secrets are not resolved into the agent's proxy, and `tether_tool_call` and
-`tether_tool_search` cannot reach them. Without `--confine` (an operator's own proxy)
-`--servers` only chooses which tools are listed natively, as above.
+`tether_tool_search` cannot reach them. This holds for the operator's proxy too;
+there is no hidden inventory behind a filtered flat listing.
 
 The default list is `torque` and `tesseract`. Grant others per project
 (`mcp.servers` in the project YAML) or per launch (`mcp_servers` in a boot
@@ -357,11 +386,10 @@ it does not add remote HTTP/SSE reconnection or periodic liveness probes.
 
 In normal proxy modes, `tether_health` returns `ok: false` and names
 `unavailable_servers` when an observed connection has failed or is recovering.
-`tether_catalog_list_mcp_servers` includes `status` (`starting`, `connected`,
-`reconnecting`, or `failed`), `restart_attempts`, `restart_limit`,
-`recovery_exhausted`, `next_retry_at`, and `last_exit` (kind, exit code, signal,
-and timestamp when available). `tool_count` includes cached tool definitions;
-it does not establish availability. These are observed states, not active probes.
+`tether_gateway_status` includes each selected origin's connection status,
+catalogued/available counts and any connection error. Native `tether_health`
+also retains detailed restart/exit diagnostics (call it through the dispatcher
+in search mode). Cached definitions do not establish availability. These are observed states, not active probes.
 
 `tether_tool_search` and `tether_tool_list` exclude unavailable upstreams from search
 results and report `complete: false` with the missing servers. An empty result
@@ -375,8 +403,7 @@ This includes incomplete value prefixes at the end of a live snapshot and
 fragments at the start of a truncated tail.
 This is bounded process-local diagnostic retention, not durable logging or a
 general secret detector. Connection loss, restart scheduling, and retry exhaustion
-also produce diagnostics on the proxy's stderr. In curated `--only` mode, native
-introspection remains suppressed; use that stderr stream to observe failures.
+also produce diagnostics on the proxy's stderr. In curated `--only` mode, gateway status still reports availability.
 
 An in-flight call fails when its transport closes and is **never replayed**.
 Its error says execution outcome may be unknown: a side effect can complete
@@ -386,20 +413,38 @@ schemas follow the existing tool-list notification path.
 
 ### Semantic Discovery
 
-In normal proxy and `--servers` mode, `tether_tool_list` provides a concise
-tool-selection flow:
+In search mode, query the eligible inventory:
 
 ```json
-{
-  "intent": "create a task",
-  "limit": "8"
-}
+{"query":"create a task","detail":"summary","limit":8}
 ```
 
-It returns JSON grouped by upstream server/domain. Each recommendation includes
-`call_name`, `server`, `summary`, up to three `tags`, `safety`, `native`, `why`,
-`score`, and refs such as `tools/list:<tool>` for schemas. Use
-`tether_tool_search` or MCP `tools/list` when you need the full input schema.
+`tether_tool_search` accepts a nonempty `query`, optional `servers` and AND `tags`
+arrays, `detail` (`summary` or `schema`), integer `limit` (1..50; default 10), and
+`cursor`. It keeps the current keyword scorer behind a service seam until the
+shared ranker has a tagged release. Filters narrow the endpoint's inventory.
+
+`tether_tool_list` enumerates real schemas with optional `servers`, integer
+`limit` (1..100; default 50) and `cursor`. Alternatively, use `{"names":["torque_task_get"]}`
+for exact-name hydration; names and enumeration fields are mutually exclusive.
+Unknown, excluded or unavailable names yield per-name errors without schemas.
+
+Both return `items`, `returned`, `total_matches`, `truncated`, `next_cursor`,
+`complete` and `unavailable_servers`. Items contain the exact `name`, `origin`,
+`title`, `description` and verbatim `annotations`; schema detail includes real
+`inputSchema`, `outputSchema` and `_meta`. Search adds `score`. Native targets
+have origin `tether` and participate in both enumeration and search. Enumeration
+is sorted by final name; search sorts by score then name. Cursors bind mode/source,
+filters and the inventory/availability snapshot. A stale cursor fails with restart
+guidance. No guessed safety labels or inaccessible schema/example references are
+returned. Tool TTL/cache fields unsupported by the negotiated SDK are not invented.
+
+`tether_tool_call` takes `{"name":"torque_task_get","arguments":{"id":"CW-..."}}`.
+Only an eligible exact name dispatches. Upstream content, tool-error content and
+structured output are preserved. `tether_gateway_status` accepts optional `name`
+to explain why it is not directly visible (mode, restriction or availability).
+Profile exclusion details, collision/lint findings and ordering pins land in the
+subsequent profile/metadata tasks.
 
 ---
 

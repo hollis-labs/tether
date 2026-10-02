@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"log/slog"
 	"sync"
 	"testing"
@@ -104,14 +105,14 @@ func TestProvenance_TetherCallForwardingStampsEnvelope(t *testing.T) {
 	a.SessionID = "sess-mc"
 
 	s := gomcp.NewServer("test-tether", "0.0.1")
-	a.registerCallTool(s, router)
+	a.registerCallTool(s, a.gatewayService(reg, router, mcpgateway.Selection{Mode: mcpgateway.Search, Source: "test"}, nil))
 
 	client := connectInMemory(t, s)
 
 	res, err := client.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "tether_tool_call",
 		Arguments: map[string]any{
-			"tool_name": "knowledge_write",
+			"name": "knowledge_write",
 			"arguments": map[string]any{
 				"key": "contract_note",
 			},

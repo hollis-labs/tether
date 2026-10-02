@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,38 +15,33 @@ import (
 )
 
 func TestResolveMCPProxyConfigOnlyRequiresProxy(t *testing.T) {
-	_, _, err := resolveMCPProxyConfig(false, false, "", "clockwork", "", true)
+	_, _, err := resolveMCPProxyConfig(false, "", "clockwork", "", true)
 	if err == nil || !strings.Contains(err.Error(), "--only requires --proxy") {
 		t.Fatalf("expected --only requires --proxy error, got %v", err)
 	}
 }
 
 func TestResolveMCPProxyConfigOnlyRequiresServerList(t *testing.T) {
-	_, _, err := resolveMCPProxyConfig(true, false, "", " , ", "", true)
+	_, _, err := resolveMCPProxyConfig(true, "", " , ", "", true)
 	if err == nil || !strings.Contains(err.Error(), "--only requires a non-empty") {
 		t.Fatalf("expected non-empty --only list error, got %v", err)
 	}
 
-	_, _, err = resolveMCPProxyConfig(true, false, "", "", "vanta", true)
+	_, _, err = resolveMCPProxyConfig(true, "", "", "vanta", true)
 	if err == nil || !strings.Contains(err.Error(), "--only requires a non-empty") {
 		t.Fatalf("expected --only to ignore env fallback, got %v", err)
 	}
 }
 
 func TestResolveMCPProxyConfigOnlyRejectsConflicts(t *testing.T) {
-	_, _, err := resolveMCPProxyConfig(true, true, "", "clockwork", "", true)
-	if err == nil || !strings.Contains(err.Error(), "--only cannot be combined with --broker") {
-		t.Fatalf("expected --only/--broker conflict, got %v", err)
-	}
-
-	_, _, err = resolveMCPProxyConfig(true, false, "vanta", "clockwork", "", true)
+	_, _, err := resolveMCPProxyConfig(true, "vanta", "clockwork", "", true)
 	if err == nil || !strings.Contains(err.Error(), "--only cannot be combined with --servers") {
 		t.Fatalf("expected --only/--servers conflict, got %v", err)
 	}
 }
 
 func TestResolveMCPProxyConfigServersFallbackAndOnly(t *testing.T) {
-	filter, only, err := resolveMCPProxyConfig(true, false, "", "", "vanta, clockwork", false)
+	filter, only, err := resolveMCPProxyConfig(true, "", "", "vanta, clockwork", false)
 	if err != nil {
 		t.Fatalf("resolve servers env: %v", err)
 	}
@@ -54,7 +52,7 @@ func TestResolveMCPProxyConfigServersFallbackAndOnly(t *testing.T) {
 		t.Fatalf("env filter = %v, want %v", filter, want)
 	}
 
-	filter, only, err = resolveMCPProxyConfig(true, false, "", "cerberus,clockwork", "vanta", true)
+	filter, only, err = resolveMCPProxyConfig(true, "", "cerberus,clockwork", "vanta", true)
 	if err != nil {
 		t.Fatalf("resolve only: %v", err)
 	}
@@ -103,5 +101,34 @@ func TestRunMCPDaemonOnly_FailsClosedWithoutADaemon(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Errorf("the state directory gained %v: a daemon-only server must not create the database", names)
+	}
+}
+
+func TestResolveMCPModeInputsArgumentEnvAndConfig(t *testing.T) {
+	old := mcpDiscoveryMode
+	t.Cleanup(func() { mcpDiscoveryMode = old })
+	configMode := "search"
+	svc := &app.Service{Catalog: &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{DiscoveryMode: &configMode}}}}
+	t.Setenv("TETHER_MCP_DISCOVERY_MODE", "search")
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "")
+	if err := cmd.Flags().Set("discovery-mode", "flat"); err != nil {
+		t.Fatal(err)
+	}
+	in, err := resolveMCPModeInputs(cmd, svc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := mcpgateway.ResolveMode(in)
+	if err != nil || got.Mode != mcpgateway.Flat || got.Source != "argument" {
+		t.Fatalf("selection %+v %v", got, err)
+	}
+	t.Setenv("TETHER_MCP_DISCOVERY_MODE", "")
+	if _, err := resolveMCPModeInputs(cmd, svc, nil); err == nil {
+		t.Fatal("overridden empty env accepted")
+	}
+	if mcpCmd.Flags().Lookup("broker") != nil {
+		t.Fatal("removed --broker still registered")
 	}
 }

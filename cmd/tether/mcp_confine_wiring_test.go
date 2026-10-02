@@ -29,6 +29,10 @@ func stubDaemon(t *testing.T) string {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	router.HandleFunc("/settings/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})
 	srv := &http.Server{Handler: router}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
@@ -47,13 +51,13 @@ func stubDaemon(t *testing.T) string {
 func setMCPFlags(t *testing.T, proxy, daemonOnly, confine bool, servers string) {
 	t.Helper()
 	oldProxy, oldDaemonOnly, oldConfine, oldServers := mcpProxy, mcpDaemonOnly, mcpConfine, mcpServers
-	oldBroker, oldOnly, oldToken, oldScopes := mcpBroker, mcpOnly, mcpToken, mcpScopes
+	oldMode, oldOnly, oldToken, oldScopes := mcpDiscoveryMode, mcpOnly, mcpToken, mcpScopes
 	t.Cleanup(func() {
 		mcpProxy, mcpDaemonOnly, mcpConfine, mcpServers = oldProxy, oldDaemonOnly, oldConfine, oldServers
-		mcpBroker, mcpOnly, mcpToken, mcpScopes = oldBroker, oldOnly, oldToken, oldScopes
+		mcpDiscoveryMode, mcpOnly, mcpToken, mcpScopes = oldMode, oldOnly, oldToken, oldScopes
 	})
 	mcpProxy, mcpDaemonOnly, mcpConfine, mcpServers = proxy, daemonOnly, confine, servers
-	mcpBroker, mcpOnly, mcpToken, mcpScopes = false, "", "tok", ""
+	mcpDiscoveryMode, mcpOnly, mcpToken, mcpScopes = "", "", "tok", ""
 }
 
 // captureProxy replaces runProxy for the test and returns the options the
@@ -136,8 +140,8 @@ func TestRunMCP_InProcessProxyIsConfined(t *testing.T) {
 }
 
 func TestProxyOptionsFor_CarriesEverySwitchThatDecidesReach(t *testing.T) {
-	got := proxyOptionsFor(true, []string{"a", "b"}, true, true)
-	if !got.BrokerMode || !got.Only || !got.Confine || !reflect.DeepEqual(got.ServerFilter, []string{"a", "b"}) { //nolint:staticcheck // SA1019: asserting the deprecated field the flag still maps to
+	got := proxyOptionsFor([]string{"a", "b"}, true, true)
+	if !got.Only || !got.Confine || !reflect.DeepEqual(got.ServerFilter, []string{"a", "b"}) {
 		t.Fatalf("proxyOptionsFor dropped a switch: %+v", got)
 	}
 }

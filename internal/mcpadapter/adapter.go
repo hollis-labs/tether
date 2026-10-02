@@ -157,8 +157,7 @@ func NewWithDaemon(svc *app.Service, dc *client.Client, token string, scopes []s
 // Run starts the MCP stdio server. It blocks until ctx is canceled or
 // the stdio transport closes.
 func (a *Adapter) Run(ctx context.Context) error {
-	s := a.newServer()
-	return s.Run(ctx)
+	return a.RunWithGatewayOpts(ctx, "", ProxyOptions{}, false)
 }
 
 // newBareServer builds a go-mcp server advertising the RuntimeObservation
