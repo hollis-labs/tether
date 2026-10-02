@@ -321,3 +321,37 @@ func TestForwardDaemonAllowsColdInitialization(t *testing.T) {
 		t.Fatal("cold initialization failed", err)
 	}
 }
+
+func TestForwardDaemonUnknown404DoesNotRecover(t *testing.T) {
+	daemon := mcp.NewServer(&mcp.Implementation{Name: "unknown-404", Version: "1"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return daemon }, nil)
+	var initializes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			var request struct {
+				Method string `json:"method"`
+			}
+			_ = json.Unmarshal(body, &request)
+			if request.Method == "initialize" {
+				initializes.Add(1)
+			}
+			if request.Method == "tools/list" {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	consumer, finish := forwardConsumer(t, server.URL)
+	defer finish()
+	if _, err := consumer.ListTools(context.Background(), nil); err == nil {
+		t.Fatal("unknown 404 swallowed")
+	}
+	if initializes.Load() != 1 {
+		t.Fatalf("unknown 404 triggered recovery: %d initializes", initializes.Load())
+	}
+}

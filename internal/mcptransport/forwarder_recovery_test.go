@@ -80,10 +80,16 @@ func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 		}
 	} else {
 		f.handler.mu.Lock()
+		views := make([]*transportView, 0, len(f.handler.views))
 		for v := range f.handler.views {
-			v.lastUsed = time.Now().Add(-131 * time.Second)
+			views = append(views, v)
 		}
 		f.handler.mu.Unlock()
+		// Invoke the monitor's exact expiry action. Backdating lastUsed alone
+		// races the SDK's asynchronous initial GET, which refreshes lastUsed.
+		for _, view := range views {
+			f.handler.remove(view)
+		}
 		for {
 			f.handler.mu.Lock()
 			expired := len(f.handler.sessions) == 0
@@ -106,7 +112,18 @@ func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 		}
 		slow <- err
 	}()
-	waitFixtureFile(ctx, t, f.childStarts+".call")
+	for {
+		if _, err := os.Stat(f.childStarts + ".call"); err == nil {
+			break
+		}
+		select {
+		case err := <-slow:
+			t.Fatal("slow call failed before execution barrier", err)
+		case <-ctx.Done():
+			t.Fatal("slow call never reached execution barrier", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	result, err := beta.CallTool(ctx, &mcp.CallToolParams{Name: "app_echo", Arguments: map[string]any{"message": "beta recovered"}})
 	if err != nil || result.IsError {
 		t.Fatalf("idle forwarder failed recovery: %+v %v", result, err)

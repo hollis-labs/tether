@@ -10,6 +10,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -137,6 +138,7 @@ type daemonSession struct {
 	opts    client.MCPOptions
 	session *mcp.ClientSession
 	done    <-chan struct{}
+	missing *atomic.Bool
 }
 
 func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*mcp.ClientSession, error) {
@@ -148,7 +150,9 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 			// A closed previous transport cannot execute a new request. Reconnect
 			// before dispatch, without replaying any previous uncertain outcome.
 		default:
-			return d.session, nil
+			if !d.missing.Load() {
+				return d.session, nil
+			}
 		}
 	}
 	if d.session != nil {
@@ -157,7 +161,10 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	}
 	setup, cancel := context.WithTimeout(ctx, client.MCPInitializeTimeout)
 	defer cancel()
-	session, err := d.client.ConnectMCP(setup, d.opts)
+	missingState := &atomic.Bool{}
+	options := d.opts
+	options.OnSessionMissing = func() { missingState.Store(true) }
+	session, err := d.client.ConnectMCP(setup, options)
 	if err != nil {
 		if setup.Err() != nil {
 			return nil, setup.Err()
@@ -165,6 +172,7 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 		return nil, err
 	}
 	d.session = session
+	d.missing = missingState
 	done := make(chan struct{})
 	d.done = done
 	go func() { _ = session.Wait(); close(done) }()
@@ -179,9 +187,31 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 	result, err := call(session)
 	// Missing-session errors may originate from a background stream and retire
 	// unrelated in-flight requests too. Retry only these read-only list/ping
-	// operations. Network errors and cancellation are never retried.
-	if !errors.Is(err, mcp.ErrSessionMissing) || ctx.Err() != nil {
-		return result, err
+	// operations. Transport loss can also reconnect a read once; cancellation
+	// and protocol/admission errors are never retried.
+	if err == nil {
+		return result, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	d.mu.Lock()
+	observedMissing := d.session == session && d.missing.Load()
+	d.mu.Unlock()
+	if !observedMissing {
+		// A closed transport can race our Wait observer. Read-only operations may
+		// reconnect once, but generic/unknown 404 and protocol errors must surface.
+		if errors.Is(err, mcp.ErrSessionMissing) || strings.Contains(err.Error(), "session not found") || strings.Contains(err.Error(), "Not Found") {
+			return result, err
+		}
+		var protocol *jsonrpc.Error
+		if errors.As(err, &protocol) {
+			return result, err
+		}
+		failure := relayError(err)
+		if failure.Code != -32001 {
+			return result, err
+		}
 	}
 	session, err = d.get(ctx, session)
 	if err != nil {
@@ -203,7 +233,11 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 	if err != nil {
 		return nil, err
 	}
-	return session.CallTool(ctx, params)
+	result, err := session.CallTool(ctx, params)
+	if err != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return result, err
 }
 
 func (d *daemonSession) close() {
@@ -214,7 +248,7 @@ func (d *daemonSession) close() {
 	}
 }
 
-func relayError(err error) error {
+func relayError(err error) *jsonrpc.Error {
 	if errors.Is(err, context.Canceled) {
 		return &jsonrpc.Error{Code: -32003, Message: "daemon_mcp_canceled: request canceled; outcome may be unknown"}
 	}
@@ -234,7 +268,10 @@ func relayError(err error) error {
 	// receiving a response, and formats body/reconnect failures with %v. These
 	// transport failures cannot retain an errors.Is sentinel through the SDK.
 	detail := err.Error()
-	if strings.Contains(detail, "request terminated without response") || strings.Contains(detail, "failed to read body:") || strings.Contains(detail, "failed to reconnect (session ID:") {
+	if strings.Contains(detail, "session not found") || strings.Contains(detail, "Not Found") {
+		return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: daemon did not accept this MCP session"}
+	}
+	if strings.Contains(detail, "request terminated without response") || strings.Contains(detail, "failed to read body:") || strings.Contains(detail, "failed to reconnect (session ID:") || (strings.Contains(detail, "client is closing") && !strings.Contains(detail, "Not Found") && !strings.Contains(detail, "Forbidden") && !strings.Contains(detail, "Unauthorized")) {
 		return &jsonrpc.Error{Code: -32001, Message: "daemon_unreachable: daemon connection lost; tool outcome may be unknown"}
 	}
 	return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: endpoint disabled, credential rejected or connection lost"}

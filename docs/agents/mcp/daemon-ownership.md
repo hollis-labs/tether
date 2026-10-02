@@ -29,8 +29,10 @@ belongs to each hop.
 
 Idle daemon views expire after two minutes for session principals. The forwarder
 reinitializes using the same credential, profile and discovery selector when the
-SDK reports a missing session. Lists and pings can be retried once on the
-replacement view. Each tool dispatch first pings the view to recover idle expiry,
+daemon/SDK explicitly reports expiry for a known session (a generic route 404
+surfaces without recovery). Lists and pings can also reconnect a closed/lost
+transport once; protocol/admission errors and cancellation surface. These
+read-only operations can be retried once on the replacement view. Each tool dispatch first pings the view to recover idle expiry,
 then sends the tool call exactly once. Tool calls are never replayed, including
 missing-session errors during execution: a background stream failure can end
 other in-flight calls whose outcomes are unknown. Network failures, lost responses
