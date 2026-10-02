@@ -154,16 +154,18 @@ func TestAttachExistingAuthorizationAndAtomicAudit(t *testing.T) {
 }
 
 func TestAttachExistingRejectsPurgedAndUnselectedStages(t *testing.T) {
-	for _, mode := range []string{"purged", "unselected"} {
+	for _, mode := range []string{"purged", "expired", "unselected"} {
 		t.Run(mode, func(t *testing.T) {
 			db, env, req := channelStage(t)
-			if mode == "purged" {
+			if mode == "purged" || mode == "expired" {
 				_, err := db.DB().Exec(`UPDATE messages SET created_at=? WHERE id=?`, time.Now().Add(-store.RoutingStageRetention-time.Hour).UTC().Format(time.RFC3339Nano), env.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := db.PurgeMessageBody(context.Background(), env.ID, identity.OperatorID); err != nil {
-					t.Fatal(err)
+				if mode == "purged" {
+					if _, err := db.PurgeMessageBody(context.Background(), env.ID, identity.OperatorID); err != nil {
+						t.Fatal(err)
+					}
 				}
 			} else {
 				_, err := db.DB().Exec(`UPDATE messages SET metadata='{"session_id":"routed","kind":"approval"}' WHERE id=?`, env.ID)
@@ -179,5 +181,42 @@ func TestAttachExistingRejectsPurgedAndUnselectedStages(t *testing.T) {
 				t.Fatalf("ineligible publication: %+v %v", history, err)
 			}
 		})
+	}
+}
+
+func TestAttachExistingRejectsStageRetargeting(t *testing.T) {
+	for _, mode := range []string{"channel", "sender", "metadata"} {
+		t.Run(mode, func(t *testing.T) {
+			db, env, req := channelStage(t)
+			if err := db.CreateSession(store.SessionRow{ID: "other", State: "running", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, &launch.Plan{Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "channel":
+				req.Channel = "other"
+			case "sender":
+				req.SessionID = "other"
+			case "metadata":
+				if _, err := db.DB().Exec(`UPDATE messages SET metadata='{"session_id":"other","kind":"final"}' WHERE id=?`, env.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := channels.New(db, nil).AttachExisting(context.Background(), req); err == nil {
+				t.Fatal("retargeted stage")
+			}
+			if _, err := db.StagedTurnOutput(context.Background(), env.ID); err != nil {
+				t.Fatal("stage released", err)
+			}
+		})
+	}
+}
+func TestAttachExistingReleasesStageInsidePublicationTransaction(t *testing.T) {
+	db, _, req := channelStage(t)
+	_, err := db.DB().Exec(`CREATE TRIGGER require_released_stage BEFORE INSERT ON channel_publications WHEN (SELECT routing_staged FROM messages WHERE id=NEW.message_id)!=0 BEGIN SELECT RAISE(ABORT,'stage not released atomically'); END`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := channels.New(db, nil).AttachExisting(context.Background(), req); err != nil {
+		t.Fatal(err)
 	}
 }

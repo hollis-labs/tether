@@ -58,7 +58,8 @@ including messages whose event failed to persist or was dropped from fanout.
 Each scan handles at most eight pages of 128 IDs and resumes its cursor on the
 next tick. Complete sweeps revisit failed IDs; retries back off from one second
 to one minute. There is no permanent hold: normal 30-day retention can purge an
-unattached stage, which removes it from the queue. Shutdown joins the worker
+unattached stage. Expired stages cannot attach, even before their bodies are
+purged; periodic scans exclude them and discard their retry records. Shutdown joins the worker
 before closing the database.
 
 The internal attach API is:

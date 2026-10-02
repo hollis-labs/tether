@@ -29,6 +29,9 @@ type retry struct {
 }
 
 type Router struct {
+	now        func() time.Time
+	ticks      <-chan time.Time
+	afterScan  func()
 	db         *store.Store
 	bus        events.Bus
 	channels   *channels.Service
@@ -83,9 +86,13 @@ func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe 
 	defer close(r.done)
 	defer r.running.Store(false)
 	defer func() { unsubscribe() }()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	r.scan(ctx)
+	ticks := r.ticks
+	if ticks == nil {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
+	r.sweep(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,7 +106,7 @@ func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe 
 			if json.Unmarshal([]byte(event.PayloadJSON), &output) == nil && output.MessageID != "" && output.SessionID == event.SessionID {
 				r.attempt(ctx, store.PendingTurnOutput{MessageID: output.MessageID, SessionID: output.SessionID})
 			}
-		case <-ticker.C:
+		case <-ticks:
 			if live == nil {
 				var err error
 				live, unsubscribe, err = r.subscribe(ctx)
@@ -109,7 +116,7 @@ func (r *Router) run(ctx context.Context, live <-chan events.Event, unsubscribe 
 					unsubscribe = func() {}
 				}
 			}
-			r.scan(ctx)
+			r.sweep(ctx)
 		}
 	}
 }
@@ -145,7 +152,7 @@ func (r *Router) scan(ctx context.Context) {
 }
 
 func (r *Router) attempt(ctx context.Context, item store.PendingTurnOutput) {
-	if state, ok := r.retries[item.MessageID]; ok && time.Now().Before(state.next) {
+	if state, ok := r.retries[item.MessageID]; ok && r.clock().Before(state.next) {
 		return
 	}
 	if err := r.attach(ctx, item); err != nil {
@@ -164,7 +171,7 @@ func (r *Router) attempt(ctx context.Context, item store.PendingTurnOutput) {
 		if previous.reason != reason {
 			log.Printf("turn router: message %q: %v", item.MessageID, err)
 		}
-		r.retries[item.MessageID] = retry{next: time.Now().Add(delay), delay: delay, reason: reason}
+		r.retries[item.MessageID] = retry{next: r.clock().Add(delay), delay: delay, reason: reason}
 	} else {
 		delete(r.retries, item.MessageID)
 	}
@@ -192,4 +199,17 @@ func (r *Router) attach(ctx context.Context, item store.PendingTurnOutput) error
 	ctx = identity.WithPrincipal(ctx, identity.Principal{ID: sender.URN(), Kind: "session", SessionID: item.SessionID, Addresses: []string{sender.URN()}, CreatedBy: actor.URN()})
 	_, err = r.channels.AttachExisting(ctx, channels.ExistingMessage{MessageID: item.MessageID, Channel: route.Channel, SessionID: item.SessionID, Actor: actor})
 	return err
+}
+
+func (r *Router) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+func (r *Router) sweep(ctx context.Context) {
+	r.scan(ctx)
+	if r.afterScan != nil {
+		r.afterScan()
+	}
 }

@@ -3,8 +3,12 @@ package app
 import (
 	"context"
 	"encoding/json"
+	gomsg "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
@@ -63,5 +67,38 @@ func TestServiceCloseFlushesOutputAndJoinsRouterBeforeStorageClose(t *testing.T)
 	}
 	if _, err := reopened.SessionRoute(context.Background(), row.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServiceCloseJoinsBlockedRouterBeforeClosingStore(t *testing.T) {
+	svc, _ := outputHarness(t, nil)
+	if err := svc.Store.CreateSession(store.SessionRow{ID: "blocked", State: "running"}, &launch.Plan{Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.StageTurnOutput(context.Background(), gomsg.Envelope{From: gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: "blocked"}, Payload: []byte(`{"text":"answer"}`), ContentType: "application/json", Metadata: map[string]string{"session_id": "blocked", "kind": "final"}}); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	checked := make(chan error, 1)
+	svc.Store.SetChannelAuthorization(func(ctx context.Context, _ string, _ string, _ identity.Principal, _ gomsg.Address) error {
+		close(entered)
+		<-ctx.Done()
+		checked <- svc.Store.DB().PingContext(context.Background())
+		return ctx.Err()
+	})
+	if err := svc.startTurnRouter(); err != nil {
+		t.Fatal(err)
+	}
+	defer svc.turnRouter.Close()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("router never entered hook")
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-checked; err != nil {
+		t.Fatal("store closed before router joined", err)
 	}
 }

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 	"slices"
 	"testing"
 
@@ -73,6 +75,80 @@ func TestInstalledTypedSignalsOnlyClassifyEndedSignal(t *testing.T) {
 			got := outputEvents(t, svc)
 			if len(got) != 1 || got[0].Kind != tc.want {
 				t.Fatalf("outputs: %+v", got)
+			}
+		})
+	}
+}
+
+func TestUnsupportedRoutingSignalsAreNotDetected(t *testing.T) {
+	for _, runtimeID := range []string{"opencode", "missing"} {
+		t.Run(runtimeID, func(t *testing.T) {
+			svc, _ := outputHarness(t, nil)
+			svc.Catalog = &config.Catalog{Providers: map[string]config.Provider{"opencode": {ID: "opencode", Provider: "opencode", RuntimeKind: config.RuntimeKindSubprocess}}}
+			svc.installTurnFeeds()
+			row, err := svc.Store.GetSession("s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := svc.newSessionTurnOutput(*row, &launch.Plan{ProviderBrand: runtimeID})
+			registration := svc.turnFeeds[runtimeID]
+			registration.observe(output, gopevents.ToolUse{Name: "request_user_input", ID: "q", Args: map[string]any{"question": "Where?"}})
+			registration.observe(output, gopevents.Done{})
+			if got := outputEvents(t, svc); len(got) != 0 {
+				t.Fatalf("uninstalled question detector: %+v", got)
+			}
+			registration.observe(output, gopevents.PermissionDenied{Action: "Bash", DisplayName: "make deploy SECRET=1"})
+			registration.observe(output, gopevents.Done{})
+			if got := outputEvents(t, svc); len(got) != 0 {
+				t.Fatalf("uninstalled approval detector: %+v", got)
+			}
+			registration.observe(output, gopevents.Done{Text: "Finished."})
+			got := outputEvents(t, svc)
+			if len(got) != 1 || got[0].Kind != turnoutput.KindFinal {
+				t.Fatalf("uninstalled detector emitted %+v", got)
+			}
+		})
+	}
+}
+func TestRoutingWiringReflectsInstalledCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		brand string
+		want  []string
+	}{
+		{"opencode", []string{"failure", "final"}},
+		{"claude", []string{"approval", "failure", "final", "question"}},
+		{"", []string{}},
+	} {
+		t.Run(tc.brand, func(t *testing.T) {
+			svc, _ := outputHarness(t, nil)
+			svc.Catalog = &config.Catalog{Providers: map[string]config.Provider{}}
+			if tc.brand != "" {
+				svc.Catalog.Providers[tc.brand] = config.Provider{ID: tc.brand, Provider: tc.brand, RuntimeKind: config.RuntimeKindSubprocess}
+			}
+			svc.installTurnFeeds()
+			got, _ := svc.RoutingWiring()
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("kinds=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnsupportedRuntimePermissionSignalsAreNotDetected(t *testing.T) {
+	for _, method := range []string{"item/tool/requestUserInput", "session/request_permission"} {
+		t.Run(method, func(t *testing.T) {
+			svc, _ := outputHarness(t, nil)
+			svc.turnFeeds = map[string]turnFeedRegistration{}
+			row, err := svc.Store.GetSession("s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := svc.newSessionTurnOutput(*row, &launch.Plan{ProviderBrand: "missing"})
+			payload, _ := json.Marshal(map[string]any{"request_id": "q", "method": method, "params": map[string]any{"question": "Secret?", "toolCall": map[string]any{"title": "make deploy SECRET=1"}}})
+			output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindAgentPermissionRequested, TurnID: "t", Payload: payload})
+			output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "t"})
+			if got := outputEvents(t, svc); len(got) != 0 {
+				t.Fatalf("uninstalled runtime detector: %+v", got)
 			}
 		})
 	}

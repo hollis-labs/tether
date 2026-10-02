@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	gomsg "github.com/hollis-labs/go-messaging"
 )
@@ -19,7 +20,7 @@ func (s *Store) PendingTurnOutputs(ctx context.Context, afterID string, limit in
 		limit = 128
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,from_urn FROM messages
- WHERE routing_staged=1 AND payload IS NOT NULL AND id>? ORDER BY id LIMIT ?`, afterID, limit)
+ WHERE routing_staged=1 AND payload IS NOT NULL AND id>? AND julianday(created_at)>julianday(?) ORDER BY id LIMIT ?`, afterID, time.Now().UTC().Add(-RoutingStageRetention).Format(time.RFC3339Nano), limit)
 	if err != nil {
 		return nil, err
 	}

@@ -38,6 +38,9 @@ func (s *Store) AttachChannelMessage(ctx context.Context, req channels.ExistingM
 	if err != nil {
 		return gomsg.Envelope{}, err
 	}
+	if staged && routingStageExpired(env.CreatedAt.Format(time.RFC3339Nano)) {
+		return gomsg.Envelope{}, gomsg.ErrNotFound
+	}
 	if env.From != sender {
 		return gomsg.Envelope{}, channels.ErrInvalid
 	}
@@ -85,7 +88,7 @@ func (s *Store) AttachChannelMessage(ctx context.Context, req channels.ExistingM
 		}
 		return current, nil
 	}
-	if len(current.Payload) == 0 {
+	if len(current.Payload) == 0 || routingStageExpired(current.CreatedAt.Format(time.RFC3339Nano)) {
 		return gomsg.Envelope{}, gomsg.ErrNotFound
 	}
 	if current.Metadata["kind"] != env.Metadata["kind"] || current.Metadata["session_id"] != req.SessionID {

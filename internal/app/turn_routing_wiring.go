@@ -37,8 +37,10 @@ func (s *Service) installTurnFeeds() {
 }
 
 func (r turnFeedRegistration) observe(o *sessionTurnOutput, ev gopevents.Event) {
-	if denied, ok := ev.(gopevents.PermissionDenied); ok && r.approval != nil {
-		r.approval(o, denied)
+	if denied, ok := ev.(gopevents.PermissionDenied); ok {
+		if r.approval != nil {
+			r.approval(o, denied)
+		}
 		return
 	}
 	o.observeProvider(ev)
@@ -91,7 +93,7 @@ func (s *Service) RoutingRuntimeKinds(runtimeID string) []string {
 func (s *Service) questionTools(runtimeID string) []string {
 	registration, ok := s.turnFeeds[runtimeID]
 	if !ok {
-		return nil
+		return []string{}
 	}
 	// Empty explicitly disables question tools on a registered source without a
 	// detector. The reducer interprets nil as its defaults.

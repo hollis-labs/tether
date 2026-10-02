@@ -122,6 +122,9 @@ func TestPendingPagesAdvancePastFailuresAndRetry(t *testing.T) {
 	db, _ := database(t)
 	bad := stage(t, db, "approval")
 	for range 130 {
+		stage(t, db, "approval")
+	}
+	for range 130 {
 		stage(t, db, "final")
 	}
 	router := New(db, nil, channels.New(db, nil))
@@ -133,7 +136,7 @@ func TestPendingPagesAdvancePastFailuresAndRetry(t *testing.T) {
 	if _, err := db.StagedTurnOutput(context.Background(), bad.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(router.retries) != 1 {
+	if len(router.retries) != 131 {
 		t.Fatalf("retry records=%d", len(router.retries))
 	}
 	// A transient denial leaves the row staged and a later full sweep retries it.
@@ -150,5 +153,73 @@ func TestPendingPagesAdvancePastFailuresAndRetry(t *testing.T) {
 	router.scan(context.Background())
 	if _, err := db.StagedTurnOutput(context.Background(), final.ID); !errors.Is(err, gomsg.ErrNotFound) {
 		t.Fatalf("retry failed: %v", err)
+	}
+}
+
+func TestWorkerUsesLiveEventsAndPeriodicRecovery(t *testing.T) {
+	for _, mode := range []string{"live", "periodic"} {
+		t.Run(mode, func(t *testing.T) {
+			db, _ := database(t)
+			attached := make(chan string, 2)
+			scanned := make(chan struct{}, 2)
+			ticks := make(chan time.Time)
+			bus := events.NewBus(events.BusOptions{Persister: db})
+			router := New(db, bus, channels.New(&notifyingStore{Store: db, attached: attached}, nil))
+			router.ticks = ticks
+			router.afterScan = func() { scanned <- struct{}{} }
+			if err := router.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer router.Close()
+			select {
+			case <-scanned:
+			case <-time.After(10 * time.Second):
+				t.Fatal("initial scan stuck")
+			}
+			staged := stage(t, db, "final")
+			if mode == "live" {
+				body, _ := json.Marshal(events.TurnOutputEvent{SessionID: "routed", MessageID: staged.ID})
+				if err := bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: "routed", Kind: events.KindSessionTurnOutput, PayloadJSON: string(body)}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				ticks <- time.Now()
+			}
+			if receive(t, attached) != staged.ID {
+				t.Fatal("wrong message")
+			}
+		})
+	}
+}
+func TestRetryBackoffAndExpiredQueueEviction(t *testing.T) {
+	db, _ := database(t)
+	env := stage(t, db, "final")
+	calls := 0
+	db.SetChannelAuthorization(func(context.Context, string, string, identity.Principal, gomsg.Address) error {
+		calls++
+		return channels.ErrForbidden
+	})
+	router := New(db, nil, channels.New(db, nil))
+	now := time.Now()
+	router.now = func() time.Time { return now }
+	item := store.PendingTurnOutput{MessageID: env.ID, SessionID: "routed"}
+	for _, delay := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute} {
+		before := calls
+		router.attempt(context.Background(), item)
+		if calls != before+1 || router.retries[env.ID].delay != delay {
+			t.Fatalf("retry=%+v calls=%d", router.retries[env.ID], calls)
+		}
+		router.attempt(context.Background(), item)
+		if calls != before+1 {
+			t.Fatal("retried before deadline")
+		}
+		now = router.retries[env.ID].next
+	}
+	if _, err := db.DB().Exec(`UPDATE messages SET created_at=? WHERE id=?`, time.Now().Add(-store.RoutingStageRetention-time.Hour).UTC().Format(time.RFC3339Nano), env.ID); err != nil {
+		t.Fatal(err)
+	}
+	router.scan(context.Background())
+	if len(router.retries) != 0 {
+		t.Fatal("expired row retains retry state")
 	}
 }
