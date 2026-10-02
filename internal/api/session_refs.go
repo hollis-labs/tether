@@ -22,7 +22,7 @@ type SessionRefStore = sessionrefs.RecordStore
 // SessionRefDTO is the application-owned wire contract, explicitly translated from storage.
 type SessionRefDTO = sessionrefs.SessionRefDTO
 type SessionRefListResponse = sessionrefs.SessionRefListResponse
-type SessionRefAttachRequest = sessionrefs.SessionRefAttachRequest
+type SessionRefAttachRequest sessionrefs.SessionRefAttachRequest
 type SessionRefAttachResponse = sessionrefs.SessionRefAttachResponse
 
 func sessionRefListOptions(r *http.Request) sessionrefs.Filters {
@@ -60,7 +60,7 @@ func (s *Server) handleAttachSessionRef(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	out, err := sessionrefs.NewRecords(s.SessionRefs).Attach(sessionID, req)
+	out, err := sessionrefs.NewRecords(s.SessionRefs).Attach(sessionID, sessionrefs.SessionRefAttachRequest(req))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
