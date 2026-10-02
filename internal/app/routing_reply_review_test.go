@@ -184,9 +184,18 @@ func TestStaleDeliveringRowsAreResolvedBySweepNotOnlyAtStartup(t *testing.T) {
 		h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
 		release := make(chan struct{})
 		entered := make(chan struct{})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		// A failed assertion below must not leave sendTurn blocked: the harness
+		// cleanup joins the dispatcher, which would wait on it forever.
+		t.Cleanup(unblock)
 		h.onSend = func(string, string) error { close(entered); <-release; return nil }
 		receipt, _ := h.reply(h.routed("s1").ID, "slow turn", false)
-		<-entered // sendTurn is blocked: a blocking runtime mid-turn
+		select {
+		case <-entered: // sendTurn is blocked: a blocking runtime mid-turn
+		case <-time.After(5 * time.Second):
+			t.Fatal("the reply was never injected")
+		}
 		for i := 0; i < 3; i++ {
 			if _, err := h.d.sweep(ctx); err != nil {
 				t.Fatal(err)
@@ -195,7 +204,7 @@ func TestStaleDeliveringRowsAreResolvedBySweepNotOnlyAtStartup(t *testing.T) {
 		if got := h.state(receipt.ReplyID); got.State != store.RoutingReplyDelivering {
 			t.Fatalf("a live injection was resolved from under itself: %+v", got)
 		}
-		close(release)
+		unblock()
 		h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
 		if n := h.rt.sendCallCount("s1"); n != 1 {
 			t.Fatalf("injected %d times", n)

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,7 +29,14 @@ func replyLaunch(t *testing.T, runtime runtimes.ID, mode string, run providertes
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	fake := providertest.New(t, runtime, run)
-	prov := config.Provider{ID: string(runtime), Type: "cli", Command: fake.Path, RuntimeKind: mode}
+	svc, id := replyLaunchCommand(t, config.Provider{ID: string(runtime), Type: "cli", Command: fake.Path, RuntimeKind: mode}, fake.Path, nil)
+	return svc, id, fake
+}
+
+// replyLaunchCommand launches a real session of prov running command under a
+// Service whose router publishes to channel "ops".
+func replyLaunchCommand(t *testing.T, prov config.Provider, command string, args []string) (*Service, string) {
+	t.Helper()
 	factory, err := runtimeFactoryForProvider(prov)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +49,7 @@ func replyLaunch(t *testing.T, runtime runtimes.ID, mode string, run providertes
 	id := "reply-session"
 	plan := &launch.Plan{LaunchID: "launch", ProjectID: "project", LogicalAgentID: "agent", ProviderID: prov.ID,
 		ProviderBrand: prov.ProviderBrand(), RuntimeKind: prov.EffectiveRuntimeKind(), RepoRoot: t.TempDir(), WriteHome: t.TempDir(),
-		WorkspaceMode: "shared", Command: fake.Path, BootMode: "none", Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}
+		WorkspaceMode: "shared", Command: command, Args: args, BootMode: "none", Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}
 	ws, err := workspace.Create(plan.WriteHome, id, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +63,7 @@ func replyLaunch(t *testing.T, runtime runtimes.ID, mode string, run providertes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { svc.stopRoutingReplies(); _ = svc.Manager.Stop(context.Background(), id) })
-	return svc, id, fake
+	return svc, id
 }
 
 func replyAs(svc *Service, parentID, body string) (api.RoutingReplyReceipt, error) {
@@ -127,5 +137,41 @@ func TestACLIThatRefusesTheTurnForWantOfALoginIsRetriedNotMarkedDelivered(t *tes
 	}
 	if n := len(fake.Calls()); n != replyMaxAttempts {
 		t.Fatalf("the CLI was invoked %d times, want %d", n, replyMaxAttempts)
+	}
+}
+
+// The no-turn-feed refusal reads the process layer: a running PTY has no turn
+// lifecycle, so nothing says when it is idle. The unit tests inject the flag; this
+// runs the production detector against real sessions.
+func TestTheProductionDetectorRefusesAReplyToARunningPTYAndOnlyThat(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	t.Setenv("HOME", t.TempDir())
+	// The PTY adapter appends its own flags, so the command must ignore its arguments
+	// and stay alive for as long as the session does.
+	idle := filepath.Join(t.TempDir(), "idle-cli")
+	if err := os.WriteFile(idle, []byte("#!"+sh+"\nexec sleep 300\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pty, ptyID := replyLaunchCommand(t, config.Provider{ID: "claude", Provider: "claude", Type: "cli", Command: idle, RuntimeKind: config.RuntimeKindPTY}, idle, nil)
+	if !pty.replyNoTurnFeed(ptyID) {
+		t.Fatal("a running PTY session is reported as having a turn feed")
+	}
+	if err := pty.StartRoutingReplies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	parent := publishRoutedFrom(t, pty, ptyID)
+	if _, err := replyAs(pty, parent.ID, "hello?"); !errors.Is(err, api.ErrReplyNoTurnFeed) {
+		t.Fatalf("a reply to a running PTY: %v, want the typed no-turn-feed refusal", err)
+	}
+
+	sub, subID, _ := replyLaunch(t, runtimes.Codex, "subprocess", providertest.Script(providertest.Exit(0)).Always())
+	if sub.replyNoTurnFeed(subID) {
+		t.Fatal("a subprocess session is reported as having no turn feed")
+	}
+	if sub.replyNoTurnFeed("no-such-session") {
+		t.Fatal("an unknown session is reported as a PTY")
 	}
 }
