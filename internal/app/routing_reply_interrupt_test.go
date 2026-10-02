@@ -15,6 +15,7 @@ import (
 
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	messaging "github.com/hollis-labs/go-messaging"
 	gop "github.com/hollis-labs/go-providers/provider"
 	"github.com/hollis-labs/go-providers/providertest"
@@ -105,7 +106,7 @@ func TestReplyInterruptsARealCodexTurnThenBecomesTheNextTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Interrupt != "cancelled" || receipt.State != "queued" || receipt.TargetSessionID != "s1" {
+	if receipt.Interrupt != llmtypes.StopReasonCancelled || receipt.State != "queued" || receipt.TargetSessionID != "s1" {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 	select {
