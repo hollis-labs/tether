@@ -222,7 +222,7 @@ The dispatcher may mutate or irreversibly remove state, so it advertises destruc
 ### Selecting discovery mode
 
 Precedence (highest first): `--discovery-mode` → `TETHER_MCP_DISCOVERY_MODE` →
-profile hook → `global.yaml` `mcp.discovery_mode` → persisted Tether setting →
+selected profile → `global.yaml` `mcp.discovery_mode` → persisted Tether setting →
 `flat`. Only `flat` and `search` are valid; explicit empty/unknown values are
 errors, **even in an overridden tier**. Same-tier explicit selectors must agree;
 an argument can legitimately override a different environment value.
@@ -239,10 +239,68 @@ settings store; daemon-only proxies read it over the daemon API, never by openin
 the state DB. Mode/source resolve once at startup; edits affect newly started
 endpoints. An older daemon returning 404 for this setting means no persisted fallback; other errors fail startup. Invalid gateway mode values fail gateway startup and appear in `tether doctor`, while generic catalog loading and daemon startup remain available. `tether_gateway_status` reports the effective mode and its source.
 
-The profile tier is a typed `mcp.profiles.<id>.discovery_mode` hook in this change;
-profile selection/filtering is CW-20260926-0008. No profile is selected yet.
+The profile tier comes from the selected `mcp.profiles.<id>.discovery_mode`.
 HTTP MCP endpoint/query/header selectors belong to CW-20261001-0539. No client
 brand or inventory-size heuristic changes the selected mode.
+
+### Named gateway profiles
+
+Select a profile with `tether mcp --proxy --profile reader` or
+`TETHER_MCP_PROFILE=reader`. The argument wins over the environment; an explicit
+empty/unknown selector is a hard error, including an overridden selector.
+Profiles live under `mcp.profiles` in catalog `global.yaml`:
+
+```yaml
+mcp:
+  profiles:
+    reader:
+      servers: [torque, tesseract, tether]
+      tools:
+        allow: ["torque_*", "tesseract_*", "tether_health"]
+        deny: ["*_delete", "*_purge"]
+      read_only: true
+      order: [tether_health]
+      always_load: [tether_health]
+      instructions: "Use discovery to find the eligible read tools."
+      discovery_mode: search
+```
+
+`servers` selects origins, including reserved native origin **`tether`**. Omitted
+means all enabled origins; `[]` means none. `[torque]` excludes native targets;
+`[torque, tether]` retains them. Unknown/disabled origins fail startup before
+resolving their credentials. CLI `--servers` instead restricts only upstreams;
+it intersects the profile and never expands it. This distinction is deliberate:
+profiles select the full origin surface and supersede upstream-only selection.
+`--only` can further suppress natives. Gateway status remains visible in flat
+mode; search retains its fixed four-tool front even for an empty profile.
+
+Allow/deny globs use case-sensitive final wire names (`*`, `?`, character classes).
+Absent `allow` accepts all; `allow: []` accepts none. **Deny wins over read-only,
+which wins over allow.** Read-only accepts only tools declaring
+`annotations.readOnlyHint: true`; missing hints are excluded. This is advisory
+metadata filtering, not authorization. Filtering happens before ranking and
+applies to enumeration, hydration and dispatch; a guessed excluded name cannot
+call a hidden SDK handler.
+
+`order` names appear first, in declared order; then profile server order (native
+`tether` first when servers are omitted), then final tool name. Search results
+retain score order after filtering. `always_load` overlays
+`_meta["anthropic/alwaysLoad"]=true` only on eligible tools without changing their
+upstream metadata. Unknown order/load names fail startup; excluded pins never
+restore a target. Instructions are advertised during initialization and must
+fit 2,048 Unicode characters. Cursors bind the selected profile and inventory;
+changes require restarting discovery/listing. Flat listing excludes unavailable
+upstreams even when their last definitions remain cached for diagnostics.
+
+Upstream transport entries remain in `catalog/mcp-servers/*.yaml`. Their existing
+`MCPServerEntry` shape (command/args/env or URL, transport, enabled, tags, token,
+file credential references and sandbox/remote opt-in fields) is the direct
+upstream definition equivalent for a future gateway-owned config. Profile config
+references their IDs and does not duplicate credentials. No live catalog files
+move in this change, and authored `file://` references continue through the same
+loader. HTTP `/p/<id>` selection/lifecycle is CW-20261001-0539; per-launch
+`grants.mcp` profile derivation awaits the assignment contract. Ordinary native
+`tether_catalog_*` tools remain and can be excluded with `tools.deny`.
 
 ### Agents Tether launches: strict config and an allow-list
 

@@ -401,7 +401,7 @@ func checkLogsDir(stateDir string) checkResult {
 
 func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
 	if err := cat.Global.MCP.Validate(); err != nil {
-		return fail("mcp-discovery-mode", err.Error(), "set mcp.discovery_mode and profile discovery_mode to flat or search in global.yaml")
+		return fail("mcp-discovery-mode", err.Error(), "fix mcp.discovery_mode and mcp.profiles fields in global.yaml")
 	}
 	return ok("mcp-discovery-mode", "configured discovery modes are valid")
 }

@@ -78,3 +78,47 @@ func TestBadGatewayModeDoesNotBrickCatalog(t *testing.T) {
 		t.Fatal("gateway accepted typo")
 	}
 }
+
+func TestMCPProfileSelectionAndModeTier(t *testing.T) {
+	oldProfile, oldMode := mcpProfile, mcpDiscoveryMode
+	t.Cleanup(func() { mcpProfile = oldProfile; mcpDiscoveryMode = oldMode })
+	t.Setenv("TETHER_MCP_PROFILE", "reader")
+	t.Setenv("TETHER_MCP_DISCOVERY_MODE", "")
+	os.Unsetenv("TETHER_MCP_DISCOVERY_MODE")
+	flat, search := "flat", "search"
+	svc := &app.Service{Catalog: &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{DiscoveryMode: &flat, Profiles: map[string]mcpgateway.Profile{"reader": {DiscoveryMode: &search}, "writer": {DiscoveryMode: &flat}}}}}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().StringVar(&mcpProfile, "profile", "", "")
+	cmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "")
+	selected, err := resolveMCPProfile(cmd, svc)
+	if err != nil || selected.ID != "reader" || selected.Source != "environment" {
+		t.Fatalf("profile=%+v %v", selected, err)
+	}
+	in, err := resolveMCPModeInputs(cmd, svc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, err := mcpgateway.ResolveMode(in)
+	if err != nil || mode.Mode != mcpgateway.Search || mode.Source != "profile" {
+		t.Fatalf("mode=%+v %v", mode, err)
+	}
+	if err := cmd.Flags().Set("profile", "writer"); err != nil {
+		t.Fatal(err)
+	}
+	selected, err = resolveMCPProfile(cmd, svc)
+	if err != nil || selected.ID != "writer" || selected.Source != "argument" {
+		t.Fatalf("profile=%+v %v", selected, err)
+	}
+	t.Setenv("TETHER_MCP_PROFILE", "bogus")
+	if _, err := resolveMCPProfile(cmd, svc); err == nil {
+		t.Fatal("unknown env profile hidden by argument")
+	}
+	t.Setenv("TETHER_MCP_PROFILE", "reader")
+	if err := cmd.Flags().Set("profile", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveMCPProfile(cmd, svc); err == nil {
+		t.Fatal("empty explicit profile fell back")
+	}
+}
