@@ -92,6 +92,50 @@ a changed credential takes effect when that owner is recreated. No automatic
 service-token mint/rotation, install, restart or identity-mode change accompanies
 this change. Operator rollout still owns provisioning and cutover.
 
+## Operator provisioning and rollout
+
+1. In the upstream's own administration flow, create a dedicated service
+   principal for this Tether proxy and issue its credential. Give it only the
+   upstream permissions the proxy needs. This is an upstream credential, not
+   a Tether session token or the daemon's operator token.
+2. Configure the receiver, including Hadron when it adopts this contract, to
+   **pin that exact authenticated proxy service principal** before honoring
+   any forwarded-user or `tether.context` identity. Reject or ignore actor
+   claims from every other principal, including ordinary authenticated clients.
+   Authenticating an arbitrary bearer is insufficient. Pin the principal
+   identity through that receiver's supported configuration; rotating its
+   credential must preserve or deliberately replace that pin.
+3. Place the issued secret in a daemon-owned credential file beneath a
+   protected root already excluded from worker reads, such as the catalog/run
+   roots used by the launch's confinement policy. Keep the containing directory
+   private (0700) and the current-user-owned regular file exactly 0600. Do not
+   put the secret in catalog YAML, worker environment, bootstrap files, argv
+   or a workspace. Mode 0600 alone does not isolate an unconfined process
+   running as the same Unix user; protecting that process boundary remains
+   necessary. The reader's opened-inode ownership/mode/regular-file/no-final-
+   symlink checks fail closed, using the same protections as daemon token files.
+4. Add the absolute path as `proxy_service_token_file` on the intended HTTP/SSE
+   entry and remove that entry's ordinary `token`. Keep disabled entries
+   disabled until the receiver pin and protected file are ready. There is no
+   database migration in part B and no automatic receiver configuration or
+   service-principal creation. Existing ordinary entries retain their previous
+   credential behavior and receive no actor headers.
+5. At the operator's scheduled daemon-transport cutover, recreate the upstream
+   owner so it reads the credential and validate both an attributed tool POST
+   and an initialize/probe/GET without actor headers. Coordinate production
+   mounting with 0539. A missing, unsafe or invalid credential file prevents
+   this service-enabled owner from starting; it never substitutes a session or
+   operator bearer. Provisioning this field does not change `identity.mode`.
+
+For credential rotation, issue the replacement through the upstream, securely
+replace the file, then recreate the owner during an authorized maintenance
+window and retire the old credential according to the upstream's overlap
+policy. Editing the file alone does not rotate a running owner. To roll back
+forwarded attribution, remove this opt-in and restore the intended ordinary
+upstream credential, recreate the owner, and remove the receiver's proxy trust
+when no longer used. These are operator actions; this change performs none of
+these live provisioning, restart or cutover steps.
+
 An entry-aware HTTP client factory keeps separate policies even for entries
 sharing a URL. Each request is cloned, caller-controlled `X-Tether-*` and
 `X-Forwarded-*` headers are stripped case-insensitively, and Authorization is
