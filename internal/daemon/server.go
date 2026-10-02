@@ -38,6 +38,7 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
+	Docs                     api.DocsService
 	Identity                 *identity.Store
 	OperatorIdentityDegraded bool
 	identityAuditMu          sync.Mutex
@@ -417,8 +418,9 @@ func (s *Server) Handler() http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Channels != nil || s.Routing != nil {
+	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil {
 		apiHandler := api.NewHandler(api.Deps{
+			Docs:                s.Docs,
 			Service:             s.Service,
 			AI:                  s.AI,
 			AIAudit:             s.AIAudit,
@@ -653,6 +655,8 @@ func (s *Server) apiMounts() []apiMount {
 		{"/proxy/events", s.ProxyEvents != nil},
 
 		{"/catalog/projects", s.Catalog != nil},
+		{"/docs/mcp", s.Docs != nil},
+		{"/docs/mcp/", s.Docs != nil},
 		{"/catalog/agents", s.Catalog != nil},
 		{"/catalog/providers", s.Catalog != nil},
 		{"/catalog/launches", s.Catalog != nil},

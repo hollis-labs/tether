@@ -23,6 +23,7 @@ type AttachmentStore interface {
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
+	Docs        DocsService
 	Service     LaunchService
 	AI          AIService
 	AIAudit     AIAuditStore
@@ -129,6 +130,7 @@ type Deps struct {
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
+	Docs                DocsService
 	Service             LaunchService
 	AI                  AIService
 	AIAudit             AIAuditStore
@@ -163,6 +165,7 @@ type Server struct {
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
+		Docs:                deps.Docs,
 		Service:             deps.Service,
 		AI:                  deps.AI,
 		AIAudit:             deps.AIAudit,
@@ -193,6 +196,7 @@ func NewHandler(deps Deps) http.Handler {
 		Retention:           deps.Retention,
 	}
 	router := http.NewServeMux()
+	s.registerDocsRoutes(router)
 	s.registerSessionRoutes(router)
 	s.registerAIRoutes(router)
 	s.registerCheckpointRoutes(router)

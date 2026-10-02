@@ -228,6 +228,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		server := &daemon.Server{
+			Docs:                     svc.Docs(),
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
