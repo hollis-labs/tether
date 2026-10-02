@@ -1,4 +1,4 @@
-.PHONY: all build install go-install uninstall run sysop-build sysop-install release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
+.PHONY: all build install go-install uninstall run sysop-build sysop-install sysop-check release-build release-install package-release test test-race fmt vet tidy lint vuln check tools-install coverage coverage-html coverage-report clean clean-coverage
 
 # ---------------------------------------------------------------------------
 # Install / release metadata
@@ -46,6 +46,10 @@ sysop-build:
 
 sysop-install:
 	$(MAKE) -C apps/sysop install
+
+# Check the separate Go module without building frontend assets.
+sysop-check:
+	$(MAKE) -C apps/sysop vet test
 
 release-build: build sysop-build
 
@@ -115,6 +119,7 @@ vuln:
 
 tidy:
 	go mod tidy
+	cd apps/sysop && go mod tidy
 
 # ---------------------------------------------------------------------------
 # Toolchain bootstrap
@@ -129,7 +134,7 @@ tools-install:
 # Gates
 # ---------------------------------------------------------------------------
 
-check: fmt vet lint test-race vuln coverage-report
+check: fmt vet lint test-race vuln coverage-report sysop-check
 
 clean:
 	rm -rf bin dist
