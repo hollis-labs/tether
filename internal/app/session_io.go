@@ -15,7 +15,9 @@ func (s *Service) SendInput(id string, data []byte) error {
 	if err := s.refuseWidenedCodex(id); err != nil {
 		return err
 	}
-	return s.subprocessTurn(id, func() error { return s.Manager.SendInput(id, data) })
+	return s.subprocessTurn(id, func() error {
+		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, data) })
+	})
 }
 
 // subprocessTurn runs send and, for a subprocess-runtime session whose turn
@@ -59,11 +61,13 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 		if err != nil {
 			return err
 		}
-		return s.Manager.SendInput(id, payload)
+		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, payload) })
 	case info.Caps.JsonRpcStdio:
-		return s.sendTurnJSONRPC(ctx, id, text)
+		return s.trackTurnSubmission(id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
 	default:
-		return s.subprocessTurn(id, func() error { return s.Manager.SendInput(id, []byte(text)) })
+		return s.subprocessTurn(id, func() error {
+			return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, []byte(text)) })
+		})
 	}
 }
 

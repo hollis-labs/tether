@@ -499,7 +499,17 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			"provider_id":      plan.ProviderID,
 		},
 	}
+	// Mark an automatically submitted boot turn before Start can emit callbacks.
+	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
+		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
+		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
+		turnOutput.mu.Lock()
+		turnOutput.ensureTurn()
+		turnOutput.mu.Unlock()
+	}
+	s.turnOutputs.Store(sessionID, turnOutput)
 	if err := s.Manager.Start(context.Background(), req); err != nil {
+		s.turnOutputs.Delete(sessionID)
 		turnOutput.flush()
 		if procLog != nil {
 			_ = procLog.Close()
@@ -510,6 +520,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	go func() {
 		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
 		turnOutput.flush()
+		s.turnOutputs.Delete(sessionID)
 	}()
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.

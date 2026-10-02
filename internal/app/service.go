@@ -47,6 +47,8 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
+	turnOutputs sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store

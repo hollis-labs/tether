@@ -25,11 +25,15 @@ import (
 // The outer lock keeps reduction, persistence and emission ordered across
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
-	mu      sync.Mutex
-	reducer *turnoutput.Reducer
-	service *Service
-	row     store.SessionRow
-	route   *launchprofile.Route
+	mu            sync.Mutex
+	reducer       *turnoutput.Reducer
+	service       *Service
+	row           store.SessionRow
+	route         *launchprofile.Route
+	turnID        string
+	reducerTurnID string
+	turnDone      chan struct{}
+	finishedTurns []string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
@@ -37,8 +41,13 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 	if err != nil {
 		log.Printf("session %q: read output route: %v", row.ID, err)
 	}
-	return &sessionTurnOutput{service: s, row: row, route: route,
-		reducer: turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand)})}
+	out := &sessionTurnOutput{service: s, row: row, route: route}
+	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), NewTurnID: func() string {
+		out.ensureTurn()
+		out.reducerTurnID = out.turnID
+		return out.turnID
+	}})
+	return out
 }
 
 func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
@@ -46,14 +55,28 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	defer o.mu.Unlock()
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
+		o.completeTurn(result.TurnID)
 	}
 }
 
 func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if ev.TurnID != "" && slices.Contains(o.finishedTurns, ev.TurnID) {
+		return
+	}
+	switch ev.Kind {
+	case runtimeevents.KindTurnStarted, runtimeevents.KindAgentDelta, runtimeevents.KindAgentToolUse,
+		runtimeevents.KindAgentToolResult, runtimeevents.KindAgentSubagentSpawn, runtimeevents.KindAgentPermissionRequested,
+		runtimeevents.KindAgentPermissionResolved, runtimeevents.KindAgentPermissionDenied,
+		runtimeevents.KindTurnCompleted, runtimeevents.KindTurnFailed:
+		if ev.TurnID != "" {
+			o.bindTurn(ev.TurnID)
+		}
+	}
 	if result, ok := o.reducer.Observe(ev); ok {
 		o.publish(result)
+		o.completeTurn(result.TurnID)
 	}
 }
 
@@ -62,7 +85,10 @@ func (o *sessionTurnOutput) flush() {
 	defer o.mu.Unlock()
 	if result, ok := o.reducer.Flush("process_exited"); ok {
 		o.publish(result)
+		o.completeTurn(result.TurnID)
 	}
+	// A process can end before its first reduced event.
+	o.settleTurn()
 }
 
 // wire is used for every native runtime. ACP's wrapper supplies runtimeevents
