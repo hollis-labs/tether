@@ -14,6 +14,7 @@ import (
 // intent. CW-0064 supplies RoutingWiring from its running router and publisher;
 // reply and interrupt stay unavailable until their own service paths exist.
 type routingWiring interface{ RoutingWiring() ([]string, bool) }
+type routingRuntimeKinds interface{ RoutingRuntimeKinds(string) []string }
 type routingReplyWiring interface{ RoutingReplyWired() bool }
 type routingInterruptWiring interface{ RoutingInterruptWired(string) bool }
 
@@ -79,10 +80,16 @@ func (s *Service) routingCapabilities(ctx context.Context, sessionID string, sou
 			continue
 		}
 		capability := RuntimeRoutingCapabilities{KindsAvailable: []string{}, FinalTextConfidence: "unknown"}
+		// Final/failure have a provider-neutral turn-output feed. Questions and
+		// approvals require runtime-specific installed detectors (CW-0073).
+		runtimeKinds := []string{"final", "failure"}
+		if wiring, ok := source.(routingRuntimeKinds); ok {
+			runtimeKinds = wiring.RoutingRuntimeKinds(runtimeID)
+		}
 		if len(published) > 0 {
 			capability.FinalTextConfidence = confidence
 			if confidence != "none" && confidence != "unknown" {
-				capability.KindsAvailable = append(capability.KindsAvailable, published...)
+				capability.KindsAvailable = commonRoutingKinds(published, runtimeKinds)
 			}
 		}
 		capability.RouteSupported = installed && len(capability.KindsAvailable) > 0

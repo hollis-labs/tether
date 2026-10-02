@@ -1380,7 +1380,10 @@ configuration alone does not enable it. Reply support requires the installed
 reply service. Interrupt requires the actual adapter's `cancel_turn`
 advertisement AND Tether's installed interrupt path; a session interface or
 lifecycle stop is insufficient. Missing wiring reports false. Question and
-approval kinds remain unavailable until their publication paths are wired.
+approval kinds remain unavailable until their runtime-specific detector and
+publication paths are wired. The global publisher kinds are intersected with
+`RoutingRuntimeKinds(runtimeID)`; without that hook only final/failure can
+be available.
 
 `final_text_confidence` accepts `exact`, `heuristic`, `none`, and `unknown`.
 Before the output publisher is wired it is `unknown`. The runtime resolver

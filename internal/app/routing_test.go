@@ -21,6 +21,37 @@ func (w routingTestWiring) RoutingWiring() ([]string, bool)   { return w.kinds, 
 func (w routingTestWiring) RoutingReplyWired() bool           { return w.reply }
 func (w routingTestWiring) RoutingInterruptWired(string) bool { return w.interrupt }
 
+type routingRuntimeTestWiring struct{ routingTestWiring }
+
+func (w routingRuntimeTestWiring) RoutingRuntimeKinds(id string) []string {
+	if id == "codex" {
+		return []string{"final", "failure", "question", "approval"}
+	}
+	return []string{"final", "failure"}
+}
+
+func TestRoutingKindsRequireRuntimeDetectors(t *testing.T) {
+	svc := routingTestService()
+	base := routingTestWiring{kinds: []string{"final", "failure", "question", "approval", "terminal"}, router: true}
+	got, err := svc.routingCapabilities(context.Background(), "", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.KindsAvailable, []string{"failure", "final"}) {
+		t.Fatalf("absent detector hook = %+v", got)
+	}
+	got, err = svc.routingCapabilities(context.Background(), "", routingRuntimeTestWiring{base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Runtimes["codex"].KindsAvailable, []string{"final", "failure", "question", "approval"}) {
+		t.Fatalf("wired codex = %+v", got)
+	}
+	if !reflect.DeepEqual(got.Runtimes["antigravity"].KindsAvailable, []string{"final", "failure"}) {
+		t.Fatalf("unwired antigravity detectors = %+v", got)
+	}
+}
+
 func routingTestService() *Service {
 	return &Service{Catalog: &config.Catalog{Providers: map[string]config.Provider{
 		"agy":   {ID: "agy", Provider: "agy", RuntimeKind: config.RuntimeKindSubprocess},
