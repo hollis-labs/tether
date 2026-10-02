@@ -8,6 +8,7 @@ import (
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -209,36 +210,26 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 			gomcp.StringProp("since", "RFC3339 lower-bound timestamp; excludes events at or before this time", false),
 		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			f := store.ProxyEventFilter{
+			f := proxyevents.CallQuery{
 				SessionID: str(args, "session_id"),
 				ServerID:  str(args, "server"),
 				ToolName:  str(args, "tool_name"),
 			}
 
-			limit := intArg(args, "limit", 100)
-			if limit <= 0 {
-				limit = 100
-			}
-			if limit > 500 {
-				limit = 500
-			}
-			f.Limit = limit
-
+			f.Limit = intArg(args, "limit", 0)
 			if b, ok := args["errors_only"].(bool); ok {
 				f.ErrorsOnly = b
 			}
 
-			if since := str(args, "since"); since != "" {
-				t, parseErr := time.Parse(time.RFC3339, since)
-				if parseErr != nil {
-					return nil, toolError("invalid_request",
-						"since must be an RFC3339 timestamp: "+parseErr.Error())
-				}
-				f.Since = t
-			}
+			f.Since = str(args, "since")
 
-			evs, err := a.proxyEventQuerier().QueryProxyEvents(f)
+			evs, err := proxyevents.QueryProxyCalls(a.proxyEventQuerier(), f)
 			if err != nil {
+				var failure *proxyevents.Error
+				if errors.As(err, &failure) {
+					return nil, toolError(failure.Code, failure.Message)
+				}
+
 				if isDaemonUnreachable(err) {
 					return nil, daemonUnreachableError(err)
 				}
