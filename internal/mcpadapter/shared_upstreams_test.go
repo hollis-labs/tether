@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -63,6 +64,16 @@ func TestDaemonUpstreamFixture(t *testing.T) {
 
 func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	if runtime.GOOS != "linux" {
+		t.Skip("real protect-only upstream smoke requires Linux bubblewrap")
+	}
+	// Probe the host, not our confinement implementation. Ubuntu CI may install
+	// bwrap while AppArmor still denies namespaces. The refusal/no-fallback test
+	// remains mandatory; this real namespace smoke runs on capable hosts.
+	probe := exec.Command("bwrap", "--bind", "/", "/", "--unshare-user", "--unshare-pid", "--proc", "/proc", "/bin/true")
+	if output, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("host cannot create bubblewrap namespace: %v (%s)", err, output)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	roots := daemonTestRoots(t)
