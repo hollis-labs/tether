@@ -248,6 +248,7 @@ brand or inventory-size heuristic changes the selected mode.
 Select a profile with `tether mcp --proxy --profile reader` or
 `TETHER_MCP_PROFILE=reader`. The argument wins over the environment; an explicit
 empty/unknown selector is a hard error, including an overridden selector.
+Repeated `--profile` arguments must agree; different values are a hard error.
 Profiles live under `mcp.profiles` in catalog `global.yaml`:
 
 ```yaml
@@ -274,7 +275,10 @@ profiles select the full origin surface and supersede upstream-only selection.
 `--only` can further suppress natives. Gateway status remains visible in flat
 mode; search retains its fixed four-tool front even for an empty profile.
 
-Allow/deny globs use case-sensitive final wire names (`*`, `?`, character classes).
+Allow/deny globs use case-sensitive final wire names (`*`, `?`, character
+classes and backslash escapes). `*` matches any run of characters, including
+`/`; `?` matches any one character, including `/`. Names are not filesystem
+paths.
 Absent `allow` accepts all; `allow: []` accepts none. **Deny wins over read-only,
 which wins over allow.** Read-only accepts only tools declaring
 `annotations.readOnlyHint: true`; missing hints are excluded. This is advisory
@@ -286,11 +290,28 @@ call a hidden SDK handler.
 `tether` first when servers are omitted), then final tool name. Search results
 retain score order after filtering. `always_load` overlays
 `_meta["anthropic/alwaysLoad"]=true` only on eligible tools without changing their
-upstream metadata. Unknown order/load names fail startup; excluded pins never
+upstream metadata. Gateway infrastructure names cannot be order/load pins.
+Unknown order/load names fail startup when discovery is complete; while an
+upstream is unavailable, startup warns "upstream X unavailable" and defers
+unknown-pin validation, because final names need not identify an origin. Retry
+discovery can fill the missing tool without restarting; gateway status reports
+any remaining unknown pin once discovery is complete. Doctor validates every
+profile’s syntax and catalog origins without opening credentials; exact
+order/load names require live discovery. Unselected malformed profiles do not
+block startup. Excluded pins never
 restore a target. Instructions are advertised during initialization and must
 fit 2,048 Unicode characters. Cursors bind the selected profile and inventory;
 changes require restarting discovery/listing. Flat listing excludes unavailable
 upstreams even when their last definitions remain cached for diagnostics.
+
+Profile origins outside `--servers` or confined grants stay excluded and appear
+in gateway status warnings. A search/list `servers` filter naming a fully
+policy-excluded origin fails as unknown or excluded, rather than returning an
+empty result. `--extract-refs` resolves references only when
+`tesseract_ref_resolve` is eligible under the same profile and grant policy. A
+catalog upstream named `tether` remains usable without a profile; selecting
+reserved native origin `tether` with that catalog collision fails (broader
+naming policy is CW-20260926-0009).
 
 Upstream transport entries remain in `catalog/mcp-servers/*.yaml`. Their existing
 `MCPServerEntry` shape (command/args/env or URL, transport, enabled, tags, token,

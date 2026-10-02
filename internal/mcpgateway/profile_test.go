@@ -157,3 +157,83 @@ func TestProtocolProfilePaginationAvailabilityAndBinding(t *testing.T) {
 		t.Fatalf("unavailable schema leaked: len=%d err=%v", len(listed), err)
 	}
 }
+
+func TestToolGlobsIncludeSlashAcrossPolicyPaths(t *testing.T) {
+	for _, pattern := range []string{"*delete*", "ns/?elete_all", "ns/[d-f]elete_all", "ns/[^a-c]elete_all"} {
+		yes, err := matchToolGlob(pattern, "ns/delete_all")
+		if err != nil || !yes {
+			t.Fatalf("%q did not match slash name: %v", pattern, err)
+		}
+	}
+	entry := Entry{Origin: "alpha", Tool: &mcpsdk.Tool{Name: "ns/delete_all"}}
+	policy := &Policy{Selection: ProfileSelection{Profile: &Profile{Tools: ToolRules{Allow: []string{"*"}, Deny: []string{"*delete*"}}}}}
+	snapshot := Snapshot{Entries: []Entry{entry}, Origins: []OriginStatus{{ID: "alpha", Status: "connected"}}}
+	service := &Service{Policy: policy, Snapshot: func() Snapshot { return snapshot }, Score: func(string, Entry) int { t.Fatal("excluded tool ranked"); return 1 }, Dispatch: func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error) {
+		t.Fatal("excluded tool dispatched")
+		return nil, nil
+	}}
+	if out, err := service.Search(Request{Query: "delete"}); err != nil || len(out.Items) != 0 {
+		t.Fatalf("search=%v %v", out, err)
+	}
+	if out, err := service.List(Request{Names: []string{entry.Tool.Name}}); err != nil || out.Items[0].Error == "" {
+		t.Fatalf("hydrate=%v %v", out, err)
+	}
+	if _, err := service.Call(context.Background(), entry.Tool.Name, nil, nil); err == nil {
+		t.Fatal("deny bypass")
+	}
+	if _, err := service.List(Request{Servers: []string{"alpha"}}); err == nil {
+		t.Fatal("fully excluded server accepted")
+	}
+	policy.Selection.Profile.Tools.Deny = nil
+	policy.Selection.Profile.Tools.Allow = []string{"*delete*"}
+	if out, err := service.List(Request{}); err != nil || len(out.Items) != 1 {
+		t.Fatalf("allow slash=%v %v", out, err)
+	}
+}
+
+func TestSelectedProfileValidationAndUnavailablePins(t *testing.T) {
+	config := Config{Profiles: map[string]Profile{"bad": {Tools: ToolRules{Deny: []string{"["}}}, "good": {}}}
+	for _, in := range []ProfileInputs{{}, {Explicit: []Selector{{"good", "argument"}}}} {
+		if _, err := ResolveProfile(config, in); err != nil {
+			t.Fatalf("unselected malformed profile blocked start: %v", err)
+		}
+	}
+	if _, err := ResolveProfile(config, ProfileInputs{Explicit: []Selector{{"bad", "argument"}}}); err == nil {
+		t.Fatal("selected malformed profile accepted")
+	}
+	policy := Policy{Selection: ProfileSelection{Profile: &Profile{Order: []string{"alpha_read"}}}}
+	snapshot := Snapshot{Origins: []OriginStatus{{ID: "alpha", Status: "disconnected"}}}
+	if err := policy.ValidateNames(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if warnings := policy.NameWarnings(snapshot); len(warnings) != 1 || !strings.Contains(warnings[0], "upstream alpha unavailable") {
+		t.Fatalf("warnings=%v", warnings)
+	}
+	snapshot.Origins[0].Status = "connected"
+	if err := policy.ValidateNames(snapshot); err == nil {
+		t.Fatal("connected missing pin accepted")
+	}
+	for _, name := range []string{"tether_gateway_status", "tether_tool_search", "tether_tool_list", "tether_tool_call"} {
+		policy.Selection.Profile.Order = []string{name}
+		snapshot.Entries = []Entry{{Tool: &mcpsdk.Tool{Name: name}}}
+		if err := policy.ValidateNames(snapshot); err == nil {
+			t.Fatal("infrastructure pin accepted")
+		}
+	}
+}
+
+func TestToolGlobSlashQuestionEscapeAndUnicode(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"?", "/", true}, {"*", "a/b\nc", true}, {"[/]", "/", true},
+		{`\*`, "*", true}, {`[\-]`, "-", true}, {"[é-ê]?", "é/", true},
+		{"*delete*", "ns/read_all", false}, {"DELETE*", "delete", false},
+	} {
+		got, err := matchToolGlob(tc.pattern, tc.name)
+		if err != nil || got != tc.want {
+			t.Fatalf("glob %q name %q=%v %v", tc.pattern, tc.name, got, err)
+		}
+	}
+}

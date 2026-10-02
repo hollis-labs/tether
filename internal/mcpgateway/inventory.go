@@ -122,7 +122,19 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 	unavailable, unavailableServers := availability(snapshot)
 	knownServers := map[string]bool{}
 	for _, origin := range snapshot.Origins {
-		knownServers[origin.ID] = true
+		if s.Policy == nil || s.Policy.Selection.Profile == nil {
+			knownServers[origin.ID] = true
+		} else if origin.Status != "connected" && origin.Status != "excluded" {
+			allowed := s.Policy.Selection.Profile.Servers == nil
+			for _, id := range s.Policy.Selection.Profile.Servers {
+				if id == origin.ID {
+					allowed = true
+				}
+			}
+			if allowed {
+				knownServers[origin.ID] = true
+			}
+		}
 	}
 	for _, entry := range snapshot.Entries {
 		knownServers[entry.Origin] = true
@@ -300,6 +312,7 @@ type Status struct {
 	Selection
 	Profile        string         `json:"profile,omitempty"`
 	ProfileSource  string         `json:"profile_source,omitempty"`
+	Warnings       []string       `json:"warnings,omitempty"`
 	Origins        []OriginStatus `json:"origins"`
 	CatalogedTools int            `json:"cataloged_tools"`
 	EligibleTools  int            `json:"eligible_tools"`
@@ -321,6 +334,13 @@ func (s *Service) Status(name string) Status {
 	if s.Policy != nil {
 		out.Profile = s.Policy.Selection.ID
 		out.ProfileSource = s.Policy.Selection.Source
+		out.Warnings = s.Policy.NameWarnings(original)
+		if err := s.Policy.ValidateNames(original); err != nil {
+			out.Warnings = append(out.Warnings, err.Error())
+		}
+		for _, id := range s.Policy.RestrictedOrigins {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("profile origin %s excluded by upstream restriction or confined grant", id))
+		}
 	}
 	for _, origin := range snapshot.Origins {
 		out.CatalogedTools += origin.ToolCount

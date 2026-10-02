@@ -3,8 +3,9 @@ package mcpgateway
 import (
 	"fmt"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"path"
+	"regexp"
 	"sort"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -19,7 +20,7 @@ func (p Profile) Validate() error {
 	}
 	for _, patterns := range [][]string{p.Tools.Allow, p.Tools.Deny} {
 		for _, pattern := range patterns {
-			if _, err := path.Match(pattern, ""); err != nil {
+			if _, err := matchToolGlob(pattern, ""); err != nil {
 				return fmt.Errorf("invalid tool glob %q: %w", pattern, err)
 			}
 		}
@@ -65,22 +66,23 @@ func ResolveProfile(config Config, in ProfileInputs) (ProfileSelection, error) {
 			return ProfileSelection{}, fmt.Errorf("%s: unknown MCP profile %q", candidate.Source, candidate.Value)
 		}
 	}
-	if err := config.Validate(); err != nil {
-		return ProfileSelection{}, err
-	}
 	if len(candidates) == 0 {
 		return ProfileSelection{}, nil
 	}
 	selected := candidates[0]
 	profile := config.Profiles[selected.Value]
+	if err := profile.Validate(); err != nil {
+		return ProfileSelection{}, fmt.Errorf("mcp.profiles.%s: %w", selected.Value, err)
+	}
 	return ProfileSelection{selected.Value, selected.Source, &profile}, nil
 }
 
 // Policy is immutable endpoint policy. Upstream order is supplied by the loader;
 // native tools are otherwise ordered with origin tether before catalog origins.
 type Policy struct {
-	Selection   ProfileSelection
-	ServerOrder []string
+	Selection         ProfileSelection
+	ServerOrder       []string
+	RestrictedOrigins []string `json:"restricted_origins,omitempty"`
 }
 
 func (p Policy) Exclusion(entry Entry) string {
@@ -102,7 +104,7 @@ func (p Policy) Exclusion(entry Entry) string {
 	}
 	matches := func(patterns []string) bool {
 		for _, pattern := range patterns {
-			if yes, _ := path.Match(pattern, entry.Tool.Name); yes {
+			if yes, _ := matchToolGlob(pattern, entry.Tool.Name); yes {
 				return true
 			}
 		}
@@ -182,7 +184,10 @@ func (p Policy) ValidateNames(snapshot Snapshot) error {
 	}
 	for _, names := range [][]string{profile.Order, profile.AlwaysLoad} {
 		for _, name := range names {
-			if !known[name] {
+			if IsInfrastructure(name) {
+				return fmt.Errorf("profile order/always_load cannot reference gateway infrastructure %q", name)
+			}
+			if !known[name] && len(p.NameWarnings(snapshot)) == 0 {
 				return fmt.Errorf("profile %q references unknown order/always_load tool %q", p.Selection.ID, name)
 			}
 		}
@@ -194,7 +199,7 @@ func (p Policy) ValidateNames(snapshot Snapshot) error {
 // profile origins with the upstream-only CLI restriction. No secrets are read.
 func SelectOrigins(known map[string]bool, upstreamRestriction []string, profile *Profile) ([]string, error) {
 	for _, id := range upstreamRestriction {
-		if id == "tether" || !known[id] {
+		if !known[id] {
 			return nil, fmt.Errorf("unknown or disabled MCP server ID %q", id)
 		}
 	}
@@ -223,4 +228,104 @@ func SelectOrigins(known map[string]bool, upstreamRestriction []string, profile 
 		}
 	}
 	return selected, nil
+}
+
+// NameWarnings defer unknown-pin checks when discovery is incomplete. Final
+// wire names need not encode their origin, so an unknown pin cannot safely be
+// attributed to a connected origin while another upstream is unavailable.
+func (p Policy) NameWarnings(snapshot Snapshot) []string {
+	if p.Selection.Profile == nil {
+		return nil
+	}
+	known := map[string]string{}
+	for _, e := range snapshot.Entries {
+		known[e.Tool.Name] = e.Origin
+	}
+	missing := false
+	pinnedOrigins := map[string]bool{}
+	for _, names := range [][]string{p.Selection.Profile.Order, p.Selection.Profile.AlwaysLoad} {
+		for _, name := range names {
+			origin, exists := known[name]
+			if !exists && !IsInfrastructure(name) {
+				missing = true
+			}
+			if exists {
+				pinnedOrigins[origin] = true
+			}
+		}
+	}
+	var warnings []string
+	for _, origin := range snapshot.Origins {
+		if origin.ID != "tether" && origin.Status != "connected" && origin.Status != "excluded" && (missing || pinnedOrigins[origin.ID]) {
+			warnings = append(warnings, fmt.Sprintf("upstream %s unavailable; profile order/always_load validation deferred until discovery recovers", origin.ID))
+		}
+	}
+	return warnings
+}
+
+func IsInfrastructure(name string) bool {
+	switch name {
+	case "tether_gateway_status", "tether_tool_search", "tether_tool_list", "tether_tool_call":
+		return true
+	}
+	return false
+}
+
+// matchToolGlob matches entire tool names, not filesystem paths. Every rune,
+// including '/', participates in '*' and '?'. Character classes and escapes
+// retain the documented glob syntax.
+func matchToolGlob(pattern, name string) (bool, error) {
+	var out strings.Builder
+	out.WriteString("(?s)^")
+	runes := []rune(pattern)
+	literal := func(r rune) { fmt.Fprintf(&out, `\x{%x}`, r) }
+	for i := 0; i < len(runes); i++ {
+		switch r := runes[i]; r {
+		case '*':
+			out.WriteString(".*")
+		case '?':
+			out.WriteByte('.')
+		case '\\':
+			i++
+			if i == len(runes) {
+				return false, fmt.Errorf("trailing escape")
+			}
+			literal(runes[i])
+		case '[':
+			out.WriteByte('[')
+			i++
+			if i < len(runes) && runes[i] == '^' {
+				out.WriteByte('^')
+				i++
+			}
+			count := 0
+			for ; i < len(runes) && runes[i] != ']'; i++ {
+				switch runes[i] {
+				case '\\':
+					i++
+					if i == len(runes) {
+						return false, fmt.Errorf("trailing class escape")
+					}
+					literal(runes[i])
+				case '-':
+					out.WriteByte('-')
+				default:
+					literal(runes[i])
+				}
+				count++
+			}
+			if i == len(runes) || count == 0 {
+				return false, fmt.Errorf("unterminated or empty character class")
+			}
+			out.WriteByte(']')
+		default:
+			literal(r)
+		}
+	}
+	out.WriteByte('$')
+	re, err := regexp.Compile(out.String())
+	if err != nil {
+		return false, err
+	}
+	return re.MatchString(name), nil
 }

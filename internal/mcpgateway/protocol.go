@@ -28,7 +28,7 @@ func (s *Service) ProtocolList(registered []*mcpsdk.Tool, infrastructure func(st
 	entries := []Entry{}
 	for _, tool := range registered {
 		if infrastructure(tool.Name) {
-			entries = append(entries, policy.Decorate(Entry{Tool: tool, Origin: "tether"}))
+			entries = append(entries, Entry{Tool: tool, Origin: "tether"})
 			continue
 		}
 		if s.Selection.Mode == Flat {

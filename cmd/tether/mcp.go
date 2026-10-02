@@ -66,7 +66,7 @@ var (
 	mcpScopes        string
 	mcpProxy         bool
 	mcpDiscoveryMode string
-	mcpProfile       string
+	mcpProfiles      []string
 	mcpServers       string
 	mcpOnly          string
 	mcpConfine       bool
@@ -80,7 +80,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: TETHER_MCP_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
-	mcpCmd.Flags().StringVar(&mcpProfile, "profile", "", "gateway profile ID (env: TETHER_MCP_PROFILE)")
+	mcpCmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "gateway profile ID (env: TETHER_MCP_PROFILE)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs permitted in every discovery mode (env: TETHER_MCP_SERVERS); omitted = all enabled upstreams")
 	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "restrict to these upstream server IDs and omit native Tether targets; gateway status/discovery infrastructure follows the selected mode")
@@ -465,9 +465,6 @@ func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind
 // The stdio client's environment is a distinct precedence tier, not a daemon
 // environment guessed by an HTTP caller. Resolution is immutable for this run.
 func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Client) (mcpgateway.ModeInputs, error) {
-	if err := svc.Catalog.Global.MCP.Validate(); err != nil {
-		return mcpgateway.ModeInputs{}, err
-	}
 	profile, err := resolveMCPProfile(cmd, svc)
 	if err != nil {
 		return mcpgateway.ModeInputs{}, err
@@ -499,7 +496,13 @@ func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Clien
 func resolveMCPProfile(cmd *cobra.Command, svc *app.Service) (mcpgateway.ProfileSelection, error) {
 	in := mcpgateway.ProfileInputs{}
 	if cmd.Flags().Changed("profile") {
-		in.Explicit = []mcpgateway.Selector{{Value: mcpProfile, Source: "argument"}}
+		values, err := cmd.Flags().GetStringArray("profile")
+		if err != nil {
+			return mcpgateway.ProfileSelection{}, err
+		}
+		for _, value := range values {
+			in.Explicit = append(in.Explicit, mcpgateway.Selector{Value: value, Source: "argument"})
+		}
 	}
 	if value, present := os.LookupEnv("TETHER_MCP_PROFILE"); present {
 		in.Environment = &value
