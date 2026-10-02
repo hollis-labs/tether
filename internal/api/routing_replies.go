@@ -143,14 +143,18 @@ func (s *Server) handleMessageReply(w http.ResponseWriter, r *http.Request, id s
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
 		return
 	}
-	s.submitReply(w, r, id, in.Body, in.Interrupt, "")
+	if receipt, ok := s.submitReply(w, r, id, in.Body, in.Interrupt, ""); ok {
+		writeJSON(w, http.StatusAccepted, receipt)
+	}
 }
 
-func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, body string, interrupt bool, fallbackCaller string) {
+// submitReply submits the reply and reports the receipt, or writes the error
+// response itself and reports false.
+func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, body string, interrupt bool, fallbackCaller string) (RoutingReplyReceipt, bool) {
 	caller, verified, err := replyCaller(r, fallbackCaller)
 	if err != nil {
 		writeReplyError(w, err)
-		return
+		return RoutingReplyReceipt{}, false
 	}
 	receipt, err := s.RoutingReplies.SubmitRoutingReply(r.Context(), RoutingReplyRequest{
 		ParentID: parentID, Body: body, Interrupt: interrupt, Caller: caller, Verified: verified,
@@ -158,9 +162,9 @@ func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, b
 	})
 	if err != nil {
 		writeReplyError(w, err)
-		return
+		return RoutingReplyReceipt{}, false
 	}
-	writeJSON(w, http.StatusAccepted, receipt)
+	return receipt, true
 }
 
 // replyCaller is the verified principal, else the self-asserted ?as= identity
@@ -231,15 +235,32 @@ func replyText(payload json.RawMessage) string {
 	return trimmed
 }
 
+// routedReplyResponse is the 201 body of POST /messages when the envelope was a
+// reply to a routed message: the stored reply envelope, exactly the shape an
+// ordinary send returns, plus its routing receipt. Existing clients (the MCP
+// tool, the CLI) read it as a sent message and need no change.
+type routedReplyResponse struct {
+	messaging.Envelope
+	RoutingReply RoutingReplyReceipt `json:"routing_reply"`
+}
+
 // sendRoutedReply serves POST /messages with in_reply_to naming a routed
 // message: the envelope is not delivered to an inbox; its text is queued for
-// the sender session exactly as POST /messages/{id}/reply would. The response
-// is the reply receipt (202), not the stored envelope.
+// the sender session exactly as POST /messages/{id}/reply would.
 func (s *Server) sendRoutedReply(w http.ResponseWriter, r *http.Request, env messaging.Envelope, parent messaging.Envelope) {
 	if env.To != (messaging.Address{}) && env.To != parent.From {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"a reply to a routed message is delivered to its sender session "+parent.From.URN()+"; omit to or set it to that address")
 		return
 	}
-	s.submitReply(w, r, parent.ID, replyText(env.Payload), false, env.From.URN())
+	receipt, ok := s.submitReply(w, r, parent.ID, replyText(env.Payload), false, env.From.URN())
+	if !ok {
+		return
+	}
+	stored, err := s.MessageStore.Get(r.Context(), receipt.ReplyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, "reply accepted as "+receipt.ReplyID+" but could not be read back: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, routedReplyResponse{Envelope: stored, RoutingReply: receipt})
 }

@@ -23,16 +23,31 @@ type fakeReplies struct {
 	requests []RoutingReplyRequest
 	err      error
 	delivery RoutingReplyDelivery
+	// db, when set, stores the reply like the real service does and returns its id.
+	db *store.Store
 }
 
-func (f *fakeReplies) SubmitRoutingReply(_ context.Context, req RoutingReplyRequest) (RoutingReplyReceipt, error) {
+func (f *fakeReplies) SubmitRoutingReply(ctx context.Context, req RoutingReplyRequest) (RoutingReplyReceipt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
 	if f.err != nil {
 		return RoutingReplyReceipt{}, f.err
 	}
-	return RoutingReplyReceipt{ReplyID: "reply-1", ParentID: req.ParentID, State: "queued", TargetSessionID: "s1"}, nil
+	id := "reply-1"
+	if f.db != nil {
+		caller, err := messaging.ParseURN(req.Caller.ID)
+		if err != nil {
+			return RoutingReplyReceipt{}, err
+		}
+		reply, _, err := f.db.CreateRoutingReply(ctx, store.NewRoutingReply{From: caller, ParentID: req.ParentID, Body: req.Body,
+			TargetSessionID: "s1", Actor: caller.URN()})
+		if err != nil {
+			return RoutingReplyReceipt{}, err
+		}
+		id = reply.ReplyID
+	}
+	return RoutingReplyReceipt{ReplyID: id, ParentID: req.ParentID, State: "queued", TargetSessionID: "s1"}, nil
 }
 
 func (f *fakeReplies) RoutingReplyDelivery(_ context.Context, id string) (RoutingReplyDelivery, error) {
@@ -187,20 +202,34 @@ func TestReplyErrorsAreTypedAndCarryTheirOwnStatus(t *testing.T) {
 func TestSendWithInReplyToARoutedMessageIsAReplyNotAMailboxDelivery(t *testing.T) {
 	svc := &fakeReplies{}
 	h, db := replyServer(t, svc)
+	svc.db = db
 	parent := routedMessage(t, db)
 
 	w := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": parent.ID,
 		"payload": map[string]string{"body": "use the second option"}}, nil)
-	if w.Code != http.StatusAccepted {
+	// 201 and an envelope, like any send: the MCP tool and the CLI read it unchanged.
+	if w.Code != http.StatusCreated {
 		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var sent struct {
+		messaging.Envelope
+		RoutingReply RoutingReplyReceipt `json:"routing_reply"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.ID == "" || sent.InReplyTo != parent.ID || sent.RoutingReply.ReplyID != sent.ID || sent.RoutingReply.State != "queued" ||
+		sent.RoutingReply.TargetSessionID != "s1" {
+		t.Fatalf("response %+v", sent)
 	}
 	got := svc.requests[0]
 	if got.ParentID != parent.ID || got.Body != "use the second option" || got.Caller.ID != "msg://user/local/chris" || got.Interrupt {
 		t.Fatalf("request %+v", got)
 	}
+	// The only stored copy is the reply the service made; the HTTP layer added no mailbox row.
 	var count int
-	if err := db.DB().QueryRow(`SELECT count(*) FROM messages WHERE in_reply_to=?`, parent.ID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("the HTTP layer stored a mailbox copy of the reply: %d %v", count, err)
+	if err := db.DB().QueryRow(`SELECT count(*) FROM messages WHERE in_reply_to=?`, parent.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("stored replies = %d (%v), want exactly the service's one", count, err)
 	}
 
 	// to, when given, must be the sender session.
@@ -211,7 +240,7 @@ func TestSendWithInReplyToARoutedMessageIsAReplyNotAMailboxDelivery(t *testing.T
 	}
 	same := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": parent.ID,
 		"to": parent.From.URN(), "payload": "plain text"}, nil)
-	if same.Code != http.StatusAccepted || svc.requests[1].Body != "plain text" {
+	if same.Code != http.StatusCreated || svc.requests[1].Body != "plain text" {
 		t.Fatalf("to = sender session: %d %s %+v", same.Code, same.Body, svc.requests)
 	}
 }
