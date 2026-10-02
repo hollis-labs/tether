@@ -31,20 +31,28 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 // catalog-driven cli-goprovider entries (codex, claude) which follow the
 // same per-turn subprocess + stream-JSON pattern as claude.
 func NewWithAdapter(plan *launch.Plan, adapter gop.CLIAdapter, providerID string, caps agentsessions.Capabilities, opts ...Option) (agentsessions.Runtime, error) {
-	scoped := &PlanScopedAdapter{
-		Inner:    adapter,
-		Binary:   plan.Command,
-		BaseArgs: append([]string(nil), plan.Args...),
+	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
+		ID:      providerID,
+		Kind:    "cli",
+		Adapter: NewPlanScopedAdapter(plan, adapter, opts...),
+		Caps:    caps,
+	})
+}
+
+// NewPlanScopedAdapter constructs the same adapter used by NewWithAdapter,
+// preserving only the interrupt interfaces the inner adapter implements.
+// Capability queries can pass a nil plan to inspect this shape without
+// resolving a launch or running preflight.
+func NewPlanScopedAdapter(plan *launch.Plan, adapter gop.CLIAdapter, opts ...Option) gop.CLIAdapter {
+	scoped := &PlanScopedAdapter{Inner: adapter}
+	if plan != nil {
+		scoped.Binary = plan.Command
+		scoped.BaseArgs = append([]string(nil), plan.Args...)
 	}
 	for _, opt := range opts {
 		opt(scoped)
 	}
-	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
-		ID:      providerID,
-		Kind:    "cli",
-		Adapter: scoped.withInterrupts(),
-		Caps:    caps,
-	})
+	return scoped.withInterrupts()
 }
 
 // Option adjusts the PlanScopedAdapter NewWithAdapter builds.
