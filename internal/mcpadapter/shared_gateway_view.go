@@ -200,6 +200,10 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware([]ToolCallMiddleware{logging}, registry))
 	}
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
+	if !opts.Only {
+		a.registerDocsResources(s)
+		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
+	}
 	allowed := map[string]struct{}{}
 	for id := range upstreams.servers {
 		allowed[id] = struct{}{}
