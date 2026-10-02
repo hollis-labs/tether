@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,15 +66,23 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	for _, mode := range []string{"flat", "search"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, scenario := range []struct {
+		mode    string
+		profile bool
+	}{{"flat", true}, {"search", true}, {"flat", false}} {
+		t.Run(scenario.mode+"/profile="+fmt.Sprint(scenario.profile), func(t *testing.T) {
+			mode := scenario.mode
 			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "reader", Kind: "service"})
 			a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			sink := make(wiringEventSink, 2)
-			v, err := r.NewGatewayView(ctx, a, ProxyOptions{Only: true, ServerFilter: []string{}, Publisher: sink, Profile: mcpgateway.ProfileSelection{ID: "reader", Profile: &mcpgateway.Profile{}}, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: mode, Source: "test"}}}})
+			profile := mcpgateway.ProfileSelection{ID: "reader"}
+			if scenario.profile {
+				profile.Profile = &mcpgateway.Profile{}
+			}
+			v, err := r.NewGatewayView(ctx, a, ProxyOptions{Only: true, ServerFilter: []string{}, Publisher: sink, Profile: profile, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: mode, Source: "test"}}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,8 +93,14 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 				name, args = "tether_tool_call", map[string]any{"name": "excluded_tool", "arguments": args}
 			}
 			result, err := client.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
-			if err != nil || !result.IsError {
+			if scenario.profile && (err != nil || !result.IsError) {
 				t.Fatalf("denial: %+v %v", result, err)
+			}
+			if !scenario.profile {
+				var rpc *jsonrpc.Error
+				if !errors.As(err, &rpc) || rpc.Code != jsonrpc.CodeInvalidParams {
+					t.Fatalf("unknown-tool RPC changed: %+v %v", result, err)
+				}
 			}
 			<-sink // start
 			var call events.ToolCallEvent
