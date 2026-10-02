@@ -56,6 +56,7 @@ const (
 )
 
 type appServer struct {
+	reader      stateReader
 	catalogRoot string
 	addr        string
 	startedAt   time.Time
@@ -641,6 +642,7 @@ func main() {
 
 	log.Printf("TetherSysop listening on http://localhost%s%s/", *addr, webui.BasePath)
 	if err := http.ListenAndServe(*addr, router); err != nil {
+		server.closeStateReader()
 		log.Fatal(err)
 	}
 }
@@ -2217,51 +2219,59 @@ FROM broker_envelopes`
 }
 
 func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
-	db, err := s.openStateDB()
+	resp, err := s.loadMessages()
 	if errors.Is(err, errStateDBUnset) {
 		writeJSON(w, http.StatusOK, messagesResponse{Messages: []messageDTO{}})
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, messagesResponse{Error: err.Error()})
+		// sysop-ui's ApiError reads message on non-2xx responses. Preserve error
+		// for API consumers while surfacing the actual cause in the inbox UI.
+		message := "Could not read the Tether inbox: " + err.Error()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": message, "message": message})
 		return
 	}
-	defer db.Close()
+	writeJSON(w, http.StatusOK, resp)
+}
 
-	totals, err := countMessages(db)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, messagesResponse{Error: err.Error()})
-		return
-	}
-	rows, err := db.ListMessages(500)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, messagesResponse{Error: err.Error()})
-		return
-	}
-	out := make([]messageDTO, 0, len(rows))
-	for _, m := range rows {
-		out = append(out, messageDTO{
-			ID:          m.ID,
-			Kind:        m.Kind,
-			Channel:     m.Channel,
-			From:        m.FromURN,
-			To:          m.ToURN,
-			ThreadID:    m.ThreadID,
-			InReplyTo:   m.InReplyTo,
-			Subject:     m.Subject,
-			Body:        m.Body,
-			Payload:     m.Payload,
-			ContentType: m.ContentType,
-			Scope:       scopeOf(m.ToURN),
-			CreatedAt:   m.CreatedAt,
-			DeliveredAt: m.DeliveredAt,
-			ConsumedAt:  m.ConsumedAt,
-			CanceledAt:  m.CanceledAt,
-			ReadAt:      m.ReadAt,
-			ArchivedAt:  m.ArchivedAt,
-		})
-	}
-	writeJSON(w, http.StatusOK, messagesResponse{Messages: out, Totals: totals})
+func (s *appServer) loadMessages() (messagesResponse, error) {
+	var resp messagesResponse
+	err := s.withStateReader(func(db *store.Store) error {
+		totals, err := countMessages(db)
+		if err != nil {
+			return err
+		}
+		rows, err := db.ListMessages(500)
+		if err != nil {
+			return err
+		}
+		out := make([]messageDTO, 0, len(rows))
+		for _, m := range rows {
+			out = append(out, messageDTO{
+				ID:          m.ID,
+				Kind:        m.Kind,
+				Channel:     m.Channel,
+				From:        m.FromURN,
+				To:          m.ToURN,
+				ThreadID:    m.ThreadID,
+				InReplyTo:   m.InReplyTo,
+				Subject:     m.Subject,
+				Body:        m.Body,
+				Payload:     m.Payload,
+				ContentType: m.ContentType,
+				Scope:       scopeOf(m.ToURN),
+				CreatedAt:   m.CreatedAt,
+				DeliveredAt: m.DeliveredAt,
+				ConsumedAt:  m.ConsumedAt,
+				CanceledAt:  m.CanceledAt,
+				ReadAt:      m.ReadAt,
+				ArchivedAt:  m.ArchivedAt,
+			})
+		}
+		resp = messagesResponse{Messages: out, Totals: totals}
+		return nil
+	})
+	return resp, err
 }
 
 func countMessages(db *store.Store) (messageTotals, error) {
