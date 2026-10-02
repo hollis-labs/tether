@@ -101,3 +101,10 @@ ID available for its approval signal. Other current sources conservatively repor
 final and failure. A question or approval is classified only when the turn ends
 on that signal. Approval text can contain the refused command line. Terminal
 outputs are emitted for lifecycle accounting and are never a routable kind.
+
+A logical-agent resume carries the checkpoint source session's persisted resolved
+route, including an absent opt-in, into the new session. Catalog changes do not
+replace an API/CLI route override on resume. Legacy checkpoints without a source
+session retain catalog resolution. The daemon's close hook calls `Service.Close`
+after draining sessions, so unfinished output is flushed before the router joins
+and storage closes.
