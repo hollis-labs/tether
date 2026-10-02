@@ -1344,6 +1344,60 @@ To watch live budget alerts, subscribe to
 ---
 
 
+## Routing capabilities
+
+`GET /routing/capabilities` reports installed consumer paths. Add
+`?session_id=<id>` to inspect the runtime/mode in that session's persisted
+launch plan; an unknown session returns 404 `not_found`.
+
+```json
+{
+  "route_supported": false,
+  "reply_to_sender": false,
+  "interrupt": false,
+  "kinds_available": [],
+  "delivery": "next-turn",
+  "runtimes": {
+    "codex": {
+      "route_supported": false,
+      "reply_to_sender": false,
+      "interrupt": false,
+      "kinds_available": [],
+      "final_text_confidence": "unknown"
+    }
+  }
+}
+```
+
+The runtime map uses registry primary ids (`claude`, `codex`, `antigravity`,
+`opencode`, and ACP agent ids). Gateway booleans mean at least one advertised
+runtime supports that path; gateway kinds are their union. When several catalog
+providers use different modes of the same runtime, its entry reports their
+common guarantees. A session query selects only its persisted mode.
+
+Routing requires both the output publisher and the running router sink. Route
+configuration alone does not enable it. Reply support requires the installed
+reply service. Interrupt requires the actual adapter's `cancel_turn`
+advertisement AND Tether's installed interrupt path; a session interface or
+lifecycle stop is insufficient. Missing wiring reports false. Question and
+approval kinds remain unavailable until their publication paths are wired.
+
+`final_text_confidence` accepts `exact`, `heuristic`, `none`, and `unknown`.
+Before the output publisher is wired it is `unknown`. The runtime resolver
+owns the baseline claim: supported Claude, Codex, Antigravity and OpenCode run
+modes produce exact final text; ACP is heuristic; OpenCode serve has none.
+Unsupported modes remain unknown. **Per-output confidence is authoritative**;
+the capability response does not replace the actual turn's confidence.
+Delivery is `next-turn`.
+
+MCP consumers use `tether_channel_list` (bounded `limit`/`offset` pages),
+`tether_channel_read` (`since`/`limit` or `last`), and `tether_routing_get`
+(optional `session_id`). These are read-only calls through the same consumer
+services. Channel names are stable handles and responses retain derived
+addresses, publication cursors and purge tombstones. SSE subscription remains
+an HTTP surface. The client library's `SubscribeChannel` does not reconnect
+automatically: resume explicitly with the last received `Seq`.
+
 ## Named channels
 
 Channels are named public topics, independent of groups and private mailboxes.

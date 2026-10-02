@@ -247,6 +247,7 @@ var daemonRunCmd = &cobra.Command{
 			Digests:                  svc.Store,
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Channels:                 channels.New(svc.Store, nil),
+			Routing:                  svc,
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
 			ProxyEvents:              svc.Store,

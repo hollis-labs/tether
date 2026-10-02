@@ -7,6 +7,8 @@ import (
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
+	wlaunch "github.com/hollis-labs/go-agent-wrapper/launch"
 	gop "github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -17,6 +19,68 @@ import (
 	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"
 	"github.com/hollis-labs/tether/internal/provider/cli/opencode"
 )
+
+// resolvedRuntimeRouting is the one source of runtime/mode confidence claims.
+// The publisher's per-output confidence is authoritative. No library currently
+// advertises a final-text confidence fact; this claim is useful only after the
+// typed output publisher is installed (CW-0062).
+func resolvedRuntimeRouting(p config.Provider) (string, string, bool, error) {
+	if _, err := runtimeFactoryForProvider(p); err != nil {
+		return "", "unknown", false, err
+	}
+	mode, debug, ok := config.RuntimeMode(p.EffectiveRuntimeKind())
+	if !ok {
+		return "", "unknown", false, fmt.Errorf("no routing mode")
+	}
+	req := runtimebind.Request{Provider: p.ProviderBrand(), RequestedRuntime: mode, AllowPTY: true}
+	if debug {
+		req.Posture = runtimebind.PostureDebug
+	}
+	binding, err := runtimebind.Resolve(req)
+	if err != nil {
+		return "", "unknown", false, err
+	}
+	confidence := "unknown"
+	if binding.Runtime.ACP() {
+		confidence = "heuristic"
+	} else {
+		switch binding.Provider {
+		case "claude", "codex", "antigravity":
+			if binding.Runtime != runtimes.ModePTY {
+				confidence = "exact"
+			}
+		case "opencode":
+			if binding.Runtime == runtimes.ModeSubprocessPerTurn {
+				confidence = "exact"
+			}
+			if binding.Runtime == runtimes.ModeHTTPSSE {
+				confidence = "none"
+			}
+		}
+	}
+	sel := wlaunch.Selection{Runtime: binding.Provider, Mode: binding.Runtime}
+	// Native Tether adapters are plan-scoped before reaching agentsessions.
+	// Query that actual wrapper shape, which may hide optional interfaces.
+	var cli gop.CLIAdapter
+	switch {
+	case binding.Provider == "claude" && binding.Runtime == runtimes.ModeStreamingStdio:
+		cli = gop.NewClaudeAdapterStreamingStdio()
+	case binding.Provider == "claude" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
+		cli = gop.NewClaudeAdapter()
+	case binding.Provider == "codex" && binding.Runtime == runtimes.ModeJSONRPCStdio:
+		cli = gop.NewCodexAdapterAppServer()
+	case binding.Provider == "codex" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
+		cli = gop.NewCodexAdapter()
+	}
+	if cli != nil {
+		sel.CLIAdapter = &claudestream.PlanScopedAdapter{Inner: cli}
+	}
+	adapter, err := wlaunch.Select(sel)
+	if err != nil {
+		return binding.Provider, "unknown", false, nil //nolint:nilerr // Valid host modes such as PTY have no wrapper delivery descriptor.
+	}
+	return binding.Provider, confidence, adapter.Describe().Delivery.Supports(adapters.DeliveryCapabilityCancelTurn), nil
+}
 
 func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 	brand := p.ProviderBrand()
