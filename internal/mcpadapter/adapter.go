@@ -45,6 +45,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
 // Scope constants for mutating tool groups.
@@ -71,6 +72,7 @@ type Adapter struct {
 	mcp       *gomcp.Server
 	token     string
 	scopes    map[string]struct{}
+	principal *identity.Principal // daemon view only; derived from verified middleware
 
 	// protected is the set of directories this adapter must not write, as real
 	// paths (SetProtectedPaths). Tether sets it for the `tether mcp` it plants into
@@ -310,6 +312,11 @@ func (a *Adapter) checkScope(scope string) error {
 	if a.token == "" {
 		return toolError("auth_required", "no token configured; pass --token to enable mutating tools")
 	}
+	if a.principal != nil {
+		if _, all := a.scopes["*"]; all {
+			return nil
+		}
+	}
 	if _, ok := a.scopes[scope]; !ok {
 		return toolError("insufficient_scope", "token missing required scope: "+scope)
 	}
@@ -429,6 +436,9 @@ func strSliceArg(args map[string]any, key string) []string {
 // answering "" exactly as it did before -- an absent attribution rather than
 // a wrong one.
 func (a *Adapter) withSessionID(ctx context.Context) context.Context {
+	if a.principal != nil {
+		return identity.WithPrincipal(WithSessionID(ctx, a.principal.SessionID), *a.principal)
+	}
 	if a.SessionID == "" {
 		return ctx
 	}

@@ -337,6 +337,9 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	if !extractRefs && s.Catalog != nil {
 		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
 	}
+	if err := s.Store.SaveSessionMCPPolicy(ctx, sessionMCPPolicy(sessionID, row.LogicalAgentID, plan)); err != nil {
+		return nil, fmt.Errorf("capture session MCP authority: %w", err)
+	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
 		if s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
