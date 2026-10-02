@@ -27,22 +27,23 @@ import (
 // The outer lock keeps reduction, persistence and emission ordered across
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
-	submissionGate sync.Mutex
-	accepted       bool
-	submissions    int
-	routeUnread    bool
-	completed      map[string]string
-	completedOrder []string
-	mu             sync.Mutex
-	runtimeID      string
-	reducer        *turnoutput.Reducer
-	service        *Service
-	row            store.SessionRow
-	route          *launchprofile.Route
-	turnID         string
-	reducerTurnID  string
-	turnDone       chan struct{}
-	finishedTurns  []string
+	submissionGate   sync.Mutex
+	accepted         bool
+	submissions      int
+	routeUnread      bool
+	completed        map[string]string
+	completedDetails map[string]TurnCompletion
+	completedOrder   []string
+	mu               sync.Mutex
+	runtimeID        string
+	reducer          *turnoutput.Reducer
+	service          *Service
+	row              store.SessionRow
+	route            *launchprofile.Route
+	turnID           string
+	reducerTurnID    string
+	turnDone         chan struct{}
+	finishedTurns    []string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
@@ -70,7 +71,7 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	defer o.mu.Unlock()
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
-		o.completeTurn(result.TurnID)
+		o.completeTurn(result, false)
 	}
 }
 
@@ -109,7 +110,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	}
 	if result, ok := o.reducer.Observe(ev); ok {
 		o.publish(result)
-		o.completeTurn(result.TurnID)
+		o.completeTurn(result, false)
 	}
 }
 
@@ -118,7 +119,7 @@ func (o *sessionTurnOutput) flush() {
 	defer o.mu.Unlock()
 	if result, ok := o.reducer.Flush("process_exited"); ok {
 		o.publish(result)
-		o.completeTurn(result.TurnID)
+		o.completeTurn(result, true)
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()

@@ -1,6 +1,22 @@
 package app
 
-import "github.com/hollis-labs/go-runtime-events/runtimeevents"
+import (
+	"context"
+	"time"
+
+	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/go-runtime-events/runtimeevents"
+)
+
+// TurnCompletion retains the bound Output and whether process exit flushed it.
+type TurnCompletion struct {
+	OutputTurnID string
+	OutputKind   turnoutput.Kind
+	StopReason   string
+	SessionEnded bool
+	// Superseded includes a successor that already completed before the query.
+	Superseded bool
+}
 
 // TurnOutputState is a read-only snapshot seam for CancelTurnAndWait. Snapshot
 // before cancellation, then wait from the caller goroutine, never the event
@@ -11,8 +27,10 @@ type TurnOutputState interface {
 	CurrentTurn() (turnID string, done <-chan struct{})
 	// Hold only across a fresh snapshot and runtime cancel; release before waiting.
 	LockSubmission() (unlock func())
+	LockSubmissionContext(context.Context) (unlock func(), err error)
 	TurnAccepted(turnID string) bool
 	CompletedTurn(markerID string) (outputTurnID string, ok bool)
+	CompletedTurnDetails(markerID string) (TurnCompletion, bool)
 }
 
 func (s *Service) SessionTurnOutputState(sessionID string) (TurnOutputState, bool) {
@@ -32,6 +50,36 @@ func (o *sessionTurnOutput) CurrentTurn() (string, <-chan struct{}) {
 func (o *sessionTurnOutput) LockSubmission() func() {
 	o.submissionGate.Lock()
 	return o.submissionGate.Unlock
+}
+
+// LockSubmissionContext acquires the existing submission mutex without a
+// waiter goroutine. Cancellation cannot leave a future acquisition behind.
+func (o *sessionTurnOutput) LockSubmissionContext(ctx context.Context) (func(), error) {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if o.submissionGate.TryLock() {
+			return o.submissionGate.Unlock, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (o *sessionTurnOutput) CompletedTurnDetails(markerID string) (TurnCompletion, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	completion, ok := o.completedDetails[markerID]
+	if ok {
+		completion.Superseded = (o.turnID != "" && o.turnID != markerID) || (len(o.completedOrder) > 0 && o.completedOrder[len(o.completedOrder)-1] != markerID)
+	}
+	return completion, ok
 }
 
 func (o *sessionTurnOutput) TurnAccepted(id string) bool {
@@ -71,15 +119,21 @@ func (o *sessionTurnOutput) bindTurn(id string) {
 
 // completeTurn follows Output processing, including an empty final, before the
 // synchronous reader callback returns. Failed submissions use settleTurn.
-func (o *sessionTurnOutput) completeTurn(id string) {
+func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded bool) {
+	id := output.TurnID
 	if o.reducerTurnID == id && o.turnID != "" {
 		if o.completed == nil {
 			o.completed = make(map[string]string)
 		}
 		o.completed[o.turnID] = id
+		if o.completedDetails == nil {
+			o.completedDetails = make(map[string]TurnCompletion)
+		}
+		o.completedDetails[o.turnID] = TurnCompletion{OutputTurnID: id, OutputKind: output.Kind, StopReason: output.StopReason, SessionEnded: sessionEnded}
 		o.completedOrder = append(o.completedOrder, o.turnID)
 		if len(o.completedOrder) > 64 {
 			delete(o.completed, o.completedOrder[0])
+			delete(o.completedDetails, o.completedOrder[0])
 			o.completedOrder = o.completedOrder[1:]
 		}
 		o.finishedTurns = append(o.finishedTurns, id)

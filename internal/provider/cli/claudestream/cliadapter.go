@@ -31,20 +31,28 @@ func New(plan *launch.Plan) (agentsessions.Runtime, error) {
 // catalog-driven cli-goprovider entries (codex, claude) which follow the
 // same per-turn subprocess + stream-JSON pattern as claude.
 func NewWithAdapter(plan *launch.Plan, adapter gop.CLIAdapter, providerID string, caps agentsessions.Capabilities, opts ...Option) (agentsessions.Runtime, error) {
-	scoped := &PlanScopedAdapter{
-		Inner:    adapter,
-		Binary:   plan.Command,
-		BaseArgs: append([]string(nil), plan.Args...),
+	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
+		ID:      providerID,
+		Kind:    "cli",
+		Adapter: NewPlanScopedAdapter(plan, adapter, opts...),
+		Caps:    caps,
+	})
+}
+
+// NewPlanScopedAdapter constructs the same adapter used by NewWithAdapter,
+// preserving only the interrupt interfaces the inner adapter implements.
+// Capability queries can pass a nil plan to inspect this shape without
+// resolving a launch or running preflight.
+func NewPlanScopedAdapter(plan *launch.Plan, adapter gop.CLIAdapter, opts ...Option) gop.CLIAdapter {
+	scoped := &PlanScopedAdapter{Inner: adapter}
+	if plan != nil {
+		scoped.Binary = plan.Command
+		scoped.BaseArgs = append([]string(nil), plan.Args...)
 	}
 	for _, opt := range opts {
 		opt(scoped)
 	}
-	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
-		ID:      providerID,
-		Kind:    "cli",
-		Adapter: scoped,
-		Caps:    caps,
-	})
+	return scoped.withInterrupts()
 }
 
 // Option adjusts the PlanScopedAdapter NewWithAdapter builds.
@@ -77,6 +85,41 @@ type PlanScopedAdapter struct {
 	// SkipPreflight suppresses the Preflight forward. Classifiers such as
 	// IsNotAuthenticated are still forwarded.
 	SkipPreflight bool
+}
+
+// withInterrupts preserves optional interrupt interfaces without claiming
+// them on adapters that do not implement them. Their methods have no neutral
+// unsupported response, so putting them on every PlanScopedAdapter would
+// advertise a capability the inner adapter does not have.
+func (a *PlanScopedAdapter) withInterrupts() gop.CLIAdapter {
+	stream, hasStream := a.Inner.(gop.TurnInterrupter)
+	rpc, hasRPC := a.Inner.(gop.RPCTurnInterrupter)
+	switch {
+	case hasStream && hasRPC:
+		return &bothInterruptAdapter{PlanScopedAdapter: a, TurnInterrupter: stream, RPCTurnInterrupter: rpc}
+	case hasStream:
+		return &streamInterruptAdapter{PlanScopedAdapter: a, TurnInterrupter: stream}
+	case hasRPC:
+		return &rpcInterruptAdapter{PlanScopedAdapter: a, RPCTurnInterrupter: rpc}
+	default:
+		return a
+	}
+}
+
+type streamInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.TurnInterrupter
+}
+
+type rpcInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.RPCTurnInterrupter
+}
+
+type bothInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.TurnInterrupter
+	gop.RPCTurnInterrupter
 }
 
 func (a *PlanScopedAdapter) Name() string { return a.Inner.Name() }

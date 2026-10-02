@@ -8,8 +8,7 @@
 // one wrapper run to agentsessions.Runtime and agentsessions.Session so the
 // Manager, attach and session.log work as they do for every other runtime.
 //
-// Stage 1 only. Native runtimes still launch through agentkit's runtimes;
-// stage 2 moves them onto the wrapper as well.
+// Native runtimes launch through agentkit. This host adapts ACP sessions only.
 package acp
 
 import (
@@ -30,6 +29,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	wacp "github.com/hollis-labs/go-agent-wrapper/acp"
 	"github.com/hollis-labs/go-agent-wrapper/activity"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
 	"github.com/hollis-labs/go-agent-wrapper/launch"
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/go-providers/registry"
@@ -265,6 +265,26 @@ func (s *session) SendInput(ctx context.Context, data []byte) error {
 }
 
 func (s *session) Resize(context.Context, uint16, uint16) error { return nil }
+
+// DeliveryCapabilities forwards the wrapper's real advertisement so callers
+// can distinguish cancel-turn support from merely keeping the session alive.
+func (s *session) DeliveryCapabilities() adapters.DeliveryCapabilities {
+	return s.w.DeliveryCapabilities()
+}
+
+// InterruptTurn preserves the ACP session and uses the wrapper's existing
+// session/cancel protocol. The manager-facing refusal is the native runtime's
+// ErrInterruptUnsupported, rather than a wrapper-specific error.
+func (s *session) InterruptTurn(ctx context.Context) error {
+	if !s.DeliveryCapabilities().Supports(adapters.DeliveryCapabilityCancelTurn) {
+		return agentsessions.ErrInterruptUnsupported
+	}
+	err := s.w.CancelTurn(ctx)
+	if errors.Is(err, wrapper.ErrTurnCancelUnsupported) {
+		return agentsessions.ErrInterruptUnsupported
+	}
+	return err
+}
 
 func (s *session) Health() agentsessions.HealthStatus {
 	select {
