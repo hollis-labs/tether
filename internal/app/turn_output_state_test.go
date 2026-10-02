@@ -20,12 +20,13 @@ func TestTurnOutputStateSnapshotsCompleteBeforeCallbackReturns(t *testing.T) {
 			if id, _ := state.CurrentTurn(); id != "" {
 				t.Fatal("idle reducer has open turn")
 			}
-			if feed == "ACP" {
+			switch feed {
+			case "ACP":
 				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "ACP-turn"})
 				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindAgentDelta, TurnID: "ACP-turn", Payload: []byte(`{"content":"reply"}`)})
-			} else if feed == "empty final" {
+			case "empty final":
 				output.observeProvider(gopevents.Thinking{Text: "not public"})
-			} else {
+			default:
 				output.observeProvider(gopevents.Delta{Text: "reply"})
 			}
 			id, done := state.CurrentTurn()
@@ -37,11 +38,12 @@ func TestTurnOutputStateSnapshotsCompleteBeforeCallbackReturns(t *testing.T) {
 				t.Fatal("open turn already completed")
 			default:
 			}
-			if feed == "ACP" {
+			switch feed {
+			case "ACP":
 				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "ACP-turn"})
-			} else if feed == "session exit" {
+			case "session exit":
 				output.flush()
-			} else {
+			default:
 				output.observeProvider(gopevents.Done{})
 			}
 			select {

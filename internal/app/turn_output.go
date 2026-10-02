@@ -73,6 +73,8 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		if ev.TurnID != "" {
 			o.bindTurn(ev.TurnID)
 		}
+	default:
+		// Process/session telemetry does not open a turn.
 	}
 	if result, ok := o.reducer.Observe(ev); ok {
 		o.publish(result)

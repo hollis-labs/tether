@@ -433,6 +433,12 @@ func (s *Service) Close() error {
 			return err
 		}
 	}
+	// Complete output persistence before closing the store. Session watchers
+	// also flush; the reducer lock makes this idempotent against those races.
+	s.turnOutputs.Range(func(_, value any) bool {
+		value.(*sessionTurnOutput).flush()
+		return true
+	})
 	if s.Store == nil {
 		return nil
 	}
