@@ -14,6 +14,8 @@ type TurnCompletion struct {
 	OutputKind   turnoutput.Kind
 	StopReason   string
 	SessionEnded bool
+	// Synthetic settles an accepted empty turn without publishing an Output.
+	Synthetic bool
 	// Superseded includes a successor that already completed before the query.
 	Superseded bool
 }
@@ -149,6 +151,7 @@ func (o *sessionTurnOutput) settleTurn() {
 		close(o.turnDone)
 	}
 	o.accepted = false
+	o.unboundTerminal = nil
 	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
@@ -192,10 +195,38 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		output.submissions--
 		if err == nil {
 			output.accepted = true
+			if output.unboundTerminal != nil {
+				output.completeEmptyTerminal(*output.unboundTerminal)
+			}
 		} else if output.submissions == 0 && !output.accepted {
 			output.settleTurn()
 		}
 	}
 	output.mu.Unlock()
 	return err
+}
+
+// A terminal may arrive synchronously before submit returns. Retain it on that
+// provisional marker, but only record a synthetic completion after acceptance.
+// Called with mu held; a bound turn always completes through the reducer.
+func (o *sessionTurnOutput) emptyTerminal(stopReason string) {
+	if o.turnID == "" || o.reducerTurnID != "" {
+		return
+	}
+	o.unboundTerminal = &stopReason
+	if o.accepted {
+		o.completeEmptyTerminal(stopReason)
+	}
+}
+
+func (o *sessionTurnOutput) completeEmptyTerminal(stopReason string) {
+	if !o.accepted || o.turnID == "" || o.reducerTurnID != "" {
+		return
+	}
+	id := o.turnID
+	o.reducerTurnID = id
+	o.completeTurn(turnoutput.Output{TurnID: id, Kind: turnoutput.KindFinal, StopReason: stopReason}, false)
+	completion := o.completedDetails[id]
+	completion.Synthetic = true
+	o.completedDetails[id] = completion
 }

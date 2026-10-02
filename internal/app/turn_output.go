@@ -30,6 +30,7 @@ type sessionTurnOutput struct {
 	submissionGate   sync.Mutex
 	accepted         bool
 	submissions      int
+	unboundTerminal  *string
 	routeUnread      bool
 	completed        map[string]string
 	completedDetails map[string]TurnCompletion
@@ -72,6 +73,13 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
+	} else {
+		switch terminal := ev.(type) {
+		case gopevents.Done:
+			o.emptyTerminal(terminal.StopReason)
+		case gopevents.Error:
+			o.emptyTerminal("")
+		}
 	}
 }
 
@@ -111,6 +119,12 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	if result, ok := o.reducer.Observe(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
+	} else if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
+		var terminal struct {
+			StopReason string `json:"stop_reason"`
+		}
+		_ = json.Unmarshal(ev.Payload, &terminal)
+		o.emptyTerminal(terminal.StopReason)
 	}
 }
 

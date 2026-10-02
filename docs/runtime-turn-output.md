@@ -135,3 +135,12 @@ open and accept a marker before a submission returns.
 Semantic submission and boot-entry gate acquisition honors the caller context.
 Cancellation while waiting does not install a marker or leave a future gate
 acquisition behind. The gate is released before the blocking runtime submission.
+
+An accepted turn can end without text. If its terminal is repeated and the reducer
+returns no Output while the host marker is still unbound, Tether closes that
+marker with an internal final completion marked `Synthetic`. It preserves any
+terminal stop reason and publishes no event or durable body for that empty final.
+A terminal arriving before submission returns is retained provisionally and
+completed only after successful acceptance; rejected submissions record no
+completion. Bound, non-empty turns still complete through the reducer. Old runtime
+terminals with an already-completed turn ID cannot settle a successor.
