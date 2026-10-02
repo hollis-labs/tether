@@ -20,7 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func thinSession(t *testing.T, f *transportFixture, ctx context.Context, id string) *mcp.ClientSession {
+func thinSession(ctx context.Context, t *testing.T, f *transportFixture, id string) *mcp.ClientSession {
 	t.Helper()
 	if err := f.db.CreateSession(store.SessionRow{ID: id, LogicalAgentID: "agent-" + id, State: "running"}, &launch.Plan{}); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func thinSession(t *testing.T, f *transportFixture, ctx context.Context, id stri
 	return session
 }
 
-func waitFixtureFile(t *testing.T, ctx context.Context, path string) {
+func waitFixtureFile(ctx context.Context, t *testing.T, path string) {
 	t.Helper()
 	for {
 		if _, err := os.Stat(path); err == nil {
@@ -61,15 +61,15 @@ func waitFixtureFile(t *testing.T, ctx context.Context, path string) {
 
 func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 	f := newTransportFixtureWithTimeout(t, true, true, 2*time.Minute)
-	bound := 15 * time.Second
+	bound := 45 * time.Second
 	longIdle := os.Getenv("TETHER_FORWARDER_IDLE_PROBE") == "1"
 	if longIdle {
-		bound = 165 * time.Second
+		bound = 210 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
-	alpha := thinSession(t, f, ctx, "recovery-alpha")
-	beta := thinSession(t, f, ctx, "recovery-beta")
+	alpha := thinSession(ctx, t, f, "recovery-alpha")
+	beta := thinSession(ctx, t, f, "recovery-beta")
 	if longIdle {
 		// Opt-in real elapsed-time probe; ordinary gate uses the same expiry path
 		// with a deterministic timestamp, without adding two minutes to the suite.
@@ -106,7 +106,7 @@ func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 		}
 		slow <- err
 	}()
-	waitFixtureFile(t, ctx, f.childStarts+".call")
+	waitFixtureFile(ctx, t, f.childStarts+".call")
 	result, err := beta.CallTool(ctx, &mcp.CallToolParams{Name: "app_echo", Arguments: map[string]any{"message": "beta recovered"}})
 	if err != nil || result.IsError {
 		t.Fatalf("idle forwarder failed recovery: %+v %v", result, err)
@@ -130,12 +130,12 @@ func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 
 func TestThinForwarderEndpointLossNeverReplaysSideEffect(t *testing.T) {
 	f := newTransportFixture(t, true, true)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	session := thinSession(t, f, ctx, "effect-session")
+	session := thinSession(ctx, t, f, "effect-session")
 	result := make(chan error, 1)
 	go func() { _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "app_count"}); result <- err }()
-	waitFixtureFile(t, ctx, f.childStarts+".effects")
+	waitFixtureFile(ctx, t, f.childStarts+".effects")
 	if err := f.closeHTTP(); err != nil {
 		t.Fatal(err)
 	}

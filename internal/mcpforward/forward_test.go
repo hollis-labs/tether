@@ -279,6 +279,7 @@ func TestRelayErrorCancellationAndTimeout(t *testing.T) {
 		message string
 	}{
 		{context.Canceled, -32003, "canceled"},
+		{errors.New("request terminated without response"), -32001, "daemon_unreachable"},
 		{context.DeadlineExceeded, -32004, "timeout"},
 	} {
 		var protocol *jsonrpc.Error

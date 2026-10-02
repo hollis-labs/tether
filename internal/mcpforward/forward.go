@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"strings"
 	"sync"
 
 	"github.com/hollis-labs/tether/internal/client"
@@ -228,6 +229,13 @@ func relayError(err error) error {
 	var protocol *jsonrpc.Error
 	if errors.As(err, &protocol) {
 		return protocol
+	}
+	// The SDK synthesizes this untyped error when an HTTP/SSE call ends before
+	// receiving a response, and formats body/reconnect failures with %v. These
+	// transport failures cannot retain an errors.Is sentinel through the SDK.
+	detail := err.Error()
+	if strings.Contains(detail, "request terminated without response") || strings.Contains(detail, "failed to read body:") || strings.Contains(detail, "failed to reconnect (session ID:") {
+		return &jsonrpc.Error{Code: -32001, Message: "daemon_unreachable: daemon connection lost; tool outcome may be unknown"}
 	}
 	return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: endpoint disabled, credential rejected or connection lost"}
 }
