@@ -766,6 +766,13 @@ func TestThinForwardersShareDaemonPoolOverUnix(t *testing.T) {
 	f := newTransportFixture(t, true, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	probeToken := f.token(t, "probe", []string{"app"})
+	if err := client.New(f.addr, client.WithToken(probeToken)).ProbeMCP(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.childStarts); !os.IsNotExist(err) {
+		t.Fatal("doctor probe initialized an upstream", err)
+	}
 	for _, id := range []string{"alpha", "beta"} {
 		if err := f.db.CreateSession(store.SessionRow{ID: id, LogicalAgentID: "agent-" + id, State: "running"}, &launch.Plan{}); err != nil {
 			t.Fatal(err)

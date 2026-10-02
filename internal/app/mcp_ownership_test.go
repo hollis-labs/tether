@@ -19,16 +19,28 @@ import (
 )
 
 func TestDaemonOwnershipRejectsUnusableLaunch(t *testing.T) {
-	for _, mode := range []string{"invalid", "daemon"} {
+	for _, mode := range []string{"invalid", "daemon", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			svc, rt, id, _ := credentialLaunch(t)
 			svc.Catalog.Global.Daemon.MCPUpstreams = mode
+			if mode == "disabled" {
+				svc.Catalog.Global.Daemon.MCPUpstreams = config.MCPUpstreamsDaemon
+			}
 			svc.Catalog.Global.Daemon.ListenAddr = "unix:" + t.TempDir() + "/missing.sock"
+			if mode == "disabled" {
+				listener, err := net.Listen("unix", strings.TrimPrefix(svc.Catalog.Global.Daemon.ListenAddr, "unix:"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				server := &http.Server{Handler: http.NotFoundHandler(), ReadHeaderTimeout: time.Second}
+				go func() { _ = server.Serve(listener) }()
+				defer func() { _ = server.Close() }()
+			}
 			_, err := svc.LaunchSessionWithContext(context.Background(), id)
 			if err == nil {
 				t.Fatal("unusable forwarding launch accepted")
 			}
-			if mode == config.MCPUpstreamsDaemon && !strings.Contains(err.Error(), "legacy_proxy") {
+			if mode != "invalid" && !strings.Contains(err.Error(), "legacy_proxy") {
 				t.Fatal("missing fix hint", err)
 			}
 			row, err := svc.Store.GetSession(id)

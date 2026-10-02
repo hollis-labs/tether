@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -49,4 +51,28 @@ type mcpErrorTransport struct{ base http.RoundTripper }
 func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(r)
 	return response, wrapIfUnreachable(err)
+}
+
+// ProbeMCP checks mounted, verified admission without initializing a view or
+// starting upstreams. An admitted GET without an SDK session is rejected with
+// mcp_session_required; that deliberate response proves the endpoint is ready.
+func (c *Client) ProbeMCP(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/mcp", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("MCP endpoint unreachable")
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if resp.StatusCode == http.StatusBadRequest && json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&body) == nil && body.Error.Code == "mcp_session_required" {
+		return nil
+	}
+	return fmt.Errorf("MCP endpoint unavailable or credential not admitted (HTTP %d)", resp.StatusCode)
 }

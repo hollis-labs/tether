@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/hollis-labs/tether/internal/config"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 func checkMCPUpstreamOwnership(cat *config.Catalog) checkResult {
@@ -19,7 +20,16 @@ func checkMCPUpstreamOwnership(cat *config.Catalog) checkResult {
 	if cfg, err := daemonConfigFromCatalog(cat); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
-		health, err := daemonClient(cfg.ListenAddr).Health(ctx)
+		dc := daemonClient(cfg.ListenAddr)
+		if cat.Global.Daemon.MCPEndpoint.Enabled {
+			if err := dc.ProbeMCP(ctx); err != nil {
+				return warn("mcp-upstream-ownership", message+"; endpoint configured enabled but health/admission unavailable", "check daemon restart, identity mode and caller credential; select legacy_proxy while unavailable")
+			}
+			message += "; endpoint healthy (verified admission, no upstream initialization)"
+		} else {
+			message += "; endpoint disabled"
+		}
+		health, err := dc.Health(ctx)
 		if err == nil && health.Hardening != nil && health.Hardening.MCPUpstreamSessions != nil {
 			counts := health.Hardening.MCPUpstreamSessions
 			message += fmt.Sprintf("; active sessions legacy_proxy=%d daemon=%d unknown=%d", counts["legacy_proxy"], counts["daemon"], counts["unknown"])
