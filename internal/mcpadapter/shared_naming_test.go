@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,6 +116,15 @@ func TestSharedNamingTypedCollisionKeepsDiagnosticsAndViewNames(t *testing.T) {
 }
 
 func TestSharedNamingReconnectRebindsAcceptedToolsInEveryView(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("real protect-only upstream smoke requires Linux bubblewrap")
+	}
+	// As in the shared confinement smoke, probe the host independently of
+	// product startup: CI AppArmor can deny namespaces even with bwrap installed.
+	probe := exec.Command("bwrap", "--bind", "/", "/", "--unshare-user", "--unshare-pid", "--proc", "/proc", "/bin/true")
+	if output, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("host cannot create bubblewrap namespace: %v (%s)", err, output)
+	}
 	dir := t.TempDir()
 	alpha := fixtureEntry(t, dir, "alpha")
 	alpha.Env["TETHER_UPSTREAM_CALL_INSTANCE"] = "1"
@@ -118,7 +132,28 @@ func TestSharedNamingReconnectRebindsAcceptedToolsInEveryView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		// The fixture's PID is namespace-local. Wait on actual process exit
+		// before removing its files; Shutdown only signals EOF to children.
+		r.pool.mu.Lock()
+		var exits []<-chan struct{}
+		for _, status := range r.pool.statuses {
+			if leaf, ok := status.client.(*stdioUpstream); ok {
+				exits = append(exits, leaf.done)
+			}
+		}
+		r.pool.mu.Unlock()
+		r.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, exited := range exits {
+			select {
+			case <-exited:
+			case <-ctx.Done():
+				t.Error("fixture process did not exit after EOF")
+			}
+		}
+	}()
 	r.pool.policy.Delays = []time.Duration{10 * time.Millisecond}
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -176,4 +211,63 @@ func TestSharedNamingReconnectRebindsAcceptedToolsInEveryView(t *testing.T) {
 			t.Fatalf("rejected refresh diagnostic lost %+v", status)
 		}
 	}
+}
+
+func TestSharedNamingSchemaRefreshKeepsAcceptedToolsCallable(t *testing.T) {
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "alpha", Transport: "http", AllowUnconfinedRemote: true}}, daemonTestRoots(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	var version atomic.Int64
+	r.pool.SetConnectFunc(func(context.Context, config.MCPServerEntry) (upstreamClient, error) {
+		return &mockClient{listToolsFunc: func(context.Context, *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
+			def := makeTool("alpha_probe")
+			def.Description = fmt.Sprintf("version %d", version.Add(1))
+			return &mcpsdk.ListToolsResult{Tools: []*mcpsdk.Tool{def}}, nil
+		}, callToolFunc: func(context.Context, *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+			return &mcpsdk.CallToolResult{}, nil
+		}}, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctx = identity.WithPrincipal(ctx, identity.Principal{ID: "caller", Kind: "service"})
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
+		a, err := NewVerifiedAdapter(ctx, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := r.NewGatewayView(ctx, a, ProxyOptions{Only: true, ServerFilter: []string{"alpha"}, ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: string(mode), Source: "test"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer v.Close()
+		cs := connectDaemonView(ctx, t, v)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name, args := "alpha_probe", map[string]any{}
+			if mode == mcpgateway.Search {
+				name, args = "tether_tool_call", map[string]any{"name": name, "arguments": args}
+			}
+			for range 1000 {
+				result, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
+				if err != nil || result.IsError {
+					t.Errorf("accepted %s view call during refresh: %v %v", mode, result, err)
+					return
+				}
+			}
+		}()
+	}
+	for range 1000 {
+		if _, err := r.pool.RefreshServer(ctx, "alpha"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wg.Wait()
 }

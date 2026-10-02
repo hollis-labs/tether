@@ -66,14 +66,8 @@ func (c *liveProxyCatalog) applyRefresh(refresh ToolRefreshResult) {
 		c.server.SDKServer().RemoveTools(c.filterNativeToolNames(refresh.ServerID, refresh.Delta.Removed)...)
 	}
 
-	updatedNames := make([]string, 0, len(refresh.Delta.Updated))
-	for _, def := range refresh.Delta.Updated {
-		updatedNames = append(updatedNames, def.Name)
-	}
-	if len(updatedNames) > 0 {
-		c.server.SDKServer().RemoveTools(c.filterNativeToolNames(refresh.ServerID, updatedNames)...)
-	}
-
+	// SDK AddTool replaces an existing name atomically. Removing updated
+	// names first would make accepted tools briefly unknown to live callers.
 	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Added)...)
 	c.addProxyTools(c.filterNativeTools(refresh.ServerID, refresh.Delta.Updated)...)
 }
