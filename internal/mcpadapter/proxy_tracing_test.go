@@ -91,14 +91,11 @@ func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, map[stri
 	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
 	s := gomcp.NewServer("test", "0.0.1")
-	idx := NewDiscoveryIndex()
-	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
 		adapter:  &Adapter{},
 		server:   s,
 		registry: reg,
 		router:   NewProxyRouter(reg),
-		index:    idx,
 		firehose: true,
 	}
 	live.addProxyTools(makeTool(toolName))

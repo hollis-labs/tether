@@ -9,6 +9,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
@@ -46,29 +47,26 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 	local := gomcp.NewServer("tether", "test")
 	adapter.registerTools(local)
 
-	idx := NewDiscoveryIndex()
 	serverTags := map[string][]string{"clockwork": {"tasks"}}
 	allowed := map[string]struct{}{"clockwork": {}}
 	router := NewProxyRouter(registry)
 	live := &liveProxyCatalog{
-		adapter:    adapter,
-		server:     local,
-		registry:   registry,
-		router:     router,
-		index:      idx,
-		serverTags: serverTags,
-		allowed:    allowed,
-		firehose:   false,
+		adapter:  adapter,
+		server:   local,
+		registry: registry,
+		router:   router,
+		allowed:  allowed,
+		firehose: false,
 	}
 	pool.SetToolRefreshHandler(live.applyRefresh)
 
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool.Start: %v", err)
 	}
-	idx.Build(registry, serverTags)
 	live.addProxyTools(registry.AllDefinitions()...)
-	adapter.registerDiscoverTool(local, idx, allowed, false)
-	adapter.registerCallTool(local, router)
+	gateway := adapter.gatewayService(registry, router, mcpgateway.Selection{Mode: mcpgateway.Search, Source: "test"}, serverTags)
+	adapter.registerSearchTool(local, gateway)
+	adapter.registerCallTool(local, gateway)
 	adapter.registerCatalogRefreshTool(local, pool)
 
 	downstream := connectInMemory(t, local)
@@ -103,13 +101,13 @@ func TestProxyRefresh_UpstreamToolListChangedAddsReachableTool(t *testing.T) {
 
 	discoverRes, err := downstream.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name:      "tether_tool_search",
-		Arguments: map[string]any{"intent": "beta inbox ordering"},
+		Arguments: map[string]any{"query": "beta inbox ordering"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(tether_tool_search): %v", err)
 	}
 	body := parseToolJSON(t, discoverRes)
-	tools, _ := body["tools"].([]any)
+	tools, _ := body["items"].([]any)
 	if len(tools) == 0 {
 		t.Fatal("tether_tool_search did not return the refreshed tool")
 	}

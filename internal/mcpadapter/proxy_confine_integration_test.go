@@ -5,10 +5,11 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,8 +44,13 @@ func TestRunWithProxyOptsHelper(t *testing.T) {
 	if v := os.Getenv(proxyHelperServersEnv); v != "" {
 		filter = strings.Split(v, ",")
 	}
-	opts := ProxyOptions{ServerFilter: filter, Confine: os.Getenv(proxyHelperConfineEnv) == "1"}
-	if err := newTestAdapter(t).RunWithProxyOpts(context.Background(), catalog, opts); err != nil {
+	opts := ProxyOptions{Only: os.Getenv("TETHER_PROXY_HELPER_ONLY") == "1", ServerFilter: filter, Confine: os.Getenv(proxyHelperConfineEnv) == "1", ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: os.Getenv("TETHER_PROXY_HELPER_MODE"), Source: "test"}}}}
+	adapter := newTestAdapter(t)
+	adapter.svc.Catalog = &config.Catalog{}
+	if os.Getenv("TETHER_PROXY_HELPER_PROTECTED") == "1" {
+		adapter.protected = []string{catalog}
+	}
+	if err := adapter.RunWithProxyOpts(context.Background(), catalog, opts); err != nil {
 		fmt.Fprintln(os.Stderr, "proxy helper:", err)
 		os.Exit(3)
 	}
@@ -73,6 +79,9 @@ func proxyCatalog(t *testing.T, names ...string) (catalog, fixtures string) {
 // connectProxy runs the proxy helper with the given allow-list and returns a
 // client connected to it.
 func connectProxy(t *testing.T, catalog string, confine bool, servers ...string) *mcpsdk.ClientSession {
+	return connectProxyMode(t, catalog, "flat", confine, servers...)
+}
+func connectProxyMode(t *testing.T, catalog, mode string, confine bool, servers ...string) *mcpsdk.ClientSession {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -84,6 +93,7 @@ func connectProxy(t *testing.T, catalog string, confine bool, servers ...string)
 		flag = "1"
 	}
 	cmd.Env = append(os.Environ(),
+		"TETHER_PROXY_HELPER_MODE="+mode,
 		proxyHelperCatalogEnv+"="+catalog,
 		proxyHelperServersEnv+"="+strings.Join(servers, ","),
 		proxyHelperConfineEnv+"="+flag,
@@ -121,7 +131,7 @@ func tetherCall(t *testing.T, cs *mcpsdk.ClientSession, tool string) (text strin
 	t.Helper()
 	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name:      "tether_tool_call",
-		Arguments: map[string]any{"tool_name": tool, "arguments": map[string]any{}},
+		Arguments: map[string]any{"name": tool, "arguments": map[string]any{}},
 	})
 	if err != nil {
 		t.Fatalf("tether_tool_call(%s): %v", tool, err)
@@ -134,67 +144,39 @@ func started(fixtures, name string) bool {
 	return err == nil && strings.Contains(string(b), "start")
 }
 
-// With Confine, an upstream outside the allow-list is never started and cannot be
-// reached through tether_tool_call; without it the same allow-list only chooses which
-// tools are native, and every upstream still starts. The second case is what
-// makes the first one mean something.
-func TestRunWithProxyOpts_ConfineKeepsUnlistedUpstreamsOut(t *testing.T) {
-	t.Run("confined: only the listed upstream starts", func(t *testing.T) {
-		catalog, fixtures := proxyCatalog(t, "alpha", "beta", "gamma")
-		cs := connectProxy(t, catalog, true, "alpha")
-
-		// The pool has finished starting by the time the proxy answers, so a
-		// loaded upstream has already recorded its start.
-		if !started(fixtures, "alpha") {
-			t.Fatal("the granted upstream did not start")
-		}
-		for _, name := range []string{"beta", "gamma"} {
-			if started(fixtures, name) {
-				t.Fatalf("%s is not on the allow-list but was started: RunWithProxyOpts is not confining", name)
+// A server restriction applies to loading and every semantic call path,
+// regardless of the former confine switch; there is no hybrid safety hatch.
+func TestRunWithProxyOpts_RestrictionNeverStartsOrCallsUnlistedUpstreams(t *testing.T) {
+	for _, confine := range []bool{false, true} {
+		t.Run(fmt.Sprintf("confine=%v", confine), func(t *testing.T) {
+			catalog, fixtures := proxyCatalog(t, "alpha", "beta", "gamma")
+			cs := connectProxyMode(t, catalog, "search", confine, "alpha")
+			if !started(fixtures, "alpha") {
+				t.Fatal("granted upstream never started")
 			}
-		}
-		tools := listToolNames(t, cs)
-		if !slices.Contains(tools, "alpha_probe") {
-			t.Fatalf("the granted upstream's tools are missing: %v", tools)
-		}
-		for _, tool := range tools {
-			if strings.HasPrefix(tool, "beta_") || strings.HasPrefix(tool, "gamma_") {
-				t.Fatalf("tool %q of an unlisted upstream is exposed", tool)
+			for _, name := range []string{"beta", "gamma"} {
+				if started(fixtures, name) {
+					t.Fatalf("excluded %s started", name)
+				}
 			}
-		}
-		if text, isErr := tetherCall(t, cs, "beta_probe"); !isErr || !strings.Contains(text, "not found") {
-			t.Fatalf("tether_tool_call(beta_probe) should be not-found for an unlisted upstream, got isError=%v %q", isErr, text)
-		}
-		if text, isErr := tetherCall(t, cs, "alpha_probe"); isErr {
-			t.Fatalf("tether_tool_call(alpha_probe) on the granted upstream failed: %q", text)
-		}
-	})
-
-	t.Run("not confined: the list only chooses native tools, every upstream starts", func(t *testing.T) {
-		catalog, fixtures := proxyCatalog(t, "alpha", "beta", "gamma")
-		cs := connectProxy(t, catalog, false, "alpha")
-
-		for _, name := range []string{"alpha", "beta", "gamma"} {
-			if !started(fixtures, name) {
-				t.Fatalf("%s did not start in an unconfined proxy", name)
+			if text, isErr := tetherCall(t, cs, "beta_probe"); !isErr || !strings.Contains(text, "excluded") {
+				t.Fatalf("excluded tool call: %v %s", isErr, text)
 			}
-		}
-		if text, isErr := tetherCall(t, cs, "beta_probe"); isErr {
-			t.Fatalf("an unconfined proxy reaches beta through tether_tool_call, got error %q", text)
-		}
-	})
-
-	t.Run("confined with an empty list: nothing starts", func(t *testing.T) {
+			if text, isErr := tetherCall(t, cs, "alpha_probe"); isErr {
+				t.Fatalf("granted call: %s", text)
+			}
+		})
+	}
+	t.Run("confined empty grants", func(t *testing.T) {
 		catalog, fixtures := proxyCatalog(t, "alpha", "beta")
-		cs := connectProxy(t, catalog, true)
-
+		cs := connectProxyMode(t, catalog, "search", true)
 		for _, name := range []string{"alpha", "beta"} {
 			if started(fixtures, name) {
-				t.Fatalf("%s started under an empty allow-list", name)
+				t.Fatalf("%s started with empty grants", name)
 			}
 		}
 		if _, isErr := tetherCall(t, cs, "alpha_probe"); !isErr {
-			t.Fatal("an empty allow-list must reach nothing")
+			t.Fatal("empty grants reachable")
 		}
 	})
 }

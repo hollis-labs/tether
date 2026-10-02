@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/settings"
 )
 
@@ -20,6 +21,7 @@ func (s *Server) registerSettingsRoutes(router *http.ServeMux) {
 	if s.Settings == nil {
 		return
 	}
+	router.HandleFunc("/settings/mcp", s.handleMCPSettings)
 	router.HandleFunc("/settings/onboarding", s.handleEffectiveOnboarding)
 	router.HandleFunc("/settings/onboarding/", s.handleScopedOnboarding)
 }
@@ -91,6 +93,50 @@ func (s *Server) handleScopedOnboarding(w http.ResponseWriter, r *http.Request) 
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 
+	default:
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+	}
+}
+
+// MCPSettingsService is optional so existing settings consumers stay narrow.
+type MCPSettingsService interface {
+	GetMCP(context.Context) (settings.MCPSettings, error)
+	SetMCP(context.Context, settings.MCPSettings) error
+}
+
+func (s *Server) handleMCPSettings(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.Settings.(MCPSettingsService)
+	if !ok {
+		writeError(w, http.StatusNotFound, CodeNotFound, "MCP settings unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		result, err := svc.GetMCP(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	case http.MethodPut:
+		var in settings.MCPSettings
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&in); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "malformed MCP settings")
+			return
+		}
+		if in.DiscoveryMode != nil {
+			if err := mcpgateway.ValidateMode(*in.DiscoveryMode); err != nil {
+				writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+				return
+			}
+		}
+		if err := svc.SetMCP(r.Context(), in); err != nil {
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, in)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 	}
