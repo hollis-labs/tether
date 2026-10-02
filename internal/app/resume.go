@@ -83,6 +83,15 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
 	}
 
+	// Resume preserves the original session's resolved opt-in, including absence.
+	// API/CLI overrides are not present in the current catalog plan.
+	if ck.SourceSessionID != "" {
+		plan.Route, err = s.Store.SessionRoute(ctx, ck.SourceSessionID)
+		if err != nil {
+			return api.LaunchResult{}, fmt.Errorf("read resumed session route: %w", err)
+		}
+	}
+
 	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
 	if hint := resumeHintForCheckpoint(ck, plan); hint.CanResumeNatively() {
 		plan.ResumeProviderSessionID = hint.ProviderSessionID

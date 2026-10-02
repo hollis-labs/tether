@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"slices"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -39,6 +40,7 @@ type sessionTurnOutput struct {
 	reducerTurnID    string
 	turnDone         chan struct{}
 	finishedTurns    []string
+	runtimeID        string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
@@ -46,8 +48,8 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 	if err != nil {
 		log.Printf("session %q: read output route: %v", row.ID, err)
 	}
-	out := &sessionTurnOutput{service: s, row: row, route: route}
-	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), NewTurnID: func() string {
+	out := &sessionTurnOutput{service: s, row: row, route: route, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
+	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), QuestionTools: s.questionTools(config.CanonicalRuntimeID(plan.ProviderBrand)), NewTurnID: func() string {
 		out.ensureTurn()
 		out.reducerTurnID = out.turnID
 		out.accepted = true
@@ -57,6 +59,9 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 }
 
 func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
+	if _, denied := ev.(gopevents.PermissionDenied); denied && o.service.turnFeeds[o.runtimeID].approval == nil {
+		return
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
@@ -66,6 +71,22 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 }
 
 func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
+	registration := o.service.turnFeeds[o.runtimeID]
+	if ev.Kind == runtimeevents.KindAgentPermissionDenied && registration.approval == nil {
+		return
+	}
+	if ev.Kind == runtimeevents.KindAgentPermissionRequested || ev.Kind == runtimeevents.KindAgentPermissionResolved {
+		var permission struct {
+			Method string `json:"method"`
+		}
+		if json.Unmarshal(ev.Payload, &permission) == nil && strings.HasSuffix(strings.ToLower(permission.Method), "requestuserinput") {
+			if len(registration.questionTools) == 0 {
+				return
+			}
+		} else if registration.approval == nil {
+			return
+		}
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if ev.TurnID != "" && slices.Contains(o.finishedTurns, ev.TurnID) {
@@ -115,7 +136,7 @@ func (o *sessionTurnOutput) wire(rt agentsessions.Runtime, opts *agentsessions.S
 			existing(ev)
 		}
 		permission(ev)
-		o.observeProvider(ev)
+		o.service.turnFeeds[o.runtimeID].observe(o, ev)
 	})
 }
 
