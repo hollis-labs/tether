@@ -1653,7 +1653,12 @@ answers like any send, `201` with the stored reply envelope (its `id` is the
 that read a send response (the MCP `tether_message_send` tool, `tether message
 send`) need no change. `to`, if given, must be the sender session; the text is
 the payload's string, or its `body`/`text`/`message`; interrupting needs
-`POST /messages/{id}/reply`. `in_reply_to` on any other message is unchanged.
+`POST /messages/{id}/reply`. `POST /messages/notify` with such an `in_reply_to` is routed the same way (the
+mailbox wake would inject a generic reminder, not the reply text, and leave a
+mailbox copy): it answers `201` in notify's shape with the stored reply as
+`message`, `wake_attempted: false`, and the receipt as `routing_reply`;
+`wake`, `wake_text` and `urgency` are ignored. `in_reply_to` on any other
+message is unchanged.
 The `as` identity is the verified principal when one is present, else the
 self-asserted `?as=` (or the envelope's `from`), as for channels; observe mode
 records it and refuses nothing.

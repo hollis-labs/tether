@@ -244,23 +244,57 @@ type routedReplyResponse struct {
 	RoutingReply RoutingReplyReceipt `json:"routing_reply"`
 }
 
-// sendRoutedReply serves POST /messages with in_reply_to naming a routed
-// message: the envelope is not delivered to an inbox; its text is queued for
-// the sender session exactly as POST /messages/{id}/reply would.
-func (s *Server) sendRoutedReply(w http.ResponseWriter, r *http.Request, env messaging.Envelope, parent messaging.Envelope) {
+// routeReplyEnvelope queues the text of an envelope that replies to a routed
+// message and reads the stored reply back. It writes the error response itself
+// and reports false on any failure.
+func (s *Server) routeReplyEnvelope(w http.ResponseWriter, r *http.Request, env messaging.Envelope, parent messaging.Envelope) (messaging.Envelope, RoutingReplyReceipt, bool) {
 	if env.To != (messaging.Address{}) && env.To != parent.From {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"a reply to a routed message is delivered to its sender session "+parent.From.URN()+"; omit to or set it to that address")
-		return
+		return messaging.Envelope{}, RoutingReplyReceipt{}, false
 	}
 	receipt, ok := s.submitReply(w, r, parent.ID, replyText(env.Payload), false, env.From.URN())
 	if !ok {
-		return
+		return messaging.Envelope{}, RoutingReplyReceipt{}, false
 	}
 	stored, err := s.MessageStore.Get(r.Context(), receipt.ReplyID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, "reply accepted as "+receipt.ReplyID+" but could not be read back: "+err.Error())
-		return
+		return messaging.Envelope{}, RoutingReplyReceipt{}, false
 	}
-	writeJSON(w, http.StatusCreated, routedReplyResponse{Envelope: stored, RoutingReply: receipt})
+	return stored, receipt, true
+}
+
+// sendRoutedReply serves POST /messages with in_reply_to naming a routed
+// message: the envelope is not delivered to an inbox; its text is queued for
+// the sender session exactly as POST /messages/{id}/reply would.
+func (s *Server) sendRoutedReply(w http.ResponseWriter, r *http.Request, env messaging.Envelope, parent messaging.Envelope) {
+	if stored, receipt, ok := s.routeReplyEnvelope(w, r, env, parent); ok {
+		writeJSON(w, http.StatusCreated, routedReplyResponse{Envelope: stored, RoutingReply: receipt})
+	}
+}
+
+// notifyRoutedReply serves POST /messages/notify with in_reply_to naming a
+// routed message. Notify's mailbox wake is the old path, which injects a generic
+// reminder turn rather than the reply text, so it does not apply: the reply is
+// queued for the sender session like any other, and wake/wake_text/urgency are
+// ignored. The response keeps notify's shape (nothing was left unread, nothing
+// was woken) and adds the receipt.
+func (s *Server) notifyRoutedReply(w http.ResponseWriter, r *http.Request, env messaging.Envelope, parent messaging.Envelope) {
+	if stored, receipt, ok := s.routeReplyEnvelope(w, r, env, parent); ok {
+		writeJSON(w, http.StatusCreated, messageNotifyResponse{Message: stored, RoutingReply: &receipt})
+	}
+}
+
+// routedParent returns the message env replies to when that is a routed
+// (channel) message and reply routing is on.
+func (s *Server) routedParent(r *http.Request, inReplyTo string) (messaging.Envelope, bool) {
+	if inReplyTo == "" || s.RoutingReplies == nil {
+		return messaging.Envelope{}, false
+	}
+	parent, err := s.MessageStore.Get(r.Context(), inReplyTo)
+	if err != nil || !routedReplyParent(parent) {
+		return messaging.Envelope{}, false
+	}
+	return parent, true
 }

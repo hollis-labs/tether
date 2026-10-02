@@ -321,3 +321,77 @@ func TestOtherActionsOnAChannelMessageStayGuarded(t *testing.T) {
 		t.Fatalf("consume on a channel message: %d %s", w.Code, w.Body)
 	}
 }
+
+// POST /messages/notify with in_reply_to naming a routed message is a reply too:
+// the old mailbox wake would inject a generic reminder instead of the reply text
+// and leave a mailbox copy, so it must not run.
+func TestNotifyWithInReplyToARoutedMessageQueuesTheReplyAndWakesNothing(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "notify-reply.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	launcher := &fakeLaunchService{
+		getRes:          map[string]*store.SessionRow{"s1": {ID: "s1", State: "running", LogicalAgentID: "worker"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	svc := &fakeReplies{db: db}
+	h := NewHandler(Deps{Service: launcher, MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc})
+	parent := routedMessage(t, db)
+
+	w := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://user/local/chris", "to": parent.From.URN(),
+		"in_reply_to": parent.ID, "session_id": "s1", "wake": true, "payload": map[string]string{"body": "use the second option"}}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var out messageNotifyResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.RoutingReply == nil || out.RoutingReply.ReplyID != out.Message.ID || out.RoutingReply.State != "queued" ||
+		out.WakeAttempted || out.WakeDelivered || out.UnreadCount != 0 {
+		t.Fatalf("response %+v", out)
+	}
+	if len(launcher.attemptWakeLog) != 0 || len(launcher.inputLog) != 0 {
+		t.Fatalf("the mailbox wake ran for a routed reply: wakes=%v inputs=%d", launcher.attemptWakeLog, len(launcher.inputLog))
+	}
+	if got := svc.requests[0]; got.Body != "use the second option" || got.ParentID != parent.ID {
+		t.Fatalf("request %+v", got)
+	}
+
+	// to, when it names someone else, is refused rather than silently misrouted.
+	other := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://user/local/chris", "to": "msg://agent/local/worker",
+		"in_reply_to": parent.ID, "payload": "x"}, nil)
+	if other.Code != http.StatusBadRequest || len(svc.requests) != 1 {
+		t.Fatalf("to mismatch: %d %s requests=%d", other.Code, other.Body, len(svc.requests))
+	}
+}
+
+func TestNotifyWithInReplyToAnOrdinaryMessageStillWakes(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "notify-ordinary.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	launcher := &fakeLaunchService{
+		getRes:          map[string]*store.SessionRow{"s1": {ID: "s1", State: "running", LogicalAgentID: "worker"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	svc := &fakeReplies{db: db}
+	h := NewHandler(Deps{Service: launcher, MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc})
+	mailbox, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindRequest,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"},
+		To:   messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: "boss"}, Payload: []byte(`"ping"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://agent/local/boss", "to": "msg://agent/local/worker",
+		"in_reply_to": mailbox.ID, "session_id": "s1", "payload": "pong"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var out messageNotifyResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || !out.WakeAttempted || out.RoutingReply != nil || len(svc.requests) != 0 {
+		t.Fatalf("an ordinary notify reply changed: %+v %v requests=%d", out, err, len(svc.requests))
+	}
+}

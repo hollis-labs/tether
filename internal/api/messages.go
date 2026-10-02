@@ -92,6 +92,10 @@ type messageNotifyResponse struct {
 	// WakeError, which is reserved for an actual failure (SendTurn itself
 	// erroring) and carries that error's text.
 	WakeReason string `json:"wake_reason,omitempty"`
+	// RoutingReply is set when in_reply_to named a message a session routed to
+	// a channel: the text was queued for that session as its next turn instead
+	// of being stored for the mailbox and woken (CW-20261002-0065).
+	RoutingReply *RoutingReplyReceipt `json:"routing_reply,omitempty"`
 }
 
 var validUrgencies = map[string]struct{}{
@@ -158,6 +162,12 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		Payload:     req.Payload,
 		ContentType: req.ContentType,
 		Metadata:    req.Metadata,
+	}
+	// A reply to a message a session routed to a channel goes to that session as
+	// its next turn, not through the mailbox wake (CW-20261002-0065).
+	if parent, ok := s.routedParent(r, env.InReplyTo); ok {
+		s.notifyRoutedReply(w, r, env, parent)
+		return
 	}
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
@@ -438,11 +448,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 
 	// A reply to a message a session routed to a channel goes to that session
 	// as its next turn (CW-20261002-0065); other in_reply_to use is unchanged.
-	if env.InReplyTo != "" && s.RoutingReplies != nil {
-		if parent, err := s.MessageStore.Get(r.Context(), env.InReplyTo); err == nil && routedReplyParent(parent) {
-			s.sendRoutedReply(w, r, env, parent)
-			return
-		}
+	if parent, ok := s.routedParent(r, env.InReplyTo); ok {
+		s.sendRoutedReply(w, r, env, parent)
+		return
 	}
 
 	sent, err := s.sendMessage(r.Context(), env)
