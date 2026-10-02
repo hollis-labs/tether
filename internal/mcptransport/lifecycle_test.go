@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -350,58 +351,102 @@ func TestTransportLifecycleReconnectRequiresFreshSession(t *testing.T) {
 	}
 }
 
-func TestTransportLifecycleProgressReachesOnlyCaller(t *testing.T) {
-	for _, unix := range []bool{false, true} {
-		t.Run(fmt.Sprintf("unix=%t", unix), func(t *testing.T) {
-			alpha, _ := lifecycleEntry(t, "alpha")
-			f := newTransportFixture(t, unix, false, alpha)
-			token := f.token(t, "alpha", []string{"alpha"})
-			progress := []chan *mcpsdk.ProgressNotificationParams{make(chan *mcpsdk.ProgressNotificationParams, 8), make(chan *mcpsdk.ProgressNotificationParams, 8)}
-			idleProgress := make(chan *mcpsdk.ProgressNotificationParams, 8)
-			callers := []*mcpsdk.ClientSession{
-				lifecycleConnect(t, f, token, "flat", "", nil, progress[0]),
-				lifecycleConnect(t, f, token, "search", "", nil, progress[1]),
-			}
-			_ = lifecycleConnect(t, f, token, "flat", "", nil, idleProgress)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			errs := make(chan error, 2)
-			var wg sync.WaitGroup
-			for i, caller := range callers {
-				wg.Add(1)
-				go func(i int, caller *mcpsdk.ClientSession) {
-					defer wg.Done()
-					name, args := "alpha_echo", map[string]any{"label": fmt.Sprint(i)}
-					if i == 1 {
-						name, args = "tether_tool_call", map[string]any{"name": "alpha_echo", "arguments": args}
-					}
-					_, err := caller.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args, Meta: mcpsdk.Meta{"progressToken": "same-client-token"}})
-					errs <- err
-				}(i, caller)
-			}
-			wg.Wait()
-			for range callers {
-				if err := <-errs; err != nil {
-					t.Fatal(err)
-				}
-			}
-			for i, ch := range progress {
-				select {
-				case p := <-ch:
-					if p.ProgressToken != "same-client-token" || p.Message != "alpha_echo"+fmt.Sprint(i) {
-						t.Fatalf("crossed progress: %+v", p)
-					}
-				case <-ctx.Done():
-					t.Fatal("upstream progress never reached initiating view")
-				}
+func lifecycleRemoteProgressEntry(t *testing.T) config.MCPServerEntry {
+	t.Helper()
+	const secret = "canary-upstream-progress-secret"
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "remote-progress", Version: "1"}, nil)
+	server.AddTool(&mcpsdk.Tool{Name: "alpha_echo", InputSchema: map[string]any{"type": "object"}, Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		var args struct {
+			Label string `json:"label"`
+		}
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+			return nil, err
+		}
+		if token := req.Params.GetProgressToken(); token != nil {
+			err := req.Session.NotifyProgress(ctx, &mcpsdk.ProgressNotificationParams{ProgressToken: token, Progress: 1, Message: "alpha_echo" + args.Label + " " + secret, Meta: mcpsdk.Meta{"tether.context": "forged-upstream-envelope"}})
+			if err != nil {
+				return nil, err
 			}
 			select {
-			case <-idleProgress:
-				t.Fatal("progress reached idle view")
-			default:
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
 			}
-		})
+		}
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
+	})
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+	return config.MCPServerEntry{ID: "alpha", Transport: "http", URL: httpServer.URL, Token: secret, AllowUnconfinedRemote: true}
+}
+
+func TestTransportLifecycleProgressReachesOnlyCaller(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		for _, unix := range []bool{false, true} {
+			t.Run(fmt.Sprintf("unix=%t/remote=%t", unix, remote), func(t *testing.T) {
+				var alpha config.MCPServerEntry
+				if remote {
+					alpha = lifecycleRemoteProgressEntry(t)
+				} else {
+					alpha, _ = lifecycleEntry(t, "alpha")
+				}
+				f := newTransportFixture(t, unix, false, alpha)
+				token := f.token(t, "alpha", []string{"alpha"})
+				progress := []chan *mcpsdk.ProgressNotificationParams{make(chan *mcpsdk.ProgressNotificationParams, 8), make(chan *mcpsdk.ProgressNotificationParams, 8)}
+				idleProgress := make(chan *mcpsdk.ProgressNotificationParams, 8)
+				callers := []*mcpsdk.ClientSession{
+					lifecycleConnect(t, f, token, "flat", "", nil, progress[0]),
+					lifecycleConnect(t, f, token, "search", "", nil, progress[1]),
+				}
+				_ = lifecycleConnect(t, f, token, "flat", "", nil, idleProgress)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				errs := make(chan error, 2)
+				var wg sync.WaitGroup
+				for i, caller := range callers {
+					wg.Add(1)
+					go func(i int, caller *mcpsdk.ClientSession) {
+						defer wg.Done()
+						name, args := "alpha_echo", map[string]any{"label": fmt.Sprint(i)}
+						if i == 1 {
+							name, args = "tether_tool_call", map[string]any{"name": "alpha_echo", "arguments": args}
+						}
+						_, err := caller.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args, Meta: mcpsdk.Meta{"progressToken": "same-client-token"}})
+						errs <- err
+					}(i, caller)
+				}
+				wg.Wait()
+				for range callers {
+					if err := <-errs; err != nil {
+						t.Fatal(err)
+					}
+				}
+				for i, ch := range progress {
+					select {
+					case p := <-ch:
+						if p.ProgressToken != "same-client-token" || !strings.HasPrefix(p.Message, "alpha_echo"+fmt.Sprint(i)) || strings.Contains(p.Message, "canary-upstream-progress-secret") || len(p.Meta) != 0 {
+							t.Fatalf("crossed progress: %+v", p)
+						}
+					case <-ctx.Done():
+						t.Fatal("upstream progress never reached initiating view")
+					}
+				}
+				select {
+				case <-idleProgress:
+					t.Fatal("progress reached idle view")
+				default:
+				}
+			})
+		}
 	}
+
 }
 
 func TestTransportLifecycleFailedRefreshCannotPublishRejectedInventory(t *testing.T) {
