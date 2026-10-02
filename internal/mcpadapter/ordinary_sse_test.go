@@ -16,7 +16,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func waitSSEPhase[T any](t *testing.T, ctx context.Context, phase <-chan T) T {
+func waitSSEPhase[T any](ctx context.Context, t *testing.T, phase <-chan T) T {
 	t.Helper()
 	select {
 	case value := <-phase:
@@ -57,7 +57,7 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 					}
 					if r.Header.Get("Authorization") != want {
 						t.Error("ordinary static authorization header changed")
-						http.Error(w, "bad auth", 401)
+						http.Error(w, "bad auth", http.StatusUnauthorized)
 						return
 					}
 					if r.Method == http.MethodGet {
@@ -92,7 +92,6 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 					if err != nil {
 						t.Fatal(err)
 					}
-					pool = owner.pool
 					registry = owner.registry
 					closeOwner = owner.Close
 					defer closeOwner()
@@ -105,7 +104,7 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 						t.Fatal(err)
 					}
 				}
-				first := waitSSEPhase(t, ctx, streams)
+				first := waitSSEPhase(ctx, t, streams)
 				router := NewProxyRouter(registry)
 				call := func() {
 					t.Helper()
@@ -122,9 +121,9 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 				if err := registered.Client.Close(); err != nil {
 					t.Fatal(err)
 				}
-				waitSSEPhase(t, ctx, first)
+				waitSSEPhase(ctx, t, first)
 				call()
-				second := waitSSEPhase(t, ctx, streams)
+				second := waitSSEPhase(ctx, t, streams)
 				if calls.Load() != 2 || initializes.Load() != 2 {
 					t.Fatalf("call/reconnect not observed: calls=%d initialize=%d", calls.Load(), initializes.Load())
 				}
@@ -134,7 +133,7 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 				default:
 				}
 				closeOwner()
-				waitSSEPhase(t, ctx, second)
+				waitSSEPhase(ctx, t, second)
 			})
 		}
 	}
@@ -255,19 +254,19 @@ func TestSSEProductionHandshakeCancellationAndFailureCloseGET(t *testing.T) {
 					}
 					result <- err
 				}()
-				waitSSEPhase(t, watchdog, observed)
+				waitSSEPhase(watchdog, t, observed)
 				if phase != "headers" && phase != "initialize" && phase != "initialize-error" {
-					waitSSEPhase(t, watchdog, consumed)
+					waitSSEPhase(watchdog, t, consumed)
 				}
 				if phase != "initialize-error" {
 					cancel()
 				}
-				if err := waitSSEPhase(t, watchdog, result); err == nil {
+				if err := waitSSEPhase(watchdog, t, result); err == nil {
 					t.Fatal("incomplete or rejected handshake unexpectedly succeeded")
 				}
 				// No elapsed-time assertion: the failed/canceled SDK handshake
 				// must actually terminate its long-lived GET before completion.
-				waitSSEPhase(t, watchdog, getClosed)
+				waitSSEPhase(watchdog, t, getClosed)
 			})
 		}
 	}
