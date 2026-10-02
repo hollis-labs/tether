@@ -255,7 +255,9 @@ func mapLifecycleStates(ev agentsessions.LifecycleEvent, stopRequested bool) (fr
 // Returns a no-op when bus is nil (test composition that skips event wiring).
 func makeBootDirPlantedCallback(bus events.Publisher, sessionID, logicalAgentID string) func(string) {
 	return func(path string) {
-		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindSessionBootDirPlanted, struct {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		publishSessionEventContext(ctx, bus, sessionID, logicalAgentID, events.KindSessionBootDirPlanted, struct {
 			Path string `json:"path"`
 		}{Path: path})
 	}
