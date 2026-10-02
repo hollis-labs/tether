@@ -88,7 +88,26 @@ func LintTool(origin string, tool *mcpsdk.Tool) []NameFinding {
 	if disabledDescription.MatchString(strings.TrimSpace(tool.Description)) {
 		add("disabled_description", "listed tool description begins with Disabled; upstream must reconcile its declaration, gateway does not infer availability from prose")
 	}
+
+	if code := lintInputSchema(tool.InputSchema); code != "" {
+		message := "inputSchema must be a valid object JSON Schema with resolvable local references; fix the upstream declaration"
+		switch code {
+		case "input_schema_limit":
+			message = "inputSchema validity unexamined: exceeds conformance limits (256 KiB, depth 64, 4096 nodes)"
+		case "input_schema_unexamined":
+			message = "inputSchema uses external references; validity is unexamined because conformance lint never fetches remote schemas"
+		}
+		add(code, message)
+	}
 	return out
+}
+
+// LintInstructions records only the observed Unicode length, never the text.
+func LintInstructions(origin string, length int) []NameFinding {
+	if length > 2048 {
+		return []NameFinding{{Origin: origin, Code: "instructions_length", Message: "initialize instructions exceed 2048 characters; shorten the upstream instructions"}}
+	}
+	return nil
 }
 
 // ValidateOriginIDs is scoped to gateway startup/doctor, never generic catalog loading.

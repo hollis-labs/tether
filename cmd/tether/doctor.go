@@ -564,13 +564,36 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 	if err != nil {
 		out = append(out, fail("mcp-live-names", err.Error(), "fix the named origin/tool or declare tool_prefix on one upstream"))
 	}
+	unexamined := map[string]int{}
 	for _, finding := range status.Lint {
+		if finding.Code == "conformance_unexamined" {
+			unexamined[finding.Origin]++
+			continue
+		}
 		remedy := "fix the upstream name or declared tool_prefix; names are not rewritten"
 		switch finding.Code {
-		case "missing_annotations", "description_length", "disabled_description":
-			remedy = "fix the upstream tool declaration; annotations/descriptions pass through unchanged"
+		case "missing_annotations", "description_length", "disabled_description", "input_schema":
+			remedy = "fix the upstream tool declaration; metadata passes through unchanged"
+		case "instructions_length":
+			remedy = "shorten upstream initialization instructions to at most 2048 Unicode characters"
+		case "input_schema_limit":
+			remedy = "simplify the upstream schema to fit the bounded conformance check"
+		case "input_schema_unexamined":
+			remedy = "bundle referenced schemas locally so the offline resolver can check them"
 		}
-		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, finding.Name+": "+finding.Message, remedy))
+		message := finding.Message
+		if finding.Name != "" {
+			message = finding.Name + ": " + message
+		}
+		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, message, remedy))
+	}
+	ids := make([]string, 0, len(unexamined))
+	for id := range unexamined {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		out = append(out, warn("mcp-name:"+id+":conformance_unexamined", fmt.Sprintf("%d tool declarations unexamined: aggregate conformance budget exhausted", unexamined[id]), "request gateway status again to examine the next bounded batch; no missing findings are implied to be passes"))
 	}
 	for _, origin := range status.Origins {
 		if origin.Status != "connected" {

@@ -8,6 +8,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Upstream conformance (CW-20260926-0011): report-only input-schema syntax/local-reference checks, explicit unexamined external/oversized schemas, and origin-scoped observed initialization instructions over 2,048 characters through gateway status and live doctor. Schema lint is memoized outside locks with per-tool and aggregate budgets, explicit unexamined counts, and no remote fetch or metadata changes; upstream-author guidance links Tangent's separate rename task CW-20261001-0646.
+
 Changes on `main` since v0.6.0.
 
 ### Added
