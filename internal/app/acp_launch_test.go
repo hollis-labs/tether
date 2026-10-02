@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/go-providers/providertest"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
@@ -78,6 +79,7 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 				CatalogRoot: t.TempDir(),
 				Catalog:     &config.Catalog{Global: config.Global{Version: "test"}},
 				Store:       db,
+				Bus:         events.NewBus(events.BusOptions{Persister: db}),
 				Manager:     agentsessions.NewManager(stateSinkAdapter{db: db}),
 				factories:   map[string]RuntimeFactory{prov.ID: factory},
 			}
@@ -97,6 +99,10 @@ func TestLaunchSession_ACPProviders(t *testing.T) {
 			log := waitForLogText(t, ws.LogPath, "[turn_done]")
 			if !strings.Contains(log, "Hi!") {
 				t.Fatalf("session.log has no reply:\n%s", log)
+			}
+			outputs := outputEvents(t, svc)
+			if len(outputs) != 1 || outputs[0].Text != "Hi!" || outputs[0].Runtime != string(tc.runtime) || outputs[0].MessageID != "" {
+				t.Fatalf("ACP turn output: %+v", outputs)
 			}
 			if entries, _ := os.ReadDir(filepath.Join(ws.Root, "boot")); len(entries) != 0 {
 				t.Errorf("ACP launch planted a shared-launch boot dir: %v", entries)

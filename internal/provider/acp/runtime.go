@@ -65,11 +65,16 @@ func New(providerID, runtimeID string, mode runtimes.Mode, binary string) (agent
 }
 
 type acpRuntime struct {
-	id   string
-	desc registry.Descriptor
-	sel  launch.Selection
-	caps agentsessions.Capabilities
+	id       string
+	desc     registry.Descriptor
+	sel      launch.Selection
+	caps     agentsessions.Capabilities
+	observer func(runtimeevents.Event)
 }
+
+// SetEventObserver installs a synchronous observer before Start. It receives
+// the wrapper's complete Activity feed, including events not rendered to logs.
+func (r *acpRuntime) SetEventObserver(observer func(runtimeevents.Event)) { r.observer = observer }
 
 func (r *acpRuntime) ID() string                       { return r.id }
 func (r *acpRuntime) Kind() string                     { return Kind }
@@ -116,6 +121,7 @@ func (r *acpRuntime) Start(ctx context.Context, opts agentsessions.StartOptions)
 	if err != nil {
 		return nil, err
 	}
+	out.observer = r.observer
 	manager := wacp.NewManager()
 	cfg := wrapper.Config{
 		App:             "tether",
@@ -286,9 +292,10 @@ func (s *session) ProviderSessionID() string { return s.w.ProviderSessionID() }
 // the wrapper emits lifecycle, raw-IO, heartbeat and policy kinds that a
 // reader of the transcript does not need, and new kinds may appear.
 type output struct {
-	mu     sync.Mutex
-	f      *os.File
-	fanout io.Writer
+	mu       sync.Mutex
+	f        *os.File
+	fanout   io.Writer
+	observer func(runtimeevents.Event)
 }
 
 func openOutput(opts agentsessions.StartOptions) (*output, error) {
@@ -313,6 +320,9 @@ func openOutput(opts agentsessions.StartOptions) (*output, error) {
 
 // Write implements runtimeevents.Sink. It never fails the wrapper's emit.
 func (o *output) Write(_ context.Context, ev runtimeevents.Event) error {
+	if o.observer != nil {
+		o.observer(ev)
+	}
 	o.writeText(render(ev))
 	return nil
 }

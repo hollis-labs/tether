@@ -50,7 +50,7 @@ func (s *Store) ListMessages(limit int) ([]MessageRow, error) {
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, created_at, delivered_at, consumed_at,
 		        canceled_at, read_at, archived_at
-		 FROM messages ORDER BY created_at DESC LIMIT ?`, limit)
+		 FROM messages WHERE routing_staged=0 ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

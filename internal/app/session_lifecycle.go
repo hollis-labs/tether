@@ -450,11 +450,8 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	// agy reports auto-denied tool actions only on the typed-event surface;
-	// other providers keep the adapter path untapped.
-	if plan.ProviderBrand == "antigravity" {
-		startOpts.TypedEventCallback = makeProviderTypedEventCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	}
+	turnOutput := s.newSessionTurnOutput(*row, plan)
+	turnOutput.wire(rt, &startOpts)
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
@@ -503,12 +500,17 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		},
 	}
 	if err := s.Manager.Start(context.Background(), req); err != nil {
+		turnOutput.flush()
 		if procLog != nil {
 			_ = procLog.Close()
 		}
 		return nil, err
 	}
 	launched = true
+	go func() {
+		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
+		turnOutput.flush()
+	}()
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.
 	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {

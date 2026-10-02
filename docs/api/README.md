@@ -996,6 +996,52 @@ Response (201): full reply `EnvelopeDTO`.
 v0.0.2 has an in-memory pub/sub bus (Sprint v002-06) over session, daemon,
 and broker scopes. Every event also persists to the `events` table.
 
+### `session.turn_output`
+
+One event per completed agent turn, from every native agentkit runtime and the
+ACP wrapper Activity feed. Empty final answers are skipped; failure and terminal
+outputs are emitted even when text is empty. Reasoning, tool calls, and narration
+from earlier blocks are excluded by the shared `turnoutput` reducer.
+
+Payload:
+
+```json
+{
+  "session_id": "session-uuid",
+  "turn_id": "turn-id",
+  "kind": "final",
+  "stop_reason": "end_turn",
+  "confidence": "exact",
+  "runtime": "codex",
+  "logical_agent_id": "agent-id",
+  "project_id": "project-id",
+  "workstream_id": "workstream-id",
+  "message_id": "durable-message-uuid"
+}
+```
+
+`kind` is `final`, `question`, `approval`, `failure`, or `terminal`; confidence
+is `exact` or `heuristic`. Runtime uses registry IDs (`claude`, `codex`,
+`opencode`, `antigravity`, `copilot`, `pi`). Unassigned workstream is an empty string.
+
+When the session has a persisted route and its resolved `kinds` selects this
+output, the full text is stored **once** as a staged message with payload
+`{"text":"..."}`, attributed to `msg://session/local/<session_id>`; the event
+carries its `message_id`. The channel router attaches that existing message.
+Staging has no delivery, inbox, wake, subscription, or default list visibility,
+including the sysop User inbox. It survives daemon restart. An unattached stage
+can be explicitly purged after the normal 30-day retention window; purged stages
+remain hidden and cannot be published.
+
+Without a selected route kind, no durable message is created. The event instead
+carries `text`, an excerpt of at most 4096 bytes on a UTF-8 boundary, and
+`text_truncated: true` when shortened. On persistence failure the producer logs
+it and emits the excerpt without a `message_id`.
+
+This is the canonical event for turn output. Consumers such as Tangent's bridge
+should migrate from `session.turn_waiting_input` to `session.turn_output`; no
+second alias event is emitted. Existing session lifecycle events are unchanged.
+
 ### Retention
 
 The daemon retains event history for **90 days by default**, with an hourly
