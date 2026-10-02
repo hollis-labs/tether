@@ -27,9 +27,10 @@ func (r interruptRuntime) Start(context.Context, agentsessions.StartOptions) (ag
 
 type interruptSession struct {
 	agentsessions.Session
-	done  chan struct{}
-	once  sync.Once
-	input func(context.Context, []byte) error
+	done      chan struct{}
+	once      sync.Once
+	input     func(context.Context, []byte) error
+	readiness func() (bool, error)
 }
 
 func (s *interruptSession) Wait() (int, error) { <-s.done; return 0, nil }
@@ -50,6 +51,13 @@ func (s *interruptSession) SendInput(ctx context.Context, data []byte) error {
 type cancellableSession struct {
 	*interruptSession
 	cancel func(context.Context) error
+}
+
+func (s *cancellableSession) TurnInterruptReady() (bool, error) {
+	if s.readiness != nil {
+		return s.readiness()
+	}
+	return true, nil
 }
 
 func (s *cancellableSession) InterruptTurn(ctx context.Context) error { return s.cancel(ctx) }

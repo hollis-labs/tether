@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/tether/internal/events"
@@ -66,6 +67,10 @@ func (s *Service) CancelTurnAndWait(ctx context.Context, sessionID, actor string
 // The intended ID is captured before acquiring the gate. Keeping this separate
 // makes the snapshot-to-gate interleaving explicit and testable.
 func (s *Service) cancelTurnAndWait(ctx context.Context, sessionID, actor string, state TurnOutputState, intended string) (TurnInterruptResult, error) {
+	return s.cancelTurnAndWaitWithClock(ctx, sessionID, actor, state, intended, realInterruptClock{})
+}
+
+func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, actor string, state TurnOutputState, intended string, clock interruptClock) (TurnInterruptResult, error) {
 	result := TurnInterruptResult{TurnID: intended}
 	var done <-chan struct{}
 	err := func() error {
@@ -99,11 +104,33 @@ func (s *Service) cancelTurnAndWait(ctx context.Context, sessionID, actor string
 		}); err != nil {
 			return fmt.Errorf("audit turn interruption request: %w", err)
 		}
-		err := s.Manager.InterruptTurn(ctx, sessionID)
-		if errors.Is(err, agentsessions.ErrInterruptUnsupported) {
-			return &TurnInterruptRefusal{Reason: TurnInterruptUnsupported, SessionID: sessionID, TurnID: intended}
+		deadline := clock.Now().Add(2 * time.Second)
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			current, _ := state.CurrentTurn()
+			if current == "" {
+				return &TurnInterruptRefusal{Reason: TurnInterruptNoTurn, SessionID: sessionID, TurnID: intended}
+			}
+			if current != intended {
+				return &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
+			}
+			err := s.Manager.InterruptTurn(ctx, sessionID)
+			if errors.Is(err, agentsessions.ErrInterruptUnsupported) {
+				return &TurnInterruptRefusal{Reason: TurnInterruptUnsupported, SessionID: sessionID, TurnID: intended}
+			}
+			if !errors.Is(err, agentsessions.ErrTurnNotStarted) {
+				return err
+			}
+			remaining := deadline.Sub(clock.Now())
+			if remaining <= 0 {
+				return &TurnInterruptRefusal{Reason: TurnInterruptNotStarted, SessionID: sessionID, TurnID: intended}
+			}
+			if err := clock.Wait(ctx, min(10*time.Millisecond, remaining)); err != nil {
+				return err
+			}
 		}
-		return err
 	}()
 	if err != nil {
 		return result, err
