@@ -70,6 +70,7 @@ type Adapter struct {
 	svc                   *app.Service
 	client                *client.Client // optional; when set, session-mutating tools route through the daemon
 	callerContextResolver func(context.Context) (callcontext.Snapshot, error)
+	callerContextCache    callerContextCache
 	mcp                   *gomcp.Server
 	token                 string
 	scopes                map[string]struct{}
@@ -208,7 +209,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	name := t.Name
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
-		ctx = a.withSessionID(ctx)
+		ctx = a.withClaimedSessionID(ctx)
 		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
@@ -433,11 +434,20 @@ func strSliceArg(args map[string]any, key string) []string {
 func (a *Adapter) withSessionID(ctx context.Context) context.Context {
 	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
 	ctx = a.withCallerContext(ctx)
-	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.Verified {
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
 		return WithSessionID(ctx, snapshot.SessionID)
 	}
 	if a.SessionID == "" {
 		return ctx
+	}
+	return WithSessionID(ctx, a.SessionID)
+}
+
+// Native tools that neither forward nor log need no daemon attribution lookup.
+func (a *Adapter) withClaimedSessionID(ctx context.Context) context.Context {
+	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
+		return WithSessionID(ctx, snapshot.SessionID)
 	}
 	return WithSessionID(ctx, a.SessionID)
 }

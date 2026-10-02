@@ -11,12 +11,15 @@ import (
 	"testing"
 	"time"
 
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/registry"
+	"github.com/hollis-labs/tether/internal/settings"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -71,10 +74,24 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := api.NewHandler(api.Deps{Service: f.service, Registry: regSvc, ProxyEvents: f.db, Bus: events.NewBus(events.BusOptions{})})
-	srv := httptest.NewServer(identity.Middleware(identity.Observe, identities, nil, h))
+	daemonServer := &daemon.Server{Config: daemon.Config{IdentityMode: identity.Observe}, Identity: identities, Service: f.service, Registry: regSvc, ProxyEvents: f.db, Bus: events.NewBus(events.BusOptions{Persister: f.db}), Settings: settings.NewService(settings.NewStorage(f.db.DB()))}
+	defer daemonServer.CloseIdentityAudit()
+	srv := httptest.NewServer(daemonServer.Handler())
 	defer srv.Close()
 	dc := client.New("tcp:"+strings.TrimPrefix(srv.URL, "http://"), client.WithToken(token))
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/settings/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	settingsResponse, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = settingsResponse.Body.Close()
+	if settingsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("production settings mount: %d", settingsResponse.StatusCode)
+	}
 	a := NewWithDaemon(nil, dc, "marker", nil)
 	a.SessionID = "forged-session"
 	ctx := a.withSessionID(context.Background())
@@ -83,8 +100,10 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 		t.Fatalf("resolved context: %+v", want)
 	}
 	var forwarded *ContextEnvelope
+	var legacy *ProvenanceEnvelope
 	mock := &mockClient{callToolFunc: func(_ context.Context, p *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 		forwarded = ExtractContextMeta(map[string]any(p.Meta))
+		legacy = ExtractProvenanceMeta(map[string]any(p.Meta))
 		return &mcpsdk.CallToolResult{}, nil
 	}}
 	tools := NewToolRegistry()
@@ -96,6 +115,9 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	}
 	if forwarded == nil || forwarded.Snapshot != want {
 		t.Fatalf("forwarded=%+v want=%+v", forwarded, want)
+	}
+	if legacy == nil || legacy.SchemaVersion != 1 || legacy.SessionID != want.SessionID || legacy.WorkstreamID != want.WorkstreamID {
+		t.Fatalf("production schema-1 stamp=%+v want session=%s workstream=%s", legacy, want.SessionID, want.WorkstreamID)
 	}
 	if len(publisher.telemetry) != 2 {
 		t.Fatalf("telemetry count %d", len(publisher.telemetry))
@@ -151,5 +173,58 @@ func TestLegacyProvenanceShapeUnchangedAlongsideTrustedContext(t *testing.T) {
 				t.Fatalf("trusted context=%+v", trusted)
 			}
 		})
+	}
+}
+
+func TestCallerContextSlowDaemonIsBoundedAndNegativelyCached(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	a := NewWithDaemon(nil, nil, "marker", nil)
+	var lookups int
+	a.SetCallerContextResolver(func(ctx context.Context) (callcontext.Snapshot, error) {
+		lookups++
+		<-ctx.Done()
+		return callcontext.Snapshot{}, ctx.Err()
+	})
+	s := a.newBareServer()
+	a.addTool(s, gomcp.Tool{Name: "noop", Description: "Local noop", InputSchema: gomcp.EmptyObjectSchema(), Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil }}, Reads("local noop"))
+	start := time.Now()
+	if _, err := s.CallTool(context.Background(), "noop", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 0 || time.Since(start) > 100*time.Millisecond {
+		t.Fatal("native noop performed attribution lookup")
+	}
+	start = time.Now()
+	ctx := a.withSessionID(context.Background())
+	if snapshot, _ := callcontext.FromContext(ctx); snapshot.Verified {
+		t.Fatal("failed lookup stamped context")
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatal("lookup exceeded bounded overhead")
+	}
+	start = time.Now()
+	for range 10 {
+		a.withSessionID(context.Background())
+	}
+	if lookups != 1 || time.Since(start) > 100*time.Millisecond {
+		t.Fatal("failed lookup was not negatively cached")
+	}
+	a.SetCallerContextResolver(func(context.Context) (callcontext.Snapshot, error) {
+		lookups++
+		return callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "session:A", SessionID: "A"}, nil
+	})
+	for range 10 {
+		a.withSessionID(context.Background())
+	}
+	if lookups != 2 {
+		t.Fatal("positive lookup was not cached")
+	}
+}
+
+func TestReservedContextMetaCaseVariantsAreStripped(t *testing.T) {
+	p := &mcpsdk.CallToolParams{Meta: mcpsdk.Meta{"Tether.Context": map[string]any{"verified": true}, "TETHER.PROVENANCE": map[string]any{"session_id": "forged"}, "ordinary": "kept"}}
+	NewProxyRouter(nil).applyProvenanceMeta(context.Background(), p)
+	if len(p.Meta) != 1 || p.Meta["ordinary"] != "kept" {
+		t.Fatal("case-variant reserved envelope survived")
 	}
 }

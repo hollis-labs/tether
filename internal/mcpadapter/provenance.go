@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"log/slog"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -111,7 +112,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 
 		fields := make(map[string]any, len(existingFields)+1)
 		for k, v := range existingFields {
-			if k != ProvenanceMetaKey {
+			if !strings.EqualFold(k, ProvenanceMetaKey) {
 				fields[k] = v
 			}
 		}
@@ -122,10 +123,10 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 	}
 
 	// Provenance is omitted. If incoming request carries ProvenanceMetaKey, strip it.
-	if _, hasProv := existingFields[ProvenanceMetaKey]; hasProv {
+	{
 		fields := make(map[string]any, len(existingFields))
 		for k, v := range existingFields {
-			if k != ProvenanceMetaKey {
+			if !strings.EqualFold(k, ProvenanceMetaKey) {
 				fields[k] = v
 			}
 		}
@@ -142,7 +143,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 func (r *ProxyRouter) applyContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
 	fields := make(map[string]any, len(params.Meta)+1)
 	for k, v := range params.Meta {
-		if k != ContextMetaKey {
+		if !strings.EqualFold(k, ContextMetaKey) {
 			fields[k] = v
 		}
 	}
