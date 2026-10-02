@@ -194,6 +194,7 @@ type ProxyOptions struct {
 	// ModeInputs are resolved once before any upstream starts. The profile
 	// tier is a typed hook; selecting/filtering profiles belongs to CW-0008.
 	ModeInputs mcpgateway.ModeInputs
+	Profile    mcpgateway.ProfileSelection
 	// ServerFilter is a strict upstream restriction in both discovery modes.
 	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
@@ -277,24 +278,75 @@ func (a *Adapter) RunWithProxyOpts(ctx context.Context, catalogDir string, opts 
 
 // RunWithGatewayOpts serves the same policy for native-only and proxy clients.
 func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opts ProxyOptions, proxy bool) error {
+	if opts.Profile.Profile != nil {
+		if err := opts.Profile.Profile.Validate(); err != nil {
+			return err
+		}
+		opts.ModeInputs.Profile = opts.Profile.Profile
+	}
 	selection, err := mcpgateway.ResolveMode(opts.ModeInputs)
 	if err != nil {
 		return err
 	}
 	registry := NewToolRegistry()
-	s := a.newBareServer()
+	instructions := ""
+	if opts.Profile.Profile != nil {
+		instructions = opts.Profile.Profile.Instructions
+	}
+	s := a.newBareServer(gomcp.WithInstructions(instructions))
+	if !proxy && opts.Profile.Profile != nil && opts.Profile.Profile.Servers != nil {
+		authored, err := config.LoadMCPServerCatalog(catalogDir)
+		if err != nil {
+			return err
+		}
+		if err := rejectSelectedReservedOrigin(authored, opts.Profile.Profile); err != nil {
+			return err
+		}
+		if _, err := mcpgateway.SelectOrigins(authoredOriginStates(authored), nil, opts.Profile.Profile); err != nil {
+			return err
+		}
+	}
 	var entries []config.MCPServerEntry
+	var restrictedOrigins []string
+	originOrder := []string{"tether"}
 	if proxy {
 		authored, loadErr := config.LoadMCPServerCatalog(catalogDir)
 		if loadErr != nil {
 			return loadErr
 		}
 		selected := opts.ServerFilter
+		if selected == nil && opts.Confine {
+			selected = []string{}
+		}
 		if selected == nil && !opts.Confine {
 			selected = []string{}
 			for _, entry := range authored {
 				if entry.IsEnabled() {
 					selected = append(selected, entry.ID)
+				}
+			}
+		}
+		if err := rejectSelectedReservedOrigin(authored, opts.Profile.Profile); err != nil {
+			return err
+		}
+		restriction := selected
+		selected, err = mcpgateway.SelectOrigins(authoredOriginStates(authored), selected, opts.Profile.Profile)
+		if err != nil {
+			return err
+		}
+		if opts.Profile.Profile != nil && opts.Profile.Profile.Servers != nil {
+			for _, id := range opts.Profile.Profile.Servers {
+				if id == "tether" {
+					continue
+				}
+				permitted := restriction == nil
+				for _, allowed := range restriction {
+					if allowed == id {
+						permitted = true
+					}
+				}
+				if !permitted {
+					restrictedOrigins = append(restrictedOrigins, id)
 				}
 			}
 		}
@@ -306,6 +358,12 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		if len(unknown) > 0 {
 			return fmt.Errorf("unknown or disabled MCP server IDs: %s", strings.Join(unknown, ", "))
 		}
+	}
+	for _, entry := range entries {
+		originOrder = append(originOrder, entry.ID)
+	}
+	if opts.Profile.Profile != nil && opts.Profile.Profile.Servers != nil {
+		originOrder = opts.Profile.Profile.Servers
 	}
 	pool := NewClientPool(entries, registry)
 	pool.confineRemote = len(a.protected) > 0 && os.Getenv(config.MCPConfineRemoteEnv) == "1"
@@ -372,6 +430,15 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		return err
 	}
 	gateway := a.gatewayService(registry, router, selection, tags)
+	gateway.Policy = &mcpgateway.Policy{Selection: opts.Profile, ServerOrder: originOrder, RestrictedOrigins: restrictedOrigins}
+	known := gateway.Snapshot()
+	if err := gateway.Policy.ValidateNames(known); err != nil {
+		return err
+	}
+	for _, warning := range gateway.Policy.NameWarnings(known) {
+		a.logger().Warn(warning)
+	}
+	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
 	if selection.Mode == mcpgateway.Flat {
 		live.addProxyTools(registry.AllDefinitions()...)
 	} else {
@@ -449,12 +516,19 @@ func toolNames(defs []*mcpsdk.Tool) []string {
 // routerRefResolver implements RefResolver by dispatching to tesseract_ref_resolve
 // via the ProxyRouter.
 type routerRefResolver struct {
-	router *ProxyRouter
+	router  *ProxyRouter
+	gateway *mcpgateway.Service
 }
 
 func (r *routerRefResolver) ResolveRef(ctx context.Context, selector map[string]any) (*ResolvedRef, error) {
 	if r.router == nil {
 		return nil, errors.New("no proxy router available for ref resolution")
+	}
+	if r.gateway == nil {
+		return nil, errors.New("no gateway policy available for ref resolution")
+	}
+	if _, err := r.gateway.ResolveTarget("tesseract_ref_resolve"); err != nil {
+		return nil, err
 	}
 	res, err := r.router.Handle(ctx, ToolCall{ToolName: "tesseract_ref_resolve", Args: selector})
 	if err != nil {
@@ -476,4 +550,31 @@ func (r *routerRefResolver) ResolveRef(ctx context.Context, selector map[string]
 		return nil, fmt.Errorf("unmarshal resolved ref: %w", err)
 	}
 	return &out, nil
+}
+
+func authoredOriginStates(entries []config.MCPServerEntry) map[string]bool {
+	out := map[string]bool{"tether": true}
+	for _, entry := range entries {
+		if entry.ID != "tether" {
+			out[entry.ID] = entry.IsEnabled()
+		}
+	}
+	return out
+}
+
+func rejectSelectedReservedOrigin(entries []config.MCPServerEntry, profile *mcpgateway.Profile) error {
+	if profile == nil {
+		return nil
+	}
+	for _, id := range profile.Servers {
+		if id != "tether" {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.ID == "tether" {
+				return fmt.Errorf("profile origin tether is reserved for native tools; catalog upstream tether conflicts")
+			}
+		}
+	}
+	return nil
 }

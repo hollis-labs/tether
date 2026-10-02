@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -37,8 +38,9 @@ func TestSettingsEffectiveRetention(t *testing.T) {
 			}
 			var got struct {
 				Retention struct {
-					Enabled bool `json:"enabled"`
-					Days    int  `json:"days"`
+					Enabled bool     `json:"enabled"`
+					Days    int      `json:"days"`
+					Tables  []string `json:"tables"`
 				} `json:"daemon.events_retention"`
 			}
 			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
@@ -47,12 +49,15 @@ func TestSettingsEffectiveRetention(t *testing.T) {
 			if got.Retention.Enabled != tc.enabled || got.Retention.Days != tc.days {
 				t.Fatalf("effective retention = %+v, want enabled=%v days=%d", got.Retention, tc.enabled, tc.days)
 			}
+			if !slices.Contains(got.Retention.Tables, "a2a_tasks") {
+				t.Fatalf("retention tables omit A2A: %+v", got.Retention.Tables)
+			}
 			catCheck, cat := checkCatalog(catalogPath)
 			if cat == nil {
 				t.Fatalf("catalog: %+v", catCheck)
 			}
 			message := retentionMessage(cat.Global.Daemon.EventsRetention)
-			if !strings.Contains(message, "restart applies changes") || (!tc.enabled && !strings.Contains(message, "disabled")) {
+			if !strings.Contains(message, "terminal a2a_tasks") || !strings.Contains(message, "restart applies changes") || (!tc.enabled && !strings.Contains(message, "disabled")) {
 				t.Fatalf("doctor retention message: %s", message)
 			}
 		})

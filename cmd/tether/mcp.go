@@ -64,6 +64,7 @@ var (
 	mcpScopes        string
 	mcpProxy         bool
 	mcpDiscoveryMode string
+	mcpProfiles      []string
 	mcpServers       string
 	mcpOnly          string
 	mcpConfine       bool
@@ -77,6 +78,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "legacy adapter presence marker; daemon credentials use --token-file or TETHER_TOKEN")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
+	mcpCmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "gateway profile ID (env: TETHER_MCP_PROFILE)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs permitted in every discovery mode (env: TETHER_MCP_SERVERS); omitted = all enabled upstreams")
 	mcpCmd.Flags().StringVar(&mcpOnly, "only", "", "restrict to these upstream server IDs and omit native Tether targets; gateway status/discovery infrastructure follows the selected mode")
@@ -151,6 +153,10 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
 		return err
 	}
+	profile, err := resolveMCPProfile(cmd, svc)
+	if err != nil {
+		return err
+	}
 	modeInputs, err := resolveMCPModeInputs(cmd, svc, nil)
 	if err != nil {
 		return err
@@ -162,6 +168,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		eventStore := mcpadapter.NewToolCallEventStore(1000)
 		opts := inProcessProxyOptions(svc, eventStore, serverFilter, curatedOnly, mcpConfine)
 		opts.ModeInputs = modeInputs
+		opts.Profile = profile
 
 		// Forward tool_call_end events to the running tetherd daemon's event bus so
 		// any consumer (HTTP /events SSE, MCP tools, downstream subscribers) can
@@ -184,7 +191,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 	}
-	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs}, false)
+	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile}, false)
 }
 
 // configureMCPAdapter applies the flags every `tether mcp` mode shares.
@@ -248,15 +255,20 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 	if err := configureMCPAdapter(adapter, listenAddr); err != nil {
 		return err
 	}
+	profile, err := resolveMCPProfile(cmd, svc)
+	if err != nil {
+		return err
+	}
 	modeInputs, err := resolveMCPModeInputs(cmd, svc, dc)
 	if err != nil {
 		return err
 	}
 	if !mcpProxy {
-		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs}, false)
+		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile}, false)
 	}
 	opts := daemonOnlyProxyOptions(cmd.Context(), dc, serverFilter, curatedOnly, mcpConfine)
 	opts.ModeInputs = modeInputs
+	opts.Profile = profile
 	return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 }
 
@@ -436,10 +448,11 @@ func (r refAttacherClient) AttachSessionRef(ctx context.Context, sessionID, kind
 // The stdio client's environment is a distinct precedence tier, not a daemon
 // environment guessed by an HTTP caller. Resolution is immutable for this run.
 func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Client) (mcpgateway.ModeInputs, error) {
-	if err := svc.Catalog.Global.MCP.Validate(); err != nil {
+	profile, err := resolveMCPProfile(cmd, svc)
+	if err != nil {
 		return mcpgateway.ModeInputs{}, err
 	}
-	in := mcpgateway.ModeInputs{Gateway: svc.Catalog.Global.MCP.DiscoveryMode}
+	in := mcpgateway.ModeInputs{Gateway: svc.Catalog.Global.MCP.DiscoveryMode, Profile: profile.Profile}
 	if cmd.Flags().Changed("discovery-mode") {
 		in.Explicit = []mcpgateway.Selector{{Value: mcpDiscoveryMode, Source: "argument"}}
 	}
@@ -459,6 +472,23 @@ func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Clien
 		}
 		in.Setting = stored.DiscoveryMode
 	}
-	_, err := mcpgateway.ResolveMode(in)
+	_, err = mcpgateway.ResolveMode(in)
 	return in, err
+}
+
+func resolveMCPProfile(cmd *cobra.Command, svc *app.Service) (mcpgateway.ProfileSelection, error) {
+	in := mcpgateway.ProfileInputs{}
+	if cmd.Flags().Changed("profile") {
+		values, err := cmd.Flags().GetStringArray("profile")
+		if err != nil {
+			return mcpgateway.ProfileSelection{}, err
+		}
+		for _, value := range values {
+			in.Explicit = append(in.Explicit, mcpgateway.Selector{Value: value, Source: "argument"})
+		}
+	}
+	if value, present := os.LookupEnv("TETHER_MCP_PROFILE"); present {
+		in.Environment = &value
+	}
+	return mcpgateway.ResolveProfile(svc.Catalog.Global.MCP, in)
 }

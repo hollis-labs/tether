@@ -16,14 +16,25 @@ type RetentionBatch struct {
 }
 
 // DeleteEventHistoryBefore deletes one bounded batch and writes its audit
-// receipt atomically. Only event-history and identity-audit tables are accepted.
+// receipt atomically. Accepted tables are event history, identity audit and
+// terminal A2A tasks. Other task states are never eligible, regardless of age.
 func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cutoff time.Time, limit int) (RetentionBatch, error) {
 	batch := RetentionBatch{Table: table, Cutoff: cutoff}
 	if limit <= 0 {
 		return batch, fmt.Errorf("retention: limit must be positive")
 	}
+	stamp := cutoff.UTC().Format(time.RFC3339Nano)
+	var age any = stamp
 	var query string
 	switch table {
+	case "a2a_tasks":
+		// State values are persisted from a2a.TaskState; these are the SDK
+		// Terminal() states. Use the last update, not the task creation time.
+		query = `DELETE FROM a2a_tasks WHERE (binding_id, task_id) IN (
+			SELECT binding_id, task_id FROM a2a_tasks
+			WHERE state IN ('TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED')
+			AND updated_ns < ? ORDER BY updated_ns, binding_id, task_id LIMIT ?)`
+		age = cutoff.UnixNano()
 	case "identity_audit":
 		query = `DELETE FROM identity_audit WHERE id IN (SELECT id FROM identity_audit WHERE at < ? ORDER BY at, id LIMIT ?)`
 	case "events":
@@ -40,8 +51,7 @@ func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cuto
 		return batch, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	stamp := cutoff.UTC().Format(time.RFC3339Nano)
-	res, err := tx.ExecContext(ctx, query, stamp, limit)
+	res, err := tx.ExecContext(ctx, query, age, limit)
 	if err != nil {
 		return batch, err
 	}

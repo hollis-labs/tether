@@ -4,7 +4,7 @@ import "testing"
 
 func ptr(value string) *string { return &value }
 func TestModePrecedenceAndValidation(t *testing.T) {
-	tiers := ModeInputs{Explicit: []Selector{{"flat", "argument"}}, Environment: ptr("search"), Profile: &Profile{ptr("flat")}, Gateway: ptr("search"), Setting: ptr("flat")}
+	tiers := ModeInputs{Explicit: []Selector{{"flat", "argument"}}, Environment: ptr("search"), Profile: &Profile{DiscoveryMode: ptr("flat")}, Gateway: ptr("search"), Setting: ptr("flat")}
 	for _, want := range []Selection{{Flat, "argument"}, {Search, "environment"}, {Flat, "profile"}, {Search, "gateway_config"}, {Flat, "tether_setting"}, {Flat, "default"}} {
 		got, err := ResolveMode(tiers)
 		if err != nil || got != want {
@@ -27,7 +27,7 @@ func TestModePrecedenceAndValidation(t *testing.T) {
 		for _, inputs := range []ModeInputs{
 			{Explicit: []Selector{{bad, "argument"}}},
 			{Explicit: []Selector{{"flat", "argument"}}, Environment: ptr(bad)},
-			{Explicit: []Selector{{"flat", "argument"}}, Profile: &Profile{ptr(bad)}},
+			{Explicit: []Selector{{"flat", "argument"}}, Profile: &Profile{DiscoveryMode: ptr(bad)}},
 			{Explicit: []Selector{{"flat", "argument"}}, Gateway: ptr(bad)},
 			{Explicit: []Selector{{"flat", "argument"}}, Setting: ptr(bad)},
 		} {

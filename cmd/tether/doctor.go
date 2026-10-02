@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -141,6 +142,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
 		checks = append(checks, checkMCPDiscoveryMode(cat))
+		checks = append(checks, checkMCPProfiles(cat, catalogRoot)...)
 		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
@@ -437,8 +439,61 @@ func checkIdentity(cat *config.Catalog) checkResult {
 }
 
 func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
-	if err := cat.Global.MCP.Validate(); err != nil {
-		return fail("mcp-discovery-mode", err.Error(), "set mcp.discovery_mode and profile discovery_mode to flat or search in global.yaml")
+	if _, err := mcpgateway.ResolveMode(mcpgateway.ModeInputs{Gateway: cat.Global.MCP.DiscoveryMode}); err != nil {
+		return fail("mcp-discovery-mode", err.Error(), "fix mcp.discovery_mode and mcp.profiles fields in global.yaml")
 	}
 	return ok("mcp-discovery-mode", "configured discovery modes are valid")
+}
+
+// Doctor validates all authored profiles without connecting upstreams or reading
+// credentials. Exact order/load names can only be verified against live tools.
+func checkMCPProfiles(cat *config.Catalog, catalogRoot string) []checkResult {
+	entries, err := config.LoadMCPServerCatalog(catalogRoot)
+	if err != nil {
+		return []checkResult{fail("mcp-profiles", err.Error(), "fix the MCP server catalog")}
+	}
+	known := map[string]bool{"tether": true}
+	for _, entry := range entries {
+		if entry.ID != "tether" {
+			known[entry.ID] = entry.IsEnabled()
+		}
+	}
+	var results []checkResult
+	for id, profile := range cat.Global.MCP.Profiles {
+		name := "mcp-profile-" + id
+		if id == "" {
+			results = append(results, fail(name, "empty profile ID", "name the profile"))
+			continue
+		}
+		if err := profile.Validate(); err != nil {
+			results = append(results, fail(name, err.Error(), "fix profile fields in global.yaml"))
+			continue
+		}
+		if _, err := mcpgateway.SelectOrigins(known, nil, &profile); err != nil {
+			results = append(results, fail(name, err.Error(), "use enabled catalog origins or reserved native tether"))
+			continue
+		}
+
+		collision := false
+		for _, id := range profile.Servers {
+			if id == "tether" {
+				for _, entry := range entries {
+					if entry.ID == "tether" {
+						collision = true
+					}
+				}
+			}
+		}
+		if collision {
+			results = append(results, fail(name, "reserved native tether origin conflicts with catalog upstream tether", "rename the upstream before selecting the reserved native origin"))
+			continue
+		}
+		if len(profile.Order)+len(profile.AlwaysLoad) > 0 {
+			results = append(results, warn(name, "order/always_load tool names require live upstream discovery", "start the selected gateway profile to validate exact names"))
+		} else {
+			results = append(results, ok(name, "profile syntax and origins are valid"))
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
+	return results
 }
