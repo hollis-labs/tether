@@ -405,7 +405,7 @@ func validTraceID(id string, size int) bool {
 		return false
 	}
 	for _, ch := range id {
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
 			return false
 		}
 	}
