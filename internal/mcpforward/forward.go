@@ -137,18 +137,35 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 // daemonSession serializes initialization, not tool execution. The credential,
 // profile and discovery selector remain frozen through every replacement view.
 type daemonSession struct {
-	mu        sync.Mutex
-	client    *client.Client
-	opts      client.MCPOptions
-	session   *mcp.ClientSession
-	done      <-chan struct{}
-	missing   *atomic.Bool
-	users     *sync.WaitGroup
-	transport mcp.Connection
+	mu           sync.Mutex
+	client       *client.Client
+	opts         client.MCPOptions
+	session      *mcp.ClientSession
+	done         <-chan struct{}
+	missing      *atomic.Bool
+	users        *sync.WaitGroup
+	transport    mcp.Connection
+	initializing *daemonInitialization
+	closeTimeout time.Duration // zero uses the production teardown bound
+}
+
+type daemonInitialization struct {
+	done    chan struct{}
+	session *mcp.ClientSession
+	err     error
 }
 
 func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*mcp.ClientSession, error) {
 	d.mu.Lock()
+	if pending := d.initializing; pending != nil {
+		d.mu.Unlock()
+		select {
+		case <-pending.done:
+			return pending.session, pending.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	var retired *mcp.ClientSession
 	var retiredUsers *sync.WaitGroup
 	var retiredTransport mcp.Connection
@@ -159,7 +176,7 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 				// Preserve admitted calls on the old view. New callers use the
 				// replacement without waiting for those calls or SDK Close.
 				retiredUsers.Wait()
-				closeSession(retired, retiredTransport)
+				closeSession(retired, retiredTransport, d.closeTimeout)
 			}()
 		}
 	}()
@@ -178,6 +195,11 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 		retired, retiredUsers, retiredTransport = d.session, d.users, d.transport
 		d.session = nil
 	}
+	pending := &daemonInitialization{done: make(chan struct{})}
+	d.initializing = pending
+	// Waiters join this attempt and receive its failure together. Do not hold
+	// the view lock during network initialization or retry once per waiter.
+	d.mu.Unlock()
 	setup, cancel := context.WithTimeout(ctx, client.MCPInitializeTimeout)
 	defer cancel()
 	missingState := &atomic.Bool{}
@@ -186,10 +208,14 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	var transport mcp.Connection
 	options.OnTransportConnected = func(connection mcp.Connection) { transport = connection }
 	session, err := d.client.ConnectMCP(setup, options)
+	d.mu.Lock()
+	if err != nil && setup.Err() != nil {
+		err = setup.Err()
+	}
+	pending.session, pending.err = session, err
+	d.initializing = nil
+	close(pending.done)
 	if err != nil {
-		if setup.Err() != nil {
-			return nil, setup.Err()
-		}
 		return nil, err
 	}
 	d.session = session
@@ -289,21 +315,30 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 
 func (d *daemonSession) close() {
 	d.mu.Lock()
+	for d.initializing != nil {
+		pending := d.initializing
+		d.mu.Unlock()
+		<-pending.done
+		d.mu.Lock()
+	}
 	session, users, transport := d.session, d.users, d.transport
 	d.session = nil
 	d.mu.Unlock()
 	if session != nil {
 		users.Wait()
-		closeSession(session, transport)
+		closeSession(session, transport, d.closeTimeout)
 	}
 }
 
-func closeSession(session *mcp.ClientSession, transport mcp.Connection) {
+func closeSession(session *mcp.ClientSession, transport mcp.Connection, timeout time.Duration) {
+	if timeout == 0 {
+		timeout = client.MCPInitializeTimeout
+	}
 	done := make(chan struct{})
 	go func() { _ = session.Close(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(client.MCPInitializeTimeout):
+	case <-time.After(timeout):
 		// All relay calls have already returned. Bound SDK teardown separately
 		// from their lifetimes; raw transport Close bounds its DELETE to 5s.
 		slog.Warn("daemon MCP session close exceeded its deadline")
@@ -368,7 +403,7 @@ func daemonTransportFailure(err error) bool {
 			return true
 		}
 	}
-	return strings.Contains(detail, "standalone SSE stream: exceeded ") && strings.Contains(detail, " retries without progress (session ID:")
+	return strings.Contains(detail, ": exceeded ") && strings.Contains(detail, " retries without progress (session ID:")
 }
 
 // Protocol negotiation belongs to each hop. Preserve application metadata and
