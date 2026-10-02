@@ -112,6 +112,12 @@ var daemonStartCmd = &cobra.Command{
 	},
 }
 
+// Dependencies are supplied here so startup error paths can be exercised with
+// isolated services, without binding or touching a user's running daemon.
+var newDaemonService = app.NewDaemon
+var closeDaemonService = func(svc *app.Service) error { return svc.Close() }
+var runDaemonServer = (*daemon.Server).Run
+
 var daemonRunCmd = &cobra.Command{
 	Use:    "run",
 	Short:  "Run the daemon in the foreground (invoked by `daemon start`; avoid calling directly)",
@@ -145,14 +151,14 @@ var daemonRunCmd = &cobra.Command{
 			}
 		}
 
-		svc, err := app.NewDaemon(catalogPath)
+		svc, err := newDaemonService(catalogPath)
 		if err != nil {
 			return err
 		}
 		var closeOnce sync.Once
 		var closeErr error
 		closeService := func() error {
-			closeOnce.Do(func() { closeErr = svc.Close() })
+			closeOnce.Do(func() { closeErr = closeDaemonService(svc) })
 			return closeErr
 		}
 		defer func() { _ = closeService() }()
@@ -293,7 +299,7 @@ var daemonRunCmd = &cobra.Command{
 			server.MCPDrain = mcpHandler.Drain
 		}
 
-		return server.Run(ctx)
+		return runDaemonServer(server, ctx)
 	},
 }
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
 )
@@ -151,44 +153,118 @@ func TestBootSubmissionMarkerExistsBeforeRuntimeStart(t *testing.T) {
 }
 
 func TestCanceledSendTurnDoesNotPrimeOrEnterRuntimeBehindGate(t *testing.T) {
+	for _, caps := range []agentsessions.Capabilities{{}, {StreamingStdio: true}, {JsonRpcStdio: true}} {
+		t.Run(fmt.Sprintf("%+v", caps), func(t *testing.T) {
+			svc, output := outputHarness(t, nil)
+			svc.turnOutputs.Store("s1", output)
+			svc.Manager = agentsessions.NewManager(nil)
+			base, err := stub.New(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{}, 1)
+			rt := &markerRuntime{Runtime: base, caps: caps, onInput: func() { entered <- struct{}{} }}
+			if err := svc.Manager.Start(context.Background(), agentsessions.StartRequest{ID: "s1", Runtime: rt}); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = svc.Manager.Stop(context.Background(), "s1") }()
+			unlock := output.LockSubmission()
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+			defer cancel()
+			returned := make(chan error, 1)
+			go func() { returned <- svc.SendTurn(ctx, "s1", "input") }()
+			select {
+			case err := <-returned:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				unlock()
+				t.Fatal("request cancellation did not release gate waiter")
+			}
+			unlock()
+			if id, _ := output.CurrentTurn(); id != "" {
+				t.Fatal("canceled request left a marker")
+			}
+			select {
+			case <-entered:
+				t.Fatal("canceled request entered runtime")
+			default:
+			}
+			if !output.submissionGate.TryLock() {
+				t.Fatal("canceled waiter retained gate")
+			}
+			output.submissionGate.Unlock()
+		})
+	}
+}
+
+func TestSubmissionCancellationAfterGateBeforeRuntimeEntry(t *testing.T) {
 	svc, output := outputHarness(t, nil)
 	svc.turnOutputs.Store("s1", output)
-	svc.Manager = agentsessions.NewManager(nil)
-	base, err := stub.New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	output.mu.Lock()
+	returned := make(chan error, 1)
+	entered := false
+	go func() {
+		returned <- svc.trackTurnSubmissionContext(ctx, "s1", func() error { entered = true; return nil })
+	}()
+	deadline := time.Now().Add(time.Second)
+	for output.submissionGate.TryLock() {
+		output.submissionGate.Unlock()
+		if time.Now().After(deadline) {
+			output.mu.Unlock()
+			t.Fatal("submission never acquired gate")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	output.mu.Unlock()
+	if err := <-returned; !errors.Is(err, context.Canceled) {
+		t.Fatalf("error: %v", err)
+	}
+	if entered {
+		t.Fatal("canceled submission entered runtime after gate acquisition")
+	}
+	if id, _ := output.CurrentTurn(); id != "" {
+		t.Fatal("canceled provisional marker retained")
+	}
+}
+
+type cancellingObserverRuntime struct {
+	*markerRuntime
+	cancel context.CancelFunc
+}
+
+func (r *cancellingObserverRuntime) SetEventObserver(func(runtimeevents.Event)) { r.cancel() }
+func TestBootSubmissionHonorsCancellationAtCollectorWiring(t *testing.T) {
+	svc, rt, id, _ := credentialLaunch(t)
+	plan, err := svc.Store.GetLaunchPlan(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entered := make(chan struct{}, 1)
-	rt := &markerRuntime{Runtime: base, onInput: func() { entered <- struct{}{} }}
-	if err := svc.Manager.Start(context.Background(), agentsessions.StartRequest{ID: "s1", Runtime: rt}); err != nil {
+	plan.RuntimeKind = "streaming-stdio"
+	plan.BootMode, plan.BootPrompt = "stdin", "boot turn"
+	raw, err := json.Marshal(plan)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = svc.Manager.Stop(context.Background(), "s1") }()
-	unlock := output.LockSubmission()
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(raw), id); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	returned := make(chan error, 1)
-	go func() { returned <- svc.SendTurn(ctx, "s1", "input") }()
-	select {
-	case err := <-returned:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		unlock()
-		t.Fatal("request cancellation did not release gate waiter")
+	entered := false
+	wrapper := &cancellingObserverRuntime{markerRuntime: &markerRuntime{Runtime: rt.Runtime, caps: agentsessions.Capabilities{StreamingStdio: true}, onStart: func() { entered = true }}, cancel: cancel}
+	svc.factories["stub"] = func(*launch.Plan) (agentsessions.Runtime, error) { return wrapper, nil }
+	if _, err := svc.LaunchSessionWithContext(ctx, id); !errors.Is(err, context.Canceled) {
+		t.Fatalf("launch error: %v", err)
 	}
-	unlock()
-	if id, _ := output.CurrentTurn(); id != "" {
-		t.Fatal("canceled request left a marker")
+	if entered {
+		t.Fatal("boot entered runtime despite canceled caller")
 	}
-	select {
-	case <-entered:
-		t.Fatal("canceled request entered runtime")
-	default:
+	if _, ok := svc.SessionTurnOutputState(id); ok {
+		t.Fatal("canceled boot retained collector")
 	}
-	if !output.submissionGate.TryLock() {
-		t.Fatal("canceled waiter retained gate")
-	}
-	output.submissionGate.Unlock()
 }

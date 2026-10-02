@@ -367,3 +367,73 @@ func TestInterruptAuditStorageDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestOutputStorageOperationsHonorTheirContexts(t *testing.T) {
+	svc, _ := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	conn, err := svc.Store.DB().Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for _, op := range []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{"route reread", func(ctx context.Context) error { _, err := svc.Store.SessionRoute(ctx, "s1"); return err }},
+		{"event insert", func(ctx context.Context) error {
+			_, _, err := svc.Store.InsertEventContext(ctx, events.ScopeSession, "s1", events.KindSessionTurnOutput, `{}`)
+			return err
+		}},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+			defer cancel()
+			returned := make(chan error, 1)
+			go func() { returned <- op.run(ctx) }()
+			select {
+			case err := <-returned:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("context ignored: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("storage operation stuck")
+			}
+		})
+	}
+}
+
+type joiningOutputBus struct {
+	events.Bus
+	calls   atomic.Int32
+	entered chan struct{}
+	checked chan error
+	svc     *Service
+}
+
+func (b *joiningOutputBus) Publish(ctx context.Context, _ events.Event) error {
+	if b.calls.Add(1) == 1 {
+		return context.DeadlineExceeded
+	}
+	close(b.entered)
+	<-ctx.Done()
+	b.checked <- b.svc.Store.DB().PingContext(context.Background())
+	return ctx.Err()
+}
+func TestServiceCloseJoinsOutputRetryBeforeClosingStorage(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputTimeout = 25 * time.Millisecond
+	bus := &joiningOutputBus{Bus: svc.Bus, entered: make(chan struct{}), checked: make(chan error, 1), svc: svc}
+	svc.Bus = bus
+	output.observeProvider(gopevents.Done{Text: "retry at shutdown"})
+	select {
+	case <-bus.entered:
+	case <-time.After(time.Second):
+		t.Fatal("retry did not enter bus")
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-bus.checked; err != nil {
+		t.Fatal("storage closed before retry joined", err)
+	}
+}
