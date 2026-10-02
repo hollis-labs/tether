@@ -179,3 +179,20 @@ func TestAttachSessionRef_PreservesParentItemID(t *testing.T) {
 		t.Errorf("response parent_item_id = %q, want 01M2ITEM1", out.Ref.ParentItemID)
 	}
 }
+
+func TestAttachSessionRef_NonObjectJSONPreservesHTTPError(t *testing.T) {
+	for _, tc := range []struct{ body, kind string }{{"[1,2]", "array"}, {"5", "number"}, {"true", "bool"}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			rows := &recordingRefStore{}
+			rr := httptest.NewRecorder()
+			NewHandler(Deps{SessionRefs: rows, Service: &fakeLaunchService{}}).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions/s1/refs", bytes.NewBufferString(tc.body)))
+			want := `{"error":{"code":"invalid_request","message":"invalid JSON body: json: cannot unmarshal ` + tc.kind + ` into Go value of type api.SessionRefAttachRequest"}}` + "\n"
+			if rr.Code != http.StatusBadRequest || rr.Body.String() != want {
+				t.Fatalf("status/body = %d / %q, want 400 / %q", rr.Code, rr.Body.String(), want)
+			}
+			if len(rows.got) != 0 {
+				t.Fatal("malformed request persisted a reference")
+			}
+		})
+	}
+}
