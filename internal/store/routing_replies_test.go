@@ -364,10 +364,10 @@ func TestRoutingReplyRecordsTheActorAndBoundsDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := db.RoutingReply(ctx, r.ReplyID)
-	if len(got.Detail) > store.RoutingReplyDetailMax || strings.Contains(got.Detail, "\n") || !strings.HasPrefix(got.Detail, "runner: process exited 1 stderr:") {
+	if len(got.Detail) > 256 || strings.Contains(got.Detail, "\n") || !strings.HasPrefix(got.Detail, "runner: process exited 1 stderr:") {
 		t.Fatalf("detail = %q (%d bytes)", got.Detail, len(got.Detail))
 	}
-	if d := store.BoundRoutingDetail(strings.Repeat("é", 400)); len(d) > store.RoutingReplyDetailMax || !utf8.ValidString(d) {
+	if d := store.BoundRoutingDetail(strings.Repeat("é", 400)); len(d) > 256 || !utf8.ValidString(d) {
 		t.Fatalf("detail cut mid-rune: %q", d)
 	}
 }

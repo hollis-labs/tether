@@ -11,6 +11,7 @@ import (
 	"github.com/hollis-labs/go-providers/provider"
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/go-runner/runner"
+	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -37,6 +38,12 @@ func TestOnlyAnErrorAfterTheTurnRanIsMarkedAsHavingRun(t *testing.T) {
 		{"the turn finished during the submission, then the runtime failed", func(svc *Service, output *sessionTurnOutput) error {
 			return svc.trackTurnSubmission("s1", func() error {
 				output.observeProvider(gopevents.Done{Text: "reply"})
+				return failure
+			})
+		}, true},
+		{"a runtime event for a turn arrived, then the runtime failed", func(svc *Service, output *sessionTurnOutput) error {
+			return svc.trackTurnSubmission("s1", func() error {
+				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "runtime-turn"})
 				return failure
 			})
 		}, true},

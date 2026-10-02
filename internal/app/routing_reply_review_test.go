@@ -382,7 +382,8 @@ func TestDetailIsBoundedOnOneLineInTheViewAndInTheEvent(t *testing.T) {
 	}
 	_, evs := h.waitEvents(1)
 	for name, detail := range map[string]string{"row": got.Detail, "view": view.Detail, "event": evs[0].Detail} {
-		if len(detail) == 0 || len(detail) > store.RoutingReplyDetailMax || strings.ContainsAny(detail, "\n\r") {
+		// 256 is the documented bound (docs/api/README.md): not the constant under test.
+		if len(detail) == 0 || len(detail) > 256 || strings.ContainsAny(detail, "\n\r") {
 			t.Fatalf("%s detail = %q (%d bytes)", name, detail, len(detail))
 		}
 	}

@@ -32,6 +32,8 @@ func TestAProcessFailureNeverPutsItsOutputInTheRowTheViewOrTheEvent(t *testing.T
 			"the runtime reported a failure after it took the reply: the runtime process exited with code 3"},
 		"after a signal ended it": {&turnRanError{echoed(&runner.ExitError{Code: -1, Signal: 9})}, store.RoutingReplyDelivered,
 			"the runtime reported a failure after it took the reply: the runtime process was terminated by signal 9"},
+		"after the runner killed it": {&turnRanError{echoed(&runner.ExitError{Code: -1, Signal: 9, Killed: true, Cause: runner.CauseIdleTimeout})}, store.RoutingReplyDelivered,
+			"the runtime reported a failure after it took the reply: the runtime process was terminated (cause idle_timeout)"},
 		"when the turn never ran": {echoed(&runner.ExitError{Code: 7}), store.RoutingReplyUndeliverable,
 			"the runtime process exited with code 7"},
 	}
