@@ -1,6 +1,7 @@
 package mcpadapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -67,12 +68,17 @@ func (r *eofReader) Read(b []byte) (int, error) {
 // This also means: NOT mcpsdk.CommandTransport, which owns Cmd construction
 // itself and exposes no hook to intercept reads for "lost" detection or to
 // attach our own Stderr/WaitDelay configuration.
-func spawnStdioUpstream(entry config.MCPServerEntry) (*stdioUpstream, *mcpsdk.IOTransport, error) {
+func spawnStdioUpstream(entry config.MCPServerEntry, lifetime ...context.Context) (*stdioUpstream, *mcpsdk.IOTransport, error) {
 	if entry.Command == "" {
 		return nil, nil, fmt.Errorf("stdio transport requires command")
 	}
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
-	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
+	cmd := exec.Command(entry.Command, entry.Args...)
+	if len(lifetime) > 0 {
+		// #nosec G204 -- Explicit live doctor probe executes the operator-authored MCP command, bounded by its context; no shell is added.
+		cmd = exec.CommandContext(lifetime[0], entry.Command, entry.Args...)
+	} // probe shutdown owns the child lifetime
+	u := &stdioUpstream{cmd: cmd, done: make(chan struct{}), lost: make(chan struct{})}
 	u.launch = observeLaunch(u.cmd, entry)
 	// A proxy's own bearer must not be delegated to upstream processes.
 	// Explicit catalog env entries below remain operator-controlled overrides.

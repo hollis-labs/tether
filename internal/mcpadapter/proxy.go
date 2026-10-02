@@ -117,7 +117,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 				return errorResult(err.Error()), nil
 			}
 		}
-		params := &mcpsdk.CallToolParams{Name: tCall.ToolName, Arguments: tCall.Args, Meta: mcpsdk.Meta(stripSDKMeta(tCall.Meta))}
+		params := &mcpsdk.CallToolParams{Name: rt.UpstreamName, Arguments: tCall.Args, Meta: mcpsdk.Meta(stripSDKMeta(tCall.Meta))}
 		r.applyProvenanceMeta(tCtx, params)
 		// Trace context rides in params._meta, never in params.arguments --
 		// an upstream with additionalProperties:false at its schema root

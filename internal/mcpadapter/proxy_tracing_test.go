@@ -88,7 +88,7 @@ func proxiedCallCapture(t *testing.T, toolName string) (map[string]any, map[stri
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
 	s := gomcp.NewServer("test", "0.0.1")
 	live := &liveProxyCatalog{
@@ -165,7 +165,7 @@ func TestProxyRouter_HandleCreatesNoSpanOfItsOwn(t *testing.T) {
 	// one of its own, this would be a child id rather than the caller's.
 	var innerSpanID trace.SpanID
 	reg := NewToolRegistry()
-	reg.Register("upstream", &mockClient{
+	mustRegister(t, reg, "upstream", &mockClient{
 		callToolFunc: func(inner context.Context, _ *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 			innerSpanID = trace.SpanContextFromContext(inner).SpanID()
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
@@ -189,7 +189,7 @@ func TestProxyRouter_RecordsUpstreamServerOnTheSpan(t *testing.T) {
 	recordingTracer(t)
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", &mockClient{}, []*mcpsdk.Tool{makeTool("tess_tool")})
+	mustRegister(t, reg, "tesseract", &mockClient{}, []*mcpsdk.Tool{makeTool("tess_tool")})
 	router := NewProxyRouter(reg)
 
 	ctx, span := otelStartTestSpan(t, "caller")

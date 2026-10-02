@@ -314,6 +314,11 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		if loadErr != nil {
 			return loadErr
 		}
+		for _, entry := range authored {
+			if entry.IsEnabled() && entry.ID == "tether" {
+				return reservedOriginError()
+			}
+		}
 		selected := opts.ServerFilter
 		if selected == nil && opts.Confine {
 			selected = []string{}
@@ -415,7 +420,9 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 			if listErr != nil {
 				return listErr
 			}
-			registry.RegisterLocal(page, nativeSession)
+			if err := registry.RegisterLocal(page, nativeSession); err != nil {
+				return err
+			}
 		}
 	}
 	tags := map[string][]string{}

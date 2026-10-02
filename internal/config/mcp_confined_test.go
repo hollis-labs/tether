@@ -142,3 +142,17 @@ func TestLoadMCPServersConfined_MissingCatalogDirIsEmpty(t *testing.T) {
 		t.Fatalf("loaded %q, unknown %q, err %v", ids(got), unknown, err)
 	}
 }
+
+func TestMCPDeclaredToolPrefixIsVerbatimCatalogMetadata(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "alpha.yaml"), []byte("id: alpha\ntransport: stdio\ncommand: ignored\ntool_prefix: alpha_\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := LoadMCPServerCatalog(root)
+	if err != nil || len(entries) != 1 || entries[0].ToolPrefix != "alpha_" {
+		t.Fatalf("prefix=%+v %v", entries, err)
+	}
+}

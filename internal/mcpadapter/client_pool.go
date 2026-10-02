@@ -15,6 +15,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 )
 
 // upstreamClient is the narrow contract client_pool.go depends on for an
@@ -36,6 +37,8 @@ type upstreamClient interface {
 
 type clientStatus struct {
 	entry      config.MCPServerEntry
+	accepted   bool
+	degraded   bool
 	client     upstreamClient
 	toolCount  int
 	err        error
@@ -75,6 +78,7 @@ func (e *RefreshAllError) Error() string {
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
 	confineRemote      bool
+	probe              bool
 	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
@@ -112,6 +116,11 @@ type recoveryPolicy struct {
 }
 
 func NewClientPool(entries []config.MCPServerEntry, registry *ToolRegistry) *ClientPool {
+	for _, entry := range entries {
+		if entry.ID != "" {
+			registry.SetPrefix(entry.ID, entry.ToolPrefix)
+		}
+	}
 	return &ClientPool{runtime: processObservation, entries: entries, registry: registry,
 		statuses: make(map[string]*clientStatus), refreshing: make(map[upstreamClient]bool),
 		policy: recoveryPolicy{Policy: supervise.DefaultPolicy(), handshakeTimeout: 10 * time.Second}}
@@ -131,6 +140,15 @@ func (p *ClientPool) SetToolRefreshHandler(fn func(ToolRefreshResult)) {
 // Start waits for the first bounded handshake per server, then leaves each
 // supervisor running until Shutdown. Failed siblings do not abort startup.
 func (p *ClientPool) Start(ctx context.Context) error {
+	ids := []string{}
+	for _, entry := range p.entries {
+		if entry.IsEnabled() {
+			ids = append(ids, entry.ID)
+		}
+	}
+	if err := mcpgateway.ValidateOriginIDs(ids); err != nil {
+		return err
+	}
 	ctx, p.cancel = context.WithCancel(ctx)
 	var initial sync.WaitGroup
 	for _, entry := range p.entries {
@@ -156,6 +174,11 @@ func (p *ClientPool) Start(ctx context.Context) error {
 		go func() { defer p.workers.Done(); p.supervise(ctx, entry, initial.Done) }()
 	}
 	initial.Wait()
+	_, collisions := p.registry.NameDiagnostics()
+	if len(collisions) > 0 {
+		p.Shutdown()
+		return &mcpgateway.CollisionError{Collisions: collisions}
+	}
 	return nil
 }
 
@@ -189,13 +212,27 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 			p.mu.Unlock()
 			listCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
 			var result *mcpsdk.ListToolsResult
-			result, err = client.ListTools(listCtx, &mcpsdk.ListToolsParams{})
+			result, err = listUpstreamTools(listCtx, client)
 			if err != nil {
 				err = fmt.Errorf("list tools: %w", err)
 			}
 			cancel()
 			if err == nil {
 				_, err = p.publish(ctx, entry.ID, client, result.Tools, !first)
+			}
+		}
+		if err != nil && !first {
+			var collision *mcpgateway.CollisionError
+			if errors.As(err, &collision) {
+				p.mu.Lock()
+				if s.accepted {
+					p.registry.RebindServer(entry.ID, client)
+					s.state = "connected"
+					s.degraded = true
+					s.err = err
+					err = nil
+				}
+				p.mu.Unlock()
 			}
 		}
 		if err != nil {
@@ -307,8 +344,16 @@ func (p *ClientPool) publish(ctx context.Context, id string, client upstreamClie
 		default:
 		}
 	}
-	delta := p.registry.ReplaceServer(id, client, tools)
+	delta, err := p.registry.ReplaceServer(id, client, tools)
+	if err != nil {
+		s.err = err
+		s.degraded = true
+		p.mu.Unlock()
+		return ToolRefreshResult{}, err
+	}
 	s.toolCount = len(tools)
+	s.accepted = true
+	s.degraded = false
 	s.err = nil
 	s.state = "connected"
 	s.nextRetry = time.Time{}
@@ -329,6 +374,9 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 		// Scrub before the error is stored (ServerStatus.Error) or logged: an
 		// endpoint in the text may be a secret.
 		err = redactUpstreamError(err, s.entry)
+		if p.probe {
+			err = &redactedError{text: redactProbeText(probeRedactor([]config.MCPServerEntry{s.entry}), err.Error()), err: err}
+		}
 		s.err = err
 		s.state = "failed"
 		slog.Warn("mcp-proxy: upstream unavailable", "server", id, "err", err)
@@ -364,7 +412,11 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 
 	switch entry.Transport {
 	case "stdio":
-		u, upTransport, err := spawnStdioUpstream(entry)
+		var lifetime []context.Context
+		if p.probe {
+			lifetime = []context.Context{ctx}
+		}
+		u, upTransport, err := spawnStdioUpstream(entry, lifetime...)
 		if err != nil {
 			return nil, err
 		}
@@ -518,6 +570,7 @@ func (p *ClientPool) Shutdown() {
 // ToolCount includes cached definitions; availability is given by Status.
 type ServerStatus struct {
 	ID                string              `json:"id"`
+	Degraded          bool                `json:"degraded"`
 	Transport         string              `json:"transport"`
 	Status            string              `json:"status"`
 	Error             string              `json:"error,omitempty"`
@@ -538,7 +591,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 	defer p.mu.Unlock()
 	out := make([]ServerStatus, 0, len(p.statuses))
 	for _, s := range p.statuses {
-		ss := ServerStatus{ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, ToolCount: s.toolCount, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
+		ss := ServerStatus{Degraded: s.degraded, ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, ToolCount: s.toolCount, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
 		ss.RecoveryExhausted = s.exhausted
 		ss.Recovery = p.recoveryObservation(s)
 		if s.lastLaunch != nil {
@@ -582,7 +635,7 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 	defer func() { p.mu.Lock(); delete(p.refreshing, client); p.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
 	defer cancel()
-	result, err := client.ListTools(ctx, &mcpsdk.ListToolsParams{})
+	result, err := listUpstreamTools(ctx, client)
 	if err != nil {
 		callerErr := callerCtx.Err()
 		if callerErr == nil || !errors.Is(err, callerErr) {
@@ -592,4 +645,29 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 		return ToolRefreshResult{}, redactUpstreamError(err, entry)
 	}
 	return p.publish(ctx, id, client, result.Tools, true)
+}
+
+// Read every tools/list page under one deadline before validating final names.
+func listUpstreamTools(ctx context.Context, client upstreamClient) (*mcpsdk.ListToolsResult, error) {
+	out := &mcpsdk.ListToolsResult{Tools: []*mcpsdk.Tool{}}
+	params := &mcpsdk.ListToolsParams{}
+	seen := map[string]bool{}
+	for {
+		result, err := client.ListTools(ctx, params)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, fmt.Errorf("upstream returned nil tools/list result")
+		}
+		out.Tools = append(out.Tools, result.Tools...)
+		if result.NextCursor == "" {
+			return out, nil
+		}
+		if seen[result.NextCursor] {
+			return nil, fmt.Errorf("upstream repeated tools/list cursor")
+		}
+		seen[result.NextCursor] = true
+		params.Cursor = result.NextCursor
+	}
 }

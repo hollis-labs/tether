@@ -168,7 +168,7 @@ func runProxiedToolCall(t *testing.T, a *Adapter, toolName string, args map[stri
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
 	s := gomcp.NewServer("t", "0.0.1")
 	live := &liveProxyCatalog{
@@ -405,7 +405,7 @@ func TestProxiedCall_TetherCall_ExtractsRefs(t *testing.T) {
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
 
 	s := gomcp.NewServer("t", "0.0.1")
 	router := NewProxyRouter(reg)
@@ -454,7 +454,7 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 		},
 	}
 	reg := NewToolRegistry()
-	reg.Register("torque", mc, []*mcpsdk.Tool{makeTool("torque_task_get")})
+	mustRegister(t, reg, "torque", mc, []*mcpsdk.Tool{makeTool("torque_task_get")})
 
 	a, _ := newExtractingAdapter("sess-1", true)
 	s := gomcp.NewServer("t", "0.0.1")

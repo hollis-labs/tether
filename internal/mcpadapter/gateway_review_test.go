@@ -25,7 +25,7 @@ func TestGatewayDispatchSanitizeTelemetryAndExactNames(t *testing.T) {
 				s := a.newBareServer()
 				registry := NewToolRegistry()
 				tool := &mcpsdk.Tool{Name: "alpha_read", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}}}
-				registry.Register(origin, nil, []*mcpsdk.Tool{tool})
+				mustRegister(t, registry, origin, nil, []*mcpsdk.Tool{tool})
 				gateway := a.gatewayService(registry, nil, mcpgateway.Selection{Mode: mode}, nil)
 				var received map[string]any
 				gateway.Dispatch = func(_ context.Context, _ string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
@@ -93,8 +93,8 @@ func TestGatewayDispatchSanitizeTelemetryAndExactNames(t *testing.T) {
 func TestGatewayRealScorerAndTags(t *testing.T) {
 	a := newTestAdapter(t)
 	registry := NewToolRegistry()
-	registry.Register("alpha", nil, []*mcpsdk.Tool{{Name: "alpha_read", Description: "read", InputSchema: map[string]any{}}, {Name: "aaa_read", Description: "alpha read", InputSchema: map[string]any{}}})
-	registry.Register("beta", nil, []*mcpsdk.Tool{{Name: "beta_read", Description: "alpha read", InputSchema: map[string]any{}}})
+	mustRegister(t, registry, "alpha", nil, []*mcpsdk.Tool{{Name: "alpha_read", Description: "read", InputSchema: map[string]any{}}, {Name: "aaa_read", Description: "alpha read", InputSchema: map[string]any{}}})
+	mustRegister(t, registry, "beta", nil, []*mcpsdk.Tool{{Name: "beta_read", Description: "alpha read", InputSchema: map[string]any{}}})
 	gateway := a.gatewayService(registry, nil, mcpgateway.Selection{Mode: mcpgateway.Search}, map[string][]string{"alpha": {"Tasks", "Memory"}, "beta": {"Tasks"}})
 	result, err := gateway.Search(mcpgateway.Request{Query: "alpha_read"})
 	if err != nil || len(result.Items) < 2 || result.Items[0].Name != "alpha_read" {

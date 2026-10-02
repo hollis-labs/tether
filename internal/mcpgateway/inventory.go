@@ -19,14 +19,17 @@ type Entry struct {
 }
 type OriginStatus struct {
 	ID             string `json:"id"`
+	Degraded       bool   `json:"degraded"`
 	Status         string `json:"status"`
 	ToolCount      int    `json:"cataloged_tools"`
 	AvailableTools int    `json:"available_tools"`
 	Error          string `json:"error,omitempty"`
 }
 type Snapshot struct {
-	Entries []Entry
-	Origins []OriginStatus
+	Entries    []Entry
+	Origins    []OriginStatus
+	Lint       []NameFinding
+	Collisions []NameCollision
 }
 type Item struct {
 	Name         string                  `json:"name"`
@@ -310,17 +313,19 @@ func (s *Service) Call(ctx context.Context, name string, args, meta map[string]a
 
 type Status struct {
 	Selection
-	Profile        string         `json:"profile,omitempty"`
-	ProfileSource  string         `json:"profile_source,omitempty"`
-	Warnings       []string       `json:"warnings,omitempty"`
-	Origins        []OriginStatus `json:"origins"`
-	CatalogedTools int            `json:"cataloged_tools"`
-	EligibleTools  int            `json:"eligible_tools"`
-	AvailableTools int            `json:"available_tools"`
-	Complete       bool           `json:"complete"`
-	Name           string         `json:"name,omitempty"`
-	Visible        *bool          `json:"visible,omitempty"`
-	Reason         string         `json:"reason,omitempty"`
+	Profile        string          `json:"profile,omitempty"`
+	ProfileSource  string          `json:"profile_source,omitempty"`
+	Warnings       []string        `json:"warnings,omitempty"`
+	Lint           []NameFinding   `json:"lint"`
+	Collisions     []NameCollision `json:"collisions"`
+	Origins        []OriginStatus  `json:"origins"`
+	CatalogedTools int             `json:"cataloged_tools"`
+	EligibleTools  int             `json:"eligible_tools"`
+	AvailableTools int             `json:"available_tools"`
+	Complete       bool            `json:"complete"`
+	Name           string          `json:"name,omitempty"`
+	Visible        *bool           `json:"visible,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -330,7 +335,7 @@ func (s *Service) Status(name string) Status {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
 	unavailable, ids := availability(snapshot)
-	out := Status{Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0, Name: name}
+	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name}
 	if s.Policy != nil {
 		out.Profile = s.Policy.Selection.ID
 		out.ProfileSource = s.Policy.Selection.Source

@@ -18,11 +18,12 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 		Selection: selection,
 		Snapshot: func() mcpgateway.Snapshot {
 			snapshot := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{}, Origins: []mcpgateway.OriginStatus{}}
+			snapshot.Lint, snapshot.Collisions = registry.NameDiagnostics()
 			byID := map[string]mcpgateway.OriginStatus{}
 			observed := map[string]bool{}
 			for _, status := range a.upstreamStatus() {
 				observed[status.ID] = true
-				byID[status.ID] = mcpgateway.OriginStatus{ID: status.ID, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error}
+				byID[status.ID] = mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error}
 			}
 			for _, def := range registry.AllDefinitions() {
 				rt, ok := registry.Lookup(def.Name)

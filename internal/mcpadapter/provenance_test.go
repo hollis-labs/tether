@@ -29,7 +29,7 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
+	mustRegister(t, reg, "tesseract", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
@@ -91,7 +91,7 @@ func TestProvenance_TetherCallForwardingStampsEnvelope(t *testing.T) {
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("knowledge_write")})
+	mustRegister(t, reg, "tesseract", mc, []*mcpsdk.Tool{makeTool("knowledge_write")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
@@ -153,7 +153,7 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
@@ -212,7 +212,7 @@ func TestProvenance_StripsClientSuppliedStampWhenNoSessionConfigured(t *testing.
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 
@@ -255,7 +255,7 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 
@@ -309,7 +309,7 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
@@ -359,7 +359,7 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("content_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("content_tool")})
 
 	router := NewProxyRouter(reg)
 
@@ -418,7 +418,7 @@ func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
 	}
 
 	reg := NewToolRegistry()
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("meta_test_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("meta_test_tool")})
 
 	router := NewProxyRouter(reg)
 	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {

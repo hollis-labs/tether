@@ -2,7 +2,7 @@ package mcpadapter
 
 import (
 	"fmt"
-	"log/slog"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"reflect"
 	"sort"
 	"sync"
@@ -13,16 +13,20 @@ import (
 // RegisteredTool associates a tool definition with its upstream source.
 // Client is nil for native tether tools.
 type RegisteredTool struct {
-	Definition *mcpsdk.Tool
-	ServerID   string // upstream server ID; empty string = native tool
-	Client     upstreamClient
+	Definition   *mcpsdk.Tool
+	ServerID     string // upstream server ID; empty string = native tool
+	Client       upstreamClient
+	UpstreamName string // exact name sent to the upstream after final-name lookup
 }
 
 // ToolRegistry holds the merged tool set: native tether tools plus all proxied
 // upstream tools. It is safe for concurrent reads and writes.
 type ToolRegistry struct {
-	tools map[string]RegisteredTool
-	mu    sync.RWMutex
+	tools      map[string]RegisteredTool
+	mu         sync.RWMutex
+	prefixes   map[string]string
+	collisions map[string][]mcpgateway.NameCollision
+	reserved   map[string]mcpgateway.ToolOwner
 }
 
 // ToolDelta describes the net effect of replacing one upstream server's tool set.
@@ -34,58 +38,76 @@ type ToolDelta struct {
 
 // NewToolRegistry creates an empty registry.
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{tools: make(map[string]RegisteredTool)}
-}
-
-// RegisterNative bulk-registers native tether tools (serverID = "", client = nil).
-func (r *ToolRegistry) RegisterNative(tools []*mcpsdk.Tool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, t := range tools {
-		r.tools[t.Name] = RegisteredTool{Definition: t}
+	r := &ToolRegistry{tools: make(map[string]RegisteredTool), prefixes: map[string]string{}, collisions: map[string][]mcpgateway.NameCollision{}, reserved: map[string]mcpgateway.ToolOwner{}}
+	for _, name := range []string{"tether_gateway_status", "tether_tool_search", "tether_tool_list", "tether_tool_call"} {
+		r.reserved[name] = mcpgateway.ToolOwner{Origin: "tether", Name: name, Kind: "gateway"}
 	}
+	return r
 }
 
-// Register bulk-registers tools from one upstream server. On name collision
-// with an already-registered tool it logs a warning and stores the new entry
-// under "<serverID>__<toolName>" to preserve both.
-func (r *ToolRegistry) Register(serverID string, client upstreamClient, tools []*mcpsdk.Tool) {
+// SetPrefix configures an exact catalog prefix before this origin registers.
+func (r *ToolRegistry) SetPrefix(serverID, prefix string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.registerLocked(serverID, client, tools)
+	r.prefixes[serverID] = prefix
 }
+func (r *ToolRegistry) RegisterNative(tools []*mcpsdk.Tool) error { return r.Register("", nil, tools) }
 
-func (r *ToolRegistry) registerLocked(serverID string, client upstreamClient, tools []*mcpsdk.Tool) {
+// Register rejects the entire batch if any final name collides. No arrival-order
+// aliases are created; successful registration preserves upstream definitions.
+func (r *ToolRegistry) Register(serverID string, client upstreamClient, tools []*mcpsdk.Tool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	candidates, err := r.checkLocked(serverID, client, tools, false)
+	if err != nil {
+		return err
+	}
+	for key, rt := range candidates {
+		r.tools[key] = rt
+	}
+	delete(r.collisions, serverID)
+	return nil
+}
+func owner(rt RegisteredTool) mcpgateway.ToolOwner {
+	origin, kind := rt.ServerID, "upstream"
+	if origin == "" {
+		origin, kind = "tether", "native"
+	}
+	return mcpgateway.ToolOwner{Origin: origin, Name: rt.UpstreamName, Kind: kind}
+}
+func (r *ToolRegistry) checkLocked(serverID string, client upstreamClient, tools []*mcpsdk.Tool, replace bool) (map[string]RegisteredTool, error) {
+	candidates := map[string]RegisteredTool{}
+	collisions := []mcpgateway.NameCollision{}
 	for _, t := range tools {
-		key, def := r.disambiguateLocked(serverID, t)
-		r.tools[key] = RegisteredTool{
-			Definition: def,
-			ServerID:   serverID,
-			Client:     client,
+		if t == nil {
+			return nil, fmt.Errorf("origin %q returned a nil tool definition", serverID)
 		}
+		name, def := r.prefixes[serverID]+t.Name, t
+		if name != t.Name {
+			copyTool := *t
+			copyTool.Name = name
+			def = &copyTool
+		}
+		incoming := RegisteredTool{Definition: def, ServerID: serverID, Client: client, UpstreamName: t.Name}
+		other, exists := r.reserved[name]
+		if !exists {
+			if rt, ok := candidates[name]; ok {
+				other, exists = owner(rt), true
+			} else if rt, ok := r.tools[name]; ok && (!replace || rt.ServerID != serverID) {
+				other, exists = owner(rt), true
+			}
+		}
+		if exists {
+			collisions = append(collisions, mcpgateway.CollidingName(name, other, owner(incoming)))
+		}
+		candidates[name] = incoming
 	}
-}
-
-// disambiguateLocked returns t unchanged (and its own Name as the key) unless
-// a different tool already owns that key, in which case it returns a shallow
-// copy of t renamed to "<serverID>__<toolName>" -- t is a pointer into the
-// caller's ListToolsResult and must never be mutated in place.
-func (r *ToolRegistry) disambiguateLocked(serverID string, t *mcpsdk.Tool) (string, *mcpsdk.Tool) {
-	key := t.Name
-	if existing, exists := r.tools[key]; exists {
-		slog.Warn("mcp-proxy: tool name collision",
-			"tool", t.Name,
-			"existing_server", existing.ServerID,
-			"incoming_server", serverID,
-			"disambiguated_as", fmt.Sprintf("%s__%s", serverID, t.Name),
-		)
-		// Disambiguate the incoming tool; keep the existing one at its original key.
-		key = fmt.Sprintf("%s__%s", serverID, t.Name)
-		disambig := *t
-		disambig.Name = key
-		t = &disambig
+	if len(collisions) > 0 {
+		sort.Slice(collisions, func(i, j int) bool { return collisions[i].Name < collisions[j].Name })
+		r.collisions[serverID] = collisions
+		return nil, &mcpgateway.CollisionError{Collisions: collisions}
 	}
-	return key, t
+	return candidates, nil
 }
 
 // Lookup returns the RegisteredTool for the given tool name (thread-safe).
@@ -113,6 +135,7 @@ func (r *ToolRegistry) AllDefinitions() []*mcpsdk.Tool {
 func (r *ToolRegistry) RemoveServer(serverID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	delete(r.collisions, serverID)
 	for key, rt := range r.tools {
 		if rt.ServerID == serverID {
 			delete(r.tools, key)
@@ -122,28 +145,26 @@ func (r *ToolRegistry) RemoveServer(serverID string) {
 
 // ReplaceServer atomically swaps one upstream server's registered tool set and
 // returns the added, updated, and removed tool names/definitions.
-func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, tools []*mcpsdk.Tool) ToolDelta {
+func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, tools []*mcpsdk.Tool) (ToolDelta, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	old := make(map[string]RegisteredTool)
+	candidates, err := r.checkLocked(serverID, client, tools, true)
+	if err != nil {
+		return ToolDelta{}, err
+	}
+	old := map[string]RegisteredTool{}
 	for key, rt := range r.tools {
 		if rt.ServerID == serverID {
 			old[key] = rt
 			delete(r.tools, key)
 		}
 	}
-
-	newDefs := make(map[string]*mcpsdk.Tool, len(tools))
-	for _, t := range tools {
-		key, def := r.disambiguateLocked(serverID, t)
-		r.tools[key] = RegisteredTool{
-			Definition: def,
-			ServerID:   serverID,
-			Client:     client,
-		}
-		newDefs[key] = def
+	newDefs := make(map[string]*mcpsdk.Tool, len(candidates))
+	for key, rt := range candidates {
+		r.tools[key] = rt
+		newDefs[key] = rt.Definition
 	}
+	delete(r.collisions, serverID)
 
 	delta := ToolDelta{
 		Added:   make([]*mcpsdk.Tool, 0),
@@ -168,13 +189,46 @@ func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, too
 	sort.Slice(delta.Added, func(i, j int) bool { return delta.Added[i].Name < delta.Added[j].Name })
 	sort.Slice(delta.Updated, func(i, j int) bool { return delta.Updated[i].Name < delta.Updated[j].Name })
 	sort.Strings(delta.Removed)
-	return delta
+	return delta, nil
 }
 
 // RegisterLocal stores native definitions and a local protocol dispatch seam.
 // They keep an empty ServerID so upstream confinement never selects them.
-func (r *ToolRegistry) RegisterLocal(tool *mcpsdk.Tool, client upstreamClient) {
+func (r *ToolRegistry) RegisterLocal(tool *mcpsdk.Tool, client upstreamClient) error {
+	return r.Register("", client, []*mcpsdk.Tool{tool})
+}
+
+func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway.NameCollision) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	findings := []mcpgateway.NameFinding{}
+	collisions := []mcpgateway.NameCollision{}
+	for _, rt := range r.tools {
+		findings = append(findings, mcpgateway.LintName(owner(rt).Origin, rt.Definition.Name)...)
+	}
+	for _, items := range r.collisions {
+		collisions = append(collisions, items...)
+	}
+	sort.Slice(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		return a.Origin+"\x00"+a.Name+"\x00"+a.Code < b.Origin+"\x00"+b.Name+"\x00"+b.Code
+	})
+	sort.Slice(collisions, func(i, j int) bool {
+		return collisions[i].Name+collisions[i].Owners[0].Origin < collisions[j].Name+collisions[j].Owners[0].Origin
+	})
+	return findings, collisions
+}
+
+// RebindServer keeps accepted schemas across reconnect when a new tools/list
+// batch is rejected. Lookup still uses the final name and its accepted upstream
+// name; newly announced conflicting names never enter dispatch.
+func (r *ToolRegistry) RebindServer(id string, client upstreamClient) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[tool.Name] = RegisteredTool{Definition: tool, Client: client}
+	for name, rt := range r.tools {
+		if rt.ServerID == id {
+			rt.Client = client
+			r.tools[name] = rt
+		}
+	}
 }

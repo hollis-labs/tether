@@ -250,6 +250,60 @@ The profile tier comes from the selected `mcp.profiles.<id>.discovery_mode`.
 HTTP MCP endpoint/query/header selectors belong to CW-20261001-0539. No client
 brand or inventory-size heuristic changes the selected mode.
 
+### Upstream names and diagnostics
+
+Each upstream catalog entry may declare an exact `tool_prefix`:
+
+```yaml
+id: alpha
+transport: stdio
+command: alpha-mcp
+tool_prefix: alpha_
+```
+
+An upstream `read` tool becomes `alpha_read`; calls still send `read` to the
+upstream. An already prefixed `alpha_read` becomes `alpha_alpha_read` if that
+prefix is declared: Tether neither guesses nor normalizes names. Profiles,
+pins, search, hydration and dispatch all use final wire names. Title,
+annotations, schemas and metadata retain their authored values.
+
+A duplicate final name is a startup error naming both origins and original
+names, with guidance to declare `tool_prefix` on one upstream. Native names and
+all four gateway infrastructure names are protected from shadowing even when
+a profile would hide the conflicting target. There are no arrival-order
+`<server>__<tool>` aliases. The catalog upstream ID `tether` is reserved for
+native origin identity; rename that upstream ID. These checks are scoped to
+MCP startup and diagnostics; generic catalog loading, unrelated commands and
+daemon startup remain usable.
+
+A colliding refresh or reconnect rejects the whole incoming batch and keeps
+the last accepted registry. On reconnect, accepted names bind to the new
+connection; a downstream failure remains a real downstream error. The origin
+reports `degraded: true`, status `collisions` names the conflicting owners,
+and `complete` is false until a valid refresh is accepted. No newly conflicting
+name becomes callable. Refreshes read every `tools/list` page under one deadline.
+
+`tether_gateway_status.lint` reports final-name issues without rewriting or
+rejecting the names: lowercase `[a-z0-9_]`, maximum 128 characters, the
+`<origin>_` convention, and a conservative 63-byte limit including the
+client-qualified `mcp__tether__` prefix. This is a portability warning, not a
+claim that every client has the same limit. Owners fix their names or prefixes.
+
+Default `tether doctor` naming checks are offline: they inspect origin IDs and
+prefix declarations. `tether doctor --mcp-live` **spawns configured upstreams**
+and resolves their credentials for an initialize/tools/list-only probe, without
+calling tools. The probe uses the normal upstream environment scrub and
+authored command/wrapper; inherited `TETHER_MCP_SERVERS` restrictions apply,
+including an explicit empty list. `--protect-path` and
+`TETHER_MCP_CONFINE_REMOTE=1` apply the same remote exclusion/opt-in rule as a
+real proxy, and an inherited sandbox continues to protect stdio descendants.
+Credential resolution is bounded to ten seconds per catalog entry; each
+upstream handshake and paginated tools/list operation has its own ten-second
+deadline. The complete probe has a thirty-second deadline and owns cancellation
+of its children. Helper resolution is attempted only on
+this explicit opt-in. Human and JSON findings redact known credentials and
+URLs, and share the collision text with startup/status.
+
 ### Named gateway profiles
 
 Select a profile with `tether mcp --proxy --profile reader` or
@@ -316,9 +370,8 @@ in gateway status warnings. A search/list `servers` filter naming a fully
 policy-excluded origin fails as unknown or excluded, rather than returning an
 empty result. `--extract-refs` resolves references only when
 `tesseract_ref_resolve` is eligible under the same profile and grant policy. A
-catalog upstream named `tether` remains usable without a profile; selecting
-reserved native origin `tether` with that catalog collision fails (broader
-naming policy is CW-20260926-0009).
+catalog upstream named `tether` is rejected by MCP startup because its origin ID
+is reserved for native tools; generic catalog loading remains usable.
 
 Upstream transport entries remain in `catalog/mcp-servers/*.yaml`. Their existing
 `MCPServerEntry` shape (command/args/env or URL, transport, enabled, tags, token,
