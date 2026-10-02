@@ -53,7 +53,7 @@ type Result struct {
 	Returned           int      `json:"returned"`
 	TotalMatches       int      `json:"total_matches"`
 	NextCursor         string   `json:"next_cursor,omitempty"`
-	ErrorTruncated     bool     `json:"error_truncated"`
+	Truncated          bool     `json:"truncated"`
 	Complete           bool     `json:"complete"`
 	UnavailableServers []string `json:"unavailable_servers"`
 }
@@ -259,8 +259,8 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		out.Items = append(out.Items, itemFor(match.entry, score))
 	}
 	out.Returned = len(out.Items)
-	out.ErrorTruncated = end < len(matches)
-	if out.ErrorTruncated {
+	out.Truncated = end < len(matches)
+	if out.Truncated {
 		raw, _ := json.Marshal(pageCursor{fingerprint, end})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
