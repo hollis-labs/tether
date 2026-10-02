@@ -171,10 +171,24 @@ func TestNamingCollisionClearsWhenOpposingOwnerDropsName(t *testing.T) {
 
 func TestNamingProbeCancellationKillsDescendants(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "survived")
+	ready := marker + ".ready"
 	ctx, cancel := context.WithCancel(context.Background())
-	u, _, err := spawnStdioUpstream(config.MCPServerEntry{Command: "sh", Args: []string{"-c", `(sleep 0.5; echo survived > "$1") & wait`, "probe", marker}}, ctx)
+	defer cancel()
+	u, _, err := spawnStdioUpstream(config.MCPServerEntry{Command: "sh", Args: []string{"-c", `(echo ready > "$2"; sleep 0.5; echo survived > "$1") & wait`, "probe", marker, ready}}, ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			u.abandon()
+			t.Fatal("probe descendant did not start")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	cancel()
 	u.abandon()
