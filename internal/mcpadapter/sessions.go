@@ -331,7 +331,7 @@ func (a *Adapter) handleSessionLaunch(ctx context.Context, args map[string]any) 
 			"logical_agent_id": res.LogicalAgentID,
 		}), nil
 	}
-	res, err := a.svc.LaunchSession(id)
+	res, err := a.svc.LaunchSessionWithContext(ctx, id)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, toolError("not_found", "session not found: "+id)

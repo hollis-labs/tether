@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -140,25 +139,7 @@ func LoadLayered(catalogRoot string) (*Catalog, error) {
 	}
 	// The system layer is already populated by Load above; Discover here
 	// only walks the user + project layers so it is not read twice.
-	var layers []LayerSpec
-	if home, err := os.UserHomeDir(); err == nil {
-		layers = append(layers, LayerSpec{Layer: LayerUser, Root: filepath.Join(home, ".tether")})
-	}
-	projectIDs := make([]string, 0, len(cat.Projects))
-	for id := range cat.Projects {
-		projectIDs = append(projectIDs, id)
-	}
-	sort.Strings(projectIDs)
-	for _, id := range projectIDs {
-		repoRoot := cat.Projects[id].RepoRoot
-		if repoRoot == "" {
-			continue
-		}
-		layers = append(layers, LayerSpec{
-			Layer: LayerProject,
-			Root:  filepath.Join(Expand(repoRoot), ".tether"),
-		})
-	}
+	layers := LayeredCatalogLayers(cat)
 	layered, err := Discover(layers)
 	if err != nil {
 		return nil, fmt.Errorf("discover layered agents: %w", err)

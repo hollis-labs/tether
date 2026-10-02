@@ -75,6 +75,8 @@ func (e *RefreshAllError) Error() string {
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
 	confineRemote      bool
+	protectedPaths     []string // daemon pools wrap every stdio child; legacy proxies inherit their wrapper
+	requireConfinement bool
 	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
@@ -328,7 +330,7 @@ func (p *ClientPool) fail(id string, client upstreamClient, err error) {
 	if s := p.statuses[id]; s != nil && s.client == client && s.state != "reconnecting" && !s.exhausted {
 		// Scrub before the error is stored (ServerStatus.Error) or logged: an
 		// endpoint in the text may be a secret.
-		err = redactUpstreamError(err, s.entry)
+		err = p.redactError(err, s.entry)
 		s.err = err
 		s.state = "failed"
 		slog.Warn("mcp-proxy: upstream unavailable", "server", id, "err", err)
@@ -364,7 +366,7 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 
 	switch entry.Transport {
 	case "stdio":
-		u, upTransport, err := spawnStdioUpstream(entry)
+		u, upTransport, err := spawnStdioUpstreamConfined(entry, p.protectedPaths, p.requireConfinement)
 		if err != nil {
 			return nil, err
 		}
@@ -549,7 +551,7 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 			ss.RestartLimit = p.policy.Limit()
 		}
 		if s.err != nil {
-			ss.Error = s.err.Error()
+			ss.Error = p.redactError(s.err, s.entry).Error()
 		}
 		if !s.nextRetry.IsZero() {
 			next := s.nextRetry
@@ -589,7 +591,7 @@ func (p *ClientPool) refreshServer(ctx context.Context, id string, client upstre
 			p.fail(id, client, fmt.Errorf("refresh list tools (%s): %w", source, err))
 		}
 		// The caller (tether_catalog_refresh, a sysop probe) shows this text.
-		return ToolRefreshResult{}, redactUpstreamError(err, entry)
+		return ToolRefreshResult{}, p.redactError(err, entry)
 	}
 	return p.publish(ctx, id, client, result.Tools, true)
 }

@@ -87,7 +87,7 @@ func (a *Adapter) handleLogicalAgentResume(ctx context.Context, args map[string]
 			"replayed":         res.Replayed,
 		}), nil
 	}
-	res, err := a.svc.ResumeLogicalAgent(id, opts)
+	res, err := a.svc.ResumeLogicalAgentWithContext(ctx, id, opts)
 	if err != nil {
 		if errors.Is(err, store.ErrIdempotencyConflict) {
 			return nil, toolError("idempotency_conflict", err.Error())
