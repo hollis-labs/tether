@@ -1142,7 +1142,21 @@ Response (200):
 
 `next_cursor` is emitted only when the page filled the limit.
 
+### `GET /auth/context`
+
+`GET /auth/context` returns secret-free session attribution derived only from
+the middleware-verified principal and daemon session/binding state. It ignores
+query/body/header session selectors. A missing principal, non-session principal,
+or missing session returns an unverified context. It grants no authorization.
+See [trusted session context](../trusted-session-context.md) for the wire fields
+and provenance/forwarded-metadata contract.
+
 ### `GET /proxy/events`
+
+Rows include an `attribution` object and an optional `claimed_session_id`.
+`attribution.verified` describes a credential-derived session context;
+legacy/anonymous top-level session IDs remain claims. See the
+[trusted session context contract](../trusted-session-context.md).
 
 Tool calls the MCP proxy has recorded, newest first. 404 when the daemon has no
 proxy-event store.
@@ -1182,9 +1196,10 @@ Response: 201 `{"ok": true}`. 400 for an unknown `phase`, a `start` without
 The daemon stamps the time of every record itself and ignores `timestamp`, so
 a record cannot be back-dated. The caller of a published record is the
 `tether mcp --daemon-only` server Tether plants in an agent, which cannot write
-the daemon's state. Its other fields are the caller's assertion: a session that
-exists is accepted whoever names it, until `tetherd` verifies who is calling
-(CW-20260930-0253).
+the daemon's state. Identity fields are recomputed from the verified principal;
+`claimed_session_id` records a bounded unverified claim and client-supplied
+`attribution` is ignored. Anonymous/off calls retain their legacy session claim
+with `attribution.verified: false`; other call details remain caller assertions.
 
 ---
 

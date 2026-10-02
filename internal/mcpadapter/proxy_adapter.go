@@ -378,6 +378,11 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	case opts.Publisher != nil:
 		mws = append(mws, NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(entries)))
 	}
+	for _, mw := range mws {
+		if logging, ok := mw.(*LoggingMiddleware); ok {
+			logging.contextDecorator = a.withSessionID
+		}
+	}
 	if opts.Bus != nil && opts.EventStore != nil {
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}

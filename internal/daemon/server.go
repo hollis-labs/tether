@@ -630,6 +630,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/whoami", s.Registry != nil},
 
 		{"/settings/mcp", s.Settings != nil},
+		{"/auth/context", true},
 		{"/settings/onboarding", s.Settings != nil},
 		{"/settings/onboarding/", s.Settings != nil},
 

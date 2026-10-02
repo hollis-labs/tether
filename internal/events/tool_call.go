@@ -1,6 +1,9 @@
 package events
 
-import "time"
+import (
+	"github.com/hollis-labs/tether/internal/callcontext"
+	"time"
+)
 
 // EventTypeToolCallStart is emitted by LoggingMiddleware immediately before
 // a proxied tool call is forwarded to an upstream MCP server.
@@ -20,6 +23,8 @@ const EventTypeToolCallEnd = "tool_call_end"
 // arg values. This ensures tokens, passwords and other secrets never appear in
 // the event log. See ADR 0021.
 type ToolCallEvent struct {
+	Attribution      callcontext.Snapshot `json:"attribution"`
+	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
 	// SessionID is the tether session that originated the call, if known.
 	// Empty string when the call came from outside a session context.
 	SessionID string `json:"session_id,omitempty"`

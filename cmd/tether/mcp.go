@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -199,6 +197,9 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 // configureMCPAdapter applies the flags every `tether mcp` mode shares.
 func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
 	adapter.SessionID = mcpSession
+	if listenAddr != "" {
+		adapter.SetCallerContextResolver(daemonClient(listenAddr).CallerContext)
+	}
 	// Wired here, where both the in-process and the daemon-only server pass,
 	// so the refusal cannot be a control that quietly does nothing on one.
 	adapter.SetProtectedPaths(mcpProtect)
@@ -365,24 +366,12 @@ func splitCommaList(s string) []string {
 	return out
 }
 
-// proxyEventForwardBody is the POST /proxy/events request shape.
-type proxyEventForwardBody struct {
-	SessionID    string `json:"session_id,omitempty"`
-	Server       string `json:"server"`
-	ToolName     string `json:"tool_name"`
-	ArgsSchemaFP string `json:"args_schema_fp,omitempty"`
-	DurationMs   int64  `json:"duration_ms"`
-	OK           bool   `json:"ok"`
-	Error        string `json:"error,omitempty"`
-	Timestamp    string `json:"timestamp"`
-}
-
 // forwardProxyEventsToDaemon subscribes to the bus and POSTs every
 // tool_call_end event to daemonBaseURL/proxy/events. Runs until ctx is done.
 // listenAddr is used to construct a transport capable of dialing unix sockets.
 // sinceSeq should be set to the current max event seq so only live events
 // are forwarded — passing 0 causes full history replay on every startup.
-func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, daemonBaseURL string, sinceSeq int64) {
+func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, _ string, sinceSeq int64) {
 	ch, cancel, err := bus.Subscribe(ctx, events.Filter{SinceSeq: sinceSeq})
 	if err != nil {
 		slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
@@ -390,11 +379,7 @@ func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr,
 	}
 	defer cancel()
 
-	// Use daemon.DialHTTPClient so the transport can dial unix:// sockets.
-	// A plain http.Client cannot reach "http://unix/..." addresses.
-	httpClient := daemon.DialHTTPClient(listenAddr)
-	httpClient.Timeout = 3 * time.Second
-	url := daemonBaseURL + "/proxy/events"
+	dc := daemonClient(listenAddr)
 
 	for {
 		select {
@@ -415,33 +400,24 @@ func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr,
 				continue
 			}
 
-			body := proxyEventForwardBody{
-				SessionID:    tce.SessionID,
-				Server:       tce.Server,
-				ToolName:     tce.ToolName,
-				ArgsSchemaFP: tce.ArgsSchemaFP,
-				DurationMs:   tce.DurationMs,
-				OK:           tce.OK,
-				Error:        tce.Error,
-				Timestamp:    tce.Timestamp.UTC().Format(time.RFC3339Nano),
+			body := api.ProxyEventIngestRequest{
+				ClaimedSessionID: tce.ClaimedSessionID,
+				SessionID:        tce.SessionID,
+				Server:           tce.Server,
+				ToolName:         tce.ToolName,
+				ArgsSchemaFP:     tce.ArgsSchemaFP,
+				DurationMs:       tce.DurationMs,
+				OK:               tce.OK,
+				Error:            api.TruncateProxyEventError(tce.Error),
+				Timestamp:        tce.Timestamp.UTC().Format(time.RFC3339Nano),
 			}
-			raw, _ := json.Marshal(body)
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-			if reqErr != nil {
-				slog.Warn("mcp: forwarder build request error", "err", reqErr)
-				continue
+			postCtx, postCancel := context.WithTimeout(ctx, 3*time.Second)
+			postErr := dc.IngestProxyEvent(postCtx, body)
+			postCancel()
+			if postErr != nil {
+				slog.Debug("mcp: forwarder POST failed", "err", postErr)
 			}
-			req.Header.Set("Content-Type", "application/json")
-			resp, doErr := httpClient.Do(req)
-			if doErr != nil {
-				// Daemon not running — log at debug and continue; don't spam.
-				slog.Debug("mcp: forwarder POST failed (daemon unreachable?)", "err", doErr)
-				continue
-			}
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusCreated {
-				slog.Warn("mcp: forwarder POST unexpected status", "status", resp.StatusCode)
-			}
+
 		}
 	}
 }

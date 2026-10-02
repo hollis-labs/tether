@@ -74,7 +74,10 @@ func Middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 			o.PrincipalID, o.SessionID = p.ID, p.SessionID
 			r = r.WithContext(WithPrincipal(r.Context(), p))
 		}
-		if record != nil {
+		// Context lookups and verified proxy telemetry are self-observation.
+		// Authenticate normally, but avoid duplicating each call in the audit.
+		selfObservation := state == "verified" && (r.Method == http.MethodGet && r.URL.Path == "/auth/context" || r.Method == http.MethodPost && r.URL.Path == "/proxy/events")
+		if record != nil && !selfObservation {
 			if err := record(r.Context(), o); err != nil {
 				// Do not print database errors: a driver may echo parameters.
 				log.Printf("identity: observation could not be persisted")

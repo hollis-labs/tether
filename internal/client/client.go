@@ -21,6 +21,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 )
@@ -583,8 +584,14 @@ func (c *Client) ListSessions(ctx context.Context, opts ListOptions) (*ListResul
 	return &ListResult{Sessions: res.Sessions, NextCursor: res.NextCursor}, nil
 }
 
-// GetSession fetches one session by id. Returns os-style not-found semantics
-// via a descriptive error when the daemon returns 404.
+// CallerContext returns only the daemon's credential-derived attribution.
+func (c *Client) CallerContext(ctx context.Context) (callcontext.Snapshot, error) {
+	var out callcontext.Snapshot
+	err := c.getJSON(ctx, "/auth/context", &out)
+	return out, err
+}
+
+// GetSession fetches one session by id; a daemon 404 is returned as an error.
 func (c *Client) GetSession(ctx context.Context, id string) (api.SessionDTO, error) {
 	var dto api.SessionDTO
 	if err := c.getJSON(ctx, "/sessions/"+url.PathEscape(id), &dto); err != nil {

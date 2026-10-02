@@ -2,17 +2,27 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"log/slog"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
+	ContextMetaKey       = "tether.context"
+	ContextSchemaVersion = 2
 	// ProvenanceMetaKey is the reserved metadata key for Tether provenance.
 	ProvenanceMetaKey = "tether.provenance"
 	// ProvenanceSchemaVersion is the current provenance schema version.
 	ProvenanceSchemaVersion = 1
 )
+
+type ContextEnvelope struct {
+	SchemaVersion int `json:"schema_version"`
+	callcontext.Snapshot
+}
 
 // WorkstreamResolver resolves the current workstream ID for a session ID.
 // It returns an empty string without error if the session has no workstream assigned.
@@ -52,13 +62,20 @@ func (r *ProxyRouter) SetLogger(l *slog.Logger) {
 //   - Unrelated metadata (e.g. progressToken, trace context) and ordinary arguments
 //     are preserved untouched.
 func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
+	r.applyContextMeta(ctx, params)
+	snapshot, hasSnapshot := callcontext.FromContext(ctx)
 	sessionID := sessionIDFromContext(ctx)
+	if hasSnapshot && snapshot.Verified {
+		sessionID = snapshot.SessionID
+	}
 	var prov *ProvenanceEnvelope
 
 	if sessionID != "" {
 		var wsID string
 		var lookupFailed bool
-		if r.workstreamResolver != nil {
+		if hasSnapshot && snapshot.Verified {
+			wsID = snapshot.WorkstreamID
+		} else if r.workstreamResolver != nil {
 			var err error
 			wsID, err = r.workstreamResolver(ctx, sessionID)
 			if err != nil {
@@ -95,7 +112,7 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 
 		fields := make(map[string]any, len(existingFields)+1)
 		for k, v := range existingFields {
-			if k != ProvenanceMetaKey {
+			if !strings.EqualFold(k, ProvenanceMetaKey) {
 				fields[k] = v
 			}
 		}
@@ -106,10 +123,10 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 	}
 
 	// Provenance is omitted. If incoming request carries ProvenanceMetaKey, strip it.
-	if _, hasProv := existingFields[ProvenanceMetaKey]; hasProv {
+	{
 		fields := make(map[string]any, len(existingFields))
 		for k, v := range existingFields {
-			if k != ProvenanceMetaKey {
+			if !strings.EqualFold(k, ProvenanceMetaKey) {
 				fields[k] = v
 			}
 		}
@@ -119,6 +136,44 @@ func (r *ProxyRouter) applyProvenanceMeta(ctx context.Context, params *mcpsdk.Ca
 			params.Meta = nil
 		}
 	}
+}
+
+// applyContextMeta strips all incoming trusted context and stamps only the
+// daemon-resolved snapshot. Legacy provenance remains correlation-only.
+func (r *ProxyRouter) applyContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
+	fields := make(map[string]any, len(params.Meta)+1)
+	for k, v := range params.Meta {
+		if !strings.EqualFold(k, ContextMetaKey) {
+			fields[k] = v
+		}
+	}
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.Verified && snapshot.Source == "daemon" && snapshot.SessionID != "" {
+		raw, _ := json.Marshal(ContextEnvelope{SchemaVersion: ContextSchemaVersion, Snapshot: snapshot})
+		var stamp map[string]any
+		_ = json.Unmarshal(raw, &stamp)
+		fields[ContextMetaKey] = stamp
+	}
+	if len(fields) == 0 {
+		params.Meta = nil
+	} else {
+		params.Meta = mcpsdk.Meta(fields)
+	}
+}
+
+func ExtractContextMeta(meta map[string]any) *ContextEnvelope {
+	raw, ok := meta[ContextMetaKey]
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var envelope ContextEnvelope
+	if json.Unmarshal(encoded, &envelope) != nil {
+		return nil
+	}
+	return &envelope
 }
 
 // ExtractProvenanceMeta reads and parses tether.provenance from meta, if present.

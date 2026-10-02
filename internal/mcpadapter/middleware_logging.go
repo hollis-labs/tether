@@ -8,6 +8,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/redact"
@@ -19,8 +20,9 @@ import (
 // the sorted arg key names only — values are never logged. See ADR 0021
 // §Decision 3.
 type LoggingMiddleware struct {
-	bus     events.Publisher
-	secrets *redact.Set
+	bus              events.Publisher
+	secrets          *redact.Set
+	contextDecorator func(context.Context) context.Context
 }
 
 // NewLoggingMiddleware creates a LoggingMiddleware backed by bus.
@@ -55,6 +57,9 @@ func proxyRedactionSet(entries []config.MCPServerEntry) *redact.Set {
 // Handle records start time, emits tool_call_start, calls next, then
 // emits tool_call_end with duration and outcome.
 func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next ToolCallHandler) (*mcpsdk.CallToolResult, error) {
+	if m.contextDecorator != nil {
+		ctx = m.contextDecorator(ctx)
+	}
 	start := time.Now()
 
 	// Compute args fingerprint — key names only, never values.
@@ -68,6 +73,14 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 
 	// Extract session ID from context if present (best-effort).
 	sessionID := sessionIDFromContext(ctx)
+	attribution, _ := callcontext.FromContext(ctx)
+	claimedSessionID := callcontext.ClaimedSession(ctx)
+	if claimedSessionID == attribution.SessionID && attribution.Verified {
+		claimedSessionID = ""
+	}
+	if claimedSessionID == "" && !attribution.Verified {
+		claimedSessionID = sessionID
+	}
 
 	// Look up the server ID for this tool from the registry via context, if available.
 	// Native tether tools never set WithServerID, so default to "tether" to keep the
@@ -78,6 +91,7 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	}
 
 	m.publish(ctx, events.EventTypeToolCallStart, events.ToolCallEvent{
+		Attribution: attribution, ClaimedSessionID: claimedSessionID,
 		SessionID:    sessionID,
 		ToolName:     call.ToolName,
 		Server:       serverID,
@@ -89,6 +103,7 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 
 	durMs := time.Since(start).Milliseconds()
 	ev := events.ToolCallEvent{
+		Attribution: attribution, ClaimedSessionID: claimedSessionID,
 		SessionID:    sessionID,
 		ToolName:     call.ToolName,
 		Server:       serverID,

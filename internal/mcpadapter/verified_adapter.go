@@ -4,7 +4,9 @@ import (
 	"context"
 	"slices"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -37,4 +39,23 @@ func NewVerifiedAdapter(ctx context.Context, svc *app.Service, dc *client.Client
 	a.principal = &p
 	a.SessionID = p.SessionID
 	return a, nil
+}
+
+// verifiedCallerContext replaces any inbound attribution with the daemon's
+// resolver result. SDK native dispatch binds the admitted view principal here;
+// neither an SDK metadata claim nor a cached stdio lookup establishes identity.
+func (a *Adapter) verifiedCallerContext(ctx context.Context) context.Context {
+	ctx = identity.WithPrincipal(ctx, *a.principal)
+	ctx = callcontext.WithClaimedSession(ctx, a.principal.SessionID)
+	var sessions api.CallerSessionLookup
+	var bindings api.CallerBindingLookup
+	if a.svc != nil {
+		if a.svc.Store != nil {
+			sessions = a.svc.Store
+		}
+		if a.svc.Registry != nil {
+			bindings = a.svc.Registry
+		}
+	}
+	return callcontext.WithSnapshot(ctx, api.ResolveCallerContext(ctx, sessions, bindings))
 }
