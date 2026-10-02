@@ -92,9 +92,9 @@ func TestEmptyTerminalCompletionAtHostBoundary(t *testing.T) {
 					output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindAgentDelta, TurnID: "real-runtime", Payload: []byte(`{"text":"real answer"}`)})
 					output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "real-runtime"})
 				}
-				real, ok := output.CompletedTurnDetails(realID)
-				if !ok || real.Synthetic {
-					t.Fatalf("real turn changed: %+v %v", real, ok)
+				answerCompletion, ok := output.CompletedTurnDetails(realID)
+				if !ok || answerCompletion.Synthetic {
+					t.Fatalf("real turn changed: %+v %v", answerCompletion, ok)
 				}
 				outputs := outputEvents(t, svc)
 				if len(outputs) != 1 || outputs[0].Kind != turnoutput.KindFinal || outputs[0].Text != "real answer" {
