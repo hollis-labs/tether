@@ -95,9 +95,9 @@ type replyRuntime struct {
 type replyDrain struct {
 	running bool
 	// again: a boundary kick (turn settled, exit, timer, sweep) arrived while a
-	// drain ran. fresh: a new reply was queued while a drain ran. submitted: this
-	// drain loop already handed the session a turn, so only a boundary may
-	// license another; a new reply says nothing about the session being idle.
+	// drain ran. fresh: a new reply was queued while a drain ran. submitted: the
+	// last drain handed the session a turn, so only a boundary may license
+	// another; a new reply says nothing about the session being idle.
 	again, fresh, submitted bool
 	// submit serializes interrupt:true submissions to one session, so a retry
 	// of an interrupting reply cannot cancel the turn its twin just started.
@@ -172,9 +172,6 @@ func (d *replyDispatcher) drainLoop(sessionID string) {
 	for {
 		d.mu.Lock()
 		st := d.drainFor(sessionID)
-		if st.again {
-			st.submitted = false
-		}
 		st.again, st.fresh = false, false
 		d.mu.Unlock()
 
@@ -182,9 +179,7 @@ func (d *replyDispatcher) drainLoop(sessionID string) {
 
 		d.mu.Lock()
 		st = d.drainFor(sessionID)
-		if delivered {
-			st.submitted = true
-		}
+		st.submitted = delivered
 		if (st.again || (st.fresh && !st.submitted)) && !d.stopped {
 			d.mu.Unlock()
 			continue
