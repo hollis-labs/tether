@@ -293,6 +293,7 @@ func TestRelayErrorCancellationAndTimeout(t *testing.T) {
 		{context.Canceled, -32003, "canceled"},
 		{errors.New("request terminated without response"), -32001, "daemon_unreachable"},
 		{errors.New("standalone SSE stream: exceeded 0 retries without progress (session ID: example)"), -32001, "daemon_unreachable"},
+		{errors.New(`sending "tools/call": exceeded 1 retries without progress (session ID: example)`), -32001, "daemon_unreachable"},
 		{errors.New("standalone SSE request failed (session ID: example): daemon unreachable: connection refused"), -32001, "daemon_unreachable"},
 		{&net.OpError{Op: "read", Net: "unix", Err: context.DeadlineExceeded}, -32001, "daemon_unreachable"},
 		{errors.New("sending tools/list: 404 Not Found"), -32002, "daemon_mcp_unavailable"},
