@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/go-apppaths/paths"
@@ -14,16 +15,30 @@ import (
 )
 
 type Global struct {
-	MCP     mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
-	Version string            `yaml:"version"`
-	Catalog CatalogRoots      `yaml:"catalog"`
-	Daemon  DaemonConfig      `yaml:"daemon"`
-	AI      AIConfig          `yaml:"ai"`
+	MCP      mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
+	Version  string            `yaml:"version"`
+	Catalog  CatalogRoots      `yaml:"catalog"`
+	Daemon   DaemonConfig      `yaml:"daemon"`
+	AI       AIConfig          `yaml:"ai"`
+	Identity IdentityConfig    `yaml:"identity"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+}
+
+// IdentityConfig rolls out verified attribution before authorization policy.
+type IdentityConfig struct {
+	Mode string `yaml:"mode"`
+}
+
+func (c IdentityConfig) EffectiveMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Mode))
+	if mode == "" {
+		return "observe"
+	}
+	return mode
 }
 
 // AIConfig controls the in-process AI gateway surface. The first schema slice
@@ -117,7 +132,7 @@ type DaemonConfig struct {
 	// reach a terminal state. Go duration string; defaults to "10s".
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
 	// EventsRetention controls the hourly age-based sweep of events,
-	// proxy_events and ai_events. Enabled by default for 90 days.
+	// proxy_events, ai_events and identity_audit. Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
 }
 
