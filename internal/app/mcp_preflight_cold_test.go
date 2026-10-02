@@ -6,22 +6,18 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/testutil"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestPreflightDaemonMCPAllowsColdInitialization(t *testing.T) {
-	root, err := os.MkdirTemp(os.TempDir(), "cold-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.RemoveAll(root) }()
+	root := testutil.SocketDir(t)
 	address := "unix:" + filepath.Join(root, "daemon.sock")
 	listener, err := net.Listen("unix", strings.TrimPrefix(address, "unix:"))
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/testutil"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -136,11 +136,7 @@ func TestForwardDaemonPreservesProgressAndInventoryNotifications(t *testing.T) {
 
 func TestForwardDaemonDownReturnsTypedErrorWithoutFallback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	root, err := os.MkdirTemp("/var/tmp", "fwd-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(root)
+	root := testutil.SocketDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	left, right := mcp.NewInMemoryTransports()
@@ -293,6 +289,7 @@ func TestRelayErrorCancellationAndTimeout(t *testing.T) {
 		{context.Canceled, -32003, "canceled"},
 		{errors.New("request terminated without response"), -32001, "daemon_unreachable"},
 		{errors.New("standalone SSE stream: exceeded 0 retries without progress (session ID: example)"), -32001, "daemon_unreachable"},
+		{errors.New(`sending "tools/call": exceeded 1 retries without progress (session ID: example)`), -32001, "daemon_unreachable"},
 		{errors.New("standalone SSE request failed (session ID: example): daemon unreachable: connection refused"), -32001, "daemon_unreachable"},
 		{&net.OpError{Op: "read", Net: "unix", Err: context.DeadlineExceeded}, -32001, "daemon_unreachable"},
 		{errors.New("sending tools/list: 404 Not Found"), -32002, "daemon_mcp_unavailable"},
