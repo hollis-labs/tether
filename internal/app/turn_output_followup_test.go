@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,5 +65,54 @@ func TestSynchronousOutputSharesOneDeadline(t *testing.T) {
 	}
 	if storage.stageDeadline.After(storage.metadataDeadline) {
 		t.Fatalf("stage extended overall deadline: metadata=%s stage=%s", storage.metadataDeadline, storage.stageDeadline)
+	}
+}
+
+type failTwiceOutputBus struct {
+	events.Bus
+	calls atomic.Int32
+}
+
+func (b *failTwiceOutputBus) Publish(ctx context.Context, ev events.Event) error {
+	if b.calls.Add(1) <= 2 {
+		return errors.New("temporary event failure")
+	}
+	return b.Bus.Publish(ctx, ev)
+}
+func TestOutputRetrySurvivesAnotherFailure(t *testing.T) {
+	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	bus := &failTwiceOutputBus{Bus: svc.Bus}
+	svc.Bus = bus
+	output.observeProvider(gopevents.Done{Text: "eventual answer"})
+	deadline := time.After(3 * time.Second)
+	for len(outputEvents(t, svc)) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("second retry did not succeed")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	svc.stopOutputRetries()
+	if bus.calls.Load() != 3 {
+		t.Fatal("unexpected retry count", bus.calls.Load())
+	}
+	var count int
+	if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("restaged body", count, err)
+	}
+}
+func TestOutputRetryFinalAttemptAtStop(t *testing.T) {
+	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	bus := &failTwiceOutputBus{Bus: svc.Bus}
+	bus.calls.Store(1)
+	svc.Bus = bus
+	output.observeProvider(gopevents.Done{Text: "shutdown answer"})
+	svc.stopOutputRetries()
+	got := outputEvents(t, svc)
+	if len(got) != 1 || got[0].MessageID == "" {
+		t.Fatalf("stop dropped pending event: %+v", got)
+	}
+	if bus.calls.Load() != 3 {
+		t.Fatal("missing final attempt", bus.calls.Load())
 	}
 }

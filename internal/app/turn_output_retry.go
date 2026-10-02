@@ -12,7 +12,8 @@ import (
 type outputRetryState struct {
 	mu     sync.Mutex
 	wg     sync.WaitGroup
-	stop   chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 	closed bool
 	count  int
 	bytes  int
@@ -26,10 +27,10 @@ func (s *Service) retryTurnOutput(job *turnOutputWrite) {
 		log.Printf("ERROR session %q turn %q: output retry unavailable or full", job.row.ID, job.result.TurnID)
 		return
 	}
-	if r.stop == nil {
-		r.stop = make(chan struct{})
+	if r.ctx == nil {
+		r.ctx, r.cancel = context.WithCancel(context.Background())
 	}
-	stop := r.stop
+	stop := r.ctx
 	r.count++
 	r.bytes += len(job.result.Text)
 	r.wg.Add(1)
@@ -37,22 +38,33 @@ func (s *Service) retryTurnOutput(job *turnOutputWrite) {
 	go func() {
 		defer r.wg.Done()
 		defer func() { r.mu.Lock(); r.count--; r.bytes -= len(job.result.Text); r.mu.Unlock() }()
-		deadline := time.NewTimer(time.Minute)
-		defer deadline.Stop()
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+		ctx, cancel := context.WithTimeout(stop, time.Minute)
+		defer cancel()
+		delay := 100 * time.Millisecond
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
 		for {
 			select {
-			case <-stop:
-				log.Printf("ERROR session %q turn %q: output retry stopped at shutdown (staged message %q)", job.row.ID, job.result.TurnID, job.messageID)
+			case <-ctx.Done():
+				if stop.Err() != nil {
+					// Shutdown cancels an in-flight attempt, then gives the
+					// retained output one fresh, bounded attempt before joining.
+					final, finish := s.outputPersistenceContext()
+					err := job.persist(final, s)
+					finish()
+					if err != nil {
+						log.Printf("ERROR session %q turn %q: final output retry failed (staged message %q): %v", job.row.ID, job.result.TurnID, job.messageID, err)
+					}
+				} else {
+					log.Printf("ERROR session %q turn %q: output retry expired (staged message %q)", job.row.ID, job.result.TurnID, job.messageID)
+				}
 				return
-			case <-deadline.C:
-				log.Printf("ERROR session %q turn %q: output retry expired (staged message %q)", job.row.ID, job.result.TurnID, job.messageID)
-				return
-			case <-ticker.C:
-				if job.persist(context.Background(), s) == nil {
+			case <-timer.C:
+				if job.persist(ctx, s) == nil {
 					return
 				}
+				delay = min(delay*2, 5*time.Second)
+				timer.Reset(delay)
 			}
 		}
 	}()
@@ -65,8 +77,8 @@ func (s *Service) stopOutputRetries() {
 	r.mu.Lock()
 	if !r.closed {
 		r.closed = true
-		if r.stop != nil {
-			close(r.stop)
+		if r.cancel != nil {
+			r.cancel()
 		}
 	}
 	r.mu.Unlock()
