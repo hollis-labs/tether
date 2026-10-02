@@ -151,7 +151,7 @@ func (s *operationStallStore) SessionRoute(ctx context.Context, id string) (*lau
 	return s.Store.SessionRoute(ctx, id)
 }
 func (s *operationStallStore) StageTurnOutput(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
-	if s.operation == "stage" && s.calls.Add(1) == 1 {
+	if s.operation == "stage" && s.calls.Add(1) <= 2 {
 		conn, err := s.DB().Conn(ctx)
 		if err != nil {
 			return messaging.Envelope{}, err
@@ -194,6 +194,9 @@ func TestOutputRetriesIsolatedRouteAndStageStalls(t *testing.T) {
 				if len(got) == 1 {
 					if got[0].MessageID == "" {
 						t.Fatal("retry lost routed body")
+					}
+					if operation == "stage" && storage.calls.Load() < 3 {
+						t.Fatal("worker staging timeout was not retried", storage.calls.Load())
 					}
 					break
 				}
@@ -268,5 +271,64 @@ func TestOutputEventsCanReorderAcrossRetry(t *testing.T) {
 			t.Fatal("delayed output not published")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// Non-context failures after each stall allow the reader to reach all four
+// operations. Returning ctx.Err on metadata would mask a missing shared cap.
+type everyOperationStallStore struct {
+	*store.Store
+	entered chan struct{}
+	first   atomic.Bool
+}
+
+func (s *everyOperationStallStore) wait(ctx context.Context) {
+	if s.first.CompareAndSwap(false, true) {
+		close(s.entered)
+	}
+	<-ctx.Done()
+}
+func (s *everyOperationStallStore) GetSessionContext(ctx context.Context, _ string) (*store.SessionRow, error) {
+	s.wait(ctx)
+	return nil, errors.New("metadata unavailable")
+}
+func (s *everyOperationStallStore) SessionRoute(ctx context.Context, _ string) (*launchprofile.Route, error) {
+	s.wait(ctx)
+	return nil, errors.New("route unavailable")
+}
+func (s *everyOperationStallStore) StageTurnOutput(ctx context.Context, _ messaging.Envelope) (messaging.Envelope, error) {
+	s.wait(ctx)
+	return messaging.Envelope{}, errors.New("stage unavailable")
+}
+
+type everyOperationStallBus struct{ events.Bus }
+
+func (b everyOperationStallBus) Publish(ctx context.Context, _ events.Event) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func TestObserveProviderBoundsReaderLockAcrossAllPersistenceStalls(t *testing.T) {
+	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	budget := 200 * time.Millisecond
+	svc.turnOutputTimeout = budget
+	storage := &everyOperationStallStore{Store: svc.Store, entered: make(chan struct{})}
+	svc.turnOutputStore = storage
+	svc.Bus = everyOperationStallBus{svc.Bus}
+	output.routeUnread = true
+	output.observeProvider(gopevents.Delta{Text: "answer"})
+	start := time.Now()
+	returned := make(chan time.Duration, 1)
+	go func() { output.observeProvider(gopevents.Done{}); returned <- time.Since(start) }()
+	select {
+	case <-storage.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader never entered persistence")
+	}
+	// This must regain the same mutex held by observeProvider, after every
+	// synchronous persistence attempt and marker completion has finished.
+	output.CurrentTurn()
+	held := <-returned
+	if held >= 2*budget {
+		t.Fatalf("reader lock held %s for %s overall cap", held, budget)
 	}
 }

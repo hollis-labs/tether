@@ -252,3 +252,22 @@ func TestStageTurnOutputReusedIdentityPreservesBothBodiesAndRetries(t *testing.T
 		t.Fatalf("attached alternate retry lost existing ID: %+v %v", retry, err)
 	}
 }
+
+func TestStageTurnOutputContentTypeConflictPreservesBothRepresentations(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	first := stageOutput(t, db)
+	input := messaging.Envelope{From: first.From, Payload: first.Payload, Metadata: first.Metadata, ContentType: "text/plain"}
+	second, err := db.StageTurnOutput(ctx, input)
+	if err != nil || second.ID == first.ID || second.ContentType != input.ContentType || string(second.Payload) != string(first.Payload) {
+		t.Fatalf("content-type-only conflict lost: id=%q type=%q err=%v", second.ID, second.ContentType, err)
+	}
+	retry, err := db.StageTurnOutput(ctx, input)
+	if err != nil || retry.ID != second.ID || retry.ContentType != input.ContentType {
+		t.Fatalf("alternate representation retry lost: id=%q type=%q err=%v", retry.ID, retry.ContentType, err)
+	}
+	original, err := db.StagedTurnOutput(ctx, first.ID)
+	if err != nil || original.ContentType != first.ContentType {
+		t.Fatal("original representation overwritten", err)
+	}
+}
