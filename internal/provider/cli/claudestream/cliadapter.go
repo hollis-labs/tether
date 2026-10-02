@@ -42,7 +42,7 @@ func NewWithAdapter(plan *launch.Plan, adapter gop.CLIAdapter, providerID string
 	return agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{
 		ID:      providerID,
 		Kind:    "cli",
-		Adapter: scoped,
+		Adapter: scoped.withInterrupts(),
 		Caps:    caps,
 	})
 }
@@ -77,6 +77,41 @@ type PlanScopedAdapter struct {
 	// SkipPreflight suppresses the Preflight forward. Classifiers such as
 	// IsNotAuthenticated are still forwarded.
 	SkipPreflight bool
+}
+
+// withInterrupts preserves optional interrupt interfaces without claiming
+// them on adapters that do not implement them. Their methods have no neutral
+// unsupported response, so putting them on every PlanScopedAdapter would
+// advertise a capability the inner adapter does not have.
+func (a *PlanScopedAdapter) withInterrupts() gop.CLIAdapter {
+	stream, hasStream := a.Inner.(gop.TurnInterrupter)
+	rpc, hasRPC := a.Inner.(gop.RPCTurnInterrupter)
+	switch {
+	case hasStream && hasRPC:
+		return &bothInterruptAdapter{PlanScopedAdapter: a, TurnInterrupter: stream, RPCTurnInterrupter: rpc}
+	case hasStream:
+		return &streamInterruptAdapter{PlanScopedAdapter: a, TurnInterrupter: stream}
+	case hasRPC:
+		return &rpcInterruptAdapter{PlanScopedAdapter: a, RPCTurnInterrupter: rpc}
+	default:
+		return a
+	}
+}
+
+type streamInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.TurnInterrupter
+}
+
+type rpcInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.RPCTurnInterrupter
+}
+
+type bothInterruptAdapter struct {
+	*PlanScopedAdapter
+	gop.TurnInterrupter
+	gop.RPCTurnInterrupter
 }
 
 func (a *PlanScopedAdapter) Name() string { return a.Inner.Name() }
