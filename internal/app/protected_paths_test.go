@@ -484,13 +484,13 @@ func TestLaunchSession_ACPRefusedWhileProtected(t *testing.T) {
 	}
 }
 
-// codexPlan is a codex launch, as Tether resolves one from the catalog, with
+// codexPlan is a default-mode codex launch, with
 // the given catalog flags.
 func codexPlan(args ...string) *launch.Plan {
 	return &launch.Plan{
 		ProviderBrand:  "codex",
 		RuntimeKind:    config.RuntimeKindSubprocess,
-		PermissionMode: config.PermissionModeBypass,
+		PermissionMode: config.PermissionModeDefault,
 		Args:           args,
 	}
 }

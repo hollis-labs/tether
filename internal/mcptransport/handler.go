@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -25,6 +26,7 @@ import (
 
 // HandlerConfig is daemon composition, never caller-controlled configuration.
 type HandlerConfig struct {
+	Publisher           events.Publisher
 	ListenAddr          string
 	IdentityMode        identity.Mode
 	Verifier            identity.Verifier
@@ -399,6 +401,14 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	if err != nil {
 		return nil, err
 	}
+	adapter.ExtractRefs = a.caller.Policy.ExtractRefs
+	if dc != nil {
+		adapter.SetRefAttacher(daemonRefAttacher{client: dc})
+	}
+	a.options.Publisher = h.cfg.Publisher
+	if h.cfg.Service != nil && h.cfg.Service.Store != nil {
+		a.options.ProxyStore = h.cfg.Service.Store
+	}
 	view, err := pool.NewGatewayView(identity.WithPrincipal(h.ctx, a.caller.Principal), adapter, a.options)
 	if err != nil {
 		return nil, err
@@ -575,4 +585,15 @@ func (h *Handler) Drain(ctx context.Context) {
 		}
 		h.mu.Unlock()
 	}
+}
+
+// ToolCallRecorderStats exposes drops/failures without changing MCP admission.
+func (h *Handler) ToolCallRecorderStats() (uint64, uint64) {
+	if h == nil {
+		return 0, 0
+	}
+	if recorder, ok := h.cfg.Publisher.(interface{ Stats() (uint64, uint64) }); ok {
+		return recorder.Stats()
+	}
+	return 0, 0
 }

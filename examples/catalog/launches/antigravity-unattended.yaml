@@ -1,0 +1,9 @@
+id: antigravity-unattended
+project: demo
+agent: unattended-agent
+provider: antigravity
+workspace:
+  mode: shared
+prompt:
+  include_project_boot: true
+  include_agent_boot: true

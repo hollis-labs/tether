@@ -1,0 +1,9 @@
+id: codex-unattended
+project: demo
+agent: unattended-agent
+provider: codex-app-server
+workspace:
+  mode: shared
+prompt:
+  include_project_boot: true
+  include_agent_boot: true

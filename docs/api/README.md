@@ -514,6 +514,15 @@ and providers are still the ones loaded at daemon start, and a launch naming one
 added since then is refused until the daemon restarts. An unknown `launch`
 answers 404 `not_found`; the message lists the launches the catalog defines.
 
+The optional `route` object opts this session into per-turn channel routing:
+`{"channel":"ops","kinds":["final","question","approval","failure"]}`.
+Omitting `route` leaves routing disabled. Omitting `kinds` selects all four;
+`[]` selects none. Invalid channels or unknown kinds answer 400
+`invalid_request` using the standard error envelope. The resolved route is
+persisted at create time. Replies always return to the sender. See
+[caller-launched sessions](../caller-launched-sessions.md#opt-in-session-routing)
+for catalog, override and CLI configuration.
+
 #### Idempotency keys
 
 `POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional
@@ -1351,6 +1360,82 @@ To watch live budget alerts, subscribe to
 `GET /events/stream?scope=daemon&kind=ai.budget_rejected`.
 
 ---
+
+
+## Named channels
+
+Channels are named public topics, independent of groups and private mailboxes.
+The stable consumer handle is a case-sensitive name: 1–64 ASCII characters,
+starting with a letter or digit, followed by letters, digits, `.`, `_` or `-`.
+The derived address is `msg://service/local/channel/<name>`. This uses the
+released go-messaging service kind; the name remains stable if a dedicated
+channel address kind is introduced later. Responses carry both `name` and
+`address`. Paths are keyed by name.
+
+A successful publication creates the channel implicitly. Publish through
+`POST /messages` with `to` set to its derived address; `channel` is filled from
+the name when absent, and a conflicting label is rejected. Existing private
+mailbox messages with a `channel` label do **not** appear in channel discovery,
+history or subscriptions, even when their label matches a public topic.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/channels?as=<caller-urn>` | `GET` | List published channels, sorted by name. Returns `{channels: [{name, address}]}`. |
+| `/channels/{name}/messages?as=<caller-urn>&since=0&limit=100` | `GET` | Non-destructive history in publication order. Returns `{name, address, messages: [{seq, ...envelope}], next_since}`. `since` is exclusive, defaults to 0; `limit` defaults to 100, maximum 1000. Continue with `since=next_since`. |
+| `/channels/{name}/subscribe?as=<caller-urn>&since=<seq>` | `GET` | SSE replay strictly after `since`, followed by live publications. Omit `since` for live-only; `since=0` replays all history. Reconnect uses the greater of `since` and `Last-Event-ID`. Live-only streams send an initial `id` at the captured high-water mark. |
+
+No membership is required to read or subscribe. Any valid caller URN may be
+asserted using `as`; it need not equal the channel address or sender. A
+middleware-verified bearer principal supplies caller identity directly, so
+`as` may be omitted for that caller. The shared channel service exposes
+identity-based authorization hooks for list/history/subscribe/publish; the
+current default observes identity without adding scope enforcement or grants.
+Daemon identity mode still controls authentication (ADR 0045 / 0253).
+Publication `from` attribution retains the existing observe-mode convention.
+
+Unknown valid names have empty history and can be subscribed to before their
+first publication; they appear in discovery after the first publication.
+
+```json
+{"kind":"notice","from":"msg://session/local/s123","to":"msg://service/local/channel/ops","payload":{"text":"Ready for review"}}
+```
+
+SSE events include a durable insertion-sequence cursor independent of timestamps
+and message-ID generation order:
+
+```text
+id: 42
+event: message
+data: {"seq":42,"id":"...","kind":"notice","channel":"ops","from":"msg://session/local/s123","to":"msg://service/local/channel/ops",...}
+```
+
+Subscriptions read committed history in bounded batches, with backpressure and
+up to 250 ms polling latency when caught up. A `: ping` comment is sent every
+15 seconds. Reconnect using the last received `id`; replay crosses restarts
+without consuming messages or acknowledging deliveries. Negative/malformed
+cursors return 400 `invalid_request`. Subscription cursors beyond the current
+high-water mark are clamped to it so EventSource can continue reconnecting. Use 0 to replay a never-published channel.
+Sequence numbers are global and can have gaps within a channel.
+To load recent messages directly, use `/channels/{name}/messages?last=N`
+(with the caller identity as usual). `N` is 1–1000; the latest N publications
+are returned oldest first. `last` cannot be combined with `since` or `limit`.
+
+Channel envelopes use the existing **messaging retention policy**: structural
+rows and replay sequences remain indefinitely; bodies and metadata may be
+removed only through the explicit audited `/messages/{id}/purge` action.
+Publications have no per-recipient delivery obligation and are therefore
+purge-eligible without subscriber acknowledgments. A purge preserves the
+message, channel name, address and sequence and writes a durable author receipt.
+History and SSE replay expose `purged: true` and `purged_at` from that receipt,
+so an empty published payload remains distinguishable from removed content.
+Mailbox inbox/list/subscribe, consume, cancel, read/archive and redrive actions
+reject channel publications with 400 `channel_not_mailbox`; notify to a channel
+address is rejected before publication. The shared atomic publication seam
+passes both the caller principal and envelope `From` to the authorization hook,
+including dispatcher and daemon-internal sends. A nil hook remains observe mode.
+The automatic event age policy does not purge channel messages. Replies, launch
+routing configuration and consumer UIs are separate surfaces/workstreams.
+
 
 ## Messages
 

@@ -23,6 +23,7 @@ type AttachmentStore interface {
 // http.Handler back. Each field is optional — handlers whose
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
+	Docs        DocsService
 	Service     LaunchService
 	AI          AIService
 	AIAudit     AIAuditStore
@@ -44,6 +45,7 @@ type Deps struct {
 	// /workstreams collection (S5, CW-20260912-0063).
 	Digests      DigestStore
 	MessageStore MessageStore
+	Channels     ChannelService
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
 	// persisting and querying MCP relay tool call events. Populated by the
 	// daemon when --proxy mode is active. The TUI polls this to populate the
@@ -127,6 +129,7 @@ type Deps struct {
 // Server carries the dependencies required by handlers. Tests construct
 // it directly; production code goes through NewHandler.
 type Server struct {
+	Docs                DocsService
 	Service             LaunchService
 	AI                  AIService
 	AIAudit             AIAuditStore
@@ -141,6 +144,7 @@ type Server struct {
 	SessionRefs         SessionRefStore
 	Digests             DigestStore
 	MessageStore        MessageStore
+	Channels            ChannelService
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
 	Registry            RegistryService
@@ -159,6 +163,7 @@ type Server struct {
 // api package. The daemon package layers /health on top of this.
 func NewHandler(deps Deps) http.Handler {
 	s := &Server{
+		Docs:                deps.Docs,
 		Service:             deps.Service,
 		AI:                  deps.AI,
 		AIAudit:             deps.AIAudit,
@@ -173,6 +178,7 @@ func NewHandler(deps Deps) http.Handler {
 		SessionRefs:         deps.SessionRefs,
 		Digests:             deps.Digests,
 		MessageStore:        deps.MessageStore,
+		Channels:            deps.Channels,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
 		Registry:            deps.Registry,
@@ -187,6 +193,7 @@ func NewHandler(deps Deps) http.Handler {
 		Retention:           deps.Retention,
 	}
 	router := http.NewServeMux()
+	s.registerDocsRoutes(router)
 	s.registerSessionRoutes(router)
 	s.registerAIRoutes(router)
 	s.registerCheckpointRoutes(router)
@@ -196,6 +203,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerSessionGroupRoutes(router)
 	s.registerWorkstreamRoutes(router)
 	s.registerMessageRoutes(router)
+	s.registerChannelRoutes(router)
 	s.registerProxyEventRoutes(router)
 	s.registerRegistryRoutes(router)
 	s.registerSettingsRoutes(router)

@@ -10,23 +10,12 @@ import (
 	"github.com/hollis-labs/go-providers/registry"
 )
 
-// Planted codex policy (CW-20261001-0216).
-//
-// A codex launch carries its posture twice. The launch template's argv has the
-// registry's overrides, `-c sandbox_mode="workspace-write" -c
-// approval_policy="on-request"`, and codex lets those win. The config.toml
-// planted into CODEX_HOME comes from the go-providers adapter's own fields, and
-// providerplant.DefaultResolver does not set them from the posture: the adapter
-// keeps its headless default, approval_policy "never". So the file said "never"
-// while the argv said "on-request".
-//
-// The argv is what runs, so nothing was wrong at runtime, but the file misled
-// anyone reading it, and a codex started from this boot dir WITHOUT the template
-// argv (a manual resume, a tool) would run under "never". Under "never" codex
-// refuses every MCP tool call outright ("MCP tool call requires approval, but
-// approval policy is never", see codex_approval.go), so the agent would lose its
-// tether tools. plantResolver makes the file say what the argv says, from the same
-// registry mapping, so the two cannot drift apart.
+// A codex launch carries its posture in both the template argv and its
+// planted CODEX_HOME/config.toml. Resolve both from the registry so a manual
+// resume from the boot dir uses the same policy. Default sessions use
+// workspace-write/on-request; explicit bypass uses danger-full-access/never
+// (CW-20261001-0251). Never refuses approval-gated MCP calls in a sandboxed
+// session, but full-access bypass permits the planted MCP calls on 0.159.3.
 
 // plantResolver is providerplant.DefaultResolver, with a codex adapter's
 // approval_policy and sandbox_mode set from the launch's permission posture.

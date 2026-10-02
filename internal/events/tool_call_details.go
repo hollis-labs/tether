@@ -14,7 +14,7 @@ const (
 )
 
 // ToolCallDetails is additive metadata; byte sizes describe JSON encoding,
-// never retained argument/result values. GatewayMs is pre/post-dispatch overhead;
+// not copied argument/result payloads. Scrubbed error text may echo argument fragments. GatewayMs is pre/post-dispatch overhead;
 // ForwardMs is dispatch wall time. ErrorTruncated refers to retained error text.
 type ToolCallDetails struct {
 	Profile        string         `json:"profile,omitempty"`
