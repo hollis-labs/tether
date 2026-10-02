@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/hollis-labs/tether/internal/telemetry"
-	"time"
 )
 
 // QueryToolCallMetrics aggregates durable completed calls before applying the
@@ -15,12 +14,16 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
  CASE WHEN json_extract(payload_json,'$.ok')=1 THEN 'ok' ELSE COALESCE(NULLIF(json_extract(payload_json,'$.error_class'),''),'upstream_error') END,
  COUNT(*),COALESCE(SUM(json_extract(payload_json,'$.args_bytes')),0),COALESCE(SUM(json_extract(payload_json,'$.result_bytes')),0),
  SUM(CASE WHEN json_type(payload_json,'$.args_bytes') IS NOT NULL THEN 1 ELSE 0 END)`
-	fields := []string{"duration_ms", "queue_ms", "forward_ms"}
-	for _, field := range fields {
+	fields := []string{"duration_ms", "gateway_ms", "forward_ms"}
+	for index, field := range fields {
 		expr := "COALESCE(json_extract(payload_json,'$." + field + "'),0)"
 		sqlText += ", SUM(" + expr + ")"
 		for _, bound := range telemetry.HistogramBoundsMs {
-			sqlText += fmt.Sprintf(", SUM(CASE WHEN %s <= %d THEN 1 ELSE 0 END)", expr, bound)
+			condition := fmt.Sprintf("%s <= %d", expr, bound)
+			if index > 0 {
+				condition = "json_type(payload_json,'$." + field + "') IS NOT NULL AND " + condition
+			}
+			sqlText += ", SUM(CASE WHEN " + condition + " THEN 1 ELSE 0 END)"
 		}
 	}
 	sqlText += ` FROM events WHERE kind='tool_call_end' AND json_valid(payload_json)`
@@ -31,15 +34,22 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 			args = append(args, filter.value)
 		}
 	}
+	// Stored timestamps use RFC3339Nano, whose variable fraction width is not
+	// lexically ordered at fractional boundaries. Pad to nine digits in UTC.
+	normalizedAt := `(substr(at,1,19) || '.' || substr(replace(substr(at,21),'Z','') || '000000000',1,9) || 'Z')`
+	const fixedUTC = "2006-01-02T15:04:05.000000000Z"
 	if !q.Since.IsZero() {
-		sqlText += " AND at>=?"
-		args = append(args, q.Since.UTC().Format(time.RFC3339Nano))
+		sqlText += " AND " + normalizedAt + ">=?"
+		args = append(args, q.Since.UTC().Format(fixedUTC))
 	}
 	if !q.Until.IsZero() {
-		sqlText += " AND at<?"
-		args = append(args, q.Until.UTC().Format(time.RFC3339Nano))
+		sqlText += " AND " + normalizedAt + "<?"
+		args = append(args, q.Until.UTC().Format(fixedUTC))
 	}
 	sqlText += " GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT ?"
+	if q.Limit < 1 || q.Limit > telemetry.MaxMetricGroups+1 {
+		q.Limit = telemetry.MaxMetricGroups + 1
+	}
 	args = append(args, q.Limit)
 	// All SQL fragments and JSON paths are fixed; selectors are parameterized.
 	//nolint:gosec // controlled assembly, no authored SQL fragments
@@ -52,7 +62,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 	for rows.Next() {
 		var group telemetry.MetricGroup
 		targets := []any{&group.Tool, &group.Upstream, &group.Outcome, &group.Calls, &group.ArgsBytes, &group.ResultBytes, &group.MetadataSamples}
-		histograms := []*telemetry.Histogram{&group.Duration, &group.Queue, &group.Forward}
+		histograms := []*telemetry.Histogram{&group.Duration, &group.Gateway, &group.Forward}
 		for _, hist := range histograms {
 			hist.Buckets = make([]telemetry.Bucket, len(telemetry.HistogramBoundsMs)+1)
 			targets = append(targets, &hist.SumMs)

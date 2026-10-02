@@ -1082,6 +1082,24 @@ Response (200):
 }
 ```
 
+### `GET /events/tool-metrics`
+
+Counters and cumulative latency histograms over retained completed-call events,
+with optional exact `tool`/`upstream` and inclusive `since`/exclusive `until`
+RFC3339 bounds. Returns `{groups, truncated, window:"retained_events"}`. Groups
+contain tool/upstream/outcome, call/byte counters, `metadata_samples` and
+`duration`/`gateway`/`forward` histograms (`count`, `sum_ms`, cumulative buckets).
+Buckets end at 5/25/100/500/1000/5000 ms and infinity (`upper_ms:null`). A maximum
+of 1,000 groups is returned in tool/upstream/outcome order; narrow filters when
+`truncated` is true. Invalid selectors return 400 `invalid_request`, storage
+failures 500 `internal_error`. Starts are excluded, and restart preserves
+counts until the existing event-retention sweep removes old rows.
+
+MCP: `tether_tool_metrics`. CLI: `tether events tool-metrics --json`. See
+[tool-call telemetry](../mcp.md#tool-call-telemetry-v2) for metadata/privacy and
+process-lifetime OTel semantics. `/proxy/events` query responses also include
+v2 call metadata from migration 0042's compatibility projection.
+
 ### `GET /events/stream`
 
 SSE stream of bus events. Replays history (via `since_seq`) then switches

@@ -1593,6 +1593,57 @@ normal and `--proxy` mode.
 > same durable `proxy_events` SQLite table as `tether_proxy_events`. Results
 > survive daemon restarts.
 
+#### Tool-call telemetry v2
+
+`tool_call_start` and `tool_call_end` are durable `events` payloads. Calls
+rejected by gateway policy or native scope validation still produce completed
+call observations. Records carry daemon-verified attribution (principal, agent,
+session and workstream), upstream `server`, `profile`, `discovery_mode`,
+`args_bytes`, `result_bytes`, `error_class`, `error_truncated`, `trace_id`,
+`span_id`, `gateway_ms` and `forward_ms`. No argument/result values are retained;
+the argument fingerprint uses key names only. Configured credentials are
+scrubbed from error text before its 4 KiB storage limit and from caller-facing
+error text.
+
+Byte sizes use canonical JSON; nil or empty arguments measure zero.
+`gateway_ms` measures pre/post-dispatch overhead, while `forward_ms` measures
+dispatch wall time. `error_truncated` describes the stored error, not the
+upstream result. Outcomes are `denied`, `upstream_down`, `timeout`, `validation`
+and `upstream_error`; successful calls have no error class. IDs are lowercase
+hex (32/16 characters). The existing go-otel provider supplies spans; disabled
+or failed OTel initialization can leave the incoming parent context instead,
+and absent context leaves IDs empty. `proxy_events` remains a compatibility
+query projection. Both it and canonical events share the default 90-day age
+retention; the live in-memory feed is not the history source.
+
+#### `tether_tool_metrics`
+
+Read completed-call counters and cumulative latency histograms grouped by
+exact tool, upstream and outcome. The matching HTTP route is
+`GET /events/tool-metrics`; the CLI is `tether events tool-metrics --json`.
+Optional `tool` and `upstream` selectors are exact matches, and `since`/`until`
+are inclusive/exclusive RFC3339 time bounds. Invalid selectors return
+`invalid_request` consistently across MCP, HTTP and CLI.
+
+Counts use retained durable `tool_call_end` rows, survive restart, and exclude
+start rows. The response is `{groups, truncated, window:"retained_events"}`.
+Groups are ordered by tool/upstream/outcome and capped at 1,000; `truncated`
+asks the caller to narrow filters. Each group includes call and byte counters,
+`metadata_samples`, and duration/gateway/forward histograms with `count`,
+`sum_ms` and cumulative `buckets`. Upper bounds are 5, 25, 100, 500, 1,000 and
+5,000 milliseconds plus a final `upper_ms:null` bucket for infinity. Historical
+rows lacking v2 metadata still contribute calls/duration; they do not invent
+size or gateway/forward samples.
+
+OTel additionally exports process-lifetime `tether.tool.calls`,
+`tether.tool.bytes` (direction `arguments`/`result`), and `tether.tool.duration`,
+`tether.tool.gateway`, `tether.tool.forward` histograms. Labels are tool,
+upstream and outcome, never caller identity or argument values. These reset
+with the observing process and are distinct from retained-event queries;
+forwarded copies do not increment a second exporter. Existing OTel exporter
+configuration and introspection access rules apply; no deployment or new
+authorization policy is implied.
+
 #### `tether_session_events`
 List historical lifecycle events for a session in descending seq order.
 

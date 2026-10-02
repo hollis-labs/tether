@@ -28,6 +28,7 @@ import (
 // registered (not proxy-mode-only) because the underlying tables are populated
 // in both modes.
 func (a *Adapter) registerObservationTools(s *gomcp.Server) {
+	a.registerToolMetricsTool(s)
 	a.registerSessionEventsTool(s)
 	a.registerSessionCheckpointsTool(s)
 	a.registerSessionAttachmentsTool(s)

@@ -35,7 +35,7 @@ type MetricGroup struct {
 	ResultBytes     int64     `json:"result_bytes"`
 	MetadataSamples int64     `json:"metadata_samples"`
 	Duration        Histogram `json:"duration"`
-	Queue           Histogram `json:"queue"`
+	Gateway         Histogram `json:"gateway"`
 	Forward         Histogram `json:"forward"`
 }
 type MetricsRequest struct {
@@ -63,7 +63,9 @@ func (e *QueryError) Error() string { return e.Message }
 
 // ReadMetrics queries only durable completed calls; starts never inflate counts.
 // The result survives daemon restarts and is bounded by event retention.
-func ReadMetrics(ctx context.Context, source MetricsSource, req MetricsRequest) (MetricsResponse, error) {
+type QueryService struct{ Source MetricsSource }
+
+func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (MetricsResponse, error) {
 	q := MetricsQuery{Tool: req.Tool, Upstream: req.Upstream, Limit: MaxMetricGroups + 1}
 	if len(req.Tool) > 256 || len(req.Upstream) > 256 {
 		return MetricsResponse{}, &QueryError{"tool/upstream identifier too long"}
@@ -83,7 +85,7 @@ func ReadMetrics(ctx context.Context, source MetricsSource, req MetricsRequest) 
 	if !q.Since.IsZero() && !q.Until.IsZero() && !q.Since.Before(q.Until) {
 		return MetricsResponse{}, &QueryError{"since must precede until"}
 	}
-	groups, err := source.QueryToolCallMetrics(ctx, q)
+	groups, err := s.Source.QueryToolCallMetrics(ctx, q)
 	if err != nil {
 		return MetricsResponse{}, err
 	}
@@ -101,9 +103,9 @@ func ReadMetrics(ctx context.Context, source MetricsSource, req MetricsRequest) 
 // Metrics exports process-lifetime completed-call observations. Identity and
 // argument data are never labels. Durable introspection is a separate view.
 type Metrics struct {
-	calls                    metric.Int64Counter
-	bytes                    metric.Int64Counter
-	duration, queue, forward metric.Float64Histogram
+	calls                      metric.Int64Counter
+	bytes                      metric.Int64Counter
+	duration, gateway, forward metric.Float64Histogram
 }
 
 func NewMetrics(meter metric.Meter) (*Metrics, error) {
@@ -122,7 +124,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	for _, h := range []struct {
 		name string
 		dst  *metric.Float64Histogram
-	}{{"tether.tool.duration", &m.duration}, {"tether.tool.queue", &m.queue}, {"tether.tool.forward", &m.forward}} {
+	}{{"tether.tool.duration", &m.duration}, {"tether.tool.gateway", &m.gateway}, {"tether.tool.forward", &m.forward}} {
 		if *h.dst, err = meter.Float64Histogram(h.name, metric.WithUnit("ms"), metric.WithExplicitBucketBoundaries(bounds...)); err != nil {
 			return nil, err
 		}
@@ -143,7 +145,7 @@ func (m *Metrics) Observe(ctx context.Context, call events.ToolCallEvent) {
 	opts := metric.WithAttributes(labels...)
 	m.calls.Add(ctx, 1, opts)
 	m.duration.Record(ctx, float64(call.DurationMs), opts)
-	m.queue.Record(ctx, float64(call.QueueMs), opts)
+	m.gateway.Record(ctx, float64(call.GatewayMs), opts)
 	m.forward.Record(ctx, float64(call.ForwardMs), opts)
 	m.bytes.Add(ctx, call.ArgsBytes, metric.WithAttributes(append(labels, attribute.String("direction", "arguments"))...))
 	m.bytes.Add(ctx, call.ResultBytes, metric.WithAttributes(append(labels, attribute.String("direction", "result"))...))
