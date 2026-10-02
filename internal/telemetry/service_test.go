@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
@@ -19,6 +20,43 @@ type capture struct{ rows []events.Event }
 func (c *capture) Publish(_ context.Context, ev events.Event) error {
 	c.rows = append(c.rows, ev)
 	return nil
+}
+
+func TestServiceKeepsResolvedCredentialIdentityWithoutSessionClaims(t *testing.T) {
+	for _, kind := range []string{"operator", "service"} {
+		t.Run(kind, func(t *testing.T) {
+			s := Service{}
+			ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Source: "daemon", PrincipalID: kind, PrincipalKind: kind, SessionID: "claimed", AgentURN: "claimed", WorkstreamID: "claimed"})
+			ctx, o := s.Start(ctx, Call{Name: "read", ClaimedSessionID: "claimed"})
+			end := s.End(ctx, o, Outcome{OK: true})
+			want := callcontext.Snapshot{Source: "daemon", PrincipalID: kind, PrincipalKind: kind}
+			if end.Attribution != want || end.ClaimedSessionID != "claimed" {
+				t.Fatalf("credential/claim separation: %+v", end)
+			}
+		})
+	}
+}
+
+func TestServiceBoundsLargeToolNamesInBothDurablePhases(t *testing.T) {
+	for _, size := range []int{1 << 20, 8 << 20} {
+		publisher := &capture{}
+		s := Service{Publisher: publisher}
+		name := strings.Repeat("€", size/3) + strings.Repeat("x", size%3)
+		ctx, observation := s.Start(context.Background(), Call{Name: name})
+		end := s.End(ctx, observation, Outcome{Class: events.ToolErrorDenied, Error: "denied"})
+		if len(end.ToolName) > MaxToolNameBytes || !utf8.ValidString(end.ToolName) || !strings.Contains(end.ToolName, "[sha256:") {
+			t.Fatalf("recorded name: %q", end.ToolName)
+		}
+		for _, row := range publisher.rows {
+			var call events.ToolCallEvent
+			if err := json.Unmarshal([]byte(row.PayloadJSON), &call); err != nil {
+				t.Fatal(err)
+			}
+			if call.ToolName != end.ToolName || len(row.PayloadJSON) > 1024 {
+				t.Fatal("large name retained or phase mismatch")
+			}
+		}
+	}
 }
 func TestServiceRecordsVerifiedMetadataAndTypedOutcome(t *testing.T) {
 	previous := otel.GetTracerProvider()

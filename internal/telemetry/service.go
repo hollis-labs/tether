@@ -1,14 +1,18 @@
-// Package telemetry owns secret-free tool-call observations and event recording.
-// Transports supply decoded sizes and typed outcomes, never argument values.
+// Package telemetry owns bounded tool-call observations and event recording.
+// Transports supply sizes and typed outcomes, not argument or result payloads.
+// Credential-scrubbed error text can still echo an argument fragment.
 package telemetry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
@@ -48,7 +52,13 @@ func (s *Service) Start(ctx context.Context, call Call) (context.Context, *Obser
 	now := time.Now()
 	attribution, _ := callcontext.FromContext(ctx)
 	if !attribution.Verified {
-		attribution = callcontext.Snapshot{}
+		if attribution.Source == "daemon" && attribution.PrincipalID != "" {
+			// Verified describes session binding, not credential validity.
+			// Retain daemon-resolved operator/service identity, without claims.
+			attribution = callcontext.Snapshot{Source: attribution.Source, PrincipalID: attribution.PrincipalID, PrincipalKind: attribution.PrincipalKind}
+		} else {
+			attribution = callcontext.Snapshot{}
+		}
 	}
 	sc := span.SpanContext()
 	details := events.ToolCallDetails{Profile: call.Profile, DiscoveryMode: call.Mode, ArgsBytes: call.ArgsBytes}
@@ -56,9 +66,25 @@ func (s *Service) Start(ctx context.Context, call Call) (context.Context, *Obser
 		details.TraceID = sc.TraceID().String()
 		details.SpanID = sc.SpanID().String()
 	}
-	o := &Observation{started: now, span: span, event: events.ToolCallEvent{ToolCallDetails: details, Attribution: attribution, SessionID: call.SessionID, ClaimedSessionID: call.ClaimedSessionID, ToolName: call.Name, Server: call.Server, ArgsSchemaFP: call.Fingerprint, Timestamp: now}}
+	o := &Observation{started: now, span: span, event: events.ToolCallEvent{ToolCallDetails: details, Attribution: attribution, SessionID: call.SessionID, ClaimedSessionID: call.ClaimedSessionID, ToolName: boundedToolName(call.Name), Server: call.Server, ArgsSchemaFP: call.Fingerprint, Timestamp: now}}
 	s.publish(ctx, events.EventTypeToolCallStart, o.event)
 	return context.WithValue(ctx, observationKey{}, o), o
+}
+
+const MaxToolNameBytes = 256
+
+// Bound recorded identifiers only; the original dispatch name is untouched.
+func boundedToolName(name string) string {
+	if len(name) <= MaxToolNameBytes {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	suffix := "…[sha256:" + hex.EncodeToString(sum[:8]) + "]"
+	prefix := name[:MaxToolNameBytes-len(suffix)]
+	for !utf8.ValidString(prefix) {
+		prefix = prefix[:len(prefix)-1]
+	}
+	return prefix + suffix
 }
 
 // SetErrorClass records a typed boundary decision without parsing human error text.

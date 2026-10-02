@@ -1,11 +1,12 @@
 package proxyevents
 
 import (
-	"github.com/hollis-labs/tether/internal/events"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/events"
 )
 
-// IngestCall translates one secret-free observation for the credentialed daemon
+// IngestCall translates one credential-scrubbed observation for the credentialed daemon
 // sink. Attribution is deliberately omitted: the daemon resolves it again.
 func IngestCall(call events.ToolCallEvent, phase string, publish bool) ProxyEventIngestRequest {
 	details := call.ToolCallDetails
