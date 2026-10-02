@@ -96,6 +96,8 @@ func (o *sessionTurnOutput) flush() {
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()
+	// The session is gone: queued replies hand off or become undeliverable.
+	o.service.notifyReplyIdle(o.row.ID)
 }
 
 // wire is used for every native runtime. ACP's wrapper supplies runtimeevents

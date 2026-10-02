@@ -14,6 +14,7 @@ CREATE TABLE routing_replies (
     interrupt INTEGER NOT NULL DEFAULT 0 CHECK (interrupt IN (0, 1)),
     state TEXT NOT NULL CHECK (state IN ('queued', 'delivering', 'delivered', 'undeliverable')),
     reason TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
     attempts INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TEXT,
     idempotency_key TEXT NOT NULL DEFAULT '',

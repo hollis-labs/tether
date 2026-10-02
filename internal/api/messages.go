@@ -318,7 +318,7 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
-	if action != "" && action != "purge" && action != "trace" || r.Method == http.MethodDelete {
+	if action != "" && action != "purge" && action != "trace" && action != "reply" || r.Method == http.MethodDelete {
 		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
 			if _, ok := channels.AddressName(env.To); ok {
 				writeChannelError(w, channels.ErrMailboxOperation)
@@ -387,6 +387,10 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMessageNack(w, r, id)
+	case "reply":
+		s.handleMessageReply(w, r, id)
+	case "delivery":
+		s.handleMessageReplyDelivery(w, r, id)
 	case "trace":
 		s.handleMessageTrace(w, r, id)
 	case "redrive":
@@ -431,6 +435,15 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	env.CreatedAt = time.Time{}
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
+
+	// A reply to a message a session routed to a channel goes to that session
+	// as its next turn (CW-20261002-0065); other in_reply_to use is unchanged.
+	if env.InReplyTo != "" && s.RoutingReplies != nil {
+		if parent, err := s.MessageStore.Get(r.Context(), env.InReplyTo); err == nil && routedReplyParent(parent) {
+			s.sendRoutedReply(w, r, env, parent)
+			return
+		}
+	}
 
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {

@@ -94,6 +94,9 @@ func (o *sessionTurnOutput) completeTurn(id string) {
 func (o *sessionTurnOutput) settleTurn() {
 	if o.turnDone != nil {
 		close(o.turnDone)
+		// A turn ended, however it ended: the session is at an idle boundary.
+		// notifyReplyIdle only queues a drain, so it is safe under mu.
+		o.service.notifyReplyIdle(o.row.ID)
 	}
 	o.accepted = false
 	o.turnID = ""

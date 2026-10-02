@@ -126,7 +126,7 @@ func TestRoutingReplyRequeueRetargetsAndHonoursNotBefore(t *testing.T) {
 		t.Fatal("claim")
 	}
 	later := time.Now().Add(time.Hour)
-	if err := db.RequeueRoutingReply(ctx, r.ReplyID, "sess-b", "handed_off", later); err != nil {
+	if err := db.RequeueRoutingReply(ctx, r.ReplyID, store.RoutingReplyRequeue{Retarget: "sess-b", Reason: "handed_off", NotBefore: later}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := db.QueuedRoutingReplies(ctx, "sess-b", time.Now(), 10); len(got) != 0 {
@@ -149,17 +149,17 @@ func TestRoutingReplySettleIsTerminalAndMarksTheMessageForRetention(t *testing.T
 	if ok, _ := db.ClaimRoutingReply(ctx, delivered.ReplyID); !ok {
 		t.Fatal("claim")
 	}
-	if err := db.SettleRoutingReply(ctx, delivered.ReplyID, store.RoutingReplyDelivered, "", "sess-a"); err != nil {
+	if err := db.SettleRoutingReply(ctx, delivered.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, DeliveredTo: "sess-a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SettleRoutingReply(ctx, dead.ReplyID, store.RoutingReplyUndeliverable, "session_ended_no_binding", ""); err != nil {
+	if err := db.SettleRoutingReply(ctx, dead.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "session_ended_no_binding", Detail: "the actor has no binding"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{delivered.ReplyID, dead.ReplyID} {
-		if err := db.SettleRoutingReply(ctx, id, store.RoutingReplyDelivered, "", "sess-a"); !errors.Is(err, store.ErrRoutingReplyState) {
+		if err := db.SettleRoutingReply(ctx, id, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, DeliveredTo: "sess-a"}); !errors.Is(err, store.ErrRoutingReplyState) {
 			t.Fatalf("settling twice: %v", err)
 		}
-		if err := db.RequeueRoutingReply(ctx, id, "", "x", time.Time{}); !errors.Is(err, store.ErrRoutingReplyState) {
+		if err := db.RequeueRoutingReply(ctx, id, store.RoutingReplyRequeue{Reason: "x"}); !errors.Is(err, store.ErrRoutingReplyState) {
 			t.Fatalf("requeue of a settled reply: %v", err)
 		}
 		if ok, _ := db.ClaimRoutingReply(ctx, id); ok {
@@ -167,10 +167,10 @@ func TestRoutingReplySettleIsTerminalAndMarksTheMessageForRetention(t *testing.T
 		}
 	}
 	got, _ := db.RoutingReply(ctx, dead.ReplyID)
-	if got.State != store.RoutingReplyUndeliverable || got.Reason != "session_ended_no_binding" || got.SettledAt == nil {
+	if got.State != store.RoutingReplyUndeliverable || got.Reason != "session_ended_no_binding" || got.Detail != "the actor has no binding" || got.SettledAt == nil {
 		t.Fatalf("undeliverable = %+v", got)
 	}
-	if err := db.SettleRoutingReply(ctx, "nope", store.RoutingReplyQueued, "", ""); err == nil {
+	if err := db.SettleRoutingReply(ctx, "nope", store.RoutingReplySettlement{State: store.RoutingReplyQueued}); err == nil {
 		t.Fatal("queued is not a terminal state")
 	}
 	cands, err := db.ListRetentionCandidates(ctx, time.Now().Add(time.Hour))
@@ -205,7 +205,7 @@ func TestRoutingReplyBodyPurgedIsReportedNotInvented(t *testing.T) {
 	db := openRetentionDB(t)
 	ctx := context.Background()
 	r, _, _ := db.CreateRoutingReply(ctx, newReply("gone"))
-	if err := db.SettleRoutingReply(ctx, r.ReplyID, store.RoutingReplyUndeliverable, "x", ""); err != nil {
+	if err := db.SettleRoutingReply(ctx, r.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if purged, err := db.PurgeMessageBody(ctx, r.ReplyID, "msg://user/local/chris"); err != nil || !purged {

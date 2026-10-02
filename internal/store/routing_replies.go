@@ -57,6 +57,7 @@ type RoutingReply struct {
 	Interrupt            bool
 	State                RoutingReplyState
 	Reason               string
+	Detail               string
 	Attempts             int
 	NextAttemptAt        *time.Time
 	CreatedAt            time.Time
@@ -84,7 +85,7 @@ func (n NewRoutingReply) hash() string {
 }
 
 const routingReplyColumns = `reply_id, parent_id, original_session_id, target_session_id, delivered_to_session_id,
- logical_agent_id, actor, interrupt, state, reason, attempts, next_attempt_at, created_at, updated_at, settled_at`
+ logical_agent_id, actor, interrupt, state, reason, detail, attempts, next_attempt_at, created_at, updated_at, settled_at`
 
 func scanRoutingReply(scan scanFunc) (RoutingReply, error) {
 	var (
@@ -94,7 +95,7 @@ func scanRoutingReply(scan scanFunc) (RoutingReply, error) {
 		nextAttempt, settledAt sql.NullString
 	)
 	if err := scan(&r.ReplyID, &r.ParentID, &r.OriginalSessionID, &r.TargetSessionID, &r.DeliveredToSessionID,
-		&r.LogicalAgentID, &r.Actor, &r.Interrupt, &state, &r.Reason, &r.Attempts, &nextAttempt, &created, &updated, &settledAt); err != nil {
+		&r.LogicalAgentID, &r.Actor, &r.Interrupt, &state, &r.Reason, &r.Detail, &r.Attempts, &nextAttempt, &created, &updated, &settledAt); err != nil {
 		return RoutingReply{}, err
 	}
 	r.State = RoutingReplyState(state)
@@ -122,22 +123,10 @@ func (s *Store) CreateRoutingReply(ctx context.Context, in NewRoutingReply) (rep
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	hash := in.hash()
-	if in.IdempotencyKey != "" {
-		var priorHash string
-		row := tx.QueryRowContext(ctx, `SELECT `+routingReplyColumns+`, request_hash FROM routing_replies
- WHERE parent_id=? AND actor=? AND idempotency_key=?`, in.ParentID, in.Actor, in.IdempotencyKey)
-		prior, scanErr := scanRoutingReplyWithHash(row.Scan, &priorHash)
-		switch {
-		case scanErr == nil && priorHash == hash:
-			return prior, false, nil
-		case scanErr == nil:
-			return RoutingReply{}, false, ErrRoutingReplyIdempotencyConflict
-		case !errors.Is(scanErr, sql.ErrNoRows):
-			return RoutingReply{}, false, scanErr
-		}
+	if prior, found, err := peekRoutingReply(ctx, tx.QueryRowContext, in); err != nil || found {
+		return prior, false, err
 	}
-
+	hash := in.hash()
 	id, err := uuid.NewV7()
 	if err != nil {
 		return RoutingReply{}, false, err
@@ -187,6 +176,33 @@ func (s *Store) CreateRoutingReply(ctx context.Context, in NewRoutingReply) (rep
 
 func scanRoutingReplyWithHash(scan scanFunc, hash *string) (RoutingReply, error) {
 	return scanRoutingReply(func(dest ...any) error { return scan(append(dest, hash)...) })
+}
+
+// PeekRoutingReply reports whether in's idempotency key already names a reply.
+// found with a nil error is the earlier reply, unchanged; a different reply
+// under the same key is ErrRoutingReplyIdempotencyConflict. It lets a caller
+// check before doing something it must not repeat, such as interrupting a turn.
+func (s *Store) PeekRoutingReply(ctx context.Context, in NewRoutingReply) (RoutingReply, bool, error) {
+	return peekRoutingReply(ctx, s.db.QueryRowContext, in)
+}
+
+func peekRoutingReply(ctx context.Context, queryRow func(context.Context, string, ...any) *sql.Row, in NewRoutingReply) (RoutingReply, bool, error) {
+	if in.IdempotencyKey == "" {
+		return RoutingReply{}, false, nil
+	}
+	var priorHash string
+	row := queryRow(ctx, `SELECT `+routingReplyColumns+`, request_hash FROM routing_replies
+ WHERE parent_id=? AND actor=? AND idempotency_key=?`, in.ParentID, in.Actor, in.IdempotencyKey)
+	prior, err := scanRoutingReplyWithHash(row.Scan, &priorHash)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return RoutingReply{}, false, nil
+	case err != nil:
+		return RoutingReply{}, false, err
+	case priorHash != in.hash():
+		return RoutingReply{}, false, ErrRoutingReplyIdempotencyConflict
+	}
+	return prior, true, nil
 }
 
 // RoutingReply reads one reply's delivery state.
@@ -290,19 +306,32 @@ func (s *Store) ClaimRoutingReply(ctx context.Context, replyID string) (bool, er
 	return n == 1, err
 }
 
-// RequeueRoutingReply puts a claimed (or queued) reply back, to be tried again
-// no sooner than notBefore. A non-empty retarget re-points it at the session
-// that now owns the actor. reason records why, for consumers.
-func (s *Store) RequeueRoutingReply(ctx context.Context, replyID, retarget, reason string, notBefore time.Time) error {
+// RoutingReplyRequeue puts a reply back in the queue.
+type RoutingReplyRequeue struct {
+	// Retarget re-points the reply at the session that now owns the actor;
+	// empty keeps the current target.
+	Retarget string
+	// Reason is a stable code consumers can key on; Detail is free text.
+	Reason, Detail string
+	// NotBefore is the earliest retry; zero means as soon as the session is idle.
+	NotBefore time.Time
+	// RefundAttempt gives back the attempt the claim counted, for a wait that is
+	// not a failure (a runtime that rejects mid-turn input).
+	RefundAttempt bool
+}
+
+// RequeueRoutingReply puts a claimed (or queued) reply back, to be tried again.
+func (s *Store) RequeueRoutingReply(ctx context.Context, replyID string, in RoutingReplyRequeue) error {
 	var next any
-	if !notBefore.IsZero() {
-		next = notBefore.UTC().Format(time.RFC3339Nano)
+	if !in.NotBefore.IsZero() {
+		next = in.NotBefore.UTC().Format(time.RFC3339Nano)
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE routing_replies
- SET state='queued', reason=?, next_attempt_at=?, updated_at=?,
-     target_session_id = CASE WHEN ? != '' THEN ? ELSE target_session_id END
+ SET state='queued', reason=?, detail=?, next_attempt_at=?, updated_at=?,
+     target_session_id = CASE WHEN ? != '' THEN ? ELSE target_session_id END,
+     attempts = CASE WHEN ? AND attempts > 0 THEN attempts - 1 ELSE attempts END
  WHERE reply_id=? AND state IN ('queued','delivering')`,
-		reason, next, routingNow(), retarget, retarget, replyID)
+		in.Reason, in.Detail, next, routingNow(), in.Retarget, in.Retarget, in.RefundAttempt, replyID)
 	if err != nil {
 		return err
 	}
@@ -312,12 +341,20 @@ func (s *Store) RequeueRoutingReply(ctx context.Context, replyID, retarget, reas
 	return nil
 }
 
+// RoutingReplySettlement is a terminal outcome.
+type RoutingReplySettlement struct {
+	State          RoutingReplyState
+	Reason, Detail string
+	// DeliveredTo is the session that received the reply (delivered only).
+	DeliveredTo string
+}
+
 // SettleRoutingReply records a terminal outcome. delivered stamps the message
 // consumed and undeliverable stamps it canceled, so retention treats both as
 // finished. Only a non-terminal reply can be settled.
-func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, state RoutingReplyState, reason, deliveredTo string) error {
-	if !state.Terminal() {
-		return fmt.Errorf("routing reply: %q is not a terminal state", state)
+func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in RoutingReplySettlement) error {
+	if !in.State.Terminal() {
+		return fmt.Errorf("routing reply: %q is not a terminal state", in.State)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,8 +363,9 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, state Ro
 	defer func() { _ = tx.Rollback() }()
 	now := routingNow()
 	res, err := tx.ExecContext(ctx, `UPDATE routing_replies
- SET state=?, reason=?, delivered_to_session_id=?, updated_at=?, settled_at=?, next_attempt_at=NULL
- WHERE reply_id=? AND state IN ('queued','delivering')`, string(state), reason, deliveredTo, now, now, replyID)
+ SET state=?, reason=?, detail=?, delivered_to_session_id=?, updated_at=?, settled_at=?, next_attempt_at=NULL
+ WHERE reply_id=? AND state IN ('queued','delivering')`,
+		string(in.State), in.Reason, in.Detail, in.DeliveredTo, now, now, replyID)
 	if err != nil {
 		return err
 	}
@@ -335,7 +373,7 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, state Ro
 		return ErrRoutingReplyState
 	}
 	column := "consumed_at"
-	if state == RoutingReplyUndeliverable {
+	if in.State == RoutingReplyUndeliverable {
 		column = "canceled_at"
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE messages SET `+column+`=? WHERE id=?`, now, replyID); err != nil {
