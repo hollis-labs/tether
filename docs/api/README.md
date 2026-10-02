@@ -1758,6 +1758,14 @@ records it and refuses nothing.
 - **A reply is not a mailbox item.** Cancel, consume, read, archive, claim, ack,
   nack, redrive and delete aimed at one are refused with 400 `reply_not_mailbox`
   and change nothing; read its state from `/delivery`.
+- **Known limitation: a reply retried after a lost provider session lands in a
+  fresh provider session.** `provider_session_lost` means the resume id the
+  session named is dead. The reply did not run, so it is retried, and the retry
+  starts a new provider conversation (the second submission carries no
+  `--resume`): the receiving agent may not have the question the reply answers.
+  The consumer sees plain `delivered` (`attempts: 2`, no `reason`), with nothing
+  marking the new conversation. A reply that depends on the question it answers
+  should restate it.
 
 `GET /messages/{reply_id}/delivery` returns `{reply_id, parent_id, state, reason?,
 detail?, original_session_id, target_session_id, delivered_to_session_id?,
