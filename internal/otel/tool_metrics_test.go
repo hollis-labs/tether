@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -12,10 +14,47 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/telemetry"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestInitLeavesMetricExportOffWithoutEndpoint(t *testing.T) {
+	// Global OTel instruments bind when the first provider is installed. Keep
+	// this default-off check separate from the production-export test.
+	if os.Getenv("TETHER_TEST_METRIC_DEFAULT") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestInitLeavesMetricExportOffWithoutEndpoint$")
+		cmd.Env = append(os.Environ(), "TETHER_TEST_METRIC_DEFAULT=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("default-off fixture: %v\n%s", err, output)
+		}
+		return
+	}
+	restoreLogging(t)
+	previousMeter, previousTracer := otel.GetMeterProvider(), otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		otel.SetMeterProvider(previousMeter)
+		otel.SetTracerProvider(previousTracer)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
+	t.Setenv(disabledEnv, "")
+	t.Setenv(legacyEnv, "")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	provider := noop.NewMeterProvider()
+	otel.SetMeterProvider(provider)
+	shutdown, err := Init(context.Background(), "tether-test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if otel.GetMeterProvider() != provider {
+		t.Fatal("metric export enabled without an operator endpoint")
+	}
+}
 
 // Exercise the production initializer and pre-initialization instruments,
 // rather than just registering instruments against an isolated test provider.

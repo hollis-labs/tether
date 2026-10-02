@@ -1636,13 +1636,18 @@ rows lacking v2 metadata still contribute calls/duration; they do not invent
 size or gateway/forward samples.
 
 OTel additionally exports process-lifetime `tether.tool.calls`,
-`tether.tool.bytes` (direction `arguments`/`result`), and `tether.tool.duration`,
+`tether.tool.args.bytes`, `tether.tool.result.bytes`, and `tether.tool.duration`,
 `tether.tool.gateway`, `tether.tool.forward` histograms. Labels are tool,
 upstream and outcome, never caller identity or argument values. These reset
 with the observing process and are distinct from retained-event queries;
-forwarded copies do not increment a second exporter. The existing initializer
-now enables metric export alongside tracing, using the same OTLP endpoint and
-OTel disable switch. Existing introspection access rules apply; no deployment or new
+forwarded copies do not increment a second exporter. Metric network export is
+off by default. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to opt in on the existing OTLP
+HTTP endpoint; a remote destination requires explicit operator configuration.
+`HOLLIS_OTEL_DISABLED` (or legacy `TETHER_OTEL_DISABLED`) disables OTel.
+Each process retains at most 1,000 distinct tool/upstream/outcome combinations;
+later combinations share `_other` labels. Labels over 256 bytes also use
+`_other`. This bounds exporter memory; retained-event queries remain exact.
+Existing introspection access rules apply; no deployment or new
 authorization policy is implied.
 
 #### `tether_session_events`

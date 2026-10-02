@@ -25,13 +25,17 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 
 	configureLogging()
 
-	return hotel.Init(ctx,
+	opts := []hotel.Option{
 		hotel.WithServiceName(serviceName),
 		hotel.WithServiceVersion(serviceVersion),
 		hotel.WithServiceNamespace("hollis"),
 		hotel.WithEnvironment(environment()),
-		hotel.WithMetricsEnabled(),
-	)
+	}
+	// Metric egress is opt-in; the existing trace default is independent.
+	if strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")) != "" {
+		opts = append(opts, hotel.WithMetricsEnabled())
+	}
+	return hotel.Init(ctx, opts...)
 }
 
 // configureLogging installs the trace-attributing handler as slog's default.

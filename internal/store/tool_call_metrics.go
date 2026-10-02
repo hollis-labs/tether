@@ -31,6 +31,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 	var args []any
 	for _, filter := range []struct{ sql, value string }{{" AND json_extract(payload_json,'$.tool_name')=?", q.Tool}, {" AND json_extract(payload_json,'$.server')=?", q.Upstream}} {
 		if filter.value != "" {
+			//nolint:gosec // SQL fragments above are constants; selector values are bound below.
 			sqlText += filter.sql
 			args = append(args, filter.value)
 		}

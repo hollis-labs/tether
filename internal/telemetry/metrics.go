@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/events"
@@ -16,6 +17,10 @@ import (
 var HistogramBoundsMs = [...]int64{5, 25, 100, 500, 1000, 5000}
 
 const MaxMetricGroups = 1000
+
+// MaxOTelCallSeries bounds process memory even when callers name unknown tools.
+// Later combinations share an overflow series; durable queries remain exact.
+const MaxOTelCallSeries = 1000
 
 type Bucket struct {
 	UpperMs *int64 `json:"upper_ms"`
@@ -103,18 +108,25 @@ func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (Metr
 // Metrics exports process-lifetime completed-call observations. Identity and
 // argument data are never labels. Durable introspection is a separate view.
 type Metrics struct {
+	mu                         sync.Mutex
+	series                     map[metricLabels]struct{}
 	calls                      metric.Int64Counter
-	bytes                      metric.Int64Counter
+	argsBytes, resultBytes     metric.Int64Counter
 	duration, gateway, forward metric.Float64Histogram
 }
 
+type metricLabels struct{ tool, upstream, outcome string }
+
 func NewMetrics(meter metric.Meter) (*Metrics, error) {
-	m := &Metrics{}
+	m := &Metrics{series: make(map[metricLabels]struct{})}
 	var err error
 	if m.calls, err = meter.Int64Counter("tether.tool.calls", metric.WithDescription("Completed tool calls, including rejected calls")); err != nil {
 		return nil, err
 	}
-	if m.bytes, err = meter.Int64Counter("tether.tool.bytes", metric.WithUnit("By")); err != nil {
+	if m.argsBytes, err = meter.Int64Counter("tether.tool.args.bytes", metric.WithUnit("By")); err != nil {
+		return nil, err
+	}
+	if m.resultBytes, err = meter.Int64Counter("tether.tool.result.bytes", metric.WithUnit("By")); err != nil {
 		return nil, err
 	}
 	bounds := make([]float64, len(HistogramBoundsMs))
@@ -141,14 +153,31 @@ func (m *Metrics) Observe(ctx context.Context, call events.ToolCallEvent) {
 	} else if outcome == "" {
 		outcome = string(events.ToolErrorUpstream)
 	}
-	labels := []attribute.KeyValue{attribute.String("tool", call.ToolName), attribute.String("upstream", call.Server), attribute.String("outcome", outcome)}
+	key := metricLabels{boundedMetricLabel(call.ToolName), boundedMetricLabel(call.Server), boundedMetricLabel(outcome)}
+	m.mu.Lock()
+	if _, known := m.series[key]; !known {
+		if len(m.series) < MaxOTelCallSeries {
+			m.series[key] = struct{}{}
+		} else {
+			key = metricLabels{"_other", "_other", "_other"}
+		}
+	}
+	m.mu.Unlock()
+	labels := []attribute.KeyValue{attribute.String("tool", key.tool), attribute.String("upstream", key.upstream), attribute.String("outcome", key.outcome)}
 	opts := metric.WithAttributes(labels...)
 	m.calls.Add(ctx, 1, opts)
 	m.duration.Record(ctx, float64(call.DurationMs), opts)
 	m.gateway.Record(ctx, float64(call.GatewayMs), opts)
 	m.forward.Record(ctx, float64(call.ForwardMs), opts)
-	m.bytes.Add(ctx, call.ArgsBytes, metric.WithAttributes(append(labels, attribute.String("direction", "arguments"))...))
-	m.bytes.Add(ctx, call.ResultBytes, metric.WithAttributes(append(labels, attribute.String("direction", "result"))...))
+	m.argsBytes.Add(ctx, call.ArgsBytes, opts)
+	m.resultBytes.Add(ctx, call.ResultBytes, opts)
+}
+
+func boundedMetricLabel(value string) string {
+	if len(value) > 256 {
+		return "_other"
+	}
+	return value
 }
 
 var processMetrics, processMetricsError = NewMetrics(otel.Meter("tether/telemetry"))
