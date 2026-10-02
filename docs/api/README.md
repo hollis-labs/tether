@@ -514,6 +514,15 @@ and providers are still the ones loaded at daemon start, and a launch naming one
 added since then is refused until the daemon restarts. An unknown `launch`
 answers 404 `not_found`; the message lists the launches the catalog defines.
 
+The optional `route` object opts this session into per-turn channel routing:
+`{"channel":"ops","kinds":["final","question","approval","failure"]}`.
+Omitting `route` leaves routing disabled. Omitting `kinds` selects all four;
+`[]` selects none. Invalid channels or unknown kinds answer 400
+`invalid_request` using the standard error envelope. The resolved route is
+persisted at create time. Replies always return to the sender. See
+[caller-launched sessions](../caller-launched-sessions.md#opt-in-session-routing)
+for catalog, override and CLI configuration.
+
 #### Idempotency keys
 
 `POST /sessions` and `POST /logical-agents/{id}/resume` accept an optional

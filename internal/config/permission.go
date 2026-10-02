@@ -56,12 +56,12 @@ func EffectivePermissionMode(global Global, agent LaunchProfile) string {
 // posture means none: the provider runs under its own defaults. An empty
 // permissionMode is PermissionModeDefault.
 //
-// Every row keeps the posture each provider ran under before postures
-// existed:
+// An explicit bypass requests unattended full access; an unset mode keeps
+// the provider's conservative posture:
 //
 //	provider     bypass   default
 //	claude       yolo     default
-//	codex        accept-edits (both)
+//	codex        yolo     accept-edits
 //	antigravity  yolo     accept-edits
 //	opencode     none (both)
 //	other / ACP  none
@@ -79,9 +79,10 @@ func ProviderPosture(permissionMode, providerBrand string, mode runtimes.Mode) p
 		}
 		return permission.ModeDefault
 	case "codex":
-		// codex bypass→yolo deliberately not used: danger-full-access +
-		// approval never would cut off MCP (see internal/app/codex_approval.go);
-		// revisit with a posture that's full-access + on-request.
+		// The registry maps yolo to danger-full-access + approval never.
+		if bypass {
+			return permission.ModeYolo
+		}
 		return permission.ModeAcceptEdits
 	case "antigravity":
 		if bypass {

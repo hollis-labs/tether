@@ -36,6 +36,7 @@ type WorkspaceSpec struct {
 // LaunchProfile captures the stable launch configuration for an agent:
 // role, skills, persona prompts, permissions, and provider overrides.
 type LaunchProfile struct {
+	Route         *Route           `yaml:"route,omitempty" json:"route,omitempty"`
 	ID            string           `yaml:"id" json:"id"`
 	Name          string           `yaml:"name" json:"name"`
 	Roles         []string         `yaml:"roles" json:"roles,omitempty"`

@@ -15,6 +15,9 @@ choose, or re-running live provider smoke tests.
 - [Smoke results](smoke-results.md) - the latest live smoke run against local
   Claude, Codex, and Opencode binaries.
 
+- [Unattended Codex and Antigravity acceptance](unattended-smoke-20261002.md) -
+  isolated Linux live run, bypass profiles, and agy active-turn steering limit.
+
 ## Related References
 
 - [Catalog launch and boot profiles](../catalog-launch-profiles.md)

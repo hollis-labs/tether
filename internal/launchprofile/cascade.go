@@ -324,6 +324,10 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 	}
 
 	for _, p := range chain {
+		if p.Route != nil {
+			resolved.Route = p.Route
+		}
+
 		// ID becomes the leaf ID
 		resolved.ID = p.ID
 

@@ -6,6 +6,7 @@ package launchprofile
 // os.Environ() at start time so fresh parent-env state is captured per
 // launch and overrides are the only values persisted in the plan.
 type Plan struct {
+	Route          *Route `json:"route,omitempty"`
 	LaunchID       string `json:"launch_id"`
 	ProjectID      string `json:"project_id"`
 	LogicalAgentID string `json:"logical_agent_id"`

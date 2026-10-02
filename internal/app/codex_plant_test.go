@@ -55,16 +55,14 @@ func TestPlantedCodexConfig_CarriesThePosture(t *testing.T) {
 				t.Fatalf("planted config.toml: %v", err)
 			}
 			text := string(b)
-			// Both modes map to accept-edits (go-providers' codex posture): the
-			// agent writes its workspace, and codex ASKS rather than refusing, which
-			// is what lets its MCP tool calls be answered (codex_approval.go).
-			for _, want := range []string{`approval_policy = "on-request"`, `sandbox_mode = "workspace-write"`} {
+			sandbox, approval := "workspace-write", "on-request"
+			if tc.mode == config.PermissionModeBypass {
+				sandbox, approval = "danger-full-access", "never"
+			}
+			for _, want := range []string{`approval_policy = "` + approval + `"`, `sandbox_mode = "` + sandbox + `"`} {
 				if !strings.Contains(text, want) {
 					t.Errorf("planted config.toml lacks %s:\n%s", want, text)
 				}
-			}
-			if strings.Contains(text, `approval_policy = "never"`) {
-				t.Errorf("planted config.toml still says approval_policy never:\n%s", text)
 			}
 		})
 	}
