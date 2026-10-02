@@ -16,6 +16,11 @@ func (s *Service) SendInput(id string, data []byte) error {
 		return err
 	}
 	return s.subprocessTurn(id, func() error {
+		if info, ok := s.Manager.Get(id); ok && info.Caps.PTY {
+			// Keystrokes are bytes, not an accepted model turn. A real reduced
+			// event can still open a marker, and semantic SendTurn stays tracked.
+			return s.Manager.SendInput(id, data)
+		}
 		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, data) })
 	})
 }
@@ -61,12 +66,12 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 		if err != nil {
 			return err
 		}
-		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, payload) })
+		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, payload) })
 	case info.Caps.JsonRpcStdio:
-		return s.trackTurnSubmission(id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
+		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
 	default:
 		return s.subprocessTurn(id, func() error {
-			return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, []byte(text)) })
+			return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, []byte(text)) })
 		})
 	}
 }

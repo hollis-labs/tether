@@ -28,11 +28,15 @@ type EventFilter struct {
 // empty; both columns store SQL NULL when so. Timestamp format is
 // RFC3339 nanoseconds in UTC.
 func (s *Store) InsertEvent(scope events.Scope, sessionID, kind, payloadJSON string) (int64, time.Time, error) {
+	return s.InsertEventContext(context.Background(), scope, sessionID, kind, payloadJSON)
+}
+
+func (s *Store) InsertEventContext(ctx context.Context, scope events.Scope, sessionID, kind, payloadJSON string) (int64, time.Time, error) {
 	if scope == "" {
 		return 0, time.Time{}, fmt.Errorf("event scope required")
 	}
 	at := time.Now().UTC()
-	res, err := s.db.Exec(
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO events (scope, session_id, at, kind, payload_json) VALUES (?, ?, ?, ?, ?)`,
 		scope, nullIfEmpty(sessionID), at.Format(time.RFC3339Nano),
 		kind, nullIfEmpty(payloadJSON),
@@ -96,8 +100,12 @@ func (s *Store) ListEventsBySession(sessionID string, limit int, cursor int64) (
 // in the events table, or 0 if the table is empty. Used by the MCP proxy
 // forwarder to subscribe live-only without replaying history.
 func (s *Store) MaxEventSeq() (int64, error) {
+	return s.MaxEventSeqContext(context.Background())
+}
+
+func (s *Store) MaxEventSeqContext(ctx context.Context) (int64, error) {
 	var seq int64
-	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM events`).Scan(&seq)
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM events`).Scan(&seq)
 	return seq, err
 }
 
@@ -112,7 +120,11 @@ func (s *Store) CountEvents() (int, error) {
 // order. Used by the bus to replay history before live delivery.
 // sinceSeq = 0 returns the entire events table.
 func (s *Store) EventsSince(sinceSeq int64) ([]events.Event, error) {
-	rows, err := s.db.Query(
+	return s.EventsSinceContext(context.Background(), sinceSeq)
+}
+
+func (s *Store) EventsSinceContext(ctx context.Context, sinceSeq int64) ([]events.Event, error) {
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, scope, session_id, at, kind, payload_json FROM events WHERE id > ? ORDER BY id ASC`,
 		sinceSeq,
 	)

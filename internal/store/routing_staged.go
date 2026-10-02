@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,18 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	if _, err := messaging.ParseURN(env.From.URN()); err != nil {
 		return messaging.Envelope{}, err
 	}
+	if env.ThreadID != "" && env.ThreadID != env.From.ID {
+		return messaging.Envelope{}, fmt.Errorf("stage turn output: thread must be its session")
+	}
+	if recorded := env.Metadata["session_id"]; recorded != "" && recorded != env.From.ID {
+		return messaging.Envelope{}, fmt.Errorf("stage turn output: session metadata must match sender")
+	}
+	env.ThreadID = env.From.ID
+	env.Metadata = maps.Clone(env.Metadata)
+	if env.Metadata == nil {
+		env.Metadata = make(map[string]string)
+	}
+	env.Metadata["session_id"] = env.From.ID
 	id, err := uuid.NewV7()
 	if err != nil {
 		return messaging.Envelope{}, err

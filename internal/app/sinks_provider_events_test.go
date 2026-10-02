@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
 
@@ -47,5 +48,20 @@ func TestProviderTypedEventCallbackPublishesOnlyDenials(t *testing.T) {
 	}
 	if pub.got[0].PayloadJSON != `{"action":"command","display_name":"RunCommand"}` {
 		t.Errorf("payload = %s", pub.got[0].PayloadJSON)
+	}
+}
+
+type deadlinePublisher struct{ deadline bool }
+
+func (p *deadlinePublisher) Publish(ctx context.Context, _ events.Event) error {
+	deadline, ok := ctx.Deadline()
+	p.deadline = ok && time.Until(deadline) <= 5*time.Second && time.Until(deadline) > 0
+	return nil
+}
+func TestProviderSessionLostCallbackBoundsPersistence(t *testing.T) {
+	pub := &deadlinePublisher{}
+	makeProviderSessionLostCallback(pub, "s1", "agent")("old", "new", "lost")
+	if !pub.deadline {
+		t.Fatal("session-lost callback used unbounded persistence")
 	}
 }

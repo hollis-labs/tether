@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -28,10 +30,15 @@ import (
 type sessionTurnOutput struct {
 	submissionGate   sync.Mutex
 	accepted         bool
+	submissions      int
+	unboundTerminal  *emptyTurnTerminal
+	unboundAmbiguous bool
+	routeUnread      bool
 	completed        map[string]string
 	completedDetails map[string]TurnCompletion
 	completedOrder   []string
 	mu               sync.Mutex
+	runtimeID        string
 	reducer          *turnoutput.Reducer
 	service          *Service
 	row              store.SessionRow
@@ -40,15 +47,16 @@ type sessionTurnOutput struct {
 	reducerTurnID    string
 	turnDone         chan struct{}
 	finishedTurns    []string
-	runtimeID        string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
-	route, err := s.Store.SessionRoute(context.Background(), row.ID)
+	ctx, cancel := s.outputPersistenceContext()
+	defer cancel()
+	route, err := s.Store.SessionRoute(ctx, row.ID)
 	if err != nil {
-		log.Printf("session %q: read output route: %v", row.ID, err)
+		log.Printf("ERROR session %q: read output route; full-text routing unavailable: %v", row.ID, err)
 	}
-	out := &sessionTurnOutput{service: s, row: row, route: route, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
+	out := &sessionTurnOutput{service: s, row: row, route: route, routeUnread: err != nil, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
 	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), QuestionTools: s.questionTools(config.CanonicalRuntimeID(plan.ProviderBrand)), NewTurnID: func() string {
 		out.ensureTurn()
 		out.reducerTurnID = out.turnID
@@ -67,6 +75,13 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
+	} else {
+		switch terminal := ev.(type) {
+		case gopevents.Done:
+			o.emptyTerminal(turnoutput.KindFinal, terminal.StopReason)
+		case gopevents.Error:
+			o.emptyTerminal(turnoutput.KindFailure, "")
+		}
 	}
 }
 
@@ -97,7 +112,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		runtimeevents.KindAgentToolResult, runtimeevents.KindAgentSubagentSpawn, runtimeevents.KindAgentPermissionRequested,
 		runtimeevents.KindAgentPermissionResolved, runtimeevents.KindAgentPermissionDenied,
 		runtimeevents.KindTurnCompleted, runtimeevents.KindTurnFailed:
-		if ev.TurnID != "" {
+		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
 	default:
@@ -106,6 +121,16 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	if result, ok := o.reducer.Observe(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
+	} else if ev.Kind == runtimeevents.KindTurnCompleted || ev.Kind == runtimeevents.KindTurnFailed {
+		var terminal struct {
+			StopReason string `json:"stop_reason"`
+		}
+		_ = json.Unmarshal(ev.Payload, &terminal)
+		kind := turnoutput.KindFinal
+		if ev.Kind == runtimeevents.KindTurnFailed {
+			kind = turnoutput.KindFailure
+		}
+		o.emptyTerminal(kind, terminal.StopReason)
 	}
 }
 
@@ -130,12 +155,17 @@ func (o *sessionTurnOutput) wire(rt agentsessions.Runtime, opts *agentsessions.S
 		return
 	}
 	existing := opts.TypedEventCallback
-	permission := makeProviderTypedEventCallback(o.service.Bus, o.row.ID, o.row.LogicalAgentID)
+	var permission gop.EventsCallback
+	if o.runtimeID == "antigravity" {
+		permission = makeProviderTypedEventCallback(o.service.Bus, o.row.ID, o.row.LogicalAgentID)
+	}
 	opts.TypedEventCallback = gop.EventsCallback(func(ev gopevents.Event) {
 		if existing != nil {
 			existing(ev)
 		}
-		permission(ev)
+		if permission != nil {
+			permission(ev)
+		}
 		o.service.turnFeeds[o.runtimeID].observe(o, ev)
 	})
 }
@@ -147,23 +177,73 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	payload := events.TurnOutputEvent{SessionID: o.row.ID, TurnID: result.TurnID, Kind: result.Kind,
+	job := &turnOutputWrite{row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
+	if err := job.persist(o.service); err != nil {
+		log.Printf("ERROR session %q turn %q: output persistence deferred: %v", o.row.ID, result.TurnID, err)
+		o.route, o.routeUnread = job.route, job.routeUnread
+		o.service.retryTurnOutput(job)
+		return
+	}
+	o.route, o.routeUnread = job.route, job.routeUnread
+}
+
+// A successful stage is retained across event retries: publishing must never
+// create a second durable body for the same output. Each SQL/bus operation has
+// its own budget so a slow metadata read cannot spend the staging budget.
+type turnOutputWrite struct {
+	row         store.SessionRow
+	route       *launchprofile.Route
+	routeUnread bool
+	result      turnoutput.Output
+	messageID   string
+}
+
+func (w *turnOutputWrite) persist(s *Service) error {
+	workstream := ""
+	ctx, cancel := s.outputPersistenceContext()
+	current, err := s.Store.GetSessionContext(ctx, w.row.ID)
+	cancel()
+	if err != nil {
+		return err
+	}
+	workstream = current.WorkstreamID.String
+	if w.routeUnread {
+		ctx, cancel = s.outputPersistenceContext()
+		route, routeErr := s.Store.SessionRoute(ctx, w.row.ID)
+		cancel()
+		if errors.Is(routeErr, context.DeadlineExceeded) || errors.Is(routeErr, context.Canceled) {
+			return routeErr
+		}
+		if routeErr != nil {
+			log.Printf("ERROR session %q: reread output route; full-text routing unavailable: %v", w.row.ID, routeErr)
+		} else {
+			w.route, w.routeUnread = route, false
+		}
+	}
+	result := w.result
+	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
 		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
-		LogicalAgentID: o.row.LogicalAgentID, ProjectID: o.row.ProjectID, WorkstreamID: o.row.WorkstreamID.String}
-	if o.route != nil && slices.Contains(o.route.Kinds, string(result.Kind)) {
+		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID}
+	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
 			Text string `json:"text"`
 		}{result.Text})
-		env, err := o.service.Store.StageTurnOutput(context.Background(), messaging.Envelope{
-			From:     messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: o.row.ID},
-			ThreadID: o.row.ID, Payload: text, ContentType: "application/json",
-			Metadata: map[string]string{"session_id": o.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
+		ctx, cancel = s.outputPersistenceContext()
+		env, stageErr := s.Store.StageTurnOutput(ctx, messaging.Envelope{
+			From:     messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: w.row.ID},
+			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
+			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
 				"stop_reason": result.StopReason, "confidence": string(result.Confidence), "runtime": result.Runtime,
-				"logical_agent_id": o.row.LogicalAgentID, "project_id": o.row.ProjectID, "workstream_id": o.row.WorkstreamID.String},
+				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream},
 		})
-		if err != nil {
-			log.Printf("session %q turn %q: persist output: %v", o.row.ID, result.TurnID, err)
+		cancel()
+		if stageErr != nil {
+			if errors.Is(stageErr, context.DeadlineExceeded) || errors.Is(stageErr, context.Canceled) {
+				return stageErr
+			}
+			log.Printf("ERROR session %q turn %q: full-text output persistence failed: %v", w.row.ID, result.TurnID, stageErr)
 		} else {
+			w.messageID = env.ID
 			payload.MessageID = env.ID
 		}
 	}
@@ -171,10 +251,10 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 		payload.Text, payload.TextTruncated = turnOutputExcerpt(result.Text)
 	}
 	data, _ := json.Marshal(payload)
-	if err := o.service.Bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession, SessionID: o.row.ID,
-		LogicalAgentID: o.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)}); err != nil {
-		log.Printf("session %q turn %q: publish output: %v", o.row.ID, result.TurnID, err)
-	}
+	ctx, cancel = s.outputPersistenceContext()
+	defer cancel()
+	return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
+		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})
 }
 
 func turnOutputExcerpt(text string) (string, bool) {
@@ -187,4 +267,12 @@ func turnOutputExcerpt(text string) (string, bool) {
 		end--
 	}
 	return text[:end], true
+}
+
+func (s *Service) outputPersistenceContext() (context.Context, context.CancelFunc) {
+	timeout := s.turnOutputTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
