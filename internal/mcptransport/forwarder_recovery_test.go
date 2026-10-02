@@ -174,3 +174,49 @@ func TestThinForwarderEndpointLossNeverReplaysSideEffect(t *testing.T) {
 		t.Fatalf("side effect replayed: %q %v", raw, err)
 	}
 }
+
+func TestThinForwarderParallelCallsAfterExpiry(t *testing.T) {
+	f := newTransportFixture(t, true, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	session := thinSession(ctx, t, f, "parallel-expiry")
+	f.handler.mu.Lock()
+	views := make([]*transportView, 0, len(f.handler.views))
+	for view := range f.handler.views {
+		views = append(views, view)
+	}
+	f.handler.mu.Unlock()
+	for _, view := range views {
+		f.handler.remove(view)
+	}
+	if err := os.WriteFile(f.childStarts+".release", []byte("release"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	result := make(chan error, 8)
+	for range 8 {
+		go func() {
+			<-start
+			response, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "app_count"})
+			if err == nil && response.IsError {
+				err = fmt.Errorf("tool failed: %+v", response)
+			}
+			result <- err
+		}()
+	}
+	close(start)
+	for range 8 {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Error("parallel expiry recovery lost call", err)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	body, err := os.ReadFile(f.childStarts + ".effects")
+	if err != nil || string(body) != strings.Repeat("effect\n", 8) {
+		t.Fatalf("parallel call content: %q %v", body, err)
+	}
+}

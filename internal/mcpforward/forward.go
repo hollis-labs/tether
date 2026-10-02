@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"maps"
 	"net"
 	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -135,17 +137,32 @@ func Run(ctx context.Context, dc *client.Client, opts client.MCPOptions, transpo
 // daemonSession serializes initialization, not tool execution. The credential,
 // profile and discovery selector remain frozen through every replacement view.
 type daemonSession struct {
-	mu      sync.Mutex
-	client  *client.Client
-	opts    client.MCPOptions
-	session *mcp.ClientSession
-	done    <-chan struct{}
-	missing *atomic.Bool
+	mu        sync.Mutex
+	client    *client.Client
+	opts      client.MCPOptions
+	session   *mcp.ClientSession
+	done      <-chan struct{}
+	missing   *atomic.Bool
+	users     *sync.WaitGroup
+	transport mcp.Connection
 }
 
 func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*mcp.ClientSession, error) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	var retired *mcp.ClientSession
+	var retiredUsers *sync.WaitGroup
+	var retiredTransport mcp.Connection
+	defer func() {
+		d.mu.Unlock()
+		if retired != nil {
+			go func() {
+				// Preserve admitted calls on the old view. New callers use the
+				// replacement without waiting for those calls or SDK Close.
+				retiredUsers.Wait()
+				closeSession(retired, retiredTransport)
+			}()
+		}
+	}()
 	if d.session != nil && d.session != missing {
 		select {
 		case <-d.done:
@@ -158,7 +175,7 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 		}
 	}
 	if d.session != nil {
-		_ = d.session.Close()
+		retired, retiredUsers, retiredTransport = d.session, d.users, d.transport
 		d.session = nil
 	}
 	setup, cancel := context.WithTimeout(ctx, client.MCPInitializeTimeout)
@@ -166,6 +183,8 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	missingState := &atomic.Bool{}
 	options := d.opts
 	options.OnSessionMissing = func() { missingState.Store(true) }
+	var transport mcp.Connection
+	options.OnTransportConnected = func(connection mcp.Connection) { transport = connection }
 	session, err := d.client.ConnectMCP(setup, options)
 	if err != nil {
 		if setup.Err() != nil {
@@ -175,18 +194,38 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 	}
 	d.session = session
 	d.missing = missingState
+	d.users = &sync.WaitGroup{}
+	d.transport = transport
 	done := make(chan struct{})
 	d.done = done
 	go func() { _ = session.Wait(); close(done) }()
 	return session, nil
 }
 
+func (d *daemonSession) acquire(ctx context.Context) (*mcp.ClientSession, func(), error) {
+	for {
+		session, err := d.get(ctx, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		d.mu.Lock()
+		if d.session == session {
+			users := d.users
+			users.Add(1)
+			d.mu.Unlock()
+			return session, users.Done, nil
+		}
+		d.mu.Unlock()
+	}
+}
+
 func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSession) (mcp.Result, error)) (mcp.Result, error) {
-	session, err := d.get(ctx, nil)
+	session, release, err := d.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result, err := call(session)
+	release()
 	// Missing-session errors may originate from a background stream and retire
 	// unrelated in-flight requests too. Retry only these read-only list/ping
 	// operations. Transport loss can also reconnect a read once; cancellation
@@ -198,7 +237,7 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 		return nil, ctx.Err()
 	}
 	d.mu.Lock()
-	observedMissing := d.session == session && d.missing.Load()
+	observedMissing := d.session != session || d.missing.Load()
 	d.mu.Unlock()
 	if !observedMissing {
 		// A closed transport can race our Wait observer. Read-only operations may
@@ -207,7 +246,7 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 			return result, err
 		}
 		var protocol *jsonrpc.Error
-		if errors.As(err, &protocol) {
+		if errors.As(err, &protocol) && !daemonTransportFailure(err) {
 			return result, err
 		}
 		failure := relayError(err)
@@ -215,10 +254,15 @@ func (d *daemonSession) invokeRead(ctx context.Context, call func(*mcp.ClientSes
 			return result, err
 		}
 	}
-	session, err = d.get(ctx, session)
+	_, err = d.get(ctx, session)
 	if err != nil {
 		return nil, err
 	}
+	session, release, err = d.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return call(session)
 }
 
@@ -231,10 +275,11 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 	}); err != nil {
 		return nil, err
 	}
-	session, err := d.get(ctx, nil)
+	session, release, err := d.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	result, err := session.CallTool(ctx, params)
 	if err != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -244,9 +289,27 @@ func (d *daemonSession) callTool(ctx context.Context, params *mcp.CallToolParams
 
 func (d *daemonSession) close() {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.session != nil {
-		_ = d.session.Close()
+	session, users, transport := d.session, d.users, d.transport
+	d.session = nil
+	d.mu.Unlock()
+	if session != nil {
+		users.Wait()
+		closeSession(session, transport)
+	}
+}
+
+func closeSession(session *mcp.ClientSession, transport mcp.Connection) {
+	done := make(chan struct{})
+	go func() { _ = session.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(client.MCPInitializeTimeout):
+		// All relay calls have already returned. Bound SDK teardown separately
+		// from their lifetimes; raw transport Close bounds its DELETE to 5s.
+		slog.Warn("daemon MCP session close exceeded its deadline")
+		if transport != nil {
+			_ = transport.Close()
+		}
 	}
 }
 
