@@ -194,6 +194,7 @@ func TestMessagePurge_Delivered_HappyPathAndIdempotent(t *testing.T) {
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("second purge: status=%d, want 200 (idempotent, not an error)", resp2.StatusCode)
 	}
+	assertPurgeReceipt(t, db, id, "msg://agent/test/operator")
 	if out2.Purged {
 		t.Fatalf("second purge: %+v, want purged=false (already purged)", out2)
 	}
@@ -238,5 +239,74 @@ func TestMessageRetention_NotConfigured_404(t *testing.T) {
 	resp2, _ := postPurge(t, srv.URL, id, map[string]any{"authorized_by": "msg://agent/test/operator"})
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("purge status = %d, want 404", resp2.StatusCode)
+	}
+}
+
+// Verify the validated HTTP author reaches durable storage, not just a log.
+func assertPurgeReceipt(t *testing.T, db *store.Store, id, author string) {
+	t.Helper()
+	var table, messageID, authorizedBy, at string
+	if err := db.DB().QueryRow(`SELECT table_name,message_id,authorized_by,at FROM message_purge_audit WHERE message_id=?`, id).Scan(&table, &messageID, &authorizedBy, &at); err != nil {
+		t.Fatal(err)
+	}
+	if table != "messages" || messageID != id || authorizedBy != author {
+		t.Fatalf("receipt: %s %s %s", table, messageID, authorizedBy)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, at); err != nil {
+		t.Fatalf("receipt time: %v", err)
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM message_purge_audit WHERE message_id=?`, id).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("duplicate/missing receipt: %d, %v", count, err)
+	}
+}
+
+func TestMessagePurge_AuditFailureReturns500AndKeepsBody(t *testing.T) {
+	base, db := newRetentionTestServer(t)
+	id := sendAPIRetentionMessage(t, db)
+	to := messaging.Address{Kind: messaging.KindAgent, Authority: "test", ID: "worker"}
+	if err := db.MessagingStore().Consume(context.Background(), id, to); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`CREATE TRIGGER reject_message_purge_audit BEFORE INSERT ON message_purge_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := postPurge(t, base, id, map[string]any{"authorized_by": "msg://agent/test/operator"})
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status=%d want 500", resp.StatusCode)
+	}
+	env, err := db.MessagingStore().Get(context.Background(), id)
+	if err != nil || string(env.Payload) != `{"body":"hello"}` {
+		t.Fatalf("failed audit lost body: %+v, %v", env, err)
+	}
+	if _, err := db.DB().Exec(`DROP TRIGGER reject_message_purge_audit`); err != nil {
+		t.Fatal(err)
+	}
+	resp, out := postPurge(t, base, id, map[string]any{"authorized_by": "msg://agent/test/operator"})
+	if resp.StatusCode != http.StatusOK || !out.Purged {
+		t.Fatalf("retry: %d %+v", resp.StatusCode, out)
+	}
+	assertPurgeReceipt(t, db, id, "msg://agent/test/operator")
+}
+
+func TestMessagePurge_RefusedRequestsLeaveNoAudit(t *testing.T) {
+	base, db := newRetentionTestServer(t)
+	id := sendAPIRetentionMessage(t, db)
+	for _, tc := range []struct {
+		id, author string
+		status     int
+	}{
+		{id, "", http.StatusBadRequest}, {id, "not-a-urn", http.StatusBadRequest},
+		{id, "msg://agent/test/operator", http.StatusConflict},
+		{"missing", "msg://agent/test/operator", http.StatusNotFound},
+	} {
+		resp, _ := postPurge(t, base, tc.id, map[string]any{"authorized_by": tc.author})
+		if resp.StatusCode != tc.status {
+			t.Fatalf("%s %q status %d want %d", tc.id, tc.author, resp.StatusCode, tc.status)
+		}
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM message_purge_audit`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("refusal wrote receipt: %d, %v", count, err)
 	}
 }
