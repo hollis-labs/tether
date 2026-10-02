@@ -20,7 +20,11 @@ func (a *Adapter) withCallerContext(ctx context.Context) context.Context {
 		return ctx
 	}
 	if _, verified := identity.FromContext(ctx); verified && a.svc != nil && a.svc.Store != nil {
-		return callcontext.WithSnapshot(ctx, api.ResolveCallerContext(ctx, a.svc.Store, a.svc.Registry))
+		var bindings api.CallerBindingLookup
+		if a.svc.Registry != nil {
+			bindings = a.svc.Registry
+		}
+		return callcontext.WithSnapshot(ctx, api.ResolveCallerContext(ctx, a.svc.Store, bindings))
 	}
 	resolve := a.callerContextResolver
 	if resolve == nil && a.client != nil {

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 type subscribedForwardBus struct {
@@ -46,7 +48,12 @@ func TestProxyEventForwarderCarriesSessionCredential(t *testing.T) {
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	bus := &subscribedForwardBus{Bus: events.NewBus(events.BusOptions{}), ready: make(chan struct{})}
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bus := &subscribedForwardBus{Bus: events.NewBus(events.BusOptions{Persister: db}), ready: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

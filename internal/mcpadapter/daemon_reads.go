@@ -143,6 +143,7 @@ func (d DaemonProxyEvents) QueryProxyEvents(f store.ProxyEventFilter) ([]store.P
 	for _, e := range dtos {
 		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
 		out = append(out, store.ProxyEvent{
+			Attribution: e.Attribution, ClaimedSessionID: e.ClaimedSessionID,
 			ID: e.ID, SessionID: e.SessionID, Server: e.Server, ToolName: e.ToolName,
 			ArgsSchemaFP: e.ArgsSchemaFP, DurationMs: e.DurationMs, OK: e.OK, Error: e.Error, Timestamp: ts,
 		})
