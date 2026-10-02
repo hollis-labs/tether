@@ -8,7 +8,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0
-	github.com/hollis-labs/agentkit v0.23.1
+	github.com/hollis-labs/agentkit v0.25.0
 	github.com/hollis-labs/go-agent-wrapper v0.27.2
 	github.com/hollis-labs/go-apppaths v0.1.0
 	github.com/hollis-labs/go-llm-types v0.5.1
@@ -18,7 +18,7 @@ require (
 	github.com/hollis-labs/go-modelsdev v0.2.0
 	github.com/hollis-labs/go-otel v0.6.1
 	github.com/hollis-labs/go-permission v0.1.0
-	github.com/hollis-labs/go-providers v0.45.0
+	github.com/hollis-labs/go-providers v0.46.0
 	github.com/hollis-labs/go-runner v0.8.2
 	github.com/hollis-labs/go-runtime-events v0.2.2
 	github.com/hollis-labs/go-sandbox v0.6.0
