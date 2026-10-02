@@ -149,3 +149,20 @@ func IsObserved(ctx context.Context) bool {
 	_, ok := ctx.Value(observationKey{}).(*Observation)
 	return ok
 }
+
+// NativeErrorClass classifies Tether's structured error codes. It must only be
+// used at a native boundary: an upstream's arbitrary code is not our policy.
+func NativeErrorClass(code string) events.ToolErrorClass {
+	switch code {
+	case "auth_required", "insufficient_scope", "forbidden":
+		return events.ToolErrorDenied
+	case "invalid_request", "bad_request", "invalid_argument":
+		return events.ToolErrorValidation
+	case "daemon_unavailable":
+		return events.ToolErrorUpstreamDown
+	case "timeout":
+		return events.ToolErrorTimeout
+	default:
+		return events.ToolErrorUpstream
+	}
+}

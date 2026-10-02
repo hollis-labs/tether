@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,4 +111,40 @@ func (p *callCapturePublisher) Publish(_ context.Context, event events.Event) er
 	}
 	p.calls = append(p.calls, call)
 	return nil
+}
+
+func TestTelemetryNativeProtocolBoundaryKeepsTypedDenialsAndScrubsStructuredError(t *testing.T) {
+	native := gomcp.NewServer("native", "test")
+	a := &Adapter{}
+	a.addTool(native, gomcp.Tool{Name: "native_denied", InputSchema: map[string]any{"type": "object"}, Handler: func(context.Context, map[string]any) (any, error) {
+		return nil, toolError("insufficient_scope", "CREDENTIAL-CANARY")
+	}}, Writes())
+	client := connectInMemory(t, native)
+	registry := NewToolRegistry()
+	if err := registry.RegisterLocal(&mcpsdk.Tool{Name: "native_denied"}, client); err != nil {
+		t.Fatal(err)
+	}
+	router := NewProxyRouter(registry)
+	publisher := &callCapturePublisher{}
+	secrets := &redact.Set{}
+	secrets.Add("CREDENTIAL-CANARY")
+	result, err := NewLoggingMiddleware(publisher).RedactWith(secrets).Handle(context.Background(), ToolCall{ToolName: "native_denied"}, router.Handle)
+	if err != nil || !result.IsError {
+		t.Fatal(result, err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "CREDENTIAL-CANARY") {
+		t.Fatal("credential in structured caller error")
+	}
+	for _, call := range publisher.calls {
+		if call.ErrorClass != "" && call.ErrorClass != events.ToolErrorDenied {
+			t.Fatalf("native denial misclassified: %+v", call)
+		}
+	}
+	if len(publisher.calls) != 2 || publisher.calls[1].ErrorClass != events.ToolErrorDenied {
+		t.Fatal(publisher.calls)
+	}
 }

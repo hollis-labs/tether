@@ -105,7 +105,11 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 		}
 	} else if result != nil && result.IsError {
 		// Copy content before scrubbing: an upstream may retain its own result.
+		if serverIDFromContext(ctx) == "" {
+			out.Class = nativeResultClass(result)
+		}
 		copyResult := *result
+		copyResult.StructuredContent = scrubStructuredError(result.StructuredContent, m.secrets)
 		copyResult.Content = append([]mcpsdk.Content(nil), result.Content...)
 		for i, c := range result.Content {
 			if tc, ok := c.(*mcpsdk.TextContent); ok {
