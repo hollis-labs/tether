@@ -399,3 +399,30 @@ func TestRoutingReplySweepQueriesUseTheStateIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestMailboxVerbsOnAReplyAreRefusedAndTheRowIsUntouched(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	r, _, _ := db.CreateRoutingReply(ctx, newReply("deliver me"))
+	ms := db.MessagingStore()
+	to := store.RoutingReplyAddress
+	for name, call := range map[string]func() error{
+		"cancel":    func() error { return ms.Cancel(ctx, r.ReplyID) },
+		"consume":   func() error { return ms.Consume(ctx, r.ReplyID, to) },
+		"mark read": func() error { return ms.MarkRead(ctx, r.ReplyID, to) },
+		"archive":   func() error { return ms.Archive(ctx, r.ReplyID, to) },
+		"unarchive": func() error { return ms.Unarchive(ctx, r.ReplyID, to) },
+	} {
+		if err := call(); !errors.Is(err, store.ErrRoutingReplyNotMailbox) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	var canceled, consumed, read, archived *string
+	if err := db.DB().QueryRow(`SELECT canceled_at, consumed_at, read_at, archived_at FROM messages WHERE id=?`, r.ReplyID).
+		Scan(&canceled, &consumed, &read, &archived); err != nil {
+		t.Fatal(err)
+	}
+	if canceled != nil || consumed != nil || read != nil || archived != nil {
+		t.Fatalf("a refused verb changed the row: %v %v %v %v", canceled, consumed, read, archived)
+	}
+}

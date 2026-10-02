@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -393,5 +394,114 @@ func TestNotifyWithInReplyToAnOrdinaryMessageStillWakes(t *testing.T) {
 	var out messageNotifyResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || !out.WakeAttempted || out.RoutingReply != nil || len(svc.requests) != 0 {
 		t.Fatalf("an ordinary notify reply changed: %+v %v requests=%d", out, err, len(svc.requests))
+	}
+}
+
+// A reply is delivered by the dispatcher. A mailbox verb aimed at its message row
+// used to return 204 while the reply was still injected, leaving a row that was
+// both canceled and consumed: refuse every one, and change nothing.
+func TestMailboxVerbsAreRefusedOnAReplyAndChangeNothing(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	ctx := context.Background()
+	parent := routedMessage(t, db)
+	reply, _, err := db.CreateRoutingReply(ctx, store.NewRoutingReply{
+		From: messaging.Address{Kind: messaging.KindUser, Authority: "local", ID: "chris"}, ParentID: parent.ID, Body: "x",
+		TargetSessionID: "s1", Actor: "msg://user/local/chris"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.delivery = RoutingReplyDelivery{ReplyID: reply.ReplyID, State: "queued"}
+	as := "?as=" + store.RoutingReplyAddress.URN()
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/messages/" + reply.ReplyID + "/cancel" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/consume" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/read" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/archive" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/unarchive" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/claim"},
+		{"POST", "/messages/" + reply.ReplyID + "/ack"},
+		{"POST", "/messages/" + reply.ReplyID + "/nack"},
+		{"POST", "/messages/" + reply.ReplyID + "/redrive"},
+		{"DELETE", "/messages/" + reply.ReplyID + as},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader([]byte("{}")))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest || errorCode(t, w) != CodeReplyNotMailbox {
+			t.Errorf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body)
+		}
+	}
+	var canceled, consumed, read, archived *string
+	if err := db.DB().QueryRow(`SELECT canceled_at, consumed_at, read_at, archived_at FROM messages WHERE id=?`, reply.ReplyID).
+		Scan(&canceled, &consumed, &read, &archived); err != nil {
+		t.Fatal(err)
+	}
+	if canceled != nil || consumed != nil || read != nil || archived != nil {
+		t.Fatalf("a refused mailbox verb changed the row: canceled=%v consumed=%v read=%v archived=%v", canceled, consumed, read, archived)
+	}
+	if got, _ := db.RoutingReply(ctx, reply.ReplyID); got.State != store.RoutingReplyQueued {
+		t.Fatalf("reply = %+v", got)
+	}
+	// Its delivery state, and the message itself for its sender, stay readable.
+	dw := httptest.NewRecorder()
+	h.ServeHTTP(dw, httptest.NewRequest(http.MethodGet, "/messages/"+reply.ReplyID+"/delivery", nil))
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delivery: %d %s", dw.Code, dw.Body)
+	}
+	gw := httptest.NewRecorder()
+	h.ServeHTTP(gw, httptest.NewRequest(http.MethodGet, "/messages/"+reply.ReplyID+"?as=msg://user/local/chris", nil))
+	if gw.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", gw.Code, gw.Body)
+	}
+}
+
+func TestAnOversizedReplyRequestIs413NotA400AndNeverReachesTheService(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	path := "/messages/" + parent.ID + "/reply?as=msg://user/local/chris"
+	for name, body := range map[string]string{
+		"just over the cap": `{"body":"` + strings.Repeat("a", maxReplyRequestBytes) + `"}`,
+		"far over the cap":  `{"body":"` + strings.Repeat("a", 3*maxReplyRequestBytes) + `"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusRequestEntityTooLarge || errorCode(t, w) != CodePayloadTooLarge {
+			t.Errorf("%s: %d %.200s", name, w.Code, w.Body)
+		}
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("an oversized request reached the service: %d", len(svc.requests))
+	}
+}
+
+func TestAReplyRequestWithAnUnknownFieldIsRefusedNotSilentlyAPlainReply(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	path := "/messages/" + parent.ID + "/reply?as=msg://user/local/chris"
+	// A misspelled "interrupt" would have queued a reply that does not interrupt. The
+	// misspelling is built, not written, so the spell checker has nothing to flag.
+	typo := strings.Replace("interrupt", "rr", "r", 1)
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"body":"stop now","`+typo+`":true}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || errorCode(t, w) != CodeInvalidRequest || !strings.Contains(w.Body.String(), typo) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("reached the service: %+v", svc.requests)
+	}
+}
+
+func TestTheNewReplyErrorsAreTyped(t *testing.T) {
+	svc := &fakeReplies{err: ErrReplyNoTurnFeed}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	w := post(h, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", map[string]any{"body": "x"}, nil)
+	if w.Code != http.StatusConflict || errorCode(t, w) != CodeTurnFeedUnavailable {
+		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
