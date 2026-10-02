@@ -79,7 +79,10 @@ channels.Service.AttachExisting(ctx, channels.ExistingMessage{
 selected kind, and invokes the normal channel publication authorization hook
 before opening the transaction. The router supplies the session URN as the
 publisher principal and envelope sender; `msg://service/local/turn-router` is
-the audit actor. A denial leaves the stage hidden for retry.
+the audit actor. The router does not synthesize token scopes. A future
+scope-based authorization policy must explicitly authorize trusted daemon-internal
+routing; identifying the session sender alone does not supply token grants.
+A denial leaves the stage hidden for retry.
 
 One transaction releases the existing body, addresses it to the channel, uses the
 session ID as its thread, indexes the publication, and records durable
@@ -87,7 +90,11 @@ session ID as its thread, indexes the publication, and records durable
 message IDs. Repeating the same attachment returns the original envelope without
 another body, publication or audit. A conflicting destination or sender fails.
 This path never calls ordinary send, mailbox fanout or delivery enqueue. The audit
-is committed directly with publication and is available in durable event history.
+is committed directly with publication and is available in durable event history,
+not through live bus/SSE fanout. Channel history follows publication commit order;
+if a turn is temporarily denied, a later turn can attach first. Session and turn
+metadata identify the original outputs; channel order does not promise model-turn
+order across retries.
 
 The original turn metadata remains on the channel message, with `launch_id` and
 `launch_display_name` added. The catalog launch currently has no separate display
@@ -109,3 +116,18 @@ replace an API/CLI route override on resume. Legacy checkpoints without a source
 session retain catalog resolution. The daemon's close hook calls `Service.Close`
 after draining sessions, so unfinished output is flushed before the router joins
 and storage closes.
+
+## Persistence and submission boundaries
+
+Turn publication uses a bounded five-second persistence context. Storage failures
+are logged; a failed body write never supplies a message ID. A corrupt stored
+route is logged and retried at subsequent output, without inventing route defaults.
+Workstream metadata is read at publication, so assignment changes apply to later
+turns. The legacy `provider.permission_denied` event remains antigravity-only;
+the turn reducer still runs for every runtime with its installed detectors.
+
+Raw PTY input is a stream of keystrokes and does not prime a model-turn marker.
+Semantic `SendTurn` and non-PTY `SendInput` publish provisional markers before
+runtime entry. Concurrent steering shares that marker: a failed submission cannot
+settle another accepted or still-pending submission. Reduced runtime events can
+open and accept a marker before a submission returns.

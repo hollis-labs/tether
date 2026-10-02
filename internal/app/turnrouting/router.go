@@ -49,7 +49,7 @@ func New(db *store.Store, bus events.Bus, channelService *channels.Service) *Rou
 }
 
 func (r *Router) subscribe(ctx context.Context) (<-chan events.Event, func(), error) {
-	seq, err := r.db.MaxEventSeq()
+	seq, err := r.db.MaxEventSeqContext(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

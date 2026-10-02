@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,7 +44,6 @@ import (
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
-	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/store"
@@ -149,8 +149,15 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		var closeOnce sync.Once
+		var closeErr error
+		closeService := func() error {
+			closeOnce.Do(func() { closeErr = svc.Close() })
+			return closeErr
+		}
+		defer func() { _ = closeService() }()
 		if _, err := svc.Catalog.Global.Daemon.MCPUpstreamOwnership(); err != nil {
-			_ = svc.Store.Close()
+			_ = closeService()
 			return err
 		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
@@ -193,11 +200,11 @@ var daemonRunCmd = &cobra.Command{
 
 		cfg, err := daemonConfigFromCatalog(svc.Catalog)
 		if err != nil {
-			_ = svc.Store.Close()
+			_ = closeService()
 			return err
 		}
 		if err := identity.ValidateBind(cfg.ListenAddr, cfg.IdentityMode); err != nil {
-			_ = svc.Store.Close()
+			_ = closeService()
 			return err
 		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
@@ -218,13 +225,13 @@ var daemonRunCmd = &cobra.Command{
 			identities = identity.NewStore(svc.Store.DB())
 			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), cfg.IdentityMode)
 			if err != nil {
-				_ = svc.Store.Close()
+				_ = closeService()
 				return err
 			}
 		}
 		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities)
 		if err != nil {
-			_ = svc.Store.Close()
+			_ = closeService()
 			return err
 		}
 		server := &daemon.Server{
@@ -247,7 +254,7 @@ var daemonRunCmd = &cobra.Command{
 			SessionRefs:              svc.Store,
 			Digests:                  svc.Store,
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
-			Channels:                 channels.New(svc.Store, nil),
+			Channels:                 svc.Channels,
 			Routing:                  svc,
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
@@ -277,7 +284,7 @@ var daemonRunCmd = &cobra.Command{
 			A2A:              a2aHandler,
 			// Complete reducer persistence and join the routing worker before
 			// closing the store, even after the server has drained sessions.
-			Close: svc.Close,
+			Close: closeService,
 		}
 
 		if mcpHandler != nil {

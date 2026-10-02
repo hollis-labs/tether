@@ -13,6 +13,9 @@ import (
 )
 
 type Input struct {
+	// RouteOverrideSet preserves an explicit absent route during resume.
+	RouteOverrideSet    bool
+	RouteOverride       *launchprofile.Route
 	LaunchID            string
 	CatalogRoot         string
 	SkipPromptFragments bool
@@ -134,6 +137,9 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	routeInput := agent.Route
 	if l.Route != nil {
 		routeInput = l.Route
+	}
+	if in.RouteOverrideSet {
+		routeInput = in.RouteOverride
 	}
 	route, err := launchprofile.ResolveRoute(routeInput)
 	if err != nil {

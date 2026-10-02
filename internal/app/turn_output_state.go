@@ -50,13 +50,12 @@ func (o *sessionTurnOutput) CompletedTurn(markerID string) (string, bool) {
 }
 
 // ensureTurn is called with mu held. Submission and steering share one marker.
-func (o *sessionTurnOutput) ensureTurn() bool {
+func (o *sessionTurnOutput) ensureTurn() {
 	if o.turnID != "" {
-		return false
+		return
 	}
 	o.turnID = runtimeevents.NewTurnID()
 	o.turnDone = make(chan struct{})
-	return true
 }
 
 // bindTurn associates a raw runtime turn with a stable submission snapshot.
@@ -96,6 +95,7 @@ func (o *sessionTurnOutput) settleTurn() {
 		close(o.turnDone)
 	}
 	o.accepted = false
+	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
 	o.turnDone = nil
@@ -112,16 +112,18 @@ func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 	output := value.(*sessionTurnOutput)
 	unlock := output.LockSubmission()
 	output.mu.Lock()
-	created := output.ensureTurn()
+	output.ensureTurn()
+	output.submissions++
 	done := output.turnDone
 	output.mu.Unlock()
 	unlock()
 	err := submit()
 	output.mu.Lock()
 	if output.turnDone == done {
+		output.submissions--
 		if err == nil {
 			output.accepted = true
-		} else if created {
+		} else if output.submissions == 0 && !output.accepted {
 			output.settleTurn()
 		}
 	}

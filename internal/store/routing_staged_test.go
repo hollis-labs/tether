@@ -131,3 +131,41 @@ func TestStagedOutputSurvivesRestartAndExpiresForRetention(t *testing.T) {
 		t.Fatalf("purged stage exposed: %+v %v", rows, err)
 	}
 }
+
+func TestStageOutputRejectsForeignSessionEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		from   messaging.Address
+		thread string
+		meta   map[string]string
+	}{
+		{"non-session", messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: "s1"}, "s1", nil},
+		{"foreign authority", messaging.Address{Kind: messaging.KindSession, Authority: "remote", ID: "s1"}, "s1", nil},
+		{"foreign thread", messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}, "other", nil},
+		{"foreign metadata", messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}, "s1", map[string]string{"session_id": "other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openRetentionDB(t)
+			if _, err := db.StageTurnOutput(context.Background(), messaging.Envelope{From: tc.from, ThreadID: tc.thread, Metadata: tc.meta, Payload: []byte(`{"text":"answer"}`)}); err == nil {
+				t.Fatal("staged foreign envelope")
+			}
+		})
+	}
+}
+func TestStageRetentionProtectsTwentyNineDaysAndExpiresAfterThirty(t *testing.T) {
+	db := openRetentionDB(t)
+	for _, days := range []int{29, 31} {
+		env := stageOutput(t, db)
+		if _, err := db.DB().Exec(`UPDATE messages SET created_at=? WHERE id=?`, time.Now().Add(-time.Duration(days)*24*time.Hour).UTC().Format(time.RFC3339Nano), env.ID); err != nil {
+			t.Fatal(err)
+		}
+		purged, err := db.PurgeMessageBody(context.Background(), env.ID, "msg://user/local/operator")
+		if days == 29 {
+			if !errors.Is(err, store.ErrPendingObligation) || purged {
+				t.Fatalf("29-day stage lost: %v %v", purged, err)
+			}
+		} else if err != nil || !purged {
+			t.Fatalf("31-day stage retained: %v %v", purged, err)
+		}
+	}
+}

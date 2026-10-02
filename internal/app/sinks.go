@@ -284,7 +284,9 @@ func makeProviderTypedEventCallback(bus events.Publisher, sessionID, logicalAgen
 		if !ok {
 			return
 		}
-		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindProviderPermissionDenied, struct {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		publishSessionEventContext(ctx, bus, sessionID, logicalAgentID, events.KindProviderPermissionDenied, struct {
 			Action      string `json:"action"`
 			DisplayName string `json:"display_name"`
 		}{d.Action, d.DisplayName})
@@ -292,6 +294,10 @@ func makeProviderTypedEventCallback(bus events.Publisher, sessionID, logicalAgen
 }
 
 func publishSessionEvent(bus events.Publisher, sessionID, logicalAgentID, kind string, payload any) {
+	publishSessionEventContext(context.Background(), bus, sessionID, logicalAgentID, kind, payload)
+}
+
+func publishSessionEventContext(ctx context.Context, bus events.Publisher, sessionID, logicalAgentID, kind string, payload any) {
 	if bus == nil {
 		return
 	}
@@ -299,7 +305,7 @@ func publishSessionEvent(bus events.Publisher, sessionID, logicalAgentID, kind s
 	if err != nil {
 		return
 	}
-	_ = bus.Publish(context.Background(), events.Event{
+	_ = bus.Publish(ctx, events.Event{
 		Scope:          events.ScopeSession,
 		SessionID:      sessionID,
 		LogicalAgentID: logicalAgentID,

@@ -28,6 +28,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/settings"
@@ -48,9 +49,11 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
-	turnRouter  *turnrouting.Router
-	turnFeeds   map[string]turnFeedRegistration
-	turnOutputs sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	Channels          *channels.Service // constructed before starting any channel publisher
+	turnOutputTimeout time.Duration     // tests may shorten the default persistence deadline
+	turnRouter        *turnrouting.Router
+	turnFeeds         map[string]turnFeedRegistration
+	turnOutputs       sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
 
 	CatalogRoot string
 	Catalog     *config.Catalog
@@ -245,6 +248,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Settings:    setSvc,
 		factories:   factories,
 	}
+	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {
 		if err := service.startTurnRouter(); err != nil {

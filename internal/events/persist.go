@@ -1,6 +1,9 @@
 package events
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Persister is the storage sink the Bus writes each published event
 // to. Implementations live outside this package (internal/store) to
@@ -18,4 +21,11 @@ import "time"
 type Persister interface {
 	InsertEvent(scope Scope, sessionID, kind, payloadJSON string) (seq int64, at time.Time, err error)
 	EventsSince(sinceSeq int64) ([]Event, error)
+}
+
+// ContextPersister bounds production persistence and replay. The older seam is
+// retained for in-memory embedders; Tether's SQL store implements this one.
+type ContextPersister interface {
+	InsertEventContext(context.Context, Scope, string, string, string) (int64, time.Time, error)
+	EventsSinceContext(context.Context, int64) ([]Event, error)
 }

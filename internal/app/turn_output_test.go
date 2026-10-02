@@ -176,8 +176,8 @@ func TestEveryNativeLaunchHasChainedTypedCallback(t *testing.T) {
 			for _, ev := range all {
 				found = found || ev.Kind == events.KindProviderPermissionDenied
 			}
-			if !found {
-				t.Fatal("permission event lost")
+			if found != (brand == "antigravity") {
+				t.Fatalf("legacy permission event changed for runtime %s: %v", brand, found)
 			}
 		})
 	}
