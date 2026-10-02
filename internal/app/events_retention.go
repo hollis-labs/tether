@@ -39,7 +39,7 @@ func (r RetentionSweep) Total() int64 {
 }
 
 // SweepEventRetention exposes a structured result for future consumers.
-// The same catalog knob governs all three histories; disabled means no writes.
+// The same catalog knob governs event histories and identity audit; disabled means no writes.
 func (s *Service) SweepEventRetention(ctx context.Context) (RetentionSweep, error) {
 	result := RetentionSweep{Removed: map[string]int64{}}
 	window := s.eventsRetention()
@@ -47,7 +47,7 @@ func (s *Service) SweepEventRetention(ctx context.Context) (RetentionSweep, erro
 		return result, nil
 	}
 	result.Cutoff = time.Now().Add(-window)
-	for _, table := range []string{"events", "proxy_events", "ai_events"} {
+	for _, table := range []string{"events", "proxy_events", "ai_events", "identity_audit"} {
 		result.Removed[table] = 0
 		for {
 			batch, err := s.Store.DeleteEventHistoryBefore(ctx, table, result.Cutoff, eventsRetentionBatch)

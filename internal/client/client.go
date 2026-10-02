@@ -33,8 +33,10 @@ var ErrDaemonUnreachable = errors.New("daemon unreachable")
 
 // Client talks to a tetherd daemon listening at ListenAddr.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL                            string
+	http                               *http.Client
+	token, tokenFile, defaultTokenFile string
+	tokenSet, tokenFileSet             bool
 }
 
 // MessageEnvelopeDTO is the daemon's /messages envelope shape as consumed by
@@ -148,12 +150,19 @@ type EventsHistoryQuery struct {
 
 // New constructs a Client for the given listen_addr. The transport handles
 // unix: and tcp: schemes the same way daemon.Server accepts them.
-func New(listenAddr string) *Client {
+func New(listenAddr string, opts ...Option) *Client {
 	httpClient := withTracing(daemon.DialHTTPClient(listenAddr))
-	return &Client{
+	c := &Client{
 		baseURL: daemon.BaseURL(listenAddr),
 		http:    httpClient,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	if err := c.configureCredentials(); err != nil {
+		c.http.Transport = &credentialTransport{base: c.http.Transport, err: &credentialError{cause: err}}
+	}
+	return c
 }
 
 // Ping issues a short GET /health to verify the daemon is reachable. It
@@ -1382,6 +1391,10 @@ func wrapIfUnreachable(err error) error {
 
 func isUnreachable(err error) bool {
 	if err == nil {
+		return false
+	}
+	var credential *credentialError
+	if errors.As(err, &credential) {
 		return false
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {

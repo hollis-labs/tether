@@ -18,7 +18,8 @@ var ErrUnknownSandboxProfile = errors.New("unknown sandbox profile")
 // Validate checks the whole catalog at load. It does not fail on an agent
 // that names an unknown sandbox profile: that would take down every launch
 // for one bad agent entry. SandboxIssues reports those, and ValidateLaunch
-// and AgentSandbox refuse the affected launches.
+// and AgentSandbox refuse the affected launches. MCP grants are checked explicitly
+// at daemon startup/doctor and per selected launch, keeping inspection available.
 func (c *Catalog) Validate() error {
 	for id := range c.Launches {
 		if err := c.validateLaunchRefs(id); err != nil {
@@ -76,6 +77,9 @@ func (c *Catalog) Validate() error {
 // must be well formed, and its agent's sandbox profile, if it names one,
 // must be defined. The launch path runs it for the launch being created.
 func (c *Catalog) ValidateLaunch(id string) error {
+	if err := c.ValidateLaunchMCPGrants(id); err != nil {
+		return err
+	}
 	if err := c.validateLaunchRefs(id); err != nil {
 		return err
 	}

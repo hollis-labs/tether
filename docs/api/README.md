@@ -1001,7 +1001,7 @@ daemon:
 ```
 
 This is daemon-wide app configuration, not the project/user onboarding settings
-cascade. The same window applies to all three event histories; inserts no longer
+cascade. The same window applies to all three event histories and credential audit; inserts no longer
 evict proxy or AI records at 2,000 rows. Query limits still bound response size.
 `tether doctor` and `tether settings` (also `--json`) show the effective catalog
 value. They report catalog configuration, which the daemon applies on restart,
@@ -1019,6 +1019,8 @@ does not open the state database.
 | `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
 | `messages` | Indefinite structural rows; explicit manual body purge only | `/messages/retention/candidates` and `/messages/{id}/purge` preserve pending/repairable obligations; this knob does not purge bodies |
 | `retention_audit` | Indefinite; outside automatic sweep | Durable sweep receipts, independent of expiring event history |
+| `principals` | Indefinite; outside automatic sweep | Identity and revocation history; no automatic credential/principal deletion |
+| `identity_audit` | Same `daemon.events_retention` window (default 90 days) | Credential-bearing request receipts; purge is audited, queue overflow/failure counters are in health/doctor |
 
 **Existing installs:** unless explicitly disabled, the first sweep deletes rows
 older than the configured window. Back up the state database before cutover.

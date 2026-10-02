@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -326,8 +327,16 @@ func writeIdempotencyConflict(w http.ResponseWriter, err error) bool {
 // handleLaunchSession services POST /sessions/{id}/launch — the start
 // leg of the split. Returns 200 on successful transition to running,
 // 409 when the session is not in 'created' state, 404 when not found.
-func (s *Server) handleLaunchSession(w http.ResponseWriter, _ *http.Request, id string) {
-	res, err := s.Service.LaunchSession(id)
+func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id string) {
+	var res LaunchResult
+	var err error
+	if contextual, ok := s.Service.(interface {
+		LaunchSessionWithContext(context.Context, string) (LaunchResult, error)
+	}); ok {
+		res, err = contextual.LaunchSessionWithContext(r.Context(), id)
+	} else {
+		res, err = s.Service.LaunchSession(id)
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")

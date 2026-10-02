@@ -9,6 +9,7 @@ import (
 )
 
 var catalogPath string
+var tokenFilePath string
 
 var rootCmd = &cobra.Command{
 	Use:     "tether",
@@ -23,6 +24,7 @@ func init() {
 	// --catalog explicitly rather than silently hitting the wrong path.
 	home, _ := os.UserHomeDir()
 	defaultCatalog := filepath.Join(home, ".tether", "catalog")
+	rootCmd.PersistentFlags().StringVar(&tokenFilePath, "token-file", "", "bearer credential file (overrides TETHER_TOKEN and operator.token)")
 	rootCmd.PersistentFlags().StringVar(&catalogPath, "catalog", defaultCatalog, "catalog root directory")
 	rootCmd.SetVersionTemplate(fmt.Sprintf("tether %s (commit %s, built %s)\n", version, commit, buildDate))
 	rootCmd.AddCommand(projectsCmd, agentsCmd, resolveCmd, launchCmd, sessionsCmd, daemonCmd, workspacesCmd, bootPromptsCmd, mcpCmd, acpCmd, messagesCmd, aiCmd, eventsCmd)

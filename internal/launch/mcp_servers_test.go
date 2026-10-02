@@ -16,8 +16,8 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}{
 		{"nil env", nil, def},
 		{"unset", map[string]string{"OTHER": "x"}, def},
-		{"empty", map[string]string{MCPServersEnv: ""}, def},
-		{"only separators and blanks", map[string]string{MCPServersEnv: " , ,"}, def},
+		{"empty grants none", map[string]string{MCPServersEnv: ""}, nil},
+		{"only separators and blanks", map[string]string{MCPServersEnv: " , ,"}, nil},
 		{"explicit list replaces the default", map[string]string{MCPServersEnv: "loom"}, []string{"loom"}},
 		{"explicit list is not merged with the default", map[string]string{MCPServersEnv: "hadron,tesseract"}, []string{"hadron", "tesseract"}},
 		{"whitespace trimmed, order kept", map[string]string{MCPServersEnv: " torque , cerberus,nanite "}, []string{"torque", "cerberus", "nanite"}},

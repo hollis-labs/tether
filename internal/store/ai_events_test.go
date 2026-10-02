@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -125,5 +126,46 @@ func TestQueryAIUsageSummary(t *testing.T) {
 	}
 	if len(summary.ByOperation) != 1 || summary.ByOperation[0].Key != "chat" {
 		t.Fatalf("operation breakdown = %+v", summary.ByOperation)
+	}
+}
+
+func TestQueryAIUsageSummaryNoUsage(t *testing.T) {
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name   string
+		seed   bool
+		filter AIUsageFilter
+	}{
+		{name: "fresh database"},
+		{name: "unmatched provider", seed: true, filter: AIUsageFilter{Provider: "unused"}},
+		{name: "empty budget window", seed: true, filter: AIUsageFilter{Since: now.Add(time.Second)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "usage.db"))
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			t.Cleanup(func() { _ = s.Close() })
+			if tc.seed {
+				if err := s.RecordAIAuditEvent(observability.AuditEvent{
+					EventType: "chat", Operation: "chat", Provider: "used",
+					Success: true, EstimatedCostUSD: 0.25, Timestamp: now,
+				}); err != nil {
+					t.Fatalf("record usage: %v", err)
+				}
+			}
+			got, err := s.QueryAIUsageSummary(tc.filter)
+			if err != nil {
+				t.Fatalf("QueryAIUsageSummary with no matching usage: %v", err)
+			}
+			if len(got.ByProvider)+len(got.ByModel)+len(got.ByOperation) != 0 {
+				t.Fatalf("unexpected usage breakdowns: %+v", got)
+			}
+			// Empty slices and nil slices both mean no grouped usage.
+			got.ByProvider, got.ByModel, got.ByOperation = nil, nil, nil
+			if !reflect.DeepEqual(got, AIUsageSummary{}) {
+				t.Fatalf("usage totals = %+v, want all zero", got)
+			}
+		})
 	}
 }

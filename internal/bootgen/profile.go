@@ -66,7 +66,7 @@ type Profile struct {
 	Template string `yaml:"template,omitempty"`
 	// MCPServers is the allowlist of upstream MCP server IDs this boot profile
 	// exposes via the proxy at launch time (v005-08). Pipes through to
-	// `tether mcp --proxy --servers <ids>`. Empty = no allowlist (proxy default).
+	// `tether mcp --proxy --servers <ids>`. Omitted/null inherits; [] grants none.
 	// The list lives on the boot profile, not the agent, so a single agent
 	// can have multiple profiles with different tool surfaces.
 	MCPServers []string `yaml:"mcp_servers,omitempty"`
@@ -727,4 +727,17 @@ func resolvePath(path, catalogRoot string) string {
 		path = filepath.Join(catalogRoot, path)
 	}
 	return path
+}
+
+// MarshalYAML keeps an explicit empty grant while omitting an inherited one.
+func (p Profile) MarshalYAML() (any, error) {
+	type plain Profile
+	var node yaml.Node
+	if err := node.Encode(plain(p)); err != nil {
+		return nil, err
+	}
+	if p.MCPServers != nil && len(p.MCPServers) == 0 {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "mcp_servers"}, &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"})
+	}
+	return &node, nil
 }

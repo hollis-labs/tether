@@ -1,5 +1,9 @@
 # Tether — MCP Adapter
 
+For short guides on connecting, discovery, grants, protection and budgets,
+start with [Use MCP through Tether](agents/mcp/README.md). This page is the full
+adapter and tool reference.
+
 `tether mcp` starts an MCP stdio server that exposes the Tether runtime as
 tools. Any MCP-capable client — Claude Desktop, Claude Code, Cursor, a custom
 agent, a Hadron blueprint — can call session lifecycle, catalog reads,
@@ -32,7 +36,7 @@ make go-install
       "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "TETHER_MCP_TOKEN": "your-secret-token",
+        "TETHER_TOKEN": "tth_…",
         "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }
@@ -47,7 +51,7 @@ make go-install
   "mcpServers": {
     "tether": {
       "command": "tether",
-      "args": ["--catalog", "/path/to/catalog", "mcp", "--token", "your-token", "--scopes", "session.write,message.write"]
+      "args": ["--catalog", "/path/to/catalog", "--token-file", "/path/to/operator.token", "mcp", "--scopes", "session.write,message.write"]
     }
   }
 }
@@ -60,7 +64,7 @@ make go-install
 tether mcp
 
 # With mutating tool access:
-TETHER_MCP_TOKEN=your-token \
+TETHER_TOKEN=tth_… \
 TETHER_MCP_SCOPES=session.write,message.write \
 tether mcp
 ```
@@ -173,22 +177,25 @@ group it already belongs to is `groups.write` as well (`tether_group_post`).
 
 See [messaging-adoption.md](./messaging-adoption.md) for the full opt-in walkthrough.
 
-Pass both via flags or environment variables:
+Supply a daemon credential from a file or environment; adapter scopes remain a fast check:
 
 ```bash
 # Flags:
-tether mcp --token my-secret --scopes session.write,message.write,ai.invoke
+tether --token-file /path/to/operator.token mcp --scopes session.write,message.write,ai.invoke
 
 # Environment variables:
-export TETHER_MCP_TOKEN=my-secret
+export TETHER_TOKEN=tth_…
 export TETHER_MCP_SCOPES=session.write,message.write,ai.invoke
 tether mcp
 ```
 
-The token value is opaque — Tether does not validate it against any external
-service; it simply confirms one is present. Pick any string. If you're running
-in a trusted local-only context, you can omit auth and only call read-only
-tools.
+The daemon verifies `tth_` credentials against its principals table. Lookup
+prefers `--token-file`, then `TETHER_TOKEN`, then `run/operator.token` beside the
+selected catalog. Files must be current-user-owned regular 0600 files. Default
+observe mode records identity without rejecting unauthenticated requests;
+explicit enforce mode rejects them. Legacy `--token` / `TETHER_MCP_TOKEN` only
+satisfy the adapter's local presence check and do not authenticate daemon calls.
+See [caller-identity.md](./caller-identity.md) for scope and cutover limits.
 
 ---
 
@@ -373,7 +380,23 @@ a list you wrote earlier still names `torque` and `tesseract` if its agents
 use them. `cerberus` can reach hosts and containers, so it is never in
 the default; an agent that needs it must be given it by name.
 
-tether's own native tools (`tether_*`) are not upstreams and are not affected.
+An explicit `mcp.servers: []` (project or launch), `mcp_servers: []` (boot
+profile), or empty `TETHER_MCP_SERVERS` grants **no upstreams** to a confined
+session. Omitted or null lists inherit: boot profile > project > launch >
+default. Empty lists replace lower-precedence lists just like nonempty lists.
+Tether's own native tools (`tether_*`) remain available.
+
+Daemon startup rejects unknown, wrong-case, or disabled upstream names in
+declared grants, including shadowed declarations and agent environment settings.
+Shared catalog loading remains available for inspection and repair. Launch
+resolution validates only its selected project, launch, and agent/provider chain;
+an invalid grant in another project does not block it. Reloaded invalid grants
+in the selected chain refuse that launch rather than use stale startup grants. `tether doctor` reports a failing `catalog-mcp-grants` finding naming
+the owner and bad entry. Fix the reference or enable that upstream under
+`mcp-servers/`; validation never starts it or resolves its secret references.
+Caller-supplied boot-profile and effective environment grants are also checked
+before session creation. Implicit defaults are checked by proxy startup rather
+than treated as authored catalog declarations.
 
 A resumed session (`POST /logical-agents/{id}/resume`) gets the project's
 `mcp.servers` list, or the default, not the list the original launch had. A

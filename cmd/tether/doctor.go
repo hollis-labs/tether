@@ -21,6 +21,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
@@ -148,7 +149,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	checks = append(checks, checkMCPCredentialFiles(catalogRoot)...)
 
 	// 3. Daemon reachable (requires catalog for listen addr).
-	checks = append(checks, checkDaemon(cat))
+	checks = append(checks, checkDaemon(cat), checkIdentity(cat))
 	checks = append(checks, checkClaudeStrictMCP(cat, localStrictMCPStatus()))
 
 	// 4. Migrations current (opens DB; idempotent — migrations are a no-op if already applied).
@@ -241,6 +242,9 @@ func checkCatalog(catalogRoot string) (checkResult, *config.Catalog) {
 		return fail("catalog-present", fmt.Sprintf("load failed: %v", err),
 			"run: tether init"), nil
 	}
+	if err := cat.ValidateMCPGrants(); err != nil {
+		return fail("catalog-mcp-grants", err.Error(), "fix the named grant or enable its upstream under mcp-servers/"), nil
+	}
 	if err := cat.Validate(); err != nil {
 		return fail("catalog-valid", fmt.Sprintf("validation failed: %v", err),
 			"check your catalog YAML files or run: tether init --force"), nil
@@ -259,7 +263,7 @@ func checkDaemon(cat *config.Catalog) checkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	c := client.New(cfg.ListenAddr)
+	c := daemonClient(cfg.ListenAddr)
 	if err := c.Ping(ctx); err != nil {
 		return warn("daemon-reachable", "daemon not running",
 			"start it with: tether daemon start")
@@ -399,6 +403,39 @@ func checkLogsDir(stateDir string) checkResult {
 	_ = f.Close()
 	_ = os.Remove(f.Name())
 	return ok("logs-dir", logsDir)
+}
+
+func checkIdentity(cat *config.Catalog) checkResult {
+	if cat == nil {
+		return warn("caller-identity", "skipped — catalog unavailable", "fix catalog first")
+	}
+	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
+	if err := mode.Validate(); err != nil {
+		return fail("caller-identity", "invalid identity.mode", "use off, observe or enforce; validation happens at daemon start")
+	}
+	cfg, err := daemonConfigFromCatalog(cat)
+	if err != nil {
+		return warn("caller-identity", "daemon settings unavailable", "fix daemon settings")
+	}
+	if err := identity.ValidateBind(cfg.ListenAddr, mode); err != nil {
+		return warn("caller-identity", "daemon start would reject identity/listener settings", "use a local listener or explicitly configure enforce")
+	}
+	if mode == identity.Off {
+		return ok("caller-identity", "off")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	h, err := client.New(cfg.ListenAddr, client.WithToken("")).Health(ctx)
+	if err != nil || h.Identity == nil {
+		return warn("caller-identity", string(mode)+" configured; runtime identity unavailable", "check daemon status")
+	}
+	if h.Identity.OperatorDegraded {
+		return warn("caller-identity", "operator credentials degraded; observe daemon remains available", "restore matching DB/token backups or explicitly recover credentials before enforce")
+	}
+	if h.Identity.Audit.Dropped > 0 || h.Identity.Audit.Failures > 0 {
+		return warn("caller-identity", fmt.Sprintf("audit dropped=%d failures=%d", h.Identity.Audit.Dropped, h.Identity.Audit.Failures), "check queue load and state DB availability")
+	}
+	return ok("caller-identity", string(h.Identity.Mode)+"; operator credentials available")
 }
 
 func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {

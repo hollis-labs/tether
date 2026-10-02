@@ -2,11 +2,11 @@ package launchprofile
 
 // MCPConfig holds per-project or per-launch MCP proxy settings that are
 // injected into agent sessions at launch time. Servers lists the upstream MCP
-// server IDs to expose as native tools (sets TETHER_MCP_SERVERS). Empty means
-// TETHER_MCP_SERVERS is not injected; the proxy defaults to exposing all servers.
+// server IDs to expose as native tools (sets TETHER_MCP_SERVERS). Omitted or
+// null inherits; an explicit empty list grants no upstreams.
 // ExtractRefs enables proxy-side identifier extraction (--extract-refs).
 type MCPConfig struct {
-	Servers     []string `yaml:"servers" json:"servers,omitempty"`
+	Servers     []string `yaml:"servers" json:"servers"`
 	ExtractRefs *bool    `yaml:"extract_refs,omitempty" json:"extract_refs,omitempty"`
 }
 
@@ -103,4 +103,16 @@ type AgentPermissions struct {
 type ProviderOverride struct {
 	ExtraArgs []string          `yaml:"extra_args" json:"extra_args,omitempty"`
 	Env       map[string]string `yaml:"env" json:"env,omitempty"`
+}
+
+// MarshalYAML preserves the distinction between inheritance and an empty grant.
+func (m MCPConfig) MarshalYAML() (any, error) {
+	out := map[string]any{}
+	if m.Servers != nil {
+		out["servers"] = m.Servers
+	}
+	if m.ExtractRefs != nil {
+		out["extract_refs"] = m.ExtractRefs
+	}
+	return out, nil
 }

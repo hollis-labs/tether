@@ -34,7 +34,7 @@ Mutating tools (session.create/launch/stop, message.send, etc.) require a
 token and the corresponding scope. Pass them via flags or environment
 variables:
 
-  TETHER_MCP_TOKEN=<token> TETHER_MCP_SCOPES=session.write,message.write \
+  TETHER_TOKEN=<token> TETHER_MCP_SCOPES=session.write,message.write \
     tether mcp
 
 Available scopes:
@@ -50,7 +50,7 @@ Example MCP client config (mcp.json):
         "command": "tether",
         "args": ["mcp"],
         "env": {
-          "TETHER_MCP_TOKEN": "your-token",
+          "TETHER_TOKEN": "tth_…",
           "TETHER_MCP_SCOPES": "session.write,message.write,ai.invoke,catalog.write"
         }
       }
@@ -77,7 +77,7 @@ var (
 func init() {
 	mcpCmd.Flags().BoolVar(&mcpExtractRefs, "extract-refs", false, "record identifiers seen in proxied tool arguments as session refs (requires --session; off by default)")
 	mcpCmd.Flags().StringVar(&mcpSession, "session", "", "Tether session id this proxy serves; attributes proxied tool calls to it (set automatically in a launched worker's .mcp.json)")
-	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "auth token for mutating tools (env: TETHER_MCP_TOKEN)")
+	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "legacy adapter presence marker; daemon credentials use --token-file or TETHER_TOKEN")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
 	mcpCmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "gateway profile ID (env: TETHER_MCP_PROFILE)")
@@ -90,8 +90,15 @@ func init() {
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
-	// Flags take precedence; fall back to env vars.
-	token := mcpToken
+	// Verified daemon credential first; legacy adapter-only flags remain a
+	// local fast check, never a substitute for a daemon bearer credential.
+	token, err := callerToken()
+	if err != nil {
+		return err
+	}
+	if token == "" {
+		token = mcpToken
+	}
 	if token == "" {
 		token = os.Getenv("TETHER_MCP_TOKEN")
 	}
@@ -141,7 +148,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// fully in-process behavior so dev/test paths still work.
 	var adapter *mcpadapter.Adapter
 	if listenAddr != "" {
-		adapter = mcpadapter.NewWithDaemon(svc, client.New(listenAddr), token, scopes)
+		adapter = mcpadapter.NewWithDaemon(svc, daemonClient(listenAddr), token, scopes)
 	} else {
 		adapter = mcpadapter.New(svc, token, scopes)
 	}
@@ -204,7 +211,7 @@ func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
 			return fmt.Errorf("--extract-refs needs --session: an extracted ref attaches to a session, and there is nothing to attach to without one")
 		}
 		adapter.ExtractRefs = true
-		adapter.SetRefAttacher(refAttacherClient{c: client.New(listenAddr)})
+		adapter.SetRefAttacher(refAttacherClient{c: daemonClient(listenAddr)})
 	}
 	// Route go-mcp's sanitize middleware's warn telemetry to stderr so the
 	// stdio MCP protocol stream on stdout stays clean.
@@ -231,7 +238,7 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 	if listenAddr == "" {
 		return fmt.Errorf("%s: the daemon address could not be resolved from the catalog", errDaemonOnlyUnreachable)
 	}
-	dc := client.New(listenAddr)
+	dc := daemonClient(listenAddr)
 	pingCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	err := dc.Ping(pingCtx)
 	cancel()

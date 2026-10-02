@@ -11,7 +11,6 @@ import (
 	"github.com/hollis-labs/tether/internal/acpadapter"
 	"github.com/hollis-labs/tether/internal/acpsvc"
 	"github.com/hollis-labs/tether/internal/app"
-	"github.com/hollis-labs/tether/internal/client"
 )
 
 var acpCmd = &cobra.Command{
@@ -102,7 +101,7 @@ func runACP(cmd *cobra.Command, _ []string) error {
 	if listenAddr == "" {
 		return fmt.Errorf("acp: cannot resolve daemon address (start with `tether daemon up` and check catalog config)")
 	}
-	dc := client.New(listenAddr)
+	dc := daemonClient(listenAddr)
 
 	// Route the adapter's warn-level logs to stderr so they don't
 	// pollute the stdout protocol stream.

@@ -349,7 +349,7 @@ required) and gates mutating operations behind a token + scope.
 tether mcp
 
 # With mutating tool access:
-TETHER_MCP_TOKEN=dev-token \
+TETHER_TOKEN='tth_<issued-token>' \
 TETHER_MCP_SCOPES=session.write,message.write \
 tether mcp
 ```
@@ -363,7 +363,7 @@ Add to Claude Desktop / Claude Code:
       "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "TETHER_MCP_TOKEN": "your-token",
+        "TETHER_TOKEN": "<issued-tth-token>",
         "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }

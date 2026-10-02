@@ -139,6 +139,9 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 
 	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
 	applyMCPAllowlist(plan, bootProfile)
+	if err := s.validatePlanMCPGrants(plan, bootProfile, in.BootProfileFile); err != nil {
+		return err
+	}
 	applyPermissionMode(plan, s.Catalog.Global, effectiveAgent)
 	if err := s.applyCallerInjection(plan, in.Injection); err != nil {
 		return err
@@ -428,9 +431,9 @@ func markCallerEnv(plan *launch.Plan, key string) {
 
 // applyMCPAllowlist threads the boot profile's MCP allowlist into TETHER_MCP_SERVERS.
 // Precedence: boot profile (this call) > catalog (launch/project). No-op when
-// the boot profile is empty.
+// the boot profile omits its list; an explicit [] grants none.
 func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
-	if len(bootProfile.MCPServers) == 0 {
+	if bootProfile.MCPServers == nil {
 		return
 	}
 	if plan.Env == nil {

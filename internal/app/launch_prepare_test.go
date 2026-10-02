@@ -79,7 +79,7 @@ func TestTetherMCPPlant_ArgvAndAttributionCannotDisagree(t *testing.T) {
 func TestTetherMCPPlant_AlwaysCarriesTheProxyContract(t *testing.T) {
 	for _, sessionID := range []string{"", "sess-1"} {
 		args := TetherMCPPlant("/catalog", sessionID, false).Args
-		for _, want := range []string{"--catalog", "/catalog", "mcp", "--proxy", "--token", "--scopes"} {
+		for _, want := range []string{"--catalog", "/catalog", "mcp", "--proxy", "--scopes"} {
 			if !slices.Contains(args, want) {
 				t.Errorf("sessionID=%q: argv missing %q: %v", sessionID, want, args)
 			}

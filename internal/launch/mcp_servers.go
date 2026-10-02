@@ -19,16 +19,16 @@ const MCPServersEnv = "TETHER_MCP_SERVERS"
 var DefaultMCPServers = []string{"torque", "tesseract"}
 
 // EffectiveMCPServers is the allow-list a launched agent's proxy runs with:
-// the plan's own list, or DefaultMCPServers when it has none.
+// the plan's own list (including empty), or DefaultMCPServers when unset.
 func EffectiveMCPServers(env map[string]string) []string {
+	if _, set := env[MCPServersEnv]; !set {
+		return append([]string(nil), DefaultMCPServers...)
+	}
 	var out []string
 	for _, id := range strings.Split(env[MCPServersEnv], ",") {
 		if id = strings.TrimSpace(id); id != "" {
 			out = append(out, id)
 		}
 	}
-	if len(out) > 0 {
-		return out
-	}
-	return append([]string(nil), DefaultMCPServers...)
+	return out
 }

@@ -47,9 +47,9 @@ type TetherMCPPlan struct {
 // TetherMCPPlant builds the `tether mcp` planting for a launched worker's
 // .mcp.json. Workers get a full-scope connection on purpose: an agent that
 // cannot reply to a message or launch a session is not sandboxed, it is
-// broken. The --token here is only the adapter's presence check — it is opaque
-// and unvalidated (see docs/mcp.md), not a secret. Meaningful per-call
-// authorization belongs in the broker, not in a launch-time scope flag.
+// broken. LaunchSession delivers the minted bearer through TETHER_TOKEN, never
+// argv. These adapter scope flags are a fast check; daemon route authorization
+// remains the phase-2 gateway responsibility.
 //
 // sessionID is threaded through as --session so the proxy knows WHICH session
 // it is serving. Nothing else tells it: before CW-20260912-0074 the plumbing
@@ -86,7 +86,6 @@ func TetherMCPPlant(catalogRoot, sessionID string, extractRefs bool, protected .
 	args := []string{
 		"--catalog", catalogRoot,
 		"mcp", "--proxy",
-		"--token", "tether-worker",
 		"--scopes", "session.write,message.write,catalog.write",
 	}
 	if sessionID == "" {

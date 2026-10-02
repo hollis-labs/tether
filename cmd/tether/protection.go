@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
-	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 )
@@ -113,7 +112,7 @@ func doctorSandboxProtect(cat *config.Catalog, catalogRoot string) []checkResult
 		if cfg, err := daemonConfigFromCatalog(cat); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			if health, err := client.New(cfg.ListenAddr).Health(ctx); err == nil && health.SandboxProtect != nil {
+			if health, err := daemonClient(cfg.ListenAddr).Health(ctx); err == nil && health.SandboxProtect != nil {
 				return []checkResult{checkSandboxProtect(health.SandboxProtect, true), checkCodexProtection(health.SandboxProtect, true)}
 			}
 		}
