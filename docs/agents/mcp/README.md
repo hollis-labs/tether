@@ -10,6 +10,7 @@ operator or an agent authorized to configure that catalog.
 | Connect a client to Tether alone | [Connect](connect.md) |
 | Choose flat or search; discover and call a tool | [Discovery](discovery.md) |
 | Restrict upstreams or grant them to a launched agent | [Limit tools](limit-tools.md) |
+| Choose daemon-owned upstreams for launched sessions | [Daemon ownership](daemon-ownership.md) |
 | Understand a protected Codex proxy | [Protection](protection.md) |
 | Add an app and its credential to the gateway | [Add an upstream](add-upstream.md) |
 | Inspect budgets and event retention | [Budgets and policies](budgets.md) |

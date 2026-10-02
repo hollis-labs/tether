@@ -81,6 +81,7 @@ type Server struct {
 	Digests api.DigestStore
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
+	Channels     api.ChannelService
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
 	// are enabled (T07, messaging vNext) -- durable claim/ack/nack for a
 	// caller pulling its own mailbox on its own initiative. Populated from
@@ -415,7 +416,7 @@ func (s *Server) Handler() http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.Service != nil || s.Catalog != nil || s.AI != nil {
+	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Channels != nil {
 		apiHandler := api.NewHandler(api.Deps{
 			Service:             s.Service,
 			AI:                  s.AI,
@@ -431,6 +432,7 @@ func (s *Server) Handler() http.Handler {
 			SessionRefs:         s.SessionRefs,
 			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
+			Channels:            s.Channels,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
@@ -478,6 +480,8 @@ type Health struct {
 
 // HealthHardening is the launch-hardening state in GET /health.
 type HealthHardening struct {
+	MCPUpstreamSessions map[string]int    `json:"mcp_upstream_sessions,omitempty"`
+	MCPRecorder         map[string]uint64 `json:"mcp_recorder,omitempty"`
 	// ClaudeStrictMCP is whether Claude agents load only the MCP servers
 	// Tether plants (--strict-mcp-config, CW-20261001-0227).
 	ClaudeStrictMCP       bool   `json:"claude_strict_mcp"`
@@ -629,6 +633,8 @@ func (s *Server) apiMounts() []apiMount {
 		// "/messages/" is a subtree pattern; the explicit siblings below it
 		// are listed because api registers them as exact patterns, and an
 		// exact pattern must be mounted to take precedence over the subtree.
+		{"/channels", s.Channels != nil},
+		{"/channels/", s.Channels != nil},
 		{"/messages", s.MessageStore != nil},
 		{"/messages/", s.MessageStore != nil},
 		{"/messages/subscribe", s.MessageStore != nil},

@@ -42,6 +42,7 @@ import (
 
 	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/delivery"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // deliveryConsumeLeaseDuration is long enough to cover the immediate
@@ -100,6 +101,15 @@ var _ InboxStore = (*deliveryBackedStore)(nil)
 // transaction open while calling Enqueue (which needs to acquire the same
 // single connection for its own BeginTx) would deadlock.
 func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	// Public topics have no single-recipient delivery obligation. They remain
+	// durable messages, and readers use independent replay cursors.
+	publication, err := channels.NormalizePublication(&env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	if publication {
+		return d.messagingStore.Send(ctx, env)
+	}
 	if env.DeliveredAt != nil || env.ConsumedAt != nil {
 		return messaging.Envelope{}, messaging.ErrPresetLifecycle
 	}

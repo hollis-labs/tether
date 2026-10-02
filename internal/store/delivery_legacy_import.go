@@ -123,6 +123,7 @@ func ImportLegacyMessagesIntoDelivery(ctx context.Context, db *sql.DB, deliveryS
 		       consumed_at, canceled_at, group_urn
 		FROM messages
 		WHERE delivery_id IS NULL
+ AND NOT EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id)
 		ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return result, fmt.Errorf("legacy import: query: %w", err)

@@ -14,13 +14,15 @@ var ErrInvalidSessionMCPPolicy = errors.New("invalid session MCP policy")
 // after launch overrides. It never contains an environment, token or upstream
 // credentials. Servers are fully resolved: empty is zero, not inheritance.
 type SessionPolicy struct {
-	SessionID     string   `json:"session_id"`
-	AgentID       string   `json:"agent_id"`
-	Servers       []string `json:"servers"`
-	Profile       *string  `json:"profile,omitempty"`
-	LaunchProfile *Profile `json:"launch_profile,omitempty"`
-	DiscoveryMode *string  `json:"discovery_mode,omitempty"`
-	Digest        string   `json:"digest"`
+	UpstreamOwnership string   `json:"upstream_ownership,omitempty"`
+	ExtractRefs       bool     `json:"extract_refs,omitempty"`
+	SessionID         string   `json:"session_id"`
+	AgentID           string   `json:"agent_id"`
+	Servers           []string `json:"servers"`
+	Profile           *string  `json:"profile,omitempty"`
+	LaunchProfile     *Profile `json:"launch_profile,omitempty"`
+	DiscoveryMode     *string  `json:"discovery_mode,omitempty"`
+	Digest            string   `json:"digest"`
 }
 
 func (p SessionPolicy) hash() string {
