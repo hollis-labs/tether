@@ -66,12 +66,12 @@ func (s *Service) SendTurn(ctx context.Context, id, text string) error {
 		if err != nil {
 			return err
 		}
-		return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, payload) })
+		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, payload) })
 	case info.Caps.JsonRpcStdio:
-		return s.trackTurnSubmission(id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
+		return s.trackTurnSubmissionContext(ctx, id, func() error { return s.sendTurnJSONRPC(ctx, id, text) })
 	default:
 		return s.subprocessTurn(id, func() error {
-			return s.trackTurnSubmission(id, func() error { return s.Manager.SendInput(id, []byte(text)) })
+			return s.trackTurnSubmissionContext(ctx, id, func() error { return s.Manager.SendInput(id, []byte(text)) })
 		})
 	}
 }

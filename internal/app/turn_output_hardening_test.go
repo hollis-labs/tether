@@ -149,6 +149,9 @@ func TestTurnCompletionRecordsExpireAfterSixtyFourOutputs(t *testing.T) {
 		newest = id
 		output.observeProvider(gopevents.Done{})
 	}
+	if _, ok := output.CompletedTurnDetails(oldest); ok {
+		t.Fatal("old detailed completion retained")
+	}
 	if _, ok := output.CompletedTurn(oldest); ok {
 		t.Fatal("old completion retained without bound")
 	}
@@ -197,5 +200,54 @@ func TestTurnCollectorRemovedOnLaunchFailureAndSessionExit(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFailedCreatorCannotSettlePendingSteering(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	failFirst := make(chan struct{})
+	failSecond := make(chan struct{})
+	firstReturned := make(chan error, 1)
+	secondReturned := make(chan error, 1)
+	go func() {
+		firstReturned <- svc.trackTurnSubmission("s1", func() error { close(firstEntered); <-failFirst; return errors.New("first failure") })
+	}()
+	<-firstEntered
+	expected, done := output.CurrentTurn()
+	go func() {
+		secondReturned <- svc.trackTurnSubmission("s1", func() error { close(secondEntered); <-failSecond; return errors.New("second failure") })
+	}()
+	<-secondEntered
+	close(failFirst)
+	if err := <-firstReturned; err == nil {
+		t.Fatal("first error hidden")
+	}
+	id, _ := output.CurrentTurn()
+	if id != expected || id == "" {
+		close(failSecond)
+		<-secondReturned
+		t.Fatal("failed creator settled pending steering")
+	}
+	select {
+	case <-done:
+		close(failSecond)
+		<-secondReturned
+		t.Fatal("pending steering completed")
+	default:
+	}
+	close(failSecond)
+	if err := <-secondReturned; err == nil {
+		t.Fatal("second error hidden")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("all rejected submissions retained marker")
+	}
+	if id, _ := output.CurrentTurn(); id != "" {
+		t.Fatal("rejected marker still current")
 	}
 }

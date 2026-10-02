@@ -159,19 +159,34 @@ func (o *sessionTurnOutput) settleTurn() {
 // emit its final output during submit. A successful return never resurrects it.
 // Failed steering cannot settle an existing turn or a later turn's marker.
 func (s *Service) trackTurnSubmission(id string, submit func() error) error {
+	return s.trackTurnSubmissionContext(context.Background(), id, submit)
+}
+
+// Caller cancellation bounds gate acquisition without holding it across runtime
+// entry. The legacy helper remains available to input paths without a context.
+func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, submit func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	value, ok := s.turnOutputs.Load(id)
 	if !ok {
 		return submit()
 	}
 	output := value.(*sessionTurnOutput)
-	unlock := output.LockSubmission()
+	unlock, err := output.LockSubmissionContext(ctx)
+	if err != nil {
+		return err
+	}
 	output.mu.Lock()
 	output.ensureTurn()
 	output.submissions++
 	done := output.turnDone
 	output.mu.Unlock()
 	unlock()
-	err := submit()
+	err = ctx.Err()
+	if err == nil {
+		err = submit()
+	}
 	output.mu.Lock()
 	if output.turnDone == done {
 		output.submissions--

@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -146,4 +148,47 @@ func TestBootSubmissionMarkerExistsBeforeRuntimeStart(t *testing.T) {
 	if !state.TurnAccepted(marker) {
 		t.Fatal("boot not accepted")
 	}
+}
+
+func TestCanceledSendTurnDoesNotPrimeOrEnterRuntimeBehindGate(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	svc.Manager = agentsessions.NewManager(nil)
+	base, err := stub.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{}, 1)
+	rt := &markerRuntime{Runtime: base, onInput: func() { entered <- struct{}{} }}
+	if err := svc.Manager.Start(context.Background(), agentsessions.StartRequest{ID: "s1", Runtime: rt}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Manager.Stop(context.Background(), "s1") }()
+	unlock := output.LockSubmission()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	returned := make(chan error, 1)
+	go func() { returned <- svc.SendTurn(ctx, "s1", "input") }()
+	select {
+	case err := <-returned:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		unlock()
+		t.Fatal("request cancellation did not release gate waiter")
+	}
+	unlock()
+	if id, _ := output.CurrentTurn(); id != "" {
+		t.Fatal("canceled request left a marker")
+	}
+	select {
+	case <-entered:
+		t.Fatal("canceled request entered runtime")
+	default:
+	}
+	if !output.submissionGate.TryLock() {
+		t.Fatal("canceled waiter retained gate")
+	}
+	output.submissionGate.Unlock()
 }

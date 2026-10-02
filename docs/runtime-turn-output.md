@@ -131,3 +131,7 @@ Semantic `SendTurn` and non-PTY `SendInput` publish provisional markers before
 runtime entry. Concurrent steering shares that marker: a failed submission cannot
 settle another accepted or still-pending submission. Reduced runtime events can
 open and accept a marker before a submission returns.
+
+Semantic submission and boot-entry gate acquisition honors the caller context.
+Cancellation while waiting does not install a marker or leave a future gate
+acquisition behind. The gate is released before the blocking runtime submission.
