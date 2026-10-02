@@ -246,3 +246,40 @@ func TestCancelTurnNonCooperativeRuntimeReleasesGate(t *testing.T) {
 	default:
 	}
 }
+
+func TestCancelTurnTerminalWithoutAcknowledgement(t *testing.T) {
+	for _, kind := range []string{"cancelled", "exit", "natural"} { //nolint:misspell // provider wire stop reason
+		t.Run(kind, func(t *testing.T) {
+			var output *sessionTurnOutput
+			release := make(chan struct{})
+			defer close(release)
+			svc, state, _ := interruptHarness(t, func(context.Context) error {
+				if kind == "exit" {
+					output.flush()
+				} else {
+					stop := "end_turn"
+					if kind == "cancelled" {
+						stop = kind
+					} //nolint:misspell // provider wire stop reason
+					output.observeProvider(gopevents.Done{StopReason: stop})
+				}
+				<-release // No interrupt ACK; only a cancelled terminal proves cancellation.
+				return nil
+			})
+			output = state
+			svc.InterruptCancelTimeout = 20 * time.Millisecond
+			output.observeProvider(gopevents.Delta{Text: "working"})
+			result, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
+			switch kind {
+			case "exit":
+				requireRefusal(t, err, TurnInterruptSessionEnded)
+			case "natural":
+				requireRefusal(t, err, TurnInterruptTimeout)
+			default:
+				if err != nil || result.StopReason != kind {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+			}
+		})
+	}
+}

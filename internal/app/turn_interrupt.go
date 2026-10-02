@@ -131,6 +131,17 @@ func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, act
 			}
 			if !errors.Is(err, agentsessions.ErrTurnNotStarted) {
 				if err != nil {
+					completion, matched := state.CompletedTurnDetails(intended)
+					if matched {
+						result.OutputTurnID = completion.OutputTurnID
+						result.OutputKind = completion.OutputKind
+						result.StopReason = completion.StopReason
+					}
+					// Matching completion classifies an exit; a non-flush cancelled
+					// terminal proves cancellation even without its separate ACK.
+					if ctx.Err() == nil && matched && !completion.Superseded && (completion.SessionEnded || completion.StopReason == "cancelled") { //nolint:misspell // provider wire stop reason
+						return nil
+					}
 					return s.interruptWaitError(ctx, err, sessionID, intended)
 				}
 				current, _ = state.CurrentTurn()
