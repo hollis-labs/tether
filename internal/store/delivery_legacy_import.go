@@ -122,7 +122,8 @@ func ImportLegacyMessagesIntoDelivery(ctx context.Context, db *sql.DB, deliveryS
 		       payload, content_type, metadata, created_at, delivered_at,
 		       consumed_at, canceled_at, group_urn
 		FROM messages
-		WHERE delivery_id IS NULL AND routing_staged=0
+WHERE delivery_id IS NULL AND routing_staged=0
+ AND NOT EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id)
 		ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return result, fmt.Errorf("legacy import: query: %w", err)

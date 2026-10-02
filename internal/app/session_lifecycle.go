@@ -338,12 +338,23 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	if !extractRefs && s.Catalog != nil {
 		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
 	}
+	ownership, err := s.mcpOwnership()
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+		return nil, err
+	}
 	var policyConfig mcpgateway.Config
 	if s.Catalog != nil {
 		policyConfig = s.Catalog.Global.MCP
 	}
 	policy, err := sessionMCPPolicy(sessionID, row.LogicalAgentID, plan, policyConfig)
 	if err == nil {
+		if rt.Kind() != acp.Kind {
+			policy.UpstreamOwnership = ownership
+		}
+		policy.ExtractRefs = extractRefs
+		policy = policy.Seal()
 		err = s.Store.SaveSessionMCPPolicy(ctx, policy)
 	}
 	if err != nil {
@@ -392,6 +403,18 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			return nil, err
 		}
 		mcpPlan := TetherMCPPlant(s.CatalogRoot, sessionID, extractRefs, mcpProtected...)
+		if ownership == config.MCPUpstreamsDaemon {
+			addr, probeErr := s.preflightDaemonMCP(ctx, token)
+			if probeErr != nil {
+				exit := 1
+				_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+				return nil, probeErr
+			}
+			mcpPlan = DaemonMCPPlant(addr, sessionID)
+			if extractRefs {
+				mcpPlan.Attribution = store.RefAttributionProxy
+			}
+		}
 		mcpCommand, mcpArgs, err := ConfineMCPPlant(plan, tetherCommandPath(), mcpPlan.Args, mcpProtected)
 		if err != nil {
 			exit := 1
@@ -399,11 +422,15 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			return nil, err
 		}
 		mcpEnv := confinedMCPEnv(plan, mcpProtected)
+		if ownership == config.MCPUpstreamsDaemon {
+			mcpEnv = map[string]string{}
+		}
 		mcpEnv["TETHER_TOKEN"] = token
 		if token == "" {
 			mcpEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 		}
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
+			DaemonOwned:   ownership == config.MCPUpstreamsDaemon,
 			TetherCommand: mcpCommand,
 			TetherArgs:    mcpArgs,
 			TetherEnv:     mcpEnv,
@@ -436,6 +463,14 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		startOpts.WorkspaceDir = ws.Root
 		startOpts.Env = mergeEnv(provider.BuildEnv(plan.EnvMode, plan.EnvPassthrough, plan.EnvRedact, plan.Env, os.Environ()), prepared.Env)
 		startOpts.Env, err = withBrowserShim(plan.ProviderBrand, ws.Root, startOpts.Env)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+	}
+	if ownership == config.MCPUpstreamsDaemon && rt.Kind() != acp.Kind {
+		startOpts.Env, err = s.daemonWorkerEnv(startOpts.Env, launch.EffectiveMCPServers(plan.Env))
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
