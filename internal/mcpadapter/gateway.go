@@ -9,7 +9,9 @@ import (
 
 	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -135,10 +137,12 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 	s.SDKServer().AddTool(&mcpsdk.Tool{Name: "tether_tool_call", Description: "Dispatch one eligible exact tool name using its real arguments schema. Unknown, excluded or unavailable targets fail. In search mode client permissions and hooks see tether_tool_call, not the downstream tool identity; this dispatcher may mutate state and is not read-only.", InputSchema: map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": map[string]any{"type": "string", "minLength": 1}, "arguments": map[string]any{"type": "object"}}}, Annotations: Destroys("dispatches targets that may irreversibly remove information or stop sessions").OpenWorld().annotations().sdk()}, a.rawProxyHandler("tether_tool_call", func(ctx context.Context, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 		name, _ := args["name"].(string)
 		if name == "" {
+			telemetry.SetErrorClass(ctx, events.ToolErrorValidation)
 			return errorResult("name is required"), nil
 		}
 		arguments, ok := args["arguments"].(map[string]any)
 		if !ok {
+			telemetry.SetErrorClass(ctx, events.ToolErrorValidation)
 			return errorResult("arguments must be a JSON object"), nil
 		}
 		arguments, report := sanitize.Sanitize(arguments)
@@ -149,6 +153,7 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 		if err != nil {
 			var targetErr *mcpgateway.TargetError
 			if errors.As(err, &targetErr) {
+				recordTargetError(ctx, err)
 				return errorResult(err.Error()), nil
 			}
 			return nil, err

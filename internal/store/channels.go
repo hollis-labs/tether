@@ -42,6 +42,16 @@ func (ms *messagingStore) requireMailbox(ctx context.Context, id string) error {
 	if publication {
 		return channels.ErrMailboxOperation
 	}
+	// A reply to a routed message is queued and delivered by the dispatcher; a
+	// mailbox verb on it (cancel, consume, read, archive) would change its message
+	// row and nothing else, leaving the reply to be injected anyway.
+	var reply bool
+	if err := ms.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM routing_replies WHERE reply_id = ?)`, id).Scan(&reply); err != nil {
+		return err
+	}
+	if reply {
+		return ErrRoutingReplyNotMailbox
+	}
 	return nil
 }
 

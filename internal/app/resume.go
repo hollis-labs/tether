@@ -78,7 +78,20 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
 	}
 
-	plan, err := s.Resolve(la.LaunchID)
+	// Preserve the original opt-in before resolving the current catalog route.
+	input := launch.Input{LaunchID: la.LaunchID, CatalogRoot: s.CatalogRoot}
+	if ck.SourceSessionID != "" {
+		input.RouteOverrideSet = true
+		input.RouteOverride, err = s.Store.SessionRoute(ctx, ck.SourceSessionID)
+		if err != nil {
+			return api.LaunchResult{}, fmt.Errorf("read resumed session route: %w", err)
+		}
+	}
+	cat, err := s.launchCatalog(la.LaunchID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("read launch catalog: %w", err)
+	}
+	plan, err := launch.Resolve(cat, input)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
 	}

@@ -167,6 +167,16 @@ type Server struct {
 	// tests that never call Run).
 	WakeSweeper WakeSweeper
 
+	// RoutingReplies, when set, enables the reply-to-sender HTTP surface
+	// (POST /messages/{id}/reply, GET /messages/{id}/delivery, in_reply_to
+	// routing). *app.Service satisfies it once StartRoutingReplies ran.
+	RoutingReplies api.RoutingReplyService
+	// ReplySweeper, when set, ticks the reply dispatcher's repair pass every
+	// replySweepInterval: for runtimes with no turn feed (PTY) and for replies
+	// whose retry time has arrived. Delivery at a native session's idle
+	// boundary does not wait for it. *app.Service satisfies it.
+	ReplySweeper ReplySweeper
+
 	// SessionDrainer, when set, replaces the bare Manager.Shutdown drain on
 	// a graceful shutdown. It records that the sessions it waits on ended
 	// because the daemon was stopped on purpose, not by a crash
@@ -215,6 +225,16 @@ type WakeSweeper interface {
 	RunWakeSweep(ctx context.Context) (int, error)
 }
 
+// ReplySweeper is the narrow seam Run uses to drive the reply dispatcher's
+// repair pass (RunRoutingReplySweep, internal/app/routing_reply.go).
+type ReplySweeper interface {
+	RunRoutingReplySweep(ctx context.Context) (int, error)
+}
+
+// replySweepInterval is the repair cadence for queued replies. A var so tests
+// can shrink it.
+var replySweepInterval = 2 * time.Second
+
 // wakeSweepInterval bounds how often the background pump retries ready
 // deliveries. Short enough that a busy session's queued wake is retried
 // promptly once it goes idle; long enough not to hammer an offline actor.
@@ -245,6 +265,14 @@ func runPeriodic(ctx context.Context, interval time.Duration, name string, run f
 func (s *Server) runWakeSweepLoop(ctx context.Context) {
 	runPeriodic(ctx, wakeSweepInterval, "wake sweep", func(ctx context.Context) error {
 		_, err := s.WakeSweeper.RunWakeSweep(ctx)
+		return err
+	})
+}
+
+// runReplySweepLoop ticks RunRoutingReplySweep until ctx is canceled.
+func (s *Server) runReplySweepLoop(ctx context.Context) {
+	runPeriodic(ctx, replySweepInterval, "reply sweep", func(ctx context.Context) error {
+		_, err := s.ReplySweeper.RunRoutingReplySweep(ctx)
 		return err
 	})
 }
@@ -334,6 +362,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.WakeSweeper != nil {
 		go s.runWakeSweepLoop(ctx)
+	}
+	if s.ReplySweeper != nil {
+		go s.runReplySweepLoop(ctx)
 	}
 	if s.EventRetention != nil {
 		go s.runEventRetentionLoop(ctx)
@@ -449,6 +480,7 @@ func (s *Server) Handler() http.Handler {
 			DeliveryTrace:       s.DeliveryTrace,
 			DeliveryRepair:      s.DeliveryRepair,
 			Retention:           s.Retention,
+			RoutingReplies:      s.RoutingReplies,
 		})
 		// Mount api at every top-level path it owns. Keeping the list
 		// explicit avoids a catch-all "/" that would shadow /health.

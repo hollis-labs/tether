@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -74,6 +76,7 @@ func (r *ProxyRouter) AppendMiddleware(mws ...ToolCallMiddleware) {
 func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallToolResult, error) {
 	rt, found := r.registry.Lookup(call.ToolName)
 	if !found {
+		telemetry.SetErrorClass(ctx, events.ToolErrorDenied)
 		return errorResult(fmt.Sprintf("tool %q not found in registry", call.ToolName)), nil
 	}
 
@@ -107,6 +110,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 	terminal := ToolCallHandler(func(tCtx context.Context, tCall ToolCall) (*mcpsdk.CallToolResult, error) {
 		// Upstream client is nil — server failed during startup or is dead.
 		if rt.Client == nil {
+			telemetry.SetErrorClass(tCtx, events.ToolErrorUpstreamDown)
 			return errorResult(fmt.Sprintf(
 				"upstream server %q is unavailable; tool %q cannot be called",
 				rt.ServerID, tCall.ToolName,
@@ -114,6 +118,7 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		}
 		if r.pool != nil && rt.ServerID != "" {
 			if err := r.pool.unavailableError(rt.ServerID, rt.Client); err != nil {
+				telemetry.SetErrorClass(tCtx, events.ToolErrorUpstreamDown)
 				return errorResult(err.Error()), nil
 			}
 		}
@@ -123,7 +128,12 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		// an upstream with additionalProperties:false at its schema root
 		// correctly rejects an argument it did not declare. See trace_meta.go.
 		injectTraceContextMeta(tCtx, params)
+		finishForward := telemetry.Forward(tCtx)
 		result, err := rt.Client.CallTool(tCtx, params)
+		finishForward()
+		if err != nil && telemetry.ErrorClass(err) == events.ToolErrorTimeout {
+			telemetry.SetErrorClass(tCtx, events.ToolErrorTimeout)
+		}
 		if err != nil && r.pool != nil {
 			wrapped := fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)
 			return nil, &redactedError{

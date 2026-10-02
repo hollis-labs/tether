@@ -16,17 +16,20 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
 	"github.com/hollis-labs/agentkit/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/settings"
@@ -47,6 +50,18 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
+	// Interrupt bounds are configured before use; zero selects 2s cancel/gate
+	// and 30s terminal defaults. Caller deadlines take precedence.
+	InterruptCancelTimeout time.Duration
+	InterruptDoneTimeout   time.Duration
+	Channels               *channels.Service // constructed before starting any channel publisher
+	turnOutputTimeout      time.Duration     // tests may shorten the default persistence deadline
+	turnOutputStore        turnOutputStore
+	turnRouter             *turnrouting.Router
+	turnFeeds              map[string]turnFeedRegistration
+	outputRetries          outputRetryState
+	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store
@@ -120,6 +135,14 @@ type Service struct {
 	// directories as ProtectedPaths; nil uses the daemon's OS and
 	// environment. See protected_paths.go.
 	protectionStatus func() ProtectionStatus
+
+	// replies is the reply-to-sender dispatcher (CW-20261002-0065), set by
+	// StartRoutingReplies. Nil means the reply path is not installed.
+	replies atomic.Pointer[replyDispatcher]
+	// interrupter backs interrupt:true on a reply; see routing_reply.go.
+	interrupter turnInterrupter
+	// ReplyAuthorization is the reply caller-identity hook; nil is observe mode.
+	ReplyAuthorization ReplyAuthorization
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the
@@ -227,7 +250,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	setStorage := settings.NewStorage(db.DB())
 	setSvc := settings.NewService(setStorage)
 
-	return &Service{
+	service := &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
@@ -239,7 +262,16 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Registry:    regSvc,
 		Settings:    setSvc,
 		factories:   factories,
-	}, nil
+	}
+	service.Channels = channels.New(db, nil)
+	service.installTurnFeeds()
+	if validateMCPGrants {
+		if err := service.startTurnRouter(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("turn router: %w", err)
+		}
+	}
+	return service, nil
 }
 
 // NewCatalogOnly constructs a Service holding only the catalog at
@@ -365,7 +397,9 @@ func (s *Service) reportSweep(swept, spared []string) {
 	if err != nil {
 		return
 	}
-	_ = s.Bus.Publish(context.Background(), events.Event{
+	ctx, cancel := s.outputPersistenceContext()
+	defer cancel()
+	_ = s.Bus.Publish(ctx, events.Event{
 		Scope:       events.ScopeDaemon,
 		Kind:        events.KindDaemonSessionsSwept,
 		PayloadJSON: string(payload),
@@ -431,6 +465,15 @@ func (s *Service) Close() error {
 			return err
 		}
 	}
+	s.stopRoutingReplies()
+	// Complete output persistence before closing the store. Session watchers
+	// also flush; the reducer lock makes this idempotent against those races.
+	s.turnOutputs.Range(func(_, value any) bool {
+		value.(*sessionTurnOutput).flush()
+		return true
+	})
+	s.stopOutputRetries()
+	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil
 	}

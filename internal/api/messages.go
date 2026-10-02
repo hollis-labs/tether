@@ -92,6 +92,10 @@ type messageNotifyResponse struct {
 	// WakeError, which is reserved for an actual failure (SendTurn itself
 	// erroring) and carries that error's text.
 	WakeReason string `json:"wake_reason,omitempty"`
+	// RoutingReply is set when in_reply_to named a message a session routed to
+	// a channel: the text was queued for that session as its next turn instead
+	// of being stored for the mailbox and woken (CW-20261002-0065).
+	RoutingReply *RoutingReplyReceipt `json:"routing_reply,omitempty"`
 }
 
 var validUrgencies = map[string]struct{}{
@@ -158,6 +162,12 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		Payload:     req.Payload,
 		ContentType: req.ContentType,
 		Metadata:    req.Metadata,
+	}
+	// A reply to a message a session routed to a channel goes to that session as
+	// its next turn, not through the mailbox wake (CW-20261002-0065).
+	if parent, ok := s.routedParent(r, env.InReplyTo); ok {
+		s.notifyRoutedReply(w, r, env, parent)
+		return
 	}
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
@@ -318,10 +328,16 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
-	if action != "" && action != "purge" && action != "trace" || r.Method == http.MethodDelete {
+	if action != "" && action != "purge" && action != "trace" && action != "reply" && action != "delivery" || r.Method == http.MethodDelete {
 		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
 			if _, ok := channels.AddressName(env.To); ok {
 				writeChannelError(w, channels.ErrMailboxOperation)
+				return
+			}
+			// A reply is delivered by the dispatcher, not through a mailbox: cancel,
+			// consume and the rest would only rewrite its message row.
+			if env.To == store.RoutingReplyAddress {
+				writeReplyError(w, store.ErrRoutingReplyNotMailbox)
 				return
 			}
 		}
@@ -387,6 +403,10 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleMessageNack(w, r, id)
+	case "reply":
+		s.handleMessageReply(w, r, id)
+	case "delivery":
+		s.handleMessageReplyDelivery(w, r, id)
 	case "trace":
 		s.handleMessageTrace(w, r, id)
 	case "redrive":
@@ -431,6 +451,13 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	env.CreatedAt = time.Time{}
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
+
+	// A reply to a message a session routed to a channel goes to that session
+	// as its next turn (CW-20261002-0065); other in_reply_to use is unchanged.
+	if parent, ok := s.routedParent(r, env.InReplyTo); ok {
+		s.sendRoutedReply(w, r, env, parent)
+		return
+	}
 
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {

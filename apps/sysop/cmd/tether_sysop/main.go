@@ -2278,7 +2278,7 @@ func countMessages(db *store.Store) (messageTotals, error) {
 	rows, err := db.DB().Query(
 		`SELECT to_urn, COALESCE(read_at, ''), COALESCE(archived_at, ''),
 		        COALESCE(canceled_at, ''), COALESCE(group_urn, '')
-		   FROM messages`)
+		   FROM messages WHERE routing_staged=0`)
 	if err != nil {
 		return messageTotals{}, err
 	}
@@ -2981,7 +2981,7 @@ func populateOverviewMessages(db *store.Store, resp *overviewResponse) {
 		`SELECT kind, to_urn, created_at, COALESCE(read_at, ''),
 		        COALESCE(archived_at, ''), COALESCE(canceled_at, ''),
 		        COALESCE(group_urn, '')
-		   FROM messages`)
+		   FROM messages WHERE routing_staged=0`)
 	if err != nil {
 		return
 	}

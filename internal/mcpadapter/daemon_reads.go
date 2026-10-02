@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"log/slog"
 	"time"
 
@@ -159,7 +160,8 @@ func (d DaemonProxyEvents) QueryProxyEvents(f store.ProxyEventFilter) ([]store.P
 	for _, e := range dtos {
 		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
 		out = append(out, store.ProxyEvent{
-			Attribution: e.Attribution, ClaimedSessionID: e.ClaimedSessionID,
+			ToolCallDetails: e.ToolCallDetails,
+			Attribution:     e.Attribution, ClaimedSessionID: e.ClaimedSessionID,
 			ID: e.ID, SessionID: e.SessionID, Server: e.Server, ToolName: e.ToolName,
 			ArgsSchemaFP: e.ArgsSchemaFP, DurationMs: e.DurationMs, OK: e.OK, Error: e.Error, Timestamp: ts,
 		})
@@ -205,22 +207,7 @@ func (p *DaemonToolCallPublisher) Publish(_ context.Context, e events.Event) err
 	if err := json.Unmarshal([]byte(e.PayloadJSON), &tce); err != nil {
 		return err
 	}
-	req := api.ProxyEventIngestRequest{
-		ClaimedSessionID: tce.ClaimedSessionID,
-		SessionID:        tce.SessionID,
-		Server:           tce.Server,
-		ToolName:         tce.ToolName,
-		ArgsSchemaFP:     tce.ArgsSchemaFP,
-		DurationMs:       tce.DurationMs,
-		OK:               tce.OK,
-		// The daemon refuses a body over its limit whole, and an upstream
-		// error can be far larger than that: send what a record keeps, so a
-		// failing call is not left as a start with no end.
-		Error:     api.TruncateProxyEventError(tce.Error),
-		Timestamp: tce.Timestamp.UTC().Format(time.RFC3339Nano),
-		Phase:     phase,
-		Publish:   true,
-	}
+	req := api.ProxyEventIngestRequest(proxyevents.IngestCall(tce, phase, true))
 	select {
 	case p.queue <- req:
 	default:

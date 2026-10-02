@@ -114,7 +114,7 @@ func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f List
 		offset = 0
 	}
 
-	where := "to_urn=?"
+	where := "routing_staged=0 AND to_urn=?"
 	args := []any{to.URN()}
 	if !f.IncludeArchived {
 		where += " AND archived_at IS NULL"
@@ -204,19 +204,19 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 	switch {
 	case col == "read_at" && !clr:
 		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=? WHERE id=? AND to_urn=? AND read_at IS NULL`,
+			`UPDATE messages SET read_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NULL`,
 			now, id, recipient.URN())
 	case col == "read_at" && clr:
 		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET read_at=NULL WHERE id=? AND to_urn=? AND read_at IS NOT NULL`,
+			`UPDATE messages SET read_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND read_at IS NOT NULL`,
 			id, recipient.URN())
 	case col == "archived_at" && !clr:
 		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET archived_at=? WHERE id=? AND to_urn=? AND archived_at IS NULL`,
+			`UPDATE messages SET archived_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NULL`,
 			now, id, recipient.URN())
 	case col == "archived_at" && clr:
 		res, err = ms.db.ExecContext(ctx,
-			`UPDATE messages SET archived_at=NULL WHERE id=? AND to_urn=? AND archived_at IS NOT NULL`,
+			`UPDATE messages SET archived_at=NULL WHERE routing_staged=0 AND id=? AND to_urn=? AND archived_at IS NOT NULL`,
 			id, recipient.URN())
 	default:
 		return fmt.Errorf("messaging store: stampRecipientField: unknown column %q", col)
@@ -229,7 +229,7 @@ func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, re
 	}
 	// 0 rows: not found, wrong recipient, or already in the target state.
 	var toURN string
-	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=?`, id).Scan(&toURN)
+	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&toURN)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messaging.ErrNotFound

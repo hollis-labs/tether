@@ -40,17 +40,7 @@ func Forward(ctx context.Context, bus events.Bus, sink func(context.Context, Pro
 				continue
 			}
 
-			body := ProxyEventIngestRequest{
-				ClaimedSessionID: tce.ClaimedSessionID,
-				SessionID:        tce.SessionID,
-				Server:           tce.Server,
-				ToolName:         tce.ToolName,
-				ArgsSchemaFP:     tce.ArgsSchemaFP,
-				DurationMs:       tce.DurationMs,
-				OK:               tce.OK,
-				Error:            TruncateProxyEventError(tce.Error),
-				Timestamp:        tce.Timestamp.UTC().Format(time.RFC3339Nano),
-			}
+			body := IngestCall(tce, ProxyEventPhaseEnd, false)
 			postCtx, postCancel := context.WithTimeout(ctx, 3*time.Second)
 			postErr := sink(postCtx, body)
 			postCancel()

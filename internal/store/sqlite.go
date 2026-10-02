@@ -388,8 +388,12 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 }
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
+	return s.GetSessionContext(context.Background(), id)
+}
+
+func (s *Store) GetSessionContext(ctx context.Context, id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json FROM sessions WHERE id=?`, id).
+	err := s.db.QueryRowContext(ctx, `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json FROM sessions WHERE id=?`, id).
 		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)

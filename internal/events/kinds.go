@@ -2,8 +2,14 @@ package events
 
 // Event kind constants. Keep this list small and justified — clients
 // depend on stable kind strings. New kinds should be documented in
-// docs/api/events.md alongside their payload schema.
+// docs/api/README.md alongside their payload schema.
 const (
+	// KindSessionTurnRouted is the atomic durable audit of channel attachment.
+	KindSessionTurnRouted = "session.turn_routed"
+
+	// KindSessionTurnOutput carries a reduced turn and an optional staged message id.
+	KindSessionTurnOutput = "session.turn_output"
+
 	// KindSessionStateChanged is emitted by the eventSinkAdapter wired
 	// into agentsessions.Manager on each session lifecycle transition
 	// (created → launching → running → completed|failed|killed; the

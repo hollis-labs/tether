@@ -1,0 +1,527 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/store"
+)
+
+type fakeReplies struct {
+	mu       sync.Mutex
+	requests []RoutingReplyRequest
+	err      error
+	delivery RoutingReplyDelivery
+	// db, when set, stores the reply like the real service does and returns its id.
+	db *store.Store
+}
+
+func (f *fakeReplies) SubmitRoutingReply(ctx context.Context, req RoutingReplyRequest) (RoutingReplyReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return RoutingReplyReceipt{}, f.err
+	}
+	id := "reply-1"
+	if f.db != nil {
+		caller, err := messaging.ParseURN(req.Caller.ID)
+		if err != nil {
+			return RoutingReplyReceipt{}, err
+		}
+		reply, _, err := f.db.CreateRoutingReply(ctx, store.NewRoutingReply{From: caller, ParentID: req.ParentID, Body: req.Body,
+			TargetSessionID: "s1", Actor: caller.URN()})
+		if err != nil {
+			return RoutingReplyReceipt{}, err
+		}
+		id = reply.ReplyID
+	}
+	return RoutingReplyReceipt{ReplyID: id, ParentID: req.ParentID, State: "queued", TargetSessionID: "s1"}, nil
+}
+
+func (f *fakeReplies) RoutingReplyDelivery(_ context.Context, id string) (RoutingReplyDelivery, error) {
+	if id != f.delivery.ReplyID {
+		return RoutingReplyDelivery{}, ErrReplyNotFound
+	}
+	return f.delivery, nil
+}
+
+func replyServer(t *testing.T, svc RoutingReplyService) (http.Handler, *store.Store) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "reply.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return NewHandler(Deps{MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc}), db
+}
+
+// routedMessage publishes a message a session sent to a channel.
+func routedMessage(t *testing.T, db *store.Store) messaging.Envelope {
+	t.Helper()
+	to, _ := channels.ChannelAddress("ops")
+	env, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}, To: to,
+		Payload: []byte(`{"text":"which option?"}`), ContentType: "application/json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+func post(h http.Handler, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	return postAs(context.Background(), h, path, body, headers)
+}
+
+func postAs(ctx context.Context, h http.Handler, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b)).WithContext(ctx)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestReplyEndpointAcceptsAReplyToAChannelMessage(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+
+	w := post(h, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", map[string]any{"body": "the second one", "interrupt": true},
+		map[string]string{"Idempotency-Key": "k-1"})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s (the channel mailbox guard must not apply to reply)", w.Code, w.Body)
+	}
+	var receipt RoutingReplyReceipt
+	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil || receipt.ReplyID != "reply-1" || receipt.State != "queued" || receipt.TargetSessionID != "s1" {
+		t.Fatalf("receipt %+v %v", receipt, err)
+	}
+	got := svc.requests[0]
+	if got.ParentID != parent.ID || got.Body != "the second one" || !got.Interrupt || got.IdempotencyKey != "k-1" ||
+		got.Caller.ID != "msg://user/local/chris" || got.Verified {
+		t.Fatalf("request %+v", got)
+	}
+}
+
+func TestReplyEndpointPrefersTheVerifiedPrincipalOverAs(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://user/local/verified", Kind: "user"})
+	w := postAs(ctx, h, "/messages/"+parent.ID+"/reply?as=msg://user/local/spoofed", map[string]any{"body": "x"}, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	if got := svc.requests[0]; got.Caller.ID != "msg://user/local/verified" || !got.Verified {
+		t.Fatalf("request %+v", got)
+	}
+}
+
+func TestReplyEndpointRequiresAnIdentityAndABody(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	for name, tc := range map[string]struct {
+		path string
+		body any
+	}{
+		"no as":        {"/messages/" + parent.ID + "/reply", map[string]any{"body": "x"}},
+		"as not a urn": {"/messages/" + parent.ID + "/reply?as=chris", map[string]any{"body": "x"}},
+	} {
+		if w := post(h, tc.path, tc.body, nil); w.Code != http.StatusBadRequest || errorCode(t, w) != CodeInvalidRequest {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", bytes.NewReader([]byte("{not json")))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("bad json: %d", w.Code)
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("a malformed request reached the service: %+v", svc.requests)
+	}
+	getReq := httptest.NewRequest(http.MethodGet, "/messages/"+parent.ID+"/reply", nil)
+	gw := httptest.NewRecorder()
+	h.ServeHTTP(gw, getReq)
+	if gw.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET reply: %d", gw.Code)
+	}
+}
+
+func errorCode(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var e ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &e); err != nil {
+		t.Fatalf("not an error envelope: %s", w.Body)
+	}
+	return e.Error.Code
+}
+
+func TestReplyErrorsAreTypedAndCarryTheirOwnStatus(t *testing.T) {
+	cases := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{ErrReplyInvalid, 400, CodeInvalidRequest},
+		{fmt.Errorf("%w: 200000 bytes", ErrReplyTooLarge), 413, CodePayloadTooLarge},
+		{ErrReplyParentNotFound, 404, CodeNotFound},
+		{ErrReplyTargetNotSession, 400, CodeReplyTargetNotSession},
+		{ErrReplyForbidden, 403, CodeForbidden},
+		{ErrReplyInterruptUnsupported, 409, CodeInterruptUnsupported},
+		{ErrReplyTurnNotStarted, 409, CodeTurnNotYetStarted},
+		{ErrReplyIdempotencyConflict, 409, CodeIdempotencyConflict},
+		{ErrRoutingRepliesNotWired, 501, CodeNotImplemented},
+		{errors.New("disk on fire"), 500, CodeInternalError},
+	}
+	for _, tc := range cases {
+		svc := &fakeReplies{err: tc.err}
+		h, db := replyServer(t, svc)
+		parent := routedMessage(t, db)
+		w := post(h, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", map[string]any{"body": "x"}, nil)
+		if w.Code != tc.status || errorCode(t, w) != tc.code {
+			t.Errorf("%v: got %d %s, want %d %s", tc.err, w.Code, w.Body, tc.status, tc.code)
+		}
+	}
+}
+
+func TestSendWithInReplyToARoutedMessageIsAReplyNotAMailboxDelivery(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	svc.db = db
+	parent := routedMessage(t, db)
+
+	w := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": parent.ID,
+		"payload": map[string]string{"body": "use the second option"}}, nil)
+	// 201 and an envelope, like any send: the MCP tool and the CLI read it unchanged.
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var sent struct {
+		messaging.Envelope
+		RoutingReply RoutingReplyReceipt `json:"routing_reply"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.ID == "" || sent.InReplyTo != parent.ID || sent.RoutingReply.ReplyID != sent.ID || sent.RoutingReply.State != "queued" ||
+		sent.RoutingReply.TargetSessionID != "s1" {
+		t.Fatalf("response %+v", sent)
+	}
+	got := svc.requests[0]
+	if got.ParentID != parent.ID || got.Body != "use the second option" || got.Caller.ID != "msg://user/local/chris" || got.Interrupt {
+		t.Fatalf("request %+v", got)
+	}
+	// The only stored copy is the reply the service made; the HTTP layer added no mailbox row.
+	var count int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM messages WHERE in_reply_to=?`, parent.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("stored replies = %d (%v), want exactly the service's one", count, err)
+	}
+
+	// to, when given, must be the sender session.
+	other := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": parent.ID,
+		"to": "msg://agent/local/someone-else", "payload": "x"}, nil)
+	if other.Code != http.StatusBadRequest {
+		t.Fatalf("to mismatch: %d %s", other.Code, other.Body)
+	}
+	same := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": parent.ID,
+		"to": parent.From.URN(), "payload": "plain text"}, nil)
+	if same.Code != http.StatusCreated || svc.requests[1].Body != "plain text" {
+		t.Fatalf("to = sender session: %d %s %+v", same.Code, same.Body, svc.requests)
+	}
+}
+
+func TestInReplyToAnOrdinaryMessageKeepsItsMailboxDelivery(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	// A message a session sent to an agent's mailbox, not to a channel.
+	mailbox, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindRequest,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"},
+		To:   messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: "boss"}, Payload: []byte(`"ping"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://agent/local/boss", "to": "msg://session/local/s1",
+		"in_reply_to": mailbox.ID, "payload": "pong"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("an ordinary reply was rerouted: %+v", svc.requests)
+	}
+}
+
+func TestSendWithInReplyToIsOrdinaryWhenReplyRoutingIsOff(t *testing.T) {
+	h, db := replyServer(t, nil)
+	parent := routedMessage(t, db)
+	w := post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "to": "msg://agent/local/boss",
+		"in_reply_to": parent.ID, "payload": "x"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+}
+
+func TestDeliveryEndpoint(t *testing.T) {
+	svc := &fakeReplies{delivery: RoutingReplyDelivery{ReplyID: "r1", ParentID: "p", State: "undeliverable", Reason: "session_ended_no_binding",
+		OriginalSessionID: "s1", TargetSessionID: "s1"}}
+	h, _ := replyServer(t, svc)
+	req := httptest.NewRequest(http.MethodGet, "/messages/r1/delivery", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	var got RoutingReplyDelivery
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.State != "undeliverable" || got.Reason != "session_ended_no_binding" {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/messages/nope/delivery", nil))
+	if missing.Code != 404 || errorCode(t, missing) != CodeNotFound {
+		t.Fatalf("unknown reply: %d %s", missing.Code, missing.Body)
+	}
+	wrong := httptest.NewRecorder()
+	h.ServeHTTP(wrong, httptest.NewRequest(http.MethodPost, "/messages/r1/delivery", nil))
+	if wrong.Code != 405 {
+		t.Fatalf("POST delivery: %d", wrong.Code)
+	}
+}
+
+func TestReplyRoutesAre404WithoutTheService(t *testing.T) {
+	h, db := replyServer(t, nil)
+	parent := routedMessage(t, db)
+	if w := post(h, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", map[string]any{"body": "x"}, nil); w.Code != 404 {
+		t.Fatalf("reply: %d", w.Code)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/messages/x/delivery", nil))
+	if w.Code != 404 {
+		t.Fatalf("delivery: %d", w.Code)
+	}
+}
+
+func TestOtherActionsOnAChannelMessageStayGuarded(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	// The reply exemption must not widen the mailbox guard to other actions.
+	w := post(h, "/messages/"+parent.ID+"/consume?as="+parent.To.URN(), map[string]any{}, nil)
+	if w.Code != http.StatusBadRequest || errorCode(t, w) != CodeChannelNotMailbox {
+		t.Fatalf("consume on a channel message: %d %s", w.Code, w.Body)
+	}
+}
+
+// POST /messages/notify with in_reply_to naming a routed message is a reply too:
+// the old mailbox wake would inject a generic reminder instead of the reply text
+// and leave a mailbox copy, so it must not run.
+func TestNotifyWithInReplyToARoutedMessageQueuesTheReplyAndWakesNothing(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "notify-reply.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	launcher := &fakeLaunchService{
+		getRes:          map[string]*store.SessionRow{"s1": {ID: "s1", State: "running", LogicalAgentID: "worker"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	svc := &fakeReplies{db: db}
+	h := NewHandler(Deps{Service: launcher, MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc})
+	parent := routedMessage(t, db)
+
+	w := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://user/local/chris", "to": parent.From.URN(),
+		"in_reply_to": parent.ID, "session_id": "s1", "wake": true, "payload": map[string]string{"body": "use the second option"}}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var out messageNotifyResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.RoutingReply == nil || out.RoutingReply.ReplyID != out.Message.ID || out.RoutingReply.State != "queued" ||
+		out.WakeAttempted || out.WakeDelivered || out.UnreadCount != 0 {
+		t.Fatalf("response %+v", out)
+	}
+	if len(launcher.attemptWakeLog) != 0 || len(launcher.inputLog) != 0 {
+		t.Fatalf("the mailbox wake ran for a routed reply: wakes=%v inputs=%d", launcher.attemptWakeLog, len(launcher.inputLog))
+	}
+	if got := svc.requests[0]; got.Body != "use the second option" || got.ParentID != parent.ID {
+		t.Fatalf("request %+v", got)
+	}
+
+	// to, when it names someone else, is refused rather than silently misrouted.
+	other := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://user/local/chris", "to": "msg://agent/local/worker",
+		"in_reply_to": parent.ID, "payload": "x"}, nil)
+	if other.Code != http.StatusBadRequest || len(svc.requests) != 1 {
+		t.Fatalf("to mismatch: %d %s requests=%d", other.Code, other.Body, len(svc.requests))
+	}
+}
+
+func TestNotifyWithInReplyToAnOrdinaryMessageStillWakes(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "notify-ordinary.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	launcher := &fakeLaunchService{
+		getRes:          map[string]*store.SessionRow{"s1": {ID: "s1", State: "running", LogicalAgentID: "worker"}},
+		runtimeHealthOK: map[string]bool{"s1": true},
+	}
+	svc := &fakeReplies{db: db}
+	h := NewHandler(Deps{Service: launcher, MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc})
+	mailbox, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindRequest,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"},
+		To:   messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: "boss"}, Payload: []byte(`"ping"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := post(h, "/messages/notify", map[string]any{"kind": "response", "from": "msg://agent/local/boss", "to": "msg://agent/local/worker",
+		"in_reply_to": mailbox.ID, "session_id": "s1", "payload": "pong"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	var out messageNotifyResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || !out.WakeAttempted || out.RoutingReply != nil || len(svc.requests) != 0 {
+		t.Fatalf("an ordinary notify reply changed: %+v %v requests=%d", out, err, len(svc.requests))
+	}
+}
+
+// A reply is delivered by the dispatcher. A mailbox verb aimed at its message row
+// used to return 204 while the reply was still injected, leaving a row that was
+// both canceled and consumed: refuse every one, and change nothing.
+func TestMailboxVerbsAreRefusedOnAReplyAndChangeNothing(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	ctx := context.Background()
+	parent := routedMessage(t, db)
+	reply, _, err := db.CreateRoutingReply(ctx, store.NewRoutingReply{
+		From: messaging.Address{Kind: messaging.KindUser, Authority: "local", ID: "chris"}, ParentID: parent.ID, Body: "x",
+		TargetSessionID: "s1", Actor: "msg://user/local/chris"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.delivery = RoutingReplyDelivery{ReplyID: reply.ReplyID, State: "queued"}
+	as := "?as=" + store.RoutingReplyAddress.URN()
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/messages/" + reply.ReplyID + "/cancel" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/consume" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/read" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/archive" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/unarchive" + as},
+		{"POST", "/messages/" + reply.ReplyID + "/claim"},
+		{"POST", "/messages/" + reply.ReplyID + "/ack"},
+		{"POST", "/messages/" + reply.ReplyID + "/nack"},
+		{"POST", "/messages/" + reply.ReplyID + "/redrive"},
+		{"DELETE", "/messages/" + reply.ReplyID + as},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader([]byte("{}")))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest || errorCode(t, w) != CodeReplyNotMailbox {
+			t.Errorf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body)
+		}
+	}
+	var canceled, consumed, read, archived *string
+	if err := db.DB().QueryRow(`SELECT canceled_at, consumed_at, read_at, archived_at FROM messages WHERE id=?`, reply.ReplyID).
+		Scan(&canceled, &consumed, &read, &archived); err != nil {
+		t.Fatal(err)
+	}
+	if canceled != nil || consumed != nil || read != nil || archived != nil {
+		t.Fatalf("a refused mailbox verb changed the row: canceled=%v consumed=%v read=%v archived=%v", canceled, consumed, read, archived)
+	}
+	if got, _ := db.RoutingReply(ctx, reply.ReplyID); got.State != store.RoutingReplyQueued {
+		t.Fatalf("reply = %+v", got)
+	}
+	// Its delivery state, and the message itself for its sender, stay readable.
+	dw := httptest.NewRecorder()
+	h.ServeHTTP(dw, httptest.NewRequest(http.MethodGet, "/messages/"+reply.ReplyID+"/delivery", nil))
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delivery: %d %s", dw.Code, dw.Body)
+	}
+	gw := httptest.NewRecorder()
+	h.ServeHTTP(gw, httptest.NewRequest(http.MethodGet, "/messages/"+reply.ReplyID+"?as=msg://user/local/chris", nil))
+	if gw.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", gw.Code, gw.Body)
+	}
+}
+
+func TestAnOversizedReplyRequestIs413NotA400AndNeverReachesTheService(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	path := "/messages/" + parent.ID + "/reply?as=msg://user/local/chris"
+	for name, body := range map[string]string{
+		"just over the cap": `{"body":"` + strings.Repeat("a", maxReplyRequestBytes) + `"}`,
+		"far over the cap":  `{"body":"` + strings.Repeat("a", 3*maxReplyRequestBytes) + `"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusRequestEntityTooLarge || errorCode(t, w) != CodePayloadTooLarge {
+			t.Errorf("%s: %d %.200s", name, w.Code, w.Body)
+		}
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("an oversized request reached the service: %d", len(svc.requests))
+	}
+}
+
+func TestAReplyRequestWithAnUnknownFieldIsRefusedNotSilentlyAPlainReply(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	path := "/messages/" + parent.ID + "/reply?as=msg://user/local/chris"
+	// A misspelled "interrupt" would have queued a reply that does not interrupt. The
+	// misspelling is built, not written, so the spell checker has nothing to flag.
+	typo := strings.Replace("interrupt", "rr", "r", 1)
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"body":"stop now","`+typo+`":true}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || errorCode(t, w) != CodeInvalidRequest || !strings.Contains(w.Body.String(), typo) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(svc.requests) != 0 {
+		t.Fatalf("reached the service: %+v", svc.requests)
+	}
+}
+
+func TestTheNewReplyErrorsAreTyped(t *testing.T) {
+	svc := &fakeReplies{err: ErrReplyNoTurnFeed}
+	h, db := replyServer(t, svc)
+	parent := routedMessage(t, db)
+	w := post(h, "/messages/"+parent.ID+"/reply?as=msg://user/local/chris", map[string]any{"body": "x"}, nil)
+	if w.Code != http.StatusConflict || errorCode(t, w) != CodeTurnFeedUnavailable {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+// Only a message a LOCAL session published is routed back to its sender. A
+// channel message from a session on another authority has no session this daemon
+// can inject into, so replying to it keeps the ordinary path rather than
+// becoming a reply the service would refuse.
+func TestInReplyToAChannelMessageFromANonLocalSessionKeepsItsOrdinaryPath(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	to, _ := channels.ChannelAddress("ops")
+	remote, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "otherhost", ID: "s9"}, To: to,
+		Payload: []byte(`{"text":"which option?"}`), ContentType: "application/json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": remote.ID, "payload": "hello"}, nil)
+	if len(svc.requests) != 0 {
+		t.Fatalf("a reply to a non-local session's message was routed: %+v", svc.requests)
+	}
+}

@@ -1593,6 +1593,78 @@ normal and `--proxy` mode.
 > same durable `proxy_events` SQLite table as `tether_proxy_events`. Results
 > survive daemon restarts.
 
+#### Tool-call telemetry v2
+
+`tool_call_start` and `tool_call_end` are durable `events` payloads. Calls
+rejected by gateway policy or native scope validation still produce completed
+call observations. Records carry daemon-resolved credential identity and verified
+session/agent/workstream attribution, upstream `server`, `profile`, `discovery_mode`,
+`args_bytes`, `result_bytes`, `error_class`, `error_truncated`, `trace_id`,
+`span_id`, `gateway_ms` and `forward_ms`. Argument/result payloads are not copied
+into telemetry; the argument fingerprint uses key names only. Stored error text
+can echo argument fragments. Configured credentials are scrubbed before its
+4 KiB limit and from caller-facing error text. Recorded tool names are capped
+at 256 UTF-8 bytes with a hash suffix; dispatch uses the original name.
+
+Daemon-resolved operator/service principal ID, kind and source remain recorded
+with `verified:false`; session, agent and workstream fields require verified
+session binding. Anonymous callers acquire no attribution. Strict `/mcp`
+admission rejects anonymous calls before observation.
+
+Byte sizes use canonical JSON; nil or empty arguments measure zero.
+`gateway_ms` measures pre/post-dispatch overhead, while `forward_ms` measures
+dispatch wall time. `error_truncated` describes the stored error, not the
+upstream result. Outcomes are `denied`, `upstream_down`, `timeout`, `validation`
+and `upstream_error`; successful calls have no error class. IDs are lowercase
+hex (32/16 characters). The existing go-otel provider supplies spans; disabled
+or failed OTel initialization can leave the incoming parent context instead,
+and absent context leaves IDs empty. `proxy_events` remains a compatibility
+query projection. Both it and canonical events share the default 90-day age
+retention; the live in-memory feed is not the history source.
+
+#### `tether_tool_metrics`
+
+Read completed-call counters and cumulative latency histograms grouped by
+exact tool, upstream and outcome. The matching HTTP route is
+`GET /events/tool-metrics`; the CLI is `tether events tool-metrics --json`.
+Optional `tool` and `upstream` selectors are exact matches, and `since`/`until`
+are inclusive/exclusive RFC3339 time bounds. Invalid selectors return
+`invalid_request` consistently across MCP, HTTP and CLI.
+
+These queries are GLOBAL and unscoped: they aggregate all callers without
+caller identity or session filtering. Each query scans retained `tool_call_end`
+events and groups them; this is suitable at the current roughly 66,000-row
+scale. A rollup table is the future option if retained history makes scans
+expensive. Counts survive restart and exclude start rows. The response is `{groups, truncated, window:"retained_events"}`.
+Groups are ordered by call count descending, with tool/upstream/outcome ties,
+and capped at 1,000; `truncated`
+asks the caller to narrow filters. Each group includes call and byte counters,
+`metadata_samples`, and duration/gateway/forward histograms with `count`,
+`sum_ms` and cumulative `buckets`. Upper bounds are 5, 25, 100, 500, 1,000 and
+5,000 milliseconds plus a final `upper_ms:null` bucket for infinity. Historical
+rows lacking v2 metadata still contribute calls/duration; they do not invent
+size or gateway/forward samples.
+
+OTel additionally exports process-lifetime `tether.tool.calls`,
+`tether.tool.args.bytes`, `tether.tool.result.bytes`, and `tether.tool.duration`,
+`tether.tool.gateway`, `tether.tool.forward` histograms. Labels are tool,
+upstream and outcome, never caller identity or argument values. These reset
+with the observing process and are distinct from retained-event queries;
+forwarded copies do not increment a second exporter. Metric network export is
+off by default. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to opt in on the existing OTLP
+HTTP endpoint; a remote destination requires explicit operator configuration.
+Metric export sends tool/upstream/outcome labels, call counts, byte-size sums
+and latency histograms to that endpoint, with the existing OTel service metadata.
+Caller identity, argument/result values, error text and correlation IDs are not
+metric labels or observations. Existing tracing configuration is separate.
+`HOLLIS_OTEL_DISABLED` (or legacy `TETHER_OTEL_DISABLED`) disables OTel.
+Each process reserves up to 100 distinct denied tool/upstream/outcome series
+and up to 900 non-denied series. Excess combinations share one `_other` series,
+so hallucinated denied names cannot consume the dispatched-tool budget. Labels over 256 bytes also use
+`_other`. This bounds exporter memory; retained-event queries remain exact.
+Existing introspection access rules apply; no deployment or new
+authorization policy is implied.
+
 #### `tether_session_events`
 List historical lifecycle events for a session in descending seq order.
 

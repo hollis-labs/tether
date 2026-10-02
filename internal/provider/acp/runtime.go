@@ -8,8 +8,7 @@
 // one wrapper run to agentsessions.Runtime and agentsessions.Session so the
 // Manager, attach and session.log work as they do for every other runtime.
 //
-// Stage 1 only. Native runtimes still launch through agentkit's runtimes;
-// stage 2 moves them onto the wrapper as well.
+// Native runtimes launch through agentkit. This host adapts ACP sessions only.
 package acp
 
 import (
@@ -30,6 +29,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	wacp "github.com/hollis-labs/go-agent-wrapper/acp"
 	"github.com/hollis-labs/go-agent-wrapper/activity"
+	"github.com/hollis-labs/go-agent-wrapper/adapters"
 	"github.com/hollis-labs/go-agent-wrapper/launch"
 	"github.com/hollis-labs/go-agent-wrapper/wrapper"
 	"github.com/hollis-labs/go-providers/registry"
@@ -65,11 +65,16 @@ func New(providerID, runtimeID string, mode runtimes.Mode, binary string) (agent
 }
 
 type acpRuntime struct {
-	id   string
-	desc registry.Descriptor
-	sel  launch.Selection
-	caps agentsessions.Capabilities
+	id       string
+	desc     registry.Descriptor
+	sel      launch.Selection
+	caps     agentsessions.Capabilities
+	observer func(runtimeevents.Event)
 }
+
+// SetEventObserver installs a synchronous observer before Start. It receives
+// the wrapper's complete Activity feed, including events not rendered to logs.
+func (r *acpRuntime) SetEventObserver(observer func(runtimeevents.Event)) { r.observer = observer }
 
 func (r *acpRuntime) ID() string                       { return r.id }
 func (r *acpRuntime) Kind() string                     { return Kind }
@@ -116,6 +121,7 @@ func (r *acpRuntime) Start(ctx context.Context, opts agentsessions.StartOptions)
 	if err != nil {
 		return nil, err
 	}
+	out.observer = r.observer
 	manager := wacp.NewManager()
 	cfg := wrapper.Config{
 		App:             "tether",
@@ -260,6 +266,26 @@ func (s *session) SendInput(ctx context.Context, data []byte) error {
 
 func (s *session) Resize(context.Context, uint16, uint16) error { return nil }
 
+// DeliveryCapabilities forwards the wrapper's real advertisement so callers
+// can distinguish cancel-turn support from merely keeping the session alive.
+func (s *session) DeliveryCapabilities() adapters.DeliveryCapabilities {
+	return s.w.DeliveryCapabilities()
+}
+
+// InterruptTurn preserves the ACP session and uses the wrapper's existing
+// session/cancel protocol. The manager-facing refusal is the native runtime's
+// ErrInterruptUnsupported, rather than a wrapper-specific error.
+func (s *session) InterruptTurn(ctx context.Context) error {
+	if !s.DeliveryCapabilities().Supports(adapters.DeliveryCapabilityCancelTurn) {
+		return agentsessions.ErrInterruptUnsupported
+	}
+	err := s.w.CancelTurn(ctx)
+	if errors.Is(err, wrapper.ErrTurnCancelUnsupported) {
+		return agentsessions.ErrInterruptUnsupported
+	}
+	return err
+}
+
 func (s *session) Health() agentsessions.HealthStatus {
 	select {
 	case <-s.done:
@@ -286,9 +312,10 @@ func (s *session) ProviderSessionID() string { return s.w.ProviderSessionID() }
 // the wrapper emits lifecycle, raw-IO, heartbeat and policy kinds that a
 // reader of the transcript does not need, and new kinds may appear.
 type output struct {
-	mu     sync.Mutex
-	f      *os.File
-	fanout io.Writer
+	mu       sync.Mutex
+	f        *os.File
+	fanout   io.Writer
+	observer func(runtimeevents.Event)
 }
 
 func openOutput(opts agentsessions.StartOptions) (*output, error) {
@@ -313,6 +340,9 @@ func openOutput(opts agentsessions.StartOptions) (*output, error) {
 
 // Write implements runtimeevents.Sink. It never fails the wrapper's emit.
 func (o *output) Write(_ context.Context, ev runtimeevents.Event) error {
+	if o.observer != nil {
+		o.observer(ev)
+	}
 	o.writeText(render(ev))
 	return nil
 }

@@ -194,15 +194,16 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err := gateway.Policy.ValidateNames(gateway.Snapshot()); err != nil {
 		return nil, err
 	}
-	if opts.Publisher != nil {
-		logging := NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(r.pool.entries))
-		logging.contextDecorator = a.withSessionID
-		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware([]ToolCallMiddleware{logging}, registry))
-	}
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
 	if !opts.Only {
 		a.registerDocsResources(s)
 		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
+	}
+	if opts.Publisher != nil {
+		logging := NewLoggingMiddleware(opts.Publisher).RedactWith(proxyRedactionSet(r.pool.entries))
+		logging.profile, logging.mode = opts.Profile.ID, string(selection.Mode)
+		logging.contextDecorator = a.withSessionID
+		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware([]ToolCallMiddleware{logging}, registry))
 	}
 	allowed := map[string]struct{}{}
 	for id := range upstreams.servers {
