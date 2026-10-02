@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // ErrWrongRecipient is returned by Consume when the caller's `as` URN does
@@ -91,6 +92,22 @@ func (ms *messagingStore) sendWithID(ctx context.Context, env messaging.Envelope
 }
 
 func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.Envelope, deliveryID string) (messaging.Envelope, error) {
+	publication, err := channels.NormalizePublication(&env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	// Commit the topic cursor and envelope together. A publication is visible
+	// exactly once, in insertion order, even when producers mint IDs out of order.
+	exec := ms.db.ExecContext
+	var tx *sql.Tx
+	if publication {
+		tx, err = ms.db.BeginTx(ctx, nil)
+		if err != nil {
+			return messaging.Envelope{}, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.ExecContext
+	}
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
 
@@ -104,7 +121,7 @@ func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.En
 		payloadStr = string(env.Payload)
 	}
 
-	_, err := ms.db.ExecContext(ctx,
+	_, err = exec(ctx,
 		`INSERT INTO messages
 		 (id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		  payload, content_type, metadata, created_at, delivery_id)
@@ -126,6 +143,14 @@ func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.En
 		return messaging.Envelope{}, fmt.Errorf("messaging store: send: %w", err)
 	}
 
+	if publication {
+		if _, err := exec(ctx, `INSERT INTO channel_publications (name, message_id) VALUES (?, ?)`, string(env.Channel), env.ID); err != nil {
+			return messaging.Envelope{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return messaging.Envelope{}, err
+		}
+	}
 	ms.fanOut(env)
 	return env, nil
 }

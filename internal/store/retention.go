@@ -48,6 +48,12 @@ package store
 // this sprint's manual-only launch policy and acceptance #3's "no silent
 // deletion."
 //
+// Channel publications have no per-recipient delivery obligation: publishing
+// commits their durable history, and independent subscribers do not hold leases.
+// They are eligible for the same explicit, audited manual body purge. Structural
+// rows and channel replay sequences remain indefinitely; no automatic age sweep
+// is introduced. Private mailbox Channel labels do not affect eligibility.
+//
 // Group-fanout messages (v060-05 T-04) are, by construction, never
 // purge-eligible. A group's canonical `messages` row records the fanout
 // under delivery_message_id (migration 0021), never delivery_id
@@ -100,6 +106,7 @@ type RetentionCandidate struct {
 // eligibility against the delivery core.
 type rawRetentionRow struct {
 	id, createdStr                  string
+	publication                     bool
 	consumedStr, canceledStr, delID sql.NullString
 }
 
@@ -115,7 +122,8 @@ type rawRetentionRow struct {
 // safe to then loop over calling GetDelivery per row.
 func (s *Store) queryRetentionRows(ctx context.Context, olderThan time.Time) ([]rawRetentionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, created_at, consumed_at, canceled_at, delivery_id
+		`SELECT id, created_at, consumed_at, canceled_at, delivery_id,
+ EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id)
 		   FROM messages
 		  WHERE created_at < ?
 		  ORDER BY created_at ASC`,
@@ -129,7 +137,7 @@ func (s *Store) queryRetentionRows(ctx context.Context, olderThan time.Time) ([]
 	var out []rawRetentionRow
 	for rows.Next() {
 		var r rawRetentionRow
-		if err := rows.Scan(&r.id, &r.createdStr, &r.consumedStr, &r.canceledStr, &r.delID); err != nil {
+		if err := rows.Scan(&r.id, &r.createdStr, &r.consumedStr, &r.canceledStr, &r.delID, &r.publication); err != nil {
 			return nil, fmt.Errorf("store: retention: scan candidate: %w", err)
 		}
 		out = append(out, r)
@@ -166,7 +174,7 @@ func (s *Store) ListRetentionCandidates(ctx context.Context, olderThan time.Time
 				c.Eligible = isPurgeEligibleStatus(rd.Status)
 			}
 		} else {
-			c.Eligible = legacyRowIsDone(r.consumedStr, r.canceledStr)
+			c.Eligible = r.publication || legacyRowIsDone(r.consumedStr, r.canceledStr)
 		}
 		out = append(out, c)
 	}
@@ -189,11 +197,13 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy st
 		return false, fmt.Errorf("store: retention: authorized_by must be a valid URN: %w", err)
 	}
 	var payload, metadata, consumedStr, canceledStr, delID sql.NullString
+	var publication bool
 	row := s.db.QueryRowContext(ctx,
-		`SELECT payload, metadata, consumed_at, canceled_at, delivery_id FROM messages WHERE id = ?`,
+		`SELECT payload, metadata, consumed_at, canceled_at, delivery_id,
+ EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id) FROM messages WHERE id = ?`,
 		messageID,
 	)
-	if scanErr := row.Scan(&payload, &metadata, &consumedStr, &canceledStr, &delID); scanErr != nil {
+	if scanErr := row.Scan(&payload, &metadata, &consumedStr, &canceledStr, &delID, &publication); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return false, fmt.Errorf("store: retention: purge %s: %w", messageID, messaging.ErrNotFound)
 		}
@@ -208,7 +218,7 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy st
 		}
 		eligible = isPurgeEligibleStatus(rd.Status)
 	} else {
-		eligible = legacyRowIsDone(consumedStr, canceledStr)
+		eligible = publication || legacyRowIsDone(consumedStr, canceledStr)
 	}
 	if !eligible {
 		return false, ErrPendingObligation

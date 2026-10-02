@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -154,8 +155,12 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		ContentType: req.ContentType,
 		Metadata:    req.Metadata,
 	}
-	sent, err := s.MessageStore.Send(r.Context(), env)
+	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
+			writeChannelError(w, err)
+			return
+		}
 		if errors.Is(err, messaging.ErrPresetLifecycle) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
@@ -414,8 +419,12 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
 
-	sent, err := s.MessageStore.Send(r.Context(), env)
+	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
+			writeChannelError(w, err)
+			return
+		}
 		if errors.Is(err, messaging.ErrPresetLifecycle) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
@@ -1110,4 +1119,15 @@ func isNotFound(err error) bool {
 
 func isWrongRecipient(err error) bool {
 	return errors.Is(err, store.ErrWrongRecipient)
+}
+
+func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	publication, err := channels.NormalizePublication(&env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	if publication && s.Channels != nil {
+		return s.Channels.Publish(ctx, env)
+	}
+	return s.MessageStore.Send(ctx, env)
 }

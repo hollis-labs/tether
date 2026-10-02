@@ -43,6 +43,7 @@ import (
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/store"
@@ -241,6 +242,7 @@ var daemonRunCmd = &cobra.Command{
 			SessionRefs:              svc.Store,
 			Digests:                  svc.Store,
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
+			Channels:                 channels.New(svc.Store, nil),
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
 			ProxyEvents:              svc.Store,

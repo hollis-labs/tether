@@ -1334,6 +1334,72 @@ To watch live budget alerts, subscribe to
 
 ---
 
+
+## Named channels
+
+Channels are named public topics, independent of groups and private mailboxes.
+The stable consumer handle is a case-sensitive name: 1–64 ASCII characters,
+starting with a letter or digit, followed by letters, digits, `.`, `_` or `-`.
+The derived address is `msg://service/local/channel/<name>`. This uses the
+released go-messaging service kind; the name remains stable if a dedicated
+channel address kind is introduced later. Responses carry both `name` and
+`address`. Paths are keyed by name.
+
+A successful publication creates the channel implicitly. Publish through
+`POST /messages` with `to` set to its derived address; `channel` is filled from
+the name when absent, and a conflicting label is rejected. Existing private
+mailbox messages with a `channel` label do **not** appear in channel discovery,
+history or subscriptions, even when their label matches a public topic.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/channels?as=<caller-urn>` | `GET` | List published channels, sorted by name. Returns `{channels: [{name, address}]}`. |
+| `/channels/{name}/messages?as=<caller-urn>&since=0&limit=100` | `GET` | Non-destructive history in publication order. Returns `{name, address, messages: [{seq, ...envelope}], next_since}`. `since` is exclusive, defaults to 0; `limit` defaults to 100, maximum 1000. Continue with `since=next_since`. |
+| `/channels/{name}/subscribe?as=<caller-urn>&since=<seq>` | `GET` | SSE replay strictly after `since`, followed by live publications. Omit `since` for live-only; `since=0` replays all history. `Last-Event-ID` supplies the cursor when the query omits it. |
+
+No membership is required to read or subscribe. Any valid caller URN may be
+asserted using `as`; it need not equal the channel address or sender. A
+middleware-verified bearer principal supplies caller identity directly, so
+`as` may be omitted for that caller. The shared channel service exposes
+identity-based authorization hooks for list/history/subscribe/publish; the
+current default observes identity without adding scope enforcement or grants.
+Daemon identity mode still controls authentication (ADR 0045 / 0253).
+Publication `from` attribution retains the existing observe-mode convention.
+
+Unknown valid names have empty history and can be subscribed to before their
+first publication; they appear in discovery after the first publication.
+
+```json
+{"kind":"notice","from":"msg://session/local/s123","to":"msg://service/local/channel/ops","payload":{"text":"Ready for review"}}
+```
+
+SSE events include a durable insertion-sequence cursor independent of timestamps
+and message-ID generation order:
+
+```text
+id: 42
+event: message
+data: {"seq":42,"id":"...","kind":"notice","channel":"ops","from":"msg://session/local/s123","to":"msg://service/local/channel/ops",...}
+```
+
+Subscriptions read committed history in bounded batches, with backpressure and
+up to 250 ms polling latency when caught up. A `: ping` comment is sent every
+15 seconds. Reconnect using the last received `id`; replay crosses restarts
+without consuming messages or acknowledging deliveries. Negative/malformed
+cursors, and subscription cursors beyond that channel's current high-water
+mark, return 400 `invalid_request`. Use 0 to replay a never-published channel.
+Sequence numbers are global and can have gaps within a channel.
+
+Channel envelopes use the existing **messaging retention policy**: structural
+rows and replay sequences remain indefinitely; bodies and metadata may be
+removed only through the explicit audited `/messages/{id}/purge` action.
+Publications have no per-recipient delivery obligation and are therefore
+purge-eligible without subscriber acknowledgments. A purge preserves the
+message, channel name, address and sequence and writes a durable author receipt.
+The automatic event age policy does not purge channel messages. Replies, launch
+routing configuration and consumer UIs are separate surfaces/workstreams.
+
+
 ## Messages
 
 `/messages/*` is the durable go-messaging mailbox surface. `POST /messages`
