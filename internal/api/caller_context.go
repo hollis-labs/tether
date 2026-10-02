@@ -26,7 +26,7 @@ func ResolveCallerContext(ctx context.Context, sessions CallerSessionLookup, bin
 	if !ok {
 		return callcontext.Snapshot{}
 	}
-	out := callcontext.Snapshot{PrincipalID: p.ID, PrincipalKind: p.Kind}
+	out := callcontext.Snapshot{Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind}
 	if p.Kind != "session" || p.SessionID == "" || sessions == nil {
 		return out
 	}

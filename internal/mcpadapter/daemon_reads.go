@@ -114,6 +114,22 @@ func (a *Adapter) proxyEventQuerier() ProxyEventQuerier {
 	return a.svc.Store
 }
 
+// sessionWorkstreamID resolves legacy, unverified schema-1 correlation only.
+func (a *Adapter) sessionWorkstreamID(ctx context.Context, sessionID string) (string, error) {
+	if a.readsViaDaemon() {
+		dto, err := a.client.GetSession(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		return dto.WorkstreamID, nil
+	}
+	row, err := a.svc.Store.GetSession(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return row.WorkstreamID.String, nil
+}
+
 // DaemonProxyEvents is a ProxyEventQuerier over GET /proxy/events, for a
 // daemon-only `tether mcp` (tether_events_tool_calls, tether_proxy_events).
 type DaemonProxyEvents struct {

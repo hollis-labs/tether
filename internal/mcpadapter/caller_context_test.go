@@ -82,16 +82,16 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	if !ok || !want.Verified || want.SessionID != "sess-1" || want.AgentURN != registry.LogicalAgentBindingTarget("worker") {
 		t.Fatalf("resolved context: %+v", want)
 	}
-	var forwarded *ProvenanceEnvelope
+	var forwarded *ContextEnvelope
 	mock := &mockClient{callToolFunc: func(_ context.Context, p *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
-		forwarded = ExtractProvenanceMeta(map[string]any(p.Meta))
+		forwarded = ExtractContextMeta(map[string]any(p.Meta))
 		return &mcpsdk.CallToolResult{}, nil
 	}}
 	tools := NewToolRegistry()
 	tools.Register("upstream", mock, []*mcpsdk.Tool{makeTool("context_test")})
 	publisher := &synchronousContextPublisher{url: srv.URL, token: token}
 	router := NewProxyRouterWithMiddleware(tools, NewLoggingMiddleware(publisher))
-	if _, err := router.Handle(ctx, ToolCall{ToolName: "context_test", Meta: map[string]any{ProvenanceMetaKey: map[string]any{"session_id": "forged", "verified": true}}}); err != nil {
+	if _, err := router.Handle(ctx, ToolCall{ToolName: "context_test", Meta: map[string]any{ProvenanceMetaKey: map[string]any{"session_id": "forged", "verified": true}, ContextMetaKey: map[string]any{"schema_version": 2, "session_id": "forged", "verified": true, "source": "daemon"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if forwarded == nil || forwarded.Snapshot != want {
@@ -118,11 +118,38 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	}
 }
 
-func TestClaimedSessionNeverCreatesProvenance(t *testing.T) {
+func TestClaimedSessionNeverCreatesTrustedContext(t *testing.T) {
 	ctx := WithSessionID(context.Background(), "forged")
-	p := &mcpsdk.CallToolParams{Meta: mcpsdk.Meta{ProvenanceMetaKey: map[string]any{"verified": true, "session_id": "forged"}}}
+	p := &mcpsdk.CallToolParams{Meta: mcpsdk.Meta{ProvenanceMetaKey: map[string]any{"verified": true, "session_id": "forged"}, ContextMetaKey: map[string]any{"verified": true, "source": "daemon", "session_id": "forged"}}}
 	NewProxyRouter(nil).applyProvenanceMeta(ctx, p)
-	if ExtractProvenanceMeta(map[string]any(p.Meta)) != nil {
-		t.Fatalf("claim became provenance: %+v", p.Meta)
+	if ExtractContextMeta(map[string]any(p.Meta)) != nil {
+		t.Fatalf("claim became trusted context: %+v", p.Meta)
+	}
+}
+
+func TestLegacyProvenanceShapeUnchangedAlongsideTrustedContext(t *testing.T) {
+	for _, verified := range []bool{false, true} {
+		t.Run(fmt.Sprint(verified), func(t *testing.T) {
+			ctx := WithSessionID(context.Background(), "s")
+			if verified {
+				ctx = callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "session:s", SessionID: "s", WorkstreamID: "w"})
+			}
+			router := NewProxyRouter(nil)
+			router.SetWorkstreamResolver(func(context.Context, string) (string, error) { return "w", nil })
+			params := &mcpsdk.CallToolParams{Meta: mcpsdk.Meta{ProvenanceMetaKey: map[string]any{"session_id": "spoof"}, ContextMetaKey: map[string]any{"verified": true, "source": "daemon", "session_id": "spoof"}}}
+			router.applyProvenanceMeta(ctx, params)
+			// Exact bytes emitted by main's schema-1 serializer: no added fields.
+			raw, err := json.Marshal(params.Meta[ProvenanceMetaKey])
+			if err != nil || string(raw) != `{"schema_version":1,"session_id":"s","workstream_id":"w"}` {
+				t.Fatalf("legacy envelope=%s err=%v", raw, err)
+			}
+			trusted := ExtractContextMeta(map[string]any(params.Meta))
+			if !verified && trusted != nil {
+				t.Fatalf("unverified context promoted: %+v", trusted)
+			}
+			if verified && (trusted == nil || trusted.SchemaVersion != 2 || !trusted.Verified || trusted.Source != "daemon" || trusted.SessionID != "s" || trusted.WorkstreamID != "w") {
+				t.Fatalf("trusted context=%+v", trusted)
+			}
+		})
 	}
 }

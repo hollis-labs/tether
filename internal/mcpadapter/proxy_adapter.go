@@ -391,6 +391,9 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	router := NewProxyRouter(registry)
 	router.pool = pool
 	router.SetLogger(a.logger())
+	if a.readsViaDaemon() || (a.svc != nil && a.svc.Store != nil) {
+		router.SetWorkstreamResolver(a.sessionWorkstreamID)
+	}
 	var nativeSession *mcpsdk.ClientSession
 	if !opts.Only {
 		native := a.newServer()

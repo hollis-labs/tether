@@ -6,6 +6,7 @@ import "context"
 
 type Snapshot struct {
 	Verified       bool   `json:"verified"`
+	Source         string `json:"source,omitempty"`
 	PrincipalID    string `json:"principal_id,omitempty"`
 	PrincipalKind  string `json:"principal_kind,omitempty"`
 	SessionID      string `json:"session_id,omitempty"`

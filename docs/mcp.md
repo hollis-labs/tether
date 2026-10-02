@@ -420,7 +420,7 @@ the agent can then be kept from writing the state directory. In this mode:
 - Each tool call is recorded by the daemon. The server posts a start and an end
   record to `POST /proxy/events` with `publish`, and the daemon writes
   `proxy_events` and the `events` log itself.
-- Attribution and upstream provenance use the daemon's credential-derived
+- Attribution and upstream `tether.context` use the daemon's credential-derived
   context, not the `--session` claim. See [trusted session context](trusted-session-context.md)
   for verified fields, unverified claims and the HTTP forwarding trust contract.
 - It refuses to start unless the daemon answers, with the error `tether daemon
@@ -431,8 +431,9 @@ the agent can then be kept from writing the state directory. In this mode:
   falls back to opening the database.
 - If the daemon goes down after the server has started, each read fails with a
   `daemon_unavailable` tool error; tool-call records are dropped with a logged
-  warning; and an upstream call goes out without its `tether.provenance`
-  stamp, because verified caller context cannot be looked up. The call is not
+  warning; and an upstream call goes out without its verified `tether.context`
+  stamp when caller context cannot be looked up. Legacy correlation also
+  omits `tether.provenance` if its workstream lookup fails. The call is not
   failed by an attribution lookup error.
 - Reads of the daemon's own state are the daemon's answers: `tether_session_health`
   now reports the daemon's live sessions, and `tether_session_list` and

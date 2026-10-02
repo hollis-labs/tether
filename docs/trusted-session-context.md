@@ -2,7 +2,7 @@
 
 The daemon verifies caller credentials before resolving call attribution.
 `GET /auth/context` accepts no session selector. Its response has `verified`,
-`principal_id`, `principal_kind`, `session_id`, `agent_urn`, `workstream_id`,
+`source`, `principal_id`, `principal_kind`, `session_id`, `agent_urn`, `workstream_id`,
 `launch_id`, `project_id`, and `logical_agent_id`. Empty fields are omitted.
 Only a session principal whose session row exists receives `verified: true`.
 An operator or service principal cannot select a session by claiming one.
@@ -16,7 +16,7 @@ remain separate caller-identity phases. Attribution never grants authority.
 
 The stdio adapter looks up this context with its own daemon credential once
 per call, with a one-second lookup deadline. Lookup failure leaves the content
-call available without a trusted stamp. A daemon-owned adapter can resolve
+call available without a trusted context stamp; legacy correlation follows its previous behavior. A daemon-owned adapter can resolve
 the same context directly from its verified request principal. `--session`,
 environment values, incoming headers and `_meta` are claims, not selectors.
 
@@ -36,13 +36,22 @@ table. Previous rows default to unverified, with no inferred backfill. These
 fields share the row's existing age retention and purge audit receipt; there
 is no separate attribution table or additional retention setting.
 
-Outbound `_meta.tether.provenance` schema 2 contains `schema_version` and the
-same verified context fields. Client-supplied provenance is always replaced
-or removed. Reserved `X-Tether-*` and `X-Forwarded-User-*` metadata keys are
-stripped, including case variants. Ordinary arguments remain unchanged.
-Upstreams must treat this envelope as correlation data unless their own
-authenticated boundary establishes trust in the sender. Stdio upstreams
-serve one session and require no forwarded-user HTTP headers.
+Outbound `_meta.tether.provenance` retains schema 1 and its exact existing
+shape: `schema_version`, `session_id`, optional `workstream_id`. For verified
+calls, those two identity fields come from the resolved snapshot. Unverified
+calls retain the previous configured-session/workstream lookup behavior. This
+legacy envelope is correlation only and never proves identity; retaining it
+preserves existing receivers' workstream association.
+
+The separate reserved `_meta.tether.context` schema 2 contains `schema_version`
+and the full verified context, including `verified: true` and `source: daemon`.
+It is omitted for unverified calls. Both inbound envelopes are always stripped
+before stamping. Reserved `X-Tether-*` and `X-Forwarded-User-*` metadata keys
+are stripped, including case variants. Ordinary arguments remain unchanged.
+Receivers can adopt schema 2 independently; they must trust it only when their
+own authenticated boundary establishes the sender. A version or verification
+field is not authentication. Stdio upstreams serve one session and require no
+forwarded-user HTTP headers.
 
 Trace context is independent of identity. Existing `_meta._traceparent` and
 `_meta._tracestate` propagation continues; legacy argument extraction remains

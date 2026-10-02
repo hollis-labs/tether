@@ -42,10 +42,11 @@ type ToolCallMiddleware interface {
 // upstream client via the ToolRegistry. Native tools must not reach this
 // router — they are dispatched by the MCP server handler before calling Handle.
 type ProxyRouter struct {
-	pool       *ClientPool
-	registry   *ToolRegistry
-	middleware []ToolCallMiddleware
-	logger     *slog.Logger
+	workstreamResolver WorkstreamResolver
+	pool               *ClientPool
+	registry           *ToolRegistry
+	middleware         []ToolCallMiddleware
+	logger             *slog.Logger
 }
 
 // NewProxyRouter creates a router backed by the given registry with no middleware.
