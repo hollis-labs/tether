@@ -14,8 +14,9 @@ it does not attest agent code or turn registry writes into authorization.
 Address/scope enforcement and protection against stolen same-uid credentials
 remain separate caller-identity phases. Attribution never grants authority.
 
-The stdio adapter looks up this context with its own daemon credential once
-per call, with a one-second lookup deadline. Lookup failure leaves the content
+The stdio adapter resolves context at forwarding/logging boundaries using its
+own daemon credential, with a 200ms deadline and short per-adapter caches.
+Lookup failure leaves the content
 call available without a trusted context stamp; legacy correlation follows its previous behavior. A daemon-owned adapter can resolve
 the same context directly from its verified request principal. `--session`,
 environment values, incoming headers and `_meta` are claims, not selectors.
@@ -73,3 +74,20 @@ worker's environment/boot files. Per-call identity must not become shared
 connection/default headers. Forwarded agent identity never confers operator
 confirmation authority. No service credential is automatically provisioned,
 and no live configuration, restart or identity-mode change accompanies this PR.
+
+Stdio attribution resolution happens only at forwarding/logging boundaries;
+local native tools do not look up attribution merely to execute. Successful
+principal snapshots are cached for five seconds per adapter; anonymous results
+and lookup failures for three seconds, with a 200ms lookup deadline. These are
+attribution caches, never authorization caches. Revocation remains checked by
+the daemon on every authenticated request. A cached forwarded snapshot can lag
+a changed binding or workstream; the receiving daemon resolves its durable row
+again. Snapshot equality is semantic field equality: `tether.context` also has
+`schema_version`, and its JSON key ordering can differ from the persisted row.
+
+Verified `GET /auth/context` and `POST /proxy/events` authenticate normally but
+skip duplicate `identity_audit` observation rows. The event ingest already
+persists attribution in `proxy_events`. Invalid credentials on these routes
+remain audited. Adapter telemetry for verified operator/service principals
+clears the session id, preserving any configured session flag only as a claim,
+to match the daemon row.
