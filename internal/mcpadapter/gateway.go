@@ -14,10 +14,7 @@ import (
 )
 
 func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, selection mcpgateway.Selection, tags map[string][]string) *mcpgateway.Service {
-	if a.resolver == nil {
-		a.resolver = &routerRefResolver{router: router}
-	}
-	return &mcpgateway.Service{
+	gateway := &mcpgateway.Service{
 		Selection: selection,
 		Snapshot: func() mcpgateway.Snapshot {
 			snapshot := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{}, Origins: []mcpgateway.OriginStatus{}}
@@ -74,6 +71,10 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 			return result, err
 		},
 	}
+	if a.resolver == nil {
+		a.resolver = &routerRefResolver{router: router, gateway: gateway}
+	}
+	return gateway
 }
 
 func discoveryRequest(args map[string]any) (mcpgateway.Request, error) {

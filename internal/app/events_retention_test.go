@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -45,10 +47,19 @@ func intPtr(n int) *int { return &n }
 // Explicit disable preserves all history.
 func TestRunEventRetention_Disabled(t *testing.T) {
 	svc, bus := retentionService(t, config.EventsRetentionConfig{Days: intPtr(0)})
-	publishAged(t, svc, bus, time.Now().Add(-400*24*time.Hour))
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	publishAged(t, svc, bus, old)
+	seedRetentionTask(t, svc, old)
 
 	if n, err := svc.RunEventRetention(context.Background()); err != nil || n != 0 {
 		t.Fatalf("deleted %d, %v; want 0 while disabled", n, err)
+	}
+	if _, err := svc.Store.GetA2ATask("binding", "task"); err != nil {
+		t.Fatalf("disabled retention lost task: %v", err)
+	}
+	var receipts int
+	if err := svc.Store.DB().QueryRow(`SELECT COUNT(*) FROM retention_audit`).Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatalf("disabled receipts: %d, %v", receipts, err)
 	}
 	if evs, _ := svc.Store.EventsSince(0); len(evs) != 1 {
 		t.Fatalf("events = %d; want the old one kept", len(evs))
@@ -124,6 +135,7 @@ func TestSweepEventRetention_DefaultAndStructuredResult(t *testing.T) {
 	svc, bus := retentionService(t, config.EventsRetentionConfig{})
 	old := time.Now().Add(-120 * 24 * time.Hour)
 	publishAged(t, svc, bus, old)
+	seedRetentionTask(t, svc, old)
 	if err := svc.Store.AppendProxyEvent(store.ProxyEvent{Server: "s", ToolName: "t", Timestamp: old}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +146,22 @@ func TestSweepEventRetention_DefaultAndStructuredResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Total() != 3 || len(result.Batches) != 3 {
+	if result.Total() != 4 || len(result.Batches) != 4 {
 		t.Fatalf("result: %+v", result)
 	}
-	for _, table := range []string{"events", "proxy_events", "ai_events"} {
+	for _, table := range []string{"events", "proxy_events", "ai_events", "a2a_tasks"} {
 		if result.Removed[table] != 1 {
 			t.Fatalf("%s: %+v", table, result)
 		}
+	}
+}
+
+func seedRetentionTask(t *testing.T, svc *Service, updated time.Time) {
+	t.Helper()
+	if _, err := svc.Store.CreateA2ATask(store.A2ATask{BindingID: "binding", TaskID: "task", State: string(a2a.TaskStateCompleted), TaskJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE a2a_tasks SET updated_ns=? WHERE binding_id='binding' AND task_id='task'`, updated.UnixNano()); err != nil {
+		t.Fatal(err)
 	}
 }

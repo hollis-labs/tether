@@ -91,8 +91,12 @@ func TestUpstreamFixture(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": name, "version": "fixture"}}
 		case "tools/list":
+			toolName := name + "_probe"
+			if v := os.Getenv("TETHER_UPSTREAM_TOOL_NAME"); v != "" {
+				toolName = v
+			}
 			defs := []map[string]any{{
-				"name":        name + "_probe",
+				"name":        toolName,
 				"description": name + " fixture probe",
 				"inputSchema": map[string]any{"type": "object"},
 			}}

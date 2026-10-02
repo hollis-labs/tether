@@ -65,6 +65,7 @@ type Request struct {
 // Score is the existing scorer seam pending go-toolselect's tagged release.
 type Service struct {
 	Selection Selection
+	Policy    *Policy
 	Snapshot  func() Snapshot
 	Score     func(query string, entry Entry) int
 	Dispatch  func(context.Context, string, map[string]any, map[string]any) (*mcpsdk.CallToolResult, error)
@@ -115,10 +116,25 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		return Result{}, fmt.Errorf("limit must be 1..%d", maxLimit)
 	}
 	snapshot := s.Snapshot()
+	if s.Policy != nil {
+		snapshot = s.Policy.Eligible(snapshot)
+	}
 	unavailable, unavailableServers := availability(snapshot)
 	knownServers := map[string]bool{}
 	for _, origin := range snapshot.Origins {
-		knownServers[origin.ID] = true
+		if s.Policy == nil || s.Policy.Selection.Profile == nil {
+			knownServers[origin.ID] = true
+		} else if origin.Status != "connected" && origin.Status != "excluded" {
+			allowed := s.Policy.Selection.Profile.Servers == nil
+			for _, id := range s.Policy.Selection.Profile.Servers {
+				if id == origin.ID {
+					allowed = true
+				}
+			}
+			if allowed {
+				knownServers[origin.ID] = true
+			}
+		}
 	}
 	for _, entry := range snapshot.Entries {
 		knownServers[entry.Origin] = true
@@ -205,6 +221,9 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		if matches[i].score != matches[j].score {
 			return matches[i].score > matches[j].score
 		}
+		if !search && s.Policy != nil {
+			return s.Policy.Less(matches[i].entry, matches[j].entry)
+		}
 		return matches[i].entry.Tool.Name < matches[j].entry.Tool.Name
 	})
 	cursor := req.Cursor
@@ -215,7 +234,8 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		Snapshot  Snapshot
 		Request   Request
 		Search    bool
-	}{s.Selection, snapshot, req, search})
+		Policy    *Policy
+	}{s.Selection, snapshot, req, search, s.Policy})
 	fingerprint := fmt.Sprintf("%x", sha256.Sum256(raw))
 	offset, err := readCursor(cursor, fingerprint, len(matches))
 	if err != nil {
@@ -263,23 +283,36 @@ type TargetError struct{ Message string }
 
 func (e *TargetError) Error() string { return e.Message }
 
-func (s *Service) Call(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+func (s *Service) ResolveTarget(name string) (Entry, error) {
 	snapshot := s.Snapshot()
+	if s.Policy != nil {
+		snapshot = s.Policy.Eligible(snapshot)
+	}
 	unavailable, _ := availability(snapshot)
 	for _, entry := range snapshot.Entries {
 		if entry.Tool.Name != name {
 			continue
 		}
 		if unavailable[entry.Origin] {
-			return nil, &TargetError{fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name)}
+			return Entry{}, &TargetError{fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name)}
 		}
-		return s.Dispatch(ctx, name, args, meta)
+		return entry, nil
 	}
-	return nil, &TargetError{fmt.Sprintf("tool %q is unknown or excluded", name)}
+	return Entry{}, &TargetError{fmt.Sprintf("tool %q is unknown or excluded", name)}
+}
+
+func (s *Service) Call(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
+	if _, err := s.ResolveTarget(name); err != nil {
+		return nil, err
+	}
+	return s.Dispatch(ctx, name, args, meta)
 }
 
 type Status struct {
 	Selection
+	Profile        string         `json:"profile,omitempty"`
+	ProfileSource  string         `json:"profile_source,omitempty"`
+	Warnings       []string       `json:"warnings,omitempty"`
 	Origins        []OriginStatus `json:"origins"`
 	CatalogedTools int            `json:"cataloged_tools"`
 	EligibleTools  int            `json:"eligible_tools"`
@@ -292,8 +325,23 @@ type Status struct {
 
 func (s *Service) Status(name string) Status {
 	snapshot := s.Snapshot()
+	original := snapshot
+	if s.Policy != nil {
+		snapshot = s.Policy.Eligible(snapshot)
+	}
 	unavailable, ids := availability(snapshot)
 	out := Status{Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0, Name: name}
+	if s.Policy != nil {
+		out.Profile = s.Policy.Selection.ID
+		out.ProfileSource = s.Policy.Selection.Source
+		out.Warnings = s.Policy.NameWarnings(original)
+		if err := s.Policy.ValidateNames(original); err != nil {
+			out.Warnings = append(out.Warnings, err.Error())
+		}
+		for _, id := range s.Policy.RestrictedOrigins {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("profile origin %s excluded by upstream restriction or confined grant", id))
+		}
+	}
 	for _, origin := range snapshot.Origins {
 		out.CatalogedTools += origin.ToolCount
 	}
@@ -306,6 +354,16 @@ func (s *Service) Status(name string) Status {
 		visible := false
 		out.Visible = &visible
 		out.Reason = "unknown or excluded by the upstream restriction"
+		if s.Policy != nil {
+			for _, entry := range original.Entries {
+				if entry.Tool.Name == name {
+					if reason := s.Policy.Exclusion(entry); reason != "" {
+						out.Reason = reason
+					}
+					break
+				}
+			}
+		}
 		for _, entry := range snapshot.Entries {
 			if entry.Tool.Name != name {
 				continue

@@ -4,6 +4,7 @@ package mcpadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -45,6 +46,13 @@ func TestRunWithProxyOptsHelper(t *testing.T) {
 		filter = strings.Split(v, ",")
 	}
 	opts := ProxyOptions{Only: os.Getenv("TETHER_PROXY_HELPER_ONLY") == "1", ServerFilter: filter, Confine: os.Getenv(proxyHelperConfineEnv) == "1", ModeInputs: mcpgateway.ModeInputs{Explicit: []mcpgateway.Selector{{Value: os.Getenv("TETHER_PROXY_HELPER_MODE"), Source: "test"}}}}
+	if raw := os.Getenv("TETHER_PROXY_HELPER_PROFILE_JSON"); raw != "" {
+		var profile mcpgateway.Profile
+		if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+			t.Fatal(err)
+		}
+		opts.Profile = mcpgateway.ProfileSelection{ID: "fixture", Source: "test", Profile: &profile}
+	}
 	adapter := newTestAdapter(t)
 	adapter.svc.Catalog = &config.Catalog{}
 	if os.Getenv("TETHER_PROXY_HELPER_PROTECTED") == "1" {

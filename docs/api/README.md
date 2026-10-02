@@ -1001,7 +1001,8 @@ daemon:
 ```
 
 This is daemon-wide app configuration, not the project/user onboarding settings
-cascade. The same window applies to all three event histories and credential audit; inserts no longer
+cascade. The same window applies to all three event histories, credential audit
+and terminal A2A tasks; inserts no longer
 evict proxy or AI records at 2,000 rows. Query limits still bound response size.
 `tether doctor` and `tether settings` (also `--json`) show the effective catalog
 value. They report catalog configuration, which the daemon applies on restart,
@@ -1013,7 +1014,7 @@ does not open the state database.
 | `events` | Shared age window, default 90 days | Session/daemon/broker replay history |
 | `proxy_events` | Shared age window, default 90 days | Durable tool-call history; no row-count eviction |
 | `ai_events` | Shared age window, default 90 days | AI summaries and usage; usage totals cover retained history only |
-| `a2a_tasks` | Indefinite; outside automatic sweep | Durable peer task lookup and repair; no automatic expiry contract |
+| `a2a_tasks` | Shared age window since last update, default 90 days; terminal states only | Completed, failed, canceled and rejected tasks expire; submitted, working, input-required, auth-required and unknown states are preserved regardless of age. Expired tasks are no longer available through peer task lookup |
 | `broker_envelopes` | Indefinite, including bodies; permanently outside the messages purge and automatic sweep | No broker-specific safe-purge contract; delivery obligations and request/reply correlation history must survive expiry |
 | `session_refs` | Indefinite; outside automatic sweep | Provenance pointers; dangling refs after session deletion are retained (FK cascades are not enforced) |
 | `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
