@@ -166,6 +166,13 @@ func TestRoutingReplySettleIsTerminalAndMarksTheMessageForRetention(t *testing.T
 			t.Fatal("claimed a settled reply")
 		}
 	}
+	// Only a delivered reply reads as consumed; an undeliverable one never was.
+	if env, err := db.MessagingStore().Get(ctx, delivered.ReplyID); err != nil || env.ConsumedAt == nil {
+		t.Fatalf("delivered reply not stamped consumed: %+v %v", env, err)
+	}
+	if env, err := db.MessagingStore().Get(ctx, dead.ReplyID); err != nil || env.ConsumedAt != nil {
+		t.Fatalf("undeliverable reply stamped consumed: %+v %v", env, err)
+	}
 	got, _ := db.RoutingReply(ctx, dead.ReplyID)
 	if got.State != store.RoutingReplyUndeliverable || got.Reason != "session_ended_no_binding" || got.Detail != "the actor has no binding" || got.SettledAt == nil {
 		t.Fatalf("undeliverable = %+v", got)
