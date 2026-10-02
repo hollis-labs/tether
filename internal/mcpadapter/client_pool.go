@@ -489,13 +489,10 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		return u, nil
 	case "sse", "http":
 		// go-mcp/client (v0.5.0+) owns dial/reconnect/health-probe for these
-		// two transports -- see the remoteClients field doc. It has no
-		// ToolListChangedHandler equivalent (dialSDK always passes nil
-		// ClientOptions), so unlike stdio, a notification-driven refresh from
-		// an sse/http upstream is not wired here; tether_catalog_refresh and the
-		// periodic paths remain the way those two transports pick up a
-		// changed tool list. Worth a go-mcp follow-up if a remote upstream
-		// that relies on the notification shows up.
+		// two transports -- see the remoteClients field doc. Daemon pools
+		// install progress callbacks using WithClientOptions. Unlike stdio,
+		// remote tools/list_changed refresh is not wired here: explicit
+		// tether_catalog_refresh and periodic refresh pick up declarations.
 		if entry.URL == "" {
 			return nil, fmt.Errorf("%s transport requires url", entry.Transport)
 		}

@@ -68,6 +68,19 @@ func TestTransportLifecycleUpstreamProcess(t *testing.T) {
 				return &mcpsdk.ListToolsResult{Tools: tools}, nil
 			}
 			call := req.(*mcpsdk.CallToolRequest)
+			var control struct {
+				Notify bool `json:"notify"`
+			}
+			if err := json.Unmarshal(call.Params.Arguments, &control); err != nil {
+				return nil, err
+			}
+			if control.Notify {
+				// AddTool emits a real SDK list_changed on the upstream wire.
+				// tools/list above still returns only the authored fixture state.
+				s.AddTool(&mcpsdk.Tool{Name: "fixture_notice", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+					return &mcpsdk.CallToolResult{}, nil
+				})
+			}
 			if token := call.Params.GetProgressToken(); token != nil {
 				var args struct {
 					Label string `json:"label"`
@@ -291,6 +304,50 @@ func TestTransportLifecycleNotificationsRespectViewInventory(t *testing.T) {
 				if err != nil || strings.Count(string(raw), "started\n") != 1 {
 					t.Fatalf("not one child per origin: %q %v", raw, err)
 				}
+			}
+		})
+	}
+}
+
+func TestTransportLifecycleUpstreamListChangedFansOutToEligibleViews(t *testing.T) {
+	for _, unix := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unix=%t", unix), func(t *testing.T) {
+			alpha, dir := lifecycleEntry(t, "alpha")
+			beta, _ := lifecycleEntry(t, "beta")
+			f := newTransportFixture(t, unix, false, alpha, beta)
+			f.catMu.Lock()
+			f.cat.Global.MCP.Profiles["limited"] = mcpgateway.Profile{Tools: mcpgateway.ToolRules{Deny: []string{"*_denied"}}}
+			f.catMu.Unlock()
+			token := f.token(t, "alpha", []string{"alpha"})
+			flatChanged, searchChanged, hiddenChanged := make(chan struct{}, 32), make(chan struct{}, 32), make(chan struct{}, 32)
+			flat := lifecycleConnect(t, f, token, "flat", "limited", flatChanged)
+			search := lifecycleConnect(t, f, token, "search", "limited", searchChanged)
+			hidden := lifecycleConnect(t, f, f.token(t, "beta", []string{"beta"}), "flat", "", hiddenChanged)
+			hiddenBefore, searchBefore := lifecycleNames(t, hidden), lifecycleNames(t, search)
+			time.Sleep(40 * time.Millisecond)
+			drainLifecycleChanges(flatChanged, searchChanged, hiddenChanged)
+			setLifecycleState(t, dir, lifecycleState{Names: []string{"alpha_echo", "alpha_added", "alpha_denied"}, Version: 2})
+			// No catalog refresh call: the confined child initiates notification.
+			if lifecycleCall(t, flat, "alpha_echo", map[string]any{"notify": true}).IsError {
+				t.Fatal("notification trigger failed")
+			}
+			awaitLifecycleChange(t, flatChanged)
+			awaitLifecycleChange(t, searchChanged)
+			if !slices.Contains(lifecycleNames(t, flat), "alpha_added") || slices.Contains(lifecycleNames(t, flat), "alpha_denied") {
+				t.Fatal("upstream notification did not publish eligible inventory")
+			}
+			result := lifecycleCall(t, search, "tether_tool_list", map[string]any{"servers": []string{"alpha"}, "limit": 100})
+			raw, _ := json.Marshal(result)
+			if !strings.Contains(string(raw), "alpha_added") || strings.Contains(string(raw), "alpha_denied") || !slices.Equal(searchBefore, lifecycleNames(t, search)) {
+				t.Fatal("search notification lost inventory isolation or fixed surface")
+			}
+			if !slices.Equal(hiddenBefore, lifecycleNames(t, hidden)) {
+				t.Fatal("upstream notification changed hidden view")
+			}
+			select {
+			case <-hiddenChanged:
+				t.Fatal("upstream notification reached hidden view")
+			default:
 			}
 		})
 	}
