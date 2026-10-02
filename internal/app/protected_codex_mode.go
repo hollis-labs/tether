@@ -68,7 +68,7 @@ func codexProtectionState(st ProtectionStatus) CodexProtectionState {
 	case CodexNotProtected:
 		return CodexProtectionState{
 			State:  string(CodexNotProtected),
-			Reason: "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox and spawns MCP servers outside that sandbox. Tether wraps the planted local proxy and its stdio descendants to protect catalog, run/ and state/ (CW-20261001-0466); remote upstreams are excluded unless the operator opts in. The MCP config is not pinned and caller identity is pending (CW-20260930-0253), so substituted servers or host services can still reach the catalog (including torque_session_launch and loom_export_bundle); the tether tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
+			Reason: "not protected (CW-20261001-0230): codex uses its own workspace-write sandbox in default mode; explicit bypass disables that sandbox. MCP servers run outside the provider sandbox. Tether wraps the planted local proxy and its stdio descendants to protect catalog, run/ and state/ (CW-20261001-0466); remote upstreams are excluded unless the operator opts in. The MCP config is not pinned and caller identity is pending (CW-20260930-0253), so substituted servers or host services can still reach the catalog (including torque_session_launch and loom_export_bundle); the tether tools that write the catalog are still refused for it. Claude and OpenCode agents are protected",
 		}
 	default:
 		return CodexProtectionState{

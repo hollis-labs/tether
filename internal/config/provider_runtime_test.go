@@ -56,6 +56,7 @@ func TestCatalogFlags(t *testing.T) {
 		{"opencode", []string{"--print-logs", "run"}, []string{"--print-logs", "run"}},
 		{"claude", []string{"run"}, []string{"run"}},
 		{"codex", nil, []string{}},
+		{"codex", []string{"app-server", "--listen", "stdio://"}, []string{"--listen", "stdio://"}},
 	} {
 		got := CatalogFlags(tc.brand, tc.args)
 		if len(got) != len(tc.want) || (len(got) > 0 && !equalStrings(got, tc.want)) {
