@@ -21,8 +21,11 @@ import (
 func daemonTestRoots(t *testing.T) DaemonProtectedRoots {
 	t.Helper()
 	root := t.TempDir()
-	r := DaemonProtectedRoots{Catalog: filepath.Join(root, "catalog"), Run: filepath.Join(root, "run"), State: filepath.Join(root, "state")}
-	for _, path := range []string{r.Catalog, r.Run, r.State} {
+	home, project := filepath.Join(root, "home"), filepath.Join(root, "project")
+	t.Setenv("HOME", home)
+	r := DaemonProtectedRoots{Catalog: filepath.Join(root, "catalog"), Run: filepath.Join(root, "run"), State: filepath.Join(root, "state"), CatalogConfig: &config.Catalog{Projects: map[string]config.Project{"project": {RepoRoot: project}}}}
+	r.CatalogConfig.Global.Catalog.Roots.Agents = filepath.Join(root, "external-agents")
+	for _, path := range []string{r.Catalog, r.Run, r.State, home, project} {
 		if err := os.Mkdir(path, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -86,6 +89,15 @@ func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, layer := range config.LayeredCatalogLayers(roots.CatalogConfig) {
+		for _, kind := range []string{"agents", "skills", "boot-profiles"} {
+			path := filepath.Join(layer.Root, kind)
+			if err := os.MkdirAll(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			paths = append(paths, path)
+		}
+	}
 	for _, path := range paths {
 		if err := os.WriteFile(filepath.Join(path, "sentinel"), []byte("original"), 0600); err != nil {
 			t.Fatal(err)
@@ -97,7 +109,7 @@ func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestDaemonUpstreamFixture$"}, Env: map[string]string{"TETHER_DAEMON_FIXTURE": outside, "TETHER_DAEMON_PROTECTED": string(raw), "CATALOG_FIXTURE_SECRET": "explicit-fixture-value"}}}, roots)
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestDaemonUpstreamFixture$"}, Env: map[string]string{"TETHER_DAEMON_FIXTURE": outside, "TETHER_DAEMON_PROTECTED": string(raw), "CATALOG_FIXTURE_SECRET": "explicit-fixture-value"}}}, roots, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,14 +178,17 @@ func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 func TestDaemonProtectedRoots_RequireAllRoots(t *testing.T) {
 	roots := daemonTestRoots(t)
 	for _, bad := range []DaemonProtectedRoots{{}, {Catalog: roots.Catalog, Run: roots.Run}, {Catalog: roots.Catalog, Run: roots.Run, State: "relative"}, {Catalog: roots.Catalog, Run: roots.Run, State: filepath.Join(roots.State, "missing")}} {
-		if _, err := NewSharedUpstreams(nil, bad); err == nil {
+		if _, err := NewSharedUpstreams(nil, bad, true); err == nil {
 			t.Fatal("unprotected daemon pool accepted", bad)
 		}
+	}
+	if _, err := NewSharedUpstreams(nil, roots, false); err == nil {
+		t.Fatal("shared runtime accepted disabled confinement")
 	}
 }
 
 func TestSharedUpstreams_SubscriberFanout(t *testing.T) {
-	r, err := NewSharedUpstreams(nil, daemonTestRoots(t))
+	r, err := NewSharedUpstreams(nil, daemonTestRoots(t), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +220,7 @@ func TestDaemonUpstreamConfinement_NoUnconfinedFallback(t *testing.T) {
 	}
 	t.Setenv("PATH", "") // mandatory sandbox executable unavailable
 	entry := config.MCPServerEntry{ID: "fixture", Command: executable, Args: []string{"-test.run=^TestDaemonUpstreamFixture$"}, Env: map[string]string{"TETHER_DAEMON_FIXTURE": outside, "TETHER_DAEMON_PROTECTED": "[]"}}
-	child, transport, err := spawnStdioUpstreamConfined(entry, paths)
+	child, transport, err := spawnStdioUpstreamConfined(entry, paths, true)
 	if err == nil || child != nil || transport != nil {
 		t.Fatalf("sandbox failure fell back: %v %v %v", child, transport, err)
 	}
@@ -215,7 +230,7 @@ func TestDaemonUpstreamConfinement_NoUnconfinedFallback(t *testing.T) {
 }
 
 func TestSharedUpstreams_RemoteExclusionVisible(t *testing.T) {
-	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "remote", Transport: "http", URL: "http://127.0.0.1:1/private-secret"}}, daemonTestRoots(t))
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "remote", Transport: "http", URL: "http://127.0.0.1:1/private-secret"}}, daemonTestRoots(t), true)
 	if err != nil {
 		t.Fatal(err)
 	}

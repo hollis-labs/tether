@@ -65,8 +65,8 @@ const (
 
 // Adapter exposes the tether runtime as MCP tools over stdio.
 type Adapter struct {
-	runtime   RuntimeObservation // captured from this process, never the installed path
-	upstreams *ClientPool        // set before proxy handlers start
+	runtime   RuntimeObservation                          // captured from this process, never the installed path
+	upstreams interface{ StatusSummary() []ServerStatus } // scoped source for daemon views; legacy pool otherwise
 	svc       *app.Service
 	client    *client.Client // optional; when set, session-mutating tools route through the daemon
 	mcp       *gomcp.Server

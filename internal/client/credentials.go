@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -9,6 +10,20 @@ import (
 	"os"
 	"path/filepath"
 )
+
+// VerifiedPrincipal proves which principal this client's credential will send.
+// Daemon MCP views use it to prevent a native API client from carrying broader
+// operator authority than the admitted caller. The bearer stays private.
+func (c *Client) VerifiedPrincipal(ctx context.Context, verifier identity.Verifier) (identity.Principal, error) {
+	if c == nil || c.http == nil || verifier == nil {
+		return identity.Principal{}, identity.ErrInvalidToken
+	}
+	transport, ok := c.http.Transport.(*credentialTransport)
+	if !ok || transport.err != nil || transport.token == "" {
+		return identity.Principal{}, identity.ErrInvalidToken
+	}
+	return verifier.Verify(ctx, transport.token)
+}
 
 // WithToken supplies an opaque bearer credential. An explicit empty token
 // disables environment/default-file lookup (e.g. for an anonymous health probe).

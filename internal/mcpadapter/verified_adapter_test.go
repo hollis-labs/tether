@@ -3,10 +3,51 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
+
+func TestVerifiedAdapter_RefusesBroaderNativeClientCredential(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db, err := store.Open(filepath.Join(t.TempDir(), "identity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	ids := identity.NewStore(db.DB())
+	p := identity.Principal{ID: "restricted", Kind: "service", Scopes: []string{"message.write"}}
+	callerToken, err := ids.Mint(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opToken, err := ids.Mint(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := identity.WriteTokenFile(filepath.Join(home, ".tether", "run", "operator.token"), opToken); err != nil {
+		t.Fatal(err)
+	}
+	ctx := identity.WithPrincipal(context.Background(), p)
+	svc := &app.Service{Store: db}
+	for _, dc := range []*client.Client{client.New("unix:"+filepath.Join(home, "unused.sock"), client.WithToken(opToken)), client.New("unix:" + filepath.Join(home, "unused.sock"))} {
+		// Changing environment after construction cannot conceal the frozen
+		// operator credential the client's actual transport will send.
+		t.Setenv("TETHER_TOKEN", callerToken)
+		if _, err := NewVerifiedAdapter(ctx, svc, dc); !errors.Is(err, identity.ErrInvalidToken) {
+			t.Fatal("operator API client accepted for restricted view", err)
+		}
+	}
+	dc := client.New("unix:"+filepath.Join(home, "unused.sock"), client.WithToken(callerToken))
+	if _, err := NewVerifiedAdapter(ctx, svc, dc); err != nil {
+		t.Fatal("matching native credential refused", err)
+	}
+}
 
 func TestVerifiedAdapter_UsesOnlyVerifiedSessionAndScopes(t *testing.T) {
 	p := identity.Principal{ID: "verified", Kind: "session", SessionID: "actual", Scopes: []string{"message.write"}}

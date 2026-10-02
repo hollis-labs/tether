@@ -12,7 +12,10 @@ upstream connection. Closing a view closes its protocol/native sessions, never
 the shared pool. The existing SDK profile middleware enforces the same eligible
 inventory for protocol listing, semantic hydration/search, direct calls and
 dispatch. A requested profile intersects the credential grant; it cannot grant
-another upstream. Status and refresh are also restricted to that view's origins.
+another upstream. The native adapter receives a scoped status source, so
+`tether_health` and gateway status/refresh disclose only that view's origins.
+Shared-pool errors scrub endpoint URLs, userinfo and query values before storage
+or logging, including literal URLs rather than only secret references.
 
 ## Principal grants
 
@@ -45,10 +48,16 @@ snapshot in `session_mcp_policy`. The daemon captures the effective launch plan
 after provider/boot overrides, before minting/delivering the session credential.
 Only resolved upstream IDs, profile/mode defaults, session/agent IDs and a
 consistency digest are stored; no environment, bearer or upstream credentials.
+The captured launch profile includes immutable rules: the effective view is
+credential grants ∩ launch profile ∩ requested profile. A broader request or
+later profile edit cannot remove launch-time read-only, deny or origin limits.
 Explicit-empty upstream grants remain empty. The digest detects inconsistent
 state; it is not an authentication token. The snapshot must match the actual
 session row and remain active. A preparation retry can repeat the same snapshot
-but cannot widen it. Legacy sessions without a snapshot must resume/relaunch to
+but cannot widen it. Empty/unknown profile or invalid discovery-mode capture
+returns typed `ErrInvalidSessionMCPPolicy` and marks the session failed before
+runtime start or credential delivery; it does not leave a stuck created session.
+Legacy sessions without a snapshot must resume/relaunch to
 use the new endpoint. Token verification remains separately required.
 
 ## Upstream execution authority
@@ -65,6 +74,20 @@ unrelated daemon environment and credentials are not inherited. Host reads,
 network access, socket connections and writes
 elsewhere remain possible. Per-app Torque allowed-root policy (0464) and Loom
 export-root policy (0465) are load-bearing, not replaced by this confinement.
+
+Protection also covers every catalog layer read by `LoadLayered`: the user
+`~/.tether` layer, each registered repository's `.tether` layer, and catalog
+directories configured outside the primary root. Loading and protection share
+the layer enumeration. Empty roots are prepared as mount anchors before launch
+so children cannot create a new layer; an unavailable parent fails closed.
+The same directory policy now protects planted Codex proxies and Claude/other
+wrapped agents. Their writable user/project layers were a pre-existing gap in
+#97 and the earlier agent protection. Workspaces must be outside protected
+layer roots; protection does not make an entire repository or HOME read-only.
+
+A daemon view's native API client must verify as the exact admitted principal,
+session and scopes. An operator-credential client is refused for a restricted
+view, including credentials frozen at construction before environment changes.
 
 HTTP/SSE upstreams cannot inherit local confinement. Their exclusion is visible
 with `cannot be confined locally`; an operator can deliberately enable an entry

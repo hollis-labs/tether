@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/tether/internal/config"
 )
 
 // daemonUpstreamEnvironment inherits only portable process basics. Catalog
@@ -32,12 +33,16 @@ func daemonUpstreamEnvironment(inherited []string, configured map[string]string)
 // proxy, a daemon pool must protect them regardless of the caller's sandbox or
 // TETHER_SANDBOX_PROTECT. Missing roots fail closed before any upstream starts.
 type DaemonProtectedRoots struct {
-	Catalog string
-	Run     string
-	State   string
+	Catalog       string
+	Run           string
+	State         string
+	CatalogConfig *config.Catalog // loaded catalog determines all authority-bearing layers
 }
 
 func (r DaemonProtectedRoots) paths() ([]string, error) {
+	if r.CatalogConfig == nil {
+		return nil, fmt.Errorf("confine daemon MCP upstream: loaded catalog is required for layer protection")
+	}
 	var out []string
 	for _, root := range []struct{ name, path string }{{"catalog", r.Catalog}, {"run", r.Run}, {"state", r.State}} {
 		if !filepath.IsAbs(root.path) {
@@ -56,6 +61,11 @@ func (r DaemonProtectedRoots) paths() ([]string, error) {
 		}
 		out = append(out, resolved)
 	}
+	layers, err := config.CatalogProtectionDirs(r.Catalog, r.CatalogConfig)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, layers...)
 	return out, nil
 }
 

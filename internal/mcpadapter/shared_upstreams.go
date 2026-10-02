@@ -27,7 +27,10 @@ type SharedUpstreams struct {
 	subscribers map[uint64]func(ToolRefreshResult)
 }
 
-func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRoots) (*SharedUpstreams, error) {
+func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRoots, requireConfinement bool) (*SharedUpstreams, error) {
+	if !requireConfinement {
+		return nil, fmt.Errorf("daemon MCP upstream confinement is required")
+	}
 	protected, err := roots.paths()
 	if err != nil {
 		return nil, err
@@ -43,6 +46,7 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 	r.pool = NewClientPool(entries, r.registry)
 	r.pool.confineRemote = true
 	r.pool.protectedPaths = protected
+	r.pool.requireConfinement = true
 	r.pool.SetToolRefreshHandler(r.publish)
 	return r, nil
 }
@@ -127,7 +131,7 @@ func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcp
 
 func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	s := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{}, Origins: []mcpgateway.OriginStatus{}}
-	for _, status := range v.runtime.pool.StatusSummary() {
+	for _, status := range v.StatusSummary() {
 		if v.servers[status.ID] {
 			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error})
 		}
@@ -140,6 +144,18 @@ func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	}
 	sort.Slice(s.Origins, func(i, j int) bool { return s.Origins[i].ID < s.Origins[j].ID })
 	return s
+}
+
+// StatusSummary is the only upstream status source installed on a native
+// daemon adapter. Hidden origins never reach health, gateway status or errors.
+func (v *UpstreamView) StatusSummary() []ServerStatus {
+	statuses := []ServerStatus{}
+	for _, status := range v.runtime.pool.StatusSummary() {
+		if v.servers[status.ID] {
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses
 }
 
 // Refresh cannot select or expose an origin outside this view's grants.

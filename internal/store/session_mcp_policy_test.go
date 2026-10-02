@@ -24,6 +24,9 @@ func TestSessionMCPPolicy_ImmutableAndActiveOnly(t *testing.T) {
 		t.Fatal("legacy policy inferred", err)
 	}
 	policy := mcpgateway.SessionPolicy{SessionID: "s", AgentID: "agent", Servers: []string{}}.Seal()
+	if _, err := db.DB().Exec("INSERT INTO session_mcp_policy(session_id,policy_json) VALUES (?,?)", "s", "not-json"); err == nil {
+		t.Fatal("database accepted malformed policy JSON")
+	}
 	if err := db.SaveSessionMCPPolicy(ctx, policy); err != nil {
 		t.Fatal(err)
 	}

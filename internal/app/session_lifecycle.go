@@ -23,6 +23,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/acp"
 	"github.com/hollis-labs/tether/internal/registry"
@@ -337,7 +338,17 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	if !extractRefs && s.Catalog != nil {
 		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
 	}
-	if err := s.Store.SaveSessionMCPPolicy(ctx, sessionMCPPolicy(sessionID, row.LogicalAgentID, plan)); err != nil {
+	var policyConfig mcpgateway.Config
+	if s.Catalog != nil {
+		policyConfig = s.Catalog.Global.MCP
+	}
+	policy, err := sessionMCPPolicy(sessionID, row.LogicalAgentID, plan, policyConfig)
+	if err == nil {
+		err = s.Store.SaveSessionMCPPolicy(ctx, policy)
+	}
+	if err != nil {
+		exit := 1
+		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, fmt.Errorf("capture session MCP authority: %w", err)
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)

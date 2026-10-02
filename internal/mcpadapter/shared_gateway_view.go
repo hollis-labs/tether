@@ -42,6 +42,18 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		known[id] = enabled
 	}
 	grant := append([]string{}, opts.ServerFilter...)
+	for _, floor := range opts.AuthorityProfiles {
+		if floor.Profile == nil {
+			return nil, mcpgateway.ErrInvalidSessionMCPPolicy
+		}
+		if err := floor.Profile.Validate(); err != nil {
+			return nil, err
+		}
+		grant, err = mcpgateway.SelectOrigins(known, grant, floor.Profile)
+		if err != nil {
+			return nil, err
+		}
+	}
 	selected, err := mcpgateway.SelectOrigins(known, grant, opts.Profile.Profile)
 	if err != nil {
 		return nil, err
@@ -50,7 +62,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if err != nil {
 		return nil, err
 	}
-	a.upstreams = r.pool
+	a.upstreams = upstreams
 	registry := NewToolRegistry()
 	router := NewProxyRouter(registry)
 	router.pool = r.pool
@@ -167,7 +179,7 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	if opts.Profile.Profile != nil && opts.Profile.Profile.Servers != nil {
 		order = append([]string{}, opts.Profile.Profile.Servers...)
 	}
-	gateway.Policy = &mcpgateway.Policy{Selection: opts.Profile, ServerOrder: order}
+	gateway.Policy = &mcpgateway.Policy{Selection: opts.Profile, Floors: opts.AuthorityProfiles, ServerOrder: order}
 	if err := gateway.Policy.ValidateNames(gateway.Snapshot()); err != nil {
 		return nil, err
 	}

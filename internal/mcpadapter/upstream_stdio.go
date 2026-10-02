@@ -68,10 +68,13 @@ func (r *eofReader) Read(b []byte) (int, error) {
 // itself and exposes no hook to intercept reads for "lost" detection or to
 // attach our own Stderr/WaitDelay configuration.
 func spawnStdioUpstream(entry config.MCPServerEntry) (*stdioUpstream, *mcpsdk.IOTransport, error) {
-	return spawnStdioUpstreamConfined(entry, nil)
+	return spawnStdioUpstreamConfined(entry, nil, false)
 }
 
-func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string) (*stdioUpstream, *mcpsdk.IOTransport, error) {
+func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string, requireConfinement bool) (*stdioUpstream, *mcpsdk.IOTransport, error) {
+	if requireConfinement && len(protected) == 0 {
+		return nil, nil, fmt.Errorf("daemon MCP upstream confinement requires protected roots")
+	}
 	if entry.Command == "" {
 		return nil, nil, fmt.Errorf("stdio transport requires command")
 	}
@@ -91,7 +94,7 @@ func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string)
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
 	}
-	if len(protected) > 0 {
+	if requireConfinement {
 		u.cmd.Env = daemonUpstreamEnvironment(os.Environ(), entry.Env)
 		if err := confineDaemonUpstream(u.cmd, protected); err != nil {
 			return nil, nil, err
