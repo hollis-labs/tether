@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -73,27 +74,33 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 		sdkHandler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	private, factory, err := daemonHTTPPolicies([]config.MCPServerEntry{{ID: "remote", Transport: transport, URL: server.URL, ProxyServiceTokenFile: path}})
+	owner, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "remote", Transport: transport, URL: server.URL, ProxyServiceTokenFile: path, AllowUnconfinedRemote: true}}, daemonTestRoots(t), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := NewClientPool(private, NewToolRegistry())
-	pool.remoteHTTPClientFactory = factory
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := owner.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	view, err := owner.OpenView("test", []string{"remote"}, mcpgateway.Selection{Mode: mcpgateway.Flat, Source: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A verified caller can cause initialization/reconnect, but those RPCs must
 	// not gain the actual tool call's actor marker.
 	p := identity.Principal{ID: "principal:A", Kind: "session", SessionID: "A"}
 	caller := callcontext.WithSnapshot(identity.WithPrincipal(ctx, p), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind, SessionID: p.SessionID})
-	client, err := pool.connect(caller, private[0])
-	if err != nil {
-		t.Fatal(err)
+	registered, ok := owner.registry.Lookup("probe")
+	if !ok {
+		t.Fatal("shared owner did not publish probe")
 	}
-	defer func() { _ = client.Close() }()
+	client := registered.Client
 	call := func(callCtx context.Context) {
 		t.Helper()
 		snapshot, _ := callcontext.FromContext(callCtx)
-		result, err := client.CallTool(callCtx, &mcpsdk.CallToolParams{Name: "probe", Arguments: map[string]any{}, Meta: mcpsdk.Meta{"test_expected_session": snapshot.SessionID}})
+		result, err := view.Service.Dispatch(callCtx, "probe", map[string]any{}, map[string]any{"test_expected_session": snapshot.SessionID})
 		if err != nil || result.IsError {
 			t.Fatalf("SDK tool call failed: %v", err)
 		}

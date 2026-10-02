@@ -60,8 +60,10 @@ supported. Trace metadata never establishes a principal. Arbitrary incoming
 `X-Forwarded-For/Host/Proto` values establish neither identity nor a trusted
 reverse-proxy boundary, and are not relayed to unrelated upstreams.
 
-Daemon-owned HTTP/SSE egress can opt into forwarded identity with an explicit
-catalog entry:
+Production use starts with 0539's daemon transport mount/cutover. This hooks
+into its shared-owner foundation; existing worker-owned stdio proxies continue
+using their existing upstream credentials. Daemon-owned HTTP/SSE egress opts
+into forwarded identity with an explicit catalog entry:
 
 ```yaml
 id: upstream
