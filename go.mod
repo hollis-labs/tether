@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/anthropics/anthropic-sdk-go v1.45.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/agent-contracts-leaf v0.3.0
 	github.com/hollis-labs/agentkit v0.21.0
@@ -79,7 +80,6 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
 	github.com/hollis-labs/go-llm-contracts v0.4.0 // indirect

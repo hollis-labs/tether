@@ -371,7 +371,12 @@ func (s *Service) Status(name string) Status {
 		}
 		out.Lint = []NameFinding{}
 		for _, finding := range original.Lint {
-			if entry, ok := visible[finding.Name]; ok && entry.Origin == finding.Origin {
+			if finding.Name == "" {
+				// Origin-level findings reveal no tool names; include only selected origins.
+				if _, ok := byOrigin[finding.Origin]; ok && s.Policy.originSelected(finding.Origin) {
+					out.Lint = append(out.Lint, finding)
+				}
+			} else if entry, ok := visible[finding.Name]; ok && entry.Origin == finding.Origin {
 				out.Lint = append(out.Lint, finding)
 			}
 		}

@@ -22,11 +22,12 @@ type RegisteredTool struct {
 // ToolRegistry holds the merged tool set: native tether tools plus all proxied
 // upstream tools. It is safe for concurrent reads and writes.
 type ToolRegistry struct {
-	tools      map[string]RegisteredTool
-	mu         sync.RWMutex
-	prefixes   map[string]string
-	collisions map[string][]mcpgateway.NameCollision
-	reserved   map[string]mcpgateway.ToolOwner
+	tools              map[string]RegisteredTool
+	mu                 sync.RWMutex
+	prefixes           map[string]string
+	collisions         map[string][]mcpgateway.NameCollision
+	reserved           map[string]mcpgateway.ToolOwner
+	instructionLengths map[string]int
 }
 
 // ToolDelta describes the net effect of replacing one upstream server's tool set.
@@ -38,7 +39,7 @@ type ToolDelta struct {
 
 // NewToolRegistry creates an empty registry.
 func NewToolRegistry() *ToolRegistry {
-	r := &ToolRegistry{tools: make(map[string]RegisteredTool), prefixes: map[string]string{}, collisions: map[string][]mcpgateway.NameCollision{}, reserved: map[string]mcpgateway.ToolOwner{}}
+	r := &ToolRegistry{instructionLengths: map[string]int{}, tools: make(map[string]RegisteredTool), prefixes: map[string]string{}, collisions: map[string][]mcpgateway.NameCollision{}, reserved: map[string]mcpgateway.ToolOwner{}}
 	for _, name := range []string{"tether_gateway_status", "tether_tool_search", "tether_tool_list", "tether_tool_call"} {
 		r.reserved[name] = mcpgateway.ToolOwner{Origin: "tether", Name: name, Kind: "gateway"}
 	}
@@ -201,6 +202,13 @@ func (r *ToolRegistry) RegisterLocal(tool *mcpsdk.Tool, client upstreamClient) e
 	return r.Register("", client, []*mcpsdk.Tool{tool})
 }
 
+// RecordInstructions retains a length only, scoped to the observed origin.
+func (r *ToolRegistry) RecordInstructions(origin string, length int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.instructionLengths[origin] = length
+}
+
 func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway.NameCollision) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -208,6 +216,9 @@ func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway
 	collisions := []mcpgateway.NameCollision{}
 	for _, rt := range r.tools {
 		findings = append(findings, mcpgateway.LintTool(owner(rt).Origin, rt.Definition)...)
+	}
+	for origin, length := range r.instructionLengths {
+		findings = append(findings, mcpgateway.LintInstructions(origin, length)...)
 	}
 	for _, items := range r.collisions {
 		collisions = append(collisions, items...)

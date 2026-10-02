@@ -306,6 +306,11 @@ These are declaration warnings: they never rewrite metadata, infer safety from
 words such as `run`/`start`/`post`, or hide a tool based on its description.
 Upstream owners reconcile their declarations. Metadata checks use observed
 tools/list inventory; the offline doctor cannot establish that inventory.
+Input-schema syntax/local-reference checks and observed initialization instructions
+over 2,048 characters are also reported. External schema references and oversized
+schemas are explicitly unexamined, never fetched or treated as proven valid.
+See [upstream author conformance](mcp-upstream-conformance.md) for rules, limits
+and finding codes.
 
 Default `tether doctor` naming checks are offline: they inspect origin IDs and
 prefix declarations. `tether doctor --mcp-live` **spawns configured upstreams**

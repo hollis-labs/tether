@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	gomcpclient "github.com/hollis-labs/go-mcp/client"
 	"github.com/hollis-labs/go-mcp/supervise"
@@ -227,6 +228,13 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		// Connect rather than registered afterward.
 		client, err := p.connect(ctx, entry)
 		if err == nil {
+			if initialized, ok := client.(interface {
+				InitializeResult() *mcpsdk.InitializeResult
+			}); ok {
+				if result := initialized.InitializeResult(); result != nil {
+					p.registry.RecordInstructions(entry.ID, utf8.RuneCountInString(result.Instructions))
+				}
+			}
 			p.mu.Lock()
 			s.client = client
 			if leaf, ok := client.(*stdioUpstream); ok {
@@ -581,6 +589,13 @@ func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolPara
 
 func (r *remoteClient) ListTools(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 	return r.gc.ListTools(ctx)
+}
+
+func (r *remoteClient) InitializeResult() *mcpsdk.InitializeResult {
+	if session := r.gc.SDKSession(); session != nil {
+		return session.InitializeResult()
+	}
+	return nil
 }
 
 func (r *remoteClient) Close() error {
