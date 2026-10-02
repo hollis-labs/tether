@@ -161,3 +161,47 @@ func TestDoctorValidatesEveryProfileCatalogOrigin(t *testing.T) {
 		t.Fatalf("doctor=%+v", results)
 	}
 }
+
+func TestDoctorNamingOfflineDoesNotSpawnOrLoadSecrets(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := "id: tether\ntransport: stdio\ncommand: /missing-upstream\ntool_prefix: BAD.\nenv:\n  TOKEN: file:///missing-private-key\n"
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "tether.yaml"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checks := checkMCPNamingConfig(root)
+	reserved, prefix := false, false
+	for _, c := range checks {
+		if strings.Contains(c.Message, "reserved") {
+			reserved = true
+			if c.Status != statusWarn {
+				t.Fatal("offline reserved-origin finding should be a warning")
+			}
+		}
+		if strings.Contains(c.Name, "mcp-prefix") {
+			prefix = true
+		}
+		if strings.Contains(c.Message, "missing-private-key") {
+			t.Fatal("offline naming check resolved credential")
+		}
+	}
+	if !reserved || !prefix {
+		t.Fatalf("checks=%+v", checks)
+	}
+}
+
+func TestDoctorInvalidPrefixReportsFileWithoutBreakingCatalog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "broken.yaml"), []byte("id: alpha\ntool_prefix: [not, a, string]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checks := checkMCPNamingConfig(root)
+	if len(checks) != 1 || checks[0].Status != statusWarn || !strings.Contains(checks[0].Message, "broken.yaml") || !strings.Contains(checks[0].Message, "ignored") {
+		t.Fatalf("checks %+v", checks)
+	}
+}

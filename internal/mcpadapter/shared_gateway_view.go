@@ -64,6 +64,11 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	}
 	a.upstreams = upstreams
 	registry := NewToolRegistry()
+	for _, entry := range r.pool.entries {
+		if upstreams.servers[entry.ID] {
+			registry.SetPrefix(entry.ID, entry.ToolPrefix)
+		}
+	}
 	router := NewProxyRouter(registry)
 	router.pool = r.pool
 	router.SetLogger(a.logger())
@@ -127,7 +132,9 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			if listErr != nil {
 				return nil, listErr
 			}
-			registry.RegisterLocal(tool, nativeClient)
+			if err := registry.RegisterLocal(tool, nativeClient); err != nil {
+				return nil, err
+			}
 		}
 	}
 	syncOrigin := func(id string) error {
@@ -141,14 +148,16 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			if !found || tool.ServerID != id {
 				continue
 			}
-			if previous, exists := registry.Lookup(def.Name); exists && previous.ServerID != id {
-				return fmt.Errorf("daemon MCP tool name collision %q", def.Name)
-			}
-			defs = append(defs, def)
+			// Shared definitions already carry final names. Reconstruct the
+			// original name before applying this view's same declared prefix,
+			// preserving the dispatch identity and authored metadata.
+			original := *def
+			original.Name = tool.UpstreamName
+			defs = append(defs, &original)
 			client = tool.Client
 		}
-		registry.ReplaceServer(id, client, defs)
-		return nil
+		_, err := registry.ReplaceServer(id, client, defs)
+		return err
 	}
 	r.pool.catalogMu.Lock()
 	defer r.pool.catalogMu.Unlock()
@@ -161,6 +170,8 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 	fullSnapshot := gateway.Snapshot
 	gateway.Snapshot = func() mcpgateway.Snapshot {
 		full := fullSnapshot()
+		_, collisions, _ := upstreams.namingDiagnostics()
+		full.Collisions = append(full.Collisions, collisions...)
 		origins := []mcpgateway.OriginStatus{}
 		for _, origin := range full.Origins {
 			if origin.ID == "tether" || upstreams.servers[origin.ID] {

@@ -51,7 +51,7 @@ func TestProxyCallErrorRedactsHTTPURLAtAgentBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = client.Close() }()
-	registry.Register("remote", client, []*mcpsdk.Tool{makeTool("probe")})
+	mustRegister(t, registry, "remote", client, []*mcpsdk.Tool{makeTool("probe")})
 	pool.statuses["remote"] = &clientStatus{entry: entries[0], client: client, state: "connected"}
 	router := NewProxyRouter(registry)
 	router.pool = pool
@@ -90,7 +90,7 @@ func TestProxyCallErrorKeepsCauseAndShortValues(t *testing.T) {
 	cause := errors.New("connection failed on port 1 using " + secret)
 	client := &mockClient{callToolFunc: func(context.Context, *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) { return nil, cause }}
 	registry := NewToolRegistry()
-	registry.Register("remote", client, []*mcpsdk.Tool{makeTool("probe")})
+	mustRegister(t, registry, "remote", client, []*mcpsdk.Tool{makeTool("probe")})
 	entry := config.MCPServerEntry{ID: "remote", Token: secret, Env: map[string]string{"DEBUG": "1", "FLAG": "on"}}
 	pool := NewClientPool([]config.MCPServerEntry{entry}, registry)
 	pool.statuses["remote"] = &clientStatus{entry: entry, client: client, state: "connected"}

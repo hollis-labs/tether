@@ -421,3 +421,22 @@ args: [mcp, "${TEST_MCP_ARG}"]
 		}
 	})
 }
+
+func TestLoadMCPServiceCredentialPathIsOperatorAuthored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("SERVICE_TOKEN_LOCATION", "worker-selected.token")
+	write(t, filepath.Join(dir, "mcp-servers", "remote.yaml"), `
+id: remote
+transport: http
+url: https://upstream.example/mcp
+proxy_service_token_file: /operator/${SERVICE_TOKEN_LOCATION}
+`)
+	entries, err := LoadMCPServers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ProxyServiceTokenFile != "/operator/${SERVICE_TOKEN_LOCATION}" || entries[0].Token != "" {
+		t.Fatal("worker environment redirected or catalog loading resolved daemon service credential")
+	}
+}

@@ -186,7 +186,24 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		}
 		daemonListenAddr, daemonBaseURL := resolveDaemonAddr()
 		if daemonBaseURL != "" {
-			go forwardProxyEventsToDaemon(cmd.Context(), svc.Bus, daemonListenAddr, daemonBaseURL, sinceSeq)
+			// Capture credential paths while this command still owns its flags.
+			dc := daemonClient(daemonListenAddr)
+			forwardCtx, stopForwarding := context.WithCancel(cmd.Context())
+			forwardDone := make(chan struct{})
+			go func() {
+				defer close(forwardDone)
+				forwardProxyEventsWithClient(forwardCtx, svc.Bus, dc, sinceSeq)
+			}()
+			defer func() {
+				stopForwarding()
+				// Forwarding is best-effort and must never hold up shutdown.
+				timer := time.NewTimer(2 * time.Second)
+				defer timer.Stop()
+				select {
+				case <-forwardDone:
+				case <-timer.C:
+				}
+			}()
 		}
 
 		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
@@ -372,14 +389,18 @@ func splitCommaList(s string) []string {
 // sinceSeq should be set to the current max event seq so only live events
 // are forwarded — passing 0 causes full history replay on every startup.
 func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr, _ string, sinceSeq int64) {
+	forwardProxyEventsWithClient(ctx, bus, daemonClient(listenAddr), sinceSeq)
+}
+
+func forwardProxyEventsWithClient(ctx context.Context, bus events.Bus, dc *client.Client, sinceSeq int64) {
 	ch, cancel, err := bus.Subscribe(ctx, events.Filter{SinceSeq: sinceSeq})
 	if err != nil {
-		slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
+		if ctx.Err() == nil {
+			slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
+		}
 		return
 	}
 	defer cancel()
-
-	dc := daemonClient(listenAddr)
 
 	for {
 		select {
