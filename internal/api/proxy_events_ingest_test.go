@@ -271,3 +271,30 @@ func TestIngestProxyEvent_NonObjectJSONPreservesHTTPError(t *testing.T) {
 		})
 	}
 }
+
+func TestIngestProxyEventPreservesTelemetryAndRejectsInvalidMetrics(t *testing.T) {
+	rows := &obsProxyEventStore{}
+	bus := &recordingBus{}
+	h := NewHandler(Deps{ProxyEvents: rows, Bus: bus})
+	details := events.ToolCallDetails{Profile: "reader", DiscoveryMode: "flat", ArgsBytes: 19, ResultBytes: 98, ErrorClass: events.ToolErrorDenied, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", QueueMs: 2, ForwardMs: 8}
+	rr := postProxyEvent(t, h, ProxyEventIngestRequest{ToolCallDetails: details, ToolName: "read", Server: "alpha", Error: strings.Repeat("€", 5000), Publish: true})
+	if rr.Code != http.StatusCreated {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	if len(rows.events) != 1 || len(bus.published) != 1 {
+		t.Fatal("record not persisted and published")
+	}
+	var call events.ToolCallEvent
+	if err := json.Unmarshal([]byte(bus.published[0].PayloadJSON), &call); err != nil {
+		t.Fatal(err)
+	}
+	if call.ArgsBytes != 19 || call.ResultBytes != 98 || call.ErrorClass != events.ToolErrorDenied || !call.Truncated || !rows.events[0].Truncated {
+		t.Fatalf("dropped telemetry: %+v", call)
+	}
+	for _, bad := range []events.ToolCallDetails{{ArgsBytes: -1}, {ResultBytes: -1}, {QueueMs: -1}, {ForwardMs: -1}, {ErrorClass: "invented"}, {Profile: strings.Repeat("x", 257)}} {
+		rr := postProxyEvent(t, h, ProxyEventIngestRequest{ToolCallDetails: bad, ToolName: "read", Publish: true})
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("invalid metadata accepted: %+v / %d", bad, rr.Code)
+		}
+	}
+}

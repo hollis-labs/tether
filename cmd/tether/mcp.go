@@ -208,7 +208,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 	}
-	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile}, false)
+	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, Bus: svc.Bus}, false)
 }
 
 // configureMCPAdapter applies the flags every `tether mcp` mode shares.
@@ -281,7 +281,7 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 		return err
 	}
 	if !mcpProxy {
-		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile}, false)
+		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, Publisher: mcpadapter.NewDaemonToolCallPublisher(cmd.Context(), dc)}, false)
 	}
 	opts := daemonOnlyProxyOptions(cmd.Context(), dc, serverFilter, curatedOnly, mcpConfine)
 	opts.ModeInputs = modeInputs

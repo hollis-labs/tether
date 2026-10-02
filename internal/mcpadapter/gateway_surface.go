@@ -29,6 +29,7 @@ func gatewaySurfaceMiddleware(gateway *mcpgateway.Service) mcpsdk.Middleware {
 							return next(ctx, method, req)
 						}
 					}
+					recordTargetError(ctx, err)
 					return errorResult(err.Error()), nil
 				}
 			}

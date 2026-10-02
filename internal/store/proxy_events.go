@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
+	"github.com/hollis-labs/tether/internal/events"
 )
 
 // proxyEventsQueryLimit caps a single query, not durable storage.
@@ -16,6 +17,7 @@ const proxyEventsQueryLimit = 2000
 // proxy_events table. Mirrors mcpadapter.ToolCallEvent but lives in the store
 // package to avoid an import cycle.
 type ProxyEvent struct {
+	events.ToolCallDetails
 	ID               int64
 	SessionID        string
 	Server           string
@@ -82,10 +84,14 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 	if err != nil {
 		return fmt.Errorf("marshal proxy attribution: %w", err)
 	}
+	details, err := json.Marshal(ev.ToolCallDetails)
+	if err != nil {
+		return fmt.Errorf("marshal proxy telemetry: %w", err)
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO proxy_events
-		    (session_id, server, tool_name, args_schema_fp, duration_ms, ok, error, timestamp, attribution_json, claimed_session_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    (session_id, server, tool_name, args_schema_fp, duration_ms, ok, error, timestamp, attribution_json, claimed_session_id, telemetry_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullIfEmpty(ev.SessionID),
 		ev.Server,
 		ev.ToolName,
@@ -94,7 +100,7 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 		ok,
 		nullIfEmpty(ev.Error),
 		ts,
-		string(attribution), ev.ClaimedSessionID,
+		string(attribution), ev.ClaimedSessionID, string(details),
 	)
 	if err != nil {
 		return fmt.Errorf("insert proxy event: %w", err)
@@ -115,7 +121,7 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 	}
 
 	q := `SELECT id, session_id, server, tool_name, args_schema_fp,
-	             duration_ms, ok, error, timestamp, attribution_json, claimed_session_id
+	             duration_ms, ok, error, timestamp, attribution_json, claimed_session_id, telemetry_json
 	      FROM proxy_events`
 	where, args := proxyEventWhereClause(f)
 	// Query fragments come only from proxyEventWhereClause's fixed clauses.
@@ -139,7 +145,7 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 		var errStr sql.NullString
 		var okInt int
 		var tsStr string
-		var attribution string
+		var attribution, details string
 
 		if err := rows.Scan(
 			&ev.ID,
@@ -151,11 +157,14 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 			&okInt,
 			&errStr,
 			&tsStr,
-			&attribution, &ev.ClaimedSessionID,
+			&attribution, &ev.ClaimedSessionID, &details,
 		); err != nil {
 			return nil, fmt.Errorf("scan proxy event: %w", err)
 		}
 
+		if err := json.Unmarshal([]byte(details), &ev.ToolCallDetails); err != nil {
+			return nil, fmt.Errorf("decode proxy telemetry: %w", err)
+		}
 		ev.SessionID = sessionID.String
 		if err := json.Unmarshal([]byte(attribution), &ev.Attribution); err != nil {
 			return nil, fmt.Errorf("decode proxy attribution: %w", err)

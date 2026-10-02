@@ -38,7 +38,7 @@ func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, 
 		meta := map[string]any(req.Params.Meta)
 
 		handlerCtx = a.withSessionID(handlerCtx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() && !trace.SpanContextFromContext(handlerCtx).IsValid() {
 			handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
 		}
 		handlerCtx, span := hotel.ToolCallSpan(handlerCtx, spanName)
@@ -220,7 +220,7 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware, registries ...*ToolRegistr
 			var args map[string]any
 			if len(call.Params.Arguments) > 0 {
 				if err := json.Unmarshal(call.Params.Arguments, &args); err != nil {
-					return next(ctx, method, req)
+					args = nil
 				}
 			}
 			terminal := ToolCallHandler(func(tCtx context.Context, _ ToolCall) (*mcpsdk.CallToolResult, error) {
@@ -241,11 +241,13 @@ func proxyLoggingMiddleware(mws []ToolCallMiddleware, registries ...*ToolRegistr
 				if name == "tether_tool_call" {
 					name, _ = args["name"].(string)
 				}
-				if target, ok := registries[0].Lookup(name); ok {
+				if name != "" {
 					observed.ToolName = name
-					if call.Params.Name == "tether_tool_call" {
-						observed.Args, _ = args["arguments"].(map[string]any)
-					}
+				}
+				if call.Params.Name == "tether_tool_call" {
+					observed.Args, _ = args["arguments"].(map[string]any)
+				}
+				if target, ok := registries[0].Lookup(name); ok {
 					ctx = WithServerID(ctx, target.ServerID)
 				}
 			}
@@ -374,14 +376,13 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 	for _, mw := range mws {
 		if logging, ok := mw.(*LoggingMiddleware); ok {
 			logging.contextDecorator = a.withSessionID
+			logging.profile, logging.mode = opts.Profile.ID, string(selection.Mode)
 		}
 	}
 	if opts.Bus != nil && opts.EventStore != nil {
 		opts.EventStore.Subscribe(ctx, opts.Bus)
 	}
-	if len(mws) > 0 {
-		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws, registry))
-	}
+
 	router := NewProxyRouter(registry)
 	router.pool = pool
 	router.SetLogger(a.logger())
@@ -438,6 +439,9 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		a.logger().Warn(warning)
 	}
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
+	if len(mws) > 0 {
+		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws, registry))
+	}
 	if selection.Mode == mcpgateway.Flat {
 		live.addProxyTools(registry.AllDefinitions()...)
 	} else {

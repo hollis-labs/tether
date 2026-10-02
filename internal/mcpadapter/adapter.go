@@ -33,6 +33,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/telemetry"
 	"log/slog"
 	"strings"
 
@@ -214,12 +216,24 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
 		ctx = a.withClaimedSessionID(ctx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !trace.SpanContextFromContext(ctx).IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
 		ctx, span := hotel.ToolCallSpan(ctx, name)
 		defer span.End()
-		return inner(ctx, args)
+		out, err := inner(ctx, args)
+		var failure *budget.ToolError
+		if errors.As(err, &failure) {
+			switch failure.Code {
+			case "auth_required", "insufficient_scope":
+				telemetry.SetErrorClass(ctx, events.ToolErrorDenied)
+			case "invalid_request", "bad_request":
+				telemetry.SetErrorClass(ctx, events.ToolErrorValidation)
+			case "daemon_unavailable":
+				telemetry.SetErrorClass(ctx, events.ToolErrorUpstreamDown)
+			}
+		}
+		return out, err
 	}
 	t.ReadOnlyHint = ann.readOnly
 	t.DestructiveHint = ann.destructive

@@ -286,7 +286,7 @@ func readCursor(cursor, binding string, total int) (int, error) {
 
 // TargetError means no dispatch occurred. Transport errors from Dispatch retain
 // their original protocol semantics and must not be disguised as target errors.
-type TargetError struct{ Message string }
+type TargetError struct{ Message string; Unavailable bool }
 
 func (e *TargetError) Error() string { return e.Message }
 
@@ -301,11 +301,11 @@ func (s *Service) ResolveTarget(name string) (Entry, error) {
 			continue
 		}
 		if unavailable[entry.Origin] {
-			return Entry{}, &TargetError{fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name)}
+			return Entry{}, &TargetError{Message:fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name),Unavailable:true}
 		}
 		return entry, nil
 	}
-	return Entry{}, &TargetError{fmt.Sprintf("tool %q is unknown or excluded", name)}
+	return Entry{}, &TargetError{Message:fmt.Sprintf("tool %q is unknown or excluded", name)}
 }
 
 func (s *Service) Call(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
