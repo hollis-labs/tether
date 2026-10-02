@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // Message is a messaging envelope enriched with the inbox-state columns
@@ -98,6 +99,9 @@ var _ InboxStore = (*messagingStore)(nil)
 // is floored at 0. The returned ListPage.Total is a COUNT(*) over the same
 // WHERE clause, taken before LIMIT/OFFSET, so callers can paginate.
 func (ms *messagingStore) List(ctx context.Context, to messaging.Address, f ListFilter) (ListPage, error) {
+	if _, ok := channels.AddressName(to); ok {
+		return ListPage{}, channels.ErrMailboxOperation
+	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
@@ -189,6 +193,9 @@ func (ms *messagingStore) Unarchive(ctx context.Context, id string, recipient me
 // col selects the column ("read_at"/"archived_at"); each branch uses a
 // fully static statement so no SQL is ever assembled from a variable.
 func (ms *messagingStore) stampRecipientField(ctx context.Context, id string, recipient messaging.Address, col string, clr bool) error {
+	if err := ms.requireMailbox(ctx, id); err != nil {
+		return err
+	}
 	var (
 		res sql.Result
 		err error

@@ -14,6 +14,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -236,10 +237,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	// A keyed request always takes the input path: that is where the
 	// request digest is computed and the key recorded.
-	if req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
+	if req.Route != nil || req.IdempotencyKey != "" || req.AgentFile != "" || req.AgentInline != "" || req.BootProfileFile != "" || req.Override != "" || req.Injection != "" || req.PromptAppend != "" {
 		// v005-08 Tier-2 path: caller-provided payload (any field set routes here).
 		res, err = s.Service.CreateSessionWithInput(CreateSessionInput{
 			LaunchID:           req.Launch,
+			Route:              req.Route,
 			BootPromptOverride: req.BootPrompt,
 			AgentFile:          req.AgentFile,
 			AgentInline:        req.AgentInline,
@@ -255,6 +257,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		res, err = s.Service.CreateSession(req.Launch)
 	}
 	if err != nil {
+		var invalidRoute *launchprofile.InvalidRouteError
+		if errors.As(err, &invalidRoute) {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			return
+		}
 		if writeIdempotencyConflict(w, err) {
 			return
 		}

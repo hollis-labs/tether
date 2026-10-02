@@ -3,8 +3,7 @@ type: cli
 provider: codex
 runtime_kind: jsonrpc-stdio
 command: codex
-args:
-  - app-server
+args: [] # The shared runtime owns the app-server subcommand.
 bootstrap:
   # jsonrpc-stdio: codex `app-server` defaults to `--listen stdio://` and
   # speaks JSON-RPC 2.0 over stdin/stdout. The same engine backs the

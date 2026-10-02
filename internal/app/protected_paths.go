@@ -48,7 +48,7 @@ func ControlPlaneProtection(goos string, getenv func(string) string) ProtectionS
 		return ProtectionStatus{Reason: fmt.Sprintf("not applied on %s until go-sandbox's seatbelt protection is verified on a real Mac (CW-20261001-0138), so agents can write the catalog, run/ and state/", goos)}
 	}
 	if codexProtectionMode == CodexNotProtected {
-		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog, run/ or state/; Codex is NOT protected (CW-20261001-0230), it relies on its own workspace-write sandbox"}
+		return ProtectionStatus{Enabled: true, Reason: "on: Claude, OpenCode and every agent Tether wraps cannot write the catalog, run/ or state/; Codex is NOT protected (CW-20261001-0230), its provider sandbox is disabled for bypass sessions"}
 	}
 	return ProtectionStatus{Enabled: true, Reason: "on: agents Tether wraps cannot write the catalog, run/ or state/; Codex is left to its own workspace-write sandbox under Tether's dormant guard, and its MCP servers run outside that sandbox (CW-20261001-0230)"}
 }

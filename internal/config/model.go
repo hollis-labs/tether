@@ -131,6 +131,10 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 type DaemonConfig struct {
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
 	MCPEndpoint MCPEndpointConfig `yaml:"mcp_endpoint,omitempty"`
+	// MCPUpstreams selects planting for new launches; omitted means legacy_proxy.
+	MCPUpstreams        string `yaml:"mcp_upstream_ownership,omitempty"`
+	mcpOwnershipPresent bool
+	mcpOwnershipInvalid bool
 	// ListenAddr accepts "unix:/path" or "tcp:host:port". If empty, defaults
 	// to "unix:~/.tether/run/tetherd.sock".
 	ListenAddr string `yaml:"listen_addr"`
@@ -284,15 +288,16 @@ type ProviderEnv struct {
 }
 
 type Launch struct {
-	ID        string          `yaml:"id" json:"id"`
-	Project   string          `yaml:"project" json:"project"`
-	Agent     string          `yaml:"agent" json:"agent"`
-	Provider  string          `yaml:"provider" json:"provider"`
-	Workspace LaunchWorkspace `yaml:"workspace" json:"workspace"`
-	Prompt    PromptSpec      `yaml:"prompt" json:"prompt"`
-	Overrides LaunchOverrides `yaml:"overrides" json:"overrides"`
-	MCP       MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
-	Injection LaunchInjection `yaml:"injection" json:"injection,omitempty"`
+	Route     *launchprofile.Route `yaml:"route,omitempty" json:"route,omitempty"`
+	ID        string               `yaml:"id" json:"id"`
+	Project   string               `yaml:"project" json:"project"`
+	Agent     string               `yaml:"agent" json:"agent"`
+	Provider  string               `yaml:"provider" json:"provider"`
+	Workspace LaunchWorkspace      `yaml:"workspace" json:"workspace"`
+	Prompt    PromptSpec           `yaml:"prompt" json:"prompt"`
+	Overrides LaunchOverrides      `yaml:"overrides" json:"overrides"`
+	MCP       MCPConfig            `yaml:"mcp" json:"mcp,omitempty"`
+	Injection LaunchInjection      `yaml:"injection" json:"injection,omitempty"`
 }
 
 type LaunchWorkspace struct {

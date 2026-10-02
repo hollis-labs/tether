@@ -15,7 +15,7 @@ package app
 // "so the child fails fast instead of hanging". Codex reads that error as a
 // refusal and fails the tool call with "user rejected MCP tool call".
 //
-// The observable result was that EVERY MCP tool call from a Tether-launched
+// Under the workspace-write sandbox, EVERY MCP tool call from a Tether-launched
 // codex worker failed, in one of two ways depending on the planted
 // approval_policy:
 //
@@ -29,13 +29,16 @@ package app
 // unusable here anyway: the planted server is the tether PROXY, which fronts
 // several hundred tools whose names Tether does not know at plant time.
 //
-// So both halves are required, and neither works alone:
+// For default sandboxed launches, both halves are required:
 //   1. the approval_policy must be a value that ASKS rather than refusing
 //      outright. The launch's posture (config.ProviderPosture, mapped by the
 //      go-providers registry) sets "on-request", in the launch template's argv
 //      and, since CW-20261001-0216, in the planted config.toml too (see
 //      plantResolver), and
 //   2. something must answer — this file.
+//
+// Explicit bypass launches use danger-full-access/never, which permits MCP
+// without this approval exchange on Codex 0.159.3 (CW-20261001-0251).
 //
 // Policy: a launched worker gets open MCP access by default. An agent that
 // cannot call the tools its own launch planted for it is not sandboxed, it

@@ -9,6 +9,7 @@ import (
 	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -126,7 +127,8 @@ type LaunchResult struct {
 // contract; rename with care.
 
 type LaunchRequest struct {
-	Launch string `json:"launch"`
+	Route  *launchprofile.Route `json:"route,omitempty"`
+	Launch string               `json:"launch"`
 	// BootPrompt, when non-empty, overrides the catalog's static boot prompt
 	// fragments. Used by `tether boot <profile_id>` to inject a dynamically
 	// generated boot prompt without modifying the catalog.
@@ -174,6 +176,7 @@ type ResumeRequest struct {
 // cycle via internal/app importing api). The adapter in cmd/tether/daemon.go
 // translates between the two.
 type CreateSessionInput struct {
+	Route              *launchprofile.Route
 	LaunchID           string
 	BootPromptOverride string
 	AgentFile          string

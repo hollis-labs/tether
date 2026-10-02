@@ -18,7 +18,8 @@ All fields below are optional; any one set routes through the Tier-2 path.
 | `agent_file` | filesystem path | Loads an agent YAML matching `config.Agent`. Field-merged over the catalog agent. |
 | `agent_inline` | JSON string | Same shape as `agent_file` but inline. Highest precedence in the agent resolve order (inline > file > catalog). |
 | `boot_profile` | filesystem path | Loads a `bootgen.Profile` YAML. Currently consumed for `mcp_servers` (the MCP allowlist for this launch). |
-| `override` | JSON string | Per-launch override applied last over the resolved plan. Shape: `{"system_prompt": "...", "env": {"KEY": "VAL"}}`. |
+| `override` | JSON string | Per-launch override over the resolved plan. Shape: `{"system_prompt": "...", "env": {"KEY": "VAL"}, "route": {"channel": "ops"}}`. |
+| `route` | object | Optional per-turn routing configuration: `{"channel":"ops","kinds":["final","question","approval","failure"]}`. Wins over the override route. |
 | `prompt_append` | string | Appends launch-time instructions after catalog/agent/override prompt composition without replacing the base prompt. Preserved across late boot-profile regeneration. |
 | `injection` | JSON string | Caller-provided native files + boot-dir overlay, supplied outside catalog YAML. JSON-encoded `config.LaunchInjection` — the same shape as the catalog `injection` block. See [Caller injection](#caller-injection) below. |
 
@@ -187,3 +188,27 @@ launched, err := c.LaunchSession(ctx, created.ID)
 - ADR 0033 — Two-Tier Agent Config (full design rationale)
 - `docs/agent-config-reference.md` — schema reference
 - `docs/skill-format.md` — skill format spec
+
+## Opt-in session routing
+
+Without a `route`, sessions behave as before and publish no routed messages.
+Set `route` on the catalog agent or launch, in an agent file/inline definition,
+in the JSON `override`, or directly on the create request. Each supplied block
+replaces the lower-precedence block; direct request routing wins over the
+JSON override. Agent file/inline routing replaces catalog routing.
+
+```sh
+tether launch --launch demo-launch --route ops --route-kinds question,approval
+```
+
+Omitted or null `kinds` defaults to `final`, `question`, `approval`, `failure`.
+An explicit empty list publishes no kinds. Unknown kinds (including `terminal`)
+and invalid channel names are rejected with HTTP 400 `invalid_request` in the
+ADR 0010 error envelope. Channel names are case-sensitive ASCII, 1–64 characters,
+starting with a letter or digit and continuing with letters, digits, `.`, `_`,
+or `-`. There is no reply-target setting: replies always return to the sender.
+
+The resolved route is persisted with the session at creation, including default
+kinds. It survives daemon restarts and does not change when the catalog changes.
+Message publishing and reply delivery are separate daemon features; this setting
+records the session's opt-in contract.
