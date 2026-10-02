@@ -48,7 +48,7 @@ func (s *Store) QueryToolCallMetrics(ctx context.Context, q telemetry.MetricsQue
 		sqlText += " AND " + normalizedAt + "<?"
 		args = append(args, q.Until.UTC().Format(fixedUTC))
 	}
-	sqlText += " GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT ?"
+	sqlText += " GROUP BY 1,2,3 ORDER BY COUNT(*) DESC,1,2,3 LIMIT ?"
 	if q.Limit < 1 || q.Limit > telemetry.MaxMetricGroups+1 {
 		q.Limit = telemetry.MaxMetricGroups + 1
 	}

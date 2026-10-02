@@ -111,3 +111,45 @@ func TestOTelMetricSeriesAreBoundedWithoutLosingCallCounts(t *testing.T) {
 	}
 	t.Fatal("missing call counter")
 }
+
+func TestDeniedJunkNamesCannotStarveLegitimateMetricSeries(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithCardinalityLimit(0))
+	defer func() { _ = provider.Shutdown(context.Background()) }()
+	metrics, err := NewMetrics(provider.Meter("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2000 {
+		metrics.Observe(context.Background(), events.ToolCallEvent{ToolName: fmt.Sprintf("junk_%d", i), ToolCallDetails: events.ToolCallDetails{ErrorClass: events.ToolErrorDenied}})
+	}
+	metrics.Observe(context.Background(), events.ToolCallEvent{ToolName: "tether_docs_list", Server: "tether", OK: true})
+	var data metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range data.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			if metric.Name != "tether.tool.calls" {
+				continue
+			}
+			points := metric.Data.(metricdata.Sum[int64]).DataPoints
+			var calls int64
+			var realTool bool
+			for _, point := range points {
+				assertMetricLabels(t, point.Attributes)
+				calls += point.Value
+				tool, _ := point.Attributes.Value("tool")
+				outcome, _ := point.Attributes.Value("outcome")
+				if tool.AsString() == "tether_docs_list" && outcome.AsString() == "ok" && point.Value == 1 {
+					realTool = true
+				}
+			}
+			if !realTool || calls != 2001 || len(points) > MaxOTelDeniedSeries+2 {
+				t.Fatalf("real tool=%v calls=%d series=%d", realTool, calls, len(points))
+			}
+			return
+		}
+	}
+	t.Fatal("missing call counter")
+}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -95,5 +96,34 @@ func TestToolMetricsFractionalTimeBoundaries(t *testing.T) {
 	out, err = service.ReadMetrics(context.Background(), telemetry.MetricsRequest{Until: "2026-10-02T00:00:00.12Z"})
 	if err != nil || len(out.Groups) != 1 || out.Groups[0].Calls != 2 {
 		t.Fatal(out, err)
+	}
+}
+
+func TestToolMetricsPrioritizeFrequentToolsOverJunkGroups(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "volume.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for i := range 1100 {
+		raw, err := json.Marshal(events.ToolCallEvent{ToolName: fmt.Sprintf("a_junk_%d", i), ToolCallDetails: events.ToolCallDetails{ErrorClass: events.ToolErrorDenied}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", events.EventTypeToolCallEnd, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 3 {
+		if _, _, err := db.InsertEvent(events.ScopeDaemon, "", events.EventTypeToolCallEnd, `{"tool_name":"tether_docs_list","ok":true}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := (telemetry.QueryService{Source: db}).ReadMetrics(context.Background(), telemetry.MetricsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Truncated || len(out.Groups) == 0 || out.Groups[0].Tool != "tether_docs_list" || out.Groups[0].Calls != 3 {
+		t.Fatal("frequent real tool displaced by junk groups or truncation missing")
 	}
 }

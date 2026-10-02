@@ -22,6 +22,10 @@ const MaxMetricGroups = 1000
 // Later combinations share an overflow series; durable queries remain exact.
 const MaxOTelCallSeries = 1000
 
+// Denials have a separate budget so unknown/excluded names cannot crowd out
+// observations of dispatched tools. The remaining slots are non-denied series.
+const MaxOTelDeniedSeries = 100
+
 type Bucket struct {
 	UpperMs *int64 `json:"upper_ms"`
 	Count   int64  `json:"count"`
@@ -110,6 +114,7 @@ func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (Metr
 type Metrics struct {
 	mu                         sync.Mutex
 	series                     map[metricLabels]struct{}
+	deniedSeries               int
 	calls                      metric.Int64Counter
 	argsBytes, resultBytes     metric.Int64Counter
 	duration, gateway, forward metric.Float64Histogram
@@ -156,8 +161,16 @@ func (m *Metrics) Observe(ctx context.Context, call events.ToolCallEvent) {
 	key := metricLabels{boundedMetricLabel(call.ToolName), boundedMetricLabel(call.Server), boundedMetricLabel(outcome)}
 	m.mu.Lock()
 	if _, known := m.series[key]; !known {
-		if len(m.series) < MaxOTelCallSeries {
+		denied := outcome == string(events.ToolErrorDenied)
+		available := m.deniedSeries < MaxOTelDeniedSeries
+		if !denied {
+			available = len(m.series)-m.deniedSeries < MaxOTelCallSeries-MaxOTelDeniedSeries
+		}
+		if available {
 			m.series[key] = struct{}{}
+			if denied {
+				m.deniedSeries++
+			}
 		} else {
 			key = metricLabels{"_other", "_other", "_other"}
 		}

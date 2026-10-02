@@ -1631,9 +1631,13 @@ Optional `tool` and `upstream` selectors are exact matches, and `since`/`until`
 are inclusive/exclusive RFC3339 time bounds. Invalid selectors return
 `invalid_request` consistently across MCP, HTTP and CLI.
 
-Counts use retained durable `tool_call_end` rows, survive restart, and exclude
-start rows. The response is `{groups, truncated, window:"retained_events"}`.
-Groups are ordered by tool/upstream/outcome and capped at 1,000; `truncated`
+These queries are GLOBAL and unscoped: they aggregate all callers without
+caller identity or session filtering. Each query scans retained `tool_call_end`
+events and groups them; this is suitable at the current roughly 66,000-row
+scale. A rollup table is the future option if retained history makes scans
+expensive. Counts survive restart and exclude start rows. The response is `{groups, truncated, window:"retained_events"}`.
+Groups are ordered by call count descending, with tool/upstream/outcome ties,
+and capped at 1,000; `truncated`
 asks the caller to narrow filters. Each group includes call and byte counters,
 `metadata_samples`, and duration/gateway/forward histograms with `count`,
 `sum_ms` and cumulative `buckets`. Upper bounds are 5, 25, 100, 500, 1,000 and
@@ -1649,9 +1653,14 @@ with the observing process and are distinct from retained-event queries;
 forwarded copies do not increment a second exporter. Metric network export is
 off by default. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to opt in on the existing OTLP
 HTTP endpoint; a remote destination requires explicit operator configuration.
+Metric export sends tool/upstream/outcome labels, call counts, byte-size sums
+and latency histograms to that endpoint, with the existing OTel service metadata.
+Caller identity, argument/result values, error text and correlation IDs are not
+metric labels or observations. Existing tracing configuration is separate.
 `HOLLIS_OTEL_DISABLED` (or legacy `TETHER_OTEL_DISABLED`) disables OTel.
-Each process retains at most 1,000 distinct tool/upstream/outcome combinations;
-later combinations share `_other` labels. Labels over 256 bytes also use
+Each process reserves up to 100 distinct denied tool/upstream/outcome series
+and up to 900 non-denied series. Excess combinations share one `_other` series,
+so hallucinated denied names cannot consume the dispatched-tool budget. Labels over 256 bytes also use
 `_other`. This bounds exporter memory; retained-event queries remain exact.
 Existing introspection access rules apply; no deployment or new
 authorization policy is implied.
