@@ -73,7 +73,7 @@ func resolvedRuntimeRouting(p config.Provider) (string, string, bool, error) {
 		cli = gop.NewCodexAdapter()
 	}
 	if cli != nil {
-		sel.CLIAdapter = &claudestream.PlanScopedAdapter{Inner: cli}
+		sel.CLIAdapter = claudestream.NewPlanScopedAdapter(nil, cli)
 	}
 	adapter, err := wlaunch.Select(sel)
 	if err != nil {
