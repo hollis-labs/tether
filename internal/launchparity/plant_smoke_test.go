@@ -24,8 +24,8 @@ import (
 //
 //   - claude: --permission-mode bypassPermissions (catalog default
 //     permission_mode: bypass -> posture yolo).
-//   - codex:  -c approval_policy="on-request" (posture accept-edits, so
-//     MCP tool calls are asked for rather than refused).
+//   - codex:  -c approval_policy="never" (explicit bypass posture yolo,
+//     paired with danger-full-access).
 //
 // It does NOT execute an agent — that is the live half of the smoke. This
 // half is what the orchestrator-s5 amendment is really about: a launch
@@ -71,7 +71,7 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 		{
 			name:     "codex carries approval_policy",
 			launchID: "tether-codex-launch",
-			wantFlag: [2]string{"-c", `approval_policy="on-request"`},
+			wantFlag: [2]string{"-c", `approval_policy="never"`},
 		},
 	}
 

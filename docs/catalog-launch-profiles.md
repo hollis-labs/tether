@@ -7,6 +7,25 @@ dynamic boot prompt on top of a launch.
 For provider-specific setup examples, current smoke results, and boot prompt
 generation workflow, see [`docs/launches/`](launches/README.md).
 
+## Unattended Codex and Antigravity
+
+The example catalog includes `codex-unattended` (Codex app-server) and
+`antigravity-unattended` (agy). Both select `unattended-agent`, whose
+`permissions.permission_mode: bypass` explicitly requests unattended execution.
+Adapt the `demo` project's repository path before launching either profile.
+Codex uses `danger-full-access` with approval `never`; agy uses
+`--dangerously-skip-permissions`. Codex subprocess launches use the same posture.
+An omitted permission mode inherits the global default, then falls back to
+`default`; it does not request bypass.
+
+Codex app-server accepts corrections during a running turn. Antigravity's
+current subprocess runtime serializes additional input: a correction sent while
+busy runs as the next turn of the same conversation. Active-turn interruption
+is tracked by CW-20261002-0078. See the
+[live acceptance record](launches/unattended-smoke-20261002.md) for evidence and
+limits. Each provider must already be signed in under the daemon's credential
+HOME; an isolated test HOME needs access to that login separately.
+
 ## File Layout
 
 ```text

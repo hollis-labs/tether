@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
@@ -36,18 +37,19 @@ func (s *Service) lockIdempotencyKey(key string) func() {
 // hash the path, not the file, so the caller alone controls the identity.
 func createRequestDigest(in CreateSessionInput) string {
 	return requestDigest(struct {
-		Op              string `json:"op"`
-		Launch          string `json:"launch"`
-		BootPrompt      string `json:"boot_prompt"`
-		AgentFile       string `json:"agent_file"`
-		AgentInline     string `json:"agent_inline"`
-		BootProfileFile string `json:"boot_profile"`
-		Override        string `json:"override"`
-		PromptAppend    string `json:"prompt_append"`
-		Injection       string `json:"injection"`
+		Op              string               `json:"op"`
+		Launch          string               `json:"launch"`
+		BootPrompt      string               `json:"boot_prompt"`
+		AgentFile       string               `json:"agent_file"`
+		AgentInline     string               `json:"agent_inline"`
+		BootProfileFile string               `json:"boot_profile"`
+		Override        string               `json:"override"`
+		PromptAppend    string               `json:"prompt_append"`
+		Injection       string               `json:"injection"`
+		Route           *launchprofile.Route `json:"route,omitempty"`
 	}{
 		store.IdempotencyOpCreate, in.LaunchID, in.BootPromptOverride, in.AgentFile, in.AgentInline,
-		in.BootProfileFile, in.Override, in.BootPromptAppend, in.Injection,
+		in.BootProfileFile, in.Override, in.BootPromptAppend, in.Injection, in.Route,
 	})
 }
 

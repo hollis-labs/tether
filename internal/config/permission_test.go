@@ -9,8 +9,7 @@ import (
 	"github.com/hollis-labs/go-providers/registry"
 )
 
-// TestProviderPosture pins each provider's posture to the one it ran under
-// before postures existed (CW-20261001-0156).
+// TestProviderPosture checks default and explicitly unattended launches.
 func TestProviderPosture(t *testing.T) {
 	tests := []struct {
 		mode, brand string
@@ -21,8 +20,8 @@ func TestProviderPosture(t *testing.T) {
 		{PermissionModeBypass, "claude", runtimes.ModePTY, permission.ModeYolo},
 		{PermissionModeDefault, "claude", runtimes.ModeStreamingStdio, permission.ModeDefault},
 		{"", "claude", runtimes.ModeSubprocessPerTurn, permission.ModeDefault},
-		{PermissionModeBypass, "codex", runtimes.ModeSubprocessPerTurn, permission.ModeAcceptEdits},
-		{PermissionModeBypass, "codex", runtimes.ModeJSONRPCStdio, permission.ModeAcceptEdits},
+		{PermissionModeBypass, "codex", runtimes.ModeSubprocessPerTurn, permission.ModeYolo},
+		{PermissionModeBypass, "codex", runtimes.ModeJSONRPCStdio, permission.ModeYolo},
 		{PermissionModeDefault, "codex", runtimes.ModeSubprocessPerTurn, permission.ModeAcceptEdits},
 		{PermissionModeBypass, "antigravity", runtimes.ModeSubprocessPerTurn, permission.ModeYolo},
 		{PermissionModeDefault, "antigravity", runtimes.ModeSubprocessPerTurn, permission.ModeAcceptEdits},
@@ -62,11 +61,9 @@ func TestProviderPostureIsMappedByTheRegistry(t *testing.T) {
 	}
 }
 
-// The approval hook in internal/app (codex_approval.go) is only reachable
-// when codex's approval policy lets it ask: under "never" codex refuses every
-// MCP tool call before asking. So whatever the Tether mode, a codex launch's
-// posture must carry approval_policy "on-request".
-func TestCodexPostureLetsCodexAsk(t *testing.T) {
+// Default sessions retain the MCP approval hook; explicit bypass sessions
+// disable the provider sandbox and approval prompts together.
+func TestCodexPostureApprovalPolicy(t *testing.T) {
 	desc, ok := registry.Lookup("codex")
 	if !ok {
 		t.Fatal("registry has no codex")
@@ -77,8 +74,12 @@ func TestCodexPostureLetsCodexAsk(t *testing.T) {
 			if err != nil {
 				t.Fatalf("codex %s %q: %v", rt, mode, err)
 			}
-			if !slices.Contains(launch.Args, `approval_policy="on-request"`) {
-				t.Errorf("codex %s %q: posture args %q do not set approval_policy=\"on-request\"; every MCP tool call would be refused before the approval hook is consulted", rt, mode, launch.Args)
+			want := `approval_policy="on-request"`
+			if mode == PermissionModeBypass {
+				want = `approval_policy="never"`
+			}
+			if !slices.Contains(launch.Args, want) {
+				t.Errorf("codex %s %q: posture args %q lack %s", rt, mode, launch.Args, want)
 			}
 		}
 	}

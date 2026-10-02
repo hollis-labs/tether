@@ -284,15 +284,16 @@ type ProviderEnv struct {
 }
 
 type Launch struct {
-	ID        string          `yaml:"id" json:"id"`
-	Project   string          `yaml:"project" json:"project"`
-	Agent     string          `yaml:"agent" json:"agent"`
-	Provider  string          `yaml:"provider" json:"provider"`
-	Workspace LaunchWorkspace `yaml:"workspace" json:"workspace"`
-	Prompt    PromptSpec      `yaml:"prompt" json:"prompt"`
-	Overrides LaunchOverrides `yaml:"overrides" json:"overrides"`
-	MCP       MCPConfig       `yaml:"mcp" json:"mcp,omitempty"`
-	Injection LaunchInjection `yaml:"injection" json:"injection,omitempty"`
+	Route     *launchprofile.Route `yaml:"route,omitempty" json:"route,omitempty"`
+	ID        string               `yaml:"id" json:"id"`
+	Project   string               `yaml:"project" json:"project"`
+	Agent     string               `yaml:"agent" json:"agent"`
+	Provider  string               `yaml:"provider" json:"provider"`
+	Workspace LaunchWorkspace      `yaml:"workspace" json:"workspace"`
+	Prompt    PromptSpec           `yaml:"prompt" json:"prompt"`
+	Overrides LaunchOverrides      `yaml:"overrides" json:"overrides"`
+	MCP       MCPConfig            `yaml:"mcp" json:"mcp,omitempty"`
+	Injection LaunchInjection      `yaml:"injection" json:"injection,omitempty"`
 }
 
 type LaunchWorkspace struct {
