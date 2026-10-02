@@ -30,9 +30,7 @@ In flat mode, call `tether_ai_budgets` with `{}` to inspect mounted budgets and
 spend; it requires a configured MCP token and the running AI-enabled daemon.
 In search mode, hydrate and dispatch that name as shown in
 [Discovery](discovery.md#search-hydrate-call).
-A disabled AI gateway returns a not-found error. On a fresh usage history,
-this query currently fails with a SQL NULL aggregate error
-(CW-20261002-0004); do not interpret that failure as zero spend or no budget.
+A disabled AI gateway returns a not-found error.
 
 ## Event retention
 

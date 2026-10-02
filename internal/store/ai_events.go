@@ -248,8 +248,8 @@ func (s *Store) QueryAIUsageSummary(f AIUsageFilter) (AIUsageSummary, error) {
 	where, args := aiUsageWhereClause(f)
 
 	totalQ := `SELECT COUNT(*),
-	                  SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-	                  SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END),
+	                  COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
+	                  COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0),
 	                  COALESCE(SUM(latency_ms), 0),
 	                  COALESCE(SUM(input_tokens), 0),
 	                  COALESCE(SUM(output_tokens), 0),
@@ -300,8 +300,8 @@ func (s *Store) queryAIUsageBreakdown(groupBy, where string, args []any) ([]AIUs
 	//nolint:gosec // G201: groupBy is whitelisted above to fixed column names; where uses ? placeholders bound via args
 	q := fmt.Sprintf(`SELECT COALESCE(%s, ''),
 	                         COUNT(*),
-	                         SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-	                         SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END),
+	                         COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
+	                         COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0),
 	                         COALESCE(SUM(latency_ms), 0),
 	                         COALESCE(SUM(input_tokens), 0),
 	                         COALESCE(SUM(output_tokens), 0),
