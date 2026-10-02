@@ -19,9 +19,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
@@ -98,12 +100,15 @@ Exit code:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		stateDir := filepath.Dir(config.Expand(catalogPath))
-		return runDoctor(os.Stdout, stateDir, catalogPath, jsonOut) //nolint:wrapcheck
+		live, _ := cmd.Flags().GetBool("mcp-live")
+		return runDoctor(os.Stdout, stateDir, catalogPath, jsonOut, live) //nolint:wrapcheck
 	},
 }
 
 func init() {
 	doctorCmd.Flags().Bool("json", false, "print JSON array of check results")
+	doctorCmd.Flags().Bool("mcp-live", false, "spawn configured MCP upstreams for a bounded initialize/tools/list-only naming probe (no tool calls; may resolve helper credentials)")
+	doctorCmd.Flags().StringArrayVar(&doctorProtect, "protect-path", nil, "protected paths for live MCP probe confinement (repeatable, same as tether mcp)")
 }
 
 // checkResult is the stable JSON shape for tether doctor --json.
@@ -128,7 +133,9 @@ func fail(name, msg, remedy string) checkResult {
 	return checkResult{Name: name, Status: statusFail, Message: msg, Remedy: remedy}
 }
 
-func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error {
+var doctorProtect []string
+
+func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live ...bool) error {
 	var checks []checkResult
 
 	// 1. State dir exists + writable.
@@ -143,6 +150,10 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 		checks = append(checks, checkSandboxProfiles(cat))
 		checks = append(checks, checkMCPDiscoveryMode(cat))
 		checks = append(checks, checkMCPProfiles(cat, catalogRoot)...)
+		checks = append(checks, checkMCPNamingConfig(catalogRoot)...)
+		if len(live) > 0 && live[0] {
+			checks = append(checks, checkMCPLiveNames(cat, catalogRoot)...)
+		}
 		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
@@ -496,4 +507,72 @@ func checkMCPProfiles(cat *config.Catalog, catalogRoot string) []checkResult {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
 	return results
+}
+
+func checkMCPNamingConfig(root string) []checkResult {
+	entries, err := config.LoadMCPServerCatalog(config.Expand(root))
+	if err != nil {
+		return []checkResult{fail("mcp-naming", "cannot read MCP server catalog", "fix catalog YAML")}
+	}
+	var out []checkResult
+	ids := []string{}
+	for _, entry := range entries {
+		if entry.IsEnabled() {
+			if entry.ID == "tether" {
+				out = append(out, warn("mcp-origins", mcpgateway.ValidateOriginIDs([]string{"tether"}).Error(), "rename the upstream ID; startup fails only when this upstream is selected"))
+				continue
+			}
+			ids = append(ids, entry.ID)
+		}
+	}
+	if err := mcpgateway.ValidateOriginIDs(ids); err != nil {
+		out = append(out, fail("mcp-origins", err.Error(), "fix enabled upstream IDs; tether is reserved"))
+	}
+	for _, entry := range entries {
+		if entry.ToolPrefixInvalid {
+			out = append(out, warn("mcp-prefix:"+entry.ID, entry.CatalogFile+": tool_prefix must be a string; invalid value ignored", "declare a string tool_prefix"))
+		}
+		if !entry.IsEnabled() {
+			continue
+		}
+		if entry.ToolPrefix != "" {
+			for _, finding := range mcpgateway.LintName(entry.ID, entry.ToolPrefix) {
+				out = append(out, warn("mcp-prefix:"+entry.ID, finding.Message, "fix declared tool_prefix; live names require --mcp-live"))
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, ok("mcp-naming", "catalog origin/prefix declarations checked; live collision/name checks require --mcp-live"))
+	}
+	return out
+}
+func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
+	adapter := mcpadapter.New(&app.Service{Catalog: cat}, "", nil)
+	adapter.SetProtectedPaths(doctorProtect)
+	opts := mcpadapter.ProxyOptions{}
+	if value, present := os.LookupEnv("TETHER_MCP_SERVERS"); present {
+		opts.ServerFilter = []string{}
+		if value != "" {
+			for _, id := range strings.Split(value, ",") {
+				opts.ServerFilter = append(opts.ServerFilter, strings.TrimSpace(id))
+			}
+		}
+	}
+	status, err := adapter.ProbeNames(context.Background(), config.Expand(root), opts)
+	var out []checkResult
+	if err != nil {
+		out = append(out, fail("mcp-live-names", err.Error(), "fix the named origin/tool or declare tool_prefix on one upstream"))
+	}
+	for _, finding := range status.Lint {
+		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, finding.Name+": "+finding.Message, "fix the upstream name or declared tool_prefix; names are not rewritten"))
+	}
+	for _, origin := range status.Origins {
+		if origin.Status != "connected" {
+			out = append(out, warn("mcp-live:"+origin.ID, "upstream "+origin.Status+"; tools/list discovery incomplete", "restore upstream availability or confinement configuration"))
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no naming issues"))
+	}
+	return out
 }

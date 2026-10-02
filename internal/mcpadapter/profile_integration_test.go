@@ -256,21 +256,11 @@ func TestProfileUnavailablePinsStartDegraded(t *testing.T) {
 	}
 }
 
-func TestNoProfileLegacyTetherUpstreamAndUnknownCallShape(t *testing.T) {
-	catalog, _ := proxyCatalog(t, "tether")
+func TestNoProfileUnknownCallShape(t *testing.T) {
+	catalog, _ := proxyCatalog(t, "alpha")
 	cs := connectProxyMode(t, catalog, "flat", false)
-	if !slices.Contains(listToolNames(t, cs), "tether_probe") {
-		t.Fatal("legacy tether upstream lost")
-	}
 	if _, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "unknown_tool", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("unknown direct name changed from JSON-RPC error to tool result")
-	}
-	if result, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "tether_probe", Arguments: map[string]any{}}); err != nil || result.IsError {
-		t.Fatalf("legacy upstream call=%v %v", result, err)
-	}
-	profile := mcpgateway.Profile{Servers: []string{"tether"}}
-	if err := newTestAdapter(t).RunWithGatewayOpts(context.Background(), catalog, ProxyOptions{Profile: mcpgateway.ProfileSelection{Profile: &profile}}, true); err == nil {
-		t.Fatal("selected reserved origin collision accepted")
 	}
 }
 
@@ -294,7 +284,9 @@ func TestProfileRefResolverUsesEligibility(t *testing.T) {
 		called = true
 		return nil, nil
 	}}
-	resolver := &routerRefResolver{router: NewProxyRouter(NewToolRegistry()), gateway: service}
+	registry := NewToolRegistry()
+	mustRegister(t, registry, "tesseract", nil, []*mcpsdk.Tool{makeTool("tesseract_ref_resolve")})
+	resolver := &routerRefResolver{router: NewProxyRouter(registry), gateway: service}
 	if _, err := resolver.ResolveRef(context.Background(), map[string]any{}); err == nil || !strings.Contains(err.Error(), "excluded") {
 		t.Fatalf("ref eligibility=%v", err)
 	}

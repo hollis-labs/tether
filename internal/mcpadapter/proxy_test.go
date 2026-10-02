@@ -46,7 +46,7 @@ func TestProxyRouter_SuccessfulForward(t *testing.T) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream-result"}}}, nil
 		},
 	}
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
 
 	router := NewProxyRouter(reg)
 	result, err := router.Handle(context.Background(), callReq("upstream_tool"))
@@ -74,7 +74,7 @@ func TestProxyRouter_ToolNotFound(t *testing.T) {
 func TestProxyRouter_DeadUpstream(t *testing.T) {
 	reg := NewToolRegistry()
 	// Register tool with nil client (simulates dead upstream).
-	reg.Register("dead-server", nil, []*mcpsdk.Tool{makeTool("dead_tool")})
+	mustRegister(t, reg, "dead-server", nil, []*mcpsdk.Tool{makeTool("dead_tool")})
 
 	router := NewProxyRouter(reg)
 	result, err := router.Handle(context.Background(), callReq("dead_tool"))
@@ -88,7 +88,7 @@ func TestProxyRouter_DeadUpstream(t *testing.T) {
 
 func TestProxyRouter_NativeTool_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	reg.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
+	mustRegisterNative(t, reg, []*mcpsdk.Tool{makeTool("tether_health")})
 
 	router := NewProxyRouter(reg)
 	_, err := router.Handle(context.Background(), callReq("tether_health"))
@@ -104,7 +104,7 @@ func TestProxyRouter_UpstreamTransportError(t *testing.T) {
 			return nil, errors.New("connection reset")
 		},
 	}
-	reg.Register("flaky", mc, []*mcpsdk.Tool{makeTool("flaky_tool")})
+	mustRegister(t, reg, "flaky", mc, []*mcpsdk.Tool{makeTool("flaky_tool")})
 
 	router := NewProxyRouter(reg)
 	_, err := router.Handle(context.Background(), callReq("flaky_tool"))
@@ -124,7 +124,7 @@ func TestProxyRouter_InjectsTraceContextIntoUpstreamMeta(t *testing.T) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
 		},
 	}
-	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
+	mustRegister(t, reg, "upstream", mc, []*mcpsdk.Tool{makeTool("upstream_tool")})
 
 	router := NewProxyRouter(reg)
 	sc := trace.NewSpanContext(trace.SpanContextConfig{

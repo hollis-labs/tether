@@ -30,6 +30,14 @@ func TestUpstreamFixture(t *testing.T) {
 		return
 	}
 	name := os.Getenv("TETHER_UPSTREAM_NAME")
+	if name == "" {
+		for i, arg := range os.Args {
+			if arg == "--" && i+1 < len(os.Args) {
+				name = os.Args[i+1]
+				break
+			}
+		}
+	}
 	appendEvent := func(event string) {
 		f, err := os.OpenFile(filepath.Join(dir, name+".events"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
@@ -39,6 +47,17 @@ func TestUpstreamFixture(t *testing.T) {
 		_ = f.Close()
 	}
 	appendEvent("start")
+	callIdentity := strconv.Itoa(os.Getpid())
+	if os.Getenv("TETHER_UPSTREAM_CALL_INSTANCE") == "1" {
+		// A confined child can have the same namespace-local PID after a
+		// restart. Tests that compare boots need a per-process identity.
+		callIdentity = strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if os.Getenv("TETHER_UPSTREAM_RECORD_TOKEN") == "1" {
+		if err := os.WriteFile(filepath.Join(dir, name+".token"), []byte(os.Getenv("TETHER_TOKEN")), 0600); err != nil {
+			os.Exit(93)
+		}
+	}
 	_, _ = fmt.Fprintln(os.Stderr, "fixture diagnostic secret-fixture-token")
 	var stdoutClosed atomic.Bool
 	if os.Getenv("TETHER_UPSTREAM_STARTUP_FAIL") == "1" {
@@ -68,6 +87,9 @@ func TestUpstreamFixture(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
+	if os.Getenv("TETHER_UPSTREAM_HANG") == "1" {
+		select {}
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var req struct {
@@ -95,6 +117,9 @@ func TestUpstreamFixture(t *testing.T) {
 			if v := os.Getenv("TETHER_UPSTREAM_TOOL_NAME"); v != "" {
 				toolName = v
 			}
+			if raw, err := os.ReadFile(filepath.Join(dir, name+".tool")); err == nil {
+				toolName = string(raw)
+			}
 			defs := []map[string]any{{
 				"name":        toolName,
 				"description": name + " fixture probe",
@@ -109,11 +134,15 @@ func TestUpstreamFixture(t *testing.T) {
 			result = map[string]any{"tools": defs}
 		case "tools/call":
 			appendEvent("call")
+			if expected := os.Getenv("TETHER_UPSTREAM_EXPECT_NAME"); expected != "" && req.Params.Name != expected {
+				result = map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "wrong forwarded name"}}}
+				break
+			}
 			if req.Params.Arguments["hold"] == true {
 				appendEvent("side_effect")
 				select {}
 			}
-			result = map[string]any{"content": []map[string]any{{"type": "text", "text": strconv.Itoa(os.Getpid())}}}
+			result = map[string]any{"content": []map[string]any{{"type": "text", "text": callIdentity}}}
 		default:
 			result = map[string]any{}
 		}
@@ -199,7 +228,7 @@ func fixtureEntry(t *testing.T, dir, name string) config.MCPServerEntry {
 	// Registered after the caller's t.TempDir, so it runs before the
 	// directory is removed.
 	t.Cleanup(func() { awaitFixturesExited(t, dir, name) })
-	return config.MCPServerEntry{ID: name, Transport: "stdio", Command: exe, Args: []string{"-test.run=^TestUpstreamFixture$"}, Tags: []string{name}, Env: map[string]string{"TETHER_UPSTREAM_FIXTURE": dir, "TETHER_UPSTREAM_NAME": name, "FIXTURE_TOKEN": "secret-fixture-token", "GORACE": "atexit_sleep_ms=0"}}
+	return config.MCPServerEntry{ID: name, Transport: "stdio", Command: exe, Args: []string{"-test.run=^TestUpstreamFixture$", "--", name}, Tags: []string{name}, Env: map[string]string{"TETHER_UPSTREAM_FIXTURE": dir, "FIXTURE_TOKEN": "secret-fixture-token", "GORACE": "atexit_sleep_ms=0"}}
 }
 
 func awaitStatus(t *testing.T, p *ClientPool, id string, predicate func(ServerStatus) bool) ServerStatus {

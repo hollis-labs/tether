@@ -19,14 +19,17 @@ type Entry struct {
 }
 type OriginStatus struct {
 	ID             string `json:"id"`
+	Degraded       bool   `json:"degraded"`
 	Status         string `json:"status"`
 	ToolCount      int    `json:"cataloged_tools"`
 	AvailableTools int    `json:"available_tools"`
 	Error          string `json:"error,omitempty"`
 }
 type Snapshot struct {
-	Entries []Entry
-	Origins []OriginStatus
+	Entries    []Entry
+	Origins    []OriginStatus
+	Lint       []NameFinding
+	Collisions []NameCollision
 }
 type Item struct {
 	Name         string                  `json:"name"`
@@ -310,17 +313,19 @@ func (s *Service) Call(ctx context.Context, name string, args, meta map[string]a
 
 type Status struct {
 	Selection
-	Profile        string         `json:"profile,omitempty"`
-	ProfileSource  string         `json:"profile_source,omitempty"`
-	Warnings       []string       `json:"warnings,omitempty"`
-	Origins        []OriginStatus `json:"origins"`
-	CatalogedTools int            `json:"cataloged_tools"`
-	EligibleTools  int            `json:"eligible_tools"`
-	AvailableTools int            `json:"available_tools"`
-	Complete       bool           `json:"complete"`
-	Name           string         `json:"name,omitempty"`
-	Visible        *bool          `json:"visible,omitempty"`
-	Reason         string         `json:"reason,omitempty"`
+	Profile        string          `json:"profile,omitempty"`
+	ProfileSource  string          `json:"profile_source,omitempty"`
+	Warnings       []string        `json:"warnings,omitempty"`
+	Lint           []NameFinding   `json:"lint"`
+	Collisions     []NameCollision `json:"collisions"`
+	Origins        []OriginStatus  `json:"origins"`
+	CatalogedTools int             `json:"cataloged_tools"`
+	EligibleTools  int             `json:"eligible_tools"`
+	AvailableTools int             `json:"available_tools"`
+	Complete       bool            `json:"complete"`
+	Name           string          `json:"name,omitempty"`
+	Visible        *bool           `json:"visible,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -330,7 +335,43 @@ func (s *Service) Status(name string) Status {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
 	unavailable, ids := availability(snapshot)
-	out := Status{Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0, Name: name}
+	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name}
+	if s.Policy != nil && (s.Policy.Selection.Profile != nil || len(s.Policy.Floors) > 0) {
+		visible := map[string]Entry{}
+		for _, entry := range snapshot.Entries {
+			visible[entry.Tool.Name] = entry
+		}
+		out.Lint = []NameFinding{}
+		for _, finding := range original.Lint {
+			if entry, ok := visible[finding.Name]; ok && entry.Origin == finding.Origin {
+				out.Lint = append(out.Lint, finding)
+			}
+		}
+		out.Collisions = []NameCollision{}
+		for _, collision := range original.Collisions {
+			allowed := true
+			for _, owner := range collision.Owners {
+				entry := Entry{Origin: owner.Origin, Tool: &mcpsdk.Tool{Name: collision.Name}}
+				if known, ok := visible[collision.Name]; ok && known.Origin == owner.Origin {
+					entry = known
+				}
+				if !IsInfrastructure(collision.Name) && s.Policy.Exclusion(entry) != "" {
+					allowed = false
+				}
+			}
+			if allowed {
+				out.Collisions = append(out.Collisions, collision)
+			}
+		}
+		if len(out.Collisions) != len(original.Collisions) {
+			out.Origins = append([]OriginStatus(nil), out.Origins...)
+			for i := range out.Origins {
+				if strings.Contains(out.Origins[i].Error, "collid") || strings.Contains(out.Origins[i].Error, "collision") {
+					out.Origins[i].Error = "upstream naming collision; tool details excluded by profile"
+				}
+			}
+		}
+	}
 	if s.Policy != nil {
 		out.Profile = s.Policy.Selection.ID
 		out.ProfileSource = s.Policy.Selection.Source
@@ -343,6 +384,9 @@ func (s *Service) Status(name string) Status {
 		}
 	}
 	for _, origin := range snapshot.Origins {
+		if origin.Degraded {
+			out.Complete = false
+		}
 		out.CatalogedTools += origin.ToolCount
 	}
 	for _, entry := range snapshot.Entries {

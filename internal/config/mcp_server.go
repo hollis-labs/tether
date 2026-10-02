@@ -37,6 +37,9 @@ type MCPServerEntry struct {
 	// cannot inherit a protected Codex proxy's local filesystem confinement.
 	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`
 	ID                    string            `yaml:"id"`
+	ToolPrefix            string            `yaml:"tool_prefix"` // exact prepend, never inferred or normalized
+	ToolPrefixInvalid     bool              `yaml:"-" json:"-"`
+	CatalogFile           string            `yaml:"-" json:"-"`
 	Transport             string            `yaml:"transport"` // "stdio" | "sse" | "http"
 	Command               string            `yaml:"command"`   // stdio: binary path
 	Args                  []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
@@ -68,6 +71,33 @@ type MCPServerEntry struct {
 	// secretRefs marks keychain/helper references as authored in the catalog,
 	// before environment substitution can produce a reference-looking value.
 	secretRefs map[string]bool
+}
+
+// UnmarshalYAML keeps an MCP-only prefix typo from breaking shared catalog
+// loading. Doctor reports invalid declarations; valid prefixes are byte-exact.
+func (e *MCPServerEntry) UnmarshalYAML(node *yaml.Node) error {
+	type plain MCPServerEntry
+	copyNode := *node
+	copyNode.Content = nil
+	var prefix *yaml.Node
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "tool_prefix" {
+			prefix = node.Content[i+1]
+			continue
+		}
+		copyNode.Content = append(copyNode.Content, node.Content[i], node.Content[i+1])
+	}
+	if err := copyNode.Decode((*plain)(e)); err != nil {
+		return err
+	}
+	if prefix != nil {
+		if prefix.Kind == yaml.ScalarNode && prefix.Tag == "!!str" {
+			e.ToolPrefix = prefix.Value
+		} else {
+			e.ToolPrefixInvalid = true
+		}
+	}
+	return nil
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
@@ -294,6 +324,11 @@ func LoadMCPServers(catalogDir string) ([]MCPServerEntry, error) {
 // removed server), in the order given, so the caller can say so; they are
 // otherwise ignored, which narrows the confined set rather than widening it.
 func LoadMCPServersConfined(catalogDir string, ids []string) (entries []MCPServerEntry, unknown []string, err error) {
+	return LoadMCPServersConfinedContext(context.Background(), catalogDir, ids)
+}
+
+// LoadMCPServersConfinedContext bounds credential resolution for explicit live probes.
+func LoadMCPServersConfinedContext(ctx context.Context, catalogDir string, ids []string) (entries []MCPServerEntry, unknown []string, err error) {
 	catalog, err := LoadMCPServerCatalog(catalogDir)
 	if err != nil {
 		return nil, nil, err
@@ -302,14 +337,19 @@ func LoadMCPServersConfined(catalogDir string, ids []string) (entries []MCPServe
 	for _, id := range ids {
 		want[id] = struct{}{}
 	}
-	ctx := context.Background()
 	found := make(map[string]struct{}, len(ids))
 	for _, entry := range catalog {
 		if _, ok := want[entry.ID]; !ok || !entry.IsEnabled() {
 			continue
 		}
-		if err := resolveEntrySecrets(ctx, &entry); err != nil {
-			return nil, nil, fmt.Errorf("mcp server %q: %w", entry.ID, err)
+		entryCtx, cancel := ctx, func() {}
+		if _, bounded := ctx.Deadline(); bounded {
+			entryCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		}
+		secretErr := resolveEntrySecrets(entryCtx, &entry)
+		cancel()
+		if secretErr != nil {
+			return nil, nil, fmt.Errorf("mcp server %q: %w", entry.ID, secretErr)
 		}
 		entries = append(entries, entry)
 		found[entry.ID] = struct{}{}
@@ -367,6 +407,7 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		}
 
 		entry.catalogDir = catalogDir
+		entry.CatalogFile = name
 		entry.fileRefs = map[string]bool{}
 		entry.secretRefs = map[string]bool{}
 

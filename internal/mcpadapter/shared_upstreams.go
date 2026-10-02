@@ -21,6 +21,7 @@ type SharedUpstreams struct {
 	tags        map[string][]string
 	lifecycle   sync.Mutex
 	started     bool
+	startErr    error
 	closed      bool
 	mu          sync.Mutex
 	next        uint64
@@ -64,10 +65,11 @@ func (r *SharedUpstreams) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon MCP upstream runtime closed")
 	}
 	if r.started {
-		return nil
+		return r.startErr
 	}
 	r.started = true
-	return r.pool.Start(ctx)
+	r.startErr = r.pool.Start(ctx)
+	return r.startErr
 }
 
 func (r *SharedUpstreams) Close() {
@@ -136,9 +138,10 @@ func (r *SharedUpstreams) OpenView(owner string, servers []string, selection mcp
 
 func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	s := mcpgateway.Snapshot{Entries: []mcpgateway.Entry{}, Origins: []mcpgateway.OriginStatus{}}
+	s.Lint, s.Collisions, _ = v.namingDiagnostics()
 	for _, status := range v.StatusSummary() {
 		if v.servers[status.ID] {
-			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error})
+			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error})
 		}
 	}
 	for _, def := range v.runtime.registry.AllDefinitions() {
@@ -155,12 +158,46 @@ func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 // daemon adapter. Hidden origins never reach health, gateway status or errors.
 func (v *UpstreamView) StatusSummary() []ServerStatus {
 	statuses := []ServerStatus{}
+	_, _, private := v.namingDiagnostics()
 	for _, status := range v.runtime.pool.StatusSummary() {
 		if v.servers[status.ID] {
+			if private[status.ID] {
+				status.Error = "tool name collision; other owner outside this view"
+			}
 			statuses = append(statuses, status)
 		}
 	}
 	return statuses
+}
+
+func (v *UpstreamView) namingDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway.NameCollision, map[string]bool) {
+	allLint, allCollisions := v.runtime.registry.NameDiagnostics()
+	lint := []mcpgateway.NameFinding{}
+	collisions := []mcpgateway.NameCollision{}
+	private := map[string]bool{}
+	for _, finding := range allLint {
+		if v.servers[finding.Origin] {
+			lint = append(lint, finding)
+		}
+	}
+	for _, collision := range allCollisions {
+		visible := true
+		for _, owner := range collision.Owners {
+			if owner.Origin != "tether" && !v.servers[owner.Origin] {
+				visible = false
+			}
+		}
+		if visible {
+			collisions = append(collisions, collision)
+		} else {
+			for _, owner := range collision.Owners {
+				if v.servers[owner.Origin] {
+					private[owner.Origin] = true
+				}
+			}
+		}
+	}
+	return lint, collisions, private
 }
 
 // Refresh cannot select or expose an origin outside this view's grants.

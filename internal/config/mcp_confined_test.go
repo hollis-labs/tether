@@ -45,6 +45,24 @@ func ids(entries []MCPServerEntry) []string {
 	return out
 }
 
+func TestMCPInvalidPrefixDoesNotBreakSharedCatalogLoad(t *testing.T) {
+	for _, value := range []string{"[alpha, beta]", "{name: alpha}", "12", "true"} {
+		t.Run(value, func(t *testing.T) {
+			root := writeMCPServers(t, map[string]string{"alpha.yaml": "id: alpha\ntransport: stdio\ncommand: alpha-mcp\ntool_prefix: " + value + "\n"})
+			if err := os.WriteFile(filepath.Join(root, "global.yaml"), []byte("{}\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(root); err != nil {
+				t.Fatalf("shared loader rejected prefix: %v", err)
+			}
+			entries, err := LoadMCPServerCatalog(root)
+			if err != nil || len(entries) != 1 || entries[0].ToolPrefix != "" || !entries[0].ToolPrefixInvalid || entries[0].CatalogFile != "alpha.yaml" {
+				t.Fatalf("entries %+v err %v", entries, err)
+			}
+		})
+	}
+}
+
 // CW-20261001-0227: a confined proxy loads, and resolves secrets for, only
 // the upstreams it was granted.
 func TestLoadMCPServersConfined(t *testing.T) {
@@ -140,5 +158,19 @@ func TestLoadMCPServersConfined_MissingCatalogDirIsEmpty(t *testing.T) {
 	got, unknown, err := LoadMCPServersConfined(t.TempDir(), []string{"torque"})
 	if err != nil || len(got) != 0 || !slices.Equal(unknown, []string{"torque"}) {
 		t.Fatalf("loaded %q, unknown %q, err %v", ids(got), unknown, err)
+	}
+}
+
+func TestMCPDeclaredToolPrefixIsVerbatimCatalogMetadata(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "alpha.yaml"), []byte("id: alpha\ntransport: stdio\ncommand: ignored\ntool_prefix: alpha_\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := LoadMCPServerCatalog(root)
+	if err != nil || len(entries) != 1 || entries[0].ToolPrefix != "alpha_" {
+		t.Fatalf("prefix=%+v %v", entries, err)
 	}
 }

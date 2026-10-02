@@ -18,7 +18,7 @@ func TestToolRegistry_RegisterAndLookup(t *testing.T) {
 	r := NewToolRegistry()
 
 	tools := []*mcpsdk.Tool{makeTool("hadron_health"), makeTool("hadron_runs_list")}
-	r.Register("hadron", nil, tools)
+	mustRegister(t, r, "hadron", nil, tools)
 
 	rt, ok := r.Lookup("hadron_health")
 	if !ok {
@@ -31,7 +31,7 @@ func TestToolRegistry_RegisterAndLookup(t *testing.T) {
 
 func TestToolRegistry_RegisterNative(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("tether_health")})
+	mustRegisterNative(t, r, []*mcpsdk.Tool{makeTool("tether_health")})
 
 	rt, ok := r.Lookup("tether_health")
 	if !ok {
@@ -47,36 +47,27 @@ func TestToolRegistry_RegisterNative(t *testing.T) {
 
 func TestToolRegistry_Collision(t *testing.T) {
 	r := NewToolRegistry()
-
-	// Register a native "health" tool first.
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("health")})
-
-	// Register an upstream server that also has "health".
-	r.Register("upstream-a", nil, []*mcpsdk.Tool{makeTool("health")})
-
-	// Original "health" must still exist and belong to native (empty serverID).
-	orig, ok := r.Lookup("health")
-	if !ok {
-		t.Fatal("original 'health' tool should still exist")
+	mustRegisterNative(t, r, []*mcpsdk.Tool{makeTool("health")})
+	if err := r.Register("upstream-a", nil, []*mcpsdk.Tool{makeTool("health"), makeTool("safe")}); err == nil {
+		t.Fatal("collision accepted")
 	}
-	if orig.ServerID != "" {
-		t.Errorf("original health serverID = %q, want empty (native)", orig.ServerID)
+	if _, ok := r.Lookup("upstream-a__health"); ok {
+		t.Fatal("silent alias created")
 	}
-
-	// Disambiguated copy must exist under "upstream-a__health".
-	disambig, ok := r.Lookup("upstream-a__health")
-	if !ok {
-		t.Fatal("disambiguated tool 'upstream-a__health' should exist")
+	if _, ok := r.Lookup("safe"); ok {
+		t.Fatal("rejected batch partially published")
 	}
-	if disambig.ServerID != "upstream-a" {
-		t.Errorf("disambig serverID = %q, want %q", disambig.ServerID, "upstream-a")
+	if rt, ok := r.Lookup("health"); !ok || rt.ServerID != "" {
+		t.Fatal("collision replaced native")
 	}
 }
 
 func TestToolRegistry_AllDefinitions(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("tether_z"), makeTool("tether_a")})
-	r.Register("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")})
+	mustRegisterNative(t, r, []*mcpsdk.Tool{makeTool("tether_z"), makeTool("tether_a")})
+	if _, err := r.ReplaceServer("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")}); err != nil {
+		t.Error(err)
+	}
 
 	defs := r.AllDefinitions()
 	if len(defs) != 3 {
@@ -94,8 +85,8 @@ func TestToolRegistry_AllDefinitions(t *testing.T) {
 
 func TestToolRegistry_RemoveServer(t *testing.T) {
 	r := NewToolRegistry()
-	r.Register("a", nil, []*mcpsdk.Tool{makeTool("a_tool1"), makeTool("a_tool2")})
-	r.Register("b", nil, []*mcpsdk.Tool{makeTool("b_tool1")})
+	mustRegister(t, r, "a", nil, []*mcpsdk.Tool{makeTool("a_tool1"), makeTool("a_tool2")})
+	mustRegister(t, r, "b", nil, []*mcpsdk.Tool{makeTool("b_tool1")})
 
 	r.RemoveServer("a")
 
@@ -116,7 +107,9 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			r.Register("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")})
+			if _, err := r.ReplaceServer("srv", nil, []*mcpsdk.Tool{makeTool("srv_tool")}); err != nil {
+				t.Error(err)
+			}
 		}
 		close(done)
 	}()
@@ -129,30 +122,46 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 
 func TestToolRegistry_ReplaceServer(t *testing.T) {
 	r := NewToolRegistry()
-	r.RegisterNative([]*mcpsdk.Tool{makeTool("health")})
-	r.Register("clockwork", nil, []*mcpsdk.Tool{makeTool("alpha"), makeTool("health")})
+	mustRegisterNative(t, r, []*mcpsdk.Tool{makeTool("health")})
+	mustRegister(t, r, "clockwork", nil, []*mcpsdk.Tool{makeTool("alpha"), makeTool("clockwork_health")})
 
-	delta := r.ReplaceServer("clockwork", nil, []*mcpsdk.Tool{
+	delta, err := r.ReplaceServer("clockwork", nil, []*mcpsdk.Tool{
 		makeTool("beta"),
-		&mcpsdk.Tool{Name: "clockwork__health", Description: "updated health"},
+		&mcpsdk.Tool{Name: "clockwork_health", Description: "updated health"},
 	})
 
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := r.Lookup("alpha"); ok {
 		t.Fatal("alpha should have been removed")
 	}
 	if _, ok := r.Lookup("beta"); !ok {
 		t.Fatal("beta should have been added")
 	}
-	if _, ok := r.Lookup("clockwork__health"); !ok {
+	if _, ok := r.Lookup("clockwork_health"); !ok {
 		t.Fatal("clockwork__health should still exist")
 	}
 	if len(delta.Added) != 1 || delta.Added[0].Name != "beta" {
 		t.Fatalf("unexpected added delta: %+v", delta.Added)
 	}
-	if len(delta.Updated) != 1 || delta.Updated[0].Name != "clockwork__health" {
+	if len(delta.Updated) != 1 || delta.Updated[0].Name != "clockwork_health" {
 		t.Fatalf("unexpected updated delta: %+v", delta.Updated)
 	}
 	if len(delta.Removed) != 1 || delta.Removed[0] != "alpha" {
 		t.Fatalf("unexpected removed delta: %+v", delta.Removed)
+	}
+}
+
+func mustRegister(t *testing.T, r *ToolRegistry, id string, client upstreamClient, tools []*mcpsdk.Tool) {
+	t.Helper()
+	if err := r.Register(id, client, tools); err != nil {
+		t.Fatal(err)
+	}
+}
+func mustRegisterNative(t *testing.T, r *ToolRegistry, tools []*mcpsdk.Tool) {
+	t.Helper()
+	if err := r.RegisterNative(tools); err != nil {
+		t.Fatal(err)
 	}
 }
