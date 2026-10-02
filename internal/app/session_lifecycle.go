@@ -470,7 +470,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		}
 	}
 	if ownership == config.MCPUpstreamsDaemon && rt.Kind() != acp.Kind {
-		startOpts.Env, err = s.daemonWorkerEnv(startOpts.Env)
+		startOpts.Env, err = s.daemonWorkerEnv(startOpts.Env, launch.EffectiveMCPServers(plan.Env))
 		if err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)

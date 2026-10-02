@@ -21,12 +21,27 @@ auto-starts the daemon or falls back to a local pool. It never looks up
 
 The daemon enforces the credential's captured upstream grant and profile floor.
 The stdio relay forwards admitted tool definitions and calls, application metadata,
-results, progress and inventory notifications; cancellation follows the SDK call
-context. Protocol negotiation metadata belongs to each hop. Failed mutations are
-never replayed. Refresh/reconnect lifecycle belongs to 0539 stage 3.
+results and inventory notifications; cancellation follows the SDK call context.
+The relay preserves progress notifications received from its daemon connection.
+Upstream-to-daemon progress routing is not yet provided by this change (nor by
+legacy proxy calls); it belongs to 0539 stage 3. Protocol negotiation metadata
+belongs to each hop.
+
+Idle daemon views expire after two minutes for session principals. The forwarder
+reinitializes using the same credential, profile and discovery selector when the
+SDK reports a missing session. Lists and pings can be retried once on the
+replacement view. Each tool dispatch first pings the view to recover idle expiry,
+then sends the tool call exactly once. Tool calls are never replayed, including
+missing-session errors during execution: a background stream failure can end
+other in-flight calls whose outcomes are unknown. Network failures, lost responses
+and canceled calls are never replayed. Revoked or expired
+credentials still fail admission; recovery cannot fall back to a local pool.
+Other refresh/reconnect lifecycle work belongs to 0539 stage 3.
 
 Every daemon-owned launch first initializes the endpoint using its newly minted
-credential. A disabled/down endpoint, missing session credential or admission
+credential with a 15-second initialization bound, allowing cold upstream startup.
+Timeout and cancellation have distinct messages from credential rejection.
+A disabled/down endpoint, missing session credential or admission
 failure fails that launch with a hint to enable the endpoint and verified identity,
 or deliberately select `legacy_proxy`. Failed preparation revokes its token.
 Observe mode remains observe; its anonymous launch degradation cannot grant access
@@ -34,7 +49,9 @@ to the strict MCP endpoint. Identity `off` therefore cannot serve daemon ownersh
 
 The selector is validated at daemon startup and by doctor, without changing shared
 catalog loading for stop/status/other clients. It is also re-read and checked at
-each launch: an unknown value fails that launch rather than using another mode.
+each launch: an unknown, explicitly empty/null/blank or non-string value fails
+that launch rather than using another mode. Only an omitted selector defaults to
+`legacy_proxy`. Doctor fails if daemon ownership selects a disabled endpoint.
 Changing the selector does not require restarting a running daemon; changing its
 endpoint enablement or listen address does. The selected ownership and opt-in
 reference extraction are captured with the session's immutable MCP policy.
@@ -46,8 +63,10 @@ Claude consumes the boot `.mcp.json`; OpenCode consumes `opencode.json` under
 insufficient. Credential-bearing files remain 0600. The thin proxy retains
 Codex's protect-only wrapper, and Claude/OpenCode retain their outer protection.
 Daemon-owned stdio children run under the daemon's mandatory protect-only policy.
-The worker's provider launch environment excludes the upstream catalog's env keys
-and referenced variables; unrelated provider model authentication remains. If an
+The worker's provider launch environment excludes granted upstreams' catalog env
+keys and referenced variables, plus secret-like names from ungranted entries.
+Routine variables such as `PATH` in ungranted entries do not remove the worker's
+own values; unrelated provider model authentication remains. If an
 upstream uses a provider's model-auth variable, give it a separate daemon-only
 credential instead of sharing that variable with the worker.
 
@@ -78,6 +97,8 @@ app onboarding/fleet serve-once acceptance (0541/0254).
 5. Rollback: set ownership `legacy_proxy` for subsequent launches. Deliberately
    checkpoint/stop/relaunch existing thin sessions before disabling/restarting
    the endpoint. Never rewrite a running session's boot files or silently switch
-   a disconnected forwarder into legacy mode.
+   a disconnected forwarder into legacy mode. If rolling back the binary as well,
+   relaunch sessions with the older binary: newly captured ownership policy
+   digests are not understood by binaries predating this change.
 
 No live cutover is performed by this change.

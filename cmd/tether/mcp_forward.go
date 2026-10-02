@@ -13,6 +13,7 @@ import (
 )
 
 func runMCPForwardDaemon(cmd *cobra.Command) error {
+	cmd.SilenceUsage = true
 	if mcpProxy || mcpDaemonOnly || mcpConfine || mcpExtractRefs || mcpScopes != "" || mcpServers != "" || mcpOnly != "" || len(mcpProtect) != 0 || mcpToken != "" {
 		return fmt.Errorf("--forward-daemon cannot be combined with local adapter/proxy flags")
 	}

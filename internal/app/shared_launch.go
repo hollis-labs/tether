@@ -65,7 +65,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 		for key, value := range lp.Provider.Env {
 			values = append(values, key+"="+value)
 		}
-		values, err = s.daemonWorkerEnv(values)
+		values, err = s.daemonWorkerEnv(values, launch.EffectiveMCPServers(plan.Env))
 		if err != nil {
 			return nil, err
 		}

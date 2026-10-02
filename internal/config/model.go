@@ -132,7 +132,9 @@ type DaemonConfig struct {
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
 	MCPEndpoint MCPEndpointConfig `yaml:"mcp_endpoint,omitempty"`
 	// MCPUpstreams selects planting for new launches; omitted means legacy_proxy.
-	MCPUpstreams string `yaml:"mcp_upstream_ownership,omitempty"`
+	MCPUpstreams        string `yaml:"mcp_upstream_ownership,omitempty"`
+	mcpOwnershipPresent bool
+	mcpOwnershipInvalid bool
 	// ListenAddr accepts "unix:/path" or "tcp:host:port". If empty, defaults
 	// to "unix:~/.tether/run/tetherd.sock".
 	ListenAddr string `yaml:"listen_addr"`

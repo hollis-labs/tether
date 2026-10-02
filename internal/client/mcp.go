@@ -3,13 +3,18 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// MCPInitializeTimeout allows cold daemon-owned upstreams to initialize.
+const MCPInitializeTimeout = 15 * time.Second
 
 type MCPOptions struct {
 	ClientOptions *mcpsdk.ClientOptions
@@ -50,7 +55,13 @@ type mcpErrorTransport struct{ base http.RoundTripper }
 
 func (t mcpErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(r)
-	return response, wrapIfUnreachable(err)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		var credential *credentialError
+		if !errors.As(err, &credential) {
+			err = fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
+		}
+	}
+	return response, err
 }
 
 // ProbeMCP checks mounted, verified admission without initializing a view or

@@ -16,6 +16,9 @@ func checkMCPUpstreamOwnership(cat *config.Catalog) checkResult {
 	if err != nil {
 		return fail("mcp-upstream-ownership", err.Error(), "choose legacy_proxy or daemon in global.yaml; existing sessions retain their planted ownership")
 	}
+	if mode == config.MCPUpstreamsDaemon && !cat.Global.Daemon.MCPEndpoint.Enabled {
+		return fail("mcp-upstream-ownership", "daemon ownership requires the MCP endpoint, but it is disabled", "enable daemon.mcp_endpoint.enabled and restart the daemon, or select legacy_proxy")
+	}
 	message := fmt.Sprintf("%s; identity=%s; applies to new launches only", mode, cat.Global.Identity.EffectiveMode())
 	if cfg, err := daemonConfigFromCatalog(cat); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)

@@ -73,7 +73,7 @@ func checkCodexProtection(h *daemon.SandboxProtectHealth, fromDaemon bool) check
 	case "":
 		return ok(name, fmt.Sprintf("not reported by the daemon (%s): it predates the codex protection report", source))
 	case "not protected":
-		return warn(name, fmt.Sprintf("codex: %s (%s)", h.CodexReason, source), "tracked as CW-20261001-0230: codex spawns MCP servers outside its sandbox, so every MCP child of a codex agent is unsandboxed until upstreams run daemon-side")
+		return warn(name, fmt.Sprintf("codex: %s (%s)", h.CodexReason, source), "legacy_proxy launches keep MCP children outside Codex sandboxing; daemon ownership confines upstreams under the daemon (CW-20261001-0230); verify the launch ownership and the remaining Codex protection limits")
 	}
 	return ok(name, fmt.Sprintf("codex: %s (%s)", h.CodexReason, source))
 }

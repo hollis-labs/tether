@@ -617,7 +617,13 @@ func checkMCPEndpoint(cat *config.Catalog) checkResult {
 	if !cat.Global.Daemon.MCPEndpoint.Enabled {
 		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
 	}
-	addr := config.Expand(cat.Global.Daemon.ListenAddr)
+	addr := cat.Global.Daemon.ListenAddr
+	if addr == "" {
+		addr = "unix:~/.tether/run/tetherd.sock"
+	}
+	if strings.HasPrefix(addr, "unix:") {
+		addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
+	}
 	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.Mode)); err != nil {
 		return fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
 	}

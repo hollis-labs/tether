@@ -2,9 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -33,10 +34,16 @@ func (s *Service) preflightDaemonMCP(ctx context.Context, token string) (string,
 		return "", fmt.Errorf("daemon MCP ownership requires a unix: listener; %s", hint)
 	}
 	addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
-	probe, cancel := context.WithTimeout(ctx, 2*time.Second)
+	probe, cancel := context.WithTimeout(ctx, client.MCPInitializeTimeout)
 	defer cancel()
 	connection, err := client.New(addr, client.WithToken(token)).ConnectMCP(probe, client.MCPOptions{})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(probe.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("daemon MCP initialization timed out (%s setup limit); cold upstreams may still be starting; retry the launch or select legacy_proxy", client.MCPInitializeTimeout)
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(probe.Err(), context.Canceled) {
+			return "", fmt.Errorf("daemon MCP initialization canceled: %w", context.Canceled)
+		}
 		// Never include an upstream or HTTP response which may echo a credential.
 		return "", fmt.Errorf("daemon MCP endpoint disabled, unreachable or rejected the session; %s", hint)
 	}
@@ -54,7 +61,7 @@ func DaemonMCPPlant(addr, sessionID string) TetherMCPPlan {
 // daemonWorkerEnv keeps catalog-owned upstream credentials out of the entire
 // agent tree, not merely the planted proxy's explicitly configured env. Provider
 // authentication unrelated to an upstream entry remains intact.
-func (s *Service) daemonWorkerEnv(env []string) ([]string, error) {
+func (s *Service) daemonWorkerEnv(env []string, granted []string) ([]string, error) {
 	entries, err := config.LoadMCPServerCatalog(s.CatalogRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read upstream environment policy: fix MCP catalog entries")
@@ -62,7 +69,9 @@ func (s *Service) daemonWorkerEnv(env []string) ([]string, error) {
 	excluded := map[string]bool{}
 	for _, entry := range entries {
 		for _, key := range entry.WorkerExcludedEnvironmentKeys() {
-			excluded[key] = true
+			if slices.Contains(granted, entry.ID) || secretEnvironmentKey(key) {
+				excluded[key] = true
+			}
 		}
 	}
 	clean := make([]string, 0, len(env))
@@ -73,4 +82,16 @@ func (s *Service) daemonWorkerEnv(env []string) ([]string, error) {
 		}
 	}
 	return clean, nil
+}
+
+// Ungranted entries must not strip routine process configuration such as PATH.
+// Secret-like keys are still withheld even when the upstream is not granted.
+func secretEnvironmentKey(key string) bool {
+	key = strings.ToUpper(key)
+	for _, part := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "APIKEY", "CREDENTIAL", "PRIVATE_KEY"} {
+		if strings.Contains(key, part) {
+			return true
+		}
+	}
+	return false
 }

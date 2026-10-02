@@ -47,9 +47,15 @@ type transportFixture struct {
 	cat         *config.Catalog
 	catMu       sync.Mutex
 	childStarts string
+	closeHTTP   func() error
 }
 
 func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
+	t.Helper()
+	return newTransportFixtureWithTimeout(t, unix, upstream, time.Minute)
+}
+
+func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout time.Duration) *transportFixture {
 	t.Helper()
 	root, err := os.MkdirTemp(os.TempDir(), "mcp-")
 	if err != nil {
@@ -101,7 +107,7 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	recordCtx, stopRecorder := context.WithCancel(context.Background())
 	svc := &app.Service{Store: db, Catalog: f.cat, CatalogRoot: catalog, Bus: f.bus}
 	h, err := NewHandler(context.Background(), HandlerConfig{
-		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, Publisher: mcpadapter.NewDaemonToolCallRecorder(recordCtx, f.bus, db), RecheckInterval: 20 * time.Millisecond, SessionTimeout: time.Minute, MaxViews: 16,
+		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, Publisher: mcpadapter.NewDaemonToolCallRecorder(recordCtx, f.bus, db), RecheckInterval: 20 * time.Millisecond, SessionTimeout: timeout, MaxViews: 16,
 		NativeClient: func(token string) *client.Client { return client.New(f.addr, client.WithToken(token)) },
 		Resolver: CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) {
 			f.catMu.Lock()
@@ -121,6 +127,7 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	f.handler = h
 	daemonServer := &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, MCP: h}
 	server := &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
+	f.closeHTTP = server.Close
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		stopRecorder()
@@ -509,6 +516,27 @@ func TestTransportUpstreamProcess(t *testing.T) {
 			return nil, ctx.Err()
 		case <-time.After(1500 * time.Millisecond):
 			return "finished", nil
+		}
+	}})
+	s.RegisterTool(gomcp.Tool{Name: "app_count", Description: "Side effect fixture", InputSchema: gomcp.InputSchema(), Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+		effects, err := os.OpenFile(path+".effects", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, err
+		}
+		_, err = effects.WriteString("effect\n")
+		_ = effects.Close()
+		if err != nil {
+			return nil, err
+		}
+		for {
+			if _, err := os.Stat(path + ".release"); err == nil {
+				return "committed", nil
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+			}
 		}
 	}})
 	if s.Run(context.Background()) != nil {

@@ -67,7 +67,10 @@ func TestDaemonWorkerEnvExcludesUpstreamCredentials(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(svc.CatalogRoot, "mcp-servers", "app.yaml"), []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.daemonWorkerEnv([]string{"APP_SECRET=canary", "APP_SOURCE_SECRET=canary", "REMOTE_SECRET=canary", "ARG_SECRET=canary", "ANTHROPIC_API_KEY=model-auth", "PATH=/usr/bin"})
+	if err := os.WriteFile(filepath.Join(svc.CatalogRoot, "mcp-servers", "other.yaml"), []byte("id: other\ntransport: stdio\ncommand: /must-not-spawn\nenv:\n  PATH: /upstream/bin\n  OTHER_SECRET: canary\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.daemonWorkerEnv([]string{"OTHER_SECRET=canary", "APP_SECRET=canary", "APP_SOURCE_SECRET=canary", "REMOTE_SECRET=canary", "ARG_SECRET=canary", "ANTHROPIC_API_KEY=model-auth", "PATH=/usr/bin"}, []string{"app"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,5 +180,35 @@ func TestDaemonOwnershipPlantsConsumedProviderConfig(t *testing.T) {
 				t.Fatalf("ownership snapshot: %+v %v", policy, err)
 			}
 		})
+	}
+}
+
+func TestDaemonOwnershipPreflightDistinguishesDeadlineAndCancellation(t *testing.T) {
+	svc := &Service{Catalog: &config.Catalog{}}
+	root, err := os.MkdirTemp("", "probe-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	addr := "unix:" + filepath.Join(root, "slow.sock")
+	listener, err := net.Listen("unix", strings.TrimPrefix(addr, "unix:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }), ReadHeaderTimeout: time.Second}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+	svc.Catalog.Global.Daemon.ListenAddr = addr
+	deadline, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	_, err = svc.preflightDaemonMCP(deadline, "session")
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("wrong deadline message: %v", err)
+	}
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	_, err = svc.preflightDaemonMCP(canceled, "session")
+	if err == nil || !strings.Contains(err.Error(), "canceled") || strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("wrong cancellation message: %v", err)
 	}
 }
