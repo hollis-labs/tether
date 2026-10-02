@@ -22,8 +22,8 @@ const MaxMetricGroups = 1000
 // Later combinations share an overflow series; durable queries remain exact.
 const MaxOTelCallSeries = 1000
 
-// Denials have a separate budget so unknown/excluded names cannot crowd out
-// observations of dispatched tools. The remaining slots are non-denied series.
+// MaxOTelDeniedSeries reserves a separate budget so unknown/excluded names
+// cannot crowd out dispatched tools. The remaining slots are non-denied series.
 const MaxOTelDeniedSeries = 100
 
 type Bucket struct {
