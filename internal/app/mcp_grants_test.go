@@ -87,3 +87,21 @@ func TestMCPGrantEnabledRemoteIsValid(t *testing.T) {
 		t.Fatalf("catalog-enabled remote grant must remain valid: %v", err)
 	}
 }
+
+func TestMCPGrantExpandsCatalogRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "catalog")
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "torque.yaml"), []byte("id: torque\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	svc := buildTestService(t, map[string]config.Agent{"test-agent": {ID: "test-agent"}}, "~/catalog")
+	plan := basePlan()
+	plan.Env[launch.MCPServersEnv] = "torque"
+	if err := svc.applyAgentOps(plan, CreateSessionInput{LaunchID: "test-launch"}); err != nil {
+		t.Fatalf("catalog root accepted by config.Load must resolve here too: %v", err)
+	}
+}

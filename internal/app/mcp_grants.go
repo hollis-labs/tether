@@ -18,7 +18,7 @@ func (s *Service) validatePlanMCPGrants(plan *launch.Plan, profile bootgen.Profi
 	}
 	cat := s.Catalog
 	if s.CatalogRoot != "" {
-		entries, err := config.LoadMCPServerCatalog(s.CatalogRoot)
+		entries, err := config.LoadMCPServerCatalog(config.Expand(s.CatalogRoot))
 		if err != nil {
 			return fmt.Errorf("validate MCP grants: %w", err)
 		}
