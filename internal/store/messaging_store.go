@@ -28,7 +28,8 @@ var ErrWrongRecipient = errors.New("consume: caller is not the intended recipien
 // This matches the memstore semantics and the design-spec intent —
 // durability is at the envelope level, not the subscription level.
 type messagingStore struct {
-	db *sql.DB
+	db    *sql.DB
+	owner *Store
 
 	subMu       sync.Mutex
 	subscribers []*msgSubscription
@@ -52,7 +53,7 @@ type msgSubscription struct {
 func (s *Store) MessagingStore() InboxStore {
 	s.msgOnce.Do(func() {
 		s.msgStore = &deliveryBackedStore{
-			messagingStore: &messagingStore{db: s.db},
+			messagingStore: &messagingStore{db: s.db, owner: s},
 			delivery:       s.DeliveryStore(),
 		}
 	})
@@ -101,6 +102,11 @@ func (ms *messagingStore) insertMessageRow(ctx context.Context, env messaging.En
 	exec := ms.db.ExecContext
 	var tx *sql.Tx
 	if publication {
+		if ms.owner != nil {
+			if err := ms.owner.authorizeChannelPublication(ctx, env); err != nil {
+				return messaging.Envelope{}, err
+			}
+		}
 		tx, err = ms.db.BeginTx(ctx, nil)
 		if err != nil {
 			return messaging.Envelope{}, err
@@ -181,6 +187,9 @@ func (ms *messagingStore) Get(ctx context.Context, id string) (messaging.Envelop
 // delivered_at updates. This is the atomic-delivery guarantee required by
 // ADR-0023 §4 and the messaging.Store contract.
 func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
+	if _, ok := channels.AddressName(to); ok {
+		return nil, channels.ErrMailboxOperation
+	}
 	toURN := to.URN()
 	limit := f.Limit
 	if limit <= 0 {
@@ -319,6 +328,9 @@ func (ms *messagingStore) Consume(ctx context.Context, id string, recipient mess
 // to complete that best-effort recording), not only the call that actually
 // transitions consumed_at from NULL to set.
 func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id string, recipient messaging.Address) (deliveryID string, err error) {
+	if err := ms.requireMailbox(ctx, id); err != nil {
+		return "", err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := ms.db.ExecContext(ctx,
 		`UPDATE messages SET consumed_at=? WHERE id=? AND to_urn=? AND consumed_at IS NULL`,
@@ -367,6 +379,9 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 // ─── Cancel ──────────────────────────────────────────────────────────────────
 
 func (ms *messagingStore) Cancel(ctx context.Context, id string) error {
+	if err := ms.requireMailbox(ctx, id); err != nil {
+		return err
+	}
 	res, err := ms.db.ExecContext(ctx,
 		`UPDATE messages SET canceled_at=? WHERE id=? AND canceled_at IS NULL`,
 		time.Now().UTC().Format(time.RFC3339Nano), id)
@@ -390,6 +405,9 @@ func (ms *messagingStore) Cancel(ctx context.Context, id string) error {
 // ─── Subscribe ───────────────────────────────────────────────────────────────
 
 func (ms *messagingStore) Subscribe(ctx context.Context, to messaging.Address, f messaging.Filter) (<-chan messaging.Envelope, error) {
+	if _, ok := channels.AddressName(to); ok {
+		return nil, channels.ErrMailboxOperation
+	}
 	ch := make(chan messaging.Envelope, 32)
 	sub := &msgSubscription{to: to, filter: f, ch: ch, done: ctx.Done()}
 

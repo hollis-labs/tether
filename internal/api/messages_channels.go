@@ -20,6 +20,7 @@ type ChannelService interface {
 	List(context.Context, string) ([]channels.Channel, error)
 	Publish(context.Context, gomsg.Envelope) (gomsg.Envelope, error)
 	History(context.Context, string, string, int64, int) (channels.Page, error)
+	Latest(context.Context, string, string, int) (channels.Page, error)
 	Subscribe(context.Context, string, string, *int64) (<-chan channels.Event, error)
 }
 
@@ -33,6 +34,8 @@ func (s *Server) registerChannelRoutes(router *http.ServeMux) {
 
 func writeChannelError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, channels.ErrMailboxOperation):
+		writeError(w, http.StatusBadRequest, CodeChannelNotMailbox, err.Error())
 	case errors.Is(err, channels.ErrInvalid):
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 	case errors.Is(err, channels.ErrForbidden):
@@ -66,8 +69,7 @@ func (s *Server) handleChannelsItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	// Event IDs are durable publication sequences. Explicit since wins over
-	// Last-Event-ID, matching normal browser EventSource reconnection behavior.
+	// Browser reconnects keep the original URL, so honor the greater cursor.
 	rawSince := q.Get("since")
 	if rawSince == "" && parts[1] == "subscribe" {
 		rawSince = r.Header.Get("Last-Event-ID")
@@ -81,8 +83,32 @@ func (s *Server) handleChannelsItem(w http.ResponseWriter, r *http.Request) {
 		}
 		since = &n
 	}
+	if parts[1] == "subscribe" && r.Header.Get("Last-Event-ID") != "" {
+		n, err := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "Last-Event-ID must be a non-negative publication sequence")
+			return
+		}
+		if since == nil || n > *since {
+			since = &n
+		}
+	}
 	if parts[1] == "subscribe" {
 		s.handleChannelSubscribe(w, r, parts[0], since)
+		return
+	}
+	if raw := q.Get("last"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 1000 || q.Has("since") || q.Has("limit") {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "last must be between 1 and 1000 and cannot be combined with since or limit")
+			return
+		}
+		page, err := s.Channels.Latest(r.Context(), parts[0], q.Get("as"), n)
+		if err != nil {
+			writeChannelError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
 		return
 	}
 	limit := 0
@@ -131,6 +157,13 @@ func (s *Server) handleChannelSubscribe(w http.ResponseWriter, r *http.Request, 
 		case event, open := <-stream:
 			if !open || event.Err != nil {
 				return // A reconnect replays from the last successfully written ID.
+			}
+			if event.InitialCursor != nil {
+				if _, err := fmt.Fprintf(w, "id: %d\n\n", *event.InitialCursor); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
 			}
 			b, err := json.Marshal(event.Message)
 			if err != nil {

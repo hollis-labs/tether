@@ -15,7 +15,9 @@ type Channel struct {
 }
 
 type Message struct {
-	Seq int64 `json:"seq"`
+	Seq      int64      `json:"seq"`
+	Purged   bool       `json:"purged,omitempty"`
+	PurgedAt *time.Time `json:"purged_at,omitempty"`
 	gomsg.Envelope
 }
 
@@ -28,9 +30,11 @@ type Page struct {
 // Backend persists publications in the normal message store and reads them by
 // durable commit sequence. History never consumes or acknowledges a message.
 type Backend interface {
+	SetChannelAuthorization(Authorization)
 	SendChannel(context.Context, gomsg.Envelope) (gomsg.Envelope, error)
 	ListChannelNames(context.Context) ([]string, error)
 	ReadChannel(context.Context, string, int64, int) ([]Message, error)
+	ReadLatestChannel(context.Context, string, int) ([]Message, error)
 	ChannelHighWater(context.Context, string) (int64, error)
 }
 
@@ -38,7 +42,7 @@ type Backend interface {
 // default policy is observe-only: identity middleware controls authentication,
 // and channels impose no membership rule. A future scope policy can install a
 // checker without changing history, publishing or subscription semantics.
-type Authorization func(ctx context.Context, operation, name string, caller identity.Principal) error
+type Authorization func(ctx context.Context, operation, name string, caller identity.Principal, from gomsg.Address) error
 
 type Service struct {
 	backend Backend
@@ -46,6 +50,9 @@ type Service struct {
 }
 
 func New(backend Backend, check Authorization) *Service {
+	if check != nil {
+		backend.SetChannelAuthorization(check)
+	}
 	return &Service{backend: backend, check: check}
 }
 
@@ -58,7 +65,7 @@ func (s *Service) authorize(ctx context.Context, operation, name, asserted strin
 		p.ID = asserted
 	}
 	if s.check != nil {
-		return s.check(ctx, operation, name, p)
+		return s.check(ctx, operation, name, p, gomsg.Address{})
 	}
 	return nil
 }
@@ -88,9 +95,8 @@ func (s *Service) Publish(ctx context.Context, env gomsg.Envelope) (gomsg.Envelo
 	if err != nil || !publication {
 		return gomsg.Envelope{}, ErrInvalid
 	}
-	if err := s.authorize(ctx, "publish", string(env.Channel), env.From.URN()); err != nil {
-		return gomsg.Envelope{}, err
-	}
+	// Publication authorization lives at the backend's atomic insertion seam,
+	// including dispatcher, HTTP and daemon-internal publishers.
 	return s.backend.SendChannel(ctx, env)
 }
 
@@ -125,9 +131,35 @@ func (s *Service) read(ctx context.Context, name string, since int64, limit int)
 	return Page{Channel: describe(name), Messages: rows, NextSince: next}, nil
 }
 
+// Latest returns the most recent count publications, oldest first.
+func (s *Service) Latest(ctx context.Context, name, as string, count int) (Page, error) {
+	if err := ValidateName(name); err != nil {
+		return Page{}, err
+	}
+	if count < 1 || count > 1000 {
+		return Page{}, ErrInvalid
+	}
+	if err := s.authorize(ctx, "history", name, as); err != nil {
+		return Page{}, err
+	}
+	rows, err := s.backend.ReadLatestChannel(ctx, name, count)
+	if err != nil {
+		return Page{}, err
+	}
+	if rows == nil {
+		rows = []Message{}
+	}
+	page := Page{Channel: describe(name), Messages: rows}
+	if len(rows) > 0 {
+		page.NextSince = rows[len(rows)-1].Seq
+	}
+	return page, nil
+}
+
 type Event struct {
-	Message Message
-	Err     error
+	Message       Message
+	Err           error
+	InitialCursor *int64
 }
 
 // Subscribe replays strictly after since, then tails the same durable cursor.
@@ -148,14 +180,21 @@ func (s *Service) Subscribe(ctx context.Context, name, as string, since *int64) 
 	}
 	cursor := high
 	if since != nil {
-		if *since < 0 || *since > high {
+		if *since < 0 {
 			return nil, fmt.Errorf("%w: since is outside channel history", ErrInvalid)
 		}
-		cursor = *since
+		cursor = min(*since, high)
 	}
 	out := make(chan Event)
 	go func() {
 		defer close(out)
+		if since == nil {
+			select {
+			case out <- Event{InitialCursor: &high}:
+			case <-ctx.Done():
+				return
+			}
+		}
 		tick := time.NewTicker(250 * time.Millisecond)
 		defer tick.Stop()
 		for {

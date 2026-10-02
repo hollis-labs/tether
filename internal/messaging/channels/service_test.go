@@ -171,6 +171,10 @@ func TestChannelReplayBackpressureAndLiveBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	initial := <-live
+	if initial.InitialCursor == nil || *initial.InitialCursor != last {
+		t.Fatalf("initial cursor=%+v", initial)
+	}
 	next, err := svc.Publish(ctx, env)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +193,7 @@ func TestChannelCallerPolicyUsesVerifiedIdentity(t *testing.T) {
 	db, _ := open(t)
 	var operations []string
 	p := identity.Principal{ID: "verified", Kind: "session", SessionID: "s", Scopes: []string{"read"}}
-	svc := channels.New(db, func(ctx context.Context, operation, name string, caller identity.Principal) error {
+	svc := channels.New(db, func(ctx context.Context, operation, name string, caller identity.Principal, from gomsg.Address) error {
 		if caller.ID != p.ID || caller.SessionID != p.SessionID {
 			t.Errorf("unverified selector displaced caller: %+v", caller)
 		}
@@ -225,7 +229,7 @@ func TestChannelCallerPolicyUsesVerifiedIdentity(t *testing.T) {
 	}
 }
 
-func TestChannelRejectsConflictingPublicationAndFutureCursor(t *testing.T) {
+func TestChannelRejectsConflictingPublicationAndClampsFutureCursor(t *testing.T) {
 	db, svc := open(t)
 	env := publication(t, "ops")
 	env.Channel = "other"
@@ -233,7 +237,9 @@ func TestChannelRejectsConflictingPublicationAndFutureCursor(t *testing.T) {
 		t.Fatalf("conflict=%v", err)
 	}
 	future := int64(100)
-	if _, err := svc.Subscribe(context.Background(), "ops", reader, &future); !errors.Is(err, channels.ErrInvalid) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := svc.Subscribe(ctx, "ops", reader, &future); err != nil {
 		t.Fatalf("future=%v", err)
 	}
 }
@@ -258,7 +264,7 @@ func TestChannelRetentionPurgesBodiesWithReceiptAndKeepsReplay(t *testing.T) {
 		t.Fatalf("receipt=%s %s %v", id, author, err)
 	}
 	page, err := svc.History(ctx, "ops", reader, 0, 100)
-	if err != nil || len(page.Messages) != 1 || len(page.Messages[0].Payload) != 0 || page.Messages[0].ID != msg.ID || page.NextSince == 0 {
+	if err != nil || len(page.Messages) != 1 || len(page.Messages[0].Payload) != 0 || page.Messages[0].ID != msg.ID || page.NextSince == 0 || !page.Messages[0].Purged || page.Messages[0].PurgedAt == nil {
 		t.Fatalf("purge destroyed history: %+v %v", page, err)
 	}
 	if again, err := db.PurgeMessageBody(ctx, msg.ID, reader); err != nil || again {
@@ -274,6 +280,80 @@ func TestChannelRetentionPurgesBodiesWithReceiptAndKeepsReplay(t *testing.T) {
 	}
 	if _, err := db.PurgeMessageBody(ctx, pending.ID, reader); !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("private pending body purged: %v", err)
+	}
+}
+
+func TestChannelMailboxOperationsLeavePublicationUntouched(t *testing.T) {
+	db, svc := open(t)
+	ctx := context.Background()
+	msg, err := svc.Publish(ctx, publication(t, "ops"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := db.MessagingStore()
+	for name, call := range map[string]func() error{
+		"inbox":     func() error { _, err := ms.Inbox(ctx, msg.To, gomsg.Filter{}); return err },
+		"list":      func() error { _, err := ms.List(ctx, msg.To, store.ListFilter{}); return err },
+		"subscribe": func() error { _, err := ms.Subscribe(ctx, msg.To, gomsg.Filter{}); return err },
+		"consume":   func() error { return ms.Consume(ctx, msg.ID, msg.To) },
+		"cancel":    func() error { return ms.Cancel(ctx, msg.ID) },
+		"read":      func() error { return ms.MarkRead(ctx, msg.ID, msg.To) },
+		"archive":   func() error { return ms.Archive(ctx, msg.ID, msg.To) },
+		"unarchive": func() error { return ms.Unarchive(ctx, msg.ID, msg.To) },
+	} {
+		if err := call(); !errors.Is(err, channels.ErrMailboxOperation) {
+			t.Errorf("%s = %v", name, err)
+		}
+	}
+	var changed int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM messages WHERE id=? AND (delivered_at IS NOT NULL OR consumed_at IS NOT NULL OR canceled_at IS NOT NULL OR read_at IS NOT NULL OR archived_at IS NOT NULL)`, msg.ID).Scan(&changed); err != nil || changed != 0 {
+		t.Fatalf("lifecycle changed=%d err=%v", changed, err)
+	}
+	page, err := svc.History(ctx, "ops", reader, 0, 100)
+	if err != nil || len(page.Messages) != 1 || string(page.Messages[0].Payload) != string(msg.Payload) {
+		t.Fatalf("history=%+v %v", page, err)
+	}
+	result, err := store.ImportLegacyMessagesIntoDelivery(ctx, db.DB(), db.DeliveryStore(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deliveries int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM messaging_deliveries`).Scan(&deliveries); err != nil || deliveries != 0 {
+		t.Fatalf("import=%+v deliveries=%d err=%v", result, deliveries, err)
+	}
+}
+
+func TestChannelHistoryUsesInsertionOrderAndReplaysPurgeReceipt(t *testing.T) {
+	db, svc := open(t)
+	ctx := context.Background()
+	first, err := svc.Publish(ctx, publication(t, "ops"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.Publish(ctx, publication(t, "ops"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`UPDATE messages SET created_at=? WHERE id=?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), second.ID); err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.History(ctx, "ops", reader, 0, 100)
+	if err != nil || len(page.Messages) != 2 || page.Messages[0].ID != first.ID || page.Messages[1].ID != second.ID {
+		t.Fatalf("order=%+v %v", page, err)
+	}
+	if _, err := db.PurgeMessageBody(ctx, first.ID, reader); err != nil {
+		t.Fatal(err)
+	}
+	replayCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	zero := int64(0)
+	stream, err := svc.Subscribe(replayCtx, "ops", reader, &zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := <-stream
+	if event.Err != nil || !event.Message.Purged || event.Message.PurgedAt == nil || event.Message.ID != first.ID {
+		t.Fatalf("purge replay=%+v", event)
 	}
 }
 

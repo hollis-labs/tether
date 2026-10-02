@@ -13,6 +13,8 @@ var ErrInvalid = errors.New("invalid channel request")
 
 var ErrForbidden = errors.New("channel operation forbidden")
 
+var ErrMailboxOperation = errors.New("channel publications are not mailbox items")
+
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // ValidateName accepts one case-sensitive URL path component, at most 64 ASCII

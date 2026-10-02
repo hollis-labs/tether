@@ -1355,7 +1355,7 @@ history or subscriptions, even when their label matches a public topic.
 |----------|--------|-------------|
 | `/channels?as=<caller-urn>` | `GET` | List published channels, sorted by name. Returns `{channels: [{name, address}]}`. |
 | `/channels/{name}/messages?as=<caller-urn>&since=0&limit=100` | `GET` | Non-destructive history in publication order. Returns `{name, address, messages: [{seq, ...envelope}], next_since}`. `since` is exclusive, defaults to 0; `limit` defaults to 100, maximum 1000. Continue with `since=next_since`. |
-| `/channels/{name}/subscribe?as=<caller-urn>&since=<seq>` | `GET` | SSE replay strictly after `since`, followed by live publications. Omit `since` for live-only; `since=0` replays all history. `Last-Event-ID` supplies the cursor when the query omits it. |
+| `/channels/{name}/subscribe?as=<caller-urn>&since=<seq>` | `GET` | SSE replay strictly after `since`, followed by live publications. Omit `since` for live-only; `since=0` replays all history. Reconnect uses the greater of `since` and `Last-Event-ID`. Live-only streams send an initial `id` at the captured high-water mark. |
 
 No membership is required to read or subscribe. Any valid caller URN may be
 asserted using `as`; it need not equal the channel address or sender. A
@@ -1386,9 +1386,12 @@ Subscriptions read committed history in bounded batches, with backpressure and
 up to 250 ms polling latency when caught up. A `: ping` comment is sent every
 15 seconds. Reconnect using the last received `id`; replay crosses restarts
 without consuming messages or acknowledging deliveries. Negative/malformed
-cursors, and subscription cursors beyond that channel's current high-water
-mark, return 400 `invalid_request`. Use 0 to replay a never-published channel.
+cursors return 400 `invalid_request`. Subscription cursors beyond the current
+high-water mark are clamped to it so EventSource can continue reconnecting. Use 0 to replay a never-published channel.
 Sequence numbers are global and can have gaps within a channel.
+To load recent messages directly, use `/channels/{name}/messages?last=N`
+(with the caller identity as usual). `N` is 1–1000; the latest N publications
+are returned oldest first. `last` cannot be combined with `since` or `limit`.
 
 Channel envelopes use the existing **messaging retention policy**: structural
 rows and replay sequences remain indefinitely; bodies and metadata may be
@@ -1396,6 +1399,13 @@ removed only through the explicit audited `/messages/{id}/purge` action.
 Publications have no per-recipient delivery obligation and are therefore
 purge-eligible without subscriber acknowledgments. A purge preserves the
 message, channel name, address and sequence and writes a durable author receipt.
+History and SSE replay expose `purged: true` and `purged_at` from that receipt,
+so an empty published payload remains distinguishable from removed content.
+Mailbox inbox/list/subscribe, consume, cancel, read/archive and redrive actions
+reject channel publications with 400 `channel_not_mailbox`; notify to a channel
+address is rejected before publication. The shared atomic publication seam
+passes both the caller principal and envelope `From` to the authorization hook,
+including dispatcher and daemon-internal sends. A nil hook remains observe mode.
 The automatic event age policy does not purge channel messages. Replies, launch
 routing configuration and consumer UIs are separate surfaces/workstreams.
 

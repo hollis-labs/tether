@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,167 @@ import (
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/store"
 )
+
+func TestChannelPublishPolicyCoversAllCreationPaths(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "policy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck
+	address, _ := channels.ChannelAddress("ops")
+	from, _ := gomsg.ParseURN("msg://session/local/sender")
+	env := gomsg.Envelope{To: address, From: from, Kind: gomsg.MsgKindRequest}
+	calls := 0
+	svc := channels.New(db, func(ctx context.Context, op, name string, p identity.Principal, claimed gomsg.Address) error {
+		if op != "publish" {
+			return nil
+		}
+		calls++
+		if claimed != from || name != "ops" || p.ID != "verified" {
+			t.Errorf("policy op=%s name=%s caller=%+v from=%+v", op, name, p, claimed)
+		}
+		return channels.ErrForbidden
+	})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "verified"})
+	if _, err := svc.Publish(ctx, env); !errors.Is(err, channels.ErrForbidden) {
+		t.Fatalf("service: %v", err)
+	}
+	if _, err := db.MessagingStore().Send(ctx, env); !errors.Is(err, channels.ErrForbidden) {
+		t.Fatalf("store: %v", err)
+	}
+	handler := NewHandler(Deps{Channels: svc, MessageStore: db.MessagingStore()})
+	for _, path := range []string{"/messages", "/messages/request?timeout=1ms"} {
+		body, _ := json.Marshal(env)
+		req := httptest.NewRequest("POST", path, bytes.NewReader(body)).WithContext(ctx)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != 403 {
+			t.Errorf("%s status=%d body=%s", path, w.Code, w.Body)
+		}
+	}
+	if calls != 4 {
+		t.Fatalf("hook calls=%d", calls)
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM channel_publications`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("denied publication inserted: %d %v", count, err)
+	}
+	// Observe-mode permits daemon-internal publishers without HTTP identity.
+	db.SetChannelAuthorization(nil)
+	if _, err := db.MessagingStore().Send(context.Background(), env); err != nil {
+		t.Fatalf("internal publisher: %v", err)
+	}
+}
+
+func TestChannelMailboxHTTPRejectsWithoutChanges(t *testing.T) {
+	srv, db := channelServer(t)
+	msg := publishHTTPChannel(t, srv, "ops")
+	as := url.QueryEscape(msg.To.URN())
+	for _, path := range []string{
+		"/messages/inbox?to=" + as + "&as=" + as,
+		"/messages/list?to=" + as + "&as=" + as,
+		"/messages/" + msg.ID + "/consume?as=" + as,
+		"/messages/" + msg.ID + "/cancel?as=" + as,
+		"/messages/" + msg.ID + "/archive?as=" + as,
+		"/messages/" + msg.ID + "/read?as=" + as,
+		"/messages/" + msg.ID + "/redrive?as=" + as,
+		"/messages/notify",
+	} {
+		method := "POST"
+		if strings.Contains(path, "/inbox?") || strings.Contains(path, "/list?") {
+			method = "GET"
+		}
+		body, _ := json.Marshal(msg)
+		req, _ := http.NewRequest(method, srv.URL+path, bytes.NewReader(body))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var failure ErrorResponse
+		err = json.NewDecoder(resp.Body).Decode(&failure)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 400 || failure.Error.Code != "channel_not_mailbox" {
+			t.Errorf("%s status=%d error=%+v decode=%v", path, resp.StatusCode, failure, err)
+		}
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("count=%d %v", count, err)
+	}
+	page := readChannelPage(t, srv, "/channels/ops/messages?as="+url.QueryEscape(channelCaller))
+	if len(page.Messages) != 1 || page.Messages[0].DeliveredAt != nil || page.Messages[0].ConsumedAt != nil || string(page.Messages[0].Payload) != string(msg.Payload) {
+		t.Fatalf("changed history=%+v", page)
+	}
+}
+
+func TestChannelLatestHistoryAndLiveCheckpoint(t *testing.T) {
+	srv, _ := channelServer(t)
+	var messages []gomsg.Envelope
+	for range 4 {
+		messages = append(messages, publishHTTPChannel(t, srv, "ops"))
+	}
+	base := "/channels/ops/messages?as=" + url.QueryEscape(channelCaller)
+	page := readChannelPage(t, srv, base+"&last=2")
+	if len(page.Messages) != 2 || page.Messages[0].ID != messages[2].ID || page.Messages[1].ID != messages[3].ID {
+		t.Fatalf("latest=%+v", page)
+	}
+	for _, suffix := range []string{"&last=0", "&last=1001", "&last=2&since=0", "&last=2&limit=1"} {
+		resp, err := http.Get(srv.URL + base + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 400 {
+			t.Errorf("%s=%d", suffix, resp.StatusCode)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/channels/ops/subscribe?as="+url.QueryEscape(channelCaller), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	if !scanner.Scan() || scanner.Text() != "id: "+strconv.FormatInt(page.NextSince, 10) {
+		t.Fatalf("live checkpoint=%q err=%v", scanner.Text(), scanner.Err())
+	}
+	resp.Body.Close()
+	// A drop before any publication can resume using the initial checkpoint.
+	newMsg := publishHTTPChannel(t, srv, "ops")
+	req, _ = http.NewRequestWithContext(ctx, "GET", req.URL.String(), nil)
+	req.Header.Set("Last-Event-ID", strconv.FormatInt(page.NextSince, 10))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, msg := sseMessage(t, bufio.NewScanner(resp.Body))
+	if msg.ID != newMsg.ID {
+		t.Fatalf("checkpoint reconnect=%+v", msg)
+	}
+}
+
+func TestChannelReconnectSinceOneLastEventThree(t *testing.T) {
+	srv, _ := channelServer(t)
+	for range 3 {
+		publishHTTPChannel(t, srv, "ops")
+	}
+	last := publishHTTPChannel(t, srv, "ops")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/channels/ops/subscribe?as="+url.QueryEscape(channelCaller)+"&since=1", nil)
+	req.Header.Set("Last-Event-ID", "3")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, msg := sseMessage(t, bufio.NewScanner(resp.Body))
+	if msg.Seq != 4 || msg.ID != last.ID {
+		t.Fatalf("reconnect replayed seq<=3: %+v", msg)
+	}
+}
 
 const channelCaller = "msg://user/local/observer"
 
@@ -136,7 +298,7 @@ func TestChannelsHTTPHistoryAndSSEReplayThenLive(t *testing.T) {
 	// Browser reconnection resumes after the last received event, across a new connection.
 	resp.Body.Close()
 	nextLive := publishHTTPChannel(t, srv, "ops")
-	req, _ = http.NewRequestWithContext(ctx, "GET", srv.URL+"/channels/ops/subscribe?as="+url.QueryEscape(channelCaller), nil)
+	req, _ = http.NewRequestWithContext(ctx, "GET", srv.URL+"/channels/ops/subscribe?as="+url.QueryEscape(channelCaller)+"&since=1", nil)
 	req.Header.Set("Last-Event-ID", id)
 	resp2, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -175,7 +337,7 @@ func TestChannelsHTTPDiscoveryAndValidation(t *testing.T) {
 		{"GET", "/channels/ops/messages?as=" + url.QueryEscape(channelCaller) + "&since=-1", 400},
 		{"GET", "/channels/ops/messages?as=" + url.QueryEscape(channelCaller) + "&limit=1001", 400},
 		{"GET", "/channels/bad%20name/messages?as=" + url.QueryEscape(channelCaller), 400},
-		{"GET", "/channels/ops/subscribe?as=" + url.QueryEscape(channelCaller) + "&since=9999", 400},
+		{"GET", "/channels/ops/subscribe?as=" + url.QueryEscape(channelCaller) + "&since=9999", 200},
 		{"POST", "/channels", 405},
 		{"POST", "/channels/ops/messages", 405},
 		{"GET", "/channels/ops/unknown", 404},
@@ -198,7 +360,7 @@ func TestChannelsHTTPDiscoveryAndValidation(t *testing.T) {
 
 func TestChannelsHTTPVerifiedCallerAndPublishPolicy(t *testing.T) {
 	_, db := channelServer(t)
-	svc := channels.New(db, func(ctx context.Context, operation, name string, p identity.Principal) error {
+	svc := channels.New(db, func(ctx context.Context, operation, name string, p identity.Principal, from gomsg.Address) error {
 		if p.ID != "verified" {
 			t.Errorf("caller=%+v", p)
 		}
