@@ -32,13 +32,18 @@ reinitializes using the same credential, profile and discovery selector when the
 daemon/SDK explicitly reports expiry for a known session (a generic route 404
 surfaces without recovery). Lists and pings can also reconnect a closed/lost
 transport once; protocol/admission errors and cancellation surface. These
-read-only operations can be retried once on the replacement view. Each tool dispatch first pings the view to recover idle expiry,
+read-only operations can be retried once on the replacement view. Each tool
+dispatch first pings the view to recover idle expiry,
 then sends the tool call exactly once. Tool calls are never replayed, including
 missing-session errors during execution: a background stream failure can end
 other in-flight calls whose outcomes are unknown. Network failures, lost responses
 and canceled calls are never replayed. Revoked or expired
 credentials still fail admission; recovery cannot fall back to a local pool.
-Other refresh/reconnect lifecycle work belongs to 0539 stage 3.
+The SDK may resume an interrupted SSE stream once using GET and
+`Last-Event-ID`; this retrieves responses/notifications and never resends a
+`tools/call` POST. A replacement view accepts new calls while calls admitted on
+the previous view finish; SDK teardown runs outside the initialization lock.
+Other refresh/reconnect lifecycle work belongs to 0539 stage 3 (paused).
 
 Every daemon-owned launch first initializes the endpoint using its newly minted
 credential with a 15-second initialization bound, allowing cold upstream startup.
