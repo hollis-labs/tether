@@ -44,6 +44,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 )
 
@@ -64,13 +65,15 @@ const (
 
 // Adapter exposes the tether runtime as MCP tools over stdio.
 type Adapter struct {
-	runtime   RuntimeObservation // captured from this process, never the installed path
-	upstreams *ClientPool        // set before proxy handlers start
-	svc       *app.Service
-	client    *client.Client // optional; when set, session-mutating tools route through the daemon
-	mcp       *gomcp.Server
-	token     string
-	scopes    map[string]struct{}
+	runtime               RuntimeObservation // captured from this process, never the installed path
+	upstreams             *ClientPool        // set before proxy handlers start
+	svc                   *app.Service
+	client                *client.Client // optional; when set, session-mutating tools route through the daemon
+	callerContextResolver func(context.Context) (callcontext.Snapshot, error)
+	callerContextCache    callerContextCache
+	mcp                   *gomcp.Server
+	token                 string
+	scopes                map[string]struct{}
 
 	// protected is the set of directories this adapter must not write, as real
 	// paths (SetProtectedPaths). Tether sets it for the `tether mcp` it plants into
@@ -206,7 +209,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	name := t.Name
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
-		ctx = a.withSessionID(ctx)
+		ctx = a.withClaimedSessionID(ctx)
 		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
@@ -429,8 +432,22 @@ func strSliceArg(args map[string]any, key string) []string {
 // answering "" exactly as it did before -- an absent attribution rather than
 // a wrong one.
 func (a *Adapter) withSessionID(ctx context.Context) context.Context {
+	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
+	ctx = a.withCallerContext(ctx)
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
+		return WithSessionID(ctx, snapshot.SessionID)
+	}
 	if a.SessionID == "" {
 		return ctx
+	}
+	return WithSessionID(ctx, a.SessionID)
+}
+
+// Native tools that neither forward nor log need no daemon attribution lookup.
+func (a *Adapter) withClaimedSessionID(ctx context.Context) context.Context {
+	ctx = callcontext.WithClaimedSession(ctx, a.SessionID)
+	if snapshot, ok := callcontext.FromContext(ctx); ok && snapshot.PrincipalID != "" {
+		return WithSessionID(ctx, snapshot.SessionID)
 	}
 	return WithSessionID(ctx, a.SessionID)
 }

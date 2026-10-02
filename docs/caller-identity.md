@@ -4,6 +4,10 @@ CW-20260930-0253 phase 1 starts with daemon-verified bearer identity. The approv
 record is Tesseract workspace item `01M3TVNJ02SD1C3NRXBF4FF1CC`; its section 8
 recommendations are approved by Chrispian and lead.
 
+MCP provenance and tool-call attribution use the [trusted session context](trusted-session-context.md)
+contract (CW-20261001-0543): credential-derived context is separate from caller
+claims, and attribution does not itself grant permissions.
+
 ```yaml
 identity:
   mode: observe
@@ -146,10 +150,10 @@ flip. Route-scope and address authorization must be assessed with phase 2.
 
 ## Remaining phase-2 client plumbing
 
-`forwardProxyEventsToDaemon` (MCP event forwarding) and the daemon-status HTTP
-probe still use direct HTTP callers without bearer credentials. They remain
-available in observe/off; explicit enforce can reject their calls. Authentication
-for these paths is phase-2 work before an enforcement cutover.
+The daemon-status HTTP probe still uses a direct HTTP caller without bearer
+credentials. It remains available in observe/off; explicit enforce can reject
+it. Authentication for that path remains phase-2 work. MCP event forwarding
+now uses the credentialed daemon client so the daemon can resolve attribution.
 
 ## Proxy credentials
 

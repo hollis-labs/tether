@@ -36,6 +36,7 @@ var apiTopLevelPaths = []string{
 	"/ai/audit", "/ai/budgets", "/ai/chat", "/ai/chat/stream", "/ai/embeddings",
 	"/ai/models", "/ai/providers", "/ai/routes", "/ai/routes/explain",
 	"/ai/routes/preview", "/ai/usage",
+	"/auth/context",
 	"/broker/envelopes", "/broker/envelopes/", "/broker/requests",
 	"/catalog/agents", "/catalog/launches", "/catalog/projects", "/catalog/providers",
 	"/events", "/events/stream",
