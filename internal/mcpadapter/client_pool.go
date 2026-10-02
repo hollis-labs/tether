@@ -78,6 +78,10 @@ func (e *RefreshAllError) Error() string {
 
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
+	lazyMu             sync.Mutex
+	lazyCtx            context.Context
+	lazyClosed         bool
+	lazyReady          map[string]chan struct{}
 	confineRemote      bool
 	probe              bool
 	protectedPaths     []string // daemon pools wrap every stdio child; legacy proxies inherit their wrapper
@@ -628,6 +632,9 @@ func (p *ClientPool) RefreshAll(ctx context.Context) ([]ToolRefreshResult, error
 }
 
 func (p *ClientPool) Shutdown() {
+	p.lazyMu.Lock()
+	p.lazyClosed = true
+	p.lazyMu.Unlock()
 	if p.cancel != nil {
 		p.cancel()
 	}

@@ -5,7 +5,9 @@ package mcptransport
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/hollis-labs/tether/internal/store"
 	"sort"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -19,6 +21,8 @@ type Caller struct {
 	Principal identity.Principal
 	Policy    mcpgateway.SessionPolicy
 }
+
+var errSessionUnavailable = errors.New("session policy temporarily unavailable")
 
 type CallerResolver struct {
 	Catalog func(context.Context) (*config.Catalog, error)
@@ -48,6 +52,9 @@ func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {
 		}
 		policy, err = r.Session(ctx, p.SessionID)
 		if err != nil {
+			if !errors.Is(err, store.ErrSessionMCPPolicyUnavailable) && !errors.Is(err, mcpgateway.ErrInvalidSessionMCPPolicy) {
+				return Caller{}, errSessionUnavailable
+			}
 			return Caller{}, err
 		}
 		if err := policy.Validate(); err != nil {

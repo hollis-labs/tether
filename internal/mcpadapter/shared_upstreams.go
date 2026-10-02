@@ -21,7 +21,6 @@ type SharedUpstreams struct {
 	tags        map[string][]string
 	lifecycle   sync.Mutex
 	started     bool
-	startErr    error
 	closed      bool
 	mu          sync.Mutex
 	next        uint64
@@ -59,17 +58,26 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 
 // Start is idempotent: N clients cannot accidentally start N copies.
 func (r *SharedUpstreams) Start(ctx context.Context) error {
+	ids := []string{}
+	for id, enabled := range r.known {
+		if enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return r.StartOrigins(ctx, ids)
+}
+
+// StartOrigins starts only the admitted view's origins; supervisors are shared.
+func (r *SharedUpstreams) StartOrigins(ctx context.Context, ids []string) error {
 	r.lifecycle.Lock()
-	defer r.lifecycle.Unlock()
 	if r.closed {
+		r.lifecycle.Unlock()
 		return fmt.Errorf("daemon MCP upstream runtime closed")
 	}
-	if r.started {
-		return r.startErr
-	}
 	r.started = true
-	r.startErr = r.pool.Start(ctx)
-	return r.startErr
+	r.lifecycle.Unlock()
+	return r.pool.startOrigins(ctx, ids)
 }
 
 func (r *SharedUpstreams) Close() {
