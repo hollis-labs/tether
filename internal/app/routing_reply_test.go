@@ -547,6 +547,12 @@ func TestSubmitResolvesOnlyAMessageASessionRouted(t *testing.T) {
 	if _, err := h.reply(forged.ID, "x", false); !errors.Is(err, api.ErrReplyTargetNotSession) {
 		t.Fatalf("session_id mismatch: %v", err)
 	}
+	// A session on another authority is not one this daemon can inject a turn into.
+	remote, _ := h.st.MessagingStore().Send(ctx, messaging.Envelope{Kind: messaging.MsgKindNotice,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "otherhost", ID: "s1"}, To: to, Payload: []byte(`"hi"`)})
+	if _, err := h.reply(remote.ID, "x", false); !errors.Is(err, api.ErrReplyTargetNotSession) {
+		t.Fatalf("non-local session sender: %v", err)
+	}
 	if rows, _ := h.st.RoutingRepliesInState(ctx, store.RoutingReplyQueued, 10); len(rows) != 0 {
 		t.Fatalf("refused replies must not queue: %+v", rows)
 	}

@@ -528,3 +528,20 @@ func TestRoutingReplyConditionalSettleAndRequeueRefuseARowThatMovedSinceItWasRea
 		t.Fatalf("row = %+v", got)
 	}
 }
+
+// An idempotency key names one request. The same key with the same text but a
+// different interrupt flag is a different request (one cancels a running turn, the
+// other does not), so it is a conflict, never the earlier reply handed back.
+func TestRoutingReplyIdempotencyKeyConflictsWhenOnlyTheInterruptFlagDiffers(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	in := newReply("same text")
+	in.IdempotencyKey = "k1"
+	if _, created, err := db.CreateRoutingReply(ctx, in); err != nil || !created {
+		t.Fatalf("first: %v created=%v", err, created)
+	}
+	in.Interrupt = true
+	if _, _, err := db.CreateRoutingReply(ctx, in); !errors.Is(err, store.ErrRoutingReplyIdempotencyConflict) {
+		t.Fatalf("same key, same text, interrupt flipped: %v, want a conflict", err)
+	}
+}
