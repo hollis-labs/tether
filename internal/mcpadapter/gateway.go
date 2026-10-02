@@ -54,19 +54,7 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 			sort.Slice(snapshot.Origins, func(i, j int) bool { return snapshot.Origins[i].ID < snapshot.Origins[j].ID })
 			return snapshot
 		},
-		Score: func(query string, entry mcpgateway.Entry) int {
-			if query == entry.Tool.Name {
-				return len(tokenise(query)) + 1
-			}
-			words := buildWordSet(entry.Tool.Name, entry.Tool.Description, entry.Tags)
-			score := 0
-			for word := range tokenise(query) {
-				if _, ok := words[word]; ok {
-					score++
-				}
-			}
-			return score
-		},
+		Score: mcpgateway.KeywordScore,
 		Dispatch: func(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 			result, err := router.Handle(ctx, ToolCall{ToolName: name, Args: args, Meta: meta})
 			a.recordProxyRefs(ctx, registry, name, args, result, err)
