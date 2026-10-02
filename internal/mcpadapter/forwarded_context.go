@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type forwardedContextTransport struct {
 // serviceHTTPClientFactory is constructed with the catalog entry, before
 // go-mcp's entry-blind builder seam. Reconnects reuse its entry-specific policy.
 func serviceHTTPClientFactory(endpoint, tokenFile string) (func(map[string]string, int) *http.Client, error) {
+	if !filepath.IsAbs(tokenFile) {
+		return nil, fmt.Errorf("upstream service credential path must be absolute")
+	}
 	origin, err := url.Parse(endpoint)
 	if err != nil || origin.Host == "" || origin.User != nil || (origin.Scheme != "http" && origin.Scheme != "https") {
 		return nil, fmt.Errorf("invalid upstream service credential endpoint")

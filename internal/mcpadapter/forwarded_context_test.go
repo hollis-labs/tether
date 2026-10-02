@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
@@ -179,4 +180,31 @@ func TestServiceHTTPFactoryReconnectAndFailClosed(t *testing.T) {
 	if _, err := serviceHTTPClientFactory("https://user:secret@upstream.example", tokenPath); err == nil {
 		t.Fatal("userinfo admitted")
 	}
+}
+
+func TestRemoteHTTPFactoryReceivesEntryRatherThanURL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pool := NewClientPool(nil, NewToolRegistry())
+	entries := make(map[string]bool)
+	pool.remoteHTTPClientFactory = func(entry config.MCPServerEntry) (func(map[string]string, int) *http.Client, error) {
+		entries[entry.ID] = true
+		return func(map[string]string, int) *http.Client { return &http.Client{} }, nil
+	}
+	a, err := pool.remoteClientPoolForEntry(config.MCPServerEntry{ID: "first", URL: "http://same.example/mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := pool.remoteClientPoolForEntry(config.MCPServerEntry{ID: "second", URL: "http://same.example/mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b || !entries["first"] || !entries["second"] {
+		t.Fatal("entry policy inferred from URL or shared across entries")
+	}
+	again, err := pool.remoteClientPoolForEntry(config.MCPServerEntry{ID: "first", URL: "http://same.example/mcp"})
+	if err != nil || again != a {
+		t.Fatal("entry pool not retained across reconnect")
+	}
+	_ = a.Close()
+	_ = b.Close()
 }

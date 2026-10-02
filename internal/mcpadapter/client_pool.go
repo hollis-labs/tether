@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -101,6 +102,10 @@ type ClientPool struct {
 	// outside this change", below) -- go-mcp/client's lazy health-probed
 	// reconnect is a real, uncomplicated gain for exactly that gap.
 	remoteClients *gomcpclient.Pool
+	// Set only by the daemon's upstream owner before Start. Per-entry pools
+	// bind the SDK's entry-blind HTTP builder to explicit catalog policy.
+	remoteHTTPClientFactory func(config.MCPServerEntry) (func(map[string]string, int) *http.Client, error)
+	remoteClientsByEntry    map[string]*gomcpclient.Pool
 }
 
 // recoveryPolicy wraps go-mcp/supervise's Policy (backoff schedule +
@@ -397,7 +402,10 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		if entry.URL == "" {
 			return nil, fmt.Errorf("%s transport requires url", entry.Transport)
 		}
-		pool := p.remoteClientPool()
+		pool, err := p.remoteClientPoolForEntry(entry)
+		if err != nil {
+			return nil, err
+		}
 		cfg := gomcpclient.ServerConfig{Transport: entry.Transport, URL: entry.URL}
 		if entry.Token != "" {
 			cfg.Headers = map[string]string{"Authorization": "Bearer " + entry.Token}
@@ -420,6 +428,30 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 	default:
 		return nil, fmt.Errorf("unknown transport %q (want stdio, sse, or http)", entry.Transport)
 	}
+}
+
+func (p *ClientPool) remoteClientPoolForEntry(entry config.MCPServerEntry) (*gomcpclient.Pool, error) {
+	if p.remoteHTTPClientFactory == nil {
+		return p.remoteClientPool(), nil
+	}
+	build, err := p.remoteHTTPClientFactory(entry)
+	if err != nil {
+		return nil, err
+	}
+	if build == nil {
+		return p.remoteClientPool(), nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.remoteClientsByEntry == nil {
+		p.remoteClientsByEntry = make(map[string]*gomcpclient.Pool)
+	}
+	if pool := p.remoteClientsByEntry[entry.ID]; pool != nil {
+		return pool, nil
+	}
+	pool := gomcpclient.NewPool(gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version), gomcpclient.WithHTTPClient(build))
+	p.remoteClientsByEntry[entry.ID] = pool
+	return pool, nil
 }
 
 // remoteClientPool lazily constructs p.remoteClients on first use, so its
