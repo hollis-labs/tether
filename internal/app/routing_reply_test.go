@@ -910,3 +910,34 @@ func TestAFailedSubmissionDoesNotLeaveRepliesStuckBehindItsMarker(t *testing.T) 
 		t.Fatalf("sends = %+v", rt.sendCalls)
 	}
 }
+
+// A runtime can take a turn and not yet show it as busy; the dispatcher must
+// not read that gap as a second idle boundary.
+func TestOneReplyPerBoundaryEvenWhenTheRuntimeShowsNoBusySignalYet(t *testing.T) {
+	h := newReplyHarness(t)
+	h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	h.setBusy("s1", true)
+	parent := h.routed("s1")
+	var ids []string
+	for _, body := range []string{"first", "second", "third"} {
+		r, err := h.reply(parent.ID, body, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ReplyID)
+	}
+	h.setBusy("s1", false)
+	h.d.notify("s1")
+	h.waitState(ids[0], store.RoutingReplyDelivered)
+	settleQuiet()
+	if n := h.rt.sendCallCount("s1"); n != 1 {
+		t.Fatalf("%d turns injected at one idle boundary, want 1", n)
+	}
+	for _, id := range ids[1:] {
+		if got := h.state(id); got.State != store.RoutingReplyQueued {
+			t.Fatalf("reply %s is %q before its boundary", id, got.State)
+		}
+	}
+	h.d.notify("s1") // the next boundary
+	h.waitState(ids[1], store.RoutingReplyDelivered)
+}
