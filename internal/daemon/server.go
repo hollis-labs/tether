@@ -478,6 +478,8 @@ type Health struct {
 
 // HealthHardening is the launch-hardening state in GET /health.
 type HealthHardening struct {
+	MCPUpstreamSessions map[string]int    `json:"mcp_upstream_sessions,omitempty"`
+	MCPRecorder         map[string]uint64 `json:"mcp_recorder,omitempty"`
 	// ClaudeStrictMCP is whether Claude agents load only the MCP servers
 	// Tether plants (--strict-mcp-config, CW-20261001-0227).
 	ClaudeStrictMCP       bool   `json:"claude_strict_mcp"`

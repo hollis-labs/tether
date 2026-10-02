@@ -23,6 +23,7 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 	}
 	cache := &mcptransport.CatalogCache{Root: svc.CatalogRoot}
 	return mcptransport.NewHandler(ctx, mcptransport.HandlerConfig{
+		Publisher:  mcpadapter.NewDaemonToolCallRecorder(ctx, svc.Bus, svc.Store),
 		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityMode, Verifier: verifier, Service: svc,
 		NativeClient: func(token string) *client.Client { return client.New(cfg.ListenAddr, client.WithToken(token)) },
 		Resolver: mcptransport.CallerResolver{
