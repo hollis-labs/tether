@@ -227,6 +227,12 @@ var daemonRunCmd = &cobra.Command{
 			_ = svc.Store.Close()
 			return err
 		}
+		// Reply-to-sender: recover replies a previous process left mid-delivery
+		// and start draining. A failure leaves RoutingReplyWired false and the
+		// reply routes answer 501 rather than taking the daemon down.
+		if err := svc.StartRoutingReplies(ctx); err != nil {
+			log.Printf("daemon: reply routing not started: %v", err)
+		}
 		server := &daemon.Server{
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
@@ -258,6 +264,8 @@ var daemonRunCmd = &cobra.Command{
 			Groups:                   svc.Registry,
 			Publisher:                svc.Bus,
 			WakeSweeper:              svc,
+			RoutingReplies:           svc,
+			ReplySweeper:             svc,
 			SessionDrainer:           svc,
 			EventRetention:           svc,
 			Hardening: func() *daemon.HealthHardening {

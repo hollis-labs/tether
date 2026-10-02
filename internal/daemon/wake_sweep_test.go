@@ -92,3 +92,44 @@ func setWakeSweepIntervalForTest(d time.Duration) (restore func()) {
 	wakeSweepInterval = d
 	return func() { wakeSweepInterval = prev }
 }
+
+type countingReplySweeper struct{ calls atomic.Int64 }
+
+func (c *countingReplySweeper) RunRoutingReplySweep(_ context.Context) (int, error) {
+	c.calls.Add(1)
+	return 0, nil
+}
+
+// The reply dispatcher's repair pass ticks while the daemon runs, and stops with it.
+func TestServer_Run_StartsReplySweepLoop_WhenConfigured(t *testing.T) {
+	dir := shortTempDir(t)
+	cfg := Config{ListenAddr: "unix:" + dir + "/s.sock", PIDFile: dir + "/d.pid", ShutdownTimeout: 2 * time.Second}
+	prev := replySweepInterval
+	replySweepInterval = 10 * time.Millisecond
+	defer func() { replySweepInterval = prev }()
+
+	sweeper := &countingReplySweeper{}
+	srv := &Server{Config: cfg, ReplySweeper: sweeper}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && sweeper.calls.Load() < 3 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := sweeper.calls.Load(); n < 3 {
+		t.Fatalf("reply sweep called %d times, want at least 3", n)
+	}
+	cancel()
+	select {
+	case <-runDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+	settled := sweeper.calls.Load()
+	time.Sleep(60 * time.Millisecond)
+	if sweeper.calls.Load() > settled+1 {
+		t.Fatal("reply sweep kept ticking after Run returned")
+	}
+}

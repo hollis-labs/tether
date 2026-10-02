@@ -47,6 +47,9 @@ Defined codes:
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
+| `reply_target_not_a_session` | 400 | `POST /messages/{id}/reply` named a message that no Tether session sent, so there is no session to deliver to |
+| `interrupt_unsupported` | 409 | a reply asked for `interrupt:true` and the session's runtime cannot cancel a turn; the reply was **not** accepted |
+| `turn_not_yet_started` | 409 | a reply asked for `interrupt:true` while the session's turn was submitted but the runtime had not started it, so there is nothing safe to cancel; nothing was queued, retry |
 | `turn_failed`       | 502  | the session's agent process ran the turn and exited non-zero (subprocess runtimes: codex exec, claude -p, opencode run, agy); the message carries the exit status and up to 2 KB of the turn's stderr |
 | `locked`            | 423  | resource is archived or otherwise closed to writes |
 | `not_implemented`   | 501  | route exists, semantics land in a later version |
@@ -1379,6 +1382,8 @@ Current (v0.0.2):
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
+| session  | `routing.reply_delivered`     | the reply dispatcher, after a reply was injected as the session's next turn | `{reply_id, parent_id, state, reason?, original_session_id, target_session_id, delivered_to_session_id, logical_agent_id?, actor}` — no reply text; `reason` is `handed_off` when `delivered_to_session_id` differs from `original_session_id` (see [Replies to routed messages](#replies-to-routed-messages)) |
+| session  | `routing.reply_undeliverable` | the reply dispatcher, when it gave up on a reply | same shape with `state: "undeliverable"` and `reason` / `detail` saying why |
 | broker   | `broker.envelope_created`     | broker.Service on successful persist   | `{id, sender, recipient, workflow_id, correlation_id, message_type}` — metadata only, never payload |
 | broker   | `broker.envelope_replied`     | broker.Service on successful reply     | same shape as created                                        |
 
@@ -1543,6 +1548,8 @@ RFC 8030 Web Push vocabulary.
 | `/messages/{id}/read?as=<urn>` | `POST` | Mark read. |
 | `/messages/{id}/archive?as=<urn>` | `POST` | Archive for recipient. |
 | `/messages/{id}/consume?as=<urn>` | `POST` | Mark consumed. |
+| `/messages/{id}/reply?as=<urn>` | `POST` | Reply to the session that sent a routed (channel) message: queued, then injected as that session's next turn. See [Replies to routed messages](#replies-to-routed-messages). |
+| `/messages/{reply_id}/delivery` | `GET` | Where a reply stands: queued, delivering, delivered or undeliverable, and why. |
 
 Notify body extends the normal message envelope with:
 
@@ -1595,6 +1602,82 @@ go-tether-client mirrors these as `WakeReason*` constants.
 
 A wake that was attempted and failed is reported in `wake_error` instead,
 which carries the error's text (for example, submitting the turn failed).
+
+### Replies to routed messages
+
+A session whose output is routed to a [named channel](#named-channels) is the
+sender of those messages (`msg://session/local/<id>`). A reply to one of them
+is delivered to **that session, as its next turn**, not to a mailbox:
+
+```
+POST /messages/{id}/reply?as=msg://user/local/chris
+Idempotency-Key: <optional>
+{"body": "use the second option", "interrupt": false}
+```
+
+`202 Accepted`:
+
+```json
+{"reply_id": "…", "parent_id": "{id}", "state": "queued", "target_session_id": "<session>",
+ "interrupt": "cancelled", "duplicate": false}
+```
+
+`POST /messages` with `in_reply_to` naming a routed message does the same and
+returns the same 202 receipt instead of the stored envelope (`to`, if given,
+must be the sender session; the text is the payload's string, or its
+`body`/`text`/`message`). `in_reply_to` on any other message is unchanged.
+The `as` identity is the verified principal when one is present, else the
+self-asserted `?as=` (or the envelope's `from`), as for channels; observe mode
+records it and refuses nothing.
+
+- **Single writer.** Tether queues the reply and injects its body with the same
+  path as `POST /sessions/{id}/turn` at the session's idle boundary: when its
+  current turn completes, fails or is interrupted (not on a timer), or at once if
+  it is idle. Consumers never submit the turn themselves. One reply is injected
+  per idle boundary, in arrival order.
+- **Runtimes that reject mid-turn input** (OpenCode, ACP, subprocess runtimes)
+  simply wait for the turn to end. A rejection is not a failed attempt.
+- **`interrupt: true`** first cancels the session's open turn and waits for it
+  to end (the caller is recorded as the interrupting actor), then queues the
+  reply. If the runtime cannot cancel a turn the reply is refused with 409
+  `interrupt_unsupported`; if the turn was submitted but not yet started, 409
+  `turn_not_yet_started` and nothing is queued. If there was nothing to cancel
+  (`no_turn_in_progress`, `turn_superseded`, `session_not_running`) the reply is
+  accepted as an ordinary next-turn delivery and the receipt's `interrupt`
+  says which. A retry with the same `Idempotency-Key` returns the earlier reply
+  (`duplicate: true`) and does not cancel again.
+- **An ended session** hands its queued replies to the session its actor is
+  currently bound to (the registry binding, never a "newest running" guess), and
+  the delivery reads `delivered` with `reason: "handed_off"` and
+  `delivered_to_session_id` naming the successor. With no usable binding the
+  reply is `undeliverable`; it is kept and stays readable, never dropped.
+- A daemon restart never re-sends a reply that was being injected into a
+  session that is still running (at most once per session): it becomes
+  `undeliverable` with `daemon_restarted_during_delivery`.
+
+`GET /messages/{reply_id}/delivery` returns `{reply_id, parent_id, state, reason?,
+detail?, original_session_id, target_session_id, delivered_to_session_id?,
+interrupt_requested, attempts, next_attempt_at?, created_at, updated_at,
+settled_at?}`. The same outcome is published as `routing.reply_delivered` /
+`routing.reply_undeliverable` on the session's event stream.
+
+| `reason` | State | Meaning |
+|---|---|---|
+| `handed_off` | `delivered` | The originating session had ended; the reply went to the session its actor is bound to. |
+| `session_ended_no_binding` | `undeliverable` | The session ended and its actor has no current binding (or the reply has no actor). |
+| `bound_session_not_running` | `undeliverable` | The binding names a session that is not running. |
+| `pull_only_binding` | `undeliverable` | The actor is a published-local bridge; Tether cannot inject a turn into it. |
+| `resolve_failed` | `undeliverable` | The binding lookup kept failing. |
+| `submit_failed` | `undeliverable` | Injecting the turn failed five times; `detail` carries the last error. While retrying the state is `queued` with this reason. |
+| `daemon_restarted_during_delivery` | `undeliverable` | See above. |
+| `body_purged` | `undeliverable` | The reply text was purged before it could be delivered. |
+| `waiting_for_idle` | `queued` | The runtime rejected mid-turn input; waiting for the turn to end. |
+
+An unknown message id is `404 not_found`; a message no session sent is 400
+`reply_target_not_a_session`; with the reply path not running,
+501 `not_implemented`. A reply body is at most 128 KiB (413
+`payload_too_large`). Idle detection for runtimes with no turn feed (a PTY) uses
+the runtime's own processing state and the daemon's 2-second repair sweep.
 
 ---
 
