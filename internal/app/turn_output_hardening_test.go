@@ -338,3 +338,32 @@ func TestACPCompletedOutOfOrderTurnsRejectLateFrames(t *testing.T) {
 		t.Fatal("new turn blocked by completion guard")
 	}
 }
+
+func TestInterruptAuditStorageDeadline(t *testing.T) {
+	for _, viaBus := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct store", true: "bus"}[viaBus], func(t *testing.T) {
+			svc, _ := outputHarness(t, nil)
+			svc.turnOutputTimeout = 25 * time.Millisecond
+			if !viaBus {
+				svc.Bus = nil
+			}
+			conn, err := svc.Store.DB().Conn(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			returned := make(chan error, 1)
+			go func() {
+				returned <- svc.auditTurnInterrupt(events.KindSessionTurnOutput, events.TurnInterruptEvent{SessionID: "s1"})
+			}()
+			select {
+			case err := <-returned:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("audit error: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("audit ignored persistence budget")
+			}
+		})
+	}
+}

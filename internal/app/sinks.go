@@ -266,7 +266,9 @@ func makeBootDirPlantedCallback(bus events.Publisher, sessionID, logicalAgentID 
 // The turn itself ran; the event is how callers learn its history is gone.
 func makeProviderSessionLostCallback(bus events.Publisher, sessionID, logicalAgentID string) func(requested, actual, reason string) {
 	return func(requested, actual, reason string) {
-		publishSessionEvent(bus, sessionID, logicalAgentID, events.KindProviderSessionLost, struct {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		publishSessionEventContext(ctx, bus, sessionID, logicalAgentID, events.KindProviderSessionLost, struct {
 			Requested string `json:"requested"`
 			Actual    string `json:"actual"`
 			Reason    string `json:"reason"`
