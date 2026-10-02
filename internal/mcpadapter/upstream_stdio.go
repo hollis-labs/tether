@@ -92,6 +92,7 @@ func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string)
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
 	}
 	if len(protected) > 0 {
+		u.cmd.Env = daemonUpstreamEnvironment(os.Environ(), entry.Env)
 		if err := confineDaemonUpstream(u.cmd, protected); err != nil {
 			return nil, nil, err
 		}

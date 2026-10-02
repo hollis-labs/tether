@@ -59,7 +59,10 @@ runs with the daemon's authority for every caller. Every daemon-launched stdio
 upstream therefore runs inside mandatory go-sandbox protect-only confinement,
 with canonical catalog/run/state roots read-only. Missing roots or an unavailable
 sandbox fail closed; there is no unconfined fallback or environment kill switch
-for this new pool. Host reads, network access, socket connections and writes
+for this new pool. Child environments inherit only PATH/HOME, locale settings
+and TMPDIR, plus the entry's explicit environment and resolved credentials;
+unrelated daemon environment and credentials are not inherited. Host reads,
+network access, socket connections and writes
 elsewhere remain possible. Per-app Torque allowed-root policy (0464) and Loom
 export-root policy (0465) are load-bearing, not replaced by this confinement.
 

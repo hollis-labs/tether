@@ -5,9 +5,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/hollis-labs/go-sandbox/sandbox"
 )
+
+// daemonUpstreamEnvironment inherits only portable process basics. Catalog
+// entries explicitly supply application settings and resolved credentials;
+// unrelated daemon credentials, service-manager and loader knobs stay private.
+func daemonUpstreamEnvironment(inherited []string, configured map[string]string) []string {
+	env := []string{}
+	for _, value := range inherited {
+		name, _, _ := strings.Cut(value, "=")
+		switch name {
+		case "PATH", "HOME", "LANG", "TMPDIR", "LC_ALL", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION":
+			env = append(env, value)
+		}
+	}
+	for name, value := range configured {
+		env = append(env, name+"="+value)
+	}
+	return env
+}
 
 // DaemonProtectedRoots names all three control-plane trees. Unlike a planted
 // proxy, a daemon pool must protect them regardless of the caller's sandbox or

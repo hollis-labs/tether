@@ -35,6 +35,9 @@ func TestDaemonUpstreamFixture(t *testing.T) {
 	if outside == "" {
 		return
 	}
+	if os.Getenv("DAEMON_ONLY_SECRET") != "" || os.Getenv("TETHER_TOKEN") != "" || os.Getenv("CATALOG_FIXTURE_SECRET") != "explicit-fixture-value" {
+		os.Exit(93)
+	}
 	var roots []string
 	if err := json.Unmarshal([]byte(os.Getenv("TETHER_DAEMON_PROTECTED")), &roots); err != nil {
 		os.Exit(90)
@@ -64,6 +67,8 @@ func TestDaemonUpstreamFixture(t *testing.T) {
 
 func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DAEMON_ONLY_SECRET", "must-not-be-delegated")
+	t.Setenv("TETHER_TOKEN", "must-not-be-delegated")
 	if runtime.GOOS != "linux" {
 		t.Skip("real protect-only upstream smoke requires Linux bubblewrap")
 	}
@@ -92,7 +97,7 @@ func TestSharedUpstreams_ConfinedOneProcessForConcurrentViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestDaemonUpstreamFixture$"}, Env: map[string]string{"TETHER_DAEMON_FIXTURE": outside, "TETHER_DAEMON_PROTECTED": string(raw)}}}, roots)
+	r, err := NewSharedUpstreams([]config.MCPServerEntry{{ID: "fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestDaemonUpstreamFixture$"}, Env: map[string]string{"TETHER_DAEMON_FIXTURE": outside, "TETHER_DAEMON_PROTECTED": string(raw), "CATALOG_FIXTURE_SECRET": "explicit-fixture-value"}}}, roots)
 	if err != nil {
 		t.Fatal(err)
 	}
