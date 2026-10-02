@@ -150,17 +150,31 @@ type daemonSession struct {
 }
 
 type daemonInitialization struct {
-	done    chan struct{}
-	session *mcp.ClientSession
-	err     error
+	done           chan struct{}
+	session        *mcp.ClientSession
+	err            error
+	initiatorEnded bool
 }
 
 func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*mcp.ClientSession, error) {
-	d.mu.Lock()
-	if pending := d.initializing; pending != nil {
+	for {
+		d.mu.Lock()
+		pending := d.initializing
+		if pending == nil {
+			break // keep the lock while selecting or creating the view
+		}
 		d.mu.Unlock()
 		select {
 		case <-pending.done:
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if pending.initiatorEnded {
+				// The initiator aborted its request before dispatch. Live
+				// waiters join one replacement attempt instead of inheriting
+				// another caller's cancellation or deadline.
+				continue
+			}
 			return pending.session, pending.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -213,6 +227,7 @@ func (d *daemonSession) get(ctx context.Context, missing *mcp.ClientSession) (*m
 		err = setup.Err()
 	}
 	pending.session, pending.err = session, err
+	pending.initiatorEnded = err != nil && ctx.Err() != nil
 	d.initializing = nil
 	close(pending.done)
 	if err != nil {

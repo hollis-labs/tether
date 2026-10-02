@@ -44,10 +44,12 @@ The SDK may resume interrupted SSE streams using GET and
 `Last-Event-ID`; this retrieves responses/notifications and never resends a
 `tools/call` POST. The retry bound applies to consecutive resumes without
 progress, so one call may have multiple resume GETs. A replacement view accepts
-new calls while calls admitted on
-the previous view finish; SDK teardown runs outside the initialization lock.
-Concurrent callers share one initialization attempt, including its failure; a
-later caller can try again after that attempt finishes.
+new calls while calls admitted on the previous view finish; SDK teardown runs
+outside the initialization lock.
+Concurrent callers share one initialization attempt, including daemon failures
+and the setup timeout. If its initiating caller cancels or reaches its own
+deadline, live waiters join a new attempt. A later caller can also try again
+after a failed attempt finishes.
 Other refresh/reconnect lifecycle work belongs to 0539 stage 3 (paused).
 The daemon does not configure a resumable EventStore today. With an EventStore,
 a daemon restart can return 404 on a resume GET, which currently surfaces as

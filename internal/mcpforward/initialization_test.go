@@ -1,10 +1,12 @@
 package mcpforward
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Done evaluation marks the waiter's arrival at the pending-attempt select.
@@ -52,7 +55,7 @@ func TestFailedInitializationIsSharedWithWaiters(t *testing.T) {
 }
 
 func testFailedInitialization(t *testing.T, deadline bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	started, fail := make(chan struct{}), make(chan struct{})
 	var attempts atomic.Int32
@@ -81,14 +84,7 @@ func testFailedInitialization(t *testing.T, deadline bool) {
 	}()
 	relay := &daemonSession{client: client.New("tcp:"+strings.TrimPrefix(server.URL, "http://"), client.WithToken("session"))}
 	results := make(chan error, 9)
-	owner := ctx
-	expired := make(chan struct{})
-	var expire sync.Once
-	if deadline {
-		owner = &initializationDeadlineContext{Context: context.Background(), expired: expired}
-		defer expire.Do(func() { close(expired) })
-	}
-	go func() { _, err := relay.get(owner, nil); results <- err }()
+	go func() { _, err := relay.get(ctx, nil); results <- err }()
 	select {
 	case <-started:
 	case <-ctx.Done():
@@ -105,9 +101,7 @@ func testFailedInitialization(t *testing.T, deadline bool) {
 	}
 	// A response failure is event-driven. The deadline variant deliberately
 	// hangs the first request until its setup context expires.
-	if deadline {
-		expire.Do(func() { close(expired) })
-	} else {
+	if !deadline {
 		close(fail)
 	}
 	var first error
@@ -142,5 +136,95 @@ func testFailedInitialization(t *testing.T, deadline bool) {
 	}
 	if got := attempts.Load(); got != 2 {
 		t.Fatalf("later caller did not retry: %d", got)
+	}
+}
+
+func TestInitializationInitiatorCancellationDoesNotFailWaiters(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprint("deadline=", deadline), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			started := make(chan struct{})
+			var attempts atomic.Int32
+			daemon := mcp.NewServer(&mcp.Implementation{Name: "initialize", Version: "1"}, nil)
+			handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return daemon }, nil)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					var request struct{ Method string }
+					_ = json.Unmarshal(body, &request)
+					if request.Method == "initialize" && attempts.Add(1) == 1 {
+						close(started)
+						<-r.Context().Done()
+						return
+					}
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			relay := &daemonSession{client: client.New("tcp:"+strings.TrimPrefix(server.URL, "http://"), client.WithToken("session"))}
+			defer func() { cancel(); relay.close() }()
+			owner, stop := context.WithCancel(ctx)
+			defer stop()
+			expired := make(chan struct{})
+			var expire sync.Once
+			if deadline {
+				owner = &initializationDeadlineContext{Context: context.Background(), expired: expired}
+				defer expire.Do(func() { close(expired) })
+			}
+			ownerResult := make(chan error, 1)
+			go func() { _, err := relay.get(owner, nil); ownerResult <- err }()
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			results := make(chan error, 3)
+			for range 3 {
+				waiter := &initializationWaiterContext{Context: ctx, joined: make(chan struct{})}
+				go func() {
+					session, err := relay.get(waiter, nil)
+					if err == nil {
+						err = session.Ping(waiter, nil)
+					}
+					results <- err
+				}()
+				select {
+				case <-waiter.joined:
+				case <-ctx.Done():
+					t.Fatal("waiter did not join", ctx.Err())
+				}
+			}
+			if deadline {
+				expire.Do(func() { close(expired) })
+			} else {
+				stop()
+			}
+			select {
+			case err := <-ownerResult:
+				if !errors.Is(err, owner.Err()) {
+					t.Fatalf("initiator error: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			for range 3 {
+				select {
+				case err := <-results:
+					if err != nil {
+						t.Fatal("live waiter inherited initiator failure", err)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			if got := attempts.Load(); got != 2 {
+				t.Fatalf("wanted one retry shared by waiters, got %d initializations", got)
+			}
+		})
 	}
 }
