@@ -1726,8 +1726,11 @@ records it and refuses nothing.
   session that is still running: it becomes `undeliverable` with
   `daemon_restarted_during_delivery`. An interrupting reply that was still being
   reserved becomes `undeliverable` with `interrupt_unconfirmed`: its caller never
-  got a receipt and nothing says whether the cancel happened, so resubmit it. The
-  same resolution runs on the daemon's repair sweep, not only at startup.
+  got a receipt and nothing says whether the cancel happened, so resubmit it
+  **with a new `Idempotency-Key`**: the old key still names that undeliverable
+  reply, and resubmitting with it answers 202 `duplicate: true` with
+  `state: "undeliverable"` and delivers nothing. The same resolution runs on the
+  daemon's repair sweep, not only at startup.
 - **A reply is not a mailbox item.** Cancel, consume, read, archive, claim, ack,
   nack, redrive and delete aimed at one are refused with 400 `reply_not_mailbox`
   and change nothing; read its state from `/delivery`.
