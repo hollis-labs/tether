@@ -343,3 +343,27 @@ func TestBrokerRoutes_NotRegisteredWithoutBroker(t *testing.T) {
 		}
 	}
 }
+
+func TestBrokerOperationsPreserveDecodeAndLookupErrorOrdering(t *testing.T) {
+	for _, tc := range []struct {
+		path, body, want string
+		status           int
+	}{
+		{"/broker/envelopes", "[1,2]", `{"error":{"code":"invalid_request","message":"invalid request body: json: cannot unmarshal array into Go value of type api.EnvelopeCreateRequest"}}` + "\n", 400},
+		{"/broker/requests?timeout=oops", "[1,2]", `{"error":{"code":"invalid_request","message":"invalid timeout: time: invalid duration \"oops\""}}` + "\n", 400},
+		{"/broker/envelopes/missing/reply", "[1,2]", `{"error":{"code":"not_found","message":"envelope not found"}}` + "\n", 404},
+		{"/broker/envelopes/original/reply", "[1,2]", `{"error":{"code":"invalid_request","message":"invalid request body: json: cannot unmarshal array into Go value of type api.EnvelopeCreateRequest"}}` + "\n", 400},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			b := &fakeBroker{rows: map[string]*broker.Envelope{"original": {ID: "original"}}}
+			rr := httptest.NewRecorder()
+			newBrokerTestHandler(b).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)))
+			if rr.Code != tc.status || rr.Body.String() != tc.want {
+				t.Fatalf("status/body=%d/%q, want %d/%q", rr.Code, rr.Body.String(), tc.status, tc.want)
+			}
+			if len(b.created) != 0 || len(b.replied) != 0 {
+				t.Fatal("failed request persisted an envelope")
+			}
+		})
+	}
+}

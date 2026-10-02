@@ -12,7 +12,10 @@ sender/recipient + propagates `workflow_id` + `correlation_id`.
 - `Envelope` struct (`model.go`) — mirrors the `broker_envelopes` table.
 - `Service` (`service.go`) — `NewService(store, publisher)` → methods:
   - `CreateEnvelope` — persist and emit `broker.envelope_created`.
-  - `ReplyEnvelope` — derive a reply from an existing envelope.
+  - `ReplyEnvelope` — persist an already-derived reply and emit the reply event.
+- `Operations` (`operations.go`) — server-assigned IDs, create/request/reply
+  correlation policy and request wait options. HTTP decodes into its request
+  contract and maps its failures without recreating the policy.
 - On each write, the bus receives a `broker.envelope_created` or
   `broker.envelope_replied` event. Payload is metadata only (id,
   sender, recipient, workflow_id, correlation_id, message_type) —
@@ -27,7 +30,7 @@ sender/recipient + propagates `workflow_id` + `correlation_id`.
 
 **Gotchas:**
 
-- IDs are UUIDv7 (sortable). Enforced at the API layer, not here.
+- IDs are UUIDv7 (sortable). Assigned by `Operations`; the storage primitive still treats them as opaque.
 - `correlation_id` on a reply defaults to the original envelope's
   `correlation_id` (or its `id` when the original had none).
 - Persist-before-emit: a store failure does not publish. Do not move

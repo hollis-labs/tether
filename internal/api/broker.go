@@ -3,18 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/hollis-labs/tether/internal/broker"
 )
 
-// defaultRequestTimeout is applied when the caller doesn't specify ?timeout=.
-const defaultRequestTimeout = 30 * time.Second
+// Shared with the messaging request route; the broker owns this legacy default.
+const defaultRequestTimeout = broker.DefaultRequestTimeout
 
 // BrokerService is the seam the broker handlers depend on. Bundles
 // broker.Service's write path (events emitted for free) with the
@@ -36,16 +33,7 @@ type BrokerService interface {
 // EnvelopeCreateRequest is the JSON body for POST /broker/envelopes.
 // Server-set fields (ID, CreatedAt) are omitted; every other field is
 // optional and round-trips verbatim into broker.Envelope.
-type EnvelopeCreateRequest struct {
-	Sender        string `json:"sender,omitempty"`
-	Recipient     string `json:"recipient,omitempty"`
-	WorkflowID    string `json:"workflow_id,omitempty"`
-	CorrelationID string `json:"correlation_id,omitempty"`
-	MessageType   string `json:"message_type,omitempty"`
-	Priority      int    `json:"priority,omitempty"`
-	Payload       string `json:"payload,omitempty"`
-	AuditJSON     string `json:"audit_json,omitempty"`
-}
+type EnvelopeCreateRequest broker.CreateRequest
 
 // EnvelopeDTO is the wire shape of an envelope.
 type EnvelopeDTO struct {
@@ -145,52 +133,12 @@ func (s *Server) handleCreateEnvelope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
 		return
 	}
-	id, err := uuid.NewV7()
+	e, err := broker.NewOperations(s.Broker).Create(r.Context(), broker.CreateRequest(req))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, "generate id: "+err.Error())
+		writeBrokerOperationError(w, err)
 		return
 	}
-	// Validate message_type at the API boundary before passing to service.
-	if req.MessageType != "" && !broker.IsValidMessageType(req.MessageType) {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"unknown message_type "+strconv.Quote(req.MessageType)+"; valid: "+strings.Join(broker.ValidMessageTypes(), ", "))
-		return
-	}
-
-	// For request envelopes the server assigns the correlation_id (UUIDv7)
-	// so responses can be matched deterministically. Callers MUST NOT set it.
-	correlationID := req.CorrelationID
-	if req.MessageType == broker.TypeRequest {
-		corrID, err := uuid.NewV7()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, CodeInternalError, "generate correlation_id: "+err.Error())
-			return
-		}
-		correlationID = corrID.String()
-	}
-
-	e := broker.Envelope{
-		ID:            id.String(),
-		Sender:        req.Sender,
-		Recipient:     req.Recipient,
-		WorkflowID:    req.WorkflowID,
-		CorrelationID: correlationID,
-		MessageType:   req.MessageType,
-		Priority:      req.Priority,
-		Payload:       req.Payload,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		AuditJSON:     req.AuditJSON,
-	}
-	if err := s.Broker.CreateEnvelope(r.Context(), e); err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "correlation_id") {
-			writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, CodeInternalError, msg)
-		return
-	}
-	writeJSON(w, http.StatusCreated, envelopeToDTO(e))
+	writeJSON(w, http.StatusCreated, envelopeToDTO(*e))
 }
 
 // handleListEnvelopes services GET /broker/envelopes. Requires one of
@@ -290,13 +238,10 @@ func (s *Server) handleGetEnvelope(w http.ResponseWriter, r *http.Request, id st
 // — its sender/recipient fields are ignored (server derives them from
 // the original) but the rest carry through.
 func (s *Server) handleReplyEnvelope(w http.ResponseWriter, r *http.Request, id string) {
-	original, err := s.Broker.GetEnvelope(id)
+	operation := broker.NewOperations(s.Broker)
+	original, err := operation.Original(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			writeError(w, http.StatusNotFound, CodeNotFound, "envelope not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		writeBrokerOperationError(w, err)
 		return
 	}
 
@@ -308,37 +253,12 @@ func (s *Server) handleReplyEnvelope(w http.ResponseWriter, r *http.Request, id 
 		}
 	}
 
-	replyID, err := uuid.NewV7()
+	reply, err := operation.Reply(r.Context(), *original, broker.CreateRequest(req))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, "generate id: "+err.Error())
+		writeBrokerOperationError(w, err)
 		return
 	}
-
-	// Correlation ID propagates from the original — if the original
-	// already carries one, preserve that thread; otherwise the original
-	// itself seeds the conversation.
-	corrID := original.CorrelationID
-	if corrID == "" {
-		corrID = original.ID
-	}
-
-	reply := broker.Envelope{
-		ID:            replyID.String(),
-		Sender:        original.Recipient,
-		Recipient:     original.Sender,
-		WorkflowID:    original.WorkflowID,
-		CorrelationID: corrID,
-		MessageType:   req.MessageType,
-		Priority:      req.Priority,
-		Payload:       req.Payload,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		AuditJSON:     req.AuditJSON,
-	}
-	if err := s.Broker.ReplyEnvelope(r.Context(), reply); err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, envelopeToDTO(reply))
+	writeJSON(w, http.StatusCreated, envelopeToDTO(*reply))
 }
 
 // handleBrokerRequests services POST /broker/requests.
@@ -360,21 +280,10 @@ func (s *Server) handleBrokerRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	waitParam := q.Get("wait")
-	blocking := waitParam == "true" || waitParam == "1"
-	// If timeout is explicitly set but wait is not, default to blocking.
-	if q.Get("timeout") != "" && waitParam == "" {
-		blocking = true
-	}
-
-	var timeoutDur = defaultRequestTimeout
-	if t := q.Get("timeout"); t != "" {
-		d, err := time.ParseDuration(t)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid timeout: "+err.Error())
-			return
-		}
-		timeoutDur = d
+	opts, err := broker.ParseRequestOptions(q.Get("wait"), q.Get("timeout"))
+	if err != nil {
+		writeBrokerOperationError(w, err)
+		return
 	}
 
 	var req EnvelopeCreateRequest
@@ -383,54 +292,38 @@ func (s *Server) handleBrokerRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Force message_type = request.
-	req.MessageType = broker.TypeRequest
-
-	// Server assigns ID and correlation_id.
-	envID, err := uuid.NewV7()
+	operation := broker.NewOperations(s.Broker)
+	e, err := operation.Request(r.Context(), broker.CreateRequest(req))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, "generate id: "+err.Error())
+		writeBrokerOperationError(w, err)
 		return
 	}
-	corrID, err := uuid.NewV7()
+	if !opts.Blocking {
+		w.Header().Set("X-Correlation-Id", e.CorrelationID)
+		writeJSON(w, http.StatusAccepted, envelopeToDTO(*e))
+		return
+	}
+	response, err := operation.Wait(r.Context(), e.CorrelationID, opts.Timeout)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, "generate correlation_id: "+err.Error())
+		writeBrokerOperationError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, envelopeToDTO(*response))
+}
 
-	e := broker.Envelope{
-		ID:            envID.String(),
-		Sender:        req.Sender,
-		Recipient:     req.Recipient,
-		WorkflowID:    req.WorkflowID,
-		CorrelationID: corrID.String(),
-		MessageType:   broker.TypeRequest,
-		Priority:      req.Priority,
-		Payload:       req.Payload,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		AuditJSON:     req.AuditJSON,
+func writeBrokerOperationError(w http.ResponseWriter, err error) {
+	status, code, message := http.StatusInternalServerError, CodeInternalError, err.Error()
+	var failure *broker.OperationError
+	if errors.As(err, &failure) {
+		code, message = failure.Code, failure.Message
+		switch code {
+		case CodeInvalidRequest:
+			status = http.StatusBadRequest
+		case CodeNotFound:
+			status = http.StatusNotFound
+		case "timeout":
+			status = http.StatusGatewayTimeout
+		}
 	}
-	if err := s.Broker.CreateEnvelope(r.Context(), e); err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
-		return
-	}
-
-	if !blocking {
-		// Async mode: return the created request envelope immediately.
-		w.Header().Set("X-Correlation-Id", corrID.String())
-		writeJSON(w, http.StatusAccepted, envelopeToDTO(e))
-		return
-	}
-
-	// Blocking mode: wait for a matching response.
-	waitCtx, cancel := context.WithTimeout(r.Context(), timeoutDur)
-	defer cancel()
-
-	resp, err := s.Broker.WaitForResponse(waitCtx, corrID.String())
-	if err != nil {
-		writeError(w, http.StatusGatewayTimeout, "timeout",
-			"no response received within "+timeoutDur.String())
-		return
-	}
-	writeJSON(w, http.StatusOK, envelopeToDTO(*resp))
+	writeError(w, status, code, message)
 }
