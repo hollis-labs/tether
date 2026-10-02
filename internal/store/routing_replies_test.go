@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -424,5 +425,41 @@ func TestMailboxVerbsOnAReplyAreRefusedAndTheRowIsUntouched(t *testing.T) {
 	}
 	if canceled != nil || consumed != nil || read != nil || archived != nil {
 		t.Fatalf("a refused verb changed the row: %v %v %v %v", canceled, consumed, read, archived)
+	}
+}
+
+// The repair sweep drains exactly the sessions that have a reply waiting: one
+// entry per session however many replies it has, and nothing for a reply that is
+// only reserved, or already finished.
+func TestRoutingReplySessionsWithQueuedAreTheDistinctQueuedTargets(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	add := func(session string, pending bool) store.RoutingReply {
+		in := newReply("x")
+		in.TargetSessionID, in.Pending = session, pending
+		r, _, err := db.CreateRoutingReply(ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	add("sess-a", false)
+	add("sess-a", false)
+	add("sess-b", false)
+	add("sess-c", true) // reserved by an interrupting submission, not deliverable yet
+	done := add("sess-d", false)
+	if ok, err := db.ClaimRoutingReply(ctx, done.ReplyID); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if err := db.SettleRoutingReply(ctx, done.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, DeliveredTo: "sess-d"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.SessionsWithQueuedRoutingReplies(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Fatalf("sessions with a queued reply = %v, want [sess-a sess-b]", got)
 	}
 }

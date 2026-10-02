@@ -505,3 +505,23 @@ func TestTheNewReplyErrorsAreTyped(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+// Only a message a LOCAL session published is routed back to its sender. A
+// channel message from a session on another authority has no session this daemon
+// can inject into, so replying to it keeps the ordinary path rather than
+// becoming a reply the service would refuse.
+func TestInReplyToAChannelMessageFromANonLocalSessionKeepsItsOrdinaryPath(t *testing.T) {
+	svc := &fakeReplies{}
+	h, db := replyServer(t, svc)
+	to, _ := channels.ChannelAddress("ops")
+	remote, err := db.MessagingStore().Send(context.Background(), messaging.Envelope{Kind: messaging.MsgKindNotice,
+		From: messaging.Address{Kind: messaging.KindSession, Authority: "otherhost", ID: "s9"}, To: to,
+		Payload: []byte(`{"text":"which option?"}`), ContentType: "application/json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(h, "/messages", map[string]any{"kind": "response", "from": "msg://user/local/chris", "in_reply_to": remote.ID, "payload": "hello"}, nil)
+	if len(svc.requests) != 0 {
+		t.Fatalf("a reply to a non-local session's message was routed: %+v", svc.requests)
+	}
+}
