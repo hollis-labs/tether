@@ -185,6 +185,7 @@ func (a *Adapter) newBareServer(options ...gomcp.Option) *gomcp.Server {
 func (a *Adapter) newServer() *gomcp.Server {
 	s := a.newBareServer()
 	a.registerTools(s)
+	a.registerDocsResources(s)
 	return s
 }
 
