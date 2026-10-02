@@ -30,9 +30,10 @@ const (
 // head of the flags it appends after the projected argv
 // (ErrPositionalAfterProjection), so a leading "run" is dropped here rather
 // than in every catalog on disk. Both launch engines and the opencode
-// runtime read catalog args through this.
+// runtime read catalog args through this. Legacy Codex app-server catalogs
+// likewise name the subcommand the JSON-RPC projection already owns.
 func CatalogFlags(brand string, args []string) []string {
-	if brand == "opencode" && len(args) > 0 && args[0] == "run" {
+	if len(args) > 0 && ((brand == "opencode" && args[0] == "run") || (brand == "codex" && args[0] == "app-server")) {
 		args = args[1:]
 	}
 	return append([]string(nil), args...)

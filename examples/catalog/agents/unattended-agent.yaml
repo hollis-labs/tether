@@ -1,0 +1,7 @@
+id: unattended-agent
+name: Unattended Agent
+roles: [general]
+skills: []
+permissions:
+  network: true
+  permission_mode: bypass

@@ -25,7 +25,7 @@ func TestResolveRuntimeBinding_Permission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve codex-cli: %v", err)
 	}
-	if codex.Permission != permission.ModeAcceptEdits {
-		t.Errorf("codex binding Permission = %q, want %q (workspace-write + on-request, so MCP tool calls can be approved)", codex.Permission, permission.ModeAcceptEdits)
+	if codex.Permission != permission.ModeYolo {
+		t.Errorf("codex binding Permission = %q, want %q (danger-full-access + never for explicit bypass)", codex.Permission, permission.ModeYolo)
 	}
 }
