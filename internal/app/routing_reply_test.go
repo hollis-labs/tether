@@ -15,6 +15,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	messaging "github.com/hollis-labs/go-messaging"
+	gopevents "github.com/hollis-labs/go-providers/provider/events"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
@@ -791,5 +792,121 @@ func TestStopWaitsForDrainsAndRefusesNewWork(t *testing.T) {
 	settleQuiet()
 	if got := h.state(r.ReplyID); got.State != store.RoutingReplyQueued || h.rt.sendCallCount("s1") != 0 {
 		t.Fatalf("a stopped dispatcher delivered: %+v", got)
+	}
+}
+
+// ─── the real turn lifecycle drives the dispatcher ──────────────────────────
+
+// replyOverRealTurnState wires a dispatcher to the session's REAL turn-output
+// state (the reducer, the submission marker and settleTurn), faking only the
+// process layer, so the idle notification is proven to come from turn
+// completion and not from the test.
+func replyOverRealTurnState(t *testing.T) (*Service, *sessionTurnOutput, *fakeRuntime, *replyDispatcher) {
+	t.Helper()
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	rt := newFakeRuntime()
+	rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	seam := rt.seam()
+	runtime := replyRuntime{wakeRuntime: seam, turnBusy: func(id string) bool {
+		state, ok := svc.SessionTurnOutputState(id)
+		if !ok {
+			return false
+		}
+		turn, _ := state.CurrentTurn()
+		return turn != ""
+	}}
+	d := newReplyDispatcher(context.Background(), svc.Store, nil, runtime, nil)
+	t.Cleanup(d.stop)
+	svc.replies.Store(d)
+	return svc, output, rt, d
+}
+
+func queueReplyFor(t *testing.T, svc *Service, session, body string) store.RoutingReply {
+	t.Helper()
+	r, _, err := svc.Store.CreateRoutingReply(context.Background(), store.NewRoutingReply{
+		From: messaging.Address{Kind: messaging.KindUser, Authority: "local", ID: "chris"}, ParentID: "p", Body: body,
+		TargetSessionID: session, Actor: "msg://user/local/chris"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func waitDelivered(t *testing.T, svc *Service, id string) store.RoutingReply {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r, err := svc.Store.RoutingReply(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.State == store.RoutingReplyDelivered {
+			return r
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reply is %q (%q)", r.State, r.Reason)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestTurnCompletionIsTheIdleTriggerForAQueuedReply(t *testing.T) {
+	svc, output, rt, d := replyOverRealTurnState(t)
+	// A real turn opens: the reducer marker says the session is busy.
+	output.observeProvider(gopevents.Delta{Text: "working"})
+	r := queueReplyFor(t, svc, "s1", "now that you are done")
+	d.notify("s1")
+	settleQuiet()
+	if rt.sendCallCount("s1") != 0 {
+		t.Fatal("injected into a session whose turn is open")
+	}
+	// Completion alone (no test-side notify) must deliver it.
+	output.observeProvider(gopevents.Done{})
+	got := waitDelivered(t, svc, r.ReplyID)
+	if got.DeliveredToSessionID != "s1" || rt.sendCalls[0].Text != "now that you are done" {
+		t.Fatalf("got %+v sends %+v", got, rt.sendCalls)
+	}
+}
+
+func TestSessionExitResolvesQueuedRepliesThroughFlush(t *testing.T) {
+	svc, output, rt, d := replyOverRealTurnState(t)
+	output.observeProvider(gopevents.Delta{Text: "working"})
+	r := queueReplyFor(t, svc, "s1", "after you are gone")
+	d.notify("s1")
+	settleQuiet()
+	rt.setAlive("s1", false, agentsessions.LiveStateIdle) // the process exits
+	output.flush()                                        // the launch goroutine's exit hook
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, err := svc.Store.RoutingReply(context.Background(), r.ReplyID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == store.RoutingReplyUndeliverable {
+			if got.Reason != ReplyReasonNoBinding {
+				t.Fatalf("got %+v", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reply stayed %q after the session exited", got.State)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestAFailedSubmissionDoesNotLeaveRepliesStuckBehindItsMarker(t *testing.T) {
+	svc, _, rt, _ := replyOverRealTurnState(t)
+	r := queueReplyFor(t, svc, "s1", "after the failed turn")
+	// trackTurnSubmission publishes a provisional marker, then a failed submit
+	// settles it: that is an idle boundary too.
+	err := svc.trackTurnSubmission("s1", func() error { return errors.New("stdin closed") })
+	if err == nil {
+		t.Fatal("expected the submission to fail")
+	}
+	waitDelivered(t, svc, r.ReplyID)
+	if rt.sendCallCount("s1") != 1 {
+		t.Fatalf("sends = %+v", rt.sendCalls)
 	}
 }
