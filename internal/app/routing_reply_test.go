@@ -13,9 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	messaging "github.com/hollis-labs/go-messaging"
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/go-providers/providertest"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
@@ -643,7 +646,9 @@ func TestInterruptCancelsTheTurnThenDeliversTheReplyAsTheNextTurn(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Interrupt != "canceled" {
+	// The receipt says what a turn_output stop_reason says, so a consumer can join them.
+	const wire = "cancelled" //nolint:misspell // the wire value, as llmtypes and ACP spell it
+	if llmtypes.StopReasonCancelled != wire || receipt.Interrupt != wire {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 	if h.intr.callCount() != 1 || h.intr.calls[0] != "s1|msg://user/local/chris" {
@@ -1015,4 +1020,91 @@ func TestAReplyAcceptedDuringAnEvaluationIsNotMissed(t *testing.T) {
 	h.reply(parent.ID, "second", false) //nolint:errcheck // arrives mid-evaluation
 	close(release)
 	h.waitState(first.ReplyID, store.RoutingReplyDelivered)
+}
+
+// ─── end to end: a real runtime, a captured CLI, the real dispatcher ─────────
+
+// A reply to a routed message reaches the session that sent it as its next turn:
+// real agentkit transport, real SendTurn, the real reducer and marker, the real
+// dispatcher. Only the model CLI is a captured fixture. The reply must wait for
+// the turn already in flight, and its own turn must produce output.
+func TestReplyBecomesTheNextTurnOfARealRuntimeSession(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		runtime       runtimes.ID
+		mode, fixture string
+		// outputs is how many turns the captured transcript can answer; a
+		// transcript that scripts one turn still proves the reply was injected.
+		outputs int
+	}{
+		{"codex app-server", runtimes.Codex, "jsonrpc-stdio", "codex/app_server_turn", 2},
+		{"claude streaming", runtimes.Claude, "streaming-stdio", "claude/stream_resume", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, id := nativeOutputLaunch(t, tc.runtime, tc.mode, providertest.Replay(tc.fixture))
+			ctx := context.Background()
+			if err := svc.StartRoutingReplies(ctx); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(svc.stopRoutingReplies)
+			if !svc.RoutingReplyWired() {
+				t.Fatal("not wired")
+			}
+
+			// The session routed a message to a channel; a user replies while its turn runs.
+			channel, _ := channels.ChannelAddress("ops")
+			parent, err := svc.Store.MessagingStore().Send(ctx, messaging.Envelope{Kind: messaging.MsgKindNotice,
+				From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id}, To: channel,
+				Payload: []byte(`{"text":"which option?"}`), ContentType: "application/json",
+				Metadata: map[string]string{"session_id": id}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.SendTurn(ctx, id, "say hi"); err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := svc.SubmitRoutingReply(ctx, api.RoutingReplyRequest{ParentID: parent.ID, Body: "say bye", Verified: true,
+				Caller: identity.Principal{ID: "msg://user/local/chris", Kind: "user"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.TargetSessionID != id {
+				t.Fatalf("receipt = %+v", receipt)
+			}
+
+			deadline := time.Now().Add(30 * time.Second)
+			var delivered store.RoutingReply
+			for time.Now().Before(deadline) {
+				delivered, _ = svc.Store.RoutingReply(ctx, receipt.ReplyID)
+				if delivered.State.Terminal() && len(outputEvents(t, svc)) >= tc.outputs {
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if delivered.State != store.RoutingReplyDelivered || delivered.DeliveredToSessionID != id {
+				t.Fatalf("reply = %+v", delivered)
+			}
+			outputs := outputEvents(t, svc)
+			if len(outputs) != tc.outputs || (tc.outputs == 2 && outputs[0].TurnID == outputs[1].TurnID) {
+				t.Fatalf("expected %d distinct turn outputs: %+v", tc.outputs, outputs)
+			}
+			// Order: the first turn's output precedes the reply's delivery event.
+			evs, err := svc.Store.EventsSince(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			firstOutput, deliveredAt := -1, -1
+			for i, ev := range evs {
+				switch {
+				case ev.Kind == events.KindSessionTurnOutput && firstOutput < 0:
+					firstOutput = i
+				case ev.Kind == events.KindRoutingReplyDelivered:
+					deliveredAt = i
+				}
+			}
+			if firstOutput < 0 || deliveredAt < firstOutput {
+				t.Fatalf("the reply was delivered (%d) before the turn in flight finished (%d)", deliveredAt, firstOutput)
+			}
+		})
+	}
 }

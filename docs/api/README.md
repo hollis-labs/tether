@@ -1619,7 +1619,7 @@ Idempotency-Key: <optional>
 
 ```json
 {"reply_id": "…", "parent_id": "{id}", "state": "queued", "target_session_id": "<session>",
- "interrupt": "canceled", "duplicate": false}
+ "interrupt": "cancelled", "duplicate": false}
 ```
 
 `POST /messages` with `in_reply_to` naming a routed message does the same and

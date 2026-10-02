@@ -32,6 +32,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	llmtypes "github.com/hollis-labs/go-llm-types"
 	messaging "github.com/hollis-labs/go-messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
@@ -66,9 +67,10 @@ var (
 	replyIdleBackoff   = time.Second
 )
 
-// Interrupt outcomes reported on the receipt.
+// Interrupt outcomes reported on the receipt. The cancel outcome is the same
+// string as a turn_output stop_reason, so a consumer can join the two.
 const (
-	replyInterruptCancelled  = "canceled"
+	replyInterruptCancelled  = llmtypes.StopReasonCancelled
 	replyInterruptNoTurn     = "no_turn_in_progress"
 	replyInterruptSuperseded = "turn_superseded"
 	replyInterruptNotRunning = "session_not_running"
