@@ -85,9 +85,9 @@ func (s *Service) End(ctx context.Context, o *Observation, out Outcome) events.T
 	duration := time.Since(o.started)
 	ev.DurationMs = duration.Milliseconds()
 	ev.ForwardMs = o.forward.Milliseconds()
-	ev.QueueMs = (duration - o.forward).Milliseconds()
-	if ev.QueueMs < 0 {
-		ev.QueueMs = 0
+	ev.GatewayMs = (duration - o.forward).Milliseconds()
+	if ev.GatewayMs < 0 {
+		ev.GatewayMs = 0
 	}
 	ev.ResultBytes = out.ResultBytes
 	ev.OK = out.OK
@@ -103,7 +103,7 @@ func (s *Service) End(ctx context.Context, o *Observation, out Outcome) events.T
 		}
 		ev.Error = s.Secrets.Redact(out.Error)
 		if len(ev.Error) > events.MaxToolCallErrorBytes {
-			ev.Truncated = true
+			ev.ErrorTruncated = true
 			ev.Error = events.TruncateToolCallError(ev.Error)
 		}
 	} else {
@@ -142,4 +142,10 @@ func ErrorClass(err error) events.ToolErrorClass {
 		return events.ToolErrorTimeout
 	}
 	return events.ToolErrorUpstream
+}
+
+// IsObserved reports whether the outer call recorder already owns the trace.
+func IsObserved(ctx context.Context) bool {
+	_, ok := ctx.Value(observationKey{}).(*Observation)
+	return ok
 }

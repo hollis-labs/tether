@@ -85,3 +85,29 @@ func TestTelemetryScrubsCallerErrorsWithoutMutatingUpstream(t *testing.T) {
 		t.Fatal("upstream result mutated")
 	}
 }
+
+func TestTelemetryEmptyArgumentsHaveZeroBytes(t *testing.T) {
+	for _, args := range []map[string]any{nil, {}} {
+		publisher := &callCapturePublisher{}
+		_, err := NewLoggingMiddleware(publisher).Handle(context.Background(), ToolCall{ToolName: "noargs", Args: args}, func(context.Context, ToolCall) (*mcpsdk.CallToolResult, error) { return &mcpsdk.CallToolResult{}, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range publisher.calls {
+			if call.ArgsBytes != 0 {
+				t.Fatalf("empty args size %d", call.ArgsBytes)
+			}
+		}
+	}
+}
+
+type callCapturePublisher struct{ calls []events.ToolCallEvent }
+
+func (p *callCapturePublisher) Publish(_ context.Context, event events.Event) error {
+	var call events.ToolCallEvent
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &call); err != nil {
+		return err
+	}
+	p.calls = append(p.calls, call)
+	return nil
+}

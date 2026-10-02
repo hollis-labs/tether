@@ -47,7 +47,7 @@ func TestProxyEvents_HTTPClientMCPParity(t *testing.T) {
 	}
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
-			original := store.ProxyEvent{ToolCallDetails: events.ToolCallDetails{Profile: "reader", DiscoveryMode: "search", ArgsBytes: 71, ResultBytes: 98, Truncated: true, ErrorClass: events.ToolErrorTimeout, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", QueueMs: 3, ForwardMs: 16}, ID: 7, SessionID: "own", Server: "upstream", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 19, OK: false, Error: "upstream failure", Timestamp: time.Date(2026, 10, 2, 1, 2, 3, 123, time.UTC), Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "session:own", SessionID: "own", Source: "daemon"}, ClaimedSessionID: "other"}
+			original := store.ProxyEvent{ToolCallDetails: events.ToolCallDetails{Profile: "reader", DiscoveryMode: "search", ArgsBytes: 71, ResultBytes: 98, ErrorTruncated: true, ErrorClass: events.ToolErrorTimeout, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", GatewayMs: 3, ForwardMs: 16}, ID: 7, SessionID: "own", Server: "upstream", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 19, OK: false, Error: "upstream failure", Timestamp: time.Date(2026, 10, 2, 1, 2, 3, 123, time.UTC), Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "session:own", SessionID: "own", Source: "daemon"}, ClaimedSessionID: "other"}
 			st := parityProxyRows{rows: []store.ProxyEvent{original}}
 			if fail {
 				st.err = errors.New("query unavailable")

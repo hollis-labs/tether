@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/telemetry"
 )
 
 // rawProxyHandler wraps fn -- a dispatch from decoded arguments/meta to a raw
@@ -38,7 +39,7 @@ func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, 
 		meta := map[string]any(req.Params.Meta)
 
 		handlerCtx = a.withSessionID(handlerCtx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() && !trace.SpanContextFromContext(handlerCtx).IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() && !telemetry.IsObserved(handlerCtx) {
 			handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
 		}
 		handlerCtx, span := hotel.ToolCallSpan(handlerCtx, spanName)

@@ -38,10 +38,10 @@ func TestServiceRecordsVerifiedMetadataAndTypedOutcome(t *testing.T) {
 	if end.Attribution.PrincipalID != "principal" || end.Attribution.WorkstreamID != "work" || end.ArgsBytes != 42 || end.ResultBytes != 123 || end.Profile != "reader" || end.DiscoveryMode != "search" {
 		t.Fatalf("metadata: %+v", end)
 	}
-	if end.ErrorClass != events.ToolErrorDenied || !end.Truncated || len(end.Error) > events.MaxToolCallErrorBytes || strings.Contains(end.Error, "canary-secret") {
+	if end.ErrorClass != events.ToolErrorDenied || !end.ErrorTruncated || len(end.Error) > events.MaxToolCallErrorBytes || strings.Contains(end.Error, "canary-secret") {
 		t.Fatalf("error: %+v", end)
 	}
-	if end.TraceID == "" || end.SpanID == "" || end.QueueMs < 0 || end.ForwardMs < 0 {
+	if end.TraceID == "" || end.SpanID == "" || end.GatewayMs < 0 || end.ForwardMs < 0 {
 		t.Fatalf("trace/timing: %+v", end)
 	}
 	if len(publisher.rows) != 2 || publisher.rows[1].Kind != events.EventTypeToolCallEnd {

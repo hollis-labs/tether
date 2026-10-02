@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/telemetry"
 	"sort"
 
 	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/telemetry"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

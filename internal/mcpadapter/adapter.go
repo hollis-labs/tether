@@ -33,8 +33,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/telemetry"
 	"log/slog"
 	"strings"
 
@@ -42,13 +40,14 @@ import (
 	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	hotel "github.com/hollis-labs/go-otel"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/telemetry"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Scope constants for mutating tool groups.
@@ -216,7 +215,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
 		ctx = a.withClaimedSessionID(ctx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !trace.SpanContextFromContext(ctx).IsValid() {
+		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !telemetry.IsObserved(ctx) {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
 		ctx, span := hotel.ToolCallSpan(ctx, name)

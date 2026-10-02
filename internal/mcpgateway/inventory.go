@@ -53,7 +53,7 @@ type Result struct {
 	Returned           int      `json:"returned"`
 	TotalMatches       int      `json:"total_matches"`
 	NextCursor         string   `json:"next_cursor,omitempty"`
-	Truncated          bool     `json:"truncated"`
+	ErrorTruncated     bool     `json:"error_truncated"`
 	Complete           bool     `json:"complete"`
 	UnavailableServers []string `json:"unavailable_servers"`
 }
@@ -259,8 +259,8 @@ func (s *Service) find(req Request, search bool) (Result, error) {
 		out.Items = append(out.Items, itemFor(match.entry, score))
 	}
 	out.Returned = len(out.Items)
-	out.Truncated = end < len(matches)
-	if out.Truncated {
+	out.ErrorTruncated = end < len(matches)
+	if out.ErrorTruncated {
 		raw, _ := json.Marshal(pageCursor{fingerprint, end})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
@@ -286,7 +286,10 @@ func readCursor(cursor, binding string, total int) (int, error) {
 
 // TargetError means no dispatch occurred. Transport errors from Dispatch retain
 // their original protocol semantics and must not be disguised as target errors.
-type TargetError struct{ Message string; Unavailable bool }
+type TargetError struct {
+	Message     string
+	Unavailable bool
+}
 
 func (e *TargetError) Error() string { return e.Message }
 
@@ -301,11 +304,11 @@ func (s *Service) ResolveTarget(name string) (Entry, error) {
 			continue
 		}
 		if unavailable[entry.Origin] {
-			return Entry{}, &TargetError{Message:fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name),Unavailable:true}
+			return Entry{}, &TargetError{Message: fmt.Sprintf("origin %q is unavailable; tool %q cannot be called", entry.Origin, name), Unavailable: true}
 		}
 		return entry, nil
 	}
-	return Entry{}, &TargetError{Message:fmt.Sprintf("tool %q is unknown or excluded", name)}
+	return Entry{}, &TargetError{Message: fmt.Sprintf("tool %q is unknown or excluded", name)}
 }
 
 func (s *Service) Call(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {

@@ -279,7 +279,7 @@ func (s *Service) Ingest(ctx context.Context, req ProxyEventIngestRequest, resol
 // truncates an over-long error. It returns the reason a body is refused, or
 // "".
 func validateIngest(req *ProxyEventIngestRequest) string {
-	if req.ArgsBytes < 0 || req.ResultBytes < 0 || req.QueueMs < 0 || req.ForwardMs < 0 {
+	if req.ArgsBytes < 0 || req.ResultBytes < 0 || req.GatewayMs < 0 || req.ForwardMs < 0 {
 		return "telemetry sizes and latencies must not be negative"
 	}
 	switch req.ErrorClass {
@@ -287,7 +287,10 @@ func validateIngest(req *ProxyEventIngestRequest) string {
 	default:
 		return "invalid error_class"
 	}
-	for _, field := range []string{req.Profile, req.DiscoveryMode, req.TraceID, req.SpanID} {
+	if !validTraceID(req.TraceID, 32) || !validTraceID(req.SpanID, 16) {
+		return "trace_id/span_id must be lowercase hex of 32/16 characters"
+	}
+	for _, field := range []string{req.Profile, req.DiscoveryMode} {
 		if len(field) > MaxIDBytes {
 			return "telemetry identifier is too long"
 		}
@@ -322,7 +325,7 @@ func validateIngest(req *ProxyEventIngestRequest) string {
 		return "duration_ms must not be negative"
 	}
 	if len(req.Error) > MaxProxyEventErrorBytes {
-		req.Truncated = true
+		req.ErrorTruncated = true
 	}
 	req.Error = TruncateProxyEventError(req.Error)
 	return ""
@@ -392,4 +395,19 @@ func ToDTO(ev Record) ProxyEventDTO {
 		Error:            ev.Error,
 		Timestamp:        ev.Timestamp.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+func validTraceID(id string, size int) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) != size {
+		return false
+	}
+	for _, ch := range id {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

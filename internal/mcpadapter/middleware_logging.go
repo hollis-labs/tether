@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/telemetry"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
-	"go.opentelemetry.io/otel/trace"
-
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/redact"
+	"github.com/hollis-labs/tether/internal/telemetry"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // LoggingMiddleware emits tool_call_start and tool_call_end events to an
@@ -64,8 +63,10 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 		ctx = m.contextDecorator(ctx)
 	}
 	var argsRaw json.RawMessage
-	if raw, err := json.Marshal(call.Args); err == nil {
-		argsRaw = raw
+	if len(call.Args) > 0 {
+		if raw, err := json.Marshal(call.Args); err == nil {
+			argsRaw = raw
+		}
 	}
 	sessionID := sessionIDFromContext(ctx)
 	attribution, _ := callcontext.FromContext(ctx)
@@ -87,8 +88,10 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	ctx, observation := service.Start(ctx, telemetry.Call{Name: call.ToolName, Server: server, SessionID: sessionID, ClaimedSessionID: claimed, Fingerprint: callFingerprint(call.Args, argsRaw), ArgsBytes: int64(len(argsRaw)), Profile: m.profile, Mode: m.mode})
 	result, err := next(ctx, call)
 	out := telemetry.Outcome{OK: err == nil && (result == nil || !result.IsError)}
-	if raw, marshalErr := json.Marshal(result); marshalErr == nil && result != nil {
-		out.ResultBytes = int64(len(raw))
+	if result != nil {
+		if size, sizeErr := telemetry.JSONSize(result); sizeErr == nil {
+			out.ResultBytes = size
+		}
 	}
 	if err != nil {
 		out.Error = err.Error()
