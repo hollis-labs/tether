@@ -112,6 +112,10 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	if rows[0].Attribution != want || rows[0].SessionID != want.SessionID || rows[0].ClaimedSessionID != "forged-session" {
 		t.Fatalf("persisted=%+v want=%+v", rows[0], want)
 	}
+	readback, err := (DaemonProxyEvents{Client: dc}).QueryProxyEvents(store.ProxyEventFilter{ToolName: "context_test"})
+	if err != nil || len(readback) != 1 || readback[0].Attribution != want || readback[0].ClaimedSessionID != "forged-session" {
+		t.Fatalf("daemon readback=%+v err=%v", readback, err)
+	}
 }
 
 func TestClaimedSessionNeverCreatesProvenance(t *testing.T) {
