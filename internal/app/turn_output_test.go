@@ -40,6 +40,7 @@ func outputHarness(t *testing.T, route *launchprofile.Route) (*Service, *session
 		t.Fatal(err)
 	}
 	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Catalog: &config.Catalog{Providers: map[string]config.Provider{"codex": {ID: "codex", Provider: "codex", RuntimeKind: config.RuntimeKindJSONRPCStdio}}}}
+	t.Cleanup(svc.stopOutputRetries)
 	svc.installTurnFeeds()
 	return svc, svc.newSessionTurnOutput(*rowPtr, plan)
 }

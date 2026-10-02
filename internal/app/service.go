@@ -57,6 +57,7 @@ type Service struct {
 	turnOutputTimeout      time.Duration     // tests may shorten the default persistence deadline
 	turnRouter             *turnrouting.Router
 	turnFeeds              map[string]turnFeedRegistration
+	outputRetries          outputRetryState
 	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
 
 	CatalogRoot string
@@ -458,6 +459,7 @@ func (s *Service) Close() error {
 		value.(*sessionTurnOutput).flush()
 		return true
 	})
+	s.stopOutputRetries()
 	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil

@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/hollis-labs/tether/internal/events"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,7 +40,7 @@ func TestTurnOutputReadsCurrentWorkstreamAtPublication(t *testing.T) {
 	}
 }
 
-func TestBlockedPersistenceCannotFreezeTurnCompletion(t *testing.T) {
+func TestBlockedPersistenceRetriesOutputWithoutFreezingTurnCompletion(t *testing.T) {
 	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
 	svc.turnOutputTimeout = 25 * time.Millisecond
 	output.observeProvider(gopevents.Delta{Text: "answer"})
@@ -66,8 +68,29 @@ func TestBlockedPersistenceCannotFreezeTurnCompletion(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := outputEvents(t, svc); len(got) != 0 {
-		t.Fatalf("failed persist emitted event: %+v", got)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := outputEvents(t, svc)
+		if len(got) == 1 {
+			if got[0].MessageID == "" {
+				t.Fatal("routed output lost its body")
+			}
+			env, err := svc.Store.StagedTurnOutput(context.Background(), got[0].MessageID)
+			if err != nil || string(env.Payload) != `{"text":"answer"}` {
+				t.Fatalf("lost body: %+v %v", env, err)
+			}
+			svc.stopOutputRetries()
+			var count int
+			if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("duplicate stage: %d %v", count, err)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("output was not eventually staged/published: %+v", got)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -249,5 +272,45 @@ func TestFailedCreatorCannotSettlePendingSteering(t *testing.T) {
 	}
 	if id, _ := output.CurrentTurn(); id != "" {
 		t.Fatal("rejected marker still current")
+	}
+}
+
+// Fail publication after staging, then allow the retry to reach the real bus.
+type stalledOutputBus struct {
+	events.Bus
+	calls atomic.Int32
+}
+
+func (b *stalledOutputBus) Publish(ctx context.Context, ev events.Event) error {
+	if b.calls.Add(1) == 1 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return b.Bus.Publish(ctx, ev)
+}
+func TestTurnOutputEventRetryRetainsSingleStagedBody(t *testing.T) {
+	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	svc.turnOutputTimeout = 25 * time.Millisecond
+	svc.Bus = &stalledOutputBus{Bus: svc.Bus}
+	output.observeProvider(gopevents.Done{Text: "retry body"})
+	deadline := time.After(3 * time.Second)
+	for {
+		got := outputEvents(t, svc)
+		if len(got) == 1 {
+			svc.stopOutputRetries()
+			var count int
+			if err := svc.Store.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("restaged output: %d %v", count, err)
+			}
+			if got[0].MessageID == "" {
+				t.Fatal("retry dropped message id")
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("event retry failed")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
