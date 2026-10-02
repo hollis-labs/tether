@@ -8,8 +8,7 @@
 // one wrapper run to agentsessions.Runtime and agentsessions.Session so the
 // Manager, attach and session.log work as they do for every other runtime.
 //
-// Stage 1 only. Native runtimes still launch through agentkit's runtimes;
-// stage 2 moves them onto the wrapper as well.
+// Native runtimes launch through agentkit. This host adapts ACP sessions only.
 package acp
 
 import (
