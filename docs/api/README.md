@@ -1679,13 +1679,21 @@ records it and refuses nothing.
   is delivered: a younger reply that is due does not jump an older one that is
   waiting out a retry.
 - **At most once.** A reply is injected at most once into a session. It is
-  retried (up to five attempts, with backoff) only when the runtime rejected the
-  submission before taking the turn. Once the runtime has taken the turn, a later
-  failure of that turn is reported and never repeated: a subprocess runtime
-  (`codex exec`, `claude -p`, `opencode run`, `agy`) blocks for the whole turn and
-  returns the process's failure afterwards, and the reply is then `delivered`
-  with `reason: "turn_failed"`. Streaming and JSON-RPC runtimes report a failed
-  turn on the session's `session.turn_output`.
+  retried (up to five attempts, with backoff) only when the runtime did not take
+  the turn: it rejected the submission, the process could not start or be
+  sandboxed, the CLI had no login (`provider_not_authenticated`) or the session
+  it was asked to resume was gone (`provider_session_lost`). Those outrank any
+  sign that the turn started: a CLI that was launched and then refused the turn
+  still opened Tether's turn marker, and the model never saw the reply. Once
+  Tether's turn feed has seen the runtime take the turn (output began or the turn
+  finished) and none of those applies, a later failure is reported and never
+  repeated: a subprocess runtime (`codex exec`, `claude -p`, `opencode run`,
+  `agy`) blocks for the whole turn and returns the process's failure afterwards,
+  and the reply is then `delivered` with `reason: "turn_failed"`. A process exit
+  on its own is not taken as proof that the turn ran. Streaming and JSON-RPC
+  runtimes report a failed turn on the session's `session.turn_output`. The one
+  case Tether cannot know is a daemon that stops while a reply is being injected:
+  see "A daemon restart".
 - **Runtimes that reject mid-turn input** (OpenCode, ACP) simply wait for the turn
   to end. A rejection is not a failed attempt.
 - **A runtime with no turn lifecycle** (a PTY) never says when it is idle, so a
@@ -1741,7 +1749,7 @@ text.
 | `bound_session_not_running` | `undeliverable` | The binding names a session that is not running. |
 | `pull_only_binding` | `undeliverable` | The actor is a published-local bridge; Tether cannot inject a turn into it. |
 | `resolve_failed` | `undeliverable` | The binding lookup kept failing. |
-| `submit_failed` | `undeliverable` | The runtime rejected the turn five times; `detail` carries the last error. While retrying the state is `queued` with this reason. |
+| `submit_failed` | `undeliverable` | The runtime did not take the turn five times (rejected, would not start, no login, resume target gone); `detail` carries the last error. While retrying the state is `queued` with this reason. |
 | `no_turn_feed` | `undeliverable` | The session's runtime reports no turn lifecycle (a PTY). |
 | `daemon_restarted_during_delivery` | `undeliverable` | See above. |
 | `interrupt_unconfirmed` | `undeliverable` | See above. |

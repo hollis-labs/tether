@@ -34,7 +34,6 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-runner/runner"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
@@ -340,12 +339,14 @@ func (d *replyDispatcher) drain(sessionID string) bool {
 }
 
 // replyTurnRan reports a submission error that came back after the runtime took
-// the turn and ran it. The model has acted on the reply; repeating it would run
-// it twice.
+// the turn and ran it: the turn feed saw the turn begin or finish
+// (trackTurnSubmission). The model has acted on the reply; repeating it would run
+// it twice. A process exit on its own is not proof, and a failure the runtime says
+// meant it took no turn (runtimeTookNoTurn) outranks the marker: a CLI that was
+// launched and then refused the turn (no login, a dead resume id) still opened it.
 func replyTurnRan(err error) bool {
 	var ran *turnRanError
-	var exit *runner.ExitError
-	return errors.As(err, &ran) || errors.As(err, &exit)
+	return errors.As(err, &ran) && !runtimeTookNoTurn(err)
 }
 
 // deliver injects r's body as sessionID's next turn. r was claimed, so r.Attempts
@@ -363,6 +364,10 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		return
 	}
 	err = d.rt.sendTurn(d.ctx, sessionID, body)
+	// The order matters. A rejection (turn in flight, session gone) means the
+	// runtime did not take the reply, whatever else the error carries: a rejected
+	// submit can still have had an in-flight turn's first event bind its marker, so
+	// "the turn ran" is only believed once these are ruled out.
 	switch {
 	case err == nil:
 		reason := ""
@@ -373,12 +378,6 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 	case d.ctx.Err() != nil:
 		// Shutting down mid-submit: whether the runtime took it is unknown. The
 		// row stays 'delivering' and startup recovery resolves it at-most-once.
-	case replyTurnRan(err):
-		// A subprocess runtime blocks for the whole turn and returns the process's
-		// failure afterwards: the reply was delivered and acted on, and the turn
-		// failed. Report it; never run the reply again.
-		reason := ReplyReasonTurnFailed
-		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, Reason: reason, Detail: err.Error(), DeliveredTo: sessionID})
 	case errors.Is(err, agentsessions.ErrTurnInFlight):
 		// A runtime that rejects mid-turn input (OpenCode, ACP): not a failure,
 		// wait for the turn's completion. The attempt does not count.
@@ -387,6 +386,12 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		// The Manager may not have noticed the exit yet: look again shortly.
 		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: err.Error(), RefundAttempt: true,
 			NotBefore: time.Now().Add(replyIdleBackoff)})
+	case replyTurnRan(err):
+		// A subprocess runtime blocks for the whole turn and returns the process's
+		// failure afterwards: the reply was delivered and acted on, and the turn
+		// failed. Report it; never run the reply again.
+		reason := ReplyReasonTurnFailed
+		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, Reason: reason, Detail: err.Error(), DeliveredTo: sessionID})
 	default:
 		if cur, getErr := d.st.RoutingReply(d.ctx, r.ReplyID); getErr == nil {
 			r.Attempts = cur.Attempts

@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-runner/runner"
 	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 )
 
@@ -173,6 +177,21 @@ type turnRanError struct{ err error }
 
 func (e *turnRanError) Error() string { return e.err.Error() }
 func (e *turnRanError) Unwrap() error { return e.err }
+
+// runtimeTookNoTurn reports a submission failure that says the runtime did not take
+// the turn, whatever the turn feed shows. It rejected the submission (a turn is in
+// flight, the session is gone), the process could not start or be sandboxed, the
+// CLI had no login, or the session it was asked to resume was lost. A launched
+// subprocess emits a synthesized terminal on every exit, so for these the feed's
+// activity is not evidence that the model saw the input. A bare process exit is
+// not in this list: it proves nothing either way.
+func runtimeTookNoTurn(err error) bool {
+	var start *runner.StartError
+	var sandbox *runner.SandboxError
+	return errors.Is(err, agentsessions.ErrTurnInFlight) || errors.Is(err, agentsessions.ErrSessionNotRunning) ||
+		errors.Is(err, provider.ErrProviderSessionLost) || errors.Is(err, provider.ErrProviderNotAuthenticated) ||
+		errors.As(err, &start) || errors.As(err, &sandbox)
+}
 
 // Publish a provisional marker before calling the runtime: it may synchronously
 // emit its final output during submit. A successful return never resurrects it.
