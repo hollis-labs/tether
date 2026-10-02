@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -33,11 +34,6 @@ func (a *Adapter) ProbeNames(ctx context.Context, catalogDir string, opts ProxyO
 					ids = append(ids, entry.ID)
 				}
 			}
-		}
-	}
-	for _, id := range ids {
-		if id == "tether" {
-			return mcpgateway.Status{}, reservedOriginError()
 		}
 	}
 	ids, err = mcpgateway.SelectOrigins(authoredOriginStates(authored), ids, nil)
@@ -119,6 +115,10 @@ func probeRedactor(entries []config.MCPServerEntry) *redact.Set {
 	out := proxyRedactionSet(entries)
 	for _, entry := range entries {
 		out.Add(entry.URL)
+		if endpoint, err := url.Parse(entry.URL); err == nil {
+			out.Add(endpoint.Hostname())
+			out.Add(endpoint.Host)
+		}
 		for i, arg := range entry.Args {
 			if i > 0 {
 				switch entry.Args[i-1] {

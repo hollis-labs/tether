@@ -146,18 +146,26 @@ func (p *ClientPool) Start(ctx context.Context) error {
 			ids = append(ids, entry.ID)
 		}
 	}
-	if err := mcpgateway.ValidateOriginIDs(ids); err != nil {
-		return err
-	}
+	originErr := mcpgateway.ValidateOriginIDs(ids)
 	ctx, p.cancel = context.WithCancel(ctx)
 	var initial sync.WaitGroup
+	seen := map[string]bool{}
 	for _, entry := range p.entries {
 		if !entry.IsEnabled() {
 			continue
 		}
 		p.mu.Lock()
 		p.statuses[entry.ID] = &clientStatus{entry: entry, state: "starting"}
+		invalid := entry.ID == "tether" || entry.ID == "" || seen[entry.ID]
+		seen[entry.ID] = true
+		if invalid {
+			p.statuses[entry.ID].state = "excluded"
+			p.statuses[entry.ID].err = originErr
+		}
 		p.mu.Unlock()
+		if invalid {
+			continue
+		}
 		if err := confineUpstreamTransport(entry, p.confineRemote); err != nil {
 			p.mu.Lock()
 			p.statuses[entry.ID].state = "excluded"
@@ -176,10 +184,19 @@ func (p *ClientPool) Start(ctx context.Context) error {
 	initial.Wait()
 	_, collisions := p.registry.NameDiagnostics()
 	if len(collisions) > 0 {
-		p.Shutdown()
-		return &mcpgateway.CollisionError{Collisions: collisions}
+		p.mu.Lock()
+		for _, collision := range collisions {
+			for _, owner := range collision.Owners {
+				if status := p.statuses[owner.Origin]; status != nil {
+					status.degraded = true
+					status.err = &mcpgateway.CollisionError{Collisions: []mcpgateway.NameCollision{collision}}
+				}
+			}
+		}
+		p.mu.Unlock()
+		return errors.Join(originErr, &mcpgateway.CollisionError{Collisions: collisions})
 	}
-	return nil
+	return originErr
 }
 
 func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry, ready func()) {
@@ -589,8 +606,27 @@ type ServerStatus struct {
 func (p *ClientPool) StatusSummary() []ServerStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	_, collisions := p.registry.NameDiagnostics()
+	affected := map[string][]mcpgateway.NameCollision{}
+	for _, collision := range collisions {
+		for _, owner := range collision.Owners {
+			affected[owner.Origin] = append(affected[owner.Origin], collision)
+		}
+	}
 	out := make([]ServerStatus, 0, len(p.statuses))
 	for _, s := range p.statuses {
+		if findings := affected[s.entry.ID]; len(findings) > 0 {
+			s.degraded = true
+			if s.accepted {
+				s.err = &mcpgateway.CollisionError{Collisions: findings}
+			}
+		} else {
+			var collision *mcpgateway.CollisionError
+			if s.accepted && errors.As(s.err, &collision) {
+				s.degraded = false
+				s.err = nil
+			}
+		}
 		ss := ServerStatus{Degraded: s.degraded, ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, ToolCount: s.toolCount, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
 		ss.RecoveryExhausted = s.exhausted
 		ss.Recovery = p.recoveryObservation(s)

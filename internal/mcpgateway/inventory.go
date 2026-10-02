@@ -336,6 +336,42 @@ func (s *Service) Status(name string) Status {
 	}
 	unavailable, ids := availability(snapshot)
 	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name}
+	if s.Policy != nil && s.Policy.Selection.Profile != nil {
+		visible := map[string]Entry{}
+		for _, entry := range snapshot.Entries {
+			visible[entry.Tool.Name] = entry
+		}
+		out.Lint = []NameFinding{}
+		for _, finding := range original.Lint {
+			if entry, ok := visible[finding.Name]; ok && entry.Origin == finding.Origin {
+				out.Lint = append(out.Lint, finding)
+			}
+		}
+		out.Collisions = []NameCollision{}
+		for _, collision := range original.Collisions {
+			allowed := true
+			for _, owner := range collision.Owners {
+				entry := Entry{Origin: owner.Origin, Tool: &mcpsdk.Tool{Name: collision.Name}}
+				if known, ok := visible[collision.Name]; ok && known.Origin == owner.Origin {
+					entry = known
+				}
+				if !IsInfrastructure(collision.Name) && s.Policy.Exclusion(entry) != "" {
+					allowed = false
+				}
+			}
+			if allowed {
+				out.Collisions = append(out.Collisions, collision)
+			}
+		}
+		if len(out.Collisions) != len(original.Collisions) {
+			out.Origins = append([]OriginStatus(nil), out.Origins...)
+			for i := range out.Origins {
+				if strings.Contains(out.Origins[i].Error, "collid") || strings.Contains(out.Origins[i].Error, "collision") {
+					out.Origins[i].Error = "upstream naming collision; tool details excluded by profile"
+				}
+			}
+		}
+	}
 	if s.Policy != nil {
 		out.Profile = s.Policy.Selection.ID
 		out.ProfileSource = s.Policy.Selection.Source

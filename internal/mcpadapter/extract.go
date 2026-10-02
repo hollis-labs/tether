@@ -434,6 +434,12 @@ func (a *Adapter) extractionEnabled() bool {
 //
 // Failures to attach are logged and dropped. Correlation is a side effect of a
 // proxied call; it must never fail the call it describes.
+func (a *Adapter) recordProxyRefs(ctx context.Context, registry *ToolRegistry, name string, args map[string]any, res *mcpsdk.CallToolResult, callErr error) {
+	if rt, ok := registry.Lookup(name); ok {
+		a.recordRefs(ctx, rt.UpstreamName, args, res, callErr)
+	}
+}
+
 func (a *Adapter) recordRefs(ctx context.Context, toolName string, args map[string]any, res *mcpsdk.CallToolResult, callErr error) {
 	if !a.extractionEnabled() || callErr != nil || (res != nil && res.IsError) {
 		return

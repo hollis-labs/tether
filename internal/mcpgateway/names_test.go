@@ -1,6 +1,7 @@
 package mcpgateway
 
 import (
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"strings"
 	"testing"
 )
@@ -28,5 +29,25 @@ func TestCollisionDescriptionIsIndependentOfArrivalOrder(t *testing.T) {
 	second := &CollisionError{Collisions: []NameCollision{CollidingName("read", b, a)}}
 	if first.Error() != second.Error() || !strings.Contains(first.Error(), "declare tool_prefix on one upstream") {
 		t.Fatalf("%v != %v", first, second)
+	}
+}
+
+func TestDuplicateWithinOriginHasActionableRemedy(t *testing.T) {
+	owner := ToolOwner{Origin: "alpha", Name: "read", Kind: "upstream"}
+	err := (&CollisionError{Collisions: []NameCollision{CollidingName("read", owner, owner)}}).Error()
+	if !strings.Contains(err, "tools/list response") || strings.Contains(err, "declare tool_prefix on one upstream") {
+		t.Fatal(err)
+	}
+}
+
+func TestProfileStatusHidesExcludedNamingDetails(t *testing.T) {
+	ownerA := ToolOwner{Origin: "alpha", Name: "read", Kind: "upstream"}
+	ownerB := ToolOwner{Origin: "beta", Name: "read", Kind: "upstream"}
+	collision := CollidingName("read", ownerA, ownerB)
+	snapshot := Snapshot{Entries: []Entry{{Origin: "alpha", Tool: &mcpsdk.Tool{Name: "alpha_read"}}, {Origin: "beta", Tool: &mcpsdk.Tool{Name: "read"}}}, Lint: LintName("beta", "read"), Collisions: []NameCollision{collision}, Origins: []OriginStatus{{ID: "beta", Error: (&CollisionError{Collisions: []NameCollision{collision}}).Error()}}}
+	s := Service{Snapshot: func() Snapshot { return snapshot }, Policy: &Policy{Selection: ProfileSelection{Profile: &Profile{Tools: ToolRules{Allow: []string{"alpha_*"}, Deny: []string{"read"}}}}}}
+	status := s.Status("")
+	if len(status.Lint) != 0 || len(status.Collisions) != 0 || strings.Contains(status.Origins[0].Error, `"read"`) {
+		t.Fatalf("hidden names in status %+v", status)
 	}
 }

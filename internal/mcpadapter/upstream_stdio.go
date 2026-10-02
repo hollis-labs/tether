@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hollis-labs/go-mcp/supervise"
@@ -19,7 +20,8 @@ import (
 
 // stdioUpstream owns Wait; the MCP transport only owns the protocol pipes.
 // A replacement is never started until Wait confirms the old process exited.
-// Closing a connection sends EOF, never a signal to a live upstream.
+// Normal proxy connections close with EOF. Explicit live probes own a separate
+// process group and terminate it on cancellation/close.
 type stdioUpstream struct {
 	*mcpsdk.ClientSession
 	cmd    *exec.Cmd
@@ -30,6 +32,7 @@ type stdioUpstream struct {
 	stderr supervise.Tail
 	exit   supervise.Exit // published by closing done
 	launch LaunchObservation
+	probe  bool
 }
 
 // eofReader must satisfy io.ReadCloser, not just io.Reader: mcpsdk.IOTransport
@@ -77,8 +80,16 @@ func spawnStdioUpstream(entry config.MCPServerEntry, lifetime ...context.Context
 	if len(lifetime) > 0 {
 		// #nosec G204 -- Explicit live doctor probe executes the operator-authored MCP command, bounded by its context; no shell is added.
 		cmd = exec.CommandContext(lifetime[0], entry.Command, entry.Args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
 	} // probe shutdown owns the child lifetime
-	u := &stdioUpstream{cmd: cmd, done: make(chan struct{}), lost: make(chan struct{})}
+	u := &stdioUpstream{cmd: cmd, probe: len(lifetime) > 0, done: make(chan struct{}), lost: make(chan struct{})}
 	u.launch = observeLaunch(u.cmd, entry)
 	// A proxy's own bearer must not be delegated to upstream processes.
 	// Explicit catalog env entries below remain operator-controlled overrides.
@@ -130,6 +141,9 @@ func spawnStdioUpstream(entry config.MCPServerEntry, lifetime ...context.Context
 // pipeRWC.Close in the official SDK's CommandTransport) and reaps the
 // process so a child that never notices EOF does not leak as a zombie.
 func (u *stdioUpstream) abandon() {
+	if u.probe {
+		_ = u.cmd.Cancel()
+	}
 	_ = u.stdin.Close()
 	_ = u.stdout.Close()
 	go func() { _ = u.cmd.Wait() }()
@@ -157,6 +171,9 @@ func stderrRedactionValues(entry config.MCPServerEntry) []string {
 }
 
 func (u *stdioUpstream) Close() error {
+	if u.probe {
+		_ = u.cmd.Cancel()
+	}
 	err := u.ClientSession.Close()
 	_ = u.stdout.Close()
 	return err

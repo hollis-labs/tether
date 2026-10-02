@@ -284,7 +284,9 @@ func TestProfileRefResolverUsesEligibility(t *testing.T) {
 		called = true
 		return nil, nil
 	}}
-	resolver := &routerRefResolver{router: NewProxyRouter(NewToolRegistry()), gateway: service}
+	registry := NewToolRegistry()
+	mustRegister(t, registry, "tesseract", nil, []*mcpsdk.Tool{makeTool("tesseract_ref_resolve")})
+	resolver := &routerRefResolver{router: NewProxyRouter(registry), gateway: service}
 	if _, err := resolver.ResolveRef(context.Background(), map[string]any{}); err == nil || !strings.Contains(err.Error(), "excluded") {
 		t.Fatalf("ref eligibility=%v", err)
 	}

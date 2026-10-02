@@ -38,12 +38,14 @@ type MCPServerEntry struct {
 	AllowUnconfinedRemote bool              `yaml:"allow_unconfined_remote"`
 	ID                    string            `yaml:"id"`
 	ToolPrefix            string            `yaml:"tool_prefix"` // exact prepend, never inferred or normalized
-	Transport             string            `yaml:"transport"`   // "stdio" | "sse" | "http"
-	Command               string            `yaml:"command"`     // stdio: binary path
-	Args                  []string          `yaml:"args"`        // stdio: arguments; support ${VAR} and secret refs
-	Env                   map[string]string `yaml:"env"`         // env vars; values support ${VAR} and secret refs
-	URL                   string            `yaml:"url"`         // sse, http: endpoint URL
-	Token                 string            `yaml:"token"`       // bearer token, ${VAR} ref, or secret ref
+	ToolPrefixInvalid     bool              `yaml:"-" json:"-"`
+	CatalogFile           string            `yaml:"-" json:"-"`
+	Transport             string            `yaml:"transport"` // "stdio" | "sse" | "http"
+	Command               string            `yaml:"command"`   // stdio: binary path
+	Args                  []string          `yaml:"args"`      // stdio: arguments; support ${VAR} and secret refs
+	Env                   map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
+	URL                   string            `yaml:"url"`       // sse, http: endpoint URL
+	Token                 string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
 	Scopes                []string          `yaml:"scopes"`
 	Enabled               *bool             `yaml:"enabled"` // nil → defaults to true
 	Tags                  []string          `yaml:"tags"`
@@ -66,6 +68,33 @@ type MCPServerEntry struct {
 	// secretRefs marks keychain/helper references as authored in the catalog,
 	// before environment substitution can produce a reference-looking value.
 	secretRefs map[string]bool
+}
+
+// UnmarshalYAML keeps an MCP-only prefix typo from breaking shared catalog
+// loading. Doctor reports invalid declarations; valid prefixes are byte-exact.
+func (e *MCPServerEntry) UnmarshalYAML(node *yaml.Node) error {
+	type plain MCPServerEntry
+	copyNode := *node
+	copyNode.Content = nil
+	var prefix *yaml.Node
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "tool_prefix" {
+			prefix = node.Content[i+1]
+			continue
+		}
+		copyNode.Content = append(copyNode.Content, node.Content[i], node.Content[i+1])
+	}
+	if err := copyNode.Decode((*plain)(e)); err != nil {
+		return err
+	}
+	if prefix != nil {
+		if prefix.Kind == yaml.ScalarNode && prefix.Tag == "!!str" {
+			e.ToolPrefix = prefix.Value
+		} else {
+			e.ToolPrefixInvalid = true
+		}
+	}
+	return nil
 }
 
 // IsEnabled returns true when the entry should be loaded. A missing enabled
@@ -375,6 +404,7 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		}
 
 		entry.catalogDir = catalogDir
+		entry.CatalogFile = name
 		entry.fileRefs = map[string]bool{}
 		entry.secretRefs = map[string]bool{}
 

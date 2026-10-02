@@ -29,7 +29,11 @@ type CollisionError struct{ Collisions []NameCollision }
 func (e *CollisionError) Error() string {
 	parts := make([]string, 0, len(e.Collisions))
 	for _, c := range e.Collisions {
-		parts = append(parts, fmt.Sprintf("final tool name %q collides: %s origin %q tool %q and %s origin %q tool %q; declare tool_prefix on one upstream", c.Name, c.Owners[0].Kind, c.Owners[0].Origin, c.Owners[0].Name, c.Owners[1].Kind, c.Owners[1].Origin, c.Owners[1].Name))
+		remedy := "declare tool_prefix on one upstream"
+		if c.Owners[0].Origin == c.Owners[1].Origin {
+			remedy = "fix the upstream tools/list response to declare each tool name once; a prefix cannot resolve duplicate names within one origin"
+		}
+		parts = append(parts, fmt.Sprintf("final tool name %q collides: %s origin %q tool %q and %s origin %q tool %q; %s", c.Name, c.Owners[0].Kind, c.Owners[0].Origin, c.Owners[0].Name, c.Owners[1].Kind, c.Owners[1].Origin, c.Owners[1].Name, remedy))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "; ")

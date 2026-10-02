@@ -162,7 +162,7 @@ func (c *liveProxyCatalog) addProxyTools(defs ...*mcpsdk.Tool) {
 			if c.adapter.resolver == nil && c.router != nil {
 				c.adapter.resolver = &routerRefResolver{router: c.router}
 			}
-			c.adapter.recordRefs(handlerCtx, def.Name, args, res, err)
+			c.adapter.recordProxyRefs(handlerCtx, c.registry, def.Name, args, res, err)
 			return res, err
 		}))
 	}
@@ -299,9 +299,6 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		if err != nil {
 			return err
 		}
-		if err := rejectSelectedReservedOrigin(authored, opts.Profile.Profile); err != nil {
-			return err
-		}
 		if _, err := mcpgateway.SelectOrigins(authoredOriginStates(authored), nil, opts.Profile.Profile); err != nil {
 			return err
 		}
@@ -313,11 +310,6 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		authored, loadErr := config.LoadMCPServerCatalog(catalogDir)
 		if loadErr != nil {
 			return loadErr
-		}
-		for _, entry := range authored {
-			if entry.IsEnabled() && entry.ID == "tether" {
-				return reservedOriginError()
-			}
 		}
 		selected := opts.ServerFilter
 		if selected == nil && opts.Confine {
@@ -331,13 +323,15 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 				}
 			}
 		}
-		if err := rejectSelectedReservedOrigin(authored, opts.Profile.Profile); err != nil {
-			return err
-		}
 		restriction := selected
 		selected, err = mcpgateway.SelectOrigins(authoredOriginStates(authored), selected, opts.Profile.Profile)
 		if err != nil {
 			return err
+		}
+		for _, id := range selected {
+			if id == "tether" {
+				return reservedOriginError()
+			}
 		}
 		if opts.Profile.Profile != nil && opts.Profile.Profile.Servers != nil {
 			for _, id := range opts.Profile.Profile.Servers {
@@ -532,10 +526,28 @@ func (r *routerRefResolver) ResolveRef(ctx context.Context, selector map[string]
 	if r.gateway == nil {
 		return nil, errors.New("no gateway policy available for ref resolution")
 	}
-	if _, err := r.gateway.ResolveTarget("tesseract_ref_resolve"); err != nil {
-		return nil, err
+	name := ""
+	var excluded error
+	for _, def := range r.router.registry.AllDefinitions() {
+		rt, _ := r.router.registry.Lookup(def.Name)
+		if rt.UpstreamName == "tesseract_ref_resolve" {
+			if _, err := r.gateway.ResolveTarget(def.Name); err != nil {
+				excluded = err
+				continue
+			}
+			if name != "" {
+				return nil, errors.New("multiple upstream tesseract_ref_resolve tools; ref resolution is ambiguous")
+			}
+			name = def.Name
+		}
 	}
-	res, err := r.router.Handle(ctx, ToolCall{ToolName: "tesseract_ref_resolve", Args: selector})
+	if name == "" {
+		if excluded != nil {
+			return nil, excluded
+		}
+		return nil, errors.New("no upstream tesseract_ref_resolve tool available")
+	}
+	res, err := r.router.Handle(ctx, ToolCall{ToolName: name, Args: selector})
 	if err != nil {
 		return nil, fmt.Errorf("tesseract_ref_resolve: %w", err)
 	}
@@ -565,21 +577,4 @@ func authoredOriginStates(entries []config.MCPServerEntry) map[string]bool {
 		}
 	}
 	return out
-}
-
-func rejectSelectedReservedOrigin(entries []config.MCPServerEntry, profile *mcpgateway.Profile) error {
-	if profile == nil {
-		return nil
-	}
-	for _, id := range profile.Servers {
-		if id != "tether" {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.ID == "tether" {
-				return fmt.Errorf("profile origin tether is reserved for native tools; catalog upstream tether conflicts")
-			}
-		}
-	}
-	return nil
 }

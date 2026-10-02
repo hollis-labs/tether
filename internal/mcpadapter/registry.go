@@ -66,6 +66,7 @@ func (r *ToolRegistry) Register(serverID string, client upstreamClient, tools []
 		r.tools[key] = rt
 	}
 	delete(r.collisions, serverID)
+	r.pruneCollisionsLocked()
 	return nil
 }
 func owner(rt RegisteredTool) mcpgateway.ToolOwner {
@@ -141,6 +142,7 @@ func (r *ToolRegistry) RemoveServer(serverID string) {
 			delete(r.tools, key)
 		}
 	}
+	r.pruneCollisionsLocked()
 }
 
 // ReplaceServer atomically swaps one upstream server's registered tool set and
@@ -165,6 +167,7 @@ func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, too
 		newDefs[key] = rt.Definition
 	}
 	delete(r.collisions, serverID)
+	r.pruneCollisionsLocked()
 
 	delta := ToolDelta{
 		Added:   make([]*mcpsdk.Tool, 0),
@@ -217,6 +220,26 @@ func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway
 		return collisions[i].Name+collisions[i].Owners[0].Origin < collisions[j].Name+collisions[j].Owners[0].Origin
 	})
 	return findings, collisions
+}
+
+// pruneCollisionsLocked removes findings whose accepted opposing owner no
+// longer exposes the colliding name. Rejected definitions are never published.
+func (r *ToolRegistry) pruneCollisionsLocked() {
+	for origin, collisions := range r.collisions {
+		active := collisions[:0]
+		for _, collision := range collisions {
+			_, reserved := r.reserved[collision.Name]
+			rt, exists := r.tools[collision.Name]
+			if reserved || collision.Owners[0].Origin == collision.Owners[1].Origin || (exists && owner(rt).Origin != origin) {
+				active = append(active, collision)
+			}
+		}
+		if len(active) == 0 {
+			delete(r.collisions, origin)
+		} else {
+			r.collisions[origin] = active
+		}
+	}
 }
 
 // RebindServer keeps accepted schemas across reconnect when a new tools/list

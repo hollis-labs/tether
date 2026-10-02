@@ -68,7 +68,7 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 		},
 		Dispatch: func(ctx context.Context, name string, args, meta map[string]any) (*mcpsdk.CallToolResult, error) {
 			result, err := router.Handle(ctx, ToolCall{ToolName: name, Args: args, Meta: meta})
-			a.recordRefs(ctx, name, args, result, err)
+			a.recordProxyRefs(ctx, registry, name, args, result, err)
 			return result, err
 		},
 	}

@@ -3395,7 +3395,7 @@ func (s *appServer) handleMCPServers(w http.ResponseWriter, _ *http.Request) {
 
 	// Best-effort runtime status probe: merge server_status + server_error.
 	// Failures in the probe are soft — we still return the catalog view.
-	if statuses, err := s.mcpServerStatuses(); err == nil {
+	if statuses, _ := s.mcpServerStatuses(); len(statuses) > 0 {
 		byID := make(map[string]mcpadapter.ServerStatus, len(statuses))
 		for _, st := range statuses {
 			byID[st.ID] = st
@@ -3422,11 +3422,9 @@ func (s *appServer) mcpServerStatuses() ([]mcpadapter.ServerStatus, error) {
 	pool := mcpadapter.NewClientPool(entries, registry)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := pool.Start(ctx); err != nil {
-		return nil, err
-	}
+	startErr := pool.Start(ctx)
 	defer pool.Shutdown()
-	return pool.StatusSummary(), nil
+	return pool.StatusSummary(), startErr
 }
 
 func (s *appServer) handleMCPServerSave(w http.ResponseWriter, r *http.Request) {
@@ -3666,9 +3664,7 @@ func (s *appServer) liveMCPTools() (map[string]liveMCPToolRow, map[string]mcpada
 	pool := mcpadapter.NewClientPool(entries, registry)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := pool.Start(ctx); err != nil {
-		return nil, nil, err
-	}
+	startErr := pool.Start(ctx)
 	defer pool.Shutdown()
 
 	statuses := pool.StatusSummary()
@@ -3694,7 +3690,7 @@ func (s *appServer) liveMCPTools() (map[string]liveMCPToolRow, map[string]mcpada
 		}
 		out[row.Name] = row
 	}
-	return out, statusByID, nil
+	return out, statusByID, startErr
 }
 
 func flattenMCPToolRows(usage map[string]*mcpToolAgg, liveByName map[string]liveMCPToolRow, liveStatuses map[string]mcpadapter.ServerStatus) []mcpToolDTO {

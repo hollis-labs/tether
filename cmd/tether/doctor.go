@@ -518,6 +518,10 @@ func checkMCPNamingConfig(root string) []checkResult {
 	ids := []string{}
 	for _, entry := range entries {
 		if entry.IsEnabled() {
+			if entry.ID == "tether" {
+				out = append(out, warn("mcp-origins", mcpgateway.ValidateOriginIDs([]string{"tether"}).Error(), "rename the upstream ID; startup fails only when this upstream is selected"))
+				continue
+			}
 			ids = append(ids, entry.ID)
 		}
 	}
@@ -525,6 +529,9 @@ func checkMCPNamingConfig(root string) []checkResult {
 		out = append(out, fail("mcp-origins", err.Error(), "fix enabled upstream IDs; tether is reserved"))
 	}
 	for _, entry := range entries {
+		if entry.ToolPrefixInvalid {
+			out = append(out, warn("mcp-prefix:"+entry.ID, entry.CatalogFile+": tool_prefix must be a string; invalid value ignored", "declare a string tool_prefix"))
+		}
 		if !entry.IsEnabled() {
 			continue
 		}
