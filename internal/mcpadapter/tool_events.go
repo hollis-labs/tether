@@ -6,6 +6,7 @@ import (
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -80,7 +81,7 @@ func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEv
 			gomcp.BooleanProp("errors_only", "When true, return only events where the tool call failed", false),
 		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			f := store.ProxyEventFilter{}
+			f := proxyevents.Query{}
 
 			if v := str(args, "server"); v != "" {
 				f.ServerID = v
@@ -114,7 +115,7 @@ func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEv
 				f.ErrorsOnly = b
 			}
 
-			results, err := proxyStore.QueryProxyEvents(f)
+			results, err := proxyevents.QueryRecords(proxyStore, f)
 			if err != nil {
 				return nil, toolError("internal_error", "query proxy events: "+err.Error())
 			}

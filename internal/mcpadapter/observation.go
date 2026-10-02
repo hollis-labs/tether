@@ -8,6 +8,7 @@ import (
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
@@ -209,7 +210,7 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 			gomcp.StringProp("since", "RFC3339 lower-bound timestamp; excludes events at or before this time", false),
 		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			f := store.ProxyEventFilter{
+			f := proxyevents.Query{
 				SessionID: str(args, "session_id"),
 				ServerID:  str(args, "server"),
 				ToolName:  str(args, "tool_name"),
@@ -237,7 +238,7 @@ func (a *Adapter) registerProxyEventsTool(s *gomcp.Server) {
 				f.Since = t
 			}
 
-			evs, err := a.proxyEventQuerier().QueryProxyEvents(f)
+			evs, err := proxyevents.QueryRecords(a.proxyEventQuerier(), f)
 			if err != nil {
 				if isDaemonUnreachable(err) {
 					return nil, daemonUnreachableError(err)
