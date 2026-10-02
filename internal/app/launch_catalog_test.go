@@ -131,6 +131,8 @@ func TestResolve_InvalidMCPGrantDoesNotFallBack(t *testing.T) {
 
 func TestBadProjectGrantDoesNotBlockOtherLaunch(t *testing.T) {
 	svc, write := newLaunchCatalogService(t)
+	write("global.yaml", "version: 0.1.0\ncatalog:\n  defaults:\n    state_db: "+filepath.Join(t.TempDir(), "state.db")+"\n")
+	write("providers/cli.yaml", "id: cli\ntype: cli-goprovider\nadapter: claude\nruntime_kind: subprocess\ncommand: echo\n")
 	write("projects/A.yaml", "id: A\nmcp:\n  servers: [missing]\n")
 	write("launches/bad.yaml", "id: bad\nproject: A\nagent: a\nprovider: cli\n")
 	if _, err := svc.Resolve("first"); err != nil {
