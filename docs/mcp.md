@@ -1,5 +1,9 @@
 # Tether — MCP Adapter
 
+For short guides on connecting, discovery, grants, protection and budgets,
+start with [Use MCP through Tether](agents/mcp/README.md). This page is the full
+adapter and tool reference.
+
 `tether mcp` starts an MCP stdio server that exposes the Tether runtime as
 tools. Any MCP-capable client — Claude Desktop, Claude Code, Cursor, a custom
 agent, a Hadron blueprint — can call session lifecycle, catalog reads,
