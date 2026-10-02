@@ -208,31 +208,41 @@ func TestCancelTurnAndWaitProvisionalSubmissionNeverCallsRuntime(t *testing.T) {
 }
 
 func TestCancelTurnAndWaitGateRejectsSnapshotSuccessor(t *testing.T) {
-	var calls atomic.Int32
-	svc, output, _ := interruptHarness(t, func(context.Context) error { calls.Add(1); return nil })
-	output.observeProvider(gopevents.Delta{Text: "first"})
-	intended, _ := output.CurrentTurn()
-	unlock := output.LockSubmission()
-	returned := make(chan error, 1)
-	go func() {
-		_, err := svc.cancelTurnAndWait(context.Background(), "s1", "actor", output, intended)
-		returned <- err
-	}()
-	output.observeProvider(gopevents.Done{})
-	// Emulate the winning successor submission while owning the gate.
-	output.mu.Lock()
-	output.ensureTurn()
-	output.accepted = true
-	output.mu.Unlock()
-	next, _ := output.CurrentTurn()
-	unlock()
-	err := <-returned
-	requireRefusal(t, err, TurnInterruptSuperseded)
-	if calls.Load() != 0 {
-		t.Fatal("cancel reached successor runtime turn")
-	}
-	if current, _ := output.CurrentTurn(); current != next {
-		t.Fatal("successor marker was modified")
+	for _, successor := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ended", true: "successor"}[successor], func(t *testing.T) {
+			var calls atomic.Int32
+			svc, output, _ := interruptHarness(t, func(context.Context) error { calls.Add(1); return nil })
+			output.observeProvider(gopevents.Delta{Text: "first"})
+			intended, _ := output.CurrentTurn()
+			unlock := output.LockSubmission()
+			returned := make(chan error, 1)
+			go func() {
+				_, err := svc.cancelTurnAndWait(context.Background(), "s1", "actor", output, intended)
+				returned <- err
+			}()
+			output.observeProvider(gopevents.Done{})
+			if successor {
+				// Emulate the winning successor submission while owning the gate.
+				output.mu.Lock()
+				output.ensureTurn()
+				output.accepted = true
+				output.mu.Unlock()
+			}
+			next, _ := output.CurrentTurn()
+			unlock()
+			err := <-returned
+			want := TurnInterruptNoTurn
+			if successor {
+				want = TurnInterruptSuperseded
+			}
+			requireRefusal(t, err, want)
+			if calls.Load() != 0 {
+				t.Fatal("cancel reached successor runtime turn")
+			}
+			if current, _ := output.CurrentTurn(); current != next {
+				t.Fatal("successor marker was modified")
+			}
+		})
 	}
 }
 
@@ -243,6 +253,19 @@ func TestCancelTurnAndWaitRejectsSettlementWithoutOutput(t *testing.T) {
 	if err := svc.SendInput("s1", []byte("no output")); err != nil {
 		t.Fatal(err)
 	}
+	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	requireRefusal(t, err, TurnInterruptSuperseded)
+}
+
+func TestCancelTurnAndWaitRejectsDifferentACPOutput(t *testing.T) {
+	var output *sessionTurnOutput
+	svc, state, _ := interruptHarness(t, func(context.Context) error {
+		output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "different-runtime-turn"})
+		output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "different-runtime-turn"})
+		return nil
+	})
+	output = state
+	output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "intended-runtime-turn"})
 	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptSuperseded)
 }
@@ -320,8 +343,15 @@ func TestCancelTurnAndWaitUnblocksAcceptedSendInput(t *testing.T) {
 	<-entered
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := svc.CancelTurnAndWait(ctx, "s1", "actor"); err != nil {
-		t.Fatal(err)
+	returned := make(chan error, 1)
+	go func() { _, err := svc.CancelTurnAndWait(ctx, "s1", "actor"); returned <- err }()
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("cancellation waited behind accepted SendInput")
 	}
 	if err := <-inputDone; err != nil {
 		t.Fatal(err)
