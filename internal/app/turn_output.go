@@ -189,15 +189,15 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	o.route, o.routeUnread = job.route, job.routeUnread
 }
 
-// A successful stage is retained across event retries: publishing must never
-// create a second durable body for the same output. The reader supplies one
-// overall deadline; retry workers additionally bound each operation.
 type turnOutputStore interface {
 	GetSessionContext(context.Context, string) (*store.SessionRow, error)
 	SessionRoute(context.Context, string) (*launchprofile.Route, error)
 	StageTurnOutput(context.Context, messaging.Envelope) (messaging.Envelope, error)
 }
 
+// A successful stage is retained across event retries: publishing must never
+// create a second durable body for the same output. The reader supplies one
+// overall deadline; retry workers additionally bound each operation.
 type turnOutputWrite struct {
 	storage     turnOutputStore
 	row         store.SessionRow
