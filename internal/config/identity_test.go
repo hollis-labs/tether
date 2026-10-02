@@ -7,7 +7,7 @@ import (
 
 func TestIdentityConfigDefaultsAndValidation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, mode := range []string{"", "off", "observe", "enforce", "typo"} {
+	for _, mode := range []string{"", "off", "observe", "enforce", "Observe", "typo"} {
 		t.Run(mode, func(t *testing.T) {
 			var global Global
 			body := "identity:\n  mode: " + mode + "\n"
@@ -16,7 +16,7 @@ func TestIdentityConfigDefaultsAndValidation(t *testing.T) {
 			}
 			cat := &Catalog{Global: global}
 			err := cat.Validate()
-			if (err != nil) != (mode == "typo") {
+			if err != nil {
 				t.Fatalf("validate mode %q: %v", mode, err)
 			}
 			if mode == "" && global.Identity.EffectiveMode() != "observe" {

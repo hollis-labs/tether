@@ -83,6 +83,13 @@ func (s *Store) EnsureOperator(ctx context.Context, path string) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	exists, err := s.HasPrincipal(ctx, OperatorID)
+	if err != nil {
+		return fmt.Errorf("lookup operator: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("operator token file missing for existing principal; explicit recovery required")
+	}
 	token, err = s.Mint(ctx, Principal{ID: OperatorID, Kind: "operator", Display: "Local operator", Scopes: []string{"*"}, Addresses: []string{OperatorID}})
 	if err != nil {
 		return fmt.Errorf("bootstrap operator: %w", err)

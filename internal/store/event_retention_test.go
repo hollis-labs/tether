@@ -15,12 +15,14 @@ func TestEventHistoryRetentionAuditAndRollback(t *testing.T) {
 	defer s.Close()
 	now := time.Now().UTC().Truncate(time.Second)
 	cutoff := now.Add(-90 * 24 * time.Hour)
-	for _, table := range []string{"events", "proxy_events", "ai_events"} {
+	for _, table := range []string{"events", "proxy_events", "ai_events", "identity_audit"} {
 		t.Run(table, func(t *testing.T) {
 			insert := func(at time.Time) {
 				t.Helper()
 				var err error
 				switch table {
+				case "identity_audit":
+					_, err = s.db.Exec(`INSERT INTO identity_audit(at,mode,authentication,method,route) VALUES(?,'observe','verified','GET','/test')`, at.UTC().Format(time.RFC3339Nano))
 				case "events":
 					insertEventAt(t, s, at)
 				case "proxy_events":

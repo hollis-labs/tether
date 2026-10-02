@@ -20,11 +20,6 @@ var ErrUnknownSandboxProfile = errors.New("unknown sandbox profile")
 // for one bad agent entry. SandboxIssues reports those, and ValidateLaunch
 // and AgentSandbox refuse the affected launches.
 func (c *Catalog) Validate() error {
-	switch c.Global.Identity.EffectiveMode() {
-	case "off", "observe", "enforce":
-	default:
-		return fmt.Errorf("identity.mode must be off, observe or enforce")
-	}
 	for id := range c.Launches {
 		if err := c.validateLaunchRefs(id); err != nil {
 			return err

@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -43,7 +42,7 @@ func (s *Store) Mint(ctx context.Context, p Principal) (string, error) {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO principals
-        (id, kind, display, token_hash, scopes_json, session_id, addresses_json,
+        (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json,
          created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Kind, p.Display, HashToken(token), string(scopes), p.SessionID,
 		string(addresses), p.CreatedBy, p.CreatedAt.Format(time.RFC3339Nano), expires)
@@ -62,19 +61,16 @@ func (s *Store) Verify(ctx context.Context, token string) (Principal, error) {
 	}
 	hash := HashToken(token)
 	var p Principal
-	var storedHash, scopes, addresses, created string
+	var scopes, addresses, created string
 	var revoked, expires sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, kind, display, token_hash,
+	err := s.db.QueryRowContext(ctx, `SELECT principal_id, kind, display,
         scopes_json, session_id, addresses_json, created_by, created_at,
         revoked_at, expires_at FROM principals WHERE token_hash = ?`, hash).Scan(
-		&p.ID, &p.Kind, &p.Display, &storedHash, &scopes, &p.SessionID,
+		&p.ID, &p.Kind, &p.Display, &scopes, &p.SessionID,
 		&addresses, &p.CreatedBy, &created, &revoked, &expires)
-	// Equal-length comparison on both hit and miss; lookup uses the hash index.
+	// Verification uses an indexed lookup of a cryptographic token hash. The
+	// database lookup is not constant-time; no token material is compared here.
 	if errors.Is(err, sql.ErrNoRows) {
-		storedHash = HashToken("")
-	}
-	match := subtle.ConstantTimeCompare([]byte(storedHash), []byte(hash))
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && match != 1) {
 		return Principal{}, ErrInvalidToken
 	}
 	if err != nil {
@@ -107,7 +103,7 @@ func (s *Store) Verify(ctx context.Context, token string) (Principal, error) {
 }
 
 func (s *Store) Revoke(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE principal_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return fmt.Errorf("revoke principal: %w", err)
 	}
@@ -131,4 +127,11 @@ func (s *Store) RecordObservation(ctx context.Context, o Observation) error {
 		return fmt.Errorf("persist identity observation: %w", err)
 	}
 	return nil
+}
+
+// HasPrincipal prevents an absent file from silently rotating a prior operator.
+func (s *Store) HasPrincipal(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = ?)`, id).Scan(&exists)
+	return exists, err
 }

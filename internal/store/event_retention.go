@@ -16,7 +16,7 @@ type RetentionBatch struct {
 }
 
 // DeleteEventHistoryBefore deletes one bounded batch and writes its audit
-// receipt atomically. Only the three event-history tables are accepted.
+// receipt atomically. Only event-history and identity-audit tables are accepted.
 func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cutoff time.Time, limit int) (RetentionBatch, error) {
 	batch := RetentionBatch{Table: table, Cutoff: cutoff}
 	if limit <= 0 {
@@ -24,6 +24,8 @@ func (s *Store) DeleteEventHistoryBefore(ctx context.Context, table string, cuto
 	}
 	var query string
 	switch table {
+	case "identity_audit":
+		query = `DELETE FROM identity_audit WHERE id IN (SELECT id FROM identity_audit WHERE at < ? ORDER BY at, id LIMIT ?)`
 	case "events":
 		query = `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE at < ? ORDER BY at, id LIMIT ?)`
 	case "proxy_events":

@@ -191,6 +191,10 @@ var daemonRunCmd = &cobra.Command{
 			_ = svc.Store.Close()
 			return err
 		}
+		if err := identity.ValidateBind(cfg.ListenAddr, cfg.IdentityMode); err != nil {
+			_ = svc.Store.Close()
+			return err
+		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,
 			Usage:     svc.Store,
@@ -204,42 +208,45 @@ var daemonRunCmd = &cobra.Command{
 
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		var identities *identity.Store
+		operatorDegraded := false
 		if cfg.IdentityMode != identity.Off {
 			identities = identity.NewStore(svc.Store.DB())
-			if err := identities.EnsureOperator(ctx, filepath.Join(stateRoot, "run", "operator.token")); err != nil {
+			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), cfg.IdentityMode)
+			if err != nil {
 				_ = svc.Store.Close()
-				return fmt.Errorf("initialize daemon identity: %w", err)
+				return err
 			}
 		}
 		server := &daemon.Server{
-			Identity:            identities,
-			Config:              cfg,
-			Manager:             svc.Manager,
-			Service:             &serviceAdapter{svc: svc},
-			AI:                  aiSvc,
-			AIAudit:             svc.Store,
-			AIUsage:             svc.Store,
-			Checkpoints:         svc.Store,
-			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
-			Bus:                 svc.Bus,
-			EventsStore:         svc.Store,
-			Catalog:             &catalogLoader{root: svc.CatalogRoot},
-			GroupStore:          svc.Store,
-			Workstreams:         svc.Store,
-			SessionRefs:         svc.Store,
-			Digests:             svc.Store,
-			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
-			DeliveryClaims:      svc.Store,
-			Attachments:         svc.Store,
-			ProxyEvents:         svc.Store,
-			Registry:            svc.Registry,
-			Settings:            svc.Settings,
-			RegistryCatalogRoot: svc.CatalogRoot,
-			Groups:              svc.Registry,
-			Publisher:           svc.Bus,
-			WakeSweeper:         svc,
-			SessionDrainer:      svc,
-			EventRetention:      svc,
+			Identity:                 identities,
+			OperatorIdentityDegraded: operatorDegraded,
+			Config:                   cfg,
+			Manager:                  svc.Manager,
+			Service:                  &serviceAdapter{svc: svc},
+			AI:                       aiSvc,
+			AIAudit:                  svc.Store,
+			AIUsage:                  svc.Store,
+			Checkpoints:              svc.Store,
+			Broker:                   &brokerAdapter{write: svc.Broker, read: svc.Store},
+			Bus:                      svc.Bus,
+			EventsStore:              svc.Store,
+			Catalog:                  &catalogLoader{root: svc.CatalogRoot},
+			GroupStore:               svc.Store,
+			Workstreams:              svc.Store,
+			SessionRefs:              svc.Store,
+			Digests:                  svc.Store,
+			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
+			DeliveryClaims:           svc.Store,
+			Attachments:              svc.Store,
+			ProxyEvents:              svc.Store,
+			Registry:                 svc.Registry,
+			Settings:                 svc.Settings,
+			RegistryCatalogRoot:      svc.CatalogRoot,
+			Groups:                   svc.Registry,
+			Publisher:                svc.Bus,
+			WakeSweeper:              svc,
+			SessionDrainer:           svc,
+			EventRetention:           svc,
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
 				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason}
@@ -1001,9 +1008,6 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
-	if err := identity.ValidateBind(expandListenAddr(d.ListenAddr), mode); err != nil {
-		return daemon.Config{}, err
-	}
 	return daemon.Config{
 		IdentityMode:    mode,
 		ListenAddr:      expandListenAddr(d.ListenAddr),
@@ -1058,4 +1062,15 @@ func expandListenAddr(addr string) string {
 
 func init() {
 	daemonCmd.AddCommand(daemonStartCmd, daemonRunCmd, daemonStopCmd, daemonStatusCmd)
+}
+
+func bootstrapOperator(ctx context.Context, ids *identity.Store, path string, mode identity.Mode) (bool, error) {
+	if err := ids.EnsureOperator(ctx, path); err != nil {
+		if mode == identity.Enforce {
+			return false, fmt.Errorf("initialize daemon identity: %w", err)
+		}
+		log.Print("WARNING: operator credential unavailable; observe mode continuing without operator bootstrap. Run tether doctor and recover credentials before enforce.")
+		return true, nil
+	}
+	return false, nil
 }

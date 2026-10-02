@@ -52,9 +52,9 @@ func TestIdentityMiddlewareModes(t *testing.T) {
 				if called != wantCalled || carried != (mode != identity.Off && valid) {
 					t.Fatalf("called=%v principal=%v", called, carried)
 				}
-				if mode == identity.Off {
+				if mode == identity.Off || auth == "" {
 					if observation != nil {
-						t.Fatal("off mode recorded identity")
+						t.Fatal("off/anonymous mode recorded identity")
 					}
 					return
 				}

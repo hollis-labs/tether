@@ -2,19 +2,18 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"strings"
-	"testing"
-
+	"database/sql"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
-func TestIdentityHandlerPersistsVerifiedAuditAndEvent(t *testing.T) {
+func TestIdentityHandlerPersistsVerifiedAuditWithoutBusEvent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -27,45 +26,82 @@ func TestIdentityHandlerPersistsVerifiedAuditAndEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	bus := events.NewBus(events.BusOptions{Persister: db})
-	var carried string
-	server := &Server{Config: Config{IdentityMode: identity.Observe}, Identity: ids, Publisher: bus,
-		A2A: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p, ok := identity.FromContext(r.Context())
-			if ok {
-				carried = p.ID
-			}
-			w.WriteHeader(http.StatusNoContent)
-		}),
-	}
-	req := httptest.NewRequest(http.MethodPost, "/a2a/call?secret=not-in-audit", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	out := httptest.NewRecorder()
-	server.Handler().ServeHTTP(out, req)
-	if out.Code != http.StatusNoContent || carried != identity.OperatorID {
-		t.Fatalf("status=%d principal=%s", out.Code, carried)
-	}
-	var principal, route string
-	if err := db.DB().QueryRow(`SELECT principal_id, route FROM identity_audit`).Scan(&principal, &route); err != nil {
-		t.Fatal(err)
-	}
-	if principal != identity.OperatorID || route != "/a2a" {
-		t.Fatalf("audit principal=%s route=%s", principal, route)
-	}
-	rows, err := db.QueryEvents(store.EventFilter{Kinds: []string{events.KindIdentityObserved}, Limit: 10})
+	ch, cancel, err := bus.Subscribe(context.Background(), events.Filter{Scopes: []events.Scope{events.ScopeDaemon}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("identity event count=%d", len(rows))
+	defer cancel()
+	s := &Server{Config: Config{IdentityMode: identity.Observe}, Identity: ids, Publisher: bus}
+	defer s.CloseIdentityAudit()
+	req := httptest.NewRequest(http.MethodGet, "/missing?secret=not-in-audit", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	out := httptest.NewRecorder()
+	s.Handler().ServeHTTP(out, req)
+	if out.Code != http.StatusNotFound {
+		t.Fatal(out.Code)
 	}
-	var observed identity.Observation
-	if err := json.Unmarshal([]byte(rows[0].PayloadJSON), &observed); err != nil {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var principal, route string
+		err := db.DB().QueryRow(`SELECT principal_id,route FROM identity_audit`).Scan(&principal, &route)
+		if err == nil {
+			if principal != identity.OperatorID || route != "/missing" {
+				t.Fatal("wrong attribution")
+			}
+			break
+		}
+		if err != sql.ErrNoRows || time.Now().After(deadline) {
+			t.Fatal("audit not persisted", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-ch:
+		t.Fatal("audit woke an event waiter")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+func TestIdentityAnonymousTrafficDoesNotWakeEventsWait(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.PrincipalID != identity.OperatorID || observed.Authentication != "verified" {
-		t.Fatalf("event=%+v", observed)
+	defer db.Close()
+	bus := events.NewBus(events.BusOptions{Persister: db})
+	s := &Server{Config: Config{IdentityMode: identity.Observe}, Identity: identity.NewStore(db.DB()), Publisher: bus, Bus: bus, Catalog: stubCatalogLoader{}}
+	defer s.CloseIdentityAudit()
+	live := httptest.NewServer(s.Handler())
+	defer live.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, live.URL+"/events/stream?scope=daemon", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(rows[0].PayloadJSON, token) || strings.Contains(rows[0].PayloadJSON, "not-in-audit") {
-		t.Fatal("secret leaked to event")
+	resp, err := live.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("SSE/Flusher changed", resp.StatusCode)
+	}
+	received := make(chan error, 1)
+	go func() { buf := make([]byte, 1); _, err := resp.Body.Read(buf); received <- err }()
+	for range 10 {
+		s.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/missing", nil))
+	}
+	select {
+	case err := <-received:
+		t.Fatal("anonymous traffic woke or closed events watch", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	_ = resp.Body.Close()
+	<-received
+	var exists bool
+	if err := db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM identity_audit)`).Scan(&exists); err != nil || exists {
+		t.Fatal("anonymous traffic audited", err)
 	}
 }

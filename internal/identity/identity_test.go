@@ -41,7 +41,7 @@ func TestIdentityMintVerifyAndRevoke(t *testing.T) {
 		t.Fatal("token entropy/mint failed")
 	}
 	var hash string
-	if err := db.DB().QueryRow(`SELECT token_hash FROM principals WHERE id = ?`, want.ID).Scan(&hash); err != nil {
+	if err := db.DB().QueryRow(`SELECT token_hash FROM principals WHERE principal_id = ?`, want.ID).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
 	if hash != identity.HashToken(token) || strings.Contains(hash, token) {
@@ -82,7 +82,7 @@ func TestIdentityExpiryAndOperatorBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.DB().Exec(`UPDATE principals SET expires_at = ? WHERE id = 'svc:test'`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := db.DB().Exec(`UPDATE principals SET expires_at = ? WHERE principal_id = 'svc:test'`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Verify(ctx, token); !errors.Is(err, identity.ErrInvalidToken) {
@@ -183,5 +183,34 @@ func TestIdentityTokenFileRejectsValidPrefixWithUnreadSuffix(t *testing.T) {
 	}
 	if _, err := identity.ReadTokenFile(path); err == nil {
 		t.Fatal("unread suffix accepted")
+	}
+}
+
+func TestIdentityMultipleTokensForOnePrincipal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, _ := identityStore(t)
+	ctx := context.Background()
+	p := identity.Principal{ID: "svc:rotate", Kind: "service"}
+	first, err := s.Mint(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Mint(ctx, p)
+	if err != nil || first == second {
+		t.Fatal("second mint failed", err)
+	}
+	for _, token := range []string{first, second} {
+		verified, err := s.Verify(ctx, token)
+		if err != nil || verified.ID != p.ID {
+			t.Fatal("wrong stable principal", err)
+		}
+	}
+	if err := s.Revoke(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{first, second} {
+		if _, err := s.Verify(ctx, token); !errors.Is(err, identity.ErrInvalidToken) {
+			t.Fatal("principal revocation did not revoke every token")
+		}
 	}
 }
