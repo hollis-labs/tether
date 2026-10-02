@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 func TestDaemonOwnershipRejectsUnusableLaunch(t *testing.T) {
@@ -26,7 +27,7 @@ func TestDaemonOwnershipRejectsUnusableLaunch(t *testing.T) {
 			if mode == "disabled" {
 				svc.Catalog.Global.Daemon.MCPUpstreams = config.MCPUpstreamsDaemon
 			}
-			svc.Catalog.Global.Daemon.ListenAddr = "unix:" + t.TempDir() + "/missing.sock"
+			svc.Catalog.Global.Daemon.ListenAddr = "unix:" + filepath.Join(testutil.SocketDir(t), "missing.sock")
 			if mode == "disabled" {
 				listener, err := net.Listen("unix", strings.TrimPrefix(svc.Catalog.Global.Daemon.ListenAddr, "unix:"))
 				if err != nil {
@@ -98,11 +99,7 @@ func TestDaemonOwnershipPlantsConsumedProviderConfig(t *testing.T) {
 			ids := identity.NewStore(svc.Store.DB())
 			stub := mcp.NewServer(&mcp.Implementation{Name: "daemon-preflight", Version: "1"}, nil)
 			handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return stub }, nil)
-			root, err := os.MkdirTemp("/var/tmp", "plant-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(root)
+			root := testutil.SocketDir(t)
 			addr := "unix:" + filepath.Join(root, "daemon.sock")
 			listener, err := net.Listen("unix", strings.TrimPrefix(addr, "unix:"))
 			if err != nil {
@@ -185,11 +182,7 @@ func TestDaemonOwnershipPlantsConsumedProviderConfig(t *testing.T) {
 
 func TestDaemonOwnershipPreflightDistinguishesDeadlineAndCancellation(t *testing.T) {
 	svc := &Service{Catalog: &config.Catalog{}}
-	root, err := os.MkdirTemp("", "probe-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(root)
+	root := testutil.SocketDir(t)
 	addr := "unix:" + filepath.Join(root, "slow.sock")
 	listener, err := net.Listen("unix", strings.TrimPrefix(addr, "unix:"))
 	if err != nil {

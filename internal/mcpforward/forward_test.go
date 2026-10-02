@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/testutil"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -136,11 +136,7 @@ func TestForwardDaemonPreservesProgressAndInventoryNotifications(t *testing.T) {
 
 func TestForwardDaemonDownReturnsTypedErrorWithoutFallback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	root, err := os.MkdirTemp("/var/tmp", "fwd-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(root)
+	root := testutil.SocketDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	left, right := mcp.NewInMemoryTransports()
