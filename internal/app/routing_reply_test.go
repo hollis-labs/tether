@@ -1120,3 +1120,65 @@ func TestReplyBecomesTheNextTurnOfARealRuntimeSession(t *testing.T) {
 		})
 	}
 }
+
+// The whole routing chain, with nothing in the middle faked: a session's final
+// answer is staged and published to its channel by the real router (0062 + 0064),
+// a user replies to THAT channel message, and the reply becomes the session's
+// next turn. Only the model CLI is a captured fixture.
+func TestAChannelMessageTheRouterPublishedCanBeRepliedTo(t *testing.T) {
+	svc, id := nativeOutputLaunch(t, runtimes.Codex, "jsonrpc-stdio", providertest.Replay("codex/app_server_turn"))
+	ctx := context.Background()
+	svc.installTurnFeeds()
+	if err := svc.startTurnRouter(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.turnRouter.Close)
+	if err := svc.StartRoutingReplies(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.stopRoutingReplies)
+
+	if err := svc.SendTurn(ctx, id, "say hi"); err != nil {
+		t.Fatal(err)
+	}
+	history := channels.New(svc.Store, nil)
+	var routed channels.Message
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		page, err := history.History(ctx, "ops", "msg://user/local/test", 0, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Messages) > 0 {
+			routed = page.Messages[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if routed.ID == "" || routed.From.ID != id {
+		t.Fatalf("the router published nothing from the session: %+v", routed)
+	}
+
+	receipt, err := svc.SubmitRoutingReply(ctx, api.RoutingReplyRequest{ParentID: routed.ID, Body: "say bye", Verified: true,
+		Caller: identity.Principal{ID: "msg://user/local/chris", Kind: "user"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.TargetSessionID != id {
+		t.Fatalf("receipt %+v: the reply must resolve to the session that sent the routed message", receipt)
+	}
+	var delivered store.RoutingReply
+	for time.Now().Before(deadline) {
+		delivered, _ = svc.Store.RoutingReply(ctx, receipt.ReplyID)
+		if delivered.State.Terminal() && len(outputEvents(t, svc)) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if delivered.State != store.RoutingReplyDelivered || delivered.DeliveredToSessionID != id {
+		t.Fatalf("reply = %+v", delivered)
+	}
+	if outputs := outputEvents(t, svc); len(outputs) != 2 || outputs[0].TurnID == outputs[1].TurnID {
+		t.Fatalf("the reply must be a second, distinct turn: %+v", outputs)
+	}
+}
