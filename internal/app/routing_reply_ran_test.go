@@ -53,6 +53,30 @@ func TestOnlyAnErrorAfterTheTurnRanIsMarkedAsHavingRun(t *testing.T) {
 				return failure
 			})
 		}, true},
+		{"a second submission re-emits the empty terminal (Done) the first one ended with, then the runtime failed", func(svc *Service, output *sessionTurnOutput) error {
+			if err := svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Done{})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Done{})
+				return failure
+			})
+		}, true},
+		{"a second submission re-emits the empty terminal (Error) the first one ended with, then the runtime failed", func(svc *Service, output *sessionTurnOutput) error {
+			if err := svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Error{Message: "x"})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Error{Message: "x"})
+				return failure
+			})
+		}, true},
 		{"the runtime rejected the turn before it did anything", func(svc *Service, _ *sessionTurnOutput) error {
 			return svc.trackTurnSubmission("s1", func() error { return failure })
 		}, false},
