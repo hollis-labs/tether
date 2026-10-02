@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/delivery"
+	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -500,43 +500,33 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	f.ThreadID = q.Get("thread_id")
 
-	envs, err := s.MessageStore.Inbox(r.Context(), to, f)
+	inbox := messageinbox.New(s.MessageStore, inboxSessionLookup{s.Service})
+	result, err := inbox.Pull(r.Context(), to, f, q.Get("as_session"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	if s.sessionIsRecipient(q.Get("as_session"), to) {
-		for _, env := range envs {
-			// Best-effort, like Consume's own receipt recording: the pull
-			// already succeeded and is the caller's contract.
-			if err := s.MessageStore.Consume(r.Context(), env.ID, to); err != nil {
-				log.Printf("api: inbox: consume message %s pulled by its recipient failed: %v", env.ID, err)
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": envs})
+	writeJSON(w, http.StatusOK, result)
 }
 
-// sessionIsRecipient reports whether sessionID is a live session that is
-// itself the recipient to: the session address, or a session of the
-// recipient actor. It is checked against the daemon's own session table,
-// not the caller's claim alone.
-func (s *Server) sessionIsRecipient(sessionID string, to messaging.Address) bool {
-	if sessionID == "" || s.Service == nil {
+// inboxSessionLookup translates the API's session seam to the observations
+// consumed by the application operation; recipient policy lives there.
+type inboxSessionLookup struct{ service LaunchService }
+
+func (s inboxSessionLookup) Live(id string) bool {
+	if s.service == nil {
 		return false
 	}
-	if _, ok := s.Service.RuntimeHealth(sessionID); !ok {
-		return false
+	_, ok := s.service.RuntimeHealth(id)
+	return ok
+}
+
+func (s inboxSessionLookup) LogicalAgentID(id string) (string, error) {
+	row, err := s.service.GetSession(id)
+	if err != nil {
+		return "", err
 	}
-	switch to.Kind {
-	case messaging.KindSession:
-		return to.ID == sessionID
-	case messaging.KindAgent:
-		row, err := s.Service.GetSession(sessionID)
-		return err == nil && row.LogicalAgentID != "" && row.LogicalAgentID == to.ID
-	default:
-		return false
-	}
+	return row.LogicalAgentID, nil
 }
 
 // GET /messages/list?to=<urn>[&kind=request,notice][&thread_id=X]

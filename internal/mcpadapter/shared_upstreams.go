@@ -149,7 +149,7 @@ func (v *UpstreamView) snapshot() mcpgateway.Snapshot {
 	s.Lint, s.Collisions, _ = v.namingDiagnostics()
 	for _, status := range v.StatusSummary() {
 		if v.servers[status.ID] {
-			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error})
+			s.Origins = append(s.Origins, mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.CatalogedTools, InventoryExamined: status.InventoryExamined, Error: status.Error})
 		}
 	}
 	for _, def := range v.runtime.registry.AllDefinitions() {

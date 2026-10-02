@@ -642,7 +642,8 @@ func (p *ClientPool) Shutdown() {
 }
 
 // ServerStatus reports observed connection state, not an active health probe.
-// ToolCount includes cached definitions; availability is given by Status.
+// ToolCount is currently available inventory. CatalogedTools retains accepted
+// cached definitions; InventoryExamined distinguishes no observation from zero.
 type ServerStatus struct {
 	ID                string              `json:"id"`
 	Degraded          bool                `json:"degraded"`
@@ -650,6 +651,8 @@ type ServerStatus struct {
 	Status            string              `json:"status"`
 	Error             string              `json:"error,omitempty"`
 	ToolCount         int                 `json:"tool_count"`
+	CatalogedTools    int                 `json:"cataloged_tools"`
+	InventoryExamined bool                `json:"inventory_examined"`
 	Tags              []string            `json:"tags,omitempty"`
 	RestartAttempts   int                 `json:"restart_attempts"`
 	RestartLimit      int                 `json:"restart_limit"`
@@ -685,7 +688,10 @@ func (p *ClientPool) StatusSummary() []ServerStatus {
 				s.err = nil
 			}
 		}
-		ss := ServerStatus{Degraded: s.degraded, ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, ToolCount: s.toolCount, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
+		ss := ServerStatus{Degraded: s.degraded, ID: s.entry.ID, Transport: s.entry.Transport, Tags: s.entry.Tags, CatalogedTools: s.toolCount, InventoryExamined: s.accepted, Status: s.state, RestartAttempts: s.restarts, LastExit: s.lastExit, StderrTail: s.stderr}
+		if s.state == "connected" {
+			ss.ToolCount = s.toolCount
+		}
 		ss.RecoveryExhausted = s.exhausted
 		ss.Recovery = p.recoveryObservation(s)
 		if s.lastLaunch != nil {
