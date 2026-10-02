@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -99,7 +100,7 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 }
 
 func TestTelemetryRouterRecordsForwardLatencyAndTypedFailures(t *testing.T) {
-	for _, scenario := range []string{"ok", "timeout", "validation", "unavailable"} {
+	for _, scenario := range []string{"ok", "timeout", "validation", "unknown", "upstream_error", "unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
 			registry := NewToolRegistry()
 			var client upstreamClient
@@ -112,22 +113,27 @@ func TestTelemetryRouterRecordsForwardLatencyAndTypedFailures(t *testing.T) {
 					if scenario == "validation" {
 						return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid input"}
 					}
+					if scenario == "upstream_error" {
+						return nil, errors.New("upstream failed")
+					}
 					return &mcpsdk.CallToolResult{}, nil
 				}}
 			}
-			mustRegister(t, registry, "alpha", client, []*mcpsdk.Tool{makeTool("read")})
+			if scenario != "unknown" {
+				mustRegister(t, registry, "alpha", client, []*mcpsdk.Tool{makeTool("read")})
+			}
 			capture := &callCapturePublisher{}
 			_, _ = NewLoggingMiddleware(capture).Handle(WithServerID(context.Background(), "alpha"), ToolCall{ToolName: "read"}, NewProxyRouter(registry).Handle)
 			call := capture.calls[1]
-			if scenario == "unavailable" {
-				if call.ForwardMs != 0 || call.ErrorClass != events.ToolErrorUpstreamDown {
+			wantClass := map[string]events.ToolErrorClass{"timeout": events.ToolErrorTimeout, "validation": events.ToolErrorValidation, "unknown": events.ToolErrorDenied, "upstream_error": events.ToolErrorUpstream, "unavailable": events.ToolErrorUpstreamDown}[scenario]
+			if call.ErrorClass != wantClass {
+				t.Fatalf("class = %q, want %q", call.ErrorClass, wantClass)
+			}
+			if scenario == "unavailable" || scenario == "unknown" {
+				if call.ForwardMs != 0 {
 					t.Fatal(call)
 				}
 			} else if call.ForwardMs < 1 || call.DurationMs < call.ForwardMs {
-				t.Fatal(call)
-			} else if scenario == "timeout" && call.ErrorClass != events.ToolErrorTimeout {
-				t.Fatal(call)
-			} else if scenario == "validation" && call.ErrorClass != events.ToolErrorValidation {
 				t.Fatal(call)
 			}
 		})
