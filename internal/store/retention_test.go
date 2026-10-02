@@ -12,9 +12,11 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,7 +54,7 @@ func TestPurgeMessageBody_PendingDelivery_RefusesAndDoesNotMutate(t *testing.T) 
 	db := openRetentionDB(t)
 	id := sendRetentionMessage(t, db)
 
-	purged, err := db.PurgeMessageBody(context.Background(), id)
+	purged, err := db.PurgeMessageBody(context.Background(), id, "msg://agent/test/operator")
 	if !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("err = %v, want ErrPendingObligation", err)
 	}
@@ -82,7 +84,7 @@ func TestPurgeMessageBody_LeasedDelivery_Refuses(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 
-	if _, err := db.PurgeMessageBody(context.Background(), id); !errors.Is(err, store.ErrPendingObligation) {
+	if _, err := db.PurgeMessageBody(context.Background(), id, "msg://agent/test/operator"); !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("err = %v, want ErrPendingObligation for a leased (in-flight) delivery", err)
 	}
 }
@@ -111,7 +113,7 @@ func TestPurgeMessageBody_DeadLettered_RefusesBecauseStillRepairableViaRedrive(t
 		t.Fatalf("precondition: delivery status = %v, err=%v, want dead_lettered", rd.Status, err)
 	}
 
-	if _, err := db.PurgeMessageBody(context.Background(), id); !errors.Is(err, store.ErrPendingObligation) {
+	if _, err := db.PurgeMessageBody(context.Background(), id, "msg://agent/test/operator"); !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("err = %v, want ErrPendingObligation -- a dead-lettered delivery remains redrivable, "+
 			"purging its body first would make a later redrive resend an empty message", err)
 	}
@@ -136,7 +138,7 @@ func TestPurgeMessageBody_Delivered_PurgesBodyAndIsIdempotent(t *testing.T) {
 		t.Fatalf("ack: %v", err)
 	}
 
-	purged, err := db.PurgeMessageBody(context.Background(), id)
+	purged, err := db.PurgeMessageBody(context.Background(), id, "msg://agent/test/operator")
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -155,7 +157,7 @@ func TestPurgeMessageBody_Delivered_PurgesBodyAndIsIdempotent(t *testing.T) {
 		t.Errorf("structural fields not preserved after purge: from=%s to=%s", env.From.URN(), env.To.URN())
 	}
 
-	purgedAgain, err := db.PurgeMessageBody(context.Background(), id)
+	purgedAgain, err := db.PurgeMessageBody(context.Background(), id, "msg://agent/test/operator")
 	if err != nil {
 		t.Fatalf("second purge: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestPurgeMessageBody_Delivered_PurgesBodyAndIsIdempotent(t *testing.T) {
 
 func TestPurgeMessageBody_NotFound(t *testing.T) {
 	db := openRetentionDB(t)
-	if _, err := db.PurgeMessageBody(context.Background(), "no-such-message"); !errors.Is(err, messaging.ErrNotFound) {
+	if _, err := db.PurgeMessageBody(context.Background(), "no-such-message", "msg://agent/test/operator"); !errors.Is(err, messaging.ErrNotFound) {
 		t.Fatalf("err = %v, want wrapped messaging.ErrNotFound", err)
 	}
 }
@@ -195,7 +197,7 @@ func TestPurgeMessageBody_LegacyRowNoDeliveryTracking_ConservativeByDefault(t *t
 	db := openRetentionDB(t)
 	insertLegacyMessage(t, db, "legacy-pending", false)
 
-	if _, err := db.PurgeMessageBody(context.Background(), "legacy-pending"); !errors.Is(err, store.ErrPendingObligation) {
+	if _, err := db.PurgeMessageBody(context.Background(), "legacy-pending", "msg://agent/test/operator"); !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("err = %v, want ErrPendingObligation -- a legacy row with no completion signal "+
 			"and no delivery-core tracking must default to not-eligible, never silently purge", err)
 	}
@@ -230,7 +232,7 @@ func TestPurgeMessageBody_GroupCanonicalRow_NeverEligible(t *testing.T) {
 	db := openRetentionDB(t)
 	insertGroupCanonicalRow(t, db, "group-canonical-old", 24*365)
 
-	if _, err := db.PurgeMessageBody(context.Background(), "group-canonical-old"); !errors.Is(err, store.ErrPendingObligation) {
+	if _, err := db.PurgeMessageBody(context.Background(), "group-canonical-old", "msg://agent/test/operator"); !errors.Is(err, store.ErrPendingObligation) {
 		t.Fatalf("err = %v, want ErrPendingObligation -- a group canonical row must never be purge-eligible "+
 			"under this schema, no matter how old", err)
 	}
@@ -250,7 +252,7 @@ func TestPurgeMessageBody_LegacyRowMarkedConsumed_IsEligible(t *testing.T) {
 	db := openRetentionDB(t)
 	insertLegacyMessage(t, db, "legacy-consumed", true)
 
-	purged, err := db.PurgeMessageBody(context.Background(), "legacy-consumed")
+	purged, err := db.PurgeMessageBody(context.Background(), "legacy-consumed", "msg://agent/test/operator")
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -326,5 +328,108 @@ func TestListRetentionCandidates_AnnotatesEligibilityAndRespectsCutoff(t *testin
 	}
 	if legacy.HasDelivery || !legacy.Eligible {
 		t.Errorf("legacy candidate = %+v, want HasDelivery=false Eligible=true (consumed_at set)", legacy)
+	}
+}
+
+func TestPurgeMessageBody_AuditSurvivesReopenAndMessageDeletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	insertLegacyMessage(t, db, "durable", true)
+	author := "msg://agent/test/operator"
+	before := time.Now().UTC()
+	if purged, err := db.PurgeMessageBody(context.Background(), "durable", author); err != nil || !purged {
+		t.Fatalf("purge: %v, %v", purged, err)
+	}
+	if _, err := db.DB().Exec(`DELETE FROM messages WHERE id='durable'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var table, id, by, at string
+	if err := reopened.DB().QueryRow(`SELECT table_name,message_id,authorized_by,at FROM message_purge_audit`).Scan(&table, &id, &by, &at); err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil || stamp.Before(before) || stamp.After(time.Now()) {
+		t.Fatalf("audit time: %q, %v", at, err)
+	}
+	if table != "messages" || id != "durable" || by != author {
+		t.Fatalf("audit: %s %s %s", table, id, by)
+	}
+}
+
+func TestPurgeMessageBody_AuditFailureRollsBackPayloadAndMetadata(t *testing.T) {
+	db := openRetentionDB(t)
+	insertLegacyMessage(t, db, "rollback", true)
+	if _, err := db.DB().Exec(`UPDATE messages SET metadata='{"private":"meta"}' WHERE id='rollback'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`CREATE TRIGGER reject_message_purge_audit BEFORE INSERT ON message_purge_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := db.PurgeMessageBody(context.Background(), "rollback", "msg://agent/test/operator"); err == nil || purged {
+		t.Fatalf("failed audit: %v, %v", purged, err)
+	}
+	var payload, metadata sql.NullString
+	if err := db.DB().QueryRow(`SELECT payload,metadata FROM messages WHERE id='rollback'`).Scan(&payload, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if payload.String != `{"body":"legacy"}` || metadata.String != `{"private":"meta"}` {
+		t.Fatalf("failed audit lost content: %v %v", payload, metadata)
+	}
+}
+
+func TestPurgeMessageBody_ConcurrentRetriesHaveOneReceipt(t *testing.T) {
+	db := openRetentionDB(t)
+	insertLegacyMessage(t, db, "retry", true)
+	var wg sync.WaitGroup
+	results := make(chan bool, 8)
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			purged, err := db.PurgeMessageBody(context.Background(), "retry", "msg://agent/test/operator")
+			results <- purged
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	changed := 0
+	for result := range results {
+		if result {
+			changed++
+		}
+	}
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM message_purge_audit WHERE message_id='retry'`).Scan(&count); err != nil || changed != 1 || count != 1 {
+		t.Fatalf("retry changed=%d receipts=%d err=%v", changed, count, err)
+	}
+}
+
+func TestPurgeMessageBody_RequiresAuthorInStore(t *testing.T) {
+	db := openRetentionDB(t)
+	insertLegacyMessage(t, db, "author", true)
+	for _, author := range []string{"", "not-a-urn"} {
+		if purged, err := db.PurgeMessageBody(context.Background(), "author", author); err == nil || purged {
+			t.Fatalf("accepted author %q: %v %v", author, purged, err)
+		}
 	}
 }
