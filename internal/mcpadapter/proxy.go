@@ -131,8 +131,8 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		finishForward := telemetry.Forward(tCtx)
 		result, err := rt.Client.CallTool(tCtx, params)
 		finishForward()
-		if err != nil {
-			telemetry.SetErrorClass(tCtx, telemetry.ErrorClass(err))
+		if err != nil && telemetry.ErrorClass(err) == events.ToolErrorTimeout {
+			telemetry.SetErrorClass(tCtx, events.ToolErrorTimeout)
 		}
 		if err != nil && r.pool != nil {
 			wrapped := fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)

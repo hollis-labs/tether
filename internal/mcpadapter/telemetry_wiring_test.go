@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/store"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -98,7 +99,7 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 }
 
 func TestTelemetryRouterRecordsForwardLatencyAndTypedFailures(t *testing.T) {
-	for _, scenario := range []string{"ok", "timeout", "unavailable"} {
+	for _, scenario := range []string{"ok", "timeout", "validation", "unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
 			registry := NewToolRegistry()
 			var client upstreamClient
@@ -107,6 +108,9 @@ func TestTelemetryRouterRecordsForwardLatencyAndTypedFailures(t *testing.T) {
 					time.Sleep(3 * time.Millisecond)
 					if scenario == "timeout" {
 						return nil, context.DeadlineExceeded
+					}
+					if scenario == "validation" {
+						return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "invalid input"}
 					}
 					return &mcpsdk.CallToolResult{}, nil
 				}}
@@ -122,6 +126,8 @@ func TestTelemetryRouterRecordsForwardLatencyAndTypedFailures(t *testing.T) {
 			} else if call.ForwardMs < 1 || call.DurationMs < call.ForwardMs {
 				t.Fatal(call)
 			} else if scenario == "timeout" && call.ErrorClass != events.ToolErrorTimeout {
+				t.Fatal(call)
+			} else if scenario == "validation" && call.ErrorClass != events.ToolErrorValidation {
 				t.Fatal(call)
 			}
 		})
