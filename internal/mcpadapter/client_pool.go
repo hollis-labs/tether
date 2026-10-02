@@ -526,12 +526,16 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 }
 
 func (p *ClientPool) remoteClientPoolForEntry(entry config.MCPServerEntry) (*gomcpclient.Pool, error) {
-	if p.remoteHTTPClientFactory == nil {
-		return p.remoteClientPool(), nil
+	var build func(map[string]string, int) *http.Client
+	if p.remoteHTTPClientFactory != nil {
+		var err error
+		build, err = p.remoteHTTPClientFactory(entry)
+		if err != nil {
+			return nil, err
+		}
 	}
-	build, err := p.remoteHTTPClientFactory(entry)
-	if err != nil {
-		return nil, err
+	if build == nil && entry.Transport == "sse" {
+		build = ordinarySSEHTTPClient
 	}
 	if build == nil {
 		return p.remoteClientPool(), nil
