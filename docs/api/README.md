@@ -998,10 +998,12 @@ and broker scopes. Every event also persists to the `events` table.
 
 ### `session.turn_output`
 
-One event per completed agent turn, from every native agentkit runtime and the
-ACP wrapper Activity feed. Empty final answers are skipped; failure and terminal
-outputs are emitted even when text is empty. Reasoning, tool calls, and narration
-from earlier blocks are excluded by the shared `turnoutput` reducer.
+Reduced output events come from every native agentkit runtime and the ACP wrapper
+Activity feed. Empty final answers are skipped; reducer-produced failure and
+terminal outputs can emit events even when text is empty. Repeated identical
+errors suppressed by the reducer can produce neither a failure event nor a
+routed failure message, although internal turn completion records the failure. Reasoning, tool calls, and
+narration from earlier blocks are excluded by the shared `turnoutput` reducer.
 
 Payload:
 
@@ -1035,8 +1037,27 @@ remain hidden and cannot be published.
 
 Without a selected route kind, no durable message is created. The event instead
 carries `text`, an excerpt of at most 4096 bytes on a UTF-8 boundary, and
-`text_truncated: true` when shortened. On persistence failure the producer logs
-it and emits the excerpt without a `message_id`.
+`text_truncated: true` when shortened. Non-context route/body persistence errors
+log and fall back to that excerpt without a `message_id`. Non-context session
+metadata errors log and continue with an empty `workstream_id`.
+
+The synchronous persistence attempt has a five-second overall budget. Context
+errors on reads/staging, and any event-publication error, retry off the reader
+with operation deadlines and backoff from 100 milliseconds to five seconds.
+Retries retain a staged message ID; staging itself is idempotent for the
+session/turn/kind tuple. Events can be delayed and arrive out of turn order within
+one session (turn 2 before a retried turn 1). Use the session and turn IDs to
+identify outputs; event order is successful persistence order, not model-turn
+order. Channel publication can reorder independently.
+
+The retry pool holds at most 64 outputs / 16 MiB for up to one minute. Shutdown
+cancels in-flight work, makes one final bounded attempt per pending output and
+joins workers before storage closes. An event is not guaranteed for every
+completed turn: a full pool, prolonged failure or failed final attempt can lose
+it. Before staging, a crash can also lose the output body. After staging, the
+durable router scan can publish the body even when the event is lost. These
+limits and empty-terminal attribution are detailed in
+[the runtime contract](../runtime-turn-output.md#persistence-and-submission-boundaries).
 
 This is the canonical event for turn output. Consumers such as Tangent's bridge
 should migrate from `session.turn_waiting_input` to `session.turn_output`; no
