@@ -154,6 +154,7 @@ type Server struct {
 	// lifecycle closes sessions/streams and upstreams before HTTP/store drain.
 	MCP         http.Handler
 	MCPShutdown func()
+	MCPDrain    func(context.Context)
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -345,13 +346,17 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.publishDaemon(events.KindDaemonShutdownStarted, "")
+	// Stop admission/streams, bounded drain, then close the pool before store.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout)
+	defer cancel()
+	if s.MCPDrain != nil {
+		s.MCPDrain(shutdownCtx)
+	}
 	if s.MCPShutdown != nil {
 		s.MCPShutdown()
 	}
 
-	// Graceful shutdown: stop accepting connections, bound by timeout.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout)
-	defer cancel()
+	// Graceful shutdown: stop accepting connections, using the same deadline.
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil && runErr == nil {
 		runErr = fmt.Errorf("http shutdown: %w", err)
 	}

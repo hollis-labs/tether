@@ -223,8 +223,6 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		server := &daemon.Server{
-			MCP:                      mcpHandler,
-			MCPShutdown:              mcpHandler.Close,
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
@@ -270,6 +268,12 @@ var daemonRunCmd = &cobra.Command{
 				// releases the store handle so the process can exit cleanly.
 				return svc.Store.Close()
 			},
+		}
+
+		if mcpHandler != nil {
+			server.MCP = mcpHandler
+			server.MCPShutdown = mcpHandler.Close
+			server.MCPDrain = mcpHandler.Drain
 		}
 
 		return server.Run(ctx)

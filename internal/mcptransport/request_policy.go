@@ -131,7 +131,7 @@ func (p authorityPolicy) validate(r *http.Request) bool {
 	return err == nil && origin.Scheme == scheme && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == "" && normalizeAuthority(origin.Host) == normalizeAuthority(r.Host)
 }
 
-func hasUpstreamGrant(a admission) (bool, error) {
+func selectedUpstreamOrigins(a admission) ([]string, error) {
 	known := map[string]bool{"tether": true}
 	for id, enabled := range a.catalog.MCPServerEnabled {
 		known[id] = enabled
@@ -141,17 +141,27 @@ func hasUpstreamGrant(a admission) (bool, error) {
 		var err error
 		selected, err = mcpgateway.SelectOrigins(known, selected, floor.Profile)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 	}
 	selected, err := mcpgateway.SelectOrigins(known, selected, a.options.Profile.Profile)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+	origins := []string{}
 	for _, id := range selected {
 		if id != "tether" {
-			return true, nil
+			origins = append(origins, id)
 		}
 	}
-	return false, nil
+	return origins, nil
+}
+
+// ValidateEndpoint is used at daemon startup and doctor, never by shared loaders.
+func ValidateEndpoint(addr string, mode identity.Mode) error {
+	if err := identity.ValidateBind(addr, mode); err != nil {
+		return err
+	}
+	_, err := newAuthorityPolicy(addr)
+	return err
 }

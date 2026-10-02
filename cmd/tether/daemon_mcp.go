@@ -14,15 +14,19 @@ import (
 )
 
 func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store) (*mcptransport.Handler, error) {
+	if !svc.Catalog.Global.Daemon.MCPEndpoint.Enabled {
+		return nil, nil
+	}
 	var verifier identity.Verifier
 	if ids != nil {
 		verifier = ids
 	}
+	cache := &mcptransport.CatalogCache{Root: svc.CatalogRoot}
 	return mcptransport.NewHandler(ctx, mcptransport.HandlerConfig{
 		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityMode, Verifier: verifier, Service: svc,
 		NativeClient: func(token string) *client.Client { return client.New(cfg.ListenAddr, client.WithToken(token)) },
 		Resolver: mcptransport.CallerResolver{
-			Catalog: func(context.Context) (*config.Catalog, error) { return config.LoadLayered(svc.CatalogRoot) },
+			Catalog: cache.Load,
 			Session: svc.Store.SessionMCPPolicy,
 		},
 		NewRuntime: func(ctx context.Context, cat *config.Catalog) (*mcpadapter.SharedUpstreams, error) {

@@ -25,6 +25,7 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
+	"github.com/hollis-labs/tether/internal/mcptransport"
 	"github.com/hollis-labs/tether/internal/setup"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -148,7 +149,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 	cat = loadedCat
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
-		checks = append(checks, checkMCPDiscoveryMode(cat))
+		checks = append(checks, checkMCPDiscoveryMode(cat), checkMCPEndpoint(cat))
 		checks = append(checks, checkMCPProfiles(cat, catalogRoot)...)
 		checks = append(checks, checkMCPNamingConfig(catalogRoot)...)
 		if len(live) > 0 && live[0] {
@@ -575,4 +576,15 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no naming issues"))
 	}
 	return out
+}
+
+func checkMCPEndpoint(cat *config.Catalog) checkResult {
+	if !cat.Global.Daemon.MCPEndpoint.Enabled {
+		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
+	}
+	addr := config.Expand(cat.Global.Daemon.ListenAddr)
+	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.Mode)); err != nil {
+		return fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
+	}
+	return ok("mcp-endpoint", "enabled; strict verified admission on /mcp and /p/<profile>")
 }

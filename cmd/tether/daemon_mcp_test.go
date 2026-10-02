@@ -11,8 +11,10 @@ import (
 	"time"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -69,7 +71,7 @@ func TestDaemonMCPRealCommandMountAndShutdown(t *testing.T) {
 	t.Setenv("TETHER_TOKEN", "")
 	addr := "unix:" + filepath.Join(run, "t.sock")
 	dbPath := filepath.Join(state, "main.db")
-	global := fmt.Sprintf("catalog:\n  defaults:\n    state_db: %q\ndaemon:\n  listen_addr: %q\n  pid_file: %q\n  shutdown_timeout: 3s\nidentity:\n  mode: observe\n  mcp_grants:\n    command-client:\n      servers: [app]\n", dbPath, addr, filepath.Join(run, "t.pid"))
+	global := fmt.Sprintf("catalog:\n  defaults:\n    state_db: %q\ndaemon:\n  mcp_endpoint:\n    enabled: true\n  listen_addr: %q\n  pid_file: %q\n  shutdown_timeout: 3s\nidentity:\n  mode: observe\n  mcp_grants:\n    command-client:\n      servers: [app]\n", dbPath, addr, filepath.Join(run, "t.pid"))
 	if err := os.WriteFile(filepath.Join(catalog, "global.yaml"), []byte(global), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -165,5 +167,28 @@ func TestDaemonMCPRealCommandMountAndShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("MCP stream prevented daemon shutdown")
+	}
+}
+
+func TestDaemonMCPEndpointOptInGuardsAuthority(t *testing.T) {
+	for _, addr := range []string{"tcp::17881", "tcp:127.0.0.1:0"} {
+		cat := &config.Catalog{}
+		svc := &app.Service{Catalog: cat}
+		cfg := daemon.Config{ListenAddr: addr, IdentityMode: identity.Enforce}
+		h, err := buildDaemonMCP(context.Background(), svc, cfg, nil)
+		if err != nil || h != nil {
+			t.Fatalf("disabled endpoint changes startup: %v %v", h, err)
+		}
+		cat.Global.Daemon.ListenAddr = addr
+		if got := checkMCPEndpoint(cat); got.Status != statusOK {
+			t.Fatal(got)
+		}
+		cat.Global.Daemon.MCPEndpoint.Enabled = true
+		if _, err := buildDaemonMCP(context.Background(), svc, cfg, nil); err == nil {
+			t.Fatal("enabled bad authority accepted")
+		}
+		if got := checkMCPEndpoint(cat); got.Status != statusFail {
+			t.Fatal(got)
+		}
 	}
 }

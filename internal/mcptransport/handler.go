@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,22 +18,25 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // HandlerConfig is daemon composition, never caller-controlled configuration.
 type HandlerConfig struct {
-	ListenAddr      string
-	IdentityMode    identity.Mode
-	Verifier        identity.Verifier
-	Resolver        CallerResolver
-	Service         *app.Service
-	NativeClient    func(string) *client.Client
-	NewRuntime      func(context.Context, *config.Catalog) (*mcpadapter.SharedUpstreams, error)
-	SessionTimeout  time.Duration
-	RecheckInterval time.Duration
-	MaxViews        int
+	ListenAddr          string
+	IdentityMode        identity.Mode
+	Verifier            identity.Verifier
+	Resolver            CallerResolver
+	Service             *app.Service
+	NativeClient        func(string) *client.Client
+	NewRuntime          func(context.Context, *config.Catalog) (*mcpadapter.SharedUpstreams, error)
+	SessionTimeout      time.Duration
+	RecheckInterval     time.Duration
+	MaxViews            int
+	MaxPrincipalViews   int
+	VerificationTimeout time.Duration
 }
 
 type admission struct {
@@ -55,23 +59,35 @@ type transportView struct {
 	selectors              selectors
 	fingerprint, sessionID string
 	ready                  bool
+	principalKey           string
+	operator               bool
+	callCtx                context.Context
+	cancelCalls            context.CancelFunc
+	streamCtx              context.Context
+	cancelStreams          context.CancelFunc
+	lastUsed               time.Time
+	active                 int
 }
 
 // Handler owns SDK sessions/views and one lazily constructed upstream runtime.
 // Close must run before the daemon closes its store or drains HTTP streams.
 type Handler struct {
-	cfg       HandlerConfig
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	authority authorityPolicy
-	sdk       http.Handler
-	mu        sync.Mutex
-	closed    bool
-	views     map[*transportView]struct{}
-	sessions  map[string]*transportView
-	runtimeMu sync.Mutex
-	runtime   *mcpadapter.SharedUpstreams
+	cfg           HandlerConfig
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	authority     authorityPolicy
+	sdk           http.Handler
+	mu            sync.Mutex
+	closed        bool
+	views         map[*transportView]struct{}
+	sessions      map[string]*transportView
+	runtimeMu     sync.Mutex
+	runtime       *mcpadapter.SharedUpstreams
+	monitorCancel context.CancelFunc
+	monitorCtx    context.Context
+	calls         sync.WaitGroup
+	requests      sync.WaitGroup
 }
 
 func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
@@ -109,8 +125,15 @@ func NewHandler(ctx context.Context, cfg HandlerConfig) (*Handler, error) {
 	if cfg.MaxViews <= 0 {
 		cfg.MaxViews = 128
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	h := &Handler{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), authority: policy, views: map[*transportView]struct{}{}, sessions: map[string]*transportView{}}
+	if cfg.MaxPrincipalViews <= 0 {
+		cfg.MaxPrincipalViews = 16
+	}
+	if cfg.VerificationTimeout <= 0 {
+		cfg.VerificationTimeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	monitorCtx, monitorCancel := context.WithCancel(ctx)
+	h := &Handler{monitorCtx: monitorCtx, monitorCancel: monitorCancel, cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), authority: policy, views: map[*transportView]struct{}{}, sessions: map[string]*transportView{}}
 	sdk := mcpsdk.NewStreamableHTTPHandler(func(r *http.Request) *mcpsdk.Server {
 		if view, _ := r.Context().Value(preparedViewKey{}).(*transportView); view != nil {
 			return view.view.Server
@@ -160,6 +183,20 @@ func (h *Handler) admit(ctx context.Context, token string, s selectors) (admissi
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		transportError(w, http.StatusServiceUnavailable, "mcp_stopping")
+		return
+	}
+	if r.Method == http.MethodPost {
+		h.requests.Add(1)
+	}
+	h.mu.Unlock()
+	if r.Method == http.MethodPost {
+		defer h.requests.Done()
+	}
+
 	if h.ctx.Err() != nil {
 		transportError(w, http.StatusServiceUnavailable, "mcp_stopping")
 		return
@@ -194,7 +231,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, code = http.StatusUnauthorized, "unauthorized"
 		} else if errors.Is(err, errIdentityUnavailable) {
 			status, code = http.StatusServiceUnavailable, "identity_unavailable"
-		} else if errors.Is(err, errCatalogUnavailable) {
+		} else if errors.Is(err, errCatalogUnavailable) || errors.Is(err, errSessionUnavailable) {
 			status, code = http.StatusServiceUnavailable, "mcp_catalog_unavailable"
 		}
 		transportError(w, status, code)
@@ -226,6 +263,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), preparedViewKey{}, v))
+		h.mu.Lock()
+		v.lastUsed = time.Now()
+		h.mu.Unlock()
+		if r.Method == http.MethodGet {
+			streamCtx, cancel := context.WithCancel(r.Context())
+			stop := context.AfterFunc(v.streamCtx, cancel)
+			defer func() { stop(); cancel() }()
+			r = r.WithContext(streamCtx)
+		}
 		h.sdk.ServeHTTP(w, r)
 		return
 	}
@@ -238,6 +284,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.prepare(r.Context(), a, parts[1], s)
 	if err != nil {
+		slog.Warn("daemon MCP view preparation failed", "reason", "runtime or credential policy unavailable")
 		transportError(w, http.StatusServiceUnavailable, "mcp_view_unavailable")
 		return
 	}
@@ -284,9 +331,26 @@ func initializeRequest(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
-	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint}
+	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: a.caller.Principal.Kind == "operator" && a.caller.Principal.ID == identity.OperatorID, lastUsed: time.Now()}
+	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)
+	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx)
 	h.mu.Lock()
-	if h.closed || len(h.views) >= h.cfg.MaxViews {
+	count, nonoperator := 0, 0
+	for existing := range h.views {
+		if existing.principalKey == v.principalKey {
+			count++
+		}
+		if !existing.operator {
+			nonoperator++
+		}
+	}
+	reserve := h.cfg.MaxPrincipalViews
+	if reserve >= h.cfg.MaxViews {
+		reserve = h.cfg.MaxViews / 4
+	}
+	if h.closed || len(h.views) >= h.cfg.MaxViews || count >= h.cfg.MaxPrincipalViews || (!v.operator && nonoperator >= h.cfg.MaxViews-reserve) {
+		v.cancelCalls()
+		v.cancelStreams()
 		h.mu.Unlock()
 		return nil, fmt.Errorf("MCP view capacity unavailable")
 	}
@@ -312,18 +376,21 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		h.runtimeMu.Unlock()
 		return nil, fmt.Errorf("MCP runtime factory returned no pool")
 	}
-	needsUpstreams, err := hasUpstreamGrant(a)
+	h.runtimeMu.Unlock()
+	origins, err := selectedUpstreamOrigins(a)
 	if err != nil {
-		h.runtimeMu.Unlock()
 		return nil, err
 	}
-	if needsUpstreams {
-		if err := pool.Start(h.ctx); err != nil {
-			h.runtimeMu.Unlock()
+	if len(origins) > 0 {
+		err := pool.StartOrigins(h.ctx, origins)
+		var collision *mcpgateway.CollisionError
+		if err != nil && !errors.As(err, &collision) {
 			return nil, err
 		}
+		if collision != nil {
+			slog.Warn("daemon MCP name collision; healthy origins remain available", "collisions", collision.Collisions)
+		}
 	}
-	h.runtimeMu.Unlock()
 	var dc *client.Client
 	if h.cfg.NativeClient != nil {
 		dc = h.cfg.NativeClient(token)
@@ -338,16 +405,23 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 	}
 	view.Server.AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
-			if h.ctx.Err() != nil {
+			h.mu.Lock()
+			if h.closed || v.callCtx.Err() != nil {
+				h.mu.Unlock()
 				return nil, fmt.Errorf("MCP stopping")
 			}
+			h.calls.Add(1)
+			v.active++
+			v.lastUsed = time.Now()
+			h.mu.Unlock()
+			defer func() { h.mu.Lock(); v.active--; h.mu.Unlock(); h.calls.Done() }()
 			current, err := h.admit(ctx, token, s)
 			if err != nil || current.fingerprint != v.fingerprint {
 				return nil, fmt.Errorf("MCP credential or policy no longer valid")
 			}
 			ctx = identity.WithPrincipal(ctx, current.caller.Principal)
 			callCtx, cancel := context.WithCancel(ctx)
-			stop := context.AfterFunc(h.ctx, cancel)
+			stop := context.AfterFunc(v.callCtx, cancel)
 			defer func() { stop(); cancel() }()
 			return next(callCtx, method, req)
 		}
@@ -369,6 +443,8 @@ func (h *Handler) remove(v *transportView) {
 	delete(h.views, v)
 	delete(h.sessions, v.sessionID)
 	view := v.view
+	v.cancelCalls()
+	v.cancelStreams()
 	h.mu.Unlock()
 	if view != nil {
 		view.Close()
@@ -381,7 +457,7 @@ func (h *Handler) monitor() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-h.ctx.Done():
+		case <-h.monitorCtx.Done():
 			return
 		case <-ticker.C:
 			h.mu.Lock()
@@ -392,26 +468,38 @@ func (h *Handler) monitor() {
 				}
 			}
 			h.mu.Unlock()
-			ctx, cancel := context.WithTimeout(h.ctx, h.cfg.RecheckInterval)
 			for _, v := range views {
+				ctx, cancel := context.WithTimeout(h.monitorCtx, h.cfg.VerificationTimeout)
 				a, err := h.admit(ctx, v.token, v.selectors)
+				cancel()
 				alive := false
 				for range v.view.Server.Sessions() {
 					alive = true
 					break
 				}
-				if err != nil || a.fingerprint != v.fingerprint || !alive {
+				h.mu.Lock()
+				idle := time.Since(v.lastUsed)
+				active := v.active > 0
+				h.mu.Unlock()
+				timeout := h.cfg.SessionTimeout
+				if !v.operator && timeout > 2*time.Minute {
+					timeout = 2 * time.Minute
+				}
+				transient := errors.Is(err, errIdentityUnavailable) || errors.Is(err, errCatalogUnavailable) || errors.Is(err, errSessionUnavailable)
+				if transient {
+					slog.Warn("daemon MCP verification temporarily unavailable; view retained", "reason", "verification unavailable")
+				}
+				if !alive || (!active && idle > timeout) || (!transient && (err != nil || a.fingerprint != v.fingerprint)) {
 					h.remove(v)
 				}
 			}
-			cancel()
 		}
 	}
 }
 
 func (h *Handler) Close() {
 	h.mu.Lock()
-	if h.closed {
+	if h.ctx.Err() != nil {
 		h.mu.Unlock()
 		return
 	}
@@ -421,6 +509,7 @@ func (h *Handler) Close() {
 		views = append(views, v)
 	}
 	h.mu.Unlock()
+	h.monitorCancel()
 	h.cancel()
 	<-h.done
 	for _, v := range views {
@@ -456,4 +545,34 @@ func transportError(w http.ResponseWriter, status int, code string) {
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": code}})
+}
+
+// Drain refuses new calls and ends streams, then lets admitted calls finish.
+// On timeout cancellation leaves the upstream outcome unknown; no replay.
+func (h *Handler) Drain(ctx context.Context) {
+	h.mu.Lock()
+	h.closed = true
+	for v := range h.views {
+		if v.active == 0 {
+			v.cancelStreams()
+		}
+	}
+	h.mu.Unlock()
+	done := make(chan struct{})
+	go func() { h.requests.Wait(); h.calls.Wait(); close(done) }()
+	select {
+	case <-done:
+		h.mu.Lock()
+		for v := range h.views {
+			v.cancelStreams()
+		}
+		h.mu.Unlock()
+	case <-ctx.Done():
+		h.mu.Lock()
+		for v := range h.views {
+			v.cancelCalls()
+			v.cancelStreams()
+		}
+		h.mu.Unlock()
+	}
 }

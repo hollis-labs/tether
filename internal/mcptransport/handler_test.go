@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 type transportFixture struct {
 	db          *store.Store
 	ids         *identity.Store
+	verifier    *switchableVerifier
 	handler     *Handler
 	addr        string
 	cat         *config.Catalog
@@ -75,6 +77,7 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 		}
 		entries = append(entries, config.MCPServerEntry{ID: "app", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestTransportUpstreamProcess$"}, Env: map[string]string{"TETHER_TRANSPORT_FIXTURE": f.childStarts}})
 	}
+	f.verifier = &switchableVerifier{inner: f.ids}
 	var listener net.Listener
 	if unix {
 		f.addr = "unix:" + filepath.Join(run, "test.sock")
@@ -90,7 +93,7 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	}
 	svc := &app.Service{Store: db, Catalog: f.cat, CatalogRoot: catalog}
 	h, err := NewHandler(context.Background(), HandlerConfig{
-		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.ids, Service: svc, RecheckInterval: 20 * time.Millisecond, SessionTimeout: time.Minute, MaxViews: 16,
+		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, RecheckInterval: 20 * time.Millisecond, SessionTimeout: time.Minute, MaxViews: 16,
 		NativeClient: func(token string) *client.Client { return client.New(f.addr, client.WithToken(token)) },
 		Resolver: CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) {
 			f.catMu.Lock()
@@ -475,6 +478,17 @@ func TestTransportUpstreamProcess(t *testing.T) {
 	s.RegisterTool(gomcp.Tool{Name: "app_echo", Description: "Read-only echo", InputSchema: gomcp.InputSchema(gomcp.StringProp("message", "message", false)), ReadOnlyHint: true, Handler: func(_ context.Context, args map[string]any) (any, error) {
 		return map[string]any{"pid": os.Getpid(), "message": args["message"]}, nil
 	}})
+	s.RegisterTool(gomcp.Tool{Name: "app_slow", Description: "Slow fixture", InputSchema: gomcp.InputSchema(), ReadOnlyHint: true, Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+		if err := os.WriteFile(path+".call", []byte("started"), 0600); err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1500 * time.Millisecond):
+			return "finished", nil
+		}
+	}})
 	if s.Run(context.Background()) != nil {
 		os.Exit(3)
 	}
@@ -563,5 +577,165 @@ func TestTransportViewCapacityRecoversAfterDelete(t *testing.T) {
 			t.Fatal("deleted view retained capacity", r.StatusCode)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Transient verification errors must not destroy SDK session identity.
+type switchableVerifier struct {
+	inner       identity.Verifier
+	unavailable atomic.Bool
+}
+
+func (v *switchableVerifier) Verify(ctx context.Context, token string) (identity.Principal, error) {
+	if v.unavailable.Load() {
+		return identity.Principal{}, errors.New("temporary verifier outage")
+	}
+	return v.inner.Verify(ctx, token)
+}
+
+func TestTransportTransientVerifierRetainsViews(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	token := f.token(t, "healthy", nil)
+	response := f.request(t, http.MethodPost, "/mcp", token, "", nil)
+	id := response.Header.Get("Mcp-Session-Id")
+	closeResponse(response)
+	f.verifier.unavailable.Store(true)
+	time.Sleep(100 * time.Millisecond)
+	response = f.request(t, http.MethodPost, "/mcp", token, id, nil)
+	if response.StatusCode != 503 {
+		t.Fatal(response.StatusCode)
+	}
+	closeResponse(response)
+	f.verifier.unavailable.Store(false)
+	response = f.request(t, http.MethodPost, "/mcp", token, id, nil)
+	defer closeResponse(response)
+	if response.StatusCode != 200 {
+		t.Fatal("healthy view evicted", response.StatusCode)
+	}
+}
+
+func TestTransportPrincipalQuotaPreservesOtherAndOperatorViews(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	a, b := f.token(t, "a", nil), f.token(t, "b", nil)
+	// The fixture's smaller global cap exercises reserved operator headroom.
+	for i := 0; i < 12; i++ {
+		r := f.request(t, http.MethodPost, "/mcp", a, "", nil)
+		if r.StatusCode != 200 {
+			t.Fatal(i, r.StatusCode)
+		}
+		closeResponse(r)
+	}
+	r := f.request(t, http.MethodPost, "/mcp", b, "", nil)
+	if r.StatusCode != 503 {
+		t.Fatal("headroom consumed", r.StatusCode)
+	}
+	closeResponse(r)
+	operator, err := f.ids.Mint(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = f.request(t, http.MethodPost, "/mcp", operator, "", nil)
+	if r.StatusCode != 200 {
+		t.Fatal("operator locked out", r.StatusCode)
+	}
+	closeResponse(r)
+}
+
+func TestTransportRevocationCancelsInflightCallAndDrainWaits(t *testing.T) {
+	for _, revoke := range []bool{true, false} {
+		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
+			f := newTransportFixture(t, true, true)
+			token := f.token(t, "slow", []string{"app"})
+			session, err := client.New(f.addr, client.WithToken(token)).ConnectMCP(context.Background(), client.MCPOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = session.Close() }()
+			done := make(chan error, 1)
+			go func() {
+				_, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "app_slow"})
+				done <- err
+			}()
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				if _, err := os.Stat(f.childStarts + ".call"); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("call never started")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			started := time.Now()
+			if revoke {
+				if _, err := f.db.DB().Exec(`UPDATE principals SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=?`, identity.HashToken(token)); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("revocation left call running")
+				}
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				f.handler.Drain(ctx)
+				if elapsed := time.Since(started); elapsed < time.Second {
+					t.Fatal("shutdown canceled call instead of draining", elapsed)
+				}
+				if err := <-done; err != nil {
+					t.Fatal("drained call failed", err)
+				}
+			}
+		})
+	}
+}
+
+func TestTransportPerPrincipalLimitDoesNotLockOthersOut(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	f.handler.cfg.MaxViews = 128
+	a, b := f.token(t, "abusive", nil), f.token(t, "other", nil)
+	for i := 0; i < 16; i++ {
+		r := f.request(t, http.MethodPost, "/mcp", a, "", nil)
+		if r.StatusCode != 200 {
+			t.Fatal(i, r.StatusCode)
+		}
+		closeResponse(r)
+	}
+	r := f.request(t, http.MethodPost, "/mcp", a, "", nil)
+	if r.StatusCode != 503 {
+		t.Fatal("principal limit missing", r.StatusCode)
+	}
+	closeResponse(r)
+	r = f.request(t, http.MethodPost, "/mcp", b, "", nil)
+	defer closeResponse(r)
+	if r.StatusCode != 200 {
+		t.Fatal("other principal locked out", r.StatusCode)
+	}
+}
+
+func TestTransportManyHealthyViewsRetainSessionIDs(t *testing.T) {
+	f := newTransportFixture(t, true, false)
+	f.handler.cfg.MaxViews = 128
+	type binding struct{ token, id string }
+	bindings := []binding{}
+	for principal := 0; principal < 7; principal++ {
+		token := f.token(t, fmt.Sprintf("healthy-%d", principal), nil)
+		for j := 0; j < 15; j++ {
+			r := f.request(t, http.MethodPost, "/mcp", token, "", nil)
+			if r.StatusCode != 200 {
+				t.Fatal("initialize", len(bindings), r.StatusCode)
+			}
+			bindings = append(bindings, binding{token, r.Header.Get("Mcp-Session-Id")})
+			closeResponse(r)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	for _, b := range bindings {
+		r := f.request(t, http.MethodPost, "/mcp", b.token, b.id, nil)
+		if r.StatusCode != 200 {
+			t.Fatal("healthy session evicted", r.StatusCode)
+		}
+		closeResponse(r)
 	}
 }

@@ -19,6 +19,7 @@ or logging, including literal URLs rather than only secret references.
 
 ## Endpoints and admission
 
+The endpoint defaults **off**. With `daemon.mcp_endpoint.enabled: true`,
 `/mcp` and `/p/<profile>` are mounted alongside the existing daemon API on
 its configured listener. Unix sockets carry the same HTTP protocol; clients use
 `http://unix/mcp` with a UDS dialer. The synthetic `localhost` authority also
@@ -50,21 +51,62 @@ principal, cannot use it. Profile, grant or mode changes require a new
 initialization; requests cannot silently widen an existing view. Native API
 clients carry the admitted credential and daemon-resolved caller context.
 
-The pool starts on the first admitted initialization with eligible upstreams,
-using the daemon lifetime. Native-only/zero-grant views spawn no upstreams.
-Views are bounded to 128 and SDK sessions expire after 15 minutes without new
-requests. A one-second recheck verifies stream credentials and current policy,
-closes revoked/terminal/changed sessions, and reclaims disconnected views.
-The SDK also enforces request-time binding; the recheck interval does not permit
-new calls with stale authority. Shutdown closes admission, views/streams and
-upstreams before HTTP/store drain. Spawn-time credential helpers use daemon
-cancellation. Invalid shared-runtime roots or credential references fail view
-construction with 503; existing API routes remain available.
+Only an admitted view's eligible upstream origins start, lazily and at most
+once per origin. Each first handshake has its own existing ten-second timeout;
+a slow/granted origin cannot block a zero-grant or differently granted view.
+Native-only views spawn no upstreams. Typed naming collisions degrade/exclude
+the conflicting origins and retain both owners in operator diagnostics;
+unrelated origins continue serving and refresh can recover accepted inventory.
+No permanent startup error is cached.
+
+Views are bounded to 128 globally and 16 per exact principal (across that
+principal's tokens). Sixteen global slots are reserved for the exact operator.
+Non-operator idle views expire after two minutes, operator idle views after
+15 minutes. A one-second monitor gives each view its own two-second verification
+deadline. Definitive invalid/revoked/terminal/changed policy closes its streams
+and cancels its in-flight calls. Temporary verifier/catalog failures keep the
+view and log/retry; new calls remain refused until verification succeeds.
+Catalog generations are cached and reparsed only on authority-layer metadata
+changes; an inaccessible/broken changed generation never serves stale grants.
+Revocation/cancellation cannot undo upstream effects: an in-flight call's
+outcome may be unknown, and it is never replayed.
+
+Shutdown stops admission and closes idle-view streams immediately. Streams
+attached to active calls remain through response drain because SDK stream
+closure otherwise fails pending POSTs. It drains admitted in-flight calls up to
+`daemon.shutdown_timeout`, cancels any remaining calls, then closes the pool
+and finally the store. A SIGTERM does not immediately kill an admitted call.
+Invalid shared-runtime roots or credential references fail view construction
+with a static 503 plus a private-safe daemon log; existing API routes remain
+available. Verified MCP initialization omits the daemon runtime PID capability.
+
+### Operator enable/disable
+
+This endpoint is an optional phase-2 rollout for CW-20261001-0230, separate
+from the live cutover. In the selected catalog's `global.yaml`, set:
+
+```yaml
+daemon:
+  mcp_endpoint:
+    enabled: true
+```
+
+Keep `identity.mode: observe` or `enforce` with provisioned credentials and a
+Unix socket or concrete loopback host/port. Run `tether doctor --catalog <root>`
+for the endpoint finding, then restart that selected daemon. Non-loopback needs
+`enforce` and a working verifier. To disable, set `enabled: false` (or remove
+`mcp_endpoint`), run doctor, and restart; no handler, pool or MCP routes are
+constructed, so `/mcp` and `/p/` return the existing API's 404. Disabled daemons
+retain existing listener behavior, including wildcard and ephemeral ports;
+enabled endpoints refuse invalid/non-concrete authorities loudly at startup
+and doctor. The seeded catalog documents the default-off switch.
 
 `internal/client.Client.ConnectMCP` reuses its frozen credential and HTTP/UDS
 dialer, with an SDK-owned stream lifetime. A missing socket, refused connection
 or dial timeout wraps `client.ErrDaemonUnreachable`. Auth/policy/protocol errors
-remain distinct. There is no local catalog/SQLite/upstream fallback, daemon
+remain distinct. The wire error string `daemon_unreachable` belongs to the
+0230/stage-3 stdio forwarding surface; this connector supplies the Go sentinel.
+There is no local catalog/SQLite/upstream fallback, daemon
 auto-start or retry of an uncertain mutation.
 
 ## Principal grants

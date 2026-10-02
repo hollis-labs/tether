@@ -172,7 +172,9 @@ func (a *Adapter) Run(ctx context.Context) error {
 // stdio path) and RunWithProxyOpts (proxy_adapter.go), which each register a
 // different tool set on top of it.
 func (a *Adapter) newBareServer(options ...gomcp.Option) *gomcp.Server {
-	options = append(options, gomcp.WithCapabilities(&mcpsdk.ServerCapabilities{Experimental: map[string]any{RuntimeObservationCapability: a.runtime}}))
+	if a.principal == nil {
+		options = append(options, gomcp.WithCapabilities(&mcpsdk.ServerCapabilities{Experimental: map[string]any{RuntimeObservationCapability: a.runtime}}))
+	}
 	s := gomcp.NewServer("tether", a.runtime.Build.Version, options...)
 	s.SDKServer().AddReceivingMiddleware(sanitize.Middleware(a.logger()))
 	return s
