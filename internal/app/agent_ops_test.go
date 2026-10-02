@@ -311,6 +311,14 @@ mcp_servers: [vanta, clockwork, cerberus]
 	svc := buildTestService(t, map[string]config.Agent{
 		"test-agent": {ID: "test-agent"},
 	}, tmp)
+	for _, id := range []string{"vanta", "clockwork", "cerberus"} {
+		if err := os.MkdirAll(filepath.Join(tmp, "mcp-servers"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "mcp-servers", id+".yaml"), []byte("id: "+id+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	plan := basePlan()
 	in := CreateSessionInput{LaunchID: "test-launch", BootProfileFile: profilePath}
 	if err := svc.applyAgentOps(plan, in); err != nil {

@@ -125,6 +125,16 @@ type Service struct {
 // with state/attachment/event sinks, and registers the built-in + catalog-
 // declared runtime factories.
 func New(catalogRoot string) (*Service, error) {
+	return newService(catalogRoot, false)
+}
+
+// NewDaemon validates every declared MCP grant at an operator's explicit
+// startup. Ordinary CLI services remain usable for catalog inspection/repair.
+func NewDaemon(catalogRoot string) (*Service, error) {
+	return newService(catalogRoot, true)
+}
+
+func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	maybeAutoSeedCatalog(catalogRoot)
 
 	cat, err := config.LoadLayered(catalogRoot)
@@ -133,6 +143,11 @@ func New(catalogRoot string) (*Service, error) {
 	}
 	if err := cat.Validate(); err != nil {
 		return nil, err
+	}
+	if validateMCPGrants {
+		if err := cat.ValidateMCPGrants(); err != nil {
+			return nil, err
+		}
 	}
 	// An agent naming an undefined sandbox profile does not stop the daemon;
 	// its launches are refused (CW-20261001-0130). Say so at startup.

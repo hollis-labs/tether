@@ -330,12 +330,15 @@ type InjectedFile struct {
 }
 
 type Catalog struct {
-	Global          Global
-	Projects        map[string]LaunchContext
-	Agents          map[string]LaunchProfile
-	Providers       map[string]Provider
-	Launches        map[string]Launch
-	SandboxProfiles map[string]sandbox.Profile
+	// MCPServerEnabled retains validation metadata only, never upstream credentials.
+	MCPServerEnabled map[string]bool
+	BootMCPGrants    map[string][]string
+	Global           Global
+	Projects         map[string]LaunchContext
+	Agents           map[string]LaunchProfile
+	Providers        map[string]Provider
+	Launches         map[string]Launch
+	SandboxProfiles  map[string]sandbox.Profile
 	// Paths is the go-apppaths Layout resolved by Load. It supplies the
 	// FALLBACK storage paths (state_db, workspace_root, temp_root) for the
 	// case where global.yaml omits the corresponding catalog default. The

@@ -75,7 +75,7 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 // edited under launches/ takes effect without a daemon restart
 // (CW-20261001-0018).
 //
-// Only launches are refreshed. Projects, agents, providers and sandbox
+// Launches and upstream enablement are refreshed. Projects, agents, providers and sandbox
 // profiles stay as loaded at startup, because session creation reads the
 // agent's permission mode and sandbox profile from s.Catalog directly; a
 // fresh agent here would reach that code with no sandbox entry to find. A
@@ -84,7 +84,8 @@ func (s *Service) resolveWithInput(in CreateSessionInput) (*launch.Plan, error) 
 //
 // A catalog that no longer loads (a YAML error anywhere in it) falls back
 // to the startup launches, so one bad edit does not stop every launch. The
-// load error is logged, and added to the not-found error when the startup
+// Grant-validation errors always refuse; they never use stale grants. Other
+// load errors are logged, and added to the not-found error when the startup
 // launches do not have launchID either.
 func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 	if s.Catalog == nil || s.CatalogRoot == "" {
@@ -98,8 +99,12 @@ func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 		}
 		return s.Catalog, nil
 	}
+	if err := fresh.ValidateLaunchMCPGrants(launchID); err != nil {
+		return nil, err
+	}
 	cat := *s.Catalog
 	cat.Launches = fresh.Launches
+	cat.MCPServerEnabled = fresh.MCPServerEnabled
 	if _, ok := cat.Launches[launchID]; !ok {
 		return &cat, nil // launch.Resolve reports the not-found
 	}

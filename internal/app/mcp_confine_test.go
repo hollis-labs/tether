@@ -77,6 +77,7 @@ func TestTetherEnvMap_DefaultAndExplicit(t *testing.T) {
 	}{
 		{"no env: the default", nil, "torque,tesseract"},
 		{"no list: the default", map[string]string{"X": "y"}, "torque,tesseract"},
+		{"empty list grants none", map[string]string{"TETHER_MCP_SERVERS": ""}, ""},
 		{"explicit list replaces the default", map[string]string{"TETHER_MCP_SERVERS": "loom"}, "loom"},
 		{"an explicit list can include more", map[string]string{"TETHER_MCP_SERVERS": "torque,tesseract,nanite"}, "torque,tesseract,nanite"},
 	} {
@@ -98,6 +99,7 @@ func TestPlantedClaudeMCPJSON_CarriesConfineAndAllowList(t *testing.T) {
 		want string
 	}{
 		{"default", nil, "torque,tesseract"},
+		{"empty", map[string]string{"TETHER_MCP_SERVERS": ""}, ""},
 		{"explicit", map[string]string{"TETHER_MCP_SERVERS": "torque,loom"}, "torque,loom"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

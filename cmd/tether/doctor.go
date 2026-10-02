@@ -240,6 +240,9 @@ func checkCatalog(catalogRoot string) (checkResult, *config.Catalog) {
 		return fail("catalog-present", fmt.Sprintf("load failed: %v", err),
 			"run: tether init"), nil
 	}
+	if err := cat.ValidateMCPGrants(); err != nil {
+		return fail("catalog-mcp-grants", err.Error(), "fix the named grant or enable its upstream under mcp-servers/"), nil
+	}
 	if err := cat.Validate(); err != nil {
 		return fail("catalog-valid", fmt.Sprintf("validation failed: %v", err),
 			"check your catalog YAML files or run: tether init --force"), nil

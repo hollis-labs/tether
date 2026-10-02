@@ -220,7 +220,7 @@ func (r *Resolver) Resolve(ctx context.Context, in CompositionInput) (*ResolvedC
 	}
 
 	// Inject MCP servers if defined on context
-	if launchCtx != nil && len(launchCtx.MCP.Servers) > 0 {
+	if launchCtx != nil && launchCtx.MCP.Servers != nil {
 		if _, exists := env["TETHER_MCP_SERVERS"]; !exists {
 			env["TETHER_MCP_SERVERS"] = strings.Join(launchCtx.MCP.Servers, ",")
 		}

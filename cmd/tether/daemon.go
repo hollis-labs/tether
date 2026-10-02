@@ -144,7 +144,7 @@ var daemonRunCmd = &cobra.Command{
 			}
 		}
 
-		svc, err := app.New(catalogPath)
+		svc, err := app.NewDaemon(catalogPath)
 		if err != nil {
 			return err
 		}
