@@ -485,11 +485,8 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	// agy reports auto-denied tool actions only on the typed-event surface;
-	// other providers keep the adapter path untapped.
-	if plan.ProviderBrand == "antigravity" {
-		startOpts.TypedEventCallback = makeProviderTypedEventCallback(s.Bus, sessionID, plan.LogicalAgentID)
-	}
+	turnOutput := s.newSessionTurnOutput(*row, plan)
+	turnOutput.wire(rt, &startOpts)
 	startOpts.SessionIDPreset = plan.ResumeProviderSessionID
 	startOpts.AttachEnabled = true
 	startOpts.AutoPlantBootDir = false
@@ -537,13 +534,31 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			"provider_id":      plan.ProviderID,
 		},
 	}
-	if err := s.Manager.Start(context.Background(), req); err != nil {
+	s.turnOutputs.Store(sessionID, turnOutput)
+	start := func() error { return s.Manager.Start(context.Background(), req) }
+	// Track an automatic boot submission through the same provisional/accepted
+	// marker path as explicit turns, without holding a gate across Start.
+	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
+		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
+		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
+		err = s.trackTurnSubmission(sessionID, start)
+	} else {
+		err = start()
+	}
+	if err != nil {
+		s.turnOutputs.Delete(sessionID)
+		turnOutput.flush()
 		if procLog != nil {
 			_ = procLog.Close()
 		}
 		return nil, err
 	}
 	launched = true
+	go func() {
+		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
+		turnOutput.flush()
+		s.turnOutputs.Delete(sessionID)
+	}()
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.
 	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {

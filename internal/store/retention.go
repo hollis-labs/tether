@@ -42,6 +42,10 @@ package store
 // pre-T03 definition of "done" -- otherwise it is conservatively treated
 // as still-pending: unknown status never purges.
 //
+// Routing-staged output has no delivery obligation. It is retained for the
+// normal 30-day window, after which explicit retention can purge it even if
+// the channel router never attached it. It stays hidden after purge.
+//
 // No automatic sweep calls PurgeMessageBody or ListRetentionCandidates
 // anywhere in this codebase -- both are invoked only by an explicit
 // operator action (CLI or HTTP; see internal/api/retention.go), matching
@@ -106,6 +110,7 @@ type RetentionCandidate struct {
 // eligibility against the delivery core.
 type rawRetentionRow struct {
 	id, createdStr                  string
+	staged                          bool
 	publication                     bool
 	consumedStr, canceledStr, delID sql.NullString
 }
@@ -122,7 +127,7 @@ type rawRetentionRow struct {
 // safe to then loop over calling GetDelivery per row.
 func (s *Store) queryRetentionRows(ctx context.Context, olderThan time.Time) ([]rawRetentionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, created_at, consumed_at, canceled_at, delivery_id,
+		`SELECT id, created_at, consumed_at, canceled_at, delivery_id, routing_staged,
  EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id)
 		   FROM messages
 		  WHERE created_at < ?
@@ -137,7 +142,7 @@ func (s *Store) queryRetentionRows(ctx context.Context, olderThan time.Time) ([]
 	var out []rawRetentionRow
 	for rows.Next() {
 		var r rawRetentionRow
-		if err := rows.Scan(&r.id, &r.createdStr, &r.consumedStr, &r.canceledStr, &r.delID, &r.publication); err != nil {
+		if err := rows.Scan(&r.id, &r.createdStr, &r.consumedStr, &r.canceledStr, &r.delID, &r.staged, &r.publication); err != nil {
 			return nil, fmt.Errorf("store: retention: scan candidate: %w", err)
 		}
 		out = append(out, r)
@@ -173,6 +178,8 @@ func (s *Store) ListRetentionCandidates(ctx context.Context, olderThan time.Time
 				c.Status = string(rd.Status)
 				c.Eligible = isPurgeEligibleStatus(rd.Status)
 			}
+		} else if r.staged {
+			c.Eligible = routingStageExpired(r.createdStr)
 		} else {
 			c.Eligible = r.publication || legacyRowIsDone(r.consumedStr, r.canceledStr)
 		}
@@ -197,13 +204,14 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy st
 		return false, fmt.Errorf("store: retention: authorized_by must be a valid URN: %w", err)
 	}
 	var payload, metadata, consumedStr, canceledStr, delID sql.NullString
-	var publication bool
+	var staged, publication bool
+	var created string
 	row := s.db.QueryRowContext(ctx,
-		`SELECT payload, metadata, consumed_at, canceled_at, delivery_id,
+		`SELECT payload, metadata, consumed_at, canceled_at, delivery_id, routing_staged, created_at,
  EXISTS (SELECT 1 FROM channel_publications p WHERE p.message_id = messages.id) FROM messages WHERE id = ?`,
 		messageID,
 	)
-	if scanErr := row.Scan(&payload, &metadata, &consumedStr, &canceledStr, &delID, &publication); scanErr != nil {
+	if scanErr := row.Scan(&payload, &metadata, &consumedStr, &canceledStr, &delID, &staged, &created, &publication); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return false, fmt.Errorf("store: retention: purge %s: %w", messageID, messaging.ErrNotFound)
 		}
@@ -217,6 +225,8 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy st
 			return false, fmt.Errorf("store: retention: purge %s: get delivery: %w", messageID, getErr)
 		}
 		eligible = isPurgeEligibleStatus(rd.Status)
+	} else if staged {
+		eligible = routingStageExpired(created)
 	} else {
 		eligible = publication || legacyRowIsDone(consumedStr, canceledStr)
 	}
@@ -237,7 +247,7 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy st
 	// Recheck body presence under the write transaction: concurrent retries
 	// must not create multiple receipts for the same content removal.
 	res, err := tx.ExecContext(ctx,
-		`UPDATE messages SET payload = NULL, metadata = NULL WHERE id = ? AND (payload IS NOT NULL OR metadata IS NOT NULL)`, messageID)
+		`UPDATE messages SET payload = NULL, metadata = NULL WHERE id = ? AND (payload IS NOT NULL OR metadata IS NOT NULL) AND (?=0 OR routing_staged=1)`, messageID, staged)
 	if err != nil {
 		return false, fmt.Errorf("store: retention: purge %s: %w", messageID, err)
 	}

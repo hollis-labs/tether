@@ -168,7 +168,7 @@ func (ms *messagingStore) Get(ctx context.Context, id string) (messaging.Envelop
 		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
 		        payload, content_type, metadata, created_at,
 		        delivered_at, consumed_at
-		 FROM messages WHERE id=?`, id)
+		 FROM messages WHERE id=? AND routing_staged=0`, id)
 	env, err := scanEnvelope(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return messaging.Envelope{}, messaging.ErrNotFound
@@ -197,7 +197,7 @@ func (ms *messagingStore) Inbox(ctx context.Context, to messaging.Address, f mes
 	}
 
 	// Build WHERE clause for optional Filter fields.
-	where := "to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL"
+	where := "routing_staged=0 AND to_urn=? AND delivered_at IS NULL AND canceled_at IS NULL"
 	args := []any{toURN}
 	if len(f.Kind) > 0 {
 		in := make([]any, len(f.Kind))
@@ -274,7 +274,7 @@ func (ms *messagingStore) Thread(ctx context.Context, threadID string, f messagi
 		limit = 100
 	}
 
-	where := "thread_id=?"
+	where := "routing_staged=0 AND thread_id=?"
 	args := []any{threadID}
 	if len(f.Kind) > 0 {
 		in := make([]any, len(f.Kind))
@@ -333,7 +333,7 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := ms.db.ExecContext(ctx,
-		`UPDATE messages SET consumed_at=? WHERE id=? AND to_urn=? AND consumed_at IS NULL`,
+		`UPDATE messages SET consumed_at=? WHERE routing_staged=0 AND id=? AND to_urn=? AND consumed_at IS NULL`,
 		now, id, recipient.URN())
 	if err != nil {
 		return "", err
@@ -341,7 +341,7 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 	n, _ := res.RowsAffected()
 	if n > 0 {
 		var delivery sql.NullString
-		if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=?`, id).Scan(&delivery); scanErr != nil {
+		if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&delivery); scanErr != nil {
 			// The consumed_at update itself already committed and is the
 			// caller's real contract; a failure reading delivery_id back
 			// only costs the best-effort receipt recording, not Consume's
@@ -353,7 +353,7 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 	}
 	// 0 rows: already consumed (idempotent OK), wrong recipient, or not found.
 	var toURN string
-	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=?`, id).Scan(&toURN)
+	err = ms.db.QueryRowContext(ctx, `SELECT to_urn FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&toURN)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", messaging.ErrNotFound
@@ -369,7 +369,7 @@ func (ms *messagingStore) consumeAndReportDeliveryID(ctx context.Context, id str
 	// (CW-20260907-0033), and this replay is the caller's only remaining
 	// chance to complete that best-effort receipt recording.
 	var delivery sql.NullString
-	if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=?`, id).Scan(&delivery); scanErr != nil {
+	if scanErr := ms.db.QueryRowContext(ctx, `SELECT delivery_id FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&delivery); scanErr != nil {
 		log.Printf("messaging store: consume: read back delivery_id for %s failed on idempotent replay (best-effort receipt recording skipped): %v", id, scanErr)
 		return "", nil
 	}
@@ -383,7 +383,7 @@ func (ms *messagingStore) Cancel(ctx context.Context, id string) error {
 		return err
 	}
 	res, err := ms.db.ExecContext(ctx,
-		`UPDATE messages SET canceled_at=? WHERE id=? AND canceled_at IS NULL`,
+		`UPDATE messages SET canceled_at=? WHERE routing_staged=0 AND id=? AND canceled_at IS NULL`,
 		time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return err
@@ -392,7 +392,7 @@ func (ms *messagingStore) Cancel(ctx context.Context, id string) error {
 	if n == 0 {
 		// Already canceled or not found — check which.
 		var exists int
-		if err := ms.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE id=?`, id).Scan(&exists); err != nil || exists == 0 {
+		if err := ms.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE id=? AND routing_staged=0`, id).Scan(&exists); err != nil || exists == 0 {
 			return messaging.ErrNotFound
 		}
 	}
