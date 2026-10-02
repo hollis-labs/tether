@@ -941,3 +941,31 @@ func TestOneReplyPerBoundaryEvenWhenTheRuntimeShowsNoBusySignalYet(t *testing.T)
 	h.d.notify("s1") // the next boundary
 	h.waitState(ids[1], store.RoutingReplyDelivered)
 }
+
+// A new reply queued while the previous one is being injected says nothing about
+// the session being idle; only the turn's own boundary does.
+func TestANewReplyDuringInjectionDoesNotLicenseASecondTurn(t *testing.T) {
+	h := newReplyHarness(t)
+	h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+	h.onSend = func(_, text string) error {
+		entered <- struct{}{}
+		if text == "first" {
+			<-release
+		}
+		return nil
+	}
+	parent := h.routed("s1")
+	first, _ := h.reply(parent.ID, "first", false)
+	<-entered
+	second, _ := h.reply(parent.ID, "second", false) // arrives while "first" is being injected
+	close(release)
+	h.waitState(first.ReplyID, store.RoutingReplyDelivered)
+	settleQuiet()
+	if got := h.state(second.ReplyID); got.State != store.RoutingReplyQueued || h.rt.sendCallCount("s1") != 1 {
+		t.Fatalf("second is %q after %d sends; a new reply must wait for the turn's boundary", got.State, h.rt.sendCallCount("s1"))
+	}
+	h.d.notify("s1") // the first turn ends
+	h.waitState(second.ReplyID, store.RoutingReplyDelivered)
+}

@@ -94,7 +94,11 @@ type replyRuntime struct {
 
 type replyDrain struct {
 	running bool
-	again   bool
+	// again: a boundary kick (turn settled, exit, timer, sweep) arrived while a
+	// drain ran. fresh: a new reply was queued while a drain ran. submitted: this
+	// drain loop already handed the session a turn, so only a boundary may
+	// license another; a new reply says nothing about the session being idle.
+	again, fresh, submitted bool
 	// submit serializes interrupt:true submissions to one session, so a retry
 	// of an interrupting reply cannot cancel the turn its twin just started.
 	// submitters counts holders and waiters so the entry outlives them.
@@ -131,10 +135,19 @@ func (d *replyDispatcher) drainFor(sessionID string) *replyDrain {
 	return st
 }
 
-// notify asks for sessionID's queue to be drained. It never blocks and takes no
-// session or reducer lock, so it is safe from a runtime callback. A kick that
-// arrives while a drain is running is remembered and re-run, never lost.
-func (d *replyDispatcher) notify(sessionID string) {
+// notify reports a boundary for sessionID, or a repair tick: its turn settled, it
+// exited, a retry time arrived, or the sweep ran. It asks for the queue to be
+// drained. It never blocks and takes no session or reducer lock, so it is safe
+// from a runtime callback. A boundary that arrives while a drain is running is
+// remembered and re-run, never lost.
+func (d *replyDispatcher) notify(sessionID string) { d.kick(sessionID, true) }
+
+// notifyNew reports that a reply was queued for sessionID. It starts a drain,
+// but once a drain has injected a turn, a new reply does not license another:
+// only a boundary does.
+func (d *replyDispatcher) notifyNew(sessionID string) { d.kick(sessionID, false) }
+
+func (d *replyDispatcher) kick(sessionID string, boundary bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.stopped || sessionID == "" {
@@ -142,7 +155,11 @@ func (d *replyDispatcher) notify(sessionID string) {
 	}
 	st := d.drainFor(sessionID)
 	if st.running {
-		st.again = true
+		if boundary {
+			st.again = true
+		} else {
+			st.fresh = true
+		}
 		return
 	}
 	st.running = true
@@ -153,15 +170,26 @@ func (d *replyDispatcher) notify(sessionID string) {
 func (d *replyDispatcher) drainLoop(sessionID string) {
 	defer d.wg.Done()
 	for {
-		d.drain(sessionID)
 		d.mu.Lock()
 		st := d.drainFor(sessionID)
-		if st.again && !d.stopped {
-			st.again = false
+		if st.again {
+			st.submitted = false
+		}
+		st.again, st.fresh = false, false
+		d.mu.Unlock()
+
+		delivered := d.drain(sessionID)
+
+		d.mu.Lock()
+		st = d.drainFor(sessionID)
+		if delivered {
+			st.submitted = true
+		}
+		if (st.again || (st.fresh && !st.submitted)) && !d.stopped {
 			d.mu.Unlock()
 			continue
 		}
-		st.running = false
+		st.running, st.again, st.fresh, st.submitted = false, false, false, false
 		if st.submitters == 0 {
 			delete(d.sessions, sessionID)
 		}
@@ -205,38 +233,39 @@ func (d *replyDispatcher) busy(sessionID string) bool {
 }
 
 // drain delivers at most one reply to sessionID, if it is idle, or resolves its
-// whole queue if the session is gone.
-func (d *replyDispatcher) drain(sessionID string) {
+// whole queue if the session is gone. It reports whether it injected a turn.
+func (d *replyDispatcher) drain(sessionID string) bool {
 	for d.ctx.Err() == nil {
 		rows, err := d.st.QueuedRoutingReplies(d.ctx, sessionID, time.Now(), replyDrainBatch)
 		if err != nil {
 			if d.ctx.Err() == nil {
 				log.Printf("routing reply: read queue of session %q: %v", sessionID, err)
 			}
-			return
+			return false
 		}
 		if len(rows) == 0 {
-			return
+			return false
 		}
 		if _, running := d.rt.health(sessionID); !running {
 			d.resolveEnded(sessionID, rows)
-			return
+			return false
 		}
 		if d.busy(sessionID) {
-			return // the turn's completion notifies again
+			return false // the turn's completion notifies again
 		}
 		r := rows[0]
 		claimed, err := d.st.ClaimRoutingReply(d.ctx, r.ReplyID)
 		if err != nil {
 			log.Printf("routing reply %s: claim: %v", r.ReplyID, err)
-			return
+			return false
 		}
 		if !claimed {
 			continue // another drain took it; look at the next
 		}
 		d.deliver(sessionID, r)
-		return
+		return true
 	}
+	return false
 }
 
 // deliver injects r's body as sessionID's next turn. r was claimed, so r.Attempts
@@ -322,7 +351,7 @@ func (d *replyDispatcher) resolveEnded(sessionID string, rows []store.RoutingRep
 		case successor != "":
 			d.requeue(r, store.RoutingReplyRequeue{Retarget: successor, Reason: ReplyReasonHandedOff,
 				Detail: fmt.Sprintf("session %s ended; its actor %s is bound to %s", sessionID, r.LogicalAgentID, successor)})
-			d.notify(successor)
+			d.notifyNew(successor)
 		case reason == ReplyReasonResolveFailed && r.Attempts < replyMaxAttempts:
 			// The binding lookup itself failed: retry, counting the attempt.
 			if claimed, err := d.st.ClaimRoutingReply(d.ctx, r.ReplyID); err == nil && claimed {
@@ -577,7 +606,7 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 		return api.RoutingReplyReceipt{}, replyStoreError(err)
 	}
 	if created {
-		d.notify(target)
+		d.notifyNew(target)
 	}
 	return replyReceipt(reply, outcome, !created), nil
 }
