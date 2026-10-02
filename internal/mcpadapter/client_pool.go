@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	gomcpclient "github.com/hollis-labs/go-mcp/client"
 	"github.com/hollis-labs/go-mcp/supervise"
@@ -193,7 +194,7 @@ func (p *ClientPool) Start(ctx context.Context) error {
 		go func() { defer p.workers.Done(); p.supervise(ctx, entry, initial.Done) }()
 	}
 	initial.Wait()
-	_, collisions := p.registry.NameDiagnostics()
+	collisions := p.registry.Collisions()
 	if len(collisions) > 0 {
 		p.mu.Lock()
 		for _, collision := range collisions {
@@ -231,6 +232,13 @@ func (p *ClientPool) supervise(ctx context.Context, entry config.MCPServerEntry,
 		// Connect rather than registered afterward.
 		client, err := p.connect(ctx, entry)
 		if err == nil {
+			if initialized, ok := client.(interface {
+				InitializeResult() *mcpsdk.InitializeResult
+			}); ok {
+				if result := initialized.InitializeResult(); result != nil {
+					p.registry.RecordInstructions(entry.ID, utf8.RuneCountInString(result.Instructions))
+				}
+			}
 			p.mu.Lock()
 			s.client = client
 			if leaf, ok := client.(*stdioUpstream); ok {
@@ -518,12 +526,16 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 }
 
 func (p *ClientPool) remoteClientPoolForEntry(entry config.MCPServerEntry) (*gomcpclient.Pool, error) {
-	if p.remoteHTTPClientFactory == nil {
-		return p.remoteClientPool(), nil
+	var build func(map[string]string, int) *http.Client
+	if p.remoteHTTPClientFactory != nil {
+		var err error
+		build, err = p.remoteHTTPClientFactory(entry)
+		if err != nil {
+			return nil, err
+		}
 	}
-	build, err := p.remoteHTTPClientFactory(entry)
-	if err != nil {
-		return nil, err
+	if build == nil && entry.Transport == "sse" {
+		build = ordinarySSEHTTPClient
 	}
 	if build == nil {
 		return p.remoteClientPool(), nil
@@ -585,6 +597,13 @@ func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolPara
 
 func (r *remoteClient) ListTools(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
 	return r.gc.ListTools(ctx)
+}
+
+func (r *remoteClient) InitializeResult() *mcpsdk.InitializeResult {
+	if session := r.gc.SDKSession(); session != nil {
+		return session.InitializeResult()
+	}
+	return nil
 }
 
 func (r *remoteClient) Close() error {
@@ -667,7 +686,7 @@ type ServerStatus struct {
 func (p *ClientPool) StatusSummary() []ServerStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, collisions := p.registry.NameDiagnostics()
+	collisions := p.registry.Collisions()
 	affected := map[string][]mcpgateway.NameCollision{}
 	for _, collision := range collisions {
 		for _, owner := range collision.Owners {

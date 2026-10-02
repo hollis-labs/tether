@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -17,16 +18,27 @@ type RegisteredTool struct {
 	ServerID     string // upstream server ID; empty string = native tool
 	Client       upstreamClient
 	UpstreamName string // exact name sent to the upstream after final-name lookup
+	conformance  *definitionLint
+}
+
+// definitionLint memoizes an accepted immutable declaration. The once callback
+// always runs after registry/pool locks have been released.
+type definitionLint struct {
+	once     sync.Once
+	ready    atomic.Bool
+	findings []mcpgateway.NameFinding
 }
 
 // ToolRegistry holds the merged tool set: native tether tools plus all proxied
 // upstream tools. It is safe for concurrent reads and writes.
 type ToolRegistry struct {
-	tools      map[string]RegisteredTool
-	mu         sync.RWMutex
-	prefixes   map[string]string
-	collisions map[string][]mcpgateway.NameCollision
-	reserved   map[string]mcpgateway.ToolOwner
+	tools              map[string]RegisteredTool
+	mu                 sync.RWMutex
+	prefixes           map[string]string
+	collisions         map[string][]mcpgateway.NameCollision
+	reserved           map[string]mcpgateway.ToolOwner
+	instructionLengths map[string]int
+	lintTool           func(string, *mcpsdk.Tool) []mcpgateway.NameFinding
 }
 
 // ToolDelta describes the net effect of replacing one upstream server's tool set.
@@ -38,7 +50,7 @@ type ToolDelta struct {
 
 // NewToolRegistry creates an empty registry.
 func NewToolRegistry() *ToolRegistry {
-	r := &ToolRegistry{tools: make(map[string]RegisteredTool), prefixes: map[string]string{}, collisions: map[string][]mcpgateway.NameCollision{}, reserved: map[string]mcpgateway.ToolOwner{}}
+	r := &ToolRegistry{lintTool: mcpgateway.LintTool, instructionLengths: map[string]int{}, tools: make(map[string]RegisteredTool), prefixes: map[string]string{}, collisions: map[string][]mcpgateway.NameCollision{}, reserved: map[string]mcpgateway.ToolOwner{}}
 	for _, name := range []string{"tether_gateway_status", "tether_tool_search", "tether_tool_list", "tether_tool_call"} {
 		r.reserved[name] = mcpgateway.ToolOwner{Origin: "tether", Name: name, Kind: "gateway"}
 	}
@@ -89,7 +101,10 @@ func (r *ToolRegistry) checkLocked(serverID string, client upstreamClient, tools
 			copyTool.Name = name
 			def = &copyTool
 		}
-		incoming := RegisteredTool{Definition: def, ServerID: serverID, Client: client, UpstreamName: t.Name}
+		incoming := RegisteredTool{Definition: def, ServerID: serverID, Client: client, UpstreamName: t.Name, conformance: &definitionLint{}}
+		if previous, ok := r.tools[name]; ok && previous.Definition == def && previous.ServerID == serverID {
+			incoming.conformance = previous.conformance
+		}
 		other, exists := r.reserved[name]
 		if !exists {
 			if rt, ok := candidates[name]; ok {
@@ -201,24 +216,85 @@ func (r *ToolRegistry) RegisterLocal(tool *mcpsdk.Tool, client upstreamClient) e
 	return r.Register("", client, []*mcpsdk.Tool{tool})
 }
 
+// RecordInstructions retains a length only, scoped to the observed origin.
+func (r *ToolRegistry) RecordInstructions(origin string, length int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.instructionLengths[origin] = length
+}
+
+// Collisions is the cheap path for callers that do not consume lint. It never
+// invokes a linter, including while a pool caller holds its status mutex.
+func (r *ToolRegistry) Collisions() []mcpgateway.NameCollision {
+	r.mu.RLock()
+	collisions := r.collisionsLocked()
+	r.mu.RUnlock()
+	sortCollisions(collisions)
+	return collisions
+}
+func (r *ToolRegistry) collisionsLocked() []mcpgateway.NameCollision {
+	out := []mcpgateway.NameCollision{}
+	for _, items := range r.collisions {
+		out = append(out, items...)
+	}
+	return out
+}
+func sortCollisions(collisions []mcpgateway.NameCollision) {
+	sort.Slice(collisions, func(i, j int) bool {
+		return collisions[i].Name+collisions[i].Owners[0].Origin < collisions[j].Name+collisions[j].Owners[0].Origin
+	})
+}
+
+// At most 128 new declarations and 512 KiB of conservatively estimated schema
+// work are examined per diagnostic pass. Cached
+// findings do not consume the budget; later passes can examine the remainder.
+const conformancePassTools = 128
+const conformancePassBytes = 512 * 1024
+
 func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway.NameCollision) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	findings := []mcpgateway.NameFinding{}
-	collisions := []mcpgateway.NameCollision{}
+	definitions := make([]RegisteredTool, 0, len(r.tools))
 	for _, rt := range r.tools {
-		findings = append(findings, mcpgateway.LintTool(owner(rt).Origin, rt.Definition)...)
+		definitions = append(definitions, rt)
 	}
-	for _, items := range r.collisions {
-		collisions = append(collisions, items...)
+	lengths := make(map[string]int, len(r.instructionLengths))
+	for origin, length := range r.instructionLengths {
+		lengths[origin] = length
+	}
+	collisions := r.collisionsLocked()
+	lint := r.lintTool
+	r.mu.RUnlock()
+	// Deterministic budget order and no linter work under registry or pool locks.
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Definition.Name < definitions[j].Definition.Name })
+	findings := []mcpgateway.NameFinding{}
+	examined, bytes := 0, 0
+	exhausted := false
+	for _, rt := range definitions {
+		cache := rt.conformance
+		if cache != nil && !cache.ready.Load() && !exhausted {
+			cost := mcpgateway.SchemaLintCost(rt.Definition.InputSchema)
+			if examined >= conformancePassTools || cost > conformancePassBytes-bytes {
+				exhausted = true
+			} else {
+				examined++
+				bytes += cost
+			}
+		}
+		if cache == nil || !cache.ready.Load() && exhausted {
+			findings = append(findings, mcpgateway.NameFinding{Origin: owner(rt).Origin, Name: rt.Definition.Name, Code: "conformance_unexamined", Message: "tool declaration unexamined: aggregate conformance budget exhausted; a later status pass can examine it"})
+			continue
+		}
+		cache.once.Do(func() { cache.findings = lint(owner(rt).Origin, rt.Definition); cache.ready.Store(true) })
+		findings = append(findings, cache.findings...)
+	}
+	for origin, length := range lengths {
+		findings = append(findings, mcpgateway.LintInstructions(origin, length)...)
 	}
 	sort.Slice(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
 		return a.Origin+"\x00"+a.Name+"\x00"+a.Code < b.Origin+"\x00"+b.Name+"\x00"+b.Code
 	})
-	sort.Slice(collisions, func(i, j int) bool {
-		return collisions[i].Name+collisions[i].Owners[0].Origin < collisions[j].Name+collisions[j].Owners[0].Origin
-	})
+	sortCollisions(collisions)
 	return findings, collisions
 }
 

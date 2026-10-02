@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/events"
@@ -400,54 +400,9 @@ func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr,
 }
 
 func forwardProxyEventsWithClient(ctx context.Context, bus events.Bus, dc *client.Client, sinceSeq int64) {
-	ch, cancel, err := bus.Subscribe(ctx, events.Filter{SinceSeq: sinceSeq})
-	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("mcp: event forwarder failed to subscribe", "err", err)
-		}
-		return
-	}
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-ch:
-			if !ok {
-				return
-			}
-			if ev.Kind != events.EventTypeToolCallEnd {
-				continue
-			}
-
-			// Unmarshal the ToolCallEvent payload.
-			var tce events.ToolCallEvent
-			if err := json.Unmarshal([]byte(ev.PayloadJSON), &tce); err != nil {
-				slog.Warn("mcp: forwarder failed to unmarshal ToolCallEvent", "err", err)
-				continue
-			}
-
-			body := api.ProxyEventIngestRequest{
-				ClaimedSessionID: tce.ClaimedSessionID,
-				SessionID:        tce.SessionID,
-				Server:           tce.Server,
-				ToolName:         tce.ToolName,
-				ArgsSchemaFP:     tce.ArgsSchemaFP,
-				DurationMs:       tce.DurationMs,
-				OK:               tce.OK,
-				Error:            api.TruncateProxyEventError(tce.Error),
-				Timestamp:        tce.Timestamp.UTC().Format(time.RFC3339Nano),
-			}
-			postCtx, postCancel := context.WithTimeout(ctx, 3*time.Second)
-			postErr := dc.IngestProxyEvent(postCtx, body)
-			postCancel()
-			if postErr != nil {
-				slog.Debug("mcp: forwarder POST failed", "err", postErr)
-			}
-
-		}
-	}
+	proxyevents.Forward(ctx, bus, func(ctx context.Context, req proxyevents.ProxyEventIngestRequest) error {
+		return dc.IngestProxyEvent(ctx, api.ProxyEventIngestRequest(req))
+	}, sinceSeq)
 }
 
 func splitScopes(s string) []string {

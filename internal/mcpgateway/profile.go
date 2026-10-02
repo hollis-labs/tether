@@ -350,3 +350,15 @@ func matchToolGlob(pattern, name string) (bool, error) {
 	}
 	return re.MatchString(name), nil
 }
+
+// Origin-level diagnostics expose no tool names, but still respect every
+// selected/floor origin restriction, including successful empty inventories.
+func (p Policy) originSelected(origin string) bool {
+	selections := append([]ProfileSelection{p.Selection}, p.Floors...)
+	for _, selection := range selections {
+		if selection.Profile != nil && selection.Profile.Servers != nil && !slices.Contains(selection.Profile.Servers, origin) {
+			return false
+		}
+	}
+	return true
+}

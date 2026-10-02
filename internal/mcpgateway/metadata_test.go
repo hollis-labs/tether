@@ -22,7 +22,7 @@ func TestMetadataLintReportsWithoutInferringOrRewriting(t *testing.T) {
 		{"Disabledness is not a disabled declaration", &mcpsdk.ToolAnnotations{}, nil},
 		{"Read disabled records", &mcpsdk.ToolAnnotations{}, nil},
 	} {
-		tool := &mcpsdk.Tool{Name: "alpha_lookup", Description: tc.description, Annotations: tc.annotations}
+		tool := &mcpsdk.Tool{Name: "alpha_lookup", Description: tc.description, Annotations: tc.annotations, InputSchema: map[string]any{"type": "object"}}
 		before := *tool
 		var codes []string
 		for _, finding := range LintTool("alpha", tool) {

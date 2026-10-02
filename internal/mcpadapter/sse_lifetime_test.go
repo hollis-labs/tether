@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,7 @@ func TestServiceSSELifetimeEndsAtSDKBodyClose(t *testing.T) {
 	stopped := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("x"))
+		_, _ = w.Write([]byte("event: endpoint\ndata: /messages\n\nx"))
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 		close(stopped)
@@ -31,6 +32,10 @@ func TestServiceSSELifetimeEndsAtSDKBodyClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
+	endpoint := make([]byte, len("event: endpoint\ndata: /messages\n\n"))
+	if _, err := io.ReadFull(response.Body, endpoint); err != nil {
+		t.Fatal(err)
+	}
 	cancel()
 	var first [1]byte
 	if _, err := response.Body.Read(first[:]); err != nil || first[0] != 'x' {
