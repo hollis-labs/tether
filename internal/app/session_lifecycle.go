@@ -21,6 +21,7 @@ import (
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider"
 	"github.com/hollis-labs/tether/internal/provider/acp"
@@ -207,6 +208,17 @@ func (s *Service) createSessionFromPlan(plan *launch.Plan, key *store.SessionIde
 // Returns ErrSessionNotCreated when the target is in any state other
 // than "created" — relaunch of terminated sessions is not supported.
 func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
+	return s.LaunchSessionWithContext(context.Background(), sessionID)
+}
+
+// LaunchSessionWithContext carries verified caller provenance into the child
+// principal. The raw credential never enters the durable launch plan.
+func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string) (*Launched, error) {
+	unlock, err := s.lockSessionLaunch(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	row, err := s.Store.GetSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -325,6 +337,22 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 	if !extractRefs && s.Catalog != nil {
 		extractRefs = config.EffectiveExtractRefs(s.Catalog.Global, s.Catalog.Projects[plan.ProjectID], s.Catalog.Launches[plan.LaunchID])
 	}
+	token, err := s.mintSessionCredential(ctx, sessionID)
+	if err != nil {
+		if s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
+			return nil, err
+		}
+		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")
+		token = ""
+	}
+	launched := false
+	defer func() {
+		if !launched && token != "" {
+			if err := identity.NewStore(s.Store.DB()).RevokeToken(context.Background(), token); err != nil {
+				log.Print("session credential revocation failed")
+			}
+		}
+	}()
 	var startOpts agentsessions.StartOptions
 	if rt.Kind() == acp.Kind {
 		// An ACP agent (CW-20260930-0106 stage 1). go-agent-wrapper's ACP
@@ -356,10 +384,15 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, err
 		}
+		mcpEnv := confinedMCPEnv(plan, mcpProtected)
+		mcpEnv["TETHER_TOKEN"] = token
+		if token == "" {
+			mcpEnv["TETHER_MCP_TOKEN"] = "tether-worker"
+		}
 		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
 			TetherCommand: mcpCommand,
 			TetherArgs:    mcpArgs,
-			TetherEnv:     confinedMCPEnv(plan, mcpProtected),
+			TetherEnv:     mcpEnv,
 		})
 		if err != nil {
 			exit := 1
@@ -395,6 +428,11 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 			return nil, err
 		}
 	}
+	sessionEnv := map[string]string{"TETHER_TOKEN": token}
+	if token == "" {
+		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
+	}
+	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
@@ -456,19 +494,20 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 		}
 		return nil, err
 	}
+	launched = true
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.
 	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {
 		s.codexExempt.Store(sessionID, ex)
 		go func() {
-			_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+			_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
 			s.codexExempt.Delete(sessionID)
 		}()
 	}
 	if procLog != nil {
 		s.subprocessLogs.Store(sessionID, procLog)
 		go func() {
-			_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+			_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
 			s.subprocessLogs.Delete(sessionID)
 			_ = procLog.Close()
 		}()

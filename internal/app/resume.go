@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -27,8 +28,11 @@ import (
 // Returns a conflict error if the agent has never launched (no launch_id).
 // Returns a not-found-shaped error if no checkpoint exists.
 func (s *Service) ResumeLogicalAgent(logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	return s.ResumeLogicalAgentWithContext(context.Background(), logicalAgentID, opts)
+}
+func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
 	if opts.IdempotencyKey == "" {
-		return s.resumeLogicalAgent(logicalAgentID, nil)
+		return s.resumeLogicalAgent(ctx, logicalAgentID, nil)
 	}
 	// Idempotent resume (CW-20260930-0229). The digest is the request as
 	// sent, so a retry after the resumed session has checkpointed replays
@@ -43,7 +47,7 @@ func (s *Service) ResumeLogicalAgent(logicalAgentID string, opts api.ResumeOptio
 	if replayed != nil {
 		return launchResultOf(replayed), nil
 	}
-	return s.resumeLogicalAgent(logicalAgentID, &store.SessionIdempotency{
+	return s.resumeLogicalAgent(ctx, logicalAgentID, &store.SessionIdempotency{
 		Key: opts.IdempotencyKey, Operation: store.IdempotencyOpResume, RequestDigest: digest,
 	})
 }
@@ -60,7 +64,7 @@ func launchResultOf(l *Launched) api.LaunchResult {
 	}
 }
 
-func (s *Service) resumeLogicalAgent(logicalAgentID string, key *store.SessionIdempotency) (api.LaunchResult, error) {
+func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string, key *store.SessionIdempotency) (api.LaunchResult, error) {
 	la, err := s.Store.GetLogicalAgent(logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get logical agent: %w", err)
@@ -134,7 +138,7 @@ func (s *Service) resumeLogicalAgent(logicalAgentID string, key *store.SessionId
 		return api.LaunchResult{}, fmt.Errorf("persist session: %w", err)
 	}
 
-	l, err := s.LaunchSession(sessID)
+	l, err := s.LaunchSessionWithContext(ctx, sessID)
 	if err != nil {
 		return api.LaunchResult{}, err
 	}

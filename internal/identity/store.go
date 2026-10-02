@@ -15,6 +15,46 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 // Mint persists only a token hash. The raw token is returned once for delivery.
 func (s *Store) Mint(ctx context.Context, p Principal) (string, error) {
+	return mint(ctx, s.db, p)
+}
+
+type principalWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// MintSessionForLaunch replaces stale credentials only while the session is
+// still created. Revocation and replacement commit atomically, so an interrupted
+// launch can retry without revoking a running session's credential.
+func (s *Store) MintSessionForLaunch(ctx context.Context, p Principal) (string, error) {
+	if p.Kind != "session" || p.SessionID == "" {
+		return "", fmt.Errorf("session principal required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin session credential: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id = ?`, p.SessionID).Scan(&state); err != nil {
+		return "", fmt.Errorf("load credential session: %w", err)
+	}
+	if state != "created" {
+		return "", fmt.Errorf("session credential replacement requires created state")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE kind = 'session' AND session_id = ? AND revoked_at IS NULL`, time.Now().UTC().Format(time.RFC3339Nano), p.SessionID); err != nil {
+		return "", fmt.Errorf("revoke stale session credential: %w", err)
+	}
+	token, err := mint(ctx, tx, p)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit session credential: %w", err)
+	}
+	return token, nil
+}
+
+func mint(ctx context.Context, writer principalWriter, p Principal) (string, error) {
 	if p.ID == "" || (p.Kind != "operator" && p.Kind != "session" && p.Kind != "service" && p.Kind != "interactive") {
 		return "", fmt.Errorf("principal id and valid kind required")
 	}
@@ -41,7 +81,7 @@ func (s *Store) Mint(ctx context.Context, p Principal) (string, error) {
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO principals
+	_, err = writer.ExecContext(ctx, `INSERT INTO principals
         (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json,
          created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Kind, p.Display, HashToken(token), string(scopes), p.SessionID,
@@ -106,6 +146,18 @@ func (s *Store) Revoke(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE principal_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return fmt.Errorf("revoke principal: %w", err)
+	}
+	return nil
+}
+
+// RevokeToken revokes only the credential minted by one launch attempt.
+func (s *Store) RevokeToken(ctx context.Context, token string) error {
+	if !validToken(token) {
+		return ErrInvalidToken
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?`, time.Now().UTC().Format(time.RFC3339Nano), HashToken(token))
+	if err != nil {
+		return fmt.Errorf("revoke credential: %w", err)
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
-	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 )
@@ -41,7 +40,7 @@ func checkClaudeStrictMCP(cat *config.Catalog, local app.StrictMCPStatus) checkR
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	h, err := client.New(cfg.ListenAddr).Health(ctx)
+	h, err := daemonClient(cfg.ListenAddr).Health(ctx)
 	return strictMCPResult(h, err, local)
 }
 

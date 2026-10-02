@@ -17,7 +17,6 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/bootexec"
 	"github.com/hollis-labs/tether/internal/bootgen"
-	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
@@ -113,7 +112,7 @@ Run 'tether list-boot-profiles' to see which profiles support booting.`,
 		if err != nil {
 			return err
 		}
-		inner := client.New(cfg.ListenAddr)
+		inner := daemonClient(cfg.ListenAddr)
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "creating session with launch %q...\n", p.Launch)
 		created, err := inner.CreateSessionWithBootPrompt(context.Background(), p.Launch, bootPrompt)
@@ -284,10 +283,13 @@ func loadBootProfileFile(profileID string) (bootgen.Profile, string, error) {
 func expandCatalogPath() string { return config.Expand(catalogPath) }
 
 func tetherEnvFromPlan(env map[string]string) []string {
-	if env == nil || env["TETHER_MCP_SERVERS"] == "" {
-		return nil
+	// boot-exec has no daemon session/principal. Its planted proxy is
+	// explicitly anonymous, even if the operator file exists.
+	out := []string{"TETHER_TOKEN=", "TETHER_MCP_TOKEN=tether-worker"}
+	if env["TETHER_MCP_SERVERS"] != "" {
+		out = append(out, "TETHER_MCP_SERVERS="+env["TETHER_MCP_SERVERS"])
 	}
-	return []string{"TETHER_MCP_SERVERS=" + env["TETHER_MCP_SERVERS"]}
+	return out
 }
 
 func runPreparedCLI(cmd *cobra.Command, prepared *bootexec.Prepared) error {

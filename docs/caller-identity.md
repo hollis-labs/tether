@@ -85,10 +85,47 @@ in audit metadata or diagnostic counters.
 | `principals` | Indefinite, including revoked token rows; no automatic purge |
 | `identity_audit` | Shared `daemon.events_retention` window: default 90 days; false or days < 1 disables; deletions write durable retention receipts |
 
-This core PR does not yet deliver tokens to existing CLI/MCP clients or mint
-session credentials. Those are the second phase-1 PR. The client library's
-credential options have their own task/PR and require a lead-chosen release
-before consumers adopt them. No token introspection endpoint is required.
+## Clients and session credentials
+
+CLI and MCP requests prefer `--token-file`, then `TETHER_TOKEN`, then the selected
+catalog's sibling `run/operator.token`. A missing default file permits anonymous
+requests in observe/off mode; a missing explicit file or insecure existing file
+fails closed. Credentials travel as an Authorization header, including streams.
+Authenticated clients refuse redirects to another origin. Legacy `mcp --token`
+and `TETHER_MCP_TOKEN` are only adapter presence checks, not daemon credentials.
+
+A normal launch in observe/enforce receives a fresh session principal and
+`tth_` credential. A verified parent is recorded as its creator; worker scopes
+are intersected with the parent's grants, and the address is that session's own
+`msg://session/local/<id>`. Anonymous observe-mode launches have no verified
+creator. Session tokens enter the runtime and planted MCP server via
+`TETHER_TOKEN` environment entries, never argv or the stored launch plan. Native
+MCP configuration files necessarily contain that environment entry inside the
+session's boot directory. Same-uid read isolation remains a separate boundary.
+
+Session tokens expire after seven days as a backstop; terminal revocation remains
+the primary lifetime control. Long-running token renewal is future work, so phase 1
+continues to use observe. Retrying a still-created session atomically revokes any
+stale credential before minting a replacement; a running session is never rotated
+by this launch path.
+
+Migration 0037 cleans duplicate and terminal/orphan credentials before creating
+the active-token uniqueness index, and revokes session principals transactionally when the session ends
+as completed, failed or killed, or is deleted; minting against missing/terminal
+sessions is refused. Only one unrevoked token may exist per session, so concurrent
+launch attempts cannot mint competing credentials. A launch that fails after mint
+revokes only its own token; terminal transitions revoke all of the session's tokens.
+A resumed session has a new session id and token. Identity-off launches mint no
+principal; their MCP adapter retains the legacy nonsecret presence marker.
+Observe-mode mint failures warn and continue anonymously, with inherited bearer
+credentials cleared in both runtime and MCP environments. Enforce-mode mint
+failures stop the launch. Preparation is serialized per session, including
+degraded launches, so concurrent attempts cannot overwrite the winning boot config.
+Existing running sessions are not retrofitted.
+
+The client library's credential options have their own task/PR and require a
+lead-chosen release before consumers adopt them. No token introspection endpoint
+is required.
 
 Phase 2 covers message `from` stamping, mailbox ownership, per-principal
 idempotency, AI caller stamping, route-scope policy and launch-plan read
@@ -106,3 +143,23 @@ No install, live token creation, restart or mode change is performed by this
 change. Chrispian owns cutover. Back up the state database first, keep default
 `observe`, and review attribution before any separately approved enforcement
 flip. Route-scope and address authorization must be assessed with phase 2.
+
+## Remaining phase-2 client plumbing
+
+`forwardProxyEventsToDaemon` (MCP event forwarding) and the daemon-status HTTP
+probe still use direct HTTP callers without bearer credentials. They remain
+available in observe/off; explicit enforce can reject their calls. Authentication
+for these paths is phase-2 work before an enforcement cutover.
+
+## Proxy credentials
+
+Session proxies (`--session` or the planted `TETHER_MCP_TOKEN` marker) never use
+the operator-file fallback when their own token is empty. Identity-off and degraded
+launches remain anonymous even if identity is later enabled. The sessionless
+`boot-exec` proxy is explicitly anonymous and retains only the adapter presence
+marker, rather than inheriting the operator fallback. Ordinary operator CLI calls
+still use the documented fallback; explicit token files/environment remain first.
+
+Stdio upstream processes do not inherit any `TETHER_*TOKEN` variable from the
+proxy. An upstream catalog entry may deliberately supply its own token variable
+in `env`; that explicit configuration is retained.

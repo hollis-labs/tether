@@ -136,7 +136,7 @@ ordinary interactive session becomes a first-class messaging participant.
       "command": "/path/to/bin/tether",
       "args": ["mcp"],
       "env": {
-        "TETHER_MCP_TOKEN": "any-opaque-string",
+        "TETHER_TOKEN": "<issued-tth-token>",
         "TETHER_MCP_SCOPES": "message.write,registry.write"
       }
     }
@@ -151,7 +151,10 @@ post to group rooms. **Scopes are per capability group, not a hierarchy** — on
 does not imply another. Reads need no token or scope at all, so a read-only
 observer can just run `tether mcp` bare.
 
-The token is opaque. Tether checks that one is present, not what it says.
+Use a daemon-issued `tth_` credential through `TETHER_TOKEN` or `--token-file`.
+The daemon verifies it; default observe mode records valid or invalid credentials
+without rejection, while explicit enforce rejects invalid credentials.
+`TETHER_MCP_TOKEN` is only a legacy adapter presence marker, not a bearer credential.
 
 ### 2. Register the session as an actor
 
