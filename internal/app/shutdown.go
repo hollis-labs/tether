@@ -86,7 +86,9 @@ func (s *Service) reportShutdownSessions(ended, stillRunning []string) {
 	if err != nil {
 		return
 	}
-	_ = s.Bus.Publish(context.Background(), events.Event{
+	ctx, cancel := s.outputPersistenceContext()
+	defer cancel()
+	_ = s.Bus.Publish(ctx, events.Event{
 		Scope:       events.ScopeDaemon,
 		Kind:        events.KindDaemonShutdownSessionsEnded,
 		PayloadJSON: string(payload),

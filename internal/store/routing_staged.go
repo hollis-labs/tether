@@ -1,11 +1,13 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"time"
 
@@ -40,28 +42,60 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 		env.Metadata = make(map[string]string)
 	}
 	env.Metadata["session_id"] = env.From.ID
-	id, err := uuid.NewV7()
-	if err != nil {
-		return messaging.Envelope{}, err
+	// JSON encodes the tuple without delimiter ambiguity. The existing message
+	// primary key makes repeated staging idempotent, including after attachment.
+	key, _ := json.Marshal([3]string{env.From.ID, env.Metadata["turn_id"], env.Metadata["kind"]})
+	if env.Metadata["turn_id"] == "" {
+		// No stable turn identity: distinct unidentified outputs must not collapse.
+		id, err := uuid.NewV7()
+		if err != nil {
+			return messaging.Envelope{}, err
+		}
+		env.ID = id.String()
+	} else {
+		env.ID = uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("tether:turn-output:"), key...)).String()
 	}
-	env.ID = id.String()
 	env.CreatedAt = time.Now().UTC()
 	env.Kind = messaging.MsgKindNotice
 	env.To = messaging.Address{Kind: messaging.KindService, Authority: "local", ID: "turn-output"}
-	env.Channel = ""
-	env.DeliveredAt, env.ConsumedAt = nil, nil
+	saved, err := s.insertStagedTurnOutput(ctx, env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	if bytes.Equal(saved.Payload, env.Payload) && saved.ContentType == env.ContentType {
+		return saved, nil
+	}
+	// A producer can reuse a turn ID. Preserve both bodies, and make retries of
+	// the alternate body stable as well. Never replace an attached/purged row.
+	alternate, _ := json.Marshal([5]string{env.From.ID, env.Metadata["turn_id"], env.Metadata["kind"], string(env.Payload), env.ContentType})
+	env.ID = uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("tether:turn-output:body:"), alternate...)).String()
+	log.Printf("ERROR session %q turn %q: reused output identity with different body; preserving message %q separately as %q", env.From.ID, env.Metadata["turn_id"], saved.ID, env.ID)
+	saved, err = s.insertStagedTurnOutput(ctx, env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	if !bytes.Equal(saved.Payload, env.Payload) || saved.ContentType != env.ContentType {
+		return messaging.Envelope{}, fmt.Errorf("stage turn output: conflicting or purged alternate body %q", env.ID)
+	}
+	return saved, nil
+}
+
+func (s *Store) insertStagedTurnOutput(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
 	meta, err := json.Marshal(env.Metadata)
 	if err != nil {
 		return messaging.Envelope{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO messages
+	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO messages
  (id, kind, channel, from_urn, to_urn, thread_id, payload, content_type, metadata, created_at, routing_staged)
  VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, 1)`, env.ID, string(env.Kind), env.From.URN(), env.To.URN(),
 		nullIfEmpty(env.ThreadID), string(env.Payload), env.ContentType, string(meta), env.CreatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return messaging.Envelope{}, fmt.Errorf("stage turn output: %w", err)
 	}
-	return env, nil
+	// Return the original body and timestamp if this was a repeated call.
+	row := s.db.QueryRowContext(ctx, `SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
+ payload, content_type, metadata, created_at, delivered_at, consumed_at FROM messages WHERE id=?`, env.ID)
+	return scanEnvelope(row.Scan)
 }
 
 // StagedTurnOutput is the internal router read. Public Get/list/inbox reads

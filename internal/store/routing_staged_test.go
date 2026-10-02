@@ -169,3 +169,86 @@ func TestStageRetentionProtectsTwentyNineDaysAndExpiresAfterThirty(t *testing.T)
 		}
 	}
 }
+
+func TestStageTurnOutputIdempotentAcrossCallsAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "idempotent.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := stageOutput(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	again := stageOutput(t, db)
+	if again.ID != first.ID || !again.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("restaged output: %+v %+v", first, again)
+	}
+	// A later retry cannot replace the body already attached by the router.
+	if _, err := db.DB().Exec(`UPDATE messages SET channel='ops', routing_staged=0 WHERE id=?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := db.StageTurnOutput(context.Background(), messaging.Envelope{From: first.From, Payload: first.Payload, ContentType: first.ContentType, Metadata: first.Metadata})
+	if err != nil || retry.ID != first.ID || retry.Channel != "ops" || string(retry.Payload) != string(first.Payload) {
+		t.Fatalf("retry replaced attached output: %+v %v", retry, err)
+	}
+	for _, tc := range []struct{ session, turn, kind string }{{"s2", "t1", ""}, {"s1", "t2", ""}, {"s1", "t1", "failure"}} {
+		env, err := db.StageTurnOutput(context.Background(), messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: tc.session}, Payload: []byte("other"), Metadata: map[string]string{"turn_id": tc.turn, "kind": tc.kind}})
+		if err != nil || env.ID == first.ID {
+			t.Fatalf("distinct output collided: %+v %v", env, err)
+		}
+	}
+}
+
+func TestStageTurnOutputEmptyIdentityDoesNotCollapse(t *testing.T) {
+	db := openRetentionDB(t)
+	input := messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}, Payload: []byte(`{"text":"answer"}`), ContentType: "application/json", Metadata: map[string]string{"kind": "final"}}
+	first, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("unidentified distinct outputs collapsed")
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if _, err := db.StagedTurnOutput(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+func TestStageTurnOutputReusedIdentityPreservesBothBodiesAndRetries(t *testing.T) {
+	db := openRetentionDB(t)
+	first := stageOutput(t, db)
+	input := messaging.Envelope{From: first.From, Payload: []byte(`{"text":"different answer"}`), ContentType: first.ContentType, Metadata: first.Metadata}
+	second, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID || string(second.Payload) != string(input.Payload) {
+		t.Fatalf("reused identity lost new body: %+v", second)
+	}
+	retry, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil || retry.ID != second.ID {
+		t.Fatalf("alternate body retry duplicated: %+v %v", retry, err)
+	}
+	original, err := db.StagedTurnOutput(context.Background(), first.ID)
+	if err != nil || string(original.Payload) != string(first.Payload) {
+		t.Fatal("original overwritten", err)
+	}
+	if _, err := db.DB().Exec(`UPDATE messages SET channel='ops', routing_staged=0 WHERE id=?`, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	retry, err = db.StageTurnOutput(context.Background(), input)
+	if err != nil || retry.ID != second.ID || retry.Channel != "ops" {
+		t.Fatalf("attached alternate retry lost existing ID: %+v %v", retry, err)
+	}
+}

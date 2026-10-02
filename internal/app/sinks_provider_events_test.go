@@ -65,3 +65,31 @@ func TestProviderSessionLostCallbackBoundsPersistence(t *testing.T) {
 		t.Fatal("session-lost callback used unbounded persistence")
 	}
 }
+
+func TestBootDirPlantedCallbackBoundsPersistence(t *testing.T) {
+	pub := &deadlinePublisher{}
+	makeBootDirPlantedCallback(pub, "s1", "agent")("/boot")
+	if !pub.deadline {
+		t.Fatal("boot directory callback used unbounded persistence")
+	}
+}
+func TestLifecycleReportsBoundPersistence(t *testing.T) {
+	for _, report := range []func(*Service){func(s *Service) { s.reportSweep([]string{"s1"}, nil) }, func(s *Service) { s.reportShutdownSessions([]string{"s1"}, nil) }} {
+		svc, _ := outputHarness(t, nil)
+		pub := &deadlineReportBus{Bus: svc.Bus}
+		svc.Bus = pub
+		report(svc)
+		if !pub.deadline {
+			t.Fatal("lifecycle report used unbounded persistence")
+		}
+	}
+}
+
+type deadlineReportBus struct {
+	events.Bus
+	deadlinePublisher
+}
+
+func (b *deadlineReportBus) Publish(ctx context.Context, ev events.Event) error {
+	return b.deadlinePublisher.Publish(ctx, ev)
+}

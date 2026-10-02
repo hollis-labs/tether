@@ -119,18 +119,37 @@ and storage closes.
 
 ## Persistence and submission boundaries
 
-Each metadata read, body stage and event publication has its own five-second
-budget. Timeout failures retry off the reader, retaining an already-staged message
-ID rather than duplicating the body. The volatile retry pool is capped at 64
-outputs / 16 MiB of text and a one-minute retry age; shutdown joins its workers
-before closing storage. Before staging, a crash, shutdown, full retry pool or
-prolonged outage can still lose output, with an explicit error log. Once staged,
-the router's durable scan can attach the body even if its output event fails.
-A failed body write never supplies a message ID. A corrupt stored
-route is logged and retried at subsequent output, without inventing route defaults.
-Workstream metadata is read at publication, so assignment changes apply to later
-turns. The legacy `provider.permission_denied` event remains antigravity-only;
-the turn reducer still runs for every runtime with its installed detectors.
+The synchronous persistence attempt has one five-second overall budget, so it
+cannot hold the turn-state lock for four successive operation budgets. Retry
+workers give each metadata read, route reread, body stage and event publication
+its own five-second budget within a one-minute retry age. Context cancellation
+or deadline errors on reads/staging, and any event-publication error, defer output
+off the reader. Other metadata-read errors log and continue with an empty
+workstream; other route/staging errors log and fall back to the excerpt without a
+message ID. A corrupt stored route is reread at subsequent output, without
+inventing route defaults.
+
+Retries back off from 100 milliseconds to five seconds. The volatile pool is
+capped at 64 outputs / 16 MiB of text. Shutdown cancels in-flight attempts, gives
+each pending output one final attempt with a five-second overall budget, then
+joins workers before closing storage. Before staging, a crash, a failed final
+shutdown attempt, a full retry pool or prolonged outage can still lose output,
+with an explicit error log. Once staged, the router's durable scan can attach the
+body even if its output event fails. Staging uses a deterministic ID from session,
+turn and kind and preserves the original envelope on same-body retries. Empty
+turn IDs use fresh message IDs. If a producer reuses a nonempty turn ID with a
+different body, staging logs the conflict and stores the new body under a separate
+body-derived ID, which remains stable on its retries. An already-staged message
+ID is also retained across event retries.
+
+`session.turn_output` events follow successful event persistence order. A delayed
+turn 1 can publish after turn 2 from the same session; this path provides no
+per-session FIFO across retries. Consumers must use session/turn metadata to
+identify outputs rather than treating event arrival order as turn order. Channel
+publication has its own retry ordering, described above. Workstream metadata is
+read at publication, so assignment changes apply to later turns. The legacy
+`provider.permission_denied` event remains antigravity-only; the turn reducer
+still runs for every runtime with its installed detectors.
 
 Raw PTY input is a stream of keystrokes and does not prime a model-turn marker.
 Semantic `SendTurn` and non-PTY `SendInput` publish provisional markers before
@@ -155,9 +174,18 @@ terminals with an already-completed turn ID cannot settle a successor.
 An ID-less terminal retained during overlapping submissions is discarded because
 it cannot safely be attributed to accepted steering. A rejected submission also
 discards its provisional terminal; a real bound output or session exit will settle
-any remaining marker. A duplicate ID-less terminal arriving after a new submission
+any remaining marker. The ambiguity flag stays set until that settlement. Two
+overlapping successful submissions followed only by repeated empty terminals can
+therefore leave the marker open; `CancelTurnAndWait` can exhaust its default
+30-second terminal wait despite the runtime having ended the turn. This is a
+conservative attribution trade-off pending an upstream begin hint or stable turn
+ID. Settlement clears the flag so a later empty turn can complete normally.
+A duplicate ID-less terminal arriving after a new submission
 is accepted remains indistinguishable from that submission's empty response and
 can settle it synthetically. This preserves repeated empty-turn completion;
 removing the ambiguity needs an upstream begin hint or stable runtime turn ID.
 The reducer can suppress repeated identical failures: Tether retains failure in
 the internal completion, but cannot reconstruct a missing durable failure output.
+A repeated identical Error suppressed by the reducer can produce neither a
+`session.turn_output` failure event nor a routed failure message, even though the
+host marker records a synthetic failure completion.

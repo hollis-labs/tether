@@ -55,6 +55,7 @@ type Service struct {
 	InterruptDoneTimeout   time.Duration
 	Channels               *channels.Service // constructed before starting any channel publisher
 	turnOutputTimeout      time.Duration     // tests may shorten the default persistence deadline
+	turnOutputStore        turnOutputStore
 	turnRouter             *turnrouting.Router
 	turnFeeds              map[string]turnFeedRegistration
 	outputRetries          outputRetryState
@@ -387,7 +388,9 @@ func (s *Service) reportSweep(swept, spared []string) {
 	if err != nil {
 		return
 	}
-	_ = s.Bus.Publish(context.Background(), events.Event{
+	ctx, cancel := s.outputPersistenceContext()
+	defer cancel()
+	_ = s.Bus.Publish(ctx, events.Event{
 		Scope:       events.ScopeDaemon,
 		Kind:        events.KindDaemonSessionsSwept,
 		PayloadJSON: string(payload),

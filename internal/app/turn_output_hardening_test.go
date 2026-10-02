@@ -410,8 +410,12 @@ type joiningOutputBus struct {
 	svc     *Service
 }
 
-func (b *joiningOutputBus) Publish(ctx context.Context, _ events.Event) error {
-	if b.calls.Add(1) == 1 {
+func (b *joiningOutputBus) Publish(ctx context.Context, ev events.Event) error {
+	call := b.calls.Add(1)
+	if call > 2 {
+		return b.Bus.Publish(ctx, ev)
+	}
+	if call == 1 {
 		return context.DeadlineExceeded
 	}
 	close(b.entered)
