@@ -136,8 +136,11 @@ joins workers before closing storage. Before staging, a crash, a failed final
 shutdown attempt, a full retry pool or prolonged outage can still lose output,
 with an explicit error log. Once staged, the router's durable scan can attach the
 body even if its output event fails. Staging uses a deterministic ID from session,
-turn and kind and preserves the original envelope on repeated calls; an already
-staged message ID is also retained across event retries.
+turn and kind and preserves the original envelope on same-body retries. Empty
+turn IDs use fresh message IDs. If a producer reuses a nonempty turn ID with a
+different body, staging logs the conflict and stores the new body under a separate
+body-derived ID, which remains stable on its retries. An already-staged message
+ID is also retained across event retries.
 
 `session.turn_output` events follow successful event persistence order. A delayed
 turn 1 can publish after turn 2 from the same session; this path provides no

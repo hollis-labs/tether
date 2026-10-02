@@ -1045,7 +1045,9 @@ The synchronous persistence attempt has a five-second overall budget. Context
 errors on reads/staging, and any event-publication error, retry off the reader
 with operation deadlines and backoff from 100 milliseconds to five seconds.
 Retries retain a staged message ID; staging itself is idempotent for the
-session/turn/kind tuple. Events can be delayed and arrive out of turn order within
+session/turn/kind tuple when the body matches. Empty turn IDs use fresh message
+IDs; reused IDs with different bodies are logged and stored separately, with
+stable IDs on retries of each body. Events can be delayed and arrive out of turn order within
 one session (turn 2 before a retried turn 1). Use the session and turn IDs to
 identify outputs; event order is successful persistence order, not model-turn
 order. Channel publication can reorder independently.

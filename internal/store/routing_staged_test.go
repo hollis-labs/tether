@@ -193,7 +193,7 @@ func TestStageTurnOutputIdempotentAcrossCallsAndReopen(t *testing.T) {
 	if _, err := db.DB().Exec(`UPDATE messages SET channel='ops', routing_staged=0 WHERE id=?`, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	retry, err := db.StageTurnOutput(context.Background(), messaging.Envelope{From: first.From, Payload: []byte("replacement"), Metadata: first.Metadata})
+	retry, err := db.StageTurnOutput(context.Background(), messaging.Envelope{From: first.From, Payload: first.Payload, ContentType: first.ContentType, Metadata: first.Metadata})
 	if err != nil || retry.ID != first.ID || retry.Channel != "ops" || string(retry.Payload) != string(first.Payload) {
 		t.Fatalf("retry replaced attached output: %+v %v", retry, err)
 	}
@@ -202,5 +202,53 @@ func TestStageTurnOutputIdempotentAcrossCallsAndReopen(t *testing.T) {
 		if err != nil || env.ID == first.ID {
 			t.Fatalf("distinct output collided: %+v %v", env, err)
 		}
+	}
+}
+
+func TestStageTurnOutputEmptyIdentityDoesNotCollapse(t *testing.T) {
+	db := openRetentionDB(t)
+	input := messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"}, Payload: []byte(`{"text":"answer"}`), ContentType: "application/json", Metadata: map[string]string{"kind": "final"}}
+	first, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("unidentified distinct outputs collapsed")
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if _, err := db.StagedTurnOutput(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+func TestStageTurnOutputReusedIdentityPreservesBothBodiesAndRetries(t *testing.T) {
+	db := openRetentionDB(t)
+	first := stageOutput(t, db)
+	input := messaging.Envelope{From: first.From, Payload: []byte(`{"text":"different answer"}`), ContentType: first.ContentType, Metadata: first.Metadata}
+	second, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID || string(second.Payload) != string(input.Payload) {
+		t.Fatalf("reused identity lost new body: %+v", second)
+	}
+	retry, err := db.StageTurnOutput(context.Background(), input)
+	if err != nil || retry.ID != second.ID {
+		t.Fatalf("alternate body retry duplicated: %+v %v", retry, err)
+	}
+	original, err := db.StagedTurnOutput(context.Background(), first.ID)
+	if err != nil || string(original.Payload) != string(first.Payload) {
+		t.Fatal("original overwritten", err)
+	}
+	if _, err := db.DB().Exec(`UPDATE messages SET channel='ops', routing_staged=0 WHERE id=?`, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	retry, err = db.StageTurnOutput(context.Background(), input)
+	if err != nil || retry.ID != second.ID || retry.Channel != "ops" {
+		t.Fatalf("attached alternate retry lost existing ID: %+v %v", retry, err)
 	}
 }
