@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"github.com/hollis-labs/tether/internal/identity"
 	"slices"
+	"time"
 )
+
+const sessionTokenTTL = 7 * 24 * time.Hour
 
 var workerScopes = []string{"session.write", "message.write", "catalog.write"}
 
@@ -13,7 +16,8 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	if s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Off) {
 		return "", nil
 	}
-	p := identity.Principal{ID: "msg://session/local/" + sessionID, Kind: "session", SessionID: sessionID, Display: "Session " + sessionID,
+	expires := time.Now().UTC().Add(sessionTokenTTL)
+	p := identity.Principal{ExpiresAt: &expires, ID: "msg://session/local/" + sessionID, Kind: "session", SessionID: sessionID, Display: "Session " + sessionID,
 		Scopes: slices.Clone(workerScopes), Addresses: []string{"msg://session/local/" + sessionID}}
 	if parent, ok := identity.FromContext(ctx); ok {
 		p.CreatedBy = parent.ID
@@ -26,7 +30,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 			}
 		}
 	}
-	token, err := identity.NewStore(s.Store.DB()).Mint(ctx, p)
+	token, err := identity.NewStore(s.Store.DB()).MintSessionForLaunch(ctx, p)
 	if err != nil {
 		return "", fmt.Errorf("mint session credential: %w", err)
 	}

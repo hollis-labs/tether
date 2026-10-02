@@ -283,10 +283,13 @@ func loadBootProfileFile(profileID string) (bootgen.Profile, string, error) {
 func expandCatalogPath() string { return config.Expand(catalogPath) }
 
 func tetherEnvFromPlan(env map[string]string) []string {
-	if env == nil || env["TETHER_MCP_SERVERS"] == "" {
-		return nil
+	// boot-exec has no daemon session/principal. Its planted proxy is
+	// explicitly anonymous, even if the operator file exists.
+	out := []string{"TETHER_TOKEN=", "TETHER_MCP_TOKEN=tether-worker"}
+	if env["TETHER_MCP_SERVERS"] != "" {
+		out = append(out, "TETHER_MCP_SERVERS="+env["TETHER_MCP_SERVERS"])
 	}
-	return []string{"TETHER_MCP_SERVERS=" + env["TETHER_MCP_SERVERS"]}
+	return out
 }
 
 func runPreparedCLI(cmd *cobra.Command, prepared *bootexec.Prepared) error {

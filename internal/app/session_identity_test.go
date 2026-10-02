@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	gop "github.com/hollis-labs/go-providers/provider"
@@ -188,45 +189,38 @@ func TestSessionCredentialRevokesAcrossStoreTerminalPaths(t *testing.T) {
 	}
 }
 
-func TestSessionCredentialConcurrentMintPreservesWinner(t *testing.T) {
-	svc, _, id, _ := credentialLaunch(t)
-	type result struct {
-		token string
-		err   error
+func TestSessionCredentialLaunchReplacesStaleToken(t *testing.T) {
+	svc, rt, id, _ := credentialLaunch(t)
+	ctx := context.Background()
+	stale, err := svc.mintSessionCredential(ctx, id)
+	if err != nil {
+		t.Fatal(err)
 	}
-	start := make(chan struct{})
-	results := make(chan result, 2)
-	for range 2 {
-		go func() {
-			<-start
-			token, err := svc.mintSessionCredential(context.Background(), id)
-			results <- result{token, err}
-		}()
-	}
-	close(start)
-	first, second := <-results, <-results
-	if first.err != nil {
-		first, second = second, first
-	}
-	if first.err != nil || second.err == nil {
-		t.Fatal("expected exactly one active session credential", first.err, second.err)
+	if _, err := svc.LaunchSession(id); err != nil {
+		t.Fatal("stale credential wedged launch", err)
 	}
 	ids := identity.NewStore(svc.Store.DB())
-	if _, err := ids.Verify(context.Background(), first.token); err != nil {
-		t.Fatal("winning credential invalid", err)
+	if _, err := ids.Verify(ctx, stale); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatal("stale token remained valid", err)
 	}
-	if err := ids.RevokeToken(context.Background(), first.token); err != nil {
+	var current string
+	for _, entry := range rt.options.Env {
+		if strings.HasPrefix(entry, "TETHER_TOKEN=") {
+			current = strings.TrimPrefix(entry, "TETHER_TOKEN=")
+		}
+	}
+	if current == stale {
+		t.Fatal("launch reused stale credential")
+	}
+	if err := ids.RevokeToken(ctx, stale); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := svc.mintSessionCredential(context.Background(), id)
+	p, err := ids.Verify(ctx, current)
 	if err != nil {
-		t.Fatal("revoked row blocked new mint", err)
+		t.Fatal("old cleanup revoked replacement", err)
 	}
-	if err := ids.RevokeToken(context.Background(), first.token); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ids.Verify(context.Background(), replacement); err != nil {
-		t.Fatal("old attempt revoked replacement", err)
+	if p.ExpiresAt == nil || !p.ExpiresAt.After(time.Now()) {
+		t.Fatal("session lacks expiry backstop")
 	}
 }
 

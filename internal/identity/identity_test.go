@@ -241,3 +241,38 @@ func TestIdentityRevokeTokenPreservesOtherCredential(t *testing.T) {
 		t.Fatal("other token was revoked", err)
 	}
 }
+
+func TestIdentitySessionReplacementIsAtomicAndCreatedOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "retry", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	p := identity.Principal{ID: "msg://session/local/retry", Kind: "session", SessionID: "retry"}
+	first, err := ids.MintSessionForLaunch(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`CREATE TRIGGER test_mint_failure BEFORE INSERT ON principals BEGIN SELECT RAISE(ABORT,'test mint failure'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.MintSessionForLaunch(ctx, p); err == nil {
+		t.Fatal("replacement unexpectedly succeeded")
+	}
+	if _, err := ids.Verify(ctx, first); err != nil {
+		t.Fatal("failed replacement revoked old credential", err)
+	}
+	if _, err := db.DB().Exec(`DROP TRIGGER test_mint_failure`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSessionState("retry", "running", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.MintSessionForLaunch(ctx, p); err == nil {
+		t.Fatal("replaced running session credential")
+	}
+	if _, err := ids.Verify(ctx, first); err != nil {
+		t.Fatal("running credential revoked", err)
+	}
+}

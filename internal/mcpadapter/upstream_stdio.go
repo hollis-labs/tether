@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,7 +74,15 @@ func spawnStdioUpstream(entry config.MCPServerEntry) (*stdioUpstream, *mcpsdk.IO
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
 	u := &stdioUpstream{cmd: exec.Command(entry.Command, entry.Args...), done: make(chan struct{}), lost: make(chan struct{})}
 	u.launch = observeLaunch(u.cmd, entry)
-	u.cmd.Env = os.Environ()
+	// A proxy's own bearer must not be delegated to upstream processes.
+	// Explicit catalog env entries below remain operator-controlled overrides.
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "TETHER_") && strings.HasSuffix(name, "TOKEN") {
+			continue
+		}
+		u.cmd.Env = append(u.cmd.Env, entry)
+	}
 	u.stderr.Secrets = stderrRedactionValues(entry)
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
