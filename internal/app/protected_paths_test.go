@@ -876,8 +876,12 @@ func writeFileT(t *testing.T, path, content string) {
 // the protected directory can write it, the premise of the overlap check. It
 // runs `codex sandbox`, which needs no model, on a temp CODEX_HOME fixture
 // and never the real ~/.codex, and skips where codex is absent or cannot
-// build its sandbox.
+// build its sandbox. Opt in with TETHER_TEST_REAL_CODEX_SANDBOX=1; normal
+// unit runs never discover or execute the host's codex binary.
 func TestRealCodex_WorkspaceSandboxFollowsTheCwd(t *testing.T) {
+	if os.Getenv("TETHER_TEST_REAL_CODEX_SANDBOX") != "1" {
+		t.Skip("set TETHER_TEST_REAL_CODEX_SANDBOX=1 to run the real codex sandbox probe")
+	}
 	bin, err := exec.LookPath("codex")
 	if err != nil {
 		t.Skip("codex is not installed")
