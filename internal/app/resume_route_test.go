@@ -33,7 +33,7 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 			}
 			// Change catalog intent after the parent exists. The persisted parent wins.
 			catalogLaunch := rig.svc.Catalog.Launches["codex-launch"]
-			catalogLaunch.Route = &launchprofile.Route{Channel: "new-catalog-channel", Kinds: []string{"final"}}
+			catalogLaunch.Route = &launchprofile.Route{Channel: "invalid catalog channel", Kinds: []string{"unknown"}}
 			rig.svc.Catalog.Launches["codex-launch"] = catalogLaunch
 			rig.checkpoint("resume-route", parent.SessionID, "")
 			resumed, err := rig.svc.ResumeLogicalAgent("agent", api.ResumeOptions{})

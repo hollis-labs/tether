@@ -40,6 +40,7 @@ func outputHarness(t *testing.T, route *launchprofile.Route) (*Service, *session
 		t.Fatal(err)
 	}
 	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Catalog: &config.Catalog{Providers: map[string]config.Provider{"codex": {ID: "codex", Provider: "codex", RuntimeKind: config.RuntimeKindJSONRPCStdio}}}}
+	t.Cleanup(svc.stopOutputRetries)
 	svc.installTurnFeeds()
 	return svc, svc.newSessionTurnOutput(*rowPtr, plan)
 }
@@ -176,8 +177,8 @@ func TestEveryNativeLaunchHasChainedTypedCallback(t *testing.T) {
 			for _, ev := range all {
 				found = found || ev.Kind == events.KindProviderPermissionDenied
 			}
-			if !found {
-				t.Fatal("permission event lost")
+			if found != (brand == "antigravity") {
+				t.Fatalf("legacy permission event changed for runtime %s: %v", brand, found)
 			}
 		})
 	}

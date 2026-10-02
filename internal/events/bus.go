@@ -3,8 +3,8 @@ package events
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // BusOptions configures a Bus. Persister is required; the bus writes
@@ -67,7 +67,7 @@ type memBus struct {
 	subBuffer      int
 	maxConsecDrops int64
 
-	mu     sync.Mutex
+	mu     chan struct{}
 	nextID int64
 	subs   map[int64]*subscriber
 }
@@ -85,6 +85,7 @@ func NewBus(opts BusOptions) Bus {
 		subBuffer:      opts.SubBuffer,
 		maxConsecDrops: opts.MaxConsecDrops,
 		subs:           make(map[int64]*subscriber),
+		mu:             make(chan struct{}, 1),
 	}
 }
 
@@ -105,10 +106,19 @@ func (b *memBus) Publish(ctx context.Context, e Event) error {
 		return ErrScopeEmpty
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	if err := b.lock(ctx); err != nil {
+		return err
+	}
+	defer b.unlock()
 
-	seq, at, err := b.persister.InsertEvent(e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+	var seq int64
+	var at time.Time
+	var err error
+	if persister, ok := b.persister.(ContextPersister); ok {
+		seq, at, err = persister.InsertEventContext(ctx, e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+	} else {
+		seq, at, err = b.persister.InsertEvent(e.Scope, e.SessionID, e.Kind, e.PayloadJSON)
+	}
 	if err != nil {
 		return err
 	}
@@ -174,15 +184,23 @@ func (b *memBus) evict(s *subscriber) {
 // subscriber registration happen under the bus lock, so a Publish
 // cannot slip an event in between.
 func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(), error) {
-	b.mu.Lock()
+	if err := b.lock(ctx); err != nil {
+		return nil, nil, err
+	}
 
 	// Always replay: EventsSince(0) returns the full history, which is
 	// the right default for subscribers that want to catch up from the
 	// start. Callers wanting live-only subscribe with Filter.SinceSeq
 	// set to the current high-water mark.
-	history, err := b.persister.EventsSince(f.SinceSeq)
+	var history []Event
+	var err error
+	if persister, ok := b.persister.(ContextPersister); ok {
+		history, err = persister.EventsSinceContext(ctx, f.SinceSeq)
+	} else {
+		history, err = b.persister.EventsSince(f.SinceSeq)
+	}
 	if err != nil {
-		b.mu.Unlock()
+		b.unlock()
 		return nil, nil, err
 	}
 
@@ -197,7 +215,7 @@ func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(),
 		maxConsec: b.maxConsecDrops,
 	}
 	b.subs[s.id] = s
-	b.mu.Unlock()
+	b.unlock()
 
 	go b.runSubscriber(s)
 
@@ -211,9 +229,9 @@ func (b *memBus) Subscribe(ctx context.Context, f Filter) (<-chan Event, func(),
 func (b *memBus) runSubscriber(s *subscriber) {
 	defer func() {
 		close(s.out)
-		b.mu.Lock()
+		b.mu <- struct{}{}
 		delete(b.subs, s.id)
-		b.mu.Unlock()
+		b.unlock()
 	}()
 	for _, e := range s.history {
 		if !s.filter.matches(e) {
@@ -244,11 +262,27 @@ func (b *memBus) runSubscriber(s *subscriber) {
 
 // subscriberDropCount is an internal hook for tests.
 func (b *memBus) subscriberDropCount() int64 {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu <- struct{}{}
+	defer b.unlock()
 	var total int64
 	for _, s := range b.subs {
 		total += s.drops.Load()
 	}
 	return total
 }
+
+// Waiting for another producer is bounded too; a SQL deadline alone would leave
+// an event reader stuck behind a producer holding the bus lock.
+func (b *memBus) lock(ctx context.Context) error {
+	select {
+	case b.mu <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			b.unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (b *memBus) unlock() { <-b.mu }

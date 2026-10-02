@@ -14,6 +14,8 @@ type TurnCompletion struct {
 	OutputKind   turnoutput.Kind
 	StopReason   string
 	SessionEnded bool
+	// Synthetic settles an accepted empty turn without publishing an Output.
+	Synthetic bool
 	// Superseded includes a successor that already completed before the query.
 	Superseded bool
 }
@@ -98,13 +100,12 @@ func (o *sessionTurnOutput) CompletedTurn(markerID string) (string, bool) {
 }
 
 // ensureTurn is called with mu held. Submission and steering share one marker.
-func (o *sessionTurnOutput) ensureTurn() bool {
+func (o *sessionTurnOutput) ensureTurn() {
 	if o.turnID != "" {
-		return false
+		return
 	}
 	o.turnID = runtimeevents.NewTurnID()
 	o.turnDone = make(chan struct{})
-	return true
 }
 
 // bindTurn associates a raw runtime turn with a stable submission snapshot.
@@ -122,6 +123,12 @@ func (o *sessionTurnOutput) bindTurn(id string) {
 // synchronous reader callback returns. Failed submissions use settleTurn.
 func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded bool) {
 	id := output.TurnID
+	// Reducer completion is authoritative even when out-of-order output does
+	// not complete our current marker. Late frames for that turn stay closed.
+	o.finishedTurns = append(o.finishedTurns, id)
+	if len(o.finishedTurns) > 64 {
+		o.finishedTurns = o.finishedTurns[len(o.finishedTurns)-64:]
+	}
 	if o.reducerTurnID == id && o.turnID != "" {
 		if o.completed == nil {
 			o.completed = make(map[string]string)
@@ -137,10 +144,6 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 			delete(o.completedDetails, o.completedOrder[0])
 			o.completedOrder = o.completedOrder[1:]
 		}
-		o.finishedTurns = append(o.finishedTurns, id)
-		if len(o.finishedTurns) > 64 {
-			o.finishedTurns = o.finishedTurns[len(o.finishedTurns)-64:]
-		}
 		o.settleTurn()
 	}
 }
@@ -153,6 +156,9 @@ func (o *sessionTurnOutput) settleTurn() {
 		o.service.notifyReplyIdle(o.row.ID)
 	}
 	o.accepted = false
+	o.unboundTerminal = nil
+	o.unboundAmbiguous = false
+	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
 	o.turnDone = nil
@@ -174,19 +180,44 @@ func (e *turnRanError) Unwrap() error { return e.err }
 // failure that comes back after the turn this submission opened was accepted or
 // finished is a turnRanError.
 func (s *Service) trackTurnSubmission(id string, submit func() error) error {
+	return s.trackTurnSubmissionContext(context.Background(), id, submit)
+}
+
+// Caller cancellation bounds gate acquisition without holding it across runtime
+// entry. The legacy helper remains available to input paths without a context.
+func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, submit func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	value, ok := s.turnOutputs.Load(id)
 	if !ok {
 		return submit()
 	}
 	output := value.(*sessionTurnOutput)
-	unlock := output.LockSubmission()
+	unlock, err := output.LockSubmissionContext(ctx)
+	if err != nil {
+		return err
+	}
 	output.mu.Lock()
-	created := output.ensureTurn()
+	// ensureTurn no longer reports whether it opened the marker: this submission did
+	// if none existed.
+	created := output.turnID == ""
+	output.ensureTurn()
+	// An ID-less terminal retained during another pending submission cannot
+	// establish which concurrent submission ran. Do not lend it to steering.
+	if output.submissions > 0 {
+		output.unboundTerminal = nil
+		output.unboundAmbiguous = true
+	}
+	output.submissions++
 	done := output.turnDone
 	marker := output.turnID
 	output.mu.Unlock()
 	unlock()
-	err := submit()
+	err = ctx.Err()
+	if err == nil {
+		err = submit()
+	}
 	output.mu.Lock()
 	ran := false
 	if err != nil && created {
@@ -194,10 +225,17 @@ func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 		ran = finished || (output.turnDone == done && output.accepted)
 	}
 	if output.turnDone == done {
+		output.submissions--
 		if err == nil {
 			output.accepted = true
-		} else if created {
-			output.settleTurn()
+			if output.unboundTerminal != nil {
+				output.completeEmptyTerminal(output.unboundTerminal.kind, output.unboundTerminal.stopReason)
+			}
+		} else {
+			output.unboundTerminal = nil
+			if output.submissions == 0 && !output.accepted {
+				output.settleTurn()
+			}
 		}
 	}
 	output.mu.Unlock()
@@ -205,4 +243,38 @@ func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 		err = &turnRanError{err}
 	}
 	return err
+}
+
+// A terminal may arrive synchronously before submit returns. Retain it on that
+// provisional marker, but only record a synthetic completion after acceptance.
+// Called with mu held; a bound turn always completes through the reducer.
+type emptyTurnTerminal struct {
+	kind       turnoutput.Kind
+	stopReason string
+}
+
+// Provider terminals without IDs have no host begin boundary. A duplicate
+// after acceptance of a new submission is indistinguishable from its empty
+// response. Preserve empty-turn settlement; resolving that ambiguity requires
+// an upstream explicit begin/turn ID, rather than guessing from timing.
+func (o *sessionTurnOutput) emptyTerminal(kind turnoutput.Kind, stopReason string) {
+	if o.turnID == "" || o.reducerTurnID != "" || o.unboundAmbiguous {
+		return
+	}
+	o.unboundTerminal = &emptyTurnTerminal{kind: kind, stopReason: stopReason}
+	if o.accepted {
+		o.completeEmptyTerminal(kind, stopReason)
+	}
+}
+
+func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReason string) {
+	if !o.accepted || o.turnID == "" || o.reducerTurnID != "" {
+		return
+	}
+	id := o.turnID
+	o.reducerTurnID = id
+	o.completeTurn(turnoutput.Output{TurnID: id, Kind: kind, StopReason: stopReason}, false)
+	completion := o.completedDetails[id]
+	completion.Synthetic = true
+	o.completedDetails[id] = completion
 }

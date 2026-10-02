@@ -78,18 +78,22 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
 	}
 
-	plan, err := s.Resolve(la.LaunchID)
-	if err != nil {
-		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
-	}
-
-	// Resume preserves the original session's resolved opt-in, including absence.
-	// API/CLI overrides are not present in the current catalog plan.
+	// Preserve the original opt-in before resolving the current catalog route.
+	input := launch.Input{LaunchID: la.LaunchID, CatalogRoot: s.CatalogRoot}
 	if ck.SourceSessionID != "" {
-		plan.Route, err = s.Store.SessionRoute(ctx, ck.SourceSessionID)
+		input.RouteOverrideSet = true
+		input.RouteOverride, err = s.Store.SessionRoute(ctx, ck.SourceSessionID)
 		if err != nil {
 			return api.LaunchResult{}, fmt.Errorf("read resumed session route: %w", err)
 		}
+	}
+	cat, err := s.launchCatalog(la.LaunchID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("read launch catalog: %w", err)
+	}
+	plan, err := launch.Resolve(cat, input)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
 	}
 
 	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)

@@ -79,7 +79,10 @@ channels.Service.AttachExisting(ctx, channels.ExistingMessage{
 selected kind, and invokes the normal channel publication authorization hook
 before opening the transaction. The router supplies the session URN as the
 publisher principal and envelope sender; `msg://service/local/turn-router` is
-the audit actor. A denial leaves the stage hidden for retry.
+the audit actor. The router does not synthesize token scopes. A future
+scope-based authorization policy must explicitly authorize trusted daemon-internal
+routing; identifying the session sender alone does not supply token grants.
+A denial leaves the stage hidden for retry.
 
 One transaction releases the existing body, addresses it to the channel, uses the
 session ID as its thread, indexes the publication, and records durable
@@ -87,7 +90,11 @@ session ID as its thread, indexes the publication, and records durable
 message IDs. Repeating the same attachment returns the original envelope without
 another body, publication or audit. A conflicting destination or sender fails.
 This path never calls ordinary send, mailbox fanout or delivery enqueue. The audit
-is committed directly with publication and is available in durable event history.
+is committed directly with publication and is available in durable event history,
+not through live bus/SSE fanout. Channel history follows publication commit order;
+if a turn is temporarily denied, a later turn can attach first. Session and turn
+metadata identify the original outputs; channel order does not promise model-turn
+order across retries.
 
 The original turn metadata remains on the channel message, with `launch_id` and
 `launch_display_name` added. The catalog launch currently has no separate display
@@ -109,3 +116,48 @@ replace an API/CLI route override on resume. Legacy checkpoints without a source
 session retain catalog resolution. The daemon's close hook calls `Service.Close`
 after draining sessions, so unfinished output is flushed before the router joins
 and storage closes.
+
+## Persistence and submission boundaries
+
+Each metadata read, body stage and event publication has its own five-second
+budget. Timeout failures retry off the reader, retaining an already-staged message
+ID rather than duplicating the body. The volatile retry pool is capped at 64
+outputs / 16 MiB of text and a one-minute retry age; shutdown joins its workers
+before closing storage. Before staging, a crash, shutdown, full retry pool or
+prolonged outage can still lose output, with an explicit error log. Once staged,
+the router's durable scan can attach the body even if its output event fails.
+A failed body write never supplies a message ID. A corrupt stored
+route is logged and retried at subsequent output, without inventing route defaults.
+Workstream metadata is read at publication, so assignment changes apply to later
+turns. The legacy `provider.permission_denied` event remains antigravity-only;
+the turn reducer still runs for every runtime with its installed detectors.
+
+Raw PTY input is a stream of keystrokes and does not prime a model-turn marker.
+Semantic `SendTurn` and non-PTY `SendInput` publish provisional markers before
+runtime entry. Concurrent steering shares that marker: a failed submission cannot
+settle another accepted or still-pending submission. Reduced runtime events can
+open and accept a marker before a submission returns.
+
+Semantic submission and boot-entry gate acquisition honors the caller context.
+Cancellation while waiting does not install a marker or leave a future gate
+acquisition behind. The gate is released before the blocking runtime submission.
+
+An accepted turn can end without text. If its terminal is repeated and the reducer
+returns no Output while the host marker is still unbound, Tether closes that
+marker with an internal completion marked `Synthetic` (final for Done/completed,
+failure for Error/failed). It preserves any
+terminal stop reason and publishes no event or durable body for that empty final.
+A terminal arriving before submission returns is retained provisionally and
+completed only after successful acceptance; rejected submissions record no
+completion. Bound, non-empty turns still complete through the reducer. Old runtime
+terminals with an already-completed turn ID cannot settle a successor.
+
+An ID-less terminal retained during overlapping submissions is discarded because
+it cannot safely be attributed to accepted steering. A rejected submission also
+discards its provisional terminal; a real bound output or session exit will settle
+any remaining marker. A duplicate ID-less terminal arriving after a new submission
+is accepted remains indistinguishable from that submission's empty response and
+can settle it synthetically. This preserves repeated empty-turn completion;
+removing the ambiguity needs an upstream begin hint or stable runtime turn ID.
+The reducer can suppress repeated identical failures: Tether retains failure in
+the internal completion, but cannot reconstruct a missing durable failure output.

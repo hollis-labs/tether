@@ -47,7 +47,10 @@ func (r turnFeedRegistration) observe(o *sessionTurnOutput, ev gopevents.Event) 
 }
 
 func (s *Service) startTurnRouter() error {
-	router := turnrouting.New(s.Store, s.Bus, channels.New(s.Store, nil))
+	if s.Channels == nil {
+		s.Channels = channels.New(s.Store, nil)
+	}
+	router := turnrouting.New(s.Store, s.Bus, s.Channels)
 	if err := router.Start(context.Background()); err != nil {
 		return err
 	}

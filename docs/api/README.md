@@ -1411,6 +1411,7 @@ Current (v0.0.2):
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
 | session  | `routing.reply_delivered`     | the reply dispatcher, after a reply was injected as the session's next turn | `{reply_id, parent_id, state, reason?, original_session_id, target_session_id, delivered_to_session_id, logical_agent_id?, actor}` — no reply text; `reason` is `handed_off` when `delivered_to_session_id` differs from `original_session_id` (see [Replies to routed messages](#replies-to-routed-messages)) |
 | session  | `routing.reply_undeliverable` | the reply dispatcher, when it gave up on a reply | same shape with `state: "undeliverable"` and `reason` / `detail` saying why |
+| session | `session.turn_routed` | durable audit of atomic channel attachment; event-history reads only, absent from live/SSE fanout | `{actor, publisher, session_id, turn_id, channel, message_id}` |
 | broker   | `broker.envelope_created`     | broker.Service on successful persist   | `{id, sender, recipient, workflow_id, correlation_id, message_type}` — metadata only, never payload |
 | broker   | `broker.envelope_replied`     | broker.Service on successful reply     | same shape as created                                        |
 

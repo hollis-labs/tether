@@ -197,12 +197,14 @@ func (s *Service) auditTurnInterrupt(kind string, payload events.TurnInterruptEv
 	if err != nil {
 		return err
 	}
+	ctx, cancel := s.outputPersistenceContext()
+	defer cancel()
 	if s.Bus != nil {
-		return s.Bus.Publish(context.Background(), events.Event{Scope: events.ScopeSession,
+		return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession,
 			SessionID: payload.SessionID, Kind: kind, PayloadJSON: string(data)})
 	}
 	if s.Store != nil {
-		_, _, err := s.Store.InsertEvent(events.ScopeSession, payload.SessionID, kind, string(data))
+		_, _, err := s.Store.InsertEventContext(ctx, events.ScopeSession, payload.SessionID, kind, string(data))
 		return err
 	}
 	return errors.New("turn interruption audit storage is unavailable")

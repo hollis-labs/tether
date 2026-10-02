@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
@@ -27,5 +28,5 @@ func (s *Store) SessionRoute(ctx context.Context, id string) (*launchprofile.Rou
 	if err := json.Unmarshal([]byte(raw.String), &route); err != nil {
 		return nil, fmt.Errorf("invalid stored session route: %w", err)
 	}
-	return &route, nil
+	return launchprofile.ValidateResolvedRoute(&route)
 }

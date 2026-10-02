@@ -29,6 +29,7 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/settings"
@@ -53,9 +54,12 @@ type Service struct {
 	// and 30s terminal defaults. Caller deadlines take precedence.
 	InterruptCancelTimeout time.Duration
 	InterruptDoneTimeout   time.Duration
-	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	Channels               *channels.Service // constructed before starting any channel publisher
+	turnOutputTimeout      time.Duration     // tests may shorten the default persistence deadline
 	turnRouter             *turnrouting.Router
 	turnFeeds              map[string]turnFeedRegistration
+	outputRetries          outputRetryState
+	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
 
 	CatalogRoot string
 	Catalog     *config.Catalog
@@ -258,6 +262,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Settings:    setSvc,
 		factories:   factories,
 	}
+	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {
 		if err := service.startTurnRouter(); err != nil {
@@ -464,6 +469,7 @@ func (s *Service) Close() error {
 		value.(*sessionTurnOutput).flush()
 		return true
 	})
+	s.stopOutputRetries()
 	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil

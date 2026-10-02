@@ -541,7 +541,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
-		err = s.trackTurnSubmission(sessionID, start)
+		err = s.trackTurnSubmissionContext(ctx, sessionID, start)
 	} else {
 		err = start()
 	}

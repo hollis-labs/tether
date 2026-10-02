@@ -2,8 +2,9 @@ package launchprofile
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
+
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // Route opts a launch into per-turn publishing to a named channel (ADR 0049).
@@ -20,16 +21,13 @@ func (e *InvalidRouteError) Error() string {
 	return fmt.Sprintf("invalid route %s %q", e.Field, e.Value)
 }
 
-// Temporary channel-name syntax; shared channel validation replaces this seam.
-var channelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
-
 // ResolveRoute validates and copies the route, filling the default kinds.
 // An explicit empty list is preserved: it publishes no kinds.
 func ResolveRoute(in *Route) (*Route, error) {
 	if in == nil {
 		return nil, nil
 	}
-	if !channelName.MatchString(in.Channel) {
+	if channels.ValidateName(in.Channel) != nil {
 		return nil, &InvalidRouteError{Field: "channel", Value: in.Channel}
 	}
 	out := &Route{Channel: in.Channel, Kinds: slices.Clone(in.Kinds)}
@@ -44,4 +42,13 @@ func ResolveRoute(in *Route) (*Route, error) {
 		}
 	}
 	return out, nil
+}
+
+// ValidateResolvedRoute never supplies defaults at read time. A persisted route
+// must already include its resolved kind list (an empty list is valid).
+func ValidateResolvedRoute(in *Route) (*Route, error) {
+	if in != nil && in.Kinds == nil {
+		return nil, &InvalidRouteError{Field: "kinds", Value: "missing resolved kinds"}
+	}
+	return ResolveRoute(in)
 }
