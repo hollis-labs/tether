@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +14,7 @@ import (
 	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 // Codes added for reply-to-sender (CW-20261002-0065).
@@ -25,6 +29,13 @@ const (
 	// runtime has not started it, so there is nothing safe to cancel yet.
 	// Nothing was queued; retry.
 	CodeTurnNotYetStarted = "turn_not_yet_started"
+	// CodeTurnFeedUnavailable (409): the target session's runtime has no turn
+	// lifecycle (a PTY), so Tether cannot tell when it is idle; nothing was queued.
+	CodeTurnFeedUnavailable = "turn_feed_unavailable"
+	// CodeReplyNotMailbox (400): a mailbox verb (cancel, consume, read, archive,
+	// claim, ack, nack, redrive) was aimed at a reply. A reply's delivery state is
+	// read from GET /messages/{id}/delivery and nowhere else.
+	CodeReplyNotMailbox = "reply_not_mailbox"
 )
 
 // Errors the reply service returns; handlers map them with writeReplyError.
@@ -37,6 +48,7 @@ var (
 	ErrReplyForbidden            = errors.New("reply not permitted")
 	ErrReplyInterruptUnsupported = errors.New("this session's runtime cannot interrupt a turn")
 	ErrReplyTurnNotStarted       = errors.New("the session's turn has not started yet")
+	ErrReplyNoTurnFeed           = errors.New("the session's runtime reports no turn lifecycle, so Tether cannot tell when it is idle")
 	ErrReplyIdempotencyConflict  = errors.New("idempotency key reused with a different reply")
 	ErrRoutingRepliesNotWired    = errors.New("reply routing is not running in this daemon")
 )
@@ -110,6 +122,10 @@ func writeReplyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, CodeInterruptUnsupported, err.Error())
 	case errors.Is(err, ErrReplyTurnNotStarted):
 		writeError(w, http.StatusConflict, CodeTurnNotYetStarted, err.Error())
+	case errors.Is(err, ErrReplyNoTurnFeed):
+		writeError(w, http.StatusConflict, CodeTurnFeedUnavailable, err.Error())
+	case errors.Is(err, store.ErrRoutingReplyNotMailbox):
+		writeError(w, http.StatusBadRequest, CodeReplyNotMailbox, err.Error())
 	case errors.Is(err, ErrReplyIdempotencyConflict):
 		writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
 	case errors.Is(err, ErrRoutingRepliesNotWired):
@@ -118,6 +134,10 @@ func writeReplyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 	}
 }
+
+// maxReplyRequestBytes caps the JSON request. The reply text is limited to 128 KiB
+// by the service; this leaves room for escaping and rejects anything absurd.
+const maxReplyRequestBytes = 1 << 20
 
 type replyBody struct {
 	Body      string `json:"body"`
@@ -138,8 +158,21 @@ func (s *Server) handleMessageReply(w http.ResponseWriter, r *http.Request, id s
 		writeError(w, http.StatusNotFound, CodeNotFound, "reply routing is not enabled")
 		return
 	}
+	// Read at most the cap plus one byte so an oversized request is a 413, not a
+	// decode error: the text itself is limited more tightly by the service.
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxReplyRequestBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if len(raw) > maxReplyRequestBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, CodePayloadTooLarge, fmt.Sprintf("request body over %d bytes", maxReplyRequestBytes))
+		return
+	}
 	var in replyBody
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields() // a misspelled field name must not silently queue a plain reply
+	if err := dec.Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
 		return
 	}

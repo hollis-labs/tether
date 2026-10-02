@@ -328,10 +328,16 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
-	if action != "" && action != "purge" && action != "trace" && action != "reply" || r.Method == http.MethodDelete {
+	if action != "" && action != "purge" && action != "trace" && action != "reply" && action != "delivery" || r.Method == http.MethodDelete {
 		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
 			if _, ok := channels.AddressName(env.To); ok {
 				writeChannelError(w, channels.ErrMailboxOperation)
+				return
+			}
+			// A reply is delivered by the dispatcher, not through a mailbox: cancel,
+			// consume and the rest would only rewrite its message row.
+			if env.To == store.RoutingReplyAddress {
+				writeReplyError(w, store.ErrRoutingReplyNotMailbox)
 				return
 			}
 		}

@@ -3,8 +3,10 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/delivery"
@@ -91,7 +93,7 @@ func TestRoutingReplyClaimIsExclusiveAndQueueIsFIFO(t *testing.T) {
 		}
 		ids = append(ids, r.ReplyID)
 	}
-	queued, err := db.QueuedRoutingReplies(ctx, "sess-a", time.Now(), 10)
+	queued, err := db.QueuedRoutingReplies(ctx, "sess-a", 10)
 	if err != nil || len(queued) != 3 {
 		t.Fatalf("queued: %+v %v", queued, err)
 	}
@@ -100,7 +102,7 @@ func TestRoutingReplyClaimIsExclusiveAndQueueIsFIFO(t *testing.T) {
 			t.Fatalf("order[%d] = %s, want %s", i, r.ReplyID, ids[i])
 		}
 	}
-	if other, err := db.QueuedRoutingReplies(ctx, "sess-b", time.Now(), 10); err != nil || len(other) != 0 {
+	if other, err := db.QueuedRoutingReplies(ctx, "sess-b", 10); err != nil || len(other) != 0 {
 		t.Fatalf("another session's queue: %+v %v", other, err)
 	}
 	if ok, err := db.ClaimRoutingReply(ctx, ids[0]); err != nil || !ok {
@@ -113,7 +115,7 @@ func TestRoutingReplyClaimIsExclusiveAndQueueIsFIFO(t *testing.T) {
 	if claimed.State != store.RoutingReplyDelivering || claimed.Attempts != 1 {
 		t.Fatalf("claimed = %+v", claimed)
 	}
-	if left, _ := db.QueuedRoutingReplies(ctx, "sess-a", time.Now(), 10); len(left) != 2 {
+	if left, _ := db.QueuedRoutingReplies(ctx, "sess-a", 10); len(left) != 2 {
 		t.Fatalf("a claimed reply is still queued: %+v", left)
 	}
 }
@@ -129,12 +131,14 @@ func TestRoutingReplyRequeueRetargetsAndHonoursNotBefore(t *testing.T) {
 	if err := db.RequeueRoutingReply(ctx, r.ReplyID, store.RoutingReplyRequeue{Retarget: "sess-b", Reason: "handed_off", NotBefore: later}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := db.QueuedRoutingReplies(ctx, "sess-b", time.Now(), 10); len(got) != 0 {
-		t.Fatalf("returned before its retry time: %+v", got)
-	}
-	got, err := db.QueuedRoutingReplies(ctx, "sess-b", later.Add(time.Second), 10)
+	// A backing-off reply is still the head of its session's queue: it carries its
+	// retry time and the dispatcher waits, so a younger due reply cannot jump it.
+	got, err := db.QueuedRoutingReplies(ctx, "sess-b", 10)
 	if err != nil || len(got) != 1 {
-		t.Fatalf("after retry time: %+v %v", got, err)
+		t.Fatalf("queue: %+v %v", got, err)
+	}
+	if got[0].NextAttemptAt == nil || got[0].NextAttemptAt.Before(later.Add(-time.Second)) {
+		t.Fatalf("retry time lost: %+v", got[0])
 	}
 	if got[0].OriginalSessionID != "sess-a" || got[0].TargetSessionID != "sess-b" || got[0].Reason != "handed_off" || got[0].Attempts != 1 {
 		t.Fatalf("requeued = %+v", got[0])
@@ -239,5 +243,159 @@ func TestRoutingRepliesInStateAndForParent(t *testing.T) {
 	}
 	if got, _ := db.RoutingRepliesForParent(ctx, "parent-1"); len(got) != 2 || got[0].ReplyID != a.ReplyID {
 		t.Fatalf("for parent: %+v", got)
+	}
+}
+
+func TestRoutingReplyInterruptingRepliesComeFirstThenArrivalOrder(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	mk := func(body string, interrupt bool) string {
+		in := newReply(body)
+		in.Interrupt = interrupt
+		r, _, err := db.CreateRoutingReply(ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.ReplyID
+	}
+	a, b := mk("older", false), mk("newer", false)
+	c, d := mk("interrupting one", true), mk("interrupting two", true)
+	got, err := db.QueuedRoutingReplies(ctx, "sess-a", 10)
+	if err != nil || len(got) != 4 {
+		t.Fatalf("queue: %+v %v", got, err)
+	}
+	for i, want := range []string{c, d, a, b} {
+		if got[i].ReplyID != want {
+			t.Fatalf("position %d = %s, want %s (interrupting replies first, each group in arrival order)", i, got[i].ReplyID, want)
+		}
+	}
+}
+
+func TestRoutingReplyPendingIsReservedButNeverQueued(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	in := newReply("interrupt me")
+	in.Interrupt, in.Pending, in.IdempotencyKey = true, true, "k"
+	pending, created, err := db.CreateRoutingReply(ctx, in)
+	if err != nil || !created || pending.State != store.RoutingReplyPending {
+		t.Fatalf("pending: %+v %v", pending, err)
+	}
+	if got, _ := db.QueuedRoutingReplies(ctx, "sess-a", 10); len(got) != 0 {
+		t.Fatalf("a pending reply is deliverable: %+v", got)
+	}
+	if sessions, _ := db.SessionsWithQueuedRoutingReplies(ctx); len(sessions) != 0 {
+		t.Fatalf("sweep would drain a pending reply: %v", sessions)
+	}
+	// The reservation holds the idempotency key: a retry finds it, it does not create a twin.
+	if again, found, err := db.PeekRoutingReply(ctx, in); err != nil || !found || again.ReplyID != pending.ReplyID {
+		t.Fatalf("peek: %+v %v %v", again, found, err)
+	}
+	if ok, _ := db.ClaimRoutingReply(ctx, pending.ReplyID); ok {
+		t.Fatal("claimed a pending reply")
+	}
+	if err := db.PromoteRoutingReply(ctx, pending.ReplyID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := db.QueuedRoutingReplies(ctx, "sess-a", 10); len(got) != 1 || got[0].ReplyID != pending.ReplyID {
+		t.Fatalf("promoted reply not queued: %+v", got)
+	}
+	if err := db.PromoteRoutingReply(ctx, pending.ReplyID); !errors.Is(err, store.ErrRoutingReplyState) {
+		t.Fatalf("promoting twice: %v", err)
+	}
+	if err := db.DiscardPendingRoutingReply(ctx, pending.ReplyID); !errors.Is(err, store.ErrRoutingReplyState) {
+		t.Fatalf("an accepted reply must never be discarded: %v", err)
+	}
+}
+
+func TestRoutingReplyDiscardRemovesOnlyAPendingReplyAndItsBody(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	in := newReply("refused")
+	in.Pending, in.IdempotencyKey = true, "k"
+	pending, _, _ := db.CreateRoutingReply(ctx, in)
+	if err := db.DiscardPendingRoutingReply(ctx, pending.ReplyID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RoutingReply(ctx, pending.ReplyID); !errors.Is(err, store.ErrRoutingReplyNotFound) {
+		t.Fatalf("reply survived: %v", err)
+	}
+	if _, err := db.MessagingStore().Get(ctx, pending.ReplyID); !errors.Is(err, messaging.ErrNotFound) {
+		t.Fatalf("message survived: %v", err)
+	}
+	// The key is free again: the refused reply left nothing behind.
+	if again, created, err := db.CreateRoutingReply(ctx, in); err != nil || !created || again.ReplyID == pending.ReplyID {
+		t.Fatalf("recreate: %+v %v %v", again, created, err)
+	}
+	// Settling a pending reply (stale reservation found after a crash) is allowed.
+	stale, _, _ := db.CreateRoutingReply(ctx, func() store.NewRoutingReply { x := newReply("stale"); x.Pending = true; return x }())
+	if err := db.SettleRoutingReply(ctx, stale.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "interrupt_unconfirmed"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRoutingReplyIdempotencyKeyIsScopedToTheParent(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	a := newReply("same body")
+	a.IdempotencyKey = "k"
+	b := a
+	b.ParentID = "parent-2"
+	first, _, err := db.CreateRoutingReply(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, created, err := db.CreateRoutingReply(ctx, b)
+	if err != nil || !created || second.ReplyID == first.ReplyID {
+		t.Fatalf("the same key on another parent must be another reply: %+v %v %v", second, created, err)
+	}
+}
+
+func TestRoutingReplyRecordsTheActorAndBoundsDetail(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	r, _, _ := db.CreateRoutingReply(ctx, newReply("who sent this"))
+	if r.Actor != "msg://user/local/chris" {
+		t.Fatalf("actor = %q", r.Actor)
+	}
+	// A subprocess error carries up to 2 KB of stderr across several lines.
+	noisy := "runner: process exited 1\nstderr:\n" + strings.Repeat("secret token = abc \n", 100)
+	if err := db.SettleRoutingReply(ctx, r.ReplyID, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "submit_failed", Detail: noisy}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.RoutingReply(ctx, r.ReplyID)
+	if len(got.Detail) > store.RoutingReplyDetailMax || strings.Contains(got.Detail, "\n") || !strings.HasPrefix(got.Detail, "runner: process exited 1 stderr:") {
+		t.Fatalf("detail = %q (%d bytes)", got.Detail, len(got.Detail))
+	}
+	if d := store.BoundRoutingDetail(strings.Repeat("é", 400)); len(d) > store.RoutingReplyDetailMax || !utf8.ValidString(d) {
+		t.Fatalf("detail cut mid-rune: %q", d)
+	}
+}
+
+// The sweep runs every few seconds over a table whose settled rows are never
+// deleted: it must read the by-state index, not the whole history.
+func TestRoutingReplySweepQueriesUseTheStateIndex(t *testing.T) {
+	db := openRetentionDB(t)
+	for _, q := range []string{
+		`SELECT DISTINCT target_session_id FROM routing_replies WHERE state='queued'`,
+		`SELECT reply_id FROM routing_replies WHERE state='delivering' ORDER BY created_at, reply_id LIMIT 1000`,
+		`SELECT reply_id FROM routing_replies WHERE state='pending' ORDER BY created_at, reply_id LIMIT 1000`,
+	} {
+		rows, err := db.DB().Query(`EXPLAIN QUERY PLAN ` + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan.WriteString(detail + "\n")
+		}
+		_ = rows.Close()
+		if !strings.Contains(plan.String(), "idx_routing_replies_state") || strings.Contains(plan.String(), "SCAN routing_replies\n") {
+			t.Fatalf("%s\nplan: %s", q, plan.String())
+		}
 	}
 }

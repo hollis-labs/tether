@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	messaging "github.com/hollis-labs/go-messaging"
@@ -16,10 +18,14 @@ import (
 
 // RoutingReplyState is where a reply to a routed message stands. The dispatcher
 // moves it queued -> delivering -> delivered, or to undeliverable with a reason;
-// it never deletes the row (ADR 0049 s1.6).
+// it never deletes the row (ADR 0049 s1.6). pending is the one state the
+// dispatcher never drains: it reserves an interrupting reply while the running
+// turn is canceled, and becomes queued (or is discarded, if the interrupt was
+// refused and the reply therefore never accepted).
 type RoutingReplyState string
 
 const (
+	RoutingReplyPending       RoutingReplyState = "pending"
 	RoutingReplyQueued        RoutingReplyState = "queued"
 	RoutingReplyDelivering    RoutingReplyState = "delivering"
 	RoutingReplyDelivered     RoutingReplyState = "delivered"
@@ -35,6 +41,9 @@ var (
 	ErrRoutingReplyNotFound            = errors.New("routing reply: not found")
 	ErrRoutingReplyIdempotencyConflict = errors.New("routing reply: idempotency key reused with a different reply")
 	ErrRoutingReplyBodyPurged          = errors.New("routing reply: body was purged")
+	// ErrRoutingReplyNotMailbox is a mailbox verb (cancel, consume, read, archive)
+	// aimed at a reply. Its delivery state lives in routing_replies only.
+	ErrRoutingReplyNotMailbox = errors.New("routing replies are not mailbox items")
 	// ErrRoutingReplyState means a transition was refused because the reply is
 	// no longer in the state the caller expected (a concurrent drain won).
 	ErrRoutingReplyState = errors.New("routing reply: not in the expected state")
@@ -77,6 +86,9 @@ type NewRoutingReply struct {
 	Interrupt       bool
 	IdempotencyKey  string
 	Metadata        map[string]string
+	// Pending stores the reply as pending rather than queued; see
+	// PromoteRoutingReply and DiscardPendingRoutingReply.
+	Pending bool
 }
 
 func (n NewRoutingReply) hash() string {
@@ -127,6 +139,10 @@ func (s *Store) CreateRoutingReply(ctx context.Context, in NewRoutingReply) (rep
 		return prior, false, err
 	}
 	hash := in.hash()
+	initial := RoutingReplyQueued
+	if in.Pending {
+		initial = RoutingReplyPending
+	}
 	id, err := uuid.NewV7()
 	if err != nil {
 		return RoutingReply{}, false, err
@@ -162,9 +178,9 @@ func (s *Store) CreateRoutingReply(ctx context.Context, in NewRoutingReply) (rep
 	if _, err := tx.ExecContext(ctx, `INSERT INTO routing_replies
  (reply_id, parent_id, original_session_id, target_session_id, logical_agent_id, actor, interrupt, state,
   idempotency_key, request_hash, created_at, updated_at)
- VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id.String(), in.ParentID, in.TargetSessionID, in.TargetSessionID, in.LogicalAgentID, in.Actor, in.Interrupt,
-		in.IdempotencyKey, hash, now, now); err != nil {
+		string(initial), in.IdempotencyKey, hash, now, now); err != nil {
 		return RoutingReply{}, false, fmt.Errorf("routing reply: queue: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -238,23 +254,101 @@ func (s *Store) RoutingReplyBody(ctx context.Context, replyID string) (string, e
 	return body.Body, nil
 }
 
-// QueuedRoutingReplies returns the replies waiting on sessionID, oldest first.
-// A reply whose retry time has not arrived is not returned.
-func (s *Store) QueuedRoutingReplies(ctx context.Context, sessionID string, now time.Time, limit int) ([]RoutingReply, error) {
+// QueuedRoutingReplies returns the replies waiting on sessionID in delivery
+// order: an interrupting reply first, then oldest first. It includes a reply whose
+// retry time has not arrived; the caller delivers only the head, so a younger
+// reply that happens to be due never jumps an older one that is backing off.
+func (s *Store) QueuedRoutingReplies(ctx context.Context, sessionID string, limit int) ([]RoutingReply, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+routingReplyColumns+` FROM routing_replies
- WHERE target_session_id=? AND state='queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
- ORDER BY created_at ASC, reply_id ASC LIMIT ?`, sessionID, now.UTC().Format(time.RFC3339Nano), limit)
+ WHERE target_session_id=? AND state='queued'
+ ORDER BY interrupt DESC, created_at ASC, reply_id ASC LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
 	}
 	return drainRoutingReplies(rows)
 }
 
-// RoutingRepliesInState lists replies in one state, oldest first. The repair
-// sweep and startup recovery use it.
+// SessionsWithQueuedRoutingReplies names every session that has a reply waiting.
+// The repair sweep runs it every few seconds, so it reads only the open-reply
+// index, never the settled history.
+func (s *Store) SessionsWithQueuedRoutingReplies(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT target_session_id FROM routing_replies WHERE state='queued'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// PromoteRoutingReply makes a pending reply deliverable. It reports
+// ErrRoutingReplyState if the reply is no longer pending.
+func (s *Store) PromoteRoutingReply(ctx context.Context, replyID string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE routing_replies SET state='queued', updated_at=?
+ WHERE reply_id=? AND state='pending'`, routingNow(), replyID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrRoutingReplyState
+	}
+	return nil
+}
+
+// DiscardPendingRoutingReply removes a reply that was reserved but never
+// accepted (its interrupt was refused), body and idempotency key included. It is
+// the only deletion in this table, and only a pending row, which no consumer was
+// ever told was queued, can be discarded.
+func (s *Store) DiscardPendingRoutingReply(ctx context.Context, replyID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `DELETE FROM routing_replies WHERE reply_id=? AND state='pending'`, replyID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrRoutingReplyState
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE id=?`, replyID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RoutingReplyDetailMax bounds the free-text detail stored with, and published
+// about, a reply: a subprocess runtime's error carries up to 2 KB of stderr, and
+// nothing a model process printed belongs in an event or a delivery view.
+const RoutingReplyDetailMax = 256
+
+// BoundRoutingDetail returns detail on one line, cut to RoutingReplyDetailMax
+// bytes at a rune boundary.
+func BoundRoutingDetail(detail string) string {
+	detail = strings.Join(strings.Fields(detail), " ")
+	if len(detail) <= RoutingReplyDetailMax {
+		return detail
+	}
+	end := RoutingReplyDetailMax - len("...")
+	for end > 0 && !utf8.RuneStart(detail[end]) {
+		end--
+	}
+	return detail[:end] + "..."
+}
+
+// RoutingRepliesInState lists replies in one state, oldest first. Startup
+// recovery and the stale-row check use it.
 func (s *Store) RoutingRepliesInState(ctx context.Context, state RoutingReplyState, limit int) ([]RoutingReply, error) {
 	if limit <= 0 {
 		limit = 200
@@ -331,7 +425,7 @@ func (s *Store) RequeueRoutingReply(ctx context.Context, replyID string, in Rout
      target_session_id = CASE WHEN ? != '' THEN ? ELSE target_session_id END,
      attempts = CASE WHEN ? AND attempts > 0 THEN attempts - 1 ELSE attempts END
  WHERE reply_id=? AND state IN ('queued','delivering')`,
-		in.Reason, in.Detail, next, routingNow(), in.Retarget, in.Retarget, in.RefundAttempt, replyID)
+		in.Reason, BoundRoutingDetail(in.Detail), next, routingNow(), in.Retarget, in.Retarget, in.RefundAttempt, replyID)
 	if err != nil {
 		return err
 	}
@@ -364,8 +458,8 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in Routi
 	now := routingNow()
 	res, err := tx.ExecContext(ctx, `UPDATE routing_replies
  SET state=?, reason=?, detail=?, delivered_to_session_id=?, updated_at=?, settled_at=?, next_attempt_at=NULL
- WHERE reply_id=? AND state IN ('queued','delivering')`,
-		string(in.State), in.Reason, in.Detail, in.DeliveredTo, now, now, replyID)
+ WHERE reply_id=? AND state IN ('pending','queued','delivering')`,
+		string(in.State), in.Reason, BoundRoutingDetail(in.Detail), in.DeliveredTo, now, now, replyID)
 	if err != nil {
 		return err
 	}

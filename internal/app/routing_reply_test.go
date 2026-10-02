@@ -34,16 +34,29 @@ type fakeInterrupter struct {
 	err   error
 	// onCancel runs inside CancelTurnAndWait, like the turn ending.
 	onCancel func(sessionID string)
+	// delay holds each call open so overlapping calls are observable.
+	delay             time.Duration
+	active, maxActive int
 }
 
 func (f *fakeInterrupter) CancelTurnAndWait(_ context.Context, sessionID, actor string) (TurnInterruptResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, sessionID+"|"+actor)
-	err, onCancel := f.err, f.onCancel
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
+	err, onCancel, delay := f.err, f.onCancel, f.delay
 	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	if err == nil && onCancel != nil {
 		onCancel(sessionID)
 	}
+	f.mu.Lock()
+	f.active--
+	f.mu.Unlock()
 	return TurnInterruptResult{TurnID: "turn-1", OutputTurnID: "out-1"}, err
 }
 
@@ -63,6 +76,7 @@ type replyHarness struct {
 	intr   *fakeInterrupter
 	mu     sync.Mutex
 	busy   map[string]bool
+	noFeed map[string]bool
 	events []events.RoutingReplyEvent
 	kinds  []string
 	// onSend runs inside sendTurn, after it is recorded.
@@ -79,7 +93,7 @@ func newReplyHarness(t *testing.T) *replyHarness {
 	t.Cleanup(func() { replySubmitBackoff, replyIdleBackoff = oldSubmit, oldIdle })
 
 	st, reg := newWakeHarness(t)
-	h := &replyHarness{t: t, st: st, reg: reg, rt: newFakeRuntime(), busy: map[string]bool{}, intr: &fakeInterrupter{}}
+	h := &replyHarness{t: t, st: st, reg: reg, rt: newFakeRuntime(), busy: map[string]bool{}, noFeed: map[string]bool{}, intr: &fakeInterrupter{}}
 	seam := h.rt.seam()
 	runtime := replyRuntime{wakeRuntime: wakeRuntime{health: seam.health, sendTurn: func(ctx context.Context, id, text string) error {
 		if err := seam.sendTurn(ctx, id, text); err != nil {
@@ -89,7 +103,11 @@ func newReplyHarness(t *testing.T) *replyHarness {
 			return h.onSend(id, text)
 		}
 		return nil
-	}}, turnBusy: func(id string) bool {
+	}}, noTurnFeed: func(id string) bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.noFeed[id]
+	}, turnBusy: func(id string) bool {
 		h.mu.Lock()
 		busy := h.busy[id]
 		h.mu.Unlock()

@@ -158,9 +158,21 @@ func (o *sessionTurnOutput) settleTurn() {
 	o.turnDone = nil
 }
 
+// turnRanError wraps a submission error that came back after the runtime had
+// taken the turn and run it: a subprocess runtime's SendInput blocks for the
+// whole turn and returns the process's failure afterwards. The model has already
+// acted on the input, so the submission must not be repeated. errors.Is/As still
+// see the original error.
+type turnRanError struct{ err error }
+
+func (e *turnRanError) Error() string { return e.err.Error() }
+func (e *turnRanError) Unwrap() error { return e.err }
+
 // Publish a provisional marker before calling the runtime: it may synchronously
 // emit its final output during submit. A successful return never resurrects it.
-// Failed steering cannot settle an existing turn or a later turn's marker.
+// Failed steering cannot settle an existing turn or a later turn's marker. A
+// failure that comes back after the turn this submission opened was accepted or
+// finished is a turnRanError.
 func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 	value, ok := s.turnOutputs.Load(id)
 	if !ok {
@@ -171,10 +183,16 @@ func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 	output.mu.Lock()
 	created := output.ensureTurn()
 	done := output.turnDone
+	marker := output.turnID
 	output.mu.Unlock()
 	unlock()
 	err := submit()
 	output.mu.Lock()
+	ran := false
+	if err != nil && created {
+		_, finished := output.completed[marker]
+		ran = finished || (output.turnDone == done && output.accepted)
+	}
 	if output.turnDone == done {
 		if err == nil {
 			output.accepted = true
@@ -183,5 +201,8 @@ func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 		}
 	}
 	output.mu.Unlock()
+	if ran {
+		err = &turnRanError{err}
+	}
 	return err
 }
