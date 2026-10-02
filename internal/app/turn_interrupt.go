@@ -137,7 +137,7 @@ func (s *Service) cancelTurnAndWaitWithClock(ctx context.Context, sessionID, act
 						result.OutputKind = completion.OutputKind
 						result.StopReason = completion.StopReason
 					}
-					// Matching completion classifies an exit; a non-flush cancelled
+					// Matching completion classifies an exit; a non-flush canceled
 					// terminal proves cancellation even without its separate ACK.
 					if ctx.Err() == nil && matched && !completion.Superseded && (completion.SessionEnded || completion.StopReason == "cancelled") { //nolint:misspell // provider wire stop reason
 						return nil

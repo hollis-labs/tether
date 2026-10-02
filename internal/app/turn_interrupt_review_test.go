@@ -258,12 +258,12 @@ func TestCancelTurnTerminalWithoutAcknowledgement(t *testing.T) {
 					output.flush()
 				} else {
 					stop := "end_turn"
-					if kind == "cancelled" {
+					if kind == "cancelled" { //nolint:misspell // provider wire stop reason
 						stop = kind
 					} //nolint:misspell // provider wire stop reason
 					output.observeProvider(gopevents.Done{StopReason: stop})
 				}
-				<-release // No interrupt ACK; only a cancelled terminal proves cancellation.
+				<-release // No interrupt ACK; only a canceled terminal proves cancellation.
 				return nil
 			})
 			output = state
