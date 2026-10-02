@@ -184,6 +184,11 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 	}
 	output.mu.Lock()
 	output.ensureTurn()
+	// An ID-less terminal retained during another pending submission cannot
+	// establish which concurrent submission ran. Do not lend it to steering.
+	if output.submissions > 0 {
+		output.unboundTerminal = nil
+	}
 	output.submissions++
 	done := output.turnDone
 	output.mu.Unlock()
@@ -198,10 +203,13 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		if err == nil {
 			output.accepted = true
 			if output.unboundTerminal != nil {
-				output.completeEmptyTerminal(*output.unboundTerminal)
+				output.completeEmptyTerminal(output.unboundTerminal.kind, output.unboundTerminal.stopReason)
 			}
-		} else if output.submissions == 0 && !output.accepted {
-			output.settleTurn()
+		} else {
+			output.unboundTerminal = nil
+			if output.submissions == 0 && !output.accepted {
+				output.settleTurn()
+			}
 		}
 	}
 	output.mu.Unlock()
@@ -211,23 +219,32 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 // A terminal may arrive synchronously before submit returns. Retain it on that
 // provisional marker, but only record a synthetic completion after acceptance.
 // Called with mu held; a bound turn always completes through the reducer.
-func (o *sessionTurnOutput) emptyTerminal(stopReason string) {
-	if o.turnID == "" || o.reducerTurnID != "" {
+type emptyTurnTerminal struct {
+	kind       turnoutput.Kind
+	stopReason string
+}
+
+// Provider terminals without IDs have no host begin boundary. A duplicate
+// after acceptance of a new submission is indistinguishable from its empty
+// response. Preserve empty-turn settlement; resolving that ambiguity requires
+// an upstream explicit begin/turn ID, rather than guessing from timing.
+func (o *sessionTurnOutput) emptyTerminal(kind turnoutput.Kind, stopReason string) {
+	if o.turnID == "" || o.reducerTurnID != "" || o.submissions > 1 {
 		return
 	}
-	o.unboundTerminal = &stopReason
+	o.unboundTerminal = &emptyTurnTerminal{kind: kind, stopReason: stopReason}
 	if o.accepted {
-		o.completeEmptyTerminal(stopReason)
+		o.completeEmptyTerminal(kind, stopReason)
 	}
 }
 
-func (o *sessionTurnOutput) completeEmptyTerminal(stopReason string) {
+func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReason string) {
 	if !o.accepted || o.turnID == "" || o.reducerTurnID != "" {
 		return
 	}
 	id := o.turnID
 	o.reducerTurnID = id
-	o.completeTurn(turnoutput.Output{TurnID: id, Kind: turnoutput.KindFinal, StopReason: stopReason}, false)
+	o.completeTurn(turnoutput.Output{TurnID: id, Kind: kind, StopReason: stopReason}, false)
 	completion := o.completedDetails[id]
 	completion.Synthetic = true
 	o.completedDetails[id] = completion

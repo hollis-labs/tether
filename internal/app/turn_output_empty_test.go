@@ -125,3 +125,76 @@ func TestRejectedEmptySubmissionDoesNotRecordCompletion(t *testing.T) {
 		t.Fatalf("failed submit recorded %+v", completion)
 	}
 }
+
+func TestAmbiguousProvisionalTerminalIsNotLentToSteering(t *testing.T) {
+	for _, phase := range []string{"before overlap", "during overlap"} {
+		t.Run(phase, func(t *testing.T) {
+			svc, output := outputHarness(t, nil)
+			svc.turnOutputs.Store("s1", output)
+			output.observeProvider(gopevents.Done{})
+			var marker string
+			var done <-chan struct{}
+			err := svc.trackTurnSubmission("s1", func() error {
+				marker, done = output.CurrentTurn()
+				if phase == "before overlap" {
+					output.observeProvider(gopevents.Done{})
+				}
+				if err := svc.trackTurnSubmission("s1", func() error {
+					if phase == "during overlap" {
+						output.observeProvider(gopevents.Done{})
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return errors.New("creator rejected")
+			})
+			if err == nil {
+				t.Fatal("creator failure hidden")
+			}
+			if current, _ := output.CurrentTurn(); current != marker || !output.TurnAccepted(marker) {
+				t.Fatal("stale terminal completed steering")
+			}
+			select {
+			case <-done:
+				t.Fatal("ambiguous terminal closed marker")
+			default:
+			}
+			output.observeProvider(gopevents.Done{Text: "steering answer"})
+			if completion, ok := output.CompletedTurnDetails(marker); !ok || completion.Synthetic {
+				t.Fatalf("real completion lost: %+v %v", completion, ok)
+			}
+		})
+	}
+}
+
+func TestSuppressedFailureTerminalRetainsFailureCompletion(t *testing.T) {
+	for _, feed := range []string{"provider", "runtime"} {
+		t.Run(feed, func(t *testing.T) {
+			svc, output := outputHarness(t, nil)
+			svc.turnOutputs.Store("s1", output)
+			terminal := func() {
+				if feed == "provider" {
+					output.observeProvider(gopevents.Error{Err: errors.New("repeated failure")})
+				} else {
+					output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnFailed, Payload: []byte(`{"error":"repeated failure"}`)})
+				}
+			}
+			for i := 0; i < 3; i++ {
+				terminal()
+			}
+			before := len(outputEvents(t, svc))
+			var marker string
+			if err := svc.trackTurnSubmission("s1", func() error { marker, _ = output.CurrentTurn(); terminal(); return nil }); err != nil {
+				t.Fatal(err)
+			}
+			completion, ok := output.CompletedTurnDetails(marker)
+			if !ok || !completion.Synthetic || completion.OutputKind != turnoutput.KindFailure {
+				t.Fatalf("failure became clean final: %+v %v", completion, ok)
+			}
+			if after := len(outputEvents(t, svc)); after != before {
+				t.Fatal("suppressed failure unexpectedly published")
+			}
+		})
+	}
+}

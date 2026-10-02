@@ -119,8 +119,14 @@ and storage closes.
 
 ## Persistence and submission boundaries
 
-Turn publication uses a bounded five-second persistence context. Storage failures
-are logged; a failed body write never supplies a message ID. A corrupt stored
+Each metadata read, body stage and event publication has its own five-second
+budget. Timeout failures retry off the reader, retaining an already-staged message
+ID rather than duplicating the body. The volatile retry pool is capped at 64
+outputs / 16 MiB of text and a one-minute retry age; shutdown joins its workers
+before closing storage. Before staging, a crash, shutdown, full retry pool or
+prolonged outage can still lose output, with an explicit error log. Once staged,
+the router's durable scan can attach the body even if its output event fails.
+A failed body write never supplies a message ID. A corrupt stored
 route is logged and retried at subsequent output, without inventing route defaults.
 Workstream metadata is read at publication, so assignment changes apply to later
 turns. The legacy `provider.permission_denied` event remains antigravity-only;
@@ -138,9 +144,20 @@ acquisition behind. The gate is released before the blocking runtime submission.
 
 An accepted turn can end without text. If its terminal is repeated and the reducer
 returns no Output while the host marker is still unbound, Tether closes that
-marker with an internal final completion marked `Synthetic`. It preserves any
+marker with an internal completion marked `Synthetic` (final for Done/completed,
+failure for Error/failed). It preserves any
 terminal stop reason and publishes no event or durable body for that empty final.
 A terminal arriving before submission returns is retained provisionally and
 completed only after successful acceptance; rejected submissions record no
 completion. Bound, non-empty turns still complete through the reducer. Old runtime
 terminals with an already-completed turn ID cannot settle a successor.
+
+An ID-less terminal retained during overlapping submissions is discarded because
+it cannot safely be attributed to accepted steering. A rejected submission also
+discards its provisional terminal; a real bound output or session exit will settle
+any remaining marker. A duplicate ID-less terminal arriving after a new submission
+is accepted remains indistinguishable from that submission's empty response and
+can settle it synthetically. This preserves repeated empty-turn completion;
+removing the ambiguity needs an upstream begin hint or stable runtime turn ID.
+The reducer can suppress repeated identical failures: Tether retains failure in
+the internal completion, but cannot reconstruct a missing durable failure output.
