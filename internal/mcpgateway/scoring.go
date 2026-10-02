@@ -1,4 +1,4 @@
-package mcpadapter
+package mcpgateway
 
 import "strings"
 
@@ -29,4 +29,21 @@ func tokenise(s string) map[string]struct{} {
 		}
 	}
 	return ws
+}
+
+// KeywordScore is the existing keyword scorer, shared by gateway transports.
+// Exact names receive the existing bonus; tokenization/tag semantics are retained.
+func KeywordScore(query string, entry Entry) int {
+	if query == entry.Tool.Name {
+		return len(tokenise(query)) + 1
+	}
+	words := buildWordSet(entry.Tool.Name, entry.Tool.Description, entry.Tags)
+	score := 0
+	for word := range tokenise(query) {
+		if _, ok := words[word]; ok {
+			score++
+		}
+	}
+	return score
+
 }
