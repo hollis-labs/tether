@@ -643,7 +643,7 @@ func TestInterruptCancelsTheTurnThenDeliversTheReplyAsTheNextTurn(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Interrupt != "cancelled" {
+	if receipt.Interrupt != "canceled" {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 	if h.intr.callCount() != 1 || h.intr.calls[0] != "s1|msg://user/local/chris" {

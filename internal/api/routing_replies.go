@@ -66,7 +66,7 @@ type RoutingReplyReceipt struct {
 	ParentID        string `json:"parent_id"`
 	State           string `json:"state"`
 	TargetSessionID string `json:"target_session_id"`
-	// Interrupt says what interrupt:true did: "cancelled", or
+	// Interrupt says what interrupt:true did: "canceled", or
 	// "no_turn_in_progress" / "turn_superseded" / "session_not_running" when
 	// there was nothing to cancel and the reply is delivered as a plain next
 	// turn. Empty when interrupt was not requested.

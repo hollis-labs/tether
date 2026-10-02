@@ -68,7 +68,7 @@ var (
 
 // Interrupt outcomes reported on the receipt.
 const (
-	replyInterruptCancelled  = "cancelled"
+	replyInterruptCancelled  = "canceled"
 	replyInterruptNoTurn     = "no_turn_in_progress"
 	replyInterruptSuperseded = "turn_superseded"
 	replyInterruptNotRunning = "session_not_running"
@@ -551,7 +551,7 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 	}
 	caller, err := messaging.ParseURN(req.Caller.ID)
 	if err != nil {
-		return api.RoutingReplyReceipt{}, fmt.Errorf("%w: caller identity: %v", api.ErrReplyInvalid, err)
+		return api.RoutingReplyReceipt{}, fmt.Errorf("%w: caller identity: %w", api.ErrReplyInvalid, err)
 	}
 
 	parent, err := s.Store.MessagingStore().Get(ctx, req.ParentID)
@@ -567,7 +567,7 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 	}
 	if s.ReplyAuthorization != nil {
 		if err := s.ReplyAuthorization(ctx, req.Caller, parent, target); err != nil {
-			return api.RoutingReplyReceipt{}, fmt.Errorf("%w: %v", api.ErrReplyForbidden, err)
+			return api.RoutingReplyReceipt{}, fmt.Errorf("%w: %w", api.ErrReplyForbidden, err)
 		}
 	} else if !req.Verified {
 		log.Printf("routing reply: unverified caller %q replying to %s (observe mode)", req.Caller.ID, parent.ID)
