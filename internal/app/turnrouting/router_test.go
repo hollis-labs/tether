@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -222,5 +223,31 @@ func TestRetryBackoffAndExpiredQueueEviction(t *testing.T) {
 	router.scan(context.Background())
 	if len(router.retries) != 0 {
 		t.Fatal("expired row retains retry state")
+	}
+}
+
+func TestRecoverySweepAttachesInStagingOrder(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Minute)
+	var want []string
+	for i := 0; i < 20; i++ {
+		env := stage(t, db, "final")
+		id := fmt.Sprintf("backlog-%02d", 20-i)
+		if _, err := db.DB().Exec(`UPDATE messages SET id=?,created_at=? WHERE id=?`, id, base.Add(time.Duration(i)*2*time.Millisecond).Format(time.RFC3339Nano), env.ID); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, id)
+	}
+	router := New(db, nil, channels.New(db, nil))
+	router.scan(ctx)
+	history, err := db.ReadChannel(ctx, "ops", 0, 100)
+	if err != nil || len(history) != len(want) {
+		t.Fatalf("backlog recovery: %d %v", len(history), err)
+	}
+	for i, env := range history {
+		if env.ID != want[i] {
+			t.Fatalf("attachment %d: got %q want %q", i, env.ID, want[i])
+		}
 	}
 }

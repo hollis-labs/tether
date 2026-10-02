@@ -55,6 +55,9 @@ The daemon installs `turnrouting.Router`; lightweight `app.New` and catalog-only
 services do not install a worker. The live `session.turn_output` subscription
 accelerates routing. Startup and periodic scans also page the durable stage queue,
 including messages whose event failed to persist or was dropped from fanout.
+Scans visit staging timestamps in ascending order, with message ID breaking ties;
+the paging cursor retains both values even after a stage attaches. Live events
+and retry backoff can still publish later turns first.
 Each scan handles at most eight pages of 128 IDs and resumes its cursor on the
 next tick. Complete sweeps revisit failed IDs; retries back off from one second
 to one minute. There is no permanent hold: normal 30-day retention can purge an

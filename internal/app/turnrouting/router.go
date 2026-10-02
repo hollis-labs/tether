@@ -39,7 +39,7 @@ type Router struct {
 	cancel     context.CancelFunc
 	done       chan struct{}
 	closeOnce  sync.Once
-	scanCursor string
+	scanCursor store.PendingTurnOutputCursor
 	scanSeen   map[string]bool
 	retries    map[string]retry // owned by worker
 }
@@ -136,7 +136,7 @@ func (r *Router) scan(ctx context.Context) {
 		for _, item := range page {
 			r.scanSeen[item.MessageID] = true
 			r.attempt(ctx, item)
-			r.scanCursor = item.MessageID
+			r.scanCursor = store.PendingTurnOutputCursor{CreatedAt: item.CreatedAt, MessageID: item.MessageID}
 		}
 		if len(page) < 128 {
 			for id := range r.retries {
@@ -144,7 +144,7 @@ func (r *Router) scan(ctx context.Context) {
 					delete(r.retries, id)
 				}
 			}
-			r.scanCursor = ""
+			r.scanCursor = store.PendingTurnOutputCursor{}
 			r.scanSeen = nil
 			return
 		}
