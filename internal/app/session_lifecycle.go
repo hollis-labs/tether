@@ -499,16 +499,18 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			"provider_id":      plan.ProviderID,
 		},
 	}
-	// Mark an automatically submitted boot turn before Start can emit callbacks.
+	s.turnOutputs.Store(sessionID, turnOutput)
+	start := func() error { return s.Manager.Start(context.Background(), req) }
+	// Track an automatic boot submission through the same provisional/accepted
+	// marker path as explicit turns, without holding a gate across Start.
 	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
-		turnOutput.mu.Lock()
-		turnOutput.ensureTurn()
-		turnOutput.mu.Unlock()
+		err = s.trackTurnSubmission(sessionID, start)
+	} else {
+		err = start()
 	}
-	s.turnOutputs.Store(sessionID, turnOutput)
-	if err := s.Manager.Start(context.Background(), req); err != nil {
+	if err != nil {
 		s.turnOutputs.Delete(sessionID)
 		turnOutput.flush()
 		if procLog != nil {

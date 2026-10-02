@@ -25,15 +25,19 @@ import (
 // The outer lock keeps reduction, persistence and emission ordered across
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
-	mu            sync.Mutex
-	reducer       *turnoutput.Reducer
-	service       *Service
-	row           store.SessionRow
-	route         *launchprofile.Route
-	turnID        string
-	reducerTurnID string
-	turnDone      chan struct{}
-	finishedTurns []string
+	submissionGate sync.Mutex
+	accepted       bool
+	completed      map[string]string
+	completedOrder []string
+	mu             sync.Mutex
+	reducer        *turnoutput.Reducer
+	service        *Service
+	row            store.SessionRow
+	route          *launchprofile.Route
+	turnID         string
+	reducerTurnID  string
+	turnDone       chan struct{}
+	finishedTurns  []string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
@@ -45,6 +49,7 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), NewTurnID: func() string {
 		out.ensureTurn()
 		out.reducerTurnID = out.turnID
+		out.accepted = true
 		return out.turnID
 	}})
 	return out

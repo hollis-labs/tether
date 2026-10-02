@@ -228,3 +228,96 @@ func TestCurrentTurnVisibleDuringSubmission(t *testing.T) {
 		t.Fatal("successful return resurrected marker")
 	}
 }
+
+func TestSubmissionGateProtectsMarkerInstallationWithoutBlockingRuntime(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	unlock := output.LockSubmission()
+	attempting := make(chan struct{})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	returned := make(chan error, 1)
+	go func() {
+		close(attempting)
+		returned <- svc.trackTurnSubmission("s1", func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-attempting
+	if id, _ := output.CurrentTurn(); id != "" {
+		t.Fatal("marker installed while gate held")
+	}
+	select {
+	case <-entered:
+		t.Fatal("runtime entered while gate held")
+	default:
+	}
+	unlock()
+	<-entered
+	// SendInput is still blocked, but cancellation can acquire the gate.
+	unlock = output.LockSubmission()
+	id, done := output.CurrentTurn()
+	if id == "" || output.TurnAccepted(id) {
+		t.Fatal("pending marker incorrectly accepted")
+	}
+	output.observeProvider(gopevents.ToolUse{ID: "tool", Name: "shell"})
+	if !output.TurnAccepted(id) {
+		t.Fatal("first reduced event did not accept turn")
+	}
+	unlock()
+	close(release)
+	if err := <-returned; err != nil {
+		t.Fatal(err)
+	}
+	output.observeProvider(gopevents.Done{Text: "reply"})
+	<-done
+	if completed, ok := output.CompletedTurn(id); !ok || completed != id {
+		t.Fatal("completion does not match marker")
+	}
+}
+
+func TestTurnAcceptedOnReturnAndBindingAwareCompletion(t *testing.T) {
+	for _, mode := range []string{"ACP", "failure", "exit"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, output := outputHarness(t, nil)
+			svc.turnOutputs.Store("s1", output)
+			var id string
+			_ = svc.trackTurnSubmission("s1", func() error {
+				id, _ = output.CurrentTurn()
+				if output.TurnAccepted(id) {
+					t.Fatal("provisional marker accepted")
+				}
+				if mode == "failure" {
+					return errors.New("not accepted")
+				}
+				return nil
+			})
+			if mode == "failure" {
+				if _, ok := output.CompletedTurn(id); ok {
+					t.Fatal("failed submission claims Output")
+				}
+				return
+			}
+			if !output.TurnAccepted(id) {
+				t.Fatal("successful submission not accepted")
+			}
+			if mode == "exit" {
+				output.flush()
+				if _, ok := output.CompletedTurn(id); ok {
+					t.Fatal("exit without Output claims completion")
+				}
+				return
+			}
+			output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "ACP-id"})
+			if current, _ := output.CurrentTurn(); current != id {
+				t.Fatal("binding replaced stable marker")
+			}
+			output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "ACP-id"})
+			if got, ok := output.CompletedTurn(id); !ok || got != "ACP-id" {
+				t.Fatal("ACP binding not recorded")
+			}
+		})
+	}
+}
