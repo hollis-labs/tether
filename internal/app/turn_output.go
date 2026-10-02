@@ -30,6 +30,7 @@ type sessionTurnOutput struct {
 	completed      map[string]string
 	completedOrder []string
 	mu             sync.Mutex
+	runtimeID      string
 	reducer        *turnoutput.Reducer
 	service        *Service
 	row            store.SessionRow
@@ -45,8 +46,8 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 	if err != nil {
 		log.Printf("session %q: read output route: %v", row.ID, err)
 	}
-	out := &sessionTurnOutput{service: s, row: row, route: route}
-	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), NewTurnID: func() string {
+	out := &sessionTurnOutput{service: s, row: row, route: route, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
+	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), QuestionTools: s.questionTools(config.CanonicalRuntimeID(plan.ProviderBrand)), NewTurnID: func() string {
 		out.ensureTurn()
 		out.reducerTurnID = out.turnID
 		out.accepted = true
@@ -114,7 +115,7 @@ func (o *sessionTurnOutput) wire(rt agentsessions.Runtime, opts *agentsessions.S
 			existing(ev)
 		}
 		permission(ev)
-		o.observeProvider(ev)
+		o.service.turnFeeds[o.runtimeID].observe(o, ev)
 	})
 }
 

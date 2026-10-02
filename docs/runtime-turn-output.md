@@ -48,3 +48,56 @@ Selected routed text is stored once in a hidden staged message. The channel
 router attaches that existing ID rather than calling ordinary message send to
 create a second body or enqueue a mailbox delivery. Unattached stages remain
 subject to the documented retention window.
+
+## Attaching staged output to a channel
+
+The daemon installs `turnrouting.Router`; lightweight `app.New` and catalog-only
+services do not install a worker. The live `session.turn_output` subscription
+accelerates routing. Startup and periodic scans also page the durable stage queue,
+including messages whose event failed to persist or was dropped from fanout.
+Each scan handles at most eight pages of 128 IDs and resumes its cursor on the
+next tick. Complete sweeps revisit failed IDs; retries back off from one second
+to one minute. There is no permanent hold: normal 30-day retention can purge an
+unattached stage, which removes it from the queue. Shutdown joins the worker
+before closing the database.
+
+The internal attach API is:
+
+```go
+channels.Service.AttachExisting(ctx, channels.ExistingMessage{
+    MessageID: stagedID,
+    Channel: route.Channel,
+    SessionID: sessionID,
+    Actor: routerAddress,
+    LaunchDisplayName: displayName, // optional; defaults to the launch ID
+}) (gomsg.Envelope, error)
+```
+
+`Store.AttachChannelMessage` implements the optional
+`channels.ExistingMessageBackend`. It checks the persisted resolved route and
+selected kind, and invokes the normal channel publication authorization hook
+before opening the transaction. The router supplies the session URN as the
+publisher principal and envelope sender; `msg://service/local/turn-router` is
+the audit actor. A denial leaves the stage hidden for retry.
+
+One transaction releases the existing body, addresses it to the channel, uses the
+session ID as its thread, indexes the publication, and records durable
+`session.turn_routed` audit with actor, publisher, session, turn, channel and
+message IDs. Repeating the same attachment returns the original envelope without
+another body, publication or audit. A conflicting destination or sender fails.
+This path never calls ordinary send, mailbox fanout or delivery enqueue. The audit
+is committed directly with publication and is available in durable event history.
+
+The original turn metadata remains on the channel message, with `launch_id` and
+`launch_display_name` added. The catalog launch currently has no separate display
+name, so daemon routing uses the launch ID. Replies use the sender; this API adds
+no reply-target setting.
+
+`RoutingWiring()` reports installed producer kinds and the running worker;
+`RoutingRuntimeKinds(runtimeID)` reports registered source detectors using primary
+runtime IDs. The reducer consumes the synchronous feed. Claude and Codex register
+question tools and permission denials; Antigravity registers denials, with no tool
+ID available for its approval signal. Other current sources conservatively report
+final and failure. A question or approval is classified only when the turn ends
+on that signal. Approval text can contain the refused command line. Terminal
+outputs are emitted for lifecycle accounting and are never a routable kind.

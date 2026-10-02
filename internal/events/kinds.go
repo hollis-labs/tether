@@ -4,6 +4,9 @@ package events
 // depend on stable kind strings. New kinds should be documented in
 // docs/api/README.md alongside their payload schema.
 const (
+	// KindSessionTurnRouted is the atomic durable audit of channel attachment.
+	KindSessionTurnRouted = "session.turn_routed"
+
 	// KindSessionTurnOutput carries a reduced turn and an optional staged message id.
 	KindSessionTurnOutput = "session.turn_output"
 

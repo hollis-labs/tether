@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/agent"
+	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
@@ -47,6 +48,8 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
+	turnRouter  *turnrouting.Router
+	turnFeeds   map[string]turnFeedRegistration
 	turnOutputs sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
 
 	CatalogRoot string
@@ -229,7 +232,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 	setStorage := settings.NewStorage(db.DB())
 	setSvc := settings.NewService(setStorage)
 
-	return &Service{
+	service := &Service{
 		CatalogRoot: catalogRoot,
 		Catalog:     cat,
 		Store:       db,
@@ -241,7 +244,15 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Registry:    regSvc,
 		Settings:    setSvc,
 		factories:   factories,
-	}, nil
+	}
+	service.installTurnFeeds()
+	if validateMCPGrants {
+		if err := service.startTurnRouter(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("turn router: %w", err)
+		}
+	}
+	return service, nil
 }
 
 // NewCatalogOnly constructs a Service holding only the catalog at
@@ -439,6 +450,7 @@ func (s *Service) Close() error {
 		value.(*sessionTurnOutput).flush()
 		return true
 	})
+	s.turnRouter.Close()
 	if s.Store == nil {
 		return nil
 	}
