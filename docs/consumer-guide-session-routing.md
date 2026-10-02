@@ -147,7 +147,7 @@ classification is **`metadata.kind`**. A representative item is:
     "session_id":"session-id",
     "turn_id":"turn-id",
     "kind":"final",
-    "stop_reason":"completed",
+    "stop_reason":"end_turn",
     "confidence":"exact",
     "runtime":"codex",
     "logical_agent_id":"task-agent",
@@ -171,6 +171,11 @@ by sender session within the channel. Runtime ids use registry primary ids:
 | `approval` | Ended turn whose unresolved refusal/approval signal still needs a response |
 | `failure` | Failed turn; inspect its stop reason and text |
 | `terminal` | Turn ended without routable user-facing output; bus only |
+
+`stop_reason` describes how the turn ended. Normalized values include
+`end_turn`, `max_tokens`, `tool_use`, `turn_limit`, `refusal`, `cancelled` and
+`error`; a provider-specific reason can also pass through. Treat this as an
+extensible string, not a closed enum or a task-success indicator.
 
 Output `confidence` describes **text extraction**, not the certainty of the
 question/approval classification. Exact terminal text or final-phase deltas are
@@ -205,7 +210,7 @@ handle the message-id-versus-excerpt distinction.
   "session_id":"session-id",
   "turn_id":"turn-id",
   "kind":"final",
-  "stop_reason":"completed",
+  "stop_reason":"end_turn",
   "confidence":"exact",
   "runtime":"codex",
   "logical_agent_id":"task-agent",
@@ -215,9 +220,15 @@ handle the message-id-versus-excerpt distinction.
 }
 ```
 
+The event's attribution fields are `logical_agent_id`, `project_id` and
+`workstream_id`; an unassigned workstream is an empty string. `launch_id` and
+`launch_display_name` belong to the channel message's metadata, added by the
+router, and are not fields on `session.turn_output`.
+
 A selected kind on a routed session carries `message_id` after durable staging.
 Other outputs carry a UTF-8-bounded excerpt of at most 4 KiB in `text`, with
-`text_truncated`, and no durable message. A staging failure also falls back to
+`text_truncated: true` only when shortened (the false field is omitted), and
+no durable message. A staging failure also falls back to
 that excerpt. The event does not mean channel attachment has already completed;
 consume channel history/SSE for published messages. Do not treat excerpt text as
 an independently stored full body.
