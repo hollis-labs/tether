@@ -440,6 +440,10 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		a.logger().Warn(warning)
 	}
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
+	if !opts.Only {
+		a.registerDocsResources(s)
+		s.SDKServer().AddReceivingMiddleware(docsResourceMiddleware(gateway))
+	}
 	if len(mws) > 0 {
 		s.SDKServer().AddReceivingMiddleware(proxyLoggingMiddleware(mws, registry))
 	}
