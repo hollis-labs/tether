@@ -52,7 +52,12 @@ type transportFixture struct {
 
 func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	t.Helper()
-	return newTransportFixtureWithTimeout(t, unix, upstream, time.Minute)
+	return newTransportFixtureWithSessionTimeout(t, unix, upstream, time.Minute)
+}
+
+func newTransportFixtureWithSessionTimeout(t *testing.T, unix, upstream bool, sessionTimeout time.Duration) *transportFixture {
+	t.Helper()
+	return newTransportFixtureWithTimeout(t, unix, upstream, sessionTimeout)
 }
 
 func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout time.Duration) *transportFixture {
@@ -154,7 +159,7 @@ func (f *transportFixture) token(t *testing.T, id string, servers []string) stri
 	return token
 }
 
-func (f *transportFixture) request(t *testing.T, method, path, token, session string, headers map[string][]string) *http.Response {
+func (f *transportFixture) request(t *testing.T, method, path, token, session string, headers map[string][]string, clients ...*http.Client) *http.Response {
 	t.Helper()
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
 	if session != "" {
@@ -179,7 +184,11 @@ func (f *transportFixture) request(t *testing.T, method, path, token, session st
 			req.Header[key] = values
 		}
 	}
-	response, err := daemon.DialHTTPClient(f.addr).Do(req)
+	hc := daemon.DialHTTPClient(f.addr)
+	if len(clients) > 0 {
+		hc = clients[0]
+	}
+	response, err := hc.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,25 +777,124 @@ func TestTransportManyHealthyViewsRetainSessionIDs(t *testing.T) {
 	f := newTransportFixture(t, true, false)
 	f.handler.cfg.MaxViews = 128
 	type binding struct{ token, id string }
+	// These are healthy, active clients, not idle-expiry subjects. Sequential
+	// native-view initialization can outlast SessionTimeout under race/coverage
+	// and host load. Keep each ID alive by protocol activity throughout setup
+	// and the final sweep, without extending either endpoint idle policy.
+	ctx, cancel := context.WithCancel(context.Background())
+	hc := daemon.DialHTTPClient(f.addr)
+	hc.Timeout = f.handler.cfg.SessionTimeout / 4
+	var heartbeats sync.WaitGroup
+	failures := make(chan error, 1)
+	t.Cleanup(func() { cancel(); heartbeats.Wait(); hc.CloseIdleConnections() })
+	keepAlive := func(b binding) {
+		heartbeats.Add(1)
+		go func() {
+			defer heartbeats.Done()
+			ticker := time.NewTicker(f.handler.cfg.SessionTimeout / 6)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, daemon.BaseURL(f.addr)+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}`))
+				if err == nil {
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Accept", "application/json, text/event-stream")
+					req.Header.Set("Authorization", "Bearer "+b.token)
+					req.Header.Set("Mcp-Session-Id", b.id)
+					var response *http.Response
+					response, err = hc.Do(req)
+					if err == nil {
+						var raw []byte
+						raw, err = io.ReadAll(response.Body)
+						closeResponse(response)
+						if response.StatusCode != http.StatusOK {
+							err = fmt.Errorf("session %s heartbeat status %d", b.id, response.StatusCode)
+						}
+						// JSON-RPC errors can arrive with HTTP 200, as JSON or SSE.
+						for _, line := range strings.Split(string(raw), "\n") {
+							var reply struct{ Error json.RawMessage }
+							line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+							if json.Unmarshal([]byte(line), &reply) == nil && len(reply.Error) > 0 && string(reply.Error) != "null" {
+								err = fmt.Errorf("session %s heartbeat RPC error: %s", b.id, reply.Error)
+							}
+						}
+					}
+				}
+				if err != nil && ctx.Err() == nil {
+					select {
+					case failures <- err:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+	checkHeartbeats := func() {
+		t.Helper()
+		select {
+		case err := <-failures:
+			t.Fatal("healthy session keepalive failed", err)
+		default:
+		}
+	}
 	bindings := []binding{}
 	for principal := 0; principal < 7; principal++ {
 		token := f.token(t, fmt.Sprintf("healthy-%d", principal), nil)
 		for j := 0; j < 15; j++ {
-			r := f.request(t, http.MethodPost, "/mcp", token, "", nil)
+			r := f.request(t, http.MethodPost, "/mcp", token, "", nil, hc)
 			if r.StatusCode != 200 {
 				t.Fatal("initialize", len(bindings), r.StatusCode)
 			}
 			bindings = append(bindings, binding{token, r.Header.Get("Mcp-Session-Id")})
 			closeResponse(r)
+			keepAlive(bindings[len(bindings)-1])
+			checkHeartbeats()
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
 	for _, b := range bindings {
-		r := f.request(t, http.MethodPost, "/mcp", b.token, b.id, nil)
+		checkHeartbeats()
+		r := f.request(t, http.MethodPost, "/mcp", b.token, b.id, nil, hc)
 		if r.StatusCode != 200 {
 			t.Fatal("healthy session evicted", r.StatusCode)
 		}
 		closeResponse(r)
+	}
+	checkHeartbeats()
+}
+
+func TestTransportIdleViewExpiresWithoutKeepalive(t *testing.T) {
+	f := newTransportFixtureWithSessionTimeout(t, true, false, 100*time.Millisecond)
+	token := f.token(t, "idle", nil)
+	response := f.request(t, http.MethodPost, "/mcp", token, "", nil)
+	id := response.Header.Get("Mcp-Session-Id")
+	closeResponse(response)
+	if response.StatusCode != http.StatusOK || id == "" {
+		t.Fatal("initialize idle view", response.StatusCode, id)
+	}
+	// Observe the reaper without making requests that would renew the lease.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		f.handler.mu.Lock()
+		_, retained := f.handler.sessions[id]
+		f.handler.mu.Unlock()
+		if !retained {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("idle view was never reaped")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	response = f.request(t, http.MethodPost, "/mcp", token, id, nil)
+	defer closeResponse(response)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatal("expired idle session accepted", response.StatusCode)
 	}
 }
 
