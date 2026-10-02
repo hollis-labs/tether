@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -49,7 +50,7 @@ func (s *Service) retryTurnOutput(job *turnOutputWrite) {
 				log.Printf("ERROR session %q turn %q: output retry expired (staged message %q)", job.row.ID, job.result.TurnID, job.messageID)
 				return
 			case <-ticker.C:
-				if job.persist(s) == nil {
+				if job.persist(context.Background(), s) == nil {
 					return
 				}
 			}
