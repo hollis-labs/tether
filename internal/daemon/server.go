@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -37,9 +38,12 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
-	Identity *identity.Store
-	Config   Config
-	Manager  *agentsessions.Manager
+	Identity                 *identity.Store
+	OperatorIdentityDegraded bool
+	identityAuditMu          sync.Mutex
+	identityAudit            *identity.AuditQueue
+	Config                   Config
+	Manager                  *agentsessions.Manager
 	// SandboxProtect, when set, fills /health's sandbox_protect field. It
 	// runs on each /health request, so it must be cheap or cache.
 	SandboxProtect func() *SandboxProtectHealth
@@ -266,6 +270,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := identity.ValidateBind(s.Config.ListenAddr, s.Config.IdentityMode); err != nil {
 		return err
 	}
+	defer s.CloseIdentityAudit()
 	s.startedAt = time.Now()
 
 	// Pre-flight: refuse to start if the PID file references a live process.
@@ -428,11 +433,12 @@ func (s *Server) Handler() http.Handler {
 // Health is the response body shape for GET /health. Kept small on purpose —
 // full session/API surfaces arrive in Sprint v002-s05.
 type Health struct {
-	Status    string `json:"status"`
-	PID       int    `json:"pid"`
-	UptimeSec int64  `json:"uptime_sec"`
-	Listener  string `json:"listener"`
-	Sessions  int    `json:"sessions"`
+	Identity  *IdentityHealth `json:"identity,omitempty"`
+	Status    string          `json:"status"`
+	PID       int             `json:"pid"`
+	UptimeSec int64           `json:"uptime_sec"`
+	Listener  string          `json:"listener"`
+	Sessions  int             `json:"sessions"`
 	// Hardening reports the launch-hardening switches the running daemon
 	// decided from its own environment, so `tether doctor` can report what
 	// tetherd does rather than what the doctor's environment would do. Absent
@@ -484,6 +490,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		UptimeSec: int64(time.Since(s.startedAt).Seconds()),
 		Listener:  s.Config.ListenAddr,
 	}
+	h.Identity = s.identityHealth()
 	if s.Manager != nil {
 		h.Sessions = len(s.Manager.List())
 	}

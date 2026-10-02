@@ -52,12 +52,23 @@ func Middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 			authError(w, http.StatusServiceUnavailable, "identity_unavailable")
 			return
 		}
-		if mode == Off || mode == "" || r.URL.Path == "/health" {
+		if mode == Off || mode == "" || r.URL.Path == "/health" || r.URL.Path == "/a2a" || strings.HasPrefix(r.URL.Path, "/a2a/") {
 			next.ServeHTTP(w, r)
 			return
 		}
+		headers := r.Header.Values("Authorization")
+		// Existing anonymous traffic must not allocate audit metadata or touch the
+		// database/bus. Enforce still denies it, without an audit write.
+		if len(headers) == 0 {
+			if mode == Enforce {
+				authError(w, http.StatusUnauthorized, "unauthorized")
+			} else {
+				next.ServeHTTP(w, r)
+			}
+			return
+		}
 		o := Observation{At: time.Now().UTC(), Mode: mode, Authentication: "missing", Method: r.Method, Route: routeFamily(r.URL.Path)}
-		p, state := authenticate(r.Context(), r.Header.Values("Authorization"), verifier)
+		p, state := authenticate(r.Context(), headers, verifier)
 		o.Authentication = state
 		if state == "verified" {
 			o.PrincipalID, o.SessionID = p.ID, p.SessionID
@@ -81,9 +92,6 @@ func Middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 			}
 			authError(w, status, code)
 			return
-		}
-		if state == "invalid" {
-			log.Printf("identity: invalid credential observed")
 		}
 		if state == "unavailable" {
 			log.Printf("identity: verifier unavailable")

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/go-apppaths/paths"
@@ -31,10 +32,11 @@ type IdentityConfig struct {
 }
 
 func (c IdentityConfig) EffectiveMode() string {
-	if c.Mode == "" {
+	mode := strings.ToLower(strings.TrimSpace(c.Mode))
+	if mode == "" {
 		return "observe"
 	}
-	return c.Mode
+	return mode
 }
 
 // AIConfig controls the in-process AI gateway surface. The first schema slice
@@ -128,7 +130,7 @@ type DaemonConfig struct {
 	// reach a terminal state. Go duration string; defaults to "10s".
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
 	// EventsRetention controls the hourly age-based sweep of events,
-	// proxy_events and ai_events. Enabled by default for 90 days.
+	// proxy_events, ai_events and identity_audit. Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
 }
 
