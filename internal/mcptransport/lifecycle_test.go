@@ -403,3 +403,38 @@ func TestTransportLifecycleProgressReachesOnlyCaller(t *testing.T) {
 		})
 	}
 }
+
+func TestTransportLifecycleFailedRefreshCannotPublishRejectedInventory(t *testing.T) {
+	for _, unix := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unix=%t", unix), func(t *testing.T) {
+			alpha, dir := lifecycleEntry(t, "alpha")
+			beta, _ := lifecycleEntry(t, "beta")
+			f := newTransportFixture(t, unix, false, alpha, beta)
+			changed := make(chan struct{}, 32)
+			caller := lifecycleConnect(t, f, f.token(t, "alpha", []string{"alpha"}), "flat", "", changed)
+			other := lifecycleConnect(t, f, f.token(t, "beta", []string{"beta"}), "flat", "", nil)
+			before := lifecycleNames(t, other)
+			setLifecycleState(t, dir, lifecycleState{Names: []string{"rejected_tool"}, Version: 2, Fail: true})
+			result := lifecycleCall(t, caller, "tether_catalog_refresh", map[string]any{"server": "alpha"})
+			if !result.IsError {
+				t.Fatal("failed upstream tools/list accepted")
+			}
+			if slices.Contains(lifecycleNames(t, caller), "rejected_tool") {
+				t.Fatal("rejected generation became visible")
+			}
+			if !slices.Equal(before, lifecycleNames(t, other)) {
+				t.Fatal("failed refresh changed unrelated view")
+			}
+			setLifecycleState(t, dir, lifecycleState{Names: []string{"alpha_echo", "alpha_recovered"}, Version: 3})
+			drainLifecycleChanges(changed)
+			lifecycleRefresh(t, caller, "alpha")
+			awaitLifecycleChange(t, changed)
+			if !slices.Contains(lifecycleNames(t, caller), "alpha_recovered") {
+				t.Fatal("fresh accepted generation did not recover")
+			}
+			if !slices.Equal(before, lifecycleNames(t, other)) {
+				t.Fatal("recovery changed unrelated view")
+			}
+		})
+	}
+}
