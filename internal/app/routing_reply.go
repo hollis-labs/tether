@@ -82,7 +82,7 @@ const (
 // refused. CW-20260930-0253 phases 2-3 install a checker here.
 type ReplyAuthorization func(ctx context.Context, caller identity.Principal, parent messaging.Envelope, targetSessionID string) error
 
-// turnInterrupter is the seam to CW-20261002-0067's Service.CancelTurnAndWait.
+// turnInterrupter is Service.CancelTurnAndWait (CW-20261002-0067); tests substitute a fake.
 type turnInterrupter interface {
 	CancelTurnAndWait(ctx context.Context, sessionID, actor string) (TurnInterruptResult, error)
 }
@@ -474,11 +474,7 @@ func (s *Service) StartRoutingReplies(ctx context.Context) error {
 		return nil
 	}
 	if s.interrupter == nil {
-		// Service.CancelTurnAndWait lands with CW-20261002-0067; until it is in
-		// this tree the assertion fails and interrupt:true is refused as unsupported.
-		if ti, ok := any(s).(turnInterrupter); ok {
-			s.interrupter = ti
-		}
+		s.interrupter = s
 	}
 	return d.recover(ctx)
 }
