@@ -463,3 +463,68 @@ func TestRoutingReplySessionsWithQueuedAreTheDistinctQueuedTargets(t *testing.T)
 		t.Fatalf("sessions with a queued reply = %v, want [sess-a sess-b]", got)
 	}
 }
+
+// A caller that acts on a snapshot (the stale-row sweep) must not overwrite a
+// transition that happened after it read: the write applies only to the exact row
+// version it saw, and an up-to-date snapshot still applies.
+func TestRoutingReplyConditionalSettleAndRequeueRefuseARowThatMovedSinceItWasRead(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	read := func(id string) store.RoutingReply {
+		r, err := db.RoutingReply(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	in := newReply("x")
+	in.Pending = true
+	created, _, err := db.CreateRoutingReply(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.ReplyID
+
+	// Promoted after the snapshot: settling from the pending snapshot is refused.
+	pending := read(id)
+	if err := db.PromoteRoutingReply(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	err = db.SettleRoutingReply(ctx, id, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "r", IfUnchanged: &pending})
+	if !errors.Is(err, store.ErrRoutingReplyState) || read(id).State != store.RoutingReplyQueued {
+		t.Fatalf("settle from a stale pending snapshot: %v, state %q", err, read(id).State)
+	}
+
+	// Requeued and claimed again after the snapshot: same state, newer version.
+	if ok, err := db.ClaimRoutingReply(ctx, id); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	delivering := read(id)
+	if err := db.RequeueRoutingReply(ctx, id, store.RoutingReplyRequeue{Reason: "again"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimRoutingReply(ctx, id); err != nil || !ok {
+		t.Fatalf("claim again: %v %v", ok, err)
+	}
+	err = db.RequeueRoutingReply(ctx, id, store.RoutingReplyRequeue{Reason: "stale", IfUnchanged: &delivering})
+	if !errors.Is(err, store.ErrRoutingReplyState) || read(id).State != store.RoutingReplyDelivering || read(id).Reason != "again" {
+		t.Fatalf("requeue from a stale delivering snapshot: %v, row %+v", err, read(id))
+	}
+	err = db.SettleRoutingReply(ctx, id, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "stale", IfUnchanged: &delivering})
+	if !errors.Is(err, store.ErrRoutingReplyState) || read(id).State != store.RoutingReplyDelivering {
+		t.Fatalf("settle from a stale delivering snapshot: %v, row %+v", err, read(id))
+	}
+
+	// A current snapshot applies.
+	current := read(id)
+	if err := db.RequeueRoutingReply(ctx, id, store.RoutingReplyRequeue{Reason: "current", IfUnchanged: &current}); err != nil {
+		t.Fatalf("requeue from a current snapshot: %v", err)
+	}
+	current = read(id)
+	if err := db.SettleRoutingReply(ctx, id, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: "current", IfUnchanged: &current}); err != nil {
+		t.Fatalf("settle from a current snapshot: %v", err)
+	}
+	if got := read(id); got.State != store.RoutingReplyUndeliverable || got.Reason != "current" {
+		t.Fatalf("row = %+v", got)
+	}
+}

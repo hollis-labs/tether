@@ -412,6 +412,22 @@ type RoutingReplyRequeue struct {
 	// RefundAttempt gives back the attempt the claim counted, for a wait that is
 	// not a failure (a runtime that rejects mid-turn input).
 	RefundAttempt bool
+	// IfUnchanged, when set, makes the requeue conditional on the reply still being
+	// exactly as this snapshot read it (same state, not touched since). A caller
+	// acting on a snapshot, such as the stale-row sweep, sets it so it cannot
+	// overwrite a transition that happened after the read.
+	IfUnchanged *RoutingReply
+}
+
+// unchangedSince is the arguments of the statements' trailing condition
+// "(? = 0 OR (state = ? AND updated_at = ?))" for IfUnchanged: every transition
+// stamps updated_at, so state plus updated_at identifies the exact row version the
+// snapshot saw. With no snapshot the condition is vacuous.
+func unchangedSince(snapshot *RoutingReply) (guarded int, state, updatedAt string) {
+	if snapshot == nil {
+		return 0, "", ""
+	}
+	return 1, string(snapshot.State), snapshot.UpdatedAt.UTC().Format(time.RFC3339Nano)
 }
 
 // RequeueRoutingReply puts a claimed (or queued) reply back, to be tried again.
@@ -420,12 +436,15 @@ func (s *Store) RequeueRoutingReply(ctx context.Context, replyID string, in Rout
 	if !in.NotBefore.IsZero() {
 		next = in.NotBefore.UTC().Format(time.RFC3339Nano)
 	}
+	guarded, guardState, guardUpdated := unchangedSince(in.IfUnchanged)
 	res, err := s.db.ExecContext(ctx, `UPDATE routing_replies
  SET state='queued', reason=?, detail=?, next_attempt_at=?, updated_at=?,
      target_session_id = CASE WHEN ? != '' THEN ? ELSE target_session_id END,
      attempts = CASE WHEN ? AND attempts > 0 THEN attempts - 1 ELSE attempts END
- WHERE reply_id=? AND state IN ('queued','delivering')`,
-		in.Reason, BoundRoutingDetail(in.Detail), next, routingNow(), in.Retarget, in.Retarget, in.RefundAttempt, replyID)
+ WHERE reply_id=? AND state IN ('queued','delivering')
+   AND (? = 0 OR (state = ? AND updated_at = ?))`,
+		in.Reason, BoundRoutingDetail(in.Detail), next, routingNow(), in.Retarget, in.Retarget, in.RefundAttempt, replyID,
+		guarded, guardState, guardUpdated)
 	if err != nil {
 		return err
 	}
@@ -441,6 +460,9 @@ type RoutingReplySettlement struct {
 	Reason, Detail string
 	// DeliveredTo is the session that received the reply (delivered only).
 	DeliveredTo string
+	// IfUnchanged, when set, makes the settlement conditional on the reply still
+	// being exactly as this snapshot read it; see RoutingReplyRequeue.IfUnchanged.
+	IfUnchanged *RoutingReply
 }
 
 // SettleRoutingReply records a terminal outcome. delivered stamps the message
@@ -456,10 +478,13 @@ func (s *Store) SettleRoutingReply(ctx context.Context, replyID string, in Routi
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := routingNow()
+	guarded, guardState, guardUpdated := unchangedSince(in.IfUnchanged)
 	res, err := tx.ExecContext(ctx, `UPDATE routing_replies
  SET state=?, reason=?, detail=?, delivered_to_session_id=?, updated_at=?, settled_at=?, next_attempt_at=NULL
- WHERE reply_id=? AND state IN ('pending','queued','delivering')`,
-		string(in.State), in.Reason, BoundRoutingDetail(in.Detail), in.DeliveredTo, now, now, replyID)
+ WHERE reply_id=? AND state IN ('pending','queued','delivering')
+   AND (? = 0 OR (state = ? AND updated_at = ?))`,
+		string(in.State), in.Reason, BoundRoutingDetail(in.Detail), in.DeliveredTo, now, now, replyID,
+		guarded, guardState, guardUpdated)
 	if err != nil {
 		return err
 	}

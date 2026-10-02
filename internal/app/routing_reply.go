@@ -473,13 +473,15 @@ func (d *replyDispatcher) successor(endedSession string, r store.RoutingReply) (
 	return "", "", b.SessionID
 }
 
-func (d *replyDispatcher) requeue(r store.RoutingReply, in store.RoutingReplyRequeue) {
+// requeue puts r back in the queue and reports whether it did: false means the
+// row was no longer in the state the caller expected.
+func (d *replyDispatcher) requeue(r store.RoutingReply, in store.RoutingReplyRequeue) bool {
 	in.Detail = store.BoundRoutingDetail(in.Detail)
 	if err := d.st.RequeueRoutingReply(context.WithoutCancel(d.ctx), r.ReplyID, in); err != nil {
 		if !errors.Is(err, store.ErrRoutingReplyState) {
 			log.Printf("routing reply %s: requeue: %v", r.ReplyID, err)
 		}
-		return
+		return false
 	}
 	if !in.NotBefore.IsZero() {
 		target := in.Retarget
@@ -488,6 +490,7 @@ func (d *replyDispatcher) requeue(r store.RoutingReply, in store.RoutingReplyReq
 		}
 		d.notifyAt(target, in.NotBefore)
 	}
+	return true
 }
 
 func (d *replyDispatcher) settle(r store.RoutingReply, in store.RoutingReplySettlement) {
@@ -540,35 +543,51 @@ func (d *replyDispatcher) sweep(ctx context.Context) (int, error) {
 // happened, so it is settled undeliverable (ReplyReasonInterruptUnconfirmed)
 // rather than sent. A pending row for a session an interrupting submission
 // currently holds belongs to that submission and is left alone.
+//
+// Both act on a snapshot, and a live drain or submission can move a row between
+// the read and the write, so every write is conditional on the row being exactly
+// as it was read.
 func (d *replyDispatcher) resolveStale(ctx context.Context) error {
 	delivering, err := d.st.RoutingRepliesInState(ctx, store.RoutingReplyDelivering, 1000)
 	if err != nil {
 		return err
 	}
 	for _, r := range delivering {
-		if d.isInflight(r.ReplyID) {
-			continue
-		}
-		if _, running := d.rt.health(r.TargetSessionID); running {
-			d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonRestart,
-				Detail: "the daemon restarted while this reply was being injected; it may or may not have reached the session, so it was not sent again"})
-			continue
-		}
-		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonRestart, Detail: "requeued after a daemon restart; the session it was being injected into is gone"})
-		d.notify(r.TargetSessionID)
+		d.resolveStaleDelivering(r)
 	}
 	pending, err := d.st.RoutingRepliesInState(ctx, store.RoutingReplyPending, 1000)
 	if err != nil {
 		return err
 	}
 	for _, r := range pending {
-		if d.held(r.TargetSessionID) {
-			continue
-		}
-		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonInterruptUnconfirmed,
-			Detail: "the daemon stopped while this interrupting reply was being reserved; whether the turn was canceled is unknown, so the reply was not sent"})
+		d.resolveStalePending(r)
 	}
 	return nil
+}
+
+// resolveStaleDelivering resolves one 'delivering' row as snapshotted by r.
+func (d *replyDispatcher) resolveStaleDelivering(r store.RoutingReply) {
+	if d.isInflight(r.ReplyID) {
+		return
+	}
+	if _, running := d.rt.health(r.TargetSessionID); running {
+		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonRestart, IfUnchanged: &r,
+			Detail: "the daemon restarted while this reply was being injected; it may or may not have reached the session, so it was not sent again"})
+		return
+	}
+	if d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonRestart, IfUnchanged: &r,
+		Detail: "requeued after a daemon restart; the session it was being injected into is gone"}) {
+		d.notify(r.TargetSessionID)
+	}
+}
+
+// resolveStalePending resolves one 'pending' row as snapshotted by r.
+func (d *replyDispatcher) resolveStalePending(r store.RoutingReply) {
+	if d.held(r.TargetSessionID) {
+		return
+	}
+	d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonInterruptUnconfirmed, IfUnchanged: &r,
+		Detail: "the daemon stopped while this interrupting reply was being reserved; whether the turn was canceled is unknown, so the reply was not sent"})
 }
 
 // recover runs before the dispatcher is installed: stale rows are resolved and
