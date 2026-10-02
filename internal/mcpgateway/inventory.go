@@ -18,12 +18,16 @@ type Entry struct {
 	Tags   []string
 }
 type OriginStatus struct {
-	ID             string `json:"id"`
-	Degraded       bool   `json:"degraded"`
-	Status         string `json:"status"`
-	ToolCount      int    `json:"cataloged_tools"`
-	AvailableTools int    `json:"available_tools"`
-	Error          string `json:"error,omitempty"`
+	ID                string         `json:"id"`
+	Degraded          bool           `json:"degraded"`
+	Status            string         `json:"status"`
+	ToolCount         int            `json:"cataloged_tools"`
+	InventoryExamined bool           `json:"inventory_examined"`
+	EligibleTools     int            `json:"eligible_tools"`
+	AvailableTools    int            `json:"available_tools"`
+	HiddenTools       int            `json:"hidden_tools"`
+	Exclusions        map[string]int `json:"exclusions"`
+	Error             string         `json:"error,omitempty"`
 }
 type Snapshot struct {
 	Entries    []Entry
@@ -322,10 +326,13 @@ type Status struct {
 	CatalogedTools int             `json:"cataloged_tools"`
 	EligibleTools  int             `json:"eligible_tools"`
 	AvailableTools int             `json:"available_tools"`
+	HiddenTools    int             `json:"hidden_tools"`
+	Exclusions     map[string]int  `json:"exclusions"`
 	Complete       bool            `json:"complete"`
 	Name           string          `json:"name,omitempty"`
 	Visible        *bool           `json:"visible,omitempty"`
 	Reason         string          `json:"reason,omitempty"`
+	Tool           *Item           `json:"tool,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -335,7 +342,28 @@ func (s *Service) Status(name string) Status {
 		snapshot = s.Policy.Eligible(snapshot)
 	}
 	unavailable, ids := availability(snapshot)
-	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: snapshot.Origins, EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name}
+	out := Status{Lint: original.Lint, Collisions: original.Collisions, Selection: s.Selection, Origins: append([]OriginStatus{}, snapshot.Origins...), EligibleTools: len(snapshot.Entries), Complete: len(ids) == 0 && len(original.Collisions) == 0, Name: name, Exclusions: map[string]int{}}
+	byOrigin := map[string]int{}
+	for i := range out.Origins {
+		origin := &out.Origins[i]
+		byOrigin[origin.ID] = i
+		origin.EligibleTools = 0
+		origin.AvailableTools = 0
+		origin.HiddenTools = 0
+		origin.Exclusions = map[string]int{}
+	}
+	if s.Policy != nil {
+		for _, entry := range original.Entries {
+			if reason := s.Policy.Exclusion(entry); reason != "" {
+				out.HiddenTools++
+				out.Exclusions[reason]++
+				if i, ok := byOrigin[entry.Origin]; ok {
+					out.Origins[i].HiddenTools++
+					out.Origins[i].Exclusions[reason]++
+				}
+			}
+		}
+	}
 	if s.Policy != nil && (s.Policy.Selection.Profile != nil || len(s.Policy.Floors) > 0) {
 		visible := map[string]Entry{}
 		for _, entry := range snapshot.Entries {
@@ -390,6 +418,12 @@ func (s *Service) Status(name string) Status {
 		out.CatalogedTools += origin.ToolCount
 	}
 	for _, entry := range snapshot.Entries {
+		if i, ok := byOrigin[entry.Origin]; ok {
+			out.Origins[i].EligibleTools++
+			if !unavailable[entry.Origin] {
+				out.Origins[i].AvailableTools++
+			}
+		}
 		if !unavailable[entry.Origin] {
 			out.AvailableTools++
 		}
@@ -412,6 +446,7 @@ func (s *Service) Status(name string) Status {
 			if entry.Tool.Name != name {
 				continue
 			}
+			out.Tool = &Item{Name: name, Origin: entry.Origin, Title: entry.Tool.Title, Description: entry.Tool.Description, Annotations: entry.Tool.Annotations}
 			switch {
 			case unavailable[entry.Origin]:
 				out.Reason = "origin unavailable"

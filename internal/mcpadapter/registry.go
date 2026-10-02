@@ -207,7 +207,7 @@ func (r *ToolRegistry) NameDiagnostics() ([]mcpgateway.NameFinding, []mcpgateway
 	findings := []mcpgateway.NameFinding{}
 	collisions := []mcpgateway.NameCollision{}
 	for _, rt := range r.tools {
-		findings = append(findings, mcpgateway.LintName(owner(rt).Origin, rt.Definition.Name)...)
+		findings = append(findings, mcpgateway.LintTool(owner(rt).Origin, rt.Definition)...)
 	}
 	for _, items := range r.collisions {
 		collisions = append(collisions, items...)

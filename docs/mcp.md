@@ -300,6 +300,13 @@ claim that every client has the same limit. Owners fix their names or prefixes.
 For a selected profile, diagnostic tool names and collision owner details are
 filtered by the same eligibility policy; excluded tools are not disclosed.
 
+The same lint reports missing annotation objects, descriptions longer than
+2,048 characters, and listed tools whose descriptions begin with `Disabled`.
+These are declaration warnings: they never rewrite metadata, infer safety from
+words such as `run`/`start`/`post`, or hide a tool based on its description.
+Upstream owners reconcile their declarations. Metadata checks use observed
+tools/list inventory; the offline doctor cannot establish that inventory.
+
 Default `tether doctor` naming checks are offline: they inspect origin IDs and
 prefix declarations. `tether doctor --mcp-live` **spawns configured upstreams**
 and resolves their credentials for an initialize/tools/list-only probe, without
@@ -313,7 +320,9 @@ upstream handshake and paginated tools/list operation has its own ten-second
 deadline. The complete probe has a thirty-second deadline and owns cancellation
 of its children in a dedicated process group, including descendants. Helper resolution is attempted only on
 this explicit opt-in. Human and JSON findings redact known credentials and
-URLs, and share the collision text with startup/status.
+URLs, and share collision and metadata findings with status. Failed initialization
+reports its redacted error and an unexamined inventory instead of claiming an
+observed empty tool set.
 
 ### Named gateway profiles
 
@@ -545,9 +554,23 @@ it does not add remote HTTP/SSE reconnection or periodic liveness probes.
 In normal proxy modes, `tether_health` returns `ok: false` and names
 `unavailable_servers` when an observed connection has failed or is recovering.
 `tether_gateway_status` includes each selected origin's connection status,
-catalogued/available counts and any connection error. Native `tether_health`
+catalogued/eligible/available counts and any connection error. Both overall and
+per-origin `hidden_tools` and `exclusions` count profile exclusions by reason,
+using the same deny/read-only/allow precedence as dispatch. These counts cover
+the caller's granted inventory; they do not disclose excluded tool names.
+Per-origin available counts reflect profile filtering, rather than the whole
+upstream. Native `tether_health`
 also retains detailed restart/exit diagnostics (call it through the dispatcher
 in search mode). Cached definitions do not establish availability. These are observed states, not active probes.
+
+In upstream health, `tool_count` is zero when the connection is unavailable;
+`cataloged_tools` retains the last accepted inventory count. Status origins
+also expose `inventory_examined`: false means tools/list has never succeeded,
+while true with a zero count means a successful empty inventory was observed.
+An optional eligible `name` returns its origin and authored annotations in
+`tool`; missing annotations remain null, and read-only/destructive hints come
+only from that authored object. A cached named tool can still be unavailable;
+its `reason` and origin status say so. Metadata hints are advisory.
 
 `tether_tool_search` and `tether_tool_list` exclude unavailable upstreams from search
 results and report `complete: false` with the missing servers. An empty result

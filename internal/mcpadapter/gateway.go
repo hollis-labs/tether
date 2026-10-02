@@ -23,7 +23,7 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 			observed := map[string]bool{}
 			for _, status := range a.upstreamStatus() {
 				observed[status.ID] = true
-				byID[status.ID] = mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.ToolCount, Error: status.Error}
+				byID[status.ID] = mcpgateway.OriginStatus{ID: status.ID, Degraded: status.Degraded, Status: status.Status, ToolCount: status.CatalogedTools, InventoryExamined: status.InventoryExamined, Error: status.Error}
 			}
 			for _, def := range registry.AllDefinitions() {
 				rt, ok := registry.Lookup(def.Name)
@@ -41,6 +41,7 @@ func (a *Adapter) gatewayService(registry *ToolRegistry, router *ProxyRouter, se
 				}
 				if rt.ServerID == "" || !observed[origin] {
 					status.ToolCount++
+					status.InventoryExamined = true
 				}
 				if status.Status == "connected" {
 					status.AvailableTools++
@@ -168,7 +169,7 @@ func (a *Adapter) registerCallTool(s *gomcp.Server, gateway *mcpgateway.Service)
 	}))
 }
 func (a *Adapter) registerGatewayStatus(s *gomcp.Server, gateway *mcpgateway.Service) {
-	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain the effective discovery mode and source, upstream availability/counts, and why an optional exact name is not listed directly. Incomplete discovery is explicit.", InputSchema: gomcp.InputSchema(gomcp.StringProp("name", "Optional exact tool name to explain", false)), Handler: func(_ context.Context, args map[string]any) (any, error) {
+	a.addTool(s, gomcp.Tool{Name: "tether_gateway_status", Description: "Explain effective profile/mode and source, cataloged/eligible/available tool counts, exclusions by reason, upstream errors, collisions and metadata lint. An optional exact name reports its visibility and authored annotations. Cached or unexamined inventory never proves availability.", InputSchema: gomcp.InputSchema(gomcp.StringProp("name", "Optional exact tool name to explain", false)), Handler: func(_ context.Context, args map[string]any) (any, error) {
 		name, _ := args["name"].(string)
 		out := gateway.Status(name)
 		if isGatewayTool(name) {
