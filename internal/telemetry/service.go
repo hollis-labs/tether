@@ -109,6 +109,9 @@ func (s *Service) End(ctx context.Context, o *Observation, out Outcome) events.T
 	} else {
 		ev.ErrorClass = ""
 	}
+	if processMetricsError == nil {
+		processMetrics.Observe(ctx, ev)
+	}
 	s.publish(ctx, events.EventTypeToolCallEnd, ev)
 	o.span.End()
 	return ev
