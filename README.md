@@ -200,7 +200,7 @@ tether sessions stop <session-id>
 tether generate-boot nanite.backend.main | pbcopy
 
 # Start the MCP adapter (for LLM tool access)
-TETHER_MCP_TOKEN=your-token \
+TETHER_TOKEN='tth_<issued-token>' \
 TETHER_MCP_SCOPES=session.write,message.write \
 tether mcp
 
@@ -255,7 +255,7 @@ Desktop, Claude Code, Cursor, or any MCP-capable agent:
       "command": "tether",
       "args": ["mcp"],
       "env": {
-        "TETHER_MCP_TOKEN": "your-token",
+        "TETHER_TOKEN": "<issued-tth-token>",
         "TETHER_MCP_SCOPES": "session.write,message.write"
       }
     }

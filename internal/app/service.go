@@ -71,6 +71,9 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
+	launchMu sync.Mutex
+	launches map[string]*sessionLaunchGate
+
 	factories map[string]RuntimeFactory
 
 	// strictMCPStatus, when set, replaces the daemon-environment decision

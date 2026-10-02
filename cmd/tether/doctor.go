@@ -261,7 +261,7 @@ func checkDaemon(cat *config.Catalog) checkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	c := client.New(cfg.ListenAddr)
+	c := daemonClient(cfg.ListenAddr)
 	if err := c.Ping(ctx); err != nil {
 		return warn("daemon-reachable", "daemon not running",
 			"start it with: tether daemon start")
@@ -423,7 +423,7 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	h, err := client.New(cfg.ListenAddr).Health(ctx)
+	h, err := client.New(cfg.ListenAddr, client.WithToken("")).Health(ctx)
 	if err != nil || h.Identity == nil {
 		return warn("caller-identity", string(mode)+" configured; runtime identity unavailable", "check daemon status")
 	}

@@ -28,6 +28,9 @@ func TestIdentityMintVerifyAndRevoke(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s, db := identityStore(t)
 	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "test", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	want := identity.Principal{ID: "msg://session/local/test", Kind: "session", SessionID: "test", Display: "Test", Scopes: []string{"session.write"}, Addresses: []string{"msg://session/local/test"}, CreatedBy: identity.OperatorID}
 	token, err := s.Mint(ctx, want)
 	if err != nil {
@@ -212,5 +215,64 @@ func TestIdentityMultipleTokensForOnePrincipal(t *testing.T) {
 		if _, err := s.Verify(ctx, token); !errors.Is(err, identity.ErrInvalidToken) {
 			t.Fatal("principal revocation did not revoke every token")
 		}
+	}
+}
+
+func TestIdentityRevokeTokenPreservesOtherCredential(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, _ := identityStore(t)
+	ctx := context.Background()
+	p := identity.Principal{ID: "svc:replacement", Kind: "service"}
+	first, err := s.Mint(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Mint(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeToken(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Verify(ctx, first); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatal("revoked token accepted", err)
+	}
+	if _, err := s.Verify(ctx, second); err != nil {
+		t.Fatal("other token was revoked", err)
+	}
+}
+
+func TestIdentitySessionReplacementIsAtomicAndCreatedOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ids, db := identityStore(t)
+	ctx := context.Background()
+	if err := db.CreateSession(store.SessionRow{ID: "retry", State: "created"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	p := identity.Principal{ID: "msg://session/local/retry", Kind: "session", SessionID: "retry"}
+	first, err := ids.MintSessionForLaunch(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`CREATE TRIGGER test_mint_failure BEFORE INSERT ON principals BEGIN SELECT RAISE(ABORT,'test mint failure'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.MintSessionForLaunch(ctx, p); err == nil {
+		t.Fatal("replacement unexpectedly succeeded")
+	}
+	if _, err := ids.Verify(ctx, first); err != nil {
+		t.Fatal("failed replacement revoked old credential", err)
+	}
+	if _, err := db.DB().Exec(`DROP TRIGGER test_mint_failure`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSessionState("retry", "running", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.MintSessionForLaunch(ctx, p); err == nil {
+		t.Fatal("replaced running session credential")
+	}
+	if _, err := ids.Verify(ctx, first); err != nil {
+		t.Fatal("running credential revoked", err)
 	}
 }

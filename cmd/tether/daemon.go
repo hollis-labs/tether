@@ -701,7 +701,10 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 }
 
 func (a *serviceAdapter) LaunchSession(sessionID string) (api.LaunchResult, error) {
-	l, err := a.svc.LaunchSession(sessionID)
+	return a.LaunchSessionWithContext(context.Background(), sessionID)
+}
+func (a *serviceAdapter) LaunchSessionWithContext(ctx context.Context, sessionID string) (api.LaunchResult, error) {
+	l, err := a.svc.LaunchSessionWithContext(ctx, sessionID)
 	if err != nil {
 		return api.LaunchResult{}, err
 	}
@@ -970,7 +973,7 @@ func newDaemonClient(catalogRoot string) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(cfg.ListenAddr), nil
+	return daemonClient(cfg.ListenAddr), nil
 }
 
 // openStoreReadOnly opens the SQLite store for fallback reads when the
@@ -1062,6 +1065,10 @@ func expandListenAddr(addr string) string {
 
 func init() {
 	daemonCmd.AddCommand(daemonStartCmd, daemonRunCmd, daemonStopCmd, daemonStatusCmd)
+}
+
+func (a *serviceAdapter) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	return a.svc.ResumeLogicalAgentWithContext(ctx, logicalAgentID, opts)
 }
 
 func bootstrapOperator(ctx context.Context, ids *identity.Store, path string, mode identity.Mode) (bool, error) {
