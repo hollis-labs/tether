@@ -46,7 +46,8 @@ func TestScopedCodexInterruptCapturedTurn(t *testing.T) {
 	notes := make(chan string, 256)
 	statuses := make(chan string, 8)
 	dir := t.TempDir()
-	sess, err := rt.Start(context.Background(), agentsessions.StartOptions{Workdir: dir, LogPath: filepath.Join(dir, "session.log"), JsonRpcNotificationHook: func(method string, params json.RawMessage) {
+	manager := agentsessions.NewManager(nil)
+	err = manager.Start(context.Background(), agentsessions.StartRequest{ID: "captured", Runtime: rt, Options: agentsessions.StartOptions{Workdir: dir, LogPath: filepath.Join(dir, "session.log"), JsonRpcNotificationHook: func(method string, params json.RawMessage) {
 		notes <- method
 		if method == "turn/completed" {
 			var p struct {
@@ -57,16 +58,18 @@ func TestScopedCodexInterruptCapturedTurn(t *testing.T) {
 			_ = json.Unmarshal(params, &p)
 			statuses <- p.Turn.Status
 		}
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = sess.Stop(context.Background()); _, _ = sess.Wait() }()
+	defer func() {
+		_ = manager.Stop(context.Background(), "captured")
+		_ = manager.Shutdown(context.Background())
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	caller := sess.(agentsessions.JsonRpcCaller)
 	for _, method := range []string{"initialize", "thread/start", "turn/start"} {
-		if _, err := caller.Call(ctx, method, map[string]any{}); err != nil {
+		if _, err := manager.JsonRpcCall(ctx, "captured", method, map[string]any{}); err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}
 	}
@@ -81,7 +84,7 @@ func TestScopedCodexInterruptCapturedTurn(t *testing.T) {
 		}
 	}
 running:
-	if err := sess.(agentsessions.TurnInterrupter).InterruptTurn(ctx); err != nil {
+	if err := manager.InterruptTurn(ctx, "captured"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -92,7 +95,7 @@ running:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if _, err := caller.Call(ctx, "turn/start", map[string]any{}); err != nil {
+	if _, err := manager.JsonRpcCall(ctx, "captured", "turn/start", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -103,8 +106,8 @@ running:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	_ = sess.Stop(context.Background())
-	_, _ = sess.Wait()
+	_ = manager.Stop(context.Background(), "captured")
+	_ = manager.Shutdown(context.Background())
 	if len(fake.Calls()) != 1 {
 		t.Fatal("interrupt restarted the provider process")
 	}
