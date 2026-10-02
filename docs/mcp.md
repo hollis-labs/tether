@@ -1640,8 +1640,9 @@ OTel additionally exports process-lifetime `tether.tool.calls`,
 `tether.tool.gateway`, `tether.tool.forward` histograms. Labels are tool,
 upstream and outcome, never caller identity or argument values. These reset
 with the observing process and are distinct from retained-event queries;
-forwarded copies do not increment a second exporter. Existing OTel exporter
-configuration and introspection access rules apply; no deployment or new
+forwarded copies do not increment a second exporter. The existing initializer
+now enables metric export alongside tracing, using the same OTLP endpoint and
+OTel disable switch. Existing introspection access rules apply; no deployment or new
 authorization policy is implied.
 
 #### `tether_session_events`

@@ -3,11 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/telemetry"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/telemetry"
 )
 
 func TestDurableToolMetricsHistogramsRetainLegacyAndDeniedCalls(t *testing.T) {

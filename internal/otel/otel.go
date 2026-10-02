@@ -30,6 +30,7 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 		hotel.WithServiceVersion(serviceVersion),
 		hotel.WithServiceNamespace("hollis"),
 		hotel.WithEnvironment(environment()),
+		hotel.WithMetricsEnabled(),
 	)
 }
 

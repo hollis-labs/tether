@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"errors"
+
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/telemetry"
 )

@@ -2,10 +2,11 @@ package telemetry
 
 import (
 	"context"
+	"testing"
+
 	"github.com/hollis-labs/tether/internal/events"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	"testing"
 )
 
 func TestOTelMetricsCaptureDeniedAndSuccessfulCalls(t *testing.T) {

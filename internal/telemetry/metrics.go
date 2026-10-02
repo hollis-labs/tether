@@ -61,7 +61,7 @@ type QueryError struct{ Message string }
 
 func (e *QueryError) Error() string { return e.Message }
 
-// ReadMetrics queries only durable completed calls; starts never inflate counts.
+// QueryService queries only durable completed calls; starts never inflate counts.
 // The result survives daemon restarts and is bounded by event retention.
 type QueryService struct{ Source MetricsSource }
 

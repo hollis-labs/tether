@@ -2,8 +2,9 @@ package api
 
 import (
 	"errors"
-	"github.com/hollis-labs/tether/internal/telemetry"
 	"net/http"
+
+	"github.com/hollis-labs/tether/internal/telemetry"
 )
 
 func (s *Server) registerToolMetricsRoute(router *http.ServeMux) {
