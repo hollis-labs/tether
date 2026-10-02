@@ -15,15 +15,10 @@ package api
 // manual-only launch policy and T09 acceptance #3's "no silent
 // deletion."
 //
-// authorized_by on purge is recorded the same way repair.go's redrive
-// records it -- a URN-shaped, self-asserted caller identity (ADR 0045) --
-// but since purging has no library-owned schema to persist it in (unlike
-// redrive's RedriveRequest.AuthorizedBy, which go-messaging itself
-// stores), it is logged rather than persisted: a best-effort audit trail
-// consistent with this package's existing precedent for the same
-// constraint (delivery_store.go's Send() logs an orphaned-delivery id
-// "for manual/T09 operator cleanup" rather than adding a new column for
-// it).
+// authorized_by is a URN-shaped, self-asserted caller identity (ADR 0045).
+// Each actual purge persists it in message_purge_audit in the same transaction
+// as clearing the content. The receipt is independent of expiring event history;
+// a failed audit write fails the purge and leaves the body intact.
 
 import (
 	"context"
@@ -44,7 +39,7 @@ import (
 // directly.
 type RetentionStore interface {
 	ListRetentionCandidates(ctx context.Context, olderThan time.Time) ([]store.RetentionCandidate, error)
-	PurgeMessageBody(ctx context.Context, messageID string) (bool, error)
+	PurgeMessageBody(ctx context.Context, messageID, authorizedBy string) (bool, error)
 }
 
 // registerRetentionRoutes mounts GET /messages/retention/candidates as an
@@ -114,9 +109,8 @@ func (s *Server) handleRetentionCandidates(w http.ResponseWriter, r *http.Reques
 }
 
 type messagePurgeRequest struct {
-	// AuthorizedBy is a URN-shaped caller identity, logged (not
-	// persisted -- see file doc comment) for audit -- self-asserted per
-	// ADR 0045, not verified.
+	// AuthorizedBy is persisted in the purge receipt: a URN-shaped,
+	// self-asserted caller identity per ADR 0045, not verified.
 	AuthorizedBy string `json:"authorized_by"`
 }
 
@@ -154,7 +148,7 @@ func (s *Server) handleMessagePurge(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 
-	purged, err := s.Retention.PurgeMessageBody(r.Context(), id)
+	purged, err := s.Retention.PurgeMessageBody(r.Context(), id, req.AuthorizedBy)
 	if err != nil {
 		if errors.Is(err, store.ErrPendingObligation) {
 			writeError(w, http.StatusConflict, CodeConflict, "message has a pending delivery obligation; refusing to purge")

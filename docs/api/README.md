@@ -1015,10 +1015,11 @@ does not open the state database.
 | `proxy_events` | Shared age window, default 90 days | Durable tool-call history; no row-count eviction |
 | `ai_events` | Shared age window, default 90 days | AI summaries and usage; usage totals cover retained history only |
 | `a2a_tasks` | Shared age window since last update, default 90 days; terminal states only | Completed, failed, canceled and rejected tasks expire; submitted, working, input-required, auth-required and unknown states are preserved regardless of age. Expired tasks are no longer available through peer task lookup |
-| `broker_envelopes` | Indefinite; outside automatic sweep | Delivery obligations and correlation history must survive event expiry |
+| `broker_envelopes` | Indefinite, including bodies; permanently outside the messages purge and automatic sweep | No broker-specific safe-purge contract; delivery obligations and request/reply correlation history must survive expiry |
 | `session_refs` | Indefinite; outside automatic sweep | Provenance pointers; dangling refs after session deletion are retained (FK cascades are not enforced) |
 | `checkpoints` | Indefinite; outside automatic sweep | Resume/recovery state; age alone does not establish safe deletion |
 | `messages` | Indefinite structural rows; explicit manual body purge only | `/messages/retention/candidates` and `/messages/{id}/purge` preserve pending/repairable obligations; this knob does not purge bodies |
+| `message_purge_audit` | Indefinite; outside automatic sweep | Atomic manual body-purge receipts: table, message ID, self-asserted `authorized_by` URN and timestamp; no body copy |
 | `retention_audit` | Indefinite; outside automatic sweep | Durable sweep receipts, independent of expiring event history |
 | `principals` | Indefinite; outside automatic sweep | Identity and revocation history; no automatic credential/principal deletion |
 | `identity_audit` | Same `daemon.events_retention` window (default 90 days) | Credential-bearing request receipts; purge is audited, queue overflow/failure counters are in health/doctor |
@@ -1037,6 +1038,17 @@ or error. This is the integration hook for future post-sweep consumers; it does
 not contain deleted bodies or provide an archive-before-delete guarantee.
 Replay is unaffected for a `since_seq` inside the window. Resuming from an older
 event returns retained events after it, without the deleted gap.
+
+Manual `POST /messages/{id}/purge` requires `authorized_by` (a valid,
+self-asserted URN). Every actual content removal writes a durable
+`message_purge_audit` row in the same transaction; a failed receipt write leaves
+payload and metadata intact. Already-purged retries return `purged: false`
+without another receipt. Receipts remain queryable by `message_id` even after
+structural message deletion and are independent of the shared age window.
+Pending, leased, dead-lettered and group-fanout obligations remain protected.
+Legacy `broker_envelopes` has no purge path and is permanently outside this
+messages-only mechanism; a separate broker policy would require its own safe
+completion contract.
 
 ### `GET /events`
 
