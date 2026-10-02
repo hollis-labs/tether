@@ -66,6 +66,8 @@ github.com/hollis-labs/agentkit v0.25.0 h1:1SHqtxndNcN1bNTT4aUqpGcSbVwtl7KxJbEyL
 github.com/hollis-labs/agentkit v0.25.0/go.mod h1:eLK7v8v7fjNSct3/zbOnBcRfAW+nmIEM+mVK8vDPMy0=
 github.com/hollis-labs/agentkit v0.26.0 h1:lIB1fJISkOMbAsBtWQpN9VRBHGapm+nYgNiQHZplSaM=
 github.com/hollis-labs/agentkit v0.26.0/go.mod h1:eLK7v8v7fjNSct3/zbOnBcRfAW+nmIEM+mVK8vDPMy0=
+github.com/hollis-labs/agentkit v0.26.1 h1:Boh96K83NSV7Xmx2BSae+Fu3JzktW9YhMA+nGW43bmI=
+github.com/hollis-labs/agentkit v0.26.1/go.mod h1:eLK7v8v7fjNSct3/zbOnBcRfAW+nmIEM+mVK8vDPMy0=
 github.com/hollis-labs/go-agent-wrapper v0.27.2 h1:pYbxrNxBglaA3okDAeGQknKNP2h+9Ac0dOOAnkcvTiw=
 github.com/hollis-labs/go-agent-wrapper v0.27.2/go.mod h1:pY9ennSm79idIm0Sv7pvrwuASj6ofM9pCbppk5WNgw8=
 github.com/hollis-labs/go-agent-wrapper v0.28.0 h1:nJmzRc8Wk8SHJwBqKOpbzxXnTsV6RjE+ygydI8mT++I=
