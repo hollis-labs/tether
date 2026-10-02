@@ -14,6 +14,7 @@ import (
 	"github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/go-messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -111,13 +112,17 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 		return
 	}
-	if s.Service == nil {
-		writeError(w, http.StatusNotFound, CodeNotFound, "session service not configured")
-		return
-	}
 	var req messageNotifyRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxInputBytes+1)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if _, ok := channels.AddressName(req.To); ok {
+		writeChannelError(w, channels.ErrMailboxOperation)
+		return
+	}
+	if s.Service == nil {
+		writeError(w, http.StatusNotFound, CodeNotFound, "session service not configured")
 		return
 	}
 	if req.Kind == "" {
@@ -154,8 +159,12 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		ContentType: req.ContentType,
 		Metadata:    req.Metadata,
 	}
-	sent, err := s.MessageStore.Send(r.Context(), env)
+	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
+			writeChannelError(w, err)
+			return
+		}
 		if errors.Is(err, messaging.ErrPresetLifecycle) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
@@ -309,6 +318,15 @@ func (s *Server) handleMessagesItem(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
+	if action != "" && action != "purge" && action != "trace" || r.Method == http.MethodDelete {
+		if env, err := s.MessageStore.Get(r.Context(), id); err == nil {
+			if _, ok := channels.AddressName(env.To); ok {
+				writeChannelError(w, channels.ErrMailboxOperation)
+				return
+			}
+		}
+	}
+
 	switch action {
 	case "":
 		switch r.Method {
@@ -414,8 +432,12 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
 
-	sent, err := s.MessageStore.Send(r.Context(), env)
+	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
+			writeChannelError(w, err)
+			return
+		}
 		if errors.Is(err, messaging.ErrPresetLifecycle) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
@@ -489,6 +511,11 @@ func (s *Server) handleMessagesInbox(w http.ResponseWriter, r *http.Request) {
 	to, err := messaging.ParseURN(toURN)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid to URN: "+err.Error())
+		return
+	}
+
+	if _, ok := channels.AddressName(to); ok {
+		writeChannelError(w, channels.ErrMailboxOperation)
 		return
 	}
 
@@ -568,6 +595,11 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	to, err := messaging.ParseURN(toURN)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid to URN: "+err.Error())
+		return
+	}
+
+	if _, ok := channels.AddressName(to); ok {
+		writeChannelError(w, channels.ErrMailboxOperation)
 		return
 	}
 
@@ -988,6 +1020,10 @@ func (s *Server) handleMessageRequest(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := disp.Request(waitCtx, env)
 	if err != nil {
+		if errors.Is(err, channels.ErrForbidden) || errors.Is(err, channels.ErrInvalid) {
+			writeChannelError(w, err)
+			return
+		}
 		writeError(w, http.StatusGatewayTimeout, "timeout",
 			"no response within "+timeoutDur.String())
 		return
@@ -1051,6 +1087,11 @@ func (s *Server) handleMessagesSubscribe(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if _, ok := channels.AddressName(to); ok {
+		writeChannelError(w, channels.ErrMailboxOperation)
+		return
+	}
+
 	var f messaging.Filter
 	if ks := q.Get("kind"); ks != "" {
 		for _, k := range strings.Split(ks, ",") {
@@ -1110,4 +1151,15 @@ func isNotFound(err error) bool {
 
 func isWrongRecipient(err error) bool {
 	return errors.Is(err, store.ErrWrongRecipient)
+}
+
+func (s *Server) sendMessage(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+	publication, err := channels.NormalizePublication(&env)
+	if err != nil {
+		return messaging.Envelope{}, err
+	}
+	if publication && s.Channels != nil {
+		return s.Channels.Publish(ctx, env)
+	}
+	return s.MessageStore.Send(ctx, env)
 }

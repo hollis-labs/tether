@@ -45,6 +45,7 @@ type Deps struct {
 	// /workstreams collection (S5, CW-20260912-0063).
 	Digests      DigestStore
 	MessageStore MessageStore
+	Channels     ChannelService
 	// ProxyEvents, when non-nil, enables the /proxy/events endpoint for
 	// persisting and querying MCP relay tool call events. Populated by the
 	// daemon when --proxy mode is active. The TUI polls this to populate the
@@ -143,6 +144,7 @@ type Server struct {
 	SessionRefs         SessionRefStore
 	Digests             DigestStore
 	MessageStore        MessageStore
+	Channels            ChannelService
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
 	Registry            RegistryService
@@ -176,6 +178,7 @@ func NewHandler(deps Deps) http.Handler {
 		SessionRefs:         deps.SessionRefs,
 		Digests:             deps.Digests,
 		MessageStore:        deps.MessageStore,
+		Channels:            deps.Channels,
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
 		Registry:            deps.Registry,
@@ -200,6 +203,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerSessionGroupRoutes(router)
 	s.registerWorkstreamRoutes(router)
 	s.registerMessageRoutes(router)
+	s.registerChannelRoutes(router)
 	s.registerProxyEventRoutes(router)
 	s.registerRegistryRoutes(router)
 	s.registerSettingsRoutes(router)

@@ -17,6 +17,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // ErrSessionNotFound is returned by GetSession when no row matches the
@@ -25,7 +27,9 @@ import (
 var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
-	db *sql.DB
+	db            *sql.DB
+	channelAuthMu sync.RWMutex
+	channelAuth   channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.
@@ -142,6 +146,8 @@ type SessionRow struct {
 	// launch_id -- that inference is false for every session that exists
 	// today. Added migration 0025 (S5, CW-20260912-0063).
 	RefAttribution sql.NullString
+	// RouteJSON is the resolved launch route; NULL means routing is disabled.
+	RouteJSON sql.NullString
 }
 
 func (s *Store) CreateSession(row SessionRow, plan *launch.Plan) error {
@@ -178,7 +184,25 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	// declared-but-never-assigned shape this sprint has already produced twice.
 	// The launch path leaves it NULL here and stamps it after planting, since
 	// what was planted is not known until it has been.
-	pb, err := json.Marshal(plan)
+	var storedPlan *launch.Plan
+	row.RouteJSON = sql.NullString{}
+	if plan != nil {
+		route, err := launchprofile.ResolveRoute(plan.Route)
+		if err != nil {
+			return err
+		}
+		snapshot := *plan
+		snapshot.Route = route
+		storedPlan = &snapshot
+		if route != nil {
+			raw, err := json.Marshal(route)
+			if err != nil {
+				return err
+			}
+			row.RouteJSON = sql.NullString{String: string(raw), Valid: true}
+		}
+	}
+	pb, err := json.Marshal(storedPlan)
 	if err != nil {
 		return err
 	}
@@ -188,11 +212,11 @@ func (s *Store) CreateSessionKeyed(row SessionRow, plan *launch.Plan, key *Sessi
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`INSERT INTO sessions
-		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, created_at, updated_at, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID, row.LaunchID, row.ProjectID, row.LogicalAgentID, row.ProviderID,
 		row.ProviderKind, row.Workspace, row.State, row.CreatedAt, row.UpdatedAt,
-		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution); err != nil {
+		row.ParentSessionID, row.Intent, row.Publication, row.WorkstreamID, row.RefAttribution, row.RouteJSON); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO launch_plans (session_id, plan_json) VALUES (?, ?)`, row.ID, string(pb)); err != nil {
@@ -344,7 +368,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 		add("session_group_id = ?", opts.GroupID)
 	}
 
-	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
+	q := `SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json FROM sessions` + where + ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -355,7 +379,7 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 	var out []SessionRow
 	for rows.Next() {
 		var r SessionRow
-		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution); err != nil {
+		if err := rows.Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -365,8 +389,8 @@ func (s *Store) ListSessions(opts ListSessionsOptions) ([]SessionRow, error) {
 
 func (s *Store) GetSession(id string) (*SessionRow, error) {
 	var r SessionRow
-	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution)
+	err := s.db.QueryRow(`SELECT id, launch_id, project_id, logical_agent_id, provider_id, provider_kind, workspace, state, pid, exit_code, created_at, updated_at, ended_at, session_group_id, parent_session_id, intent, publication, workstream_id, ref_attribution, route_json FROM sessions WHERE id=?`, id).
+		Scan(&r.ID, &r.LaunchID, &r.ProjectID, &r.LogicalAgentID, &r.ProviderID, &r.ProviderKind, &r.Workspace, &r.State, &r.PID, &r.ExitCode, &r.CreatedAt, &r.UpdatedAt, &r.EndedAt, &r.SessionGroupID, &r.ParentSessionID, &r.Intent, &r.Publication, &r.WorkstreamID, &r.RefAttribution, &r.RouteJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}

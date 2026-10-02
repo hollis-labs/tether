@@ -11,13 +11,14 @@ import (
 // Standard error codes returned in ErrorResponse.Error.Code. External
 // clients key on these; add sparingly.
 const (
-	CodeInvalidRequest   = "invalid_request"
-	CodeNotFound         = "not_found"
-	CodeMethodNotAllowed = "method_not_allowed"
-	CodePayloadTooLarge  = "payload_too_large"
-	CodeConflict         = "conflict"
-	CodeInternalError    = "internal_error"
-	CodeNotImplemented   = "not_implemented"
+	CodeInvalidRequest    = "invalid_request"
+	CodeNotFound          = "not_found"
+	CodeMethodNotAllowed  = "method_not_allowed"
+	CodePayloadTooLarge   = "payload_too_large"
+	CodeConflict          = "conflict"
+	CodeInternalError     = "internal_error"
+	CodeNotImplemented    = "not_implemented"
+	CodeChannelNotMailbox = "channel_not_mailbox"
 
 	// CodeProviderSessionLost (409) means the provider no longer has the
 	// session's resume id: the turn was not delivered, the runtime has

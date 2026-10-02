@@ -26,14 +26,15 @@ type DocsService struct{}
 func (*Service) Docs() *DocsService { return &DocsService{} }
 
 var docTriggers = map[string]string{
-	"README":       "Find the MCP guide for your task.",
-	"connect":      "Connect an MCP client to Tether.",
-	"discovery":    "Choose a discovery mode, find tools and call them.",
-	"limit-tools":  "Restrict upstreams and grant tools to launched agents.",
-	"protection":   "Understand protected proxies and their security limits.",
-	"add-upstream": "Register an upstream app and its credential reference.",
-	"budgets":      "Inspect AI budgets, MCP policy plans and event retention.",
-	"troubleshoot": "Diagnose missing tools or failed upstream connections.",
+	"README":           "Find the MCP guide for your task.",
+	"connect":          "Connect an MCP client to Tether.",
+	"discovery":        "Choose a discovery mode, find tools and call them.",
+	"limit-tools":      "Restrict upstreams and grant tools to launched agents.",
+	"protection":       "Understand protected proxies and their security limits.",
+	"add-upstream":     "Register an upstream app and its credential reference.",
+	"budgets":          "Inspect AI budgets, MCP policy plans and event retention.",
+	"troubleshoot":     "Diagnose missing tools or failed upstream connections.",
+	"daemon-ownership": "Choose daemon-owned MCP upstreams for launched sessions.",
 }
 
 func (*DocsService) List() []DocMetadata {

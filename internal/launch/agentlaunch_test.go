@@ -17,7 +17,7 @@ func TestAgentLaunchPlanCarriesThePosture(t *testing.T) {
 	}{
 		{"claude", config.RuntimeKindStreamingStdio, config.PermissionModeBypass, permission.ModeYolo},
 		{"claude", config.RuntimeKindPTY, config.PermissionModeDefault, permission.ModeDefault},
-		{"codex", config.RuntimeKindSubprocess, config.PermissionModeBypass, permission.ModeAcceptEdits},
+		{"codex", config.RuntimeKindSubprocess, config.PermissionModeBypass, permission.ModeYolo},
 		{"opencode", config.RuntimeKindSubprocess, config.PermissionModeBypass, ""},
 		{"copilot", config.RuntimeKindACPStdio, config.PermissionModeBypass, ""},
 	}

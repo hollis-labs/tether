@@ -70,13 +70,13 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 		},
 		{
 			name:        "codex app-server",
+			args:        []string{"app-server"},
 			providerID:  "codex-app-server",
 			brand:       "codex",
 			runtimeKind: config.RuntimeKindJSONRPCStdio,
 			mode:        config.PermissionModeBypass,
-			// accept-edits in either Tether mode: approval "never" would
-			// refuse every MCP tool call (codex_approval.go).
-			wantOnce: []string{"app-server", `sandbox_mode="workspace-write"`, `approval_policy="on-request"`},
+			// Explicit bypass disables provider sandboxing and approvals.
+			wantOnce: []string{"app-server", `sandbox_mode="danger-full-access"`, `approval_policy="never"`},
 		},
 		{
 			name:        "codex exec turn",
@@ -86,6 +86,16 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 			mode:        config.PermissionModeDefault,
 			wantPairs:   [][2]string{{"--cd", "project"}},
 			wantOnce:    []string{"exec", "--json", "--skip-git-repo-check", "--cd", `sandbox_mode="workspace-write"`, `approval_policy="on-request"`},
+			wantPrompt:  turnPrompt,
+		},
+		{
+			name:        "codex exec bypass turn",
+			providerID:  "codex-cli",
+			brand:       "codex",
+			runtimeKind: config.RuntimeKindSubprocess,
+			mode:        config.PermissionModeBypass,
+			wantPairs:   [][2]string{{"--cd", "project"}},
+			wantOnce:    []string{"exec", "--json", `sandbox_mode="danger-full-access"`, `approval_policy="never"`},
 			wantPrompt:  turnPrompt,
 		},
 		{

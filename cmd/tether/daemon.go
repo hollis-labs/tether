@@ -43,6 +43,7 @@ import (
 	llmservice "github.com/hollis-labs/tether/internal/llm/service"
 	"github.com/hollis-labs/tether/internal/llm/usagebudget"
 	"github.com/hollis-labs/tether/internal/messaging"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/modelcatalog"
 	"github.com/hollis-labs/tether/internal/redact"
 	"github.com/hollis-labs/tether/internal/store"
@@ -148,6 +149,10 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if _, err := svc.Catalog.Global.Daemon.MCPUpstreamOwnership(); err != nil {
+			_ = svc.Store.Close()
+			return err
+		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
 		logControlPlaneProtection(log.Printf, svc.ProtectionHealth())
 		logCodexProtection(log.Printf, svc.ProtectionHealth())
@@ -242,6 +247,7 @@ var daemonRunCmd = &cobra.Command{
 			SessionRefs:              svc.Store,
 			Digests:                  svc.Store,
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
+			Channels:                 channels.New(svc.Store, nil),
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
 			ProxyEvents:              svc.Store,
@@ -255,7 +261,11 @@ var daemonRunCmd = &cobra.Command{
 			EventRetention:           svc,
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
-				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason}
+				countCtx, cancelCounts := context.WithTimeout(ctx, 200*time.Millisecond)
+				counts, _ := svc.Store.MCPUpstreamSessionCounts(countCtx)
+				cancelCounts()
+				dropped, failures := mcpHandler.ToolCallRecorderStats()
+				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason, MCPUpstreamSessions: counts, MCPRecorder: map[string]uint64{"dropped": dropped, "failures": failures}}
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
 			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },
@@ -695,6 +705,7 @@ func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.
 		BootProfileFile:    in.BootProfileFile,
 		Override:           in.Override,
 		BootPromptAppend:   in.PromptAppend,
+		Route:              in.Route,
 		Injection:          in.Injection,
 		IdempotencyKey:     in.IdempotencyKey,
 	})

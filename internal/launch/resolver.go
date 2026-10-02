@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 type Input struct {
@@ -130,6 +131,14 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	args := append([]string(nil), prov.Args...)
 
 	extractRefs := config.EffectiveExtractRefs(cat.Global, proj, l)
+	routeInput := agent.Route
+	if l.Route != nil {
+		routeInput = l.Route
+	}
+	route, err := launchprofile.ResolveRoute(routeInput)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Plan{
 		LaunchID:       l.ID,
@@ -140,6 +149,7 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		RuntimeKind:    prov.EffectiveRuntimeKind(),
 		PermissionMode: permMode,
 		ExtractRefs:    extractRefs,
+		Route:          route,
 		RepoRoot:       config.Expand(proj.RepoRoot),
 		WriteHome:      writeHome,
 		WorkspaceMode:  workspaceMode,

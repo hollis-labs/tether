@@ -63,6 +63,8 @@ var (
 	mcpToken         string
 	mcpScopes        string
 	mcpProxy         bool
+	mcpForwardDaemon bool
+	mcpDaemonAddress string
 	mcpDiscoveryMode string
 	mcpProfiles      []string
 	mcpServers       string
@@ -73,6 +75,8 @@ var (
 )
 
 func init() {
+	mcpCmd.Flags().BoolVar(&mcpForwardDaemon, "forward-daemon", false, "relay admitted daemon MCP tools only; no local upstreams or fallback")
+	mcpCmd.Flags().StringVar(&mcpDaemonAddress, "daemon-address", "", "explicit unix: daemon endpoint for --forward-daemon")
 	mcpCmd.Flags().BoolVar(&mcpExtractRefs, "extract-refs", false, "record identifiers seen in proxied tool arguments as session refs (requires --session; off by default)")
 	mcpCmd.Flags().StringVar(&mcpSession, "session", "", "Tether session id this proxy serves; attributes proxied tool calls to it (set automatically in a launched worker's .mcp.json)")
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "legacy adapter presence marker; daemon credentials use --token-file or TETHER_TOKEN")
@@ -88,6 +92,9 @@ func init() {
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
+	if mcpForwardDaemon {
+		return runMCPForwardDaemon(cmd)
+	}
 	// Verified daemon credential first; legacy adapter-only flags remain a
 	// local fast check, never a substitute for a daemon bearer credential.
 	token, err := callerToken()
