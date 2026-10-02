@@ -2,8 +2,11 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/hollis-labs/tether/internal/callcontext"
 )
 
 // proxyEventsQueryLimit caps a single query, not durable storage.
@@ -13,15 +16,17 @@ const proxyEventsQueryLimit = 2000
 // proxy_events table. Mirrors mcpadapter.ToolCallEvent but lives in the store
 // package to avoid an import cycle.
 type ProxyEvent struct {
-	ID           int64
-	SessionID    string
-	Server       string
-	ToolName     string
-	ArgsSchemaFP string
-	DurationMs   int64
-	OK           bool
-	Error        string
-	Timestamp    time.Time
+	ID               int64
+	SessionID        string
+	Server           string
+	ToolName         string
+	ArgsSchemaFP     string
+	DurationMs       int64
+	OK               bool
+	Error            string
+	Timestamp        time.Time
+	Attribution      callcontext.Snapshot
+	ClaimedSessionID string
 }
 
 // ProxyEventFilter narrows which events are returned by QueryProxyEvents.
@@ -73,10 +78,14 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 		ts = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	_, err := s.db.Exec(
+	attribution, err := json.Marshal(ev.Attribution)
+	if err != nil {
+		return fmt.Errorf("marshal proxy attribution: %w", err)
+	}
+	_, err = s.db.Exec(
 		`INSERT INTO proxy_events
-		    (session_id, server, tool_name, args_schema_fp, duration_ms, ok, error, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		    (session_id, server, tool_name, args_schema_fp, duration_ms, ok, error, timestamp, attribution_json, claimed_session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullIfEmpty(ev.SessionID),
 		ev.Server,
 		ev.ToolName,
@@ -85,6 +94,7 @@ func (s *Store) AppendProxyEvent(ev ProxyEvent) error {
 		ok,
 		nullIfEmpty(ev.Error),
 		ts,
+		string(attribution), ev.ClaimedSessionID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert proxy event: %w", err)
@@ -105,7 +115,7 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 	}
 
 	q := `SELECT id, session_id, server, tool_name, args_schema_fp,
-	             duration_ms, ok, error, timestamp
+	             duration_ms, ok, error, timestamp, attribution_json, claimed_session_id
 	      FROM proxy_events`
 	where, args := proxyEventWhereClause(f)
 	// Query fragments come only from proxyEventWhereClause's fixed clauses.
@@ -129,6 +139,7 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 		var errStr sql.NullString
 		var okInt int
 		var tsStr string
+		var attribution string
 
 		if err := rows.Scan(
 			&ev.ID,
@@ -140,11 +151,15 @@ func (s *Store) QueryProxyEvents(f ProxyEventFilter) ([]ProxyEvent, error) {
 			&okInt,
 			&errStr,
 			&tsStr,
+			&attribution, &ev.ClaimedSessionID,
 		); err != nil {
 			return nil, fmt.Errorf("scan proxy event: %w", err)
 		}
 
 		ev.SessionID = sessionID.String
+		if err := json.Unmarshal([]byte(attribution), &ev.Attribution); err != nil {
+			return nil, fmt.Errorf("decode proxy attribution: %w", err)
+		}
 		ev.ArgsSchemaFP = argsSchemaFP.String
 		ev.Error = errStr.String
 		ev.OK = okInt == 1

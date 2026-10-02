@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -21,15 +22,17 @@ type ProxyEventStore interface {
 
 // ProxyEventDTO is the on-the-wire shape for a proxy event row.
 type ProxyEventDTO struct {
-	ID           int64  `json:"id"`
-	SessionID    string `json:"session_id,omitempty"`
-	Server       string `json:"server"`
-	ToolName     string `json:"tool_name"`
-	ArgsSchemaFP string `json:"args_schema_fp,omitempty"`
-	DurationMs   int64  `json:"duration_ms"`
-	OK           bool   `json:"ok"`
-	Error        string `json:"error,omitempty"`
-	Timestamp    string `json:"timestamp"`
+	Attribution      callcontext.Snapshot `json:"attribution"`
+	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
+	ID               int64                `json:"id"`
+	SessionID        string               `json:"session_id,omitempty"`
+	Server           string               `json:"server"`
+	ToolName         string               `json:"tool_name"`
+	ArgsSchemaFP     string               `json:"args_schema_fp,omitempty"`
+	DurationMs       int64                `json:"duration_ms"`
+	OK               bool                 `json:"ok"`
+	Error            string               `json:"error,omitempty"`
+	Timestamp        string               `json:"timestamp"`
 }
 
 // ProxyEventListResponse is the envelope returned by GET /proxy/events.
@@ -40,13 +43,16 @@ type ProxyEventListResponse struct {
 
 // ProxyEventIngestRequest is the body accepted by POST /proxy/events.
 type ProxyEventIngestRequest struct {
-	SessionID    string `json:"session_id"`
-	Server       string `json:"server"`
-	ToolName     string `json:"tool_name"`
-	ArgsSchemaFP string `json:"args_schema_fp"`
-	DurationMs   int64  `json:"duration_ms"`
-	OK           bool   `json:"ok"`
-	Error        string `json:"error"`
+	// Attribution is computed by the daemon, never accepted from JSON.
+	Attribution      callcontext.Snapshot `json:"-"`
+	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
+	SessionID        string               `json:"session_id"`
+	Server           string               `json:"server"`
+	ToolName         string               `json:"tool_name"`
+	ArgsSchemaFP     string               `json:"args_schema_fp"`
+	DurationMs       int64                `json:"duration_ms"`
+	OK               bool                 `json:"ok"`
+	Error            string               `json:"error"`
 	// Timestamp is accepted for compatibility and ignored: the daemon stamps
 	// the time of every record itself, so a caller cannot back-date one.
 	Timestamp string `json:"timestamp,omitempty"`
@@ -177,6 +183,15 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", msg)
 		return
 	}
+	req.Attribution = ResolveCallerContext(r.Context(), s.Service, s.Registry)
+	if req.SessionID != "" && (!req.Attribution.Verified || req.SessionID != req.Attribution.SessionID) {
+		req.ClaimedSessionID = req.SessionID
+	}
+	if req.Attribution.PrincipalID != "" {
+		// A verified operator/service is not a session. Its body claim cannot
+		// select somebody else's session, even when observe accepts the call.
+		req.SessionID = req.Attribution.SessionID
+	}
 	if req.Publish {
 		if s.Bus == nil {
 			writeError(w, http.StatusNotFound, CodeNotFound, "event bus not configured")
@@ -210,14 +225,16 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 
 	if req.Phase != ProxyEventPhaseStart {
 		ev := store.ProxyEvent{
-			SessionID:    req.SessionID,
-			Server:       req.Server,
-			ToolName:     req.ToolName,
-			ArgsSchemaFP: req.ArgsSchemaFP,
-			DurationMs:   req.DurationMs,
-			OK:           req.OK,
-			Error:        req.Error,
-			Timestamp:    ts,
+			Attribution:      req.Attribution,
+			ClaimedSessionID: req.ClaimedSessionID,
+			SessionID:        req.SessionID,
+			Server:           req.Server,
+			ToolName:         req.ToolName,
+			ArgsSchemaFP:     req.ArgsSchemaFP,
+			DurationMs:       req.DurationMs,
+			OK:               req.OK,
+			Error:            req.Error,
+			Timestamp:        ts,
 		}
 		if err := s.ProxyEvents.AppendProxyEvent(ev); err != nil {
 			writeError(w, http.StatusInternalServerError, CodeInternalError, "persist proxy event: "+err.Error())
@@ -255,6 +272,7 @@ func validateProxyEventIngest(req *ProxyEventIngestRequest) string {
 		{"tool_name", req.ToolName, maxProxyEventIDBytes},
 		{"server", req.Server, maxProxyEventIDBytes},
 		{"session_id", req.SessionID, maxProxyEventIDBytes},
+		{"claimed_session_id", req.ClaimedSessionID, maxProxyEventIDBytes},
 		{"args_schema_fp", req.ArgsSchemaFP, maxProxyEventFPBytes},
 	} {
 		if len(f.value) > f.max {
@@ -274,14 +292,16 @@ func validateProxyEventIngest(req *ProxyEventIngestRequest) string {
 func (s *Server) publishToolCallEvent(r *http.Request, req ProxyEventIngestRequest) error {
 	kind := events.EventTypeToolCallEnd
 	tce := events.ToolCallEvent{
-		SessionID:    req.SessionID,
-		ToolName:     req.ToolName,
-		Server:       req.Server,
-		ArgsSchemaFP: req.ArgsSchemaFP,
-		DurationMs:   req.DurationMs,
-		OK:           req.OK,
-		Error:        req.Error,
-		Timestamp:    time.Now().UTC(),
+		Attribution:      req.Attribution,
+		ClaimedSessionID: req.ClaimedSessionID,
+		SessionID:        req.SessionID,
+		ToolName:         req.ToolName,
+		Server:           req.Server,
+		ArgsSchemaFP:     req.ArgsSchemaFP,
+		DurationMs:       req.DurationMs,
+		OK:               req.OK,
+		Error:            req.Error,
+		Timestamp:        time.Now().UTC(),
 	}
 	if req.Phase == ProxyEventPhaseStart {
 		kind = events.EventTypeToolCallStart
@@ -316,14 +336,16 @@ func truncateUTF8(s string, n int) string {
 
 func proxyEventToDTO(ev store.ProxyEvent) ProxyEventDTO {
 	return ProxyEventDTO{
-		ID:           ev.ID,
-		SessionID:    ev.SessionID,
-		Server:       ev.Server,
-		ToolName:     ev.ToolName,
-		ArgsSchemaFP: ev.ArgsSchemaFP,
-		DurationMs:   ev.DurationMs,
-		OK:           ev.OK,
-		Error:        ev.Error,
-		Timestamp:    ev.Timestamp.UTC().Format(time.RFC3339Nano),
+		Attribution:      ev.Attribution,
+		ClaimedSessionID: ev.ClaimedSessionID,
+		ID:               ev.ID,
+		SessionID:        ev.SessionID,
+		Server:           ev.Server,
+		ToolName:         ev.ToolName,
+		ArgsSchemaFP:     ev.ArgsSchemaFP,
+		DurationMs:       ev.DurationMs,
+		OK:               ev.OK,
+		Error:            ev.Error,
+		Timestamp:        ev.Timestamp.UTC().Format(time.RFC3339Nano),
 	}
 }

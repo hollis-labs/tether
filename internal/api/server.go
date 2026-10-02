@@ -201,6 +201,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerSettingsRoutes(router)
 	s.registerGroupRoutes(router)
 	s.registerWhoamiRoutes(router)
+	s.registerCallerContextRoutes(router)
 	s.registerSessionBootstrapRoutes(router)
 	s.registerRetentionRoutes(router)
 	s.registerScopedBindingRoutes(router)

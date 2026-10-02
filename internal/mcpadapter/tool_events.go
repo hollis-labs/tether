@@ -32,6 +32,7 @@ func (q *toolCallEventStoreQuerier) QueryProxyEvents(f store.ProxyEventFilter) (
 	out := make([]store.ProxyEvent, 0, len(events))
 	for _, ev := range events {
 		out = append(out, store.ProxyEvent{
+			Attribution: ev.Attribution, ClaimedSessionID: ev.ClaimedSessionID,
 			SessionID:    ev.SessionID,
 			Server:       ev.Server,
 			ToolName:     ev.ToolName,

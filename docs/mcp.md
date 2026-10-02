@@ -341,6 +341,9 @@ the agent can then be kept from writing the state directory. In this mode:
 - Each tool call is recorded by the daemon. The server posts a start and an end
   record to `POST /proxy/events` with `publish`, and the daemon writes
   `proxy_events` and the `events` log itself.
+- Attribution and upstream provenance use the daemon's credential-derived
+  context, not the `--session` claim. See [trusted session context](trusted-session-context.md)
+  for verified fields, unverified claims and the HTTP forwarding trust contract.
 - It refuses to start unless the daemon answers, with the error `tether daemon
   unreachable; tether tools unavailable`, and exits with that line alone (no usage
   text). An agent launched while `tetherd` is down therefore has **no tether tools and
@@ -350,8 +353,8 @@ the agent can then be kept from writing the state directory. In this mode:
 - If the daemon goes down after the server has started, each read fails with a
   `daemon_unavailable` tool error; tool-call records are dropped with a logged
   warning; and an upstream call goes out without its `tether.provenance`
-  stamp, because the session's workstream cannot be looked up (a WARN is
-  logged, and the call is not failed).
+  stamp, because verified caller context cannot be looked up. The call is not
+  failed by an attribution lookup error.
 - Reads of the daemon's own state are the daemon's answers: `tether_session_health`
   now reports the daemon's live sessions, and `tether_session_list` and
   `tether_session_get` carry the daemon's `attached_clients`. `tether_logical_agent_list`

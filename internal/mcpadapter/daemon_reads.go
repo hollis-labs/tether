@@ -114,22 +114,6 @@ func (a *Adapter) proxyEventQuerier() ProxyEventQuerier {
 	return a.svc.Store
 }
 
-// sessionWorkstreamID is the workstream sessionID is assigned to, or "".
-func (a *Adapter) sessionWorkstreamID(ctx context.Context, sessionID string) (string, error) {
-	if a.readsViaDaemon() {
-		dto, err := a.client.GetSession(ctx, sessionID)
-		if err != nil {
-			return "", err
-		}
-		return dto.WorkstreamID, nil
-	}
-	row, err := a.svc.Store.GetSession(sessionID)
-	if err != nil {
-		return "", err
-	}
-	return row.WorkstreamID.String, nil
-}
-
 // DaemonProxyEvents is a ProxyEventQuerier over GET /proxy/events, for a
 // daemon-only `tether mcp` (tether_events_tool_calls, tether_proxy_events).
 type DaemonProxyEvents struct {
@@ -205,12 +189,13 @@ func (p *DaemonToolCallPublisher) Publish(_ context.Context, e events.Event) err
 		return err
 	}
 	req := api.ProxyEventIngestRequest{
-		SessionID:    tce.SessionID,
-		Server:       tce.Server,
-		ToolName:     tce.ToolName,
-		ArgsSchemaFP: tce.ArgsSchemaFP,
-		DurationMs:   tce.DurationMs,
-		OK:           tce.OK,
+		ClaimedSessionID: tce.ClaimedSessionID,
+		SessionID:        tce.SessionID,
+		Server:           tce.Server,
+		ToolName:         tce.ToolName,
+		ArgsSchemaFP:     tce.ArgsSchemaFP,
+		DurationMs:       tce.DurationMs,
+		OK:               tce.OK,
 		// The daemon refuses a body over its limit whole, and an upstream
 		// error can be far larger than that: send what a record keeps, so a
 		// failing call is not left as a start with no end.

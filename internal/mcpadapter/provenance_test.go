@@ -1,12 +1,10 @@
 package mcpadapter
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
-	"log/slog"
-	"sync"
 	"testing"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
@@ -32,14 +30,8 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("workspace_write")})
 
 	router := NewProxyRouter(reg)
-	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
-		if sessionID == "sess-100" {
-			return "ws-200", nil
-		}
-		return "", nil
-	})
 
-	ctx := WithSessionID(context.Background(), "sess-100")
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionID: "sess-100", WorkstreamID: "ws-200"})
 	call := ToolCall{
 		ToolName: "workspace_write",
 		Args:     map[string]any{"item_id": "item-1", "summary": "draft"},
@@ -60,8 +52,8 @@ func TestProvenance_DirectProxiedCallStampsEnvelope(t *testing.T) {
 	if env == nil {
 		t.Fatalf("missing tether.provenance in _meta: %v", gotMeta)
 	}
-	if env.SchemaVersion != 1 {
-		t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
+	if env.SchemaVersion != ProvenanceSchemaVersion {
+		t.Errorf("schema_version = %d, want 2", env.SchemaVersion)
 	}
 	if env.SessionID != "sess-100" {
 		t.Errorf("session_id = %q, want %q", env.SessionID, "sess-100")
@@ -94,15 +86,12 @@ func TestProvenance_TetherCallForwardingStampsEnvelope(t *testing.T) {
 	reg.Register("tesseract", mc, []*mcpsdk.Tool{makeTool("knowledge_write")})
 
 	router := NewProxyRouter(reg)
-	router.SetWorkstreamResolver(func(_ context.Context, sessionID string) (string, error) {
-		if sessionID == "sess-mc" {
-			return "ws-mc", nil
-		}
-		return "", nil
-	})
 
 	a := New(nil, "", nil)
-	a.SessionID = "sess-mc"
+	a.SessionID = "claimed-session"
+	a.SetCallerContextResolver(func(context.Context) (callcontext.Snapshot, error) {
+		return callcontext.Snapshot{Verified: true, SessionID: "sess-mc", WorkstreamID: "ws-mc"}, nil
+	})
 
 	s := gomcp.NewServer("test-tether", "0.0.1")
 	a.registerCallTool(s, a.gatewayService(reg, router, mcpgateway.Selection{Mode: mcpgateway.Search, Source: "test"}, nil))
@@ -132,7 +121,7 @@ func TestProvenance_TetherCallForwardingStampsEnvelope(t *testing.T) {
 	if env == nil {
 		t.Fatalf("missing tether.provenance in _meta from tether_tool_call: %v", gotMeta)
 	}
-	if env.SchemaVersion != 1 || env.SessionID != "sess-mc" || env.WorkstreamID != "ws-mc" {
+	if env.SchemaVersion != ProvenanceSchemaVersion || env.SessionID != "sess-mc" || env.WorkstreamID != "ws-mc" {
 		t.Errorf("unexpected provenance envelope: %+v", env)
 	}
 	if gotArgs["key"] != "contract_note" {
@@ -156,11 +145,8 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
-	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
-		return "ws-real", nil
-	})
 
-	ctx := WithSessionID(context.Background(), "sess-real")
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionID: "sess-real", WorkstreamID: "ws-real"})
 	call := ToolCall{
 		ToolName: "some_tool",
 		Meta: map[string]any{
@@ -182,8 +168,8 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 	if env == nil {
 		t.Fatal("missing provenance envelope")
 	}
-	if env.SchemaVersion != 1 {
-		t.Errorf("schema_version = %d, want 1", env.SchemaVersion)
+	if env.SchemaVersion != ProvenanceSchemaVersion {
+		t.Errorf("schema_version = %d, want 2", env.SchemaVersion)
 	}
 	if env.SessionID != "sess-real" {
 		t.Errorf("session_id = %q, want %q", env.SessionID, "sess-real")
@@ -191,10 +177,10 @@ func TestProvenance_ReplacesClientSuppliedStampWhenSessionConfigured(t *testing.
 	if env.WorkstreamID != "ws-real" {
 		t.Errorf("workstream_id = %q, want %q", env.WorkstreamID, "ws-real")
 	}
-	// Verify spoofed fields (like "verified") are not in the envelope map.
+	// Verification belongs to the resolved snapshot, never the inbound map.
 	provMap, _ := gotMeta[ProvenanceMetaKey].(map[string]any)
-	if _, ok := provMap["verified"]; ok {
-		t.Errorf("spoofed 'verified' field survived in provenance map: %v", provMap)
+	if provMap["verified"] != true {
+		t.Errorf("resolved verification missing: %v", provMap)
 	}
 }
 
@@ -259,16 +245,7 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 
 	router := NewProxyRouter(reg)
 
-	var mu sync.Mutex
-	currentWorkstream := "ws-first"
-
-	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		return currentWorkstream, nil
-	})
-
-	ctx := WithSessionID(context.Background(), "sess-live")
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionID: "sess-live", WorkstreamID: "ws-first"})
 
 	// Call 1: initial assignment.
 	_, err := router.Handle(ctx, ToolCall{ToolName: "some_tool"})
@@ -281,9 +258,7 @@ func TestProvenance_ReassignmentSnapshotPerCall(t *testing.T) {
 	}
 
 	// Reassignment happens mid-session.
-	mu.Lock()
-	currentWorkstream = "ws-second"
-	mu.Unlock()
+	ctx = callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionID: "sess-live", WorkstreamID: "ws-second"})
 
 	// Call 2: reflects new snapshot.
 	_, err = router.Handle(ctx, ToolCall{ToolName: "some_tool"})
@@ -312,11 +287,8 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("some_tool")})
 
 	router := NewProxyRouter(reg)
-	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
-		return "", nil // no workstream assigned
-	})
 
-	ctx := WithSessionID(context.Background(), "sess-noworkstream")
+	ctx := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, SessionID: "sess-noworkstream", WorkstreamID: ""})
 	_, err := router.Handle(ctx, ToolCall{ToolName: "some_tool"})
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -342,11 +314,11 @@ func TestProvenance_SessionWithoutWorkstreamOmitsWorkstreamID(t *testing.T) {
 	}
 }
 
-// TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope verifies that if
+// TestProvenance_FailedSessionLookupOmitsEnvelope verifies that if
 // session lookup fails (e.g. database error), a bounded warning is logged, the
 // envelope is omitted, any client-supplied stamp is stripped, and the content call
 // is NOT failed.
-func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T) {
+func TestProvenance_FailedSessionLookupOmitsEnvelope(t *testing.T) {
 	var gotMeta map[string]any
 	var executed bool
 
@@ -363,15 +335,12 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 
 	router := NewProxyRouter(reg)
 
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	router.SetLogger(logger)
-
-	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
-		return "", errors.New("db locked or session not found")
+	a := New(nil, "", nil)
+	a.SessionID = "sess-err"
+	a.SetCallerContextResolver(func(context.Context) (callcontext.Snapshot, error) {
+		return callcontext.Snapshot{}, errors.New("lookup failed")
 	})
-
-	ctx := WithSessionID(context.Background(), "sess-err")
+	ctx := a.withSessionID(context.Background())
 	call := ToolCall{
 		ToolName: "content_tool",
 		Meta: map[string]any{
@@ -388,11 +357,6 @@ func TestProvenance_FailedSessionLookupLogsWarningAndOmitsEnvelope(t *testing.T)
 	}
 	if !executed {
 		t.Fatal("content tool was not executed")
-	}
-
-	// Warning must be logged.
-	if !bytes.Contains(logBuf.Bytes(), []byte("failed to resolve session workstream for provenance")) {
-		t.Errorf("expected warning log, got: %s", logBuf.String())
 	}
 
 	// Envelope must be omitted, and client stamp stripped.
@@ -421,9 +385,6 @@ func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
 	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool("meta_test_tool")})
 
 	router := NewProxyRouter(reg)
-	router.SetWorkstreamResolver(func(_ context.Context, _ string) (string, error) {
-		return "ws-preserve", nil
-	})
 
 	sc := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    trace.TraceID{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
@@ -431,7 +392,7 @@ func TestProvenance_PreservesUnrelatedMetaAndTraceContext(t *testing.T) {
 		TraceFlags: trace.FlagsSampled,
 	})
 	ctx := trace.ContextWithSpanContext(context.Background(), sc)
-	ctx = WithSessionID(ctx, "sess-preserve")
+	ctx = callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, SessionID: "sess-preserve", WorkstreamID: "ws-preserve"})
 
 	call := ToolCall{
 		ToolName: "meta_test_tool",

@@ -42,11 +42,10 @@ type ToolCallMiddleware interface {
 // upstream client via the ToolRegistry. Native tools must not reach this
 // router — they are dispatched by the MCP server handler before calling Handle.
 type ProxyRouter struct {
-	pool               *ClientPool
-	registry           *ToolRegistry
-	middleware         []ToolCallMiddleware
-	workstreamResolver WorkstreamResolver
-	logger             *slog.Logger
+	pool       *ClientPool
+	registry   *ToolRegistry
+	middleware []ToolCallMiddleware
+	logger     *slog.Logger
 }
 
 // NewProxyRouter creates a router backed by the given registry with no middleware.
@@ -166,7 +165,8 @@ func stripSDKMeta(meta map[string]any) map[string]any {
 	}
 	var out map[string]any
 	for k, v := range meta {
-		if strings.HasPrefix(k, "io.modelcontextprotocol/") {
+		lower := strings.ToLower(k)
+		if strings.HasPrefix(k, "io.modelcontextprotocol/") || strings.HasPrefix(lower, "x-tether-") || strings.HasPrefix(lower, "x-forwarded-user-") {
 			continue
 		}
 		if out == nil {
