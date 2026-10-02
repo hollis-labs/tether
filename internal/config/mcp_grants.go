@@ -10,6 +10,17 @@ import (
 // ErrInvalidMCPGrant identifies a declared upstream that cannot be granted.
 var ErrInvalidMCPGrant = errors.New("invalid MCP grant")
 
+// PrincipalMCPServers returns only this verified principal's operator-provisioned
+// grant. Missing/null grants are explicit zero authority. Callers must obtain
+// principalID from identity middleware, never a request selector.
+func (c *Catalog) PrincipalMCPServers(principalID string) ([]string, error) {
+	grant := c.Global.Identity.MCPGrants[principalID]
+	if err := c.ValidateMCPGrant(fmt.Sprintf("identity principal %q mcp_grants.servers", principalID), grant.Servers); err != nil {
+		return nil, err
+	}
+	return append([]string{}, grant.Servers...), nil
+}
+
 // ValidateMCPGrant checks names without spawning upstreams or resolving secrets.
 func (c *Catalog) ValidateMCPGrant(owner string, ids []string) error {
 	var issues []error
@@ -44,6 +55,9 @@ func (c *Catalog) ValidateMCPGrantEnv(owner, value string) error {
 // shadowed by a higher-precedence owner. Implicit defaults are not declarations.
 func (c *Catalog) ValidateMCPGrants() error {
 	var issues []error
+	for id, grant := range c.Global.Identity.MCPGrants {
+		issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("identity principal %q mcp_grants.servers", id), grant.Servers))
+	}
 	for id, p := range c.Projects {
 		issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("project %q mcp.servers", id), p.MCP.Servers))
 	}

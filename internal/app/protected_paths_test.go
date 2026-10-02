@@ -32,7 +32,7 @@ func envOf(kv map[string]string) func(string) string {
 
 // tetherLayout builds a Tether root with catalog/, run/ and state/ under a
 // temp dir, reached through a symlink, and returns a protected Service over
-// it plus the real catalog and run paths.
+// it plus the canonical catalog and run paths.
 func tetherLayout(t *testing.T) (svc *Service, catalog, run string) {
 	t.Helper()
 	// The guard these tests exercise is dormant in the shipped build (codex is
@@ -47,11 +47,15 @@ func tetherLayout(t *testing.T) (svc *Service, catalog, run string) {
 func tetherLayoutKeepingMode(t *testing.T) (svc *Service, catalog, run string) {
 	t.Helper()
 	base := t.TempDir()
+	t.Setenv("HOME", base)
 	root := filepath.Join(base, "tether")
 	for _, d := range []string{"catalog", "run", "state"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Symlink(filepath.Join(root, "catalog"), filepath.Join(base, ".tether")); err != nil {
+		t.Fatal(err)
 	}
 	link := filepath.Join(base, "link")
 	if err := os.Symlink(root, link); err != nil {
@@ -73,7 +77,7 @@ func tetherLayoutKeepingMode(t *testing.T) (svc *Service, catalog, run string) {
 }
 
 // The catalog root, the daemon's run directory and the state database's
-// directory are protected by their real paths, even when configured through
+// directory are protected by their canonical paths, even when configured through
 // a symlink.
 func TestControlPlaneDirs(t *testing.T) {
 	svc, catalog, run := tetherLayout(t)
@@ -126,6 +130,29 @@ func TestControlPlaneDirs(t *testing.T) {
 	svc.CatalogRoot = filepath.Join(t.TempDir(), "gone")
 	if _, err := svc.controlPlaneDirs(); err == nil {
 		t.Fatal("missing catalog root: want an error, got none")
+	}
+}
+
+func TestControlPlaneDirs_ProtectEveryCatalogLayer(t *testing.T) {
+	home, catalog, project, external := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	cat := &config.Catalog{Projects: map[string]config.Project{"p": {RepoRoot: project}}}
+	cat.Global.Catalog.Roots.Agents = external
+	svc := &Service{CatalogRoot: catalog, Catalog: cat}
+	dirs, err := svc.controlPlaneDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{catalog, filepath.Join(home, ".tether"), filepath.Join(project, ".tether"), external} {
+		canonical, err := filepath.EvalSymlinks(root)
+		if err != nil || !containsPath(dirs, canonical) {
+			t.Fatalf("catalog layer left writable: %s (%v)", root, err)
+		}
+	}
+	for _, outside := range []string{home, project} {
+		if insideAnyRoot(dirs, outside) || containsPath(dirs, outside) {
+			t.Fatal("layer protection swallowed workspace root", outside)
+		}
 	}
 }
 
@@ -669,7 +696,7 @@ func TestApplyControlPlaneProtection_CodexSandboxWeakened(t *testing.T) {
 }
 
 // The exemption is an allowlist. Each way a launch can widen codex's own
-// sandbox, every one of them demonstrated against real codex 0.159.x
+// sandbox, every one of them demonstrated against canonical codex 0.159.x
 // (CW-20261001-0142 review), puts Tether's protection back on the launch, as
 // does anything the allowlist does not recognize. A caller with session.write
 // reaches most of them through tether_session_create.
@@ -787,7 +814,7 @@ func TestCodexOwnsSandbox_BypassesAreWrapped(t *testing.T) {
 			if ok || why == "" {
 				t.Fatalf("codexOwnsSandbox = %v, %q; want it refused with a reason, so the launch is wrapped", ok, why)
 			}
-			// And through the real decision: Tether wraps it, where it can.
+			// And through the canonical decision: Tether wraps it, where it can.
 			_, outer, err := svc.protectionPlan(plan, "cli", &opts, false)
 			if err != nil || !outer {
 				t.Fatalf("protectionPlan outer = %v, err = %v; want Tether's sandbox on the launch", outer, err)
@@ -799,7 +826,7 @@ func TestCodexOwnsSandbox_BypassesAreWrapped(t *testing.T) {
 // A caller reaches the flags through agent_inline, whose
 // provider_overrides.<id>.extra_args are appended to the plan's args by
 // applyProviderOverrides, and the environment through the same block. The
-// real function builds the plan here, so the test follows the real path.
+// canonical function builds the plan here, so the test follows the canonical path.
 func TestCodexOwnsSandbox_CallerSuppliedOverrides(t *testing.T) {
 	svc, catalog, _ := tetherLayout(t)
 	clearWritableRoots(t)
@@ -875,12 +902,12 @@ func writeFileT(t *testing.T, path, content string) {
 // Real codex honors its cwd as a writable root: a codex whose cwd contains
 // the protected directory can write it, the premise of the overlap check. It
 // runs `codex sandbox`, which needs no model, on a temp CODEX_HOME fixture
-// and never the real ~/.codex, and skips where codex is absent or cannot
+// and never the canonical ~/.codex, and skips where codex is absent or cannot
 // build its sandbox. Opt in with TETHER_TEST_REAL_CODEX_SANDBOX=1; normal
 // unit runs never discover or execute the host's codex binary.
 func TestRealCodex_WorkspaceSandboxFollowsTheCwd(t *testing.T) {
 	if os.Getenv("TETHER_TEST_REAL_CODEX_SANDBOX") != "1" {
-		t.Skip("set TETHER_TEST_REAL_CODEX_SANDBOX=1 to run the real codex sandbox probe")
+		t.Skip("set TETHER_TEST_REAL_CODEX_SANDBOX=1 to run the canonical codex sandbox probe")
 	}
 	bin, err := exec.LookPath("codex")
 	if err != nil {
@@ -947,7 +974,7 @@ func TestControlPlaneDirs_RunDirIndependentOfTheCatalogParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join(realOther, "catalog"), filepath.Join(realHome, ".tether", "run")}
+	want := []string{filepath.Join(realOther, "catalog"), filepath.Join(realHome, ".tether"), filepath.Join(realHome, ".tether", "run")}
 	if !slices.Equal(dirs, want) {
 		t.Fatalf("dirs = %q, want %q: ~/.tether/run protected although the catalog is elsewhere, the socket in an unrelated shared dir not", dirs, want)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -81,11 +82,17 @@ func ResolveProfile(config Config, in ProfileInputs) (ProfileSelection, error) {
 // native tools are otherwise ordered with origin tether before catalog origins.
 type Policy struct {
 	Selection         ProfileSelection
+	Floors            []ProfileSelection `json:"authority_profiles,omitempty"`
 	ServerOrder       []string
 	RestrictedOrigins []string `json:"restricted_origins,omitempty"`
 }
 
 func (p Policy) Exclusion(entry Entry) string {
+	for _, floor := range p.Floors {
+		if reason := (Policy{Selection: floor}).Exclusion(entry); reason != "" {
+			return "launch profile: " + reason
+		}
+	}
 	profile := p.Selection.Profile
 	if profile == nil {
 		return ""
@@ -120,6 +127,20 @@ func (p Policy) Exclusion(entry Entry) string {
 		return "profile allow"
 	}
 	return ""
+}
+
+// CloneProfile preserves nil/empty rules while owning all mutable selectors.
+func CloneProfile(p Profile) Profile {
+	p.Servers = slices.Clone(p.Servers)
+	p.Tools.Allow = slices.Clone(p.Tools.Allow)
+	p.Tools.Deny = slices.Clone(p.Tools.Deny)
+	p.Order = slices.Clone(p.Order)
+	p.AlwaysLoad = slices.Clone(p.AlwaysLoad)
+	if p.DiscoveryMode != nil {
+		value := *p.DiscoveryMode
+		p.DiscoveryMode = &value
+	}
+	return p
 }
 func (p Policy) Decorate(entry Entry) Entry {
 	profile := p.Selection.Profile
