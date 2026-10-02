@@ -109,6 +109,30 @@ remain distinct. The wire error string `daemon_unreachable` belongs to the
 There is no local catalog/SQLite/upstream fallback, daemon
 auto-start or retry of an uncertain mutation.
 
+## Inventory changes and reconnects
+
+Accepted eligible inventory changes fan out to the view's SDK sessions. Flat
+views publish eligible tool additions, removals and declaration updates. Search
+views retain their four infrastructure tools and signal the changed semantic
+inventory with `notifications/tools/list_changed`; clients then hydrate/search
+again. Hidden origins and changes confined to profile-denied tools do not
+signal. A view observes a complete installed generation when it relists.
+Notifications are hints, not a durable replay log.
+
+Client disconnect/reconnect creates a new MCP session while reusing the same
+shared upstream process. After a daemon restart an old MCP session ID returns
+404. A client must explicitly initialize with its credential/selectors again
+and relist before continuing. The endpoint never replays an uncertain tool
+call or reconstructs a view from a caller's stale session ID.
+
+For an active tool call, the daemon replaces the caller's progress token with a
+random per-call upstream token, then restores the original token only on that
+call's initiating SDK session. Identical tokens on other views cannot capture
+the progress. Origin binding prevents another upstream from sending on that
+route; completion/cancellation removes it. Upstream progress metadata is not
+trusted caller context, and catalog credentials are scrubbed from messages.
+Notifications arriving after the call has completed are discarded.
+
 ## Principal grants
 
 Service and interactive principals are provisioned by exact verified principal

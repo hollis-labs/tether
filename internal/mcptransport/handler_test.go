@@ -41,9 +41,10 @@ type transportFixture struct {
 	cat         *config.Catalog
 	catMu       sync.Mutex
 	childStarts string
+	restart     func(*testing.T)
 }
 
-func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
+func newTransportFixture(t *testing.T, unix, upstream bool, additional ...config.MCPServerEntry) *transportFixture {
 	t.Helper()
 	root, err := os.MkdirTemp(os.TempDir(), "mcp-")
 	if err != nil {
@@ -64,7 +65,10 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	}
 	f := &transportFixture{db: db, ids: identity.NewStore(db.DB()), cat: &config.Catalog{MCPServerEnabled: map[string]bool{}}, childStarts: filepath.Join(root, "child-starts")}
 	f.cat.Global.MCP.Profiles = map[string]mcpgateway.Profile{"readonly": {ReadOnly: true}, "full": {}}
-	entries := []config.MCPServerEntry{}
+	entries := append([]config.MCPServerEntry{}, additional...)
+	for _, entry := range additional {
+		f.cat.MCPServerEnabled[entry.ID] = entry.IsEnabled()
+	}
 	if upstream {
 		if output, err := exec.Command("bwrap", "--ro-bind", "/", "/", "--unshare-user", "--unshare-pid", "--proc", "/proc", "--dev", "/dev", "--", "true").CombinedOutput(); err != nil {
 			_ = db.Close()
@@ -113,7 +117,32 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	f.handler = h
 	daemonServer := &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, MCP: h}
 	server := &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
-	go func() { _ = server.Serve(listener) }()
+	go func(s *http.Server, l net.Listener) { _ = s.Serve(l) }(server, listener)
+	f.restart = func(t *testing.T) {
+		t.Helper()
+		cfg := h.cfg
+		h.Close()
+		_ = server.Close()
+		daemonServer.CloseIdentityAudit()
+		var err error
+		if unix {
+			listener, err = net.Listen("unix", strings.TrimPrefix(f.addr, "unix:"))
+		} else {
+			listener, err = net.Listen("tcp", strings.TrimPrefix(f.addr, "tcp:"))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err = NewHandler(context.Background(), cfg)
+		if err != nil {
+			_ = listener.Close()
+			t.Fatal(err)
+		}
+		f.handler = h
+		daemonServer = &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, MCP: h}
+		server = &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
+		go func(s *http.Server, l net.Listener) { _ = s.Serve(l) }(server, listener)
+	}
 	t.Cleanup(func() { h.Close(); _ = server.Close(); daemonServer.CloseIdentityAudit(); _ = db.Close() })
 	return f
 }
@@ -158,7 +187,13 @@ func (f *transportFixture) request(t *testing.T, method, path, token, session st
 			req.Header[key] = values
 		}
 	}
-	response, err := daemon.DialHTTPClient(f.addr).Do(req)
+	hc := daemon.DialHTTPClient(f.addr)
+	if hc.Transport == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableKeepAlives = true
+		hc.Transport = transport
+	}
+	response, err := hc.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

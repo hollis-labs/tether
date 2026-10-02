@@ -79,6 +79,7 @@ func (e *RefreshAllError) Error() string {
 
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
+	progress           *sharedProgress
 	lazyMu             sync.Mutex
 	lazyCtx            context.Context
 	lazyClosed         bool
@@ -451,6 +452,11 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		},
 	}
 
+	if p.progress != nil {
+		opts.ProgressNotificationHandler = func(_ context.Context, req *mcpsdk.ProgressNotificationClientRequest) {
+			p.progress.notify(entry.ID, req)
+		}
+	}
 	handshakeCtx, cancel := context.WithTimeout(ctx, p.policy.handshakeTimeout)
 	defer cancel()
 
@@ -544,7 +550,8 @@ func (p *ClientPool) remoteClientPoolForEntry(entry config.MCPServerEntry) (*gom
 	if pool := p.remoteClientsByEntry[entry.ID]; pool != nil {
 		return pool, nil
 	}
-	pool := gomcpclient.NewPool(gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version), gomcpclient.WithHTTPClient(build))
+	options := append(p.remoteProgressOptions(), gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version), gomcpclient.WithHTTPClient(build))
+	pool := gomcpclient.NewPool(options...)
 	p.remoteClientsByEntry[entry.ID] = pool
 	return pool, nil
 }
@@ -556,7 +563,8 @@ func (p *ClientPool) remoteClientPool() *gomcpclient.Pool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.remoteClients == nil {
-		p.remoteClients = gomcpclient.NewPool(gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version))
+		options := append(p.remoteProgressOptions(), gomcpclient.WithIdentity("tether-proxy", p.runtime.Build.Version))
+		p.remoteClients = gomcpclient.NewPool(options...)
 	}
 	return p.remoteClients
 }

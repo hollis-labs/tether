@@ -48,6 +48,7 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 		return nil, err
 	}
 	r.pool = NewClientPool(private, r.registry)
+	r.pool.progress = &sharedProgress{routes: map[string]progressRoute{}, redact: proxyRedactionSet(private).Redact}
 	r.pool.remoteHTTPClientFactory = factory
 	r.pool.confineRemote = true
 	r.pool.protectedPaths = protected

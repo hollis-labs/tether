@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
@@ -195,19 +196,47 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 		return nil, err
 	}
 	s.SDKServer().AddReceivingMiddleware(gatewaySurfaceMiddleware(gateway))
+	// A list-change signal must follow the complete view publication, even if
+	// the SDK's debounce timer fires while a large generation is being installed.
+	s.SDKServer().AddSendingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			if method == "notifications/tools/list_changed" {
+				updateMu.Lock()
+				defer updateMu.Unlock()
+				if closed {
+					return nil, nil
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
+	s.SDKServer().AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			if method == "tools/call" {
+				call := req.(*mcpsdk.CallToolRequest)
+				ctx = context.WithValue(ctx, progressSessionKey{}, call.Session)
+			}
+			if method == "tools/list" {
+				updateMu.Lock()
+				defer updateMu.Unlock()
+			}
+			return next(ctx, method, req)
+		}
+	})
 	allowed := map[string]struct{}{}
 	for id := range upstreams.servers {
 		allowed[id] = struct{}{}
 	}
 	live := &liveProxyCatalog{adapter: a, server: s, registry: registry, router: router, allowed: allowed}
 	if selection.Mode == mcpgateway.Flat {
-		live.addProxyTools(registry.AllDefinitions()...)
+		reconcileVisible(live, nil, visibleInventory(gateway))
 	} else {
 		a.registerSearchTool(s, gateway)
 		a.registerListTool(s, gateway)
 		a.registerCallTool(s, gateway)
 	}
 	a.registerGatewayStatus(s, gateway)
+	visible := visibleInventory(gateway)
 	unsubscribe = r.Subscribe(func(refresh ToolRefreshResult) {
 		updateMu.Lock()
 		defer updateMu.Unlock()
@@ -218,9 +247,16 @@ func (r *SharedUpstreams) NewGatewayView(ctx context.Context, a *Adapter, opts P
 			a.logger().Error("daemon MCP view refresh refused", "reason", err.Error())
 			return
 		}
+		next := visibleInventory(gateway)
 		if selection.Mode == mcpgateway.Flat {
-			live.applyRefresh(refresh)
+			reconcileVisible(live, visible, next)
+		} else if !reflect.DeepEqual(visible, next) {
+			// The SDK exposes list_changed through AddTool. Replace the identical
+			// infrastructure registration to signal semantic inventory change while
+			// keeping search mode's fixed protocol surface unchanged.
+			a.registerGatewayStatus(s, gateway)
 		}
+		visible = next
 	})
 	success = true
 	return &GatewayView{Server: s.SDKServer(), Service: gateway, close: closeView}, nil

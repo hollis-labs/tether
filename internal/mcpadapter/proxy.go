@@ -123,6 +123,10 @@ func (r *ProxyRouter) Handle(ctx context.Context, call ToolCall) (*mcpsdk.CallTo
 		// an upstream with additionalProperties:false at its schema root
 		// correctly rejects an argument it did not declare. See trace_meta.go.
 		injectTraceContextMeta(tCtx, params)
+		if r.pool != nil && r.pool.progress != nil && rt.ServerID != "" {
+			unregister := r.pool.progress.bind(tCtx, rt.ServerID, params)
+			defer unregister()
+		}
 		result, err := rt.Client.CallTool(tCtx, params)
 		if err != nil && r.pool != nil {
 			wrapped := fmt.Errorf("upstream %q call failed; execution outcome may be unknown; request was not replayed: %w", rt.ServerID, err)
