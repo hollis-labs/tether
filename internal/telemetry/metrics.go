@@ -1,0 +1,196 @@
+package telemetry
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/hollis-labs/tether/internal/events"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+)
+
+// HistogramBoundsMs defines cumulative latency buckets shared by introspection
+// and OTel. The final JSON bucket has a null upper bound, meaning +infinity.
+var HistogramBoundsMs = [...]int64{5, 25, 100, 500, 1000, 5000}
+
+const MaxMetricGroups = 1000
+
+// MaxOTelCallSeries bounds process memory even when callers name unknown tools.
+// Later combinations share an overflow series; durable queries remain exact.
+const MaxOTelCallSeries = 1000
+
+// MaxOTelDeniedSeries reserves a separate budget so unknown/excluded names
+// cannot crowd out dispatched tools. The remaining slots are non-denied series.
+const MaxOTelDeniedSeries = 100
+
+type Bucket struct {
+	UpperMs *int64 `json:"upper_ms"`
+	Count   int64  `json:"count"`
+}
+type Histogram struct {
+	Count   int64    `json:"count"`
+	SumMs   int64    `json:"sum_ms"`
+	Buckets []Bucket `json:"buckets"`
+}
+type MetricGroup struct {
+	Tool            string    `json:"tool"`
+	Upstream        string    `json:"upstream"`
+	Outcome         string    `json:"outcome"`
+	Calls           int64     `json:"calls"`
+	ArgsBytes       int64     `json:"args_bytes"`
+	ResultBytes     int64     `json:"result_bytes"`
+	MetadataSamples int64     `json:"metadata_samples"`
+	Duration        Histogram `json:"duration"`
+	Gateway         Histogram `json:"gateway"`
+	Forward         Histogram `json:"forward"`
+}
+type MetricsRequest struct {
+	Tool     string `json:"tool,omitempty"`
+	Upstream string `json:"upstream,omitempty"`
+	Since    string `json:"since,omitempty"`
+	Until    string `json:"until,omitempty"`
+}
+type MetricsQuery struct {
+	Tool, Upstream string
+	Since, Until   time.Time
+	Limit          int
+}
+type MetricsResponse struct {
+	Groups    []MetricGroup `json:"groups"`
+	Truncated bool          `json:"truncated"`
+	Window    string        `json:"window"`
+}
+type MetricsSource interface {
+	QueryToolCallMetrics(context.Context, MetricsQuery) ([]MetricGroup, error)
+}
+type QueryError struct{ Message string }
+
+func (e *QueryError) Error() string { return e.Message }
+
+// QueryService queries only durable completed calls; starts never inflate counts.
+// The result survives daemon restarts and is bounded by event retention.
+type QueryService struct{ Source MetricsSource }
+
+func (s QueryService) ReadMetrics(ctx context.Context, req MetricsRequest) (MetricsResponse, error) {
+	q := MetricsQuery{Tool: req.Tool, Upstream: req.Upstream, Limit: MaxMetricGroups + 1}
+	if len(req.Tool) > 256 || len(req.Upstream) > 256 {
+		return MetricsResponse{}, &QueryError{"tool/upstream identifier too long"}
+	}
+	for _, field := range []struct {
+		name, value string
+		dst         *time.Time
+	}{{"since", req.Since, &q.Since}, {"until", req.Until, &q.Until}} {
+		if field.value != "" {
+			stamp, err := time.Parse(time.RFC3339Nano, field.value)
+			if err != nil {
+				return MetricsResponse{}, &QueryError{fmt.Sprintf("%s must be an RFC3339 timestamp", field.name)}
+			}
+			*field.dst = stamp
+		}
+	}
+	if !q.Since.IsZero() && !q.Until.IsZero() && !q.Since.Before(q.Until) {
+		return MetricsResponse{}, &QueryError{"since must precede until"}
+	}
+	groups, err := s.Source.QueryToolCallMetrics(ctx, q)
+	if err != nil {
+		return MetricsResponse{}, err
+	}
+	out := MetricsResponse{Groups: groups, Window: "retained_events"}
+	if len(out.Groups) > MaxMetricGroups {
+		out.Groups = out.Groups[:MaxMetricGroups]
+		out.Truncated = true
+	}
+	if out.Groups == nil {
+		out.Groups = []MetricGroup{}
+	}
+	return out, nil
+}
+
+// Metrics exports process-lifetime completed-call observations. Identity and
+// argument data are never labels. Durable introspection is a separate view.
+type Metrics struct {
+	mu                         sync.Mutex
+	series                     map[metricLabels]struct{}
+	deniedSeries               int
+	calls                      metric.Int64Counter
+	argsBytes, resultBytes     metric.Int64Counter
+	duration, gateway, forward metric.Float64Histogram
+}
+
+type metricLabels struct{ tool, upstream, outcome string }
+
+func NewMetrics(meter metric.Meter) (*Metrics, error) {
+	m := &Metrics{series: make(map[metricLabels]struct{})}
+	var err error
+	if m.calls, err = meter.Int64Counter("tether.tool.calls", metric.WithDescription("Completed tool calls, including rejected calls")); err != nil {
+		return nil, err
+	}
+	if m.argsBytes, err = meter.Int64Counter("tether.tool.args.bytes", metric.WithUnit("By")); err != nil {
+		return nil, err
+	}
+	if m.resultBytes, err = meter.Int64Counter("tether.tool.result.bytes", metric.WithUnit("By")); err != nil {
+		return nil, err
+	}
+	bounds := make([]float64, len(HistogramBoundsMs))
+	for i, b := range HistogramBoundsMs {
+		bounds[i] = float64(b)
+	}
+	for _, h := range []struct {
+		name string
+		dst  *metric.Float64Histogram
+	}{{"tether.tool.duration", &m.duration}, {"tether.tool.gateway", &m.gateway}, {"tether.tool.forward", &m.forward}} {
+		if *h.dst, err = meter.Float64Histogram(h.name, metric.WithUnit("ms"), metric.WithExplicitBucketBoundaries(bounds...)); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+func (m *Metrics) Observe(ctx context.Context, call events.ToolCallEvent) {
+	if m == nil {
+		return
+	}
+	outcome := string(call.ErrorClass)
+	if call.OK {
+		outcome = "ok"
+	} else if outcome == "" {
+		outcome = string(events.ToolErrorUpstream)
+	}
+	key := metricLabels{boundedMetricLabel(call.ToolName), boundedMetricLabel(call.Server), boundedMetricLabel(outcome)}
+	m.mu.Lock()
+	if _, known := m.series[key]; !known {
+		denied := outcome == string(events.ToolErrorDenied)
+		available := m.deniedSeries < MaxOTelDeniedSeries
+		if !denied {
+			available = len(m.series)-m.deniedSeries < MaxOTelCallSeries-MaxOTelDeniedSeries
+		}
+		if available {
+			m.series[key] = struct{}{}
+			if denied {
+				m.deniedSeries++
+			}
+		} else {
+			key = metricLabels{"_other", "_other", "_other"}
+		}
+	}
+	m.mu.Unlock()
+	labels := []attribute.KeyValue{attribute.String("tool", key.tool), attribute.String("upstream", key.upstream), attribute.String("outcome", key.outcome)}
+	opts := metric.WithAttributes(labels...)
+	m.calls.Add(ctx, 1, opts)
+	m.duration.Record(ctx, float64(call.DurationMs), opts)
+	m.gateway.Record(ctx, float64(call.GatewayMs), opts)
+	m.forward.Record(ctx, float64(call.ForwardMs), opts)
+	m.argsBytes.Add(ctx, call.ArgsBytes, opts)
+	m.resultBytes.Add(ctx, call.ResultBytes, opts)
+}
+
+func boundedMetricLabel(value string) string {
+	if len(value) > 256 {
+		return "_other"
+	}
+	return value
+}
+
+var processMetrics, processMetricsError = NewMetrics(otel.Meter("tether/telemetry"))

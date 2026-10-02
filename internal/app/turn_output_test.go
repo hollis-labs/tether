@@ -16,6 +16,7 @@ import (
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -38,7 +39,8 @@ func outputHarness(t *testing.T, route *launchprofile.Route) (*Service, *session
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db})}
+	svc := &Service{Store: db, Bus: events.NewBus(events.BusOptions{Persister: db}), Catalog: &config.Catalog{Providers: map[string]config.Provider{"codex": {ID: "codex", Provider: "codex", RuntimeKind: config.RuntimeKindJSONRPCStdio}}}}
+	svc.installTurnFeeds()
 	return svc, svc.newSessionTurnOutput(*rowPtr, plan)
 }
 

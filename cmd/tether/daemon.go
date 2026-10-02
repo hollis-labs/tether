@@ -283,11 +283,9 @@ var daemonRunCmd = &cobra.Command{
 			DeliveryRepair:   svc.Store,
 			Retention:        svc.Store,
 			A2A:              a2aHandler,
-			Close: func() error {
-				// Manager.Shutdown is driven by daemon.Server; Close just
-				// releases the store handle so the process can exit cleanly.
-				return svc.Store.Close()
-			},
+			// Complete reducer persistence and join the routing worker before
+			// closing the store, even after the server has drained sessions.
+			Close: svc.Close,
 		}
 
 		if mcpHandler != nil {

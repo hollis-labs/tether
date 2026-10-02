@@ -1140,6 +1140,27 @@ Response (200):
 }
 ```
 
+### `GET /events/tool-metrics`
+
+Counters and cumulative latency histograms over retained completed-call events,
+with optional exact `tool`/`upstream` and inclusive `since`/exclusive `until`
+RFC3339 bounds. Returns `{groups, truncated, window:"retained_events"}`. Groups
+contain tool/upstream/outcome, call/byte counters, `metadata_samples` and
+`duration`/`gateway`/`forward` histograms (`count`, `sum_ms`, cumulative buckets).
+Buckets end at 5/25/100/500/1000/5000 ms and infinity (`upper_ms:null`). A maximum
+of 1,000 groups is returned by descending call count, then tool/upstream/outcome
+to break ties; narrow filters when
+`truncated` is true. Invalid selectors return 400 `invalid_request`, storage
+failures 500 `internal_error`. Starts are excluded, and restart preserves
+counts until the existing event-retention sweep removes old rows. This query
+is global/unscoped across all callers, without identity filtering, and scans
+retained completed-call events; a rollup is a later option for larger histories.
+
+MCP: `tether_tool_metrics`. CLI: `tether events tool-metrics --json`. See
+[tool-call telemetry](../mcp.md#tool-call-telemetry-v2) for metadata/privacy and
+process-lifetime OTel semantics. `/proxy/events` query responses also include
+v2 call metadata from migration 0042's compatibility projection.
+
 ### `GET /events/stream`
 
 SSE stream of bus events. Replays history (via `since_seq`) then switches
@@ -1212,8 +1233,10 @@ and provenance/forwarded-metadata contract.
 ### `GET /proxy/events`
 
 Rows include an `attribution` object and an optional `claimed_session_id`.
-`attribution.verified` describes a credential-derived session context;
-legacy/anonymous top-level session IDs remain claims. See the
+`attribution.verified` describes a credential-derived session context.
+Daemon-resolved operator/service principal identity remains present when
+`verified:false`; session/agent/workstream claims require verified binding.
+Legacy/anonymous top-level session IDs remain claims. See the
 [trusted session context contract](../trusted-session-context.md).
 
 Tool calls the MCP proxy has recorded, newest first. 404 when the daemon has no

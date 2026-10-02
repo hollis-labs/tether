@@ -47,6 +47,7 @@ func eventToDTO(e events.Event) EventDTO {
 }
 
 func (s *Server) registerEventRoutes(router *http.ServeMux) {
+	s.registerToolMetricsRoute(router)
 	if s.Bus != nil {
 		router.HandleFunc("/events/stream", s.handleEventsStream)
 	}
