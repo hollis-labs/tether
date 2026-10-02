@@ -339,12 +339,16 @@ func (d *replyDispatcher) drain(sessionID string) bool {
 	return false
 }
 
-// replyTurnRan reports a submission error that came back after the runtime took
-// the turn and ran it: the turn feed saw the turn begin or finish
-// (trackTurnSubmission). The model has acted on the reply; repeating it would run
-// it twice. A process exit on its own is not proof, and a failure the runtime says
-// meant it took no turn (runtimeTookNoTurn) outranks the marker: a CLI that was
-// launched and then refused the turn (no login, a dead resume id) still opened it.
+// replyTurnRan reports a submission error that came back after Tether's turn feed
+// showed activity on the turn (trackTurnSubmission): output began, the turn
+// finished, or a terminal arrived. For a subprocess runtime that includes the
+// terminal its adapter synthesizes on EVERY process exit, so a subprocess that
+// exits non-zero without printing anything counts: Tether cannot tell whether it
+// read the reply before it died, and repeating a reply the model may have acted on
+// is the worse error, so it is reported (turn_failed) and not retried. The
+// exception is a failure the runtime itself says meant it took no turn
+// (runtimeTookNoTurn): it outranks the feed, because a CLI that was launched and
+// then refused the turn (no login, a dead resume id) still produced that terminal.
 func replyTurnRan(err error) bool {
 	var ran *turnRanError
 	return errors.As(err, &ran) && !runtimeTookNoTurn(err)
@@ -419,7 +423,7 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		// failure afterwards: the reply was delivered and acted on, and the turn
 		// failed. Report it; never run the reply again. The detail is fixed text
 		// plus how the process ended, never the error: it can carry stderr.
-		detail := "the runtime reported a failure after it took the reply"
+		detail := "the runtime reported a failure after the reply was submitted; it is not retried"
 		if exit, ok := replyProcessExit(err); ok {
 			detail += ": " + exit
 		}

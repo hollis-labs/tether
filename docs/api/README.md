@@ -1702,22 +1702,23 @@ records it and refuses nothing.
   is delivered: a younger reply that is due does not jump an older one that is
   waiting out a retry.
 - **At most once.** A reply is injected at most once into a session. It is
-  retried (up to five attempts, with backoff) only when the runtime did not take
-  the turn: it rejected the submission, the process could not start or be
+  retried (up to five attempts, with backoff) only when the runtime itself says
+  it took no turn: it rejected the submission, the process could not start or be
   sandboxed, the CLI had no login (`provider_not_authenticated`) or the session
-  it was asked to resume was gone (`provider_session_lost`). Those outrank any
-  sign that the turn started: a CLI that was launched and then refused the turn
-  still opened Tether's turn marker, and the model never saw the reply. Once
-  Tether's turn feed has seen the runtime take the turn (a turn began or finished
-  or a terminal arrived while the reply was being submitted) and none of those
-  applies, a later failure is reported and never
-  repeated: a subprocess runtime (`codex exec`, `claude -p`, `opencode run`,
-  `agy`) blocks for the whole turn and returns the process's failure afterwards,
-  and the reply is then `delivered` with `reason: "turn_failed"`. A process exit
-  on its own is not taken as proof that the turn ran. Streaming and JSON-RPC
-  runtimes report a failed turn on the session's `session.turn_output`. The one
-  case Tether cannot know is a daemon that stops while a reply is being injected:
-  see "A daemon restart".
+  it was asked to resume was gone (`provider_session_lost`). Those outrank
+  everything else, because a CLI that was launched and then refused the turn
+  still shows activity on Tether's turn feed and the model never saw the reply.
+  Every other failure after the submission is reported and never repeated.
+  Tether's turn feed counts any turn activity, including the terminal a
+  subprocess runtime's adapter synthesizes on **every** process exit, so a
+  subprocess runtime (`codex exec`, `claude -p`, `opencode run`, `agy`) whose
+  process exits non-zero, even without printing anything, makes the reply
+  `delivered` with `reason: "turn_failed"` after one attempt, and it is not
+  retried. Tether cannot tell whether such a process read the reply before it
+  died, and repeating a reply the model may have acted on is the worse error.
+  Streaming and JSON-RPC runtimes report a failed turn on the session's
+  `session.turn_output`. The one case Tether cannot know is a daemon that stops
+  while a reply is being injected: see "A daemon restart".
 - **Runtimes that reject mid-turn input** (OpenCode, ACP) simply wait for the turn
   to end. A rejection is not a failed attempt.
 - **A runtime with no turn lifecycle** (a PTY) never says when it is idle, so a
@@ -1775,7 +1776,7 @@ text.
 | `reason` | State | Meaning |
 |---|---|---|
 | `handed_off` | `delivered` | The originating session had ended; the reply went to the session its actor is bound to. |
-| `turn_failed` | `delivered` | The reply was injected and its turn ran, then failed (a subprocess runtime returns that as the submit error); not retried. `detail` says how the process ended (exit code or signal), nothing else. |
+| `turn_failed` | `delivered` | The reply was injected and its turn ran, then failed (a subprocess runtime returns that as the submit error, including a process that exited without printing anything); not retried. `detail` says how the process ended (exit code or signal), nothing else. |
 | `session_ended_no_binding` | `undeliverable` | The session ended and its actor has no current binding (or the reply has no actor). |
 | `bound_session_not_running` | `undeliverable` | The binding names a session that is not running. |
 | `pull_only_binding` | `undeliverable` | The actor is a published-local bridge; Tether cannot inject a turn into it. |

@@ -186,7 +186,7 @@ func (e *turnRanError) Unwrap() error { return e.err }
 // CLI had no login, or the session it was asked to resume was lost. A launched
 // subprocess emits a synthesized terminal on every exit, so for these the feed's
 // activity is not evidence that the model saw the input. A bare process exit is
-// not in this list: it proves nothing either way.
+// not in this list: it counts as the turn having run (see replyTurnRan).
 func runtimeTookNoTurn(err error) bool {
 	var start *runner.StartError
 	var sandbox *runner.SandboxError

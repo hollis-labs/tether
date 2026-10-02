@@ -17,16 +17,20 @@ import (
 // A CLI that was launched and then refused the turn (no login, a dead resume id)
 // still opens the turn marker, so a failure behind an open marker is not proof
 // that the model saw the reply. The runtime's own "did not run" signals outrank the
-// marker, and a bare process exit proves nothing: each is retried, because a retry
-// can succeed and nothing has acted on the reply.
+// marker: each is retried, because a retry can succeed and nothing has acted on the
+// reply. The last case injects a bare process-exit error WITHOUT the turn feed, so
+// nothing marks it as having run; that is not what production does (the adapter's
+// synthesized terminal makes a bare exit turn_failed, once: see
+// TestAFailedSubprocessTurnIsNotRetried), it only pins that the dispatcher itself
+// does not treat an ExitError as proof.
 func TestAFailureTheRuntimeSaysDidNotRunTheTurnIsRetriedWhateverTheMarkerSays(t *testing.T) {
 	exit := func() error { return &runner.ExitError{Code: 1} }
 	for name, err := range map[string]error{
-		"a lost resume session behind an open marker":       &turnRanError{&agentsessions.SessionLostError{RequestedID: "gone", Err: exit()}},
-		"no login behind an open marker":                    &turnRanError{fmt.Errorf("agentsessions: %w: %w", provider.ErrProviderNotAuthenticated, exit())},
-		"a process that would not start behind a marker":    &turnRanError{&runner.StartError{Err: errors.New("fork/exec: no such file")}},
-		"a sandbox that could not be set up behind marker":  &turnRanError{&runner.SandboxError{Err: errors.New("sandbox denied")}},
-		"a bare process exit with no sign the turn started": exit(),
+		"a lost resume session behind an open marker":                            &turnRanError{&agentsessions.SessionLostError{RequestedID: "gone", Err: exit()}},
+		"no login behind an open marker":                                         &turnRanError{fmt.Errorf("agentsessions: %w: %w", provider.ErrProviderNotAuthenticated, exit())},
+		"a process that would not start behind a marker":                         &turnRanError{&runner.StartError{Err: errors.New("fork/exec: no such file")}},
+		"a sandbox that could not be set up behind marker":                       &turnRanError{&runner.SandboxError{Err: errors.New("sandbox denied")}},
+		"a process exit error that reached the dispatcher without the turn feed": exit(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newReplyHarness(t)
