@@ -60,20 +60,125 @@ supported. Trace metadata never establishes a principal. Arbitrary incoming
 `X-Forwarded-For/Host/Proto` values establish neither identity nor a trusted
 reverse-proxy boundary, and are not relayed to unrelated upstreams.
 
-The approved HTTP forwarding contract is a separate part B after the 0539
-daemon egress seam lands: only daemon-owned egress carrying an explicitly
-configured per-upstream Tether-proxy service credential may stamp
-`X-Forwarded-User-Id: session:<verified-id>`. Provision that credential through
-the upstream's operator/admin flow, storing it in a current-user-owned regular
-0600 service token file. The planned catalog field `proxy_service_token_file`
-will use the existing fail-closed owner/mode/no-symlink reader. It is not yet
-accepted by this part A. The upstream pins that service principal before
-honoring actor headers; an ordinary bearer token does not imply this trust.
-Never send the session bearer upstream or put the service credential in a
-worker's environment/boot files. Per-call identity must not become shared
-connection/default headers. Forwarded agent identity never confers operator
-confirmation authority. No service credential is automatically provisioned,
-and no live configuration, restart or identity-mode change accompanies this PR.
+Production use starts with 0539's daemon transport mount/cutover. This hooks
+into its shared-owner foundation; existing worker-owned stdio proxies continue
+using their existing upstream credentials. Daemon-owned HTTP/SSE egress opts
+into forwarded identity with an explicit catalog entry:
+
+```yaml
+id: upstream
+transport: http # or sse
+url: https://upstream.example/mcp
+allow_unconfined_remote: true
+proxy_service_token_file: /absolute/operator-owned/upstream-service.token
+```
+
+The upstream's operator/admin provisions a dedicated Tether-proxy service
+principal and issues its bearer credential. Tether does not create that
+upstream principal or reuse a session bearer/operator token. Store the
+credential in a current-user-owned regular file with exactly mode 0600. The
+path must be absolute; it is never expanded from worker environment variables.
+The reader checks the opened inode, refuses a final symlink or special file,
+and bounds the file at 4096 bytes. Content must be one opaque bearer value of
+at least four bytes (the shared redactor's minimum),
+with optional surrounding whitespace, never a header or multiline secret.
+An entry combining `token` and `proxy_service_token_file`, or using the service
+field for stdio, is refused. Disabled entries do not read their service file.
+
+Only the daemon's upstream owner loads this file, into a private in-memory
+entry used by existing error redaction. Every tool result, successful or failed,
+also scrubs the service credential from text and structured content before
+delivery to the caller. The authored catalog and worker
+ENV/boot files receive no service secret. A runtime loads the credential once;
+a changed credential takes effect when that owner is recreated. No automatic
+service-token mint/rotation, install, restart or identity-mode change accompanies
+this change. Operator rollout still owns provisioning and cutover.
+
+## Operator provisioning and rollout
+
+1. In the upstream's own administration flow, create a dedicated service
+   principal for this Tether proxy and issue its credential. Give it only the
+   upstream permissions the proxy needs. This is an upstream credential, not
+   a Tether session token or the daemon's operator token.
+2. Configure the receiver, including Hadron when it adopts this contract, to
+   **pin that exact authenticated proxy service principal** before honoring
+   any forwarded-user or `tether.context` identity. Reject or ignore actor
+   claims from every other principal, including ordinary authenticated clients.
+   Authenticating an arbitrary bearer is insufficient. Pin the principal
+   identity through that receiver's supported configuration; rotating its
+   credential must preserve or deliberately replace that pin.
+3. Place the issued secret in a daemon-owned credential file beneath a
+   protected root already excluded from worker reads, such as the catalog/run
+   roots used by the launch's confinement policy. Keep the containing directory
+   private (0700) and the current-user-owned regular file exactly 0600. Do not
+   put the secret in catalog YAML, worker environment, bootstrap files, argv
+   or a workspace. Mode 0600 alone does not isolate an unconfined process
+   running as the same Unix user; protecting that process boundary remains
+   necessary. The reader's opened-inode ownership/mode/regular-file/no-final-
+   symlink checks fail closed, using the same protections as daemon token files.
+4. Add the absolute path as `proxy_service_token_file` on the intended HTTP/SSE
+   entry and remove that entry's ordinary `token`. Keep disabled entries
+   disabled until the receiver pin and protected file are ready. There is no
+   database migration in part B and no automatic receiver configuration or
+   service-principal creation. Existing ordinary entries retain their previous
+   credential behavior and receive no actor headers.
+5. At the operator's scheduled daemon-transport cutover, recreate the upstream
+   owner so it reads the credential and validate both an attributed tool POST
+   and an initialize/probe/GET without actor headers. Coordinate production
+   mounting with 0539. A missing, unsafe or invalid credential file prevents
+   this service-enabled owner from starting; it never substitutes a session or
+   operator bearer. Provisioning this field does not change `identity.mode`.
+
+For credential rotation, issue the replacement through the upstream, securely
+replace the file, then recreate the owner during an authorized maintenance
+window and retire the old credential according to the upstream's overlap
+policy. Editing the file alone does not rotate a running owner. To roll back
+forwarded attribution, remove this opt-in and restore the intended ordinary
+upstream credential, recreate the owner, and remove the receiver's proxy trust
+when no longer used. These are operator actions; this change performs none of
+these live provisioning, restart or cutover steps.
+
+An entry-aware HTTP client factory keeps separate policies even for entries
+sharing a URL. Each request is cloned, caller-controlled `X-Tether-*` and
+`X-Forwarded-*` headers are stripped case-insensitively, and Authorization is
+set only to this entry's upstream service bearer. Redirects are refused and
+the transport rejects requests to another origin. Ordinary trace metadata
+remains independent of identity.
+
+Actor headers require all of: an admitted session principal, a daemon-resolved
+verified snapshot matching its principal/session, and the private marker set
+around the SDK `CallTool`, covering its tool POST and any associated
+`notifications/cancelled` POST for that same verified caller. Cancellation
+notifications retain the originating actor, not another caller's identity.
+The preceding Ping/reconnect,
+initialize, background GET, refresh and probes carry service authentication
+without actor headers. Operator/service principals remain identifiable in
+telemetry but never inherit a claimed session or actor headers. The upstream
+must pin the configured service principal before trusting these headers;
+Source/Verified strings and ordinary bearer authentication alone establish no
+forwarded-user trust. Agent attribution confers no operator-confirm authority.
+
+| Outbound header | Resolved snapshot field |
+| --- | --- |
+| `X-Forwarded-User-Id` | `session:<session_id>` |
+| `X-Tether-Session-Id` | `session_id` |
+| `X-Tether-Agent-Urn` | `agent_urn`, only with a current binding |
+| `X-Tether-Workstream-Id` | `workstream_id` |
+| `X-Tether-Launch-Id` | `launch_id` |
+| `X-Tether-Project-Id` | `project_id` |
+| `X-Tether-Logical-Agent-Id` | `logical_agent_id` |
+
+Empty optional fields are omitted. Each field is at most 512 visible ASCII
+bytes; an unsafe/oversized field suppresses actor headers while preserving the
+content call and service authentication. This does not mutate shared defaults
+or store one caller's identity on an upstream connection. The schema-2 context
+in the MCP envelope retains the same resolved snapshot as attribution.
+
+For service-authenticated SSE, handshake cancellation bounds dialing and
+response headers. After headers arrive, the SDK owns the long-lived response
+body; closing it releases the stream. This prevents the handshake timeout from
+immediately closing a successfully initialized SSE connection. Stream GETs
+still carry no actor attribution.
 
 Stdio attribution resolution happens only at forwarding/logging boundaries;
 local native tools do not look up attribution merely to execute. Successful

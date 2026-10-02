@@ -46,9 +46,12 @@ type MCPServerEntry struct {
 	Env                   map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
 	URL                   string            `yaml:"url"`       // sse, http: endpoint URL
 	Token                 string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
-	Scopes                []string          `yaml:"scopes"`
-	Enabled               *bool             `yaml:"enabled"` // nil → defaults to true
-	Tags                  []string          `yaml:"tags"`
+	// ProxyServiceTokenFile is an explicit daemon-only upstream service
+	// credential path. It is never resolved from worker environment variables.
+	ProxyServiceTokenFile string   `yaml:"proxy_service_token_file"`
+	Scopes                []string `yaml:"scopes"`
+	Enabled               *bool    `yaml:"enabled"` // nil → defaults to true
+	Tags                  []string `yaml:"tags"`
 
 	// argumentRedactionValues carries resolved argument and URL secret material
 	// to the process owner without exposing it through YAML serialization.

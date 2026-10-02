@@ -44,7 +44,12 @@ func NewSharedUpstreams(entries []config.MCPServerEntry, roots DaemonProtectedRo
 		r.known[entry.ID] = entry.IsEnabled()
 		r.tags[entry.ID] = append([]string(nil), entry.Tags...)
 	}
-	r.pool = NewClientPool(entries, r.registry)
+	private, factory, err := daemonHTTPPolicies(entries)
+	if err != nil {
+		return nil, err
+	}
+	r.pool = NewClientPool(private, r.registry)
+	r.pool.remoteHTTPClientFactory = factory
 	r.pool.confineRemote = true
 	r.pool.protectedPaths = protected
 	r.pool.requireConfinement = true
