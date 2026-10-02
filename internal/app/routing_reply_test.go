@@ -64,6 +64,9 @@ type replyHarness struct {
 	kinds  []string
 	// onSend runs inside sendTurn, after it is recorded.
 	onSend func(sessionID, text string) error
+	// onBusyCheck runs after every idle check read its answer and before it is
+	// returned, so a test can change the world while that answer is stale.
+	onBusyCheck func(sessionID string)
 }
 
 func newReplyHarness(t *testing.T) *replyHarness {
@@ -85,8 +88,12 @@ func newReplyHarness(t *testing.T) *replyHarness {
 		return nil
 	}}, turnBusy: func(id string) bool {
 		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.busy[id]
+		busy := h.busy[id]
+		h.mu.Unlock()
+		if h.onBusyCheck != nil {
+			h.onBusyCheck(id)
+		}
+		return busy
 	}}
 	h.d = newReplyDispatcher(context.Background(), st, reg, runtime, func(kind string, ev events.RoutingReplyEvent) {
 		h.mu.Lock()
@@ -98,6 +105,24 @@ func newReplyHarness(t *testing.T) *replyHarness {
 	h.svc = &Service{Store: st, Registry: reg, interrupter: h.intr}
 	h.svc.replies.Store(h.d)
 	return h
+}
+
+// waitQuiet lets any in-flight drain finish.
+func (h *replyHarness) waitQuiet() {
+	h.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.d.mu.Lock()
+		n := len(h.d.sessions)
+		h.d.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatal("a drain never finished")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 func (h *replyHarness) setBusy(session string, busy bool) {
@@ -968,4 +993,26 @@ func TestANewReplyDuringInjectionDoesNotLicenseASecondTurn(t *testing.T) {
 	}
 	h.d.notify("s1") // the first turn ends
 	h.waitState(second.ReplyID, store.RoutingReplyDelivered)
+}
+
+// A reply accepted while a drain is mid-evaluation (it already read the queue and
+// its idle check answered "busy") must not wait for the repair sweep: the session
+// may have become idle since, and the new reply is a reason to look again.
+func TestAReplyAcceptedDuringAnEvaluationIsNotMissed(t *testing.T) {
+	h := newReplyHarness(t)
+	h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+	h.setBusy("s1", true)
+	parent := h.routed("s1")
+	first, _ := h.reply(parent.ID, "first", false)
+	h.waitQuiet()
+	checking := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.onBusyCheck = func(string) { once.Do(func() { close(checking); <-release }) }
+	h.d.notify("s1")
+	<-checking // the drain read reply 1 and holds a stale "busy"
+	h.setBusy("s1", false)
+	h.reply(parent.ID, "second", false) //nolint:errcheck // arrives mid-evaluation
+	close(release)
+	h.waitState(first.ReplyID, store.RoutingReplyDelivered)
 }
