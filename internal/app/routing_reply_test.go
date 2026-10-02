@@ -676,6 +676,18 @@ func TestInterruptWithNothingToCancelIsAPlainNextTurnDelivery(t *testing.T) {
 			h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
 		})
 	}
+	t.Run("the cancel was requested but the turn did not end in time", func(t *testing.T) {
+		h := newReplyHarness(t)
+		h.rt.setAlive("s1", true, agentsessions.LiveStateIdle)
+		h.intr.err = &TurnInterruptRefusal{Reason: TurnInterruptTimeout, SessionID: "s1"}
+		receipt, err := h.reply(h.routed("s1").ID, "next", true)
+		if err != nil || receipt.Interrupt != "interrupt_timeout" {
+			t.Fatalf("receipt %+v err %v", receipt, err)
+		}
+		// Accepted, not refused: a retry must not queue a second copy, and the reply
+		// still reaches the agent when the turn ends.
+		h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
+	})
 	t.Run("a typed refusal that wraps the session-ended sentinel", func(t *testing.T) {
 		h := newReplyHarness(t)
 		// An exit-flushed terminal: the cancel may have been acknowledged, but the

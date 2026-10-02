@@ -1672,7 +1672,9 @@ records it and refuses nothing.
   `turn_not_yet_started` and nothing is queued. If there was nothing to cancel
   (`no_turn_in_progress`, `turn_superseded`, `session_not_running`) the reply is
   accepted as an ordinary next-turn delivery and the receipt's `interrupt`
-  says which. A retry with the same `Idempotency-Key` returns the earlier reply
+  says which. If the cancel was requested but the turn did not end within the
+  daemon's bound (`interrupt_timeout`), the reply is accepted too, so a retry
+  cannot queue a duplicate, and is delivered when the turn does end. A retry with the same `Idempotency-Key` returns the earlier reply
   (`duplicate: true`) and does not cancel again.
 - **An ended session** hands its queued replies to the session its actor is
   currently bound to (the registry binding, never a "newest running" guess), and

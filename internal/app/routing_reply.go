@@ -74,6 +74,9 @@ const (
 	replyInterruptNoTurn     = "no_turn_in_progress"
 	replyInterruptSuperseded = "turn_superseded"
 	replyInterruptNotRunning = "session_not_running"
+	// The cancel was requested but the turn did not end in time. The reply is
+	// accepted and follows the turn's eventual boundary like any queued reply.
+	replyInterruptTimedOut = "interrupt_timeout"
 )
 
 // ReplyAuthorization is the caller-identity hook for replies, shaped like the
@@ -643,6 +646,10 @@ func (s *Service) interruptForReply(ctx context.Context, sessionID, actor string
 			return "", api.ErrReplyTurnNotStarted
 		case TurnInterruptUnsupported:
 			return "", api.ErrReplyInterruptUnsupported
+		case TurnInterruptTimeout:
+			return replyInterruptTimedOut, nil
+		case TurnInterruptSessionEnded:
+			return replyInterruptNotRunning, nil // wraps ErrSessionNotRunning; matched above
 		}
 		return "", err
 	case errors.Is(err, agentsessions.ErrInterruptUnsupported):
