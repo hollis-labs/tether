@@ -123,6 +123,12 @@ func (o *sessionTurnOutput) bindTurn(id string) {
 // synchronous reader callback returns. Failed submissions use settleTurn.
 func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded bool) {
 	id := output.TurnID
+	// Reducer completion is authoritative even when out-of-order output does
+	// not complete our current marker. Late frames for that turn stay closed.
+	o.finishedTurns = append(o.finishedTurns, id)
+	if len(o.finishedTurns) > 64 {
+		o.finishedTurns = o.finishedTurns[len(o.finishedTurns)-64:]
+	}
 	if o.reducerTurnID == id && o.turnID != "" {
 		if o.completed == nil {
 			o.completed = make(map[string]string)
@@ -137,10 +143,6 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 			delete(o.completed, o.completedOrder[0])
 			delete(o.completedDetails, o.completedOrder[0])
 			o.completedOrder = o.completedOrder[1:]
-		}
-		o.finishedTurns = append(o.finishedTurns, id)
-		if len(o.finishedTurns) > 64 {
-			o.finishedTurns = o.finishedTurns[len(o.finishedTurns)-64:]
 		}
 		o.settleTurn()
 	}

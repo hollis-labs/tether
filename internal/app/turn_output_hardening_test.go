@@ -314,3 +314,27 @@ func TestTurnOutputEventRetryRetainsSingleStagedBody(t *testing.T) {
 		}
 	}
 }
+
+func TestACPCompletedOutOfOrderTurnsRejectLateFrames(t *testing.T) {
+	_, output := outputHarness(t, nil)
+	for _, id := range []string{"first", "second"} {
+		output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: id})
+	}
+	for _, id := range []string{"first", "second"} {
+		output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: id})
+	}
+	if id, _ := output.CurrentTurn(); id != "" {
+		t.Fatalf("completed turn retained %q", id)
+	}
+	for _, kind := range []runtimeevents.EventKind{runtimeevents.KindTurnStarted, runtimeevents.KindAgentDelta, runtimeevents.KindTurnCompleted} {
+		output.observeRuntime(runtimeevents.Event{Kind: kind, TurnID: "first", Payload: []byte(`{"text":"late"}`)})
+		if id, _ := output.CurrentTurn(); id != "" {
+			t.Fatalf("late %s reopened phantom marker %q", kind, id)
+		}
+	}
+	// The guard applies only to completed turns; a new turn still opens.
+	output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "third"})
+	if id, _ := output.CurrentTurn(); id == "" {
+		t.Fatal("new turn blocked by completion guard")
+	}
+}
