@@ -102,3 +102,30 @@ func TestAFailedSubprocessTurnIsNotRetried(t *testing.T) {
 		t.Fatalf("reply = %+v, want delivered with reason %s after one attempt", got, ReplyReasonTurnFailed)
 	}
 }
+
+// A CLI that is launched and then refuses the turn for want of a login exits
+// non-zero, and Tether's turn feed still shows a turn (a synthesized terminal is
+// emitted on every subprocess exit). The model never saw the reply, so it must be
+// retried and end undeliverable, never settled as delivered with a failed turn.
+func TestACLIThatRefusesTheTurnForWantOfALoginIsRetriedNotMarkedDelivered(t *testing.T) {
+	oldBackoff := replySubmitBackoff
+	replySubmitBackoff = 5 * time.Millisecond
+	t.Cleanup(func() { replySubmitBackoff = oldBackoff }) // registered first, so it runs after the dispatcher stops
+	svc, id, fake := replyLaunch(t, runtimes.Antigravity, "subprocess",
+		providertest.Script(providertest.Stderr("not authenticated: no stored credentials found"), providertest.Exit(1)).Always())
+	if err := svc.StartRoutingReplies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	parent := publishRoutedFrom(t, svc, id)
+	receipt, err := replyAs(svc, parent.ID, "do the thing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := waitTerminal(t, svc, receipt.ReplyID)
+	if got.State != store.RoutingReplyUndeliverable || got.Reason != ReplyReasonSubmitFailed || got.Attempts != replyMaxAttempts {
+		t.Fatalf("reply = %+v, want undeliverable/%s after %d attempts", got, ReplyReasonSubmitFailed, replyMaxAttempts)
+	}
+	if n := len(fake.Calls()); n != replyMaxAttempts {
+		t.Fatalf("the CLI was invoked %d times, want %d", n, replyMaxAttempts)
+	}
+}

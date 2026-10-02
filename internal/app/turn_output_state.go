@@ -115,6 +115,7 @@ func (o *sessionTurnOutput) ensureTurn() {
 // bindTurn associates a raw runtime turn with a stable submission snapshot.
 // Called with mu held; native providers bind through the NewTurnID hook.
 func (o *sessionTurnOutput) bindTurn(id string) {
+	o.noteTurnActivity()
 	if o.reducerTurnID != "" && o.reducerTurnID != id {
 		o.settleTurn()
 	}
@@ -126,6 +127,7 @@ func (o *sessionTurnOutput) bindTurn(id string) {
 // completeTurn follows Output processing, including an empty final, before the
 // synchronous reader callback returns. Failed submissions use settleTurn.
 func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded bool) {
+	o.noteTurnActivity()
 	id := output.TurnID
 	// Reducer completion is authoritative even when out-of-order output does
 	// not complete our current marker. Late frames for that turn stay closed.
@@ -193,11 +195,31 @@ func runtimeTookNoTurn(err error) bool {
 		errors.As(err, &start) || errors.As(err, &sandbox)
 }
 
+// noteTurnActivity records, with mu held, that the turn feed showed the runtime
+// doing something with a turn: it opened or bound one, finished one, or reported
+// a terminal (even one dropped as ambiguous). trackTurnSubmissionContext compares
+// the count at entry and at exit.
+func (o *sessionTurnOutput) noteTurnActivity() { o.activity++ }
+
+// tookTurn reports, with mu held, whether the turn feed shows the runtime took a
+// turn since activity was read at a submission's entry: the submission's marker
+// finished, a terminal is retained, or any turn event was observed. The feed is
+// per session and a retained terminal carries no turn id, so overlapping or
+// steering submissions cannot be told apart and another submission's activity
+// counts too: overlap errs toward "the turn ran", i.e. toward not repeating a
+// reply.
+func (o *sessionTurnOutput) tookTurn(marker string, activity uint64) bool {
+	_, finished := o.completed[marker]
+	return finished || o.unboundTerminal != nil || o.activity != activity
+}
+
 // Publish a provisional marker before calling the runtime: it may synchronously
 // emit its final output during submit. A successful return never resurrects it.
 // Failed steering cannot settle an existing turn or a later turn's marker. A
-// failure that comes back after the turn this submission opened was accepted or
-// finished is a turnRanError.
+// failure that comes back after the turn feed showed the runtime take a turn is a
+// turnRanError (see tookTurn), unless the failure itself says the runtime took
+// none (runtimeTookNoTurn). The evidence is read before the failure path below
+// discards the retained terminal and settles the marker.
 func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 	return s.trackTurnSubmissionContext(context.Background(), id, submit)
 }
@@ -218,9 +240,6 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		return err
 	}
 	output.mu.Lock()
-	// ensureTurn no longer reports whether it opened the marker: this submission did
-	// if none existed.
-	created := output.turnID == ""
 	output.ensureTurn()
 	// An ID-less terminal retained during another pending submission cannot
 	// establish which concurrent submission ran. Do not lend it to steering.
@@ -231,6 +250,7 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 	output.submissions++
 	done := output.turnDone
 	marker := output.turnID
+	activity := output.activity
 	output.mu.Unlock()
 	unlock()
 	err = ctx.Err()
@@ -238,11 +258,7 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		err = submit()
 	}
 	output.mu.Lock()
-	ran := false
-	if err != nil && created {
-		_, finished := output.completed[marker]
-		ran = finished || (output.turnDone == done && output.accepted)
-	}
+	ran := err != nil && output.tookTurn(marker, activity) && !runtimeTookNoTurn(err)
 	if output.turnDone == done {
 		output.submissions--
 		if err == nil {
@@ -277,6 +293,7 @@ type emptyTurnTerminal struct {
 // response. Preserve empty-turn settlement; resolving that ambiguity requires
 // an upstream explicit begin/turn ID, rather than guessing from timing.
 func (o *sessionTurnOutput) emptyTerminal(kind turnoutput.Kind, stopReason string) {
+	o.noteTurnActivity()
 	if o.turnID == "" || o.reducerTurnID != "" || o.unboundAmbiguous {
 		return
 	}

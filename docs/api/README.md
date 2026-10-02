@@ -1685,8 +1685,9 @@ records it and refuses nothing.
   it was asked to resume was gone (`provider_session_lost`). Those outrank any
   sign that the turn started: a CLI that was launched and then refused the turn
   still opened Tether's turn marker, and the model never saw the reply. Once
-  Tether's turn feed has seen the runtime take the turn (output began or the turn
-  finished) and none of those applies, a later failure is reported and never
+  Tether's turn feed has seen the runtime take the turn (a turn began or finished
+  or a terminal arrived while the reply was being submitted) and none of those
+  applies, a later failure is reported and never
   repeated: a subprocess runtime (`codex exec`, `claude -p`, `opencode run`,
   `agy`) blocks for the whole turn and returns the process's failure afterwards,
   and the reply is then `delivered` with `reason: "turn_failed"`. A process exit

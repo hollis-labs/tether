@@ -2,21 +2,25 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-providers/provider"
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/go-runner/runner"
 
 	"github.com/hollis-labs/tether/internal/store"
 )
 
 // trackTurnSubmission marks a failure as having happened after the turn ran, and
-// the reply dispatcher relies on that to never run a reply twice. Only a
-// submission that opened the turn can be marked, and only once the turn produced
-// output or finished: a rejection that did nothing, or a failed attempt to steer
-// a turn some other submission owns, must stay retryable.
+// the reply dispatcher relies on that to never run a reply twice. The evidence is
+// the turn feed: activity since the submission began, a finished marker, or a
+// retained terminal. It is read before the failure path discards the retained
+// terminal and settles the marker. A rejection that did nothing, or an attempt to
+// steer a turn that was already running, must stay retryable.
 func TestOnlyAnErrorAfterTheTurnRanIsMarkedAsHavingRun(t *testing.T) {
 	failure := errors.New("exit status 1")
 	cases := []struct {
@@ -36,10 +40,16 @@ func TestOnlyAnErrorAfterTheTurnRanIsMarkedAsHavingRun(t *testing.T) {
 				return failure
 			})
 		}, true},
+		{"an empty terminal arrived and is retained, then the runtime failed", func(svc *Service, output *sessionTurnOutput) error {
+			return svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Done{})
+				return failure
+			})
+		}, true},
 		{"the runtime rejected the turn before it did anything", func(svc *Service, _ *sessionTurnOutput) error {
 			return svc.trackTurnSubmission("s1", func() error { return failure })
 		}, false},
-		{"steering a turn another submission opened was rejected", func(svc *Service, output *sessionTurnOutput) error {
+		{"steering a turn that was already running was rejected", func(svc *Service, output *sessionTurnOutput) error {
 			if err := svc.trackTurnSubmission("s1", func() error {
 				output.observeProvider(gopevents.Delta{Text: "working"})
 				return nil
@@ -60,6 +70,37 @@ func TestOnlyAnErrorAfterTheTurnRanIsMarkedAsHavingRun(t *testing.T) {
 			var ran *turnRanError
 			if got := errors.As(err, &ran); got != tc.want {
 				t.Fatalf("marked as having run = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A launched subprocess emits a synthesized terminal on every exit, so the feed
+// shows activity even when the CLI refused the turn. A failure that says the
+// runtime took no turn is never marked as having run, whatever the feed shows:
+// rejections (a turn in flight, a session that is gone), a process that would not
+// start or be sandboxed, no login, a lost resume session.
+func TestAFailureThatSaysNoTurnWasTakenIsNeverMarkedAsHavingRunWhateverTheFeedShows(t *testing.T) {
+	exit := func() error { return &runner.ExitError{Code: 1} }
+	for name, failure := range map[string]error{
+		"a turn already in flight":       fmt.Errorf("%w: busy", agentsessions.ErrTurnInFlight),
+		"a session that went away":       fmt.Errorf("%w: gone", agentsessions.ErrSessionNotRunning),
+		"a lost resume session":          &agentsessions.SessionLostError{RequestedID: "gone", Err: exit()},
+		"no login":                       fmt.Errorf("agentsessions: %w: %w", provider.ErrProviderNotAuthenticated, exit()),
+		"a process that would not start": &runner.StartError{Err: errors.New("fork/exec: no such file")},
+		"a sandbox that failed":          &runner.SandboxError{Err: errors.New("sandbox denied")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, output := outputHarness(t, nil)
+			svc.turnOutputs.Store("s1", output)
+			err := svc.trackTurnSubmission("s1", func() error {
+				output.observeProvider(gopevents.Delta{Text: "starting"}) // the feed shows a turn
+				output.observeProvider(gopevents.Done{})                  // and the synthesized terminal
+				return failure
+			})
+			var ran *turnRanError
+			if !errors.Is(err, failure) || errors.As(err, &ran) {
+				t.Fatalf("err = %v (marked as having run: %v)", err, errors.As(err, &ran))
 			}
 		})
 	}
