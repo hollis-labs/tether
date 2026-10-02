@@ -82,6 +82,15 @@ func (s *Service) cancelTurnAndWait(ctx context.Context, sessionID, actor string
 			return &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
 		}
 		if !state.TurnAccepted(intended) {
+			// The reader can complete the turn between the snapshot and the
+			// acceptance check; completion does not take the submission gate.
+			current, _ = state.CurrentTurn()
+			if current == "" {
+				return &TurnInterruptRefusal{Reason: TurnInterruptNoTurn, SessionID: sessionID, TurnID: intended}
+			}
+			if current != intended {
+				return &TurnInterruptRefusal{Reason: TurnInterruptSuperseded, SessionID: sessionID, TurnID: intended}
+			}
 			return &TurnInterruptRefusal{Reason: TurnInterruptNotStarted, SessionID: sessionID, TurnID: intended}
 		}
 		done = ch

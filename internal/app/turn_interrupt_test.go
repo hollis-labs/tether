@@ -270,6 +270,29 @@ func TestCancelTurnAndWaitRejectsDifferentACPOutput(t *testing.T) {
 	requireRefusal(t, err, TurnInterruptSuperseded)
 }
 
+type completingAcceptanceState struct {
+	TurnOutputState
+	finish func()
+}
+
+func (s completingAcceptanceState) TurnAccepted(id string) bool {
+	s.finish()
+	return s.TurnOutputState.TurnAccepted(id)
+}
+
+func TestCancelTurnAndWaitCompletionDuringAcceptanceCheck(t *testing.T) {
+	var calls atomic.Int32
+	svc, output, _ := interruptHarness(t, func(context.Context) error { calls.Add(1); return nil })
+	output.observeProvider(gopevents.Delta{Text: "working"})
+	intended, _ := output.CurrentTurn()
+	state := completingAcceptanceState{TurnOutputState: output, finish: func() { output.observeProvider(gopevents.Done{}) }}
+	_, err := svc.cancelTurnAndWait(context.Background(), "s1", "actor", state, intended)
+	requireRefusal(t, err, TurnInterruptNoTurn)
+	if calls.Load() != 0 {
+		t.Fatal("completed turn reached runtime cancellation")
+	}
+}
+
 func TestCancelTurnAndWaitAuditFailurePreventsCancel(t *testing.T) {
 	var calls atomic.Int32
 	svc, output, _ := interruptHarness(t, func(context.Context) error { calls.Add(1); return nil })
