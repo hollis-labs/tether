@@ -1099,10 +1099,13 @@ RFC3339 bounds. Returns `{groups, truncated, window:"retained_events"}`. Groups
 contain tool/upstream/outcome, call/byte counters, `metadata_samples` and
 `duration`/`gateway`/`forward` histograms (`count`, `sum_ms`, cumulative buckets).
 Buckets end at 5/25/100/500/1000/5000 ms and infinity (`upper_ms:null`). A maximum
-of 1,000 groups is returned in tool/upstream/outcome order; narrow filters when
+of 1,000 groups is returned by descending call count, then tool/upstream/outcome
+to break ties; narrow filters when
 `truncated` is true. Invalid selectors return 400 `invalid_request`, storage
 failures 500 `internal_error`. Starts are excluded, and restart preserves
-counts until the existing event-retention sweep removes old rows.
+counts until the existing event-retention sweep removes old rows. This query
+is global/unscoped across all callers, without identity filtering, and scans
+retained completed-call events; a rollup is a later option for larger histories.
 
 MCP: `tether_tool_metrics`. CLI: `tether events tool-metrics --json`. See
 [tool-call telemetry](../mcp.md#tool-call-telemetry-v2) for metadata/privacy and
