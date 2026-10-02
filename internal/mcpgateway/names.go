@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// NameFinding reports an authored wire-name issue without rewriting the name.
+// NameFinding reports an authored tool declaration issue without rewriting it.
 type NameFinding struct {
 	Origin  string `json:"origin"`
 	Name    string `json:"name"`
@@ -64,6 +66,27 @@ func LintName(origin, name string) []NameFinding {
 	}
 	if !strings.HasPrefix(name, origin+"_") {
 		add("origin_prefix", fmt.Sprintf("final name should identify origin %q with %q; declare tool_prefix if needed", origin, origin+"_"))
+	}
+	return out
+}
+
+var disabledDescription = regexp.MustCompile(`(?i)^disabled(?:\s|:|$)`)
+
+// LintTool reports metadata issues. It never infers behavior or hides a tool;
+// descriptions and annotation hints remain the upstream's authored values.
+func LintTool(origin string, tool *mcpsdk.Tool) []NameFinding {
+	out := LintName(origin, tool.Name)
+	add := func(code, message string) {
+		out = append(out, NameFinding{Origin: origin, Name: tool.Name, Code: code, Message: message})
+	}
+	if tool.Annotations == nil {
+		add("missing_annotations", "upstream supplied no annotations; tool behavior is unassessed, no safety label inferred")
+	}
+	if utf8.RuneCountInString(tool.Description) > 2048 {
+		add("description_length", "description exceeds 2048 characters; some clients truncate it")
+	}
+	if disabledDescription.MatchString(strings.TrimSpace(tool.Description)) {
+		add("disabled_description", "listed tool description begins with Disabled; upstream must reconcile its declaration, gateway does not infer availability from prose")
 	}
 	return out
 }

@@ -107,7 +107,7 @@ Exit code:
 
 func init() {
 	doctorCmd.Flags().Bool("json", false, "print JSON array of check results")
-	doctorCmd.Flags().Bool("mcp-live", false, "spawn configured MCP upstreams for a bounded initialize/tools/list-only naming probe (no tool calls; may resolve helper credentials)")
+	doctorCmd.Flags().Bool("mcp-live", false, "spawn configured MCP upstreams for a bounded initialize/tools/list-only name/metadata probe (no tool calls; may resolve helper credentials)")
 	doctorCmd.Flags().StringArrayVar(&doctorProtect, "protect-path", nil, "protected paths for live MCP probe confinement (repeatable, same as tether mcp)")
 }
 
@@ -542,7 +542,7 @@ func checkMCPNamingConfig(root string) []checkResult {
 		}
 	}
 	if len(out) == 0 {
-		out = append(out, ok("mcp-naming", "catalog origin/prefix declarations checked; live collision/name checks require --mcp-live"))
+		out = append(out, ok("mcp-naming", "catalog origin/prefix declarations checked; live collision/name/metadata checks require --mcp-live"))
 	}
 	return out
 }
@@ -564,15 +564,27 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 		out = append(out, fail("mcp-live-names", err.Error(), "fix the named origin/tool or declare tool_prefix on one upstream"))
 	}
 	for _, finding := range status.Lint {
-		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, finding.Name+": "+finding.Message, "fix the upstream name or declared tool_prefix; names are not rewritten"))
+		remedy := "fix the upstream name or declared tool_prefix; names are not rewritten"
+		switch finding.Code {
+		case "missing_annotations", "description_length", "disabled_description":
+			remedy = "fix the upstream tool declaration; annotations/descriptions pass through unchanged"
+		}
+		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, finding.Name+": "+finding.Message, remedy))
 	}
 	for _, origin := range status.Origins {
 		if origin.Status != "connected" {
-			out = append(out, warn("mcp-live:"+origin.ID, "upstream "+origin.Status+"; tools/list discovery incomplete", "restore upstream availability or confinement configuration"))
+			message := "upstream " + origin.Status + "; tools/list discovery incomplete"
+			if !origin.InventoryExamined {
+				message += "; inventory unexamined"
+			}
+			if origin.Error != "" {
+				message += ": " + origin.Error
+			}
+			out = append(out, warn("mcp-live:"+origin.ID, message, "restore upstream availability or confinement configuration"))
 		}
 	}
 	if len(out) == 0 {
-		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no naming issues"))
+		out = append(out, ok("mcp-live-names", "bounded live tools/list probe found no name or metadata issues"))
 	}
 	return out
 }
