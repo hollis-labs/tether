@@ -11,9 +11,12 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 var (
+	launchRoute        string
+	launchRouteKinds   []string
 	launchID           string
 	launchWait         bool
 	launchAgentFile    string
@@ -33,6 +36,10 @@ var launchCmd = &cobra.Command{
 	Use:   "launch",
 	Short: "Launch a session from a launch profile",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		route, err := launchRouteFromFlags(cmd)
+		if err != nil {
+			return err
+		}
 		c, err := newDaemonClient(catalogPath)
 		if err != nil {
 			return err
@@ -58,9 +65,10 @@ var launchCmd = &cobra.Command{
 		}
 
 		var res api.LaunchResponse
-		if launchIdemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
+		if route != nil || launchIdemKey != "" || launchAgentFile != "" || launchAgentInline != "" || launchBootProfile != "" || launchOverride != "" || injection != "" || launchBootPromptOR != "" || promptAppend != "" {
 			res, err = c.LaunchWithInput(ctx, api.LaunchRequest{
 				Launch:          launchID,
+				Route:           route,
 				BootPrompt:      launchBootPromptOR,
 				AgentFile:       launchAgentFile,
 				AgentInline:     launchAgentInline,
@@ -104,6 +112,8 @@ var launchCmd = &cobra.Command{
 }
 
 func init() {
+	launchCmd.Flags().StringVar(&launchRoute, "route", "", "publish selected turn kinds into this channel (off by default)")
+	launchCmd.Flags().StringSliceVar(&launchRouteKinds, "route-kinds", nil, "routed kinds: final,question,approval,failure (requires --route; default all four)")
 	launchCmd.Flags().StringVar(&launchID, "launch", "", "launch ID (required)")
 	launchCmd.Flags().BoolVar(&launchWait, "wait", false, "wait for process to exit")
 	launchCmd.Flags().StringVar(&launchAgentFile, "agent-file", "", "v005-08: path to agent YAML; field-merged over the catalog agent")
@@ -118,4 +128,14 @@ func init() {
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990)")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
 	_ = launchCmd.MarkFlagRequired("launch")
+}
+
+func launchRouteFromFlags(cmd *cobra.Command) (*launchprofile.Route, error) {
+	if !cmd.Flags().Changed("route") {
+		if cmd.Flags().Changed("route-kinds") {
+			return nil, &launchprofile.InvalidRouteError{Field: "channel", Value: "--route-kinds requires --route"}
+		}
+		return nil, nil
+	}
+	return launchprofile.ResolveRoute(&launchprofile.Route{Channel: launchRoute, Kinds: launchRouteKinds})
 }

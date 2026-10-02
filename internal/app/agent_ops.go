@@ -16,6 +16,7 @@ import (
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/skills"
 )
 
@@ -35,6 +36,7 @@ import (
 // behavior should populate LaunchID + BootPromptOverride and leave the new
 // fields zero.
 type CreateSessionInput struct {
+	Route *launchprofile.Route
 	// LaunchID resolves the base launch profile from the catalog. Required.
 	LaunchID string
 
@@ -59,6 +61,7 @@ type CreateSessionInput struct {
 	// Allowed fields:
 	//   system_prompt: string  — replaces the composed boot prompt
 	//   env:           {KEY: VALUE, ...} — merged onto plan.Env (Env mode)
+	//   route:         {channel, kinds} — replaces the route block
 	Override string
 
 	// Injection is a JSON-encoded config.LaunchInjection: caller-provided
@@ -93,8 +96,9 @@ type CreateSessionInput struct {
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
 // Defined as a named type so the JSON contract is auditable in one place.
 type LaunchOverride struct {
-	SystemPrompt string            `json:"system_prompt,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
+	Route        *launchprofile.Route `json:"route,omitempty"`
+	SystemPrompt string               `json:"system_prompt,omitempty"`
+	Env          map[string]string    `json:"env,omitempty"`
 }
 
 // applyAgentOps mutates the resolved launch plan in place with the v005-08
@@ -130,9 +134,20 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 
+	if effectiveAgent.Route != s.Catalog.Agents[plan.LogicalAgentID].Route {
+		plan.Route = effectiveAgent.Route
+	}
 	composedPrompt := s.composeBootPrompt(plan, effectiveAgent)
 
 	composedPrompt, err = applyOverride(plan, composedPrompt, in.Override)
+	if err != nil {
+		return err
+	}
+
+	if in.Route != nil {
+		plan.Route = in.Route
+	}
+	plan.Route, err = launchprofile.ResolveRoute(plan.Route)
 	if err != nil {
 		return err
 	}
@@ -339,6 +354,9 @@ func applyOverride(plan *launch.Plan, composedPrompt, overrideJSON string) (stri
 	if err := json.Unmarshal([]byte(overrideJSON), &ov); err != nil {
 		return "", fmt.Errorf("override: parse: %w", err)
 	}
+	if ov.Route != nil {
+		plan.Route = ov.Route
+	}
 	if ov.SystemPrompt != "" {
 		composedPrompt = ov.SystemPrompt
 	}
@@ -485,6 +503,9 @@ func (s *Service) loadEffectiveSkills(ids []string) ([]skills.Skill, error) {
 // rather than concatenate — concatenation surprises far more often than it
 // helps.
 func mergeAgent(dst *config.Agent, src config.Agent) {
+	if src.Route != nil {
+		dst.Route = src.Route
+	}
 	if src.ID != "" {
 		dst.ID = src.ID
 	}
