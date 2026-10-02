@@ -1,3 +1,7 @@
+// Package proxyevents owns proxy-event queries, ingestion and forwarding.
+// Its storage-shaped ports are an interim composition seam accepted for
+// CW-20261001-0546 stage 2; stage 6 replaces them when app.Service.Store
+// becomes private. Public results are application-owned contracts.
 package proxyevents
 
 import (

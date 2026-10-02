@@ -393,7 +393,9 @@ func forwardProxyEventsToDaemon(ctx context.Context, bus events.Bus, listenAddr,
 }
 
 func forwardProxyEventsWithClient(ctx context.Context, bus events.Bus, dc *client.Client, sinceSeq int64) {
-	proxyevents.Forward(ctx, bus, dc.IngestProxyEvent, sinceSeq)
+	proxyevents.Forward(ctx, bus, func(ctx context.Context, req proxyevents.ProxyEventIngestRequest) error {
+		return dc.IngestProxyEvent(ctx, api.ProxyEventIngestRequest(req))
+	}, sinceSeq)
 }
 
 func splitScopes(s string) []string {

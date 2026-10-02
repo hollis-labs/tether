@@ -11,8 +11,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
+)
+
+const (
+	maxProxyEventIDBytes = proxyevents.MaxIDBytes
+	maxProxyEventFPBytes = proxyevents.MaxFPBytes
 )
 
 // recordingBus is an events.Bus that remembers what was published.
@@ -246,5 +252,22 @@ func TestTruncateProxyEventError(t *testing.T) {
 		if !strings.HasSuffix(got, "…[truncated]") {
 			t.Errorf("%s: result does not end with the truncated marker", name)
 		}
+	}
+}
+
+func TestIngestProxyEvent_NonObjectJSONPreservesHTTPError(t *testing.T) {
+	for _, tc := range []struct{ body, kind string }{{"[1,2]", "array"}, {"5", "number"}, {"true", "bool"}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			rows := &obsProxyEventStore{}
+			rr := httptest.NewRecorder()
+			NewHandler(Deps{ProxyEvents: rows}).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/proxy/events", strings.NewReader(tc.body)))
+			want := `{"error":{"code":"bad_request","message":"invalid request body: json: cannot unmarshal ` + tc.kind + ` into Go value of type api.ProxyEventIngestRequest"}}` + "\n"
+			if rr.Code != http.StatusBadRequest || rr.Body.String() != want {
+				t.Fatalf("status/body = %d / %q, want 400 / %q", rr.Code, rr.Body.String(), want)
+			}
+			if len(rows.events) != 0 {
+				t.Fatal("malformed request persisted an event")
+			}
+		})
 	}
 }

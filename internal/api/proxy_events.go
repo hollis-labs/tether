@@ -17,14 +17,12 @@ type ProxyEventStore = proxyevents.Store
 // ProxyEventDTO is an application-owned wire contract, not a storage-row alias.
 type ProxyEventDTO = proxyevents.ProxyEventDTO
 type ProxyEventListResponse = proxyevents.ProxyEventListResponse
-type ProxyEventIngestRequest = proxyevents.ProxyEventIngestRequest
+type ProxyEventIngestRequest proxyevents.ProxyEventIngestRequest
 
 const (
 	ProxyEventPhaseStart    = proxyevents.ProxyEventPhaseStart
 	ProxyEventPhaseEnd      = proxyevents.ProxyEventPhaseEnd
 	maxProxyEventBodyBytes  = 64 << 10
-	maxProxyEventIDBytes    = proxyevents.MaxIDBytes
-	maxProxyEventFPBytes    = proxyevents.MaxFPBytes
 	MaxProxyEventErrorBytes = proxyevents.MaxProxyEventErrorBytes
 )
 
@@ -107,7 +105,7 @@ func (s *Server) handleIngestProxyEvent(w http.ResponseWriter, r *http.Request) 
 		sessionExists = func(id string) error { _, err := s.Service.GetSession(id); return err }
 	}
 	operation := proxyevents.New(s.ProxyEvents, s.Bus, sessionExists)
-	err := operation.Ingest(r.Context(), req, func() callcontext.Snapshot { return ResolveCallerContext(r.Context(), s.Service, s.Registry) })
+	err := operation.Ingest(r.Context(), proxyevents.ProxyEventIngestRequest(req), func() callcontext.Snapshot { return ResolveCallerContext(r.Context(), s.Service, s.Registry) })
 	if err != nil {
 		var failure *proxyevents.Error
 		if errors.As(err, &failure) {
