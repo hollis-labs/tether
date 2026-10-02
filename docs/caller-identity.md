@@ -94,7 +94,7 @@ fails closed. Credentials travel as an Authorization header, including streams.
 Authenticated clients refuse redirects to another origin. Legacy `mcp --token`
 and `TETHER_MCP_TOKEN` are only adapter presence checks, not daemon credentials.
 
-Each launched session in observe/enforce receives a fresh session principal and
+A normal launch in observe/enforce receives a fresh session principal and
 `tth_` credential. A verified parent is recorded as its creator; worker scopes
 are intersected with the parent's grants, and the address is that session's own
 `msg://session/local/<id>`. Anonymous observe-mode launches have no verified
@@ -110,6 +110,10 @@ launch attempts cannot mint competing credentials. A launch that fails after min
 revokes only its own token; terminal transitions revoke all of the session's tokens.
 A resumed session has a new session id and token. Identity-off launches mint no
 principal; their MCP adapter retains the legacy nonsecret presence marker.
+Observe-mode mint failures warn and continue anonymously, with inherited bearer
+credentials cleared in both runtime and MCP environments. Enforce-mode mint
+failures stop the launch. Preparation is serialized per session, including
+degraded launches, so concurrent attempts cannot overwrite the winning boot config.
 Existing running sessions are not retrofitted.
 
 The client library's credential options have their own task/PR and require a

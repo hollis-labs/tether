@@ -32,3 +32,39 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 	}
 	return token, nil
 }
+
+// sessionLaunchGate serializes preparation and minting for one session, including
+// observe-mode launches that cannot mint. Entries disappear after the last waiter.
+type sessionLaunchGate struct {
+	slot chan struct{}
+	refs int
+}
+
+func (s *Service) lockSessionLaunch(ctx context.Context, id string) (func(), error) {
+	s.launchMu.Lock()
+	if s.launches == nil {
+		s.launches = make(map[string]*sessionLaunchGate)
+	}
+	gate := s.launches[id]
+	if gate == nil {
+		gate = &sessionLaunchGate{slot: make(chan struct{}, 1)}
+		s.launches[id] = gate
+	}
+	gate.refs++
+	s.launchMu.Unlock()
+	dropRef := func() {
+		s.launchMu.Lock()
+		defer s.launchMu.Unlock()
+		gate.refs--
+		if gate.refs == 0 {
+			delete(s.launches, id)
+		}
+	}
+	select {
+	case gate.slot <- struct{}{}:
+		return func() { <-gate.slot; dropRef() }, nil
+	case <-ctx.Done():
+		dropRef()
+		return nil, ctx.Err()
+	}
+}

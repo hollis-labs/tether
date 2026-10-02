@@ -229,3 +229,102 @@ func TestSessionCredentialConcurrentMintPreservesWinner(t *testing.T) {
 		t.Fatal("old attempt revoked replacement", err)
 	}
 }
+
+func TestSessionCredentialMintFailureAvailability(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, rt, id, ws := credentialLaunch(t)
+			t.Setenv("TETHER_TOKEN", "inherited-operator-secret")
+			svc.Catalog.Global.Identity.Mode = mode
+			_, err := svc.Store.DB().Exec(`CREATE TRIGGER test_mint_failure BEFORE INSERT ON principals WHEN NEW.kind = 'session' BEGIN SELECT RAISE(ABORT, 'test mint unavailable'); END;`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = svc.LaunchSession(id)
+			if mode == "enforce" {
+				if err == nil {
+					t.Fatal("enforce launch continued without credential")
+				}
+				if rt.options.Env != nil {
+					t.Fatal("enforce started runtime")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("observe mint failure stopped launch", err)
+			}
+			if !slices.Contains(rt.options.Env, "TETHER_TOKEN=") {
+				t.Fatal("inherited runtime credential not cleared")
+			}
+			for _, entry := range rt.options.Env {
+				if strings.HasPrefix(entry, "TETHER_TOKEN=") && entry != "TETHER_TOKEN=" {
+					t.Fatal("inherited runtime credential leaked")
+				}
+			}
+			var found bool
+			err = filepath.WalkDir(filepath.Join(ws, "boot"), func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() || d.Name() != ".mcp.json" {
+					return nil
+				}
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				var config struct {
+					Servers map[string]struct {
+						Env map[string]string `json:"env"`
+					} `json:"mcpServers"`
+				}
+				if err := json.Unmarshal(body, &config); err != nil {
+					return err
+				}
+				for _, server := range config.Servers {
+					if server.Env["TETHER_MCP_TOKEN"] == "tether-worker" {
+						found = true
+						if server.Env["TETHER_TOKEN"] != "" {
+							t.Fatal("inherited MCP credential leaked")
+						}
+					}
+				}
+				return nil
+			})
+			if err != nil || !found {
+				t.Fatal("anonymous MCP environment missing", err)
+			}
+		})
+	}
+}
+
+func TestSessionCredentialConcurrentLaunchKeepsWinner(t *testing.T) {
+	svc, rt, id, _ := credentialLaunch(t)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { <-start; _, err := svc.LaunchSession(id); results <- err }()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first != nil {
+		first, second = second, first
+	}
+	if first != nil || !errors.Is(second, ErrSessionNotCreated) {
+		t.Fatal("expected one launch and a lifecycle conflict", first, second)
+	}
+	var token string
+	for _, entry := range rt.options.Env {
+		if strings.HasPrefix(entry, "TETHER_TOKEN=") {
+			token = strings.TrimPrefix(entry, "TETHER_TOKEN=")
+		}
+	}
+	if _, err := identity.NewStore(svc.Store.DB()).Verify(context.Background(), token); err != nil {
+		t.Fatal("winning runtime token invalid", err)
+	}
+	svc.launchMu.Lock()
+	defer svc.launchMu.Unlock()
+	if len(svc.launches) != 0 {
+		t.Fatal("completed launch guard retained session")
+	}
+}

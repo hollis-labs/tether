@@ -214,6 +214,11 @@ func (s *Service) LaunchSession(sessionID string) (*Launched, error) {
 // LaunchSessionWithContext carries verified caller provenance into the child
 // principal. The raw credential never enters the durable launch plan.
 func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string) (*Launched, error) {
+	unlock, err := s.lockSessionLaunch(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	row, err := s.Store.GetSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -334,7 +339,11 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		if s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
+			return nil, err
+		}
+		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")
+		token = ""
 	}
 	launched := false
 	defer func() {
