@@ -1,12 +1,12 @@
 # Daemon MCP transport
 
-CW-20261001-0539 is being delivered in stages. Stage 1 supplies the shared
-upstream runtime, credential resolver and profile-aware SDK view construction.
-It does not mount an HTTP endpoint yet or change planted/interactive stdio
-forwarders. The approved design is Tesseract workspace item
+CW-20261001-0539 is being delivered in stages. Stages 1–2 supply the shared
+upstream runtime, credential resolver, profile-aware SDK views and daemon
+Streamable HTTP endpoints. Planted/interactive stdio forwarders retain their
+existing path until the later cutover. The approved design is Tesseract workspace item
 `01M3X329W5ZSBWR46169XNJ68G`, key `mcp_daemon_transport_design`.
 
-The daemon composition will own one `SharedUpstreams` instance. Each MCP view
+The daemon composition owns one lazily constructed `SharedUpstreams` instance. Each MCP view
 has its own native dispatch session and profile/mode policy while sharing every
 upstream connection. Closing a view closes its protocol/native sessions, never
 the shared pool. The existing SDK profile middleware enforces the same eligible
@@ -16,6 +16,56 @@ another upstream. The native adapter receives a scoped status source, so
 `tether_health` and gateway status/refresh disclose only that view's origins.
 Shared-pool errors scrub endpoint URLs, userinfo and query values before storage
 or logging, including literal URLs rather than only secret references.
+
+## Endpoints and admission
+
+`/mcp` and `/p/<profile>` are mounted alongside the existing daemon API on
+its configured listener. Unix sockets carry the same HTTP protocol; clients use
+`http://unix/mcp` with a UDS dialer. The synthetic `localhost` authority also
+works over UDS. TCP clients use the configured concrete host and port. Host
+validation accepts the configured authority and its loopback aliases; it never
+trusts forwarded-host headers. An Origin, if present, must be a single, non-null
+origin matching the request's scheme and authority. Foreign origins/hosts are
+refused before dispatch, and the SDK's localhost protection remains enabled.
+
+MCP requires a valid bearer even while the existing API remains in `observe`.
+Every POST/GET/DELETE re-verifies the supplied credential in the identity store;
+SDK method dispatch also verifies current authority. Missing/invalid/revoked
+credentials receive 401; an unavailable verifier receives 503; identity `off`
+disables this endpoint with 503. The endpoint never infers identity from flags,
+client info or claimed session headers. Non-loopback TCP requires `enforce` and
+a working verifier; the daemon checks both the configured address and actual
+bound address, including localhost resolution.
+
+Profiles may be selected by `/p/<id>`, query `profile` or `X-Tether-Profile`.
+Discovery mode uses query `discovery_mode` or `X-Tether-Discovery-Mode`.
+All supplied selectors must be valid; repeated selectors must agree. Empty,
+unknown or conflicting values refuse initialization. Query credentials are
+forbidden. Session defaults come from the launch snapshot, never daemon env.
+
+An MCP session ID is SDK transport state, distinct from a Tether session ID.
+It is bound to the verified principal, credential hash, scopes and resolved
+policy/profile/mode fingerprint. Another credential, even for the same
+principal, cannot use it. Profile, grant or mode changes require a new
+initialization; requests cannot silently widen an existing view. Native API
+clients carry the admitted credential and daemon-resolved caller context.
+
+The pool starts on the first admitted initialization with eligible upstreams,
+using the daemon lifetime. Native-only/zero-grant views spawn no upstreams.
+Views are bounded to 128 and SDK sessions expire after 15 minutes without new
+requests. A one-second recheck verifies stream credentials and current policy,
+closes revoked/terminal/changed sessions, and reclaims disconnected views.
+The SDK also enforces request-time binding; the recheck interval does not permit
+new calls with stale authority. Shutdown closes admission, views/streams and
+upstreams before HTTP/store drain. Spawn-time credential helpers use daemon
+cancellation. Invalid shared-runtime roots or credential references fail view
+construction with 503; existing API routes remain available.
+
+`internal/client.Client.ConnectMCP` reuses its frozen credential and HTTP/UDS
+dialer, with an SDK-owned stream lifetime. A missing socket, refused connection
+or dial timeout wraps `client.ErrDaemonUnreachable`. Auth/policy/protocol errors
+remain distinct. There is no local catalog/SQLite/upstream fallback, daemon
+auto-start or retry of an uncertain mutation.
 
 ## Principal grants
 
@@ -101,12 +151,6 @@ unchanged from today's proxies. Trusted forwarded caller attribution is later
 work, with explicit service authentication and per-call context.
 
 ## Remaining stages
-
-Stage 2 mounts `/mcp` and `/p/<profile>` over Streamable HTTP on the existing
-HTTP/UDS handler tree, with verified admission even while the existing API stays
-in observe mode. It binds transport session IDs to credential/view policy,
-checks loopback/Origin/Host rules, handles revocation and typed daemon-down
-errors, and proves identical HTTP/UDS surfaces against a disposable real daemon.
 
 Stage 3 completes refresh notification, shutdown/reconnect and stdio forwarding
 coverage. Production forwarder migration belongs to 0230/0254/0540. During

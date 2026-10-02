@@ -217,7 +217,14 @@ var daemonRunCmd = &cobra.Command{
 				return err
 			}
 		}
+		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities)
+		if err != nil {
+			_ = svc.Store.Close()
+			return err
+		}
 		server := &daemon.Server{
+			MCP:                      mcpHandler,
+			MCPShutdown:              mcpHandler.Close,
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,

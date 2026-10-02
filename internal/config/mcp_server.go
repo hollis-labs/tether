@@ -263,13 +263,24 @@ func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
 // material never reaches the catalog display and edit surfaces, which read the
 // unresolved file instead.
 func LoadMCPServers(catalogDir string) ([]MCPServerEntry, error) {
+	return LoadMCPServersContext(context.Background(), catalogDir)
+}
+
+// LoadMCPServersContext lets the daemon cancel spawn-time credential helpers
+// while its shared pool is being prepared. Legacy proxies keep the same loader.
+func LoadMCPServersContext(ctx context.Context, catalogDir string) ([]MCPServerEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := LoadMCPServerCatalog(catalogDir)
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
 	out := entries[:0]
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !entry.IsEnabled() {
 			continue
 		}

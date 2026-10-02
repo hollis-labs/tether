@@ -150,6 +150,10 @@ type Server struct {
 	// feature stays optional for local messaging").
 	A2A   http.Handler
 	Close func() error
+	// MCP is the injected daemon-owned Streamable HTTP/UDS gateway. Its
+	// lifecycle closes sessions/streams and upstreams before HTTP/store drain.
+	MCP         http.Handler
+	MCPShutdown func()
 
 	// WakeSweeper is optional; when set, Run starts a periodic background
 	// pass (wakeSweepInterval) retrying wake attempts the delivery core
@@ -267,6 +271,9 @@ func (s *Server) publishDaemon(kind, payloadJSON string) {
 // state. Listener errors (e.g., socket already bound) likewise abort
 // before the PID file is written.
 func (s *Server) Run(ctx context.Context) error {
+	if s.MCPShutdown != nil {
+		defer s.MCPShutdown()
+	}
 	if err := identity.ValidateBind(s.Config.ListenAddr, s.Config.IdentityMode); err != nil {
 		return err
 	}
@@ -283,6 +290,12 @@ func (s *Server) Run(ctx context.Context) error {
 	lis, err := Listener(s.Config.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("open listener %s: %w", s.Config.ListenAddr, err)
+	}
+	if s.MCP != nil {
+		if err := validateMCPListenerAddress(lis.Addr(), s.Config.IdentityMode, s.Identity != nil); err != nil {
+			_ = lis.Close()
+			return err
+		}
 	}
 
 	if err := WritePIDFile(s.Config.PIDFile, os.Getpid()); err != nil {
@@ -332,6 +345,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.publishDaemon(events.KindDaemonShutdownStarted, "")
+	if s.MCPShutdown != nil {
+		s.MCPShutdown()
+	}
 
 	// Graceful shutdown: stop accepting connections, bound by timeout.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout)
@@ -383,6 +399,10 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	router := http.NewServeMux()
 	router.HandleFunc("/health", s.handleHealth)
+	if s.MCP != nil {
+		router.Handle("/mcp", s.MCP)
+		router.Handle("/p/", s.MCP)
+	}
 	if s.A2A != nil {
 		// A totally separate handler tree from api.NewHandler -- A2A has
 		// its own wire format (JSON-RPC/well-known-card), not Tether's
