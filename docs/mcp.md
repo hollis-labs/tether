@@ -1597,13 +1597,19 @@ normal and `--proxy` mode.
 
 `tool_call_start` and `tool_call_end` are durable `events` payloads. Calls
 rejected by gateway policy or native scope validation still produce completed
-call observations. Records carry daemon-verified attribution (principal, agent,
-session and workstream), upstream `server`, `profile`, `discovery_mode`,
+call observations. Records carry daemon-resolved credential identity and verified
+session/agent/workstream attribution, upstream `server`, `profile`, `discovery_mode`,
 `args_bytes`, `result_bytes`, `error_class`, `error_truncated`, `trace_id`,
-`span_id`, `gateway_ms` and `forward_ms`. No argument/result values are retained;
-the argument fingerprint uses key names only. Configured credentials are
-scrubbed from error text before its 4 KiB storage limit and from caller-facing
-error text.
+`span_id`, `gateway_ms` and `forward_ms`. Argument/result payloads are not copied
+into telemetry; the argument fingerprint uses key names only. Stored error text
+can echo argument fragments. Configured credentials are scrubbed before its
+4 KiB limit and from caller-facing error text. Recorded tool names are capped
+at 256 UTF-8 bytes with a hash suffix; dispatch uses the original name.
+
+Daemon-resolved operator/service principal ID, kind and source remain recorded
+with `verified:false`; session, agent and workstream fields require verified
+session binding. Anonymous callers acquire no attribution. Strict `/mcp`
+admission rejects anonymous calls before observation.
 
 Byte sizes use canonical JSON; nil or empty arguments measure zero.
 `gateway_ms` measures pre/post-dispatch overhead, while `forward_ms` measures

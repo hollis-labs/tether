@@ -1181,8 +1181,10 @@ and provenance/forwarded-metadata contract.
 ### `GET /proxy/events`
 
 Rows include an `attribution` object and an optional `claimed_session_id`.
-`attribution.verified` describes a credential-derived session context;
-legacy/anonymous top-level session IDs remain claims. See the
+`attribution.verified` describes a credential-derived session context.
+Daemon-resolved operator/service principal identity remains present when
+`verified:false`; session/agent/workstream claims require verified binding.
+Legacy/anonymous top-level session IDs remain claims. See the
 [trusted session context contract](../trusted-session-context.md).
 
 Tool calls the MCP proxy has recorded, newest first. 404 when the daemon has no
