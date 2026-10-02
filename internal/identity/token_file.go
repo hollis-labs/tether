@@ -14,6 +14,35 @@ import (
 // ReadTokenFile never follows a symlink or blocks on a special file. It checks
 // the opened inode, rather than trusting a pathname check before open.
 func ReadTokenFile(path string) (string, error) {
+	return readTokenFile(path, 256, validToken)
+}
+
+// ReadBearerTokenFile reads an upstream-issued service credential using the
+// same opened-inode protections as Tether credentials. It accepts only an
+// opaque bearer value, never a header or a multiline secret.
+func ReadBearerTokenFile(path string) (string, error) {
+	return readTokenFile(path, 4096, validBearerToken)
+}
+
+func validBearerToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	padding := false
+	for _, c := range token {
+		if c == '=' {
+			padding = true
+			continue
+		}
+		allowed := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~+/", c)
+		if padding || !allowed {
+			return false
+		}
+	}
+	return token[0] != '='
+}
+
+func readTokenFile(path string, limit int64, validate func(string) bool) (string, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // G304: operator-selected path; opened inode must be owned, regular and 0600.
 	if err != nil {
 		return "", fmt.Errorf("open token file: %w", err)
@@ -27,12 +56,12 @@ func ReadTokenFile(path string) (string, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ok || int(owner.Uid) != os.Getuid() {
 		return "", fmt.Errorf("token file must be a regular file owned by this user with mode 0600")
 	}
-	body, err := io.ReadAll(io.LimitReader(f, 257))
+	body, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 	token := strings.TrimSpace(string(body))
-	if len(body) > 256 || !validToken(token) {
+	if int64(len(body)) > limit || !validate(token) {
 		return "", fmt.Errorf("token file has invalid content")
 	}
 	return token, nil
