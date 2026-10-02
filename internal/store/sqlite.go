@@ -18,6 +18,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
 // ErrSessionNotFound is returned by GetSession when no row matches the
@@ -26,7 +27,9 @@ import (
 var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
-	db *sql.DB
+	db            *sql.DB
+	channelAuthMu sync.RWMutex
+	channelAuth   channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
 	// fan-out instance on every call within a process so Subscribe/Send
 	// cross-talk works. See messaging_store.go.
