@@ -629,6 +629,10 @@ func (s *Service) interruptForReply(ctx context.Context, sessionID, actor string
 	switch {
 	case err == nil:
 		return replyInterruptCancelled, nil
+	// The session ended: even a typed refusal that also wraps this sentinel (an
+	// exit-flushed terminal) means the reply follows the ended-session path.
+	case errors.Is(err, agentsessions.ErrSessionNotRunning):
+		return replyInterruptNotRunning, nil
 	case errors.As(err, &refusal):
 		switch refusal.Reason {
 		case TurnInterruptNoTurn:
@@ -643,8 +647,6 @@ func (s *Service) interruptForReply(ctx context.Context, sessionID, actor string
 		return "", err
 	case errors.Is(err, agentsessions.ErrInterruptUnsupported):
 		return "", api.ErrReplyInterruptUnsupported
-	case errors.Is(err, agentsessions.ErrSessionNotRunning):
-		return replyInterruptNotRunning, nil
 	}
 	return "", err
 }

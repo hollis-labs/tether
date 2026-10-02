@@ -676,6 +676,18 @@ func TestInterruptWithNothingToCancelIsAPlainNextTurnDelivery(t *testing.T) {
 			h.waitState(receipt.ReplyID, store.RoutingReplyDelivered)
 		})
 	}
+	t.Run("a typed refusal that wraps the session-ended sentinel", func(t *testing.T) {
+		h := newReplyHarness(t)
+		// An exit-flushed terminal: the cancel may have been acknowledged, but the
+		// session is gone. Whatever typed shape carries it, it is not a refusal to
+		// accept the reply.
+		h.intr.err = fmt.Errorf("%w: %w", &TurnInterruptRefusal{Reason: "session_ended", SessionID: "s-gone"}, agentsessions.ErrSessionNotRunning)
+		receipt, err := h.reply(h.routed("s-gone").ID, "next", true)
+		if err != nil || receipt.Interrupt != "session_not_running" {
+			t.Fatalf("receipt %+v err %v", receipt, err)
+		}
+		h.waitState(receipt.ReplyID, store.RoutingReplyUndeliverable)
+	})
 	t.Run("the session already ended", func(t *testing.T) {
 		h := newReplyHarness(t)
 		h.intr.err = agentsessions.ErrSessionNotRunning
