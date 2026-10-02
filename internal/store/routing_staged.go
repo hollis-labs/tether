@@ -47,8 +47,6 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	env.CreatedAt = time.Now().UTC()
 	env.Kind = messaging.MsgKindNotice
 	env.To = messaging.Address{Kind: messaging.KindService, Authority: "local", ID: "turn-output"}
-	env.Channel = ""
-	env.DeliveredAt, env.ConsumedAt = nil, nil
 	meta, err := json.Marshal(env.Metadata)
 	if err != nil {
 		return messaging.Envelope{}, err

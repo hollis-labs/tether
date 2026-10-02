@@ -79,7 +79,7 @@ func TestLifecycleReportsBoundPersistence(t *testing.T) {
 		pub := &deadlineReportBus{Bus: svc.Bus}
 		svc.Bus = pub
 		report(svc)
-		if !pub.deadlinePublisher.deadline {
+		if !pub.deadline {
 			t.Fatal("lifecycle report used unbounded persistence")
 		}
 	}
