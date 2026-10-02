@@ -300,9 +300,12 @@ session. Omitted or null lists inherit: boot profile > project > launch >
 default. Empty lists replace lower-precedence lists just like nonempty lists.
 Tether's own native tools (`tether_*`) remain available.
 
-Catalog load and reload reject unknown, wrong-case, or disabled upstream names
-in declared grants, including shadowed declarations and agent environment
-settings. `tether doctor` reports a failing `catalog-mcp-grants` finding naming
+Daemon startup rejects unknown, wrong-case, or disabled upstream names in
+declared grants, including shadowed declarations and agent environment settings.
+Shared catalog loading remains available for inspection and repair. Launch
+resolution validates only its selected project, launch, and agent/provider chain;
+an invalid grant in another project does not block it. Reloaded invalid grants
+in the selected chain refuse that launch rather than use stale startup grants. `tether doctor` reports a failing `catalog-mcp-grants` finding naming
 the owner and bad entry. Fix the reference or enable that upstream under
 `mcp-servers/`; validation never starts it or resolves its secret references.
 Caller-supplied boot-profile and effective environment grants are also checked

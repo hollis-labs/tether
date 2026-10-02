@@ -78,3 +78,27 @@ func (c *Catalog) ValidateMCPGrants() error {
 	}
 	return fmt.Errorf("%w:\n%s", ErrInvalidMCPGrant, strings.Join(messages, "\n"))
 }
+
+// ValidateLaunchMCPGrants checks only owners in this launch's selected chain.
+// Startup and doctor use ValidateMCPGrants to report all catalog declarations.
+func (c *Catalog) ValidateLaunchMCPGrants(id string) error {
+	l, exists := c.Launches[id]
+	if !exists {
+		return nil
+	} // normal launch-reference validation reports this
+	p := c.Projects[l.Project]
+	a := c.Agents[l.Agent]
+	var issues []error
+	issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("launch %q mcp.servers", id), l.MCP.Servers))
+	issues = append(issues, c.ValidateMCPGrant(fmt.Sprintf("project %q mcp.servers", l.Project), p.MCP.Servers))
+	for owner, env := range map[string]map[string]string{
+		fmt.Sprintf("launch %q overrides.env.TETHER_MCP_SERVERS", id):                   l.Overrides.Env,
+		fmt.Sprintf("agent %q env.TETHER_MCP_SERVERS", l.Agent):                         a.Env,
+		fmt.Sprintf("agent %q provider %q env.TETHER_MCP_SERVERS", l.Agent, l.Provider): a.ProviderOverrides[l.Provider].Env,
+	} {
+		if value, set := env["TETHER_MCP_SERVERS"]; set {
+			issues = append(issues, c.ValidateMCPGrantEnv(owner, value))
+		}
+	}
+	return errors.Join(issues...)
+}

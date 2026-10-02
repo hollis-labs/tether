@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestLoadRejectsInvalidMCPGrants(t *testing.T) {
+func TestCatalogRejectsInvalidMCPGrantsWithoutBlockingLoad(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, tc := range []struct{ name, path, body, owner, bad string }{
 		{"typo", "projects/p.yaml", "id: p\nmcp:\n  servers: [torqe]\n", `project "p"`, "torqe"},
@@ -38,9 +38,13 @@ func TestLoadRejectsInvalidMCPGrants(t *testing.T) {
 			write("mcp-servers/disabled.yaml", "id: disabled\nenabled: false\n")
 			write(tc.path, tc.body)
 			for _, load := range []func(string) (*Catalog, error){Load, LoadLayered} {
-				_, err := load(root)
+				cat, err := load(root)
+				if err != nil {
+					t.Fatalf("shared load must allow inspection/repair: %v", err)
+				}
+				err = cat.ValidateMCPGrants()
 				if !errors.Is(err, ErrInvalidMCPGrant) || !strings.Contains(err.Error(), tc.owner) || !strings.Contains(err.Error(), tc.bad) {
-					t.Fatalf("load error: %v", err)
+					t.Fatalf("grant validation error: %v", err)
 				}
 			}
 			write(tc.path, strings.ReplaceAll(tc.body, tc.bad, "torque"))
@@ -93,7 +97,11 @@ func TestLayeredAgentMCPGrantValidation(t *testing.T) {
 	if _, err := Load(root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadLayered(root); !errors.Is(err, ErrInvalidMCPGrant) || !strings.Contains(err.Error(), `agent "user"`) {
+	cat, err := LoadLayered(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.ValidateMCPGrants(); !errors.Is(err, ErrInvalidMCPGrant) || !strings.Contains(err.Error(), `agent "user"`) {
 		t.Fatalf("layered grant error: %v", err)
 	}
 }

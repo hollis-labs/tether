@@ -128,3 +128,30 @@ func TestResolve_InvalidMCPGrantDoesNotFallBack(t *testing.T) {
 		t.Fatalf("must refuse an invalid reloaded grant, not fall back: %v", err)
 	}
 }
+
+func TestBadProjectGrantDoesNotBlockOtherLaunch(t *testing.T) {
+	svc, write := newLaunchCatalogService(t)
+	write("projects/A.yaml", "id: A\nmcp:\n  servers: [missing]\n")
+	write("launches/bad.yaml", "id: bad\nproject: A\nagent: a\nprovider: cli\n")
+	if _, err := svc.Resolve("first"); err != nil {
+		t.Fatalf("project B's clean chain must proceed: %v", err)
+	}
+	if _, err := svc.Resolve("bad"); !errors.Is(err, config.ErrInvalidMCPGrant) || !strings.Contains(err.Error(), `project "A"`) {
+		t.Fatalf("project A must refuse its invalid current grant: %v", err)
+	}
+	// The projects/resolve CLI uses ordinary New, so it must work too.
+	cli, err := New(svc.CatalogRoot)
+	if err != nil {
+		t.Fatalf("ordinary CLI service must remain usable: %v", err)
+	}
+	if err := cli.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Inspection still works, while an operator's explicit restart is loud.
+	if _, err := NewCatalogOnly(svc.CatalogRoot); err != nil {
+		t.Fatalf("read-only loading must work: %v", err)
+	}
+	if _, err := NewDaemon(svc.CatalogRoot); !errors.Is(err, config.ErrInvalidMCPGrant) {
+		t.Fatalf("startup must report invalid grants: %v", err)
+	}
+}

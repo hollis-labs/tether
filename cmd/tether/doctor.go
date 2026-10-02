@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -237,11 +236,11 @@ func checkSandboxProfiles(cat *config.Catalog) checkResult {
 func checkCatalog(catalogRoot string) (checkResult, *config.Catalog) {
 	cat, err := config.LoadLayered(catalogRoot)
 	if err != nil {
-		if errors.Is(err, config.ErrInvalidMCPGrant) {
-			return fail("catalog-mcp-grants", err.Error(), "fix the named grant or enable its upstream under mcp-servers/"), nil
-		}
 		return fail("catalog-present", fmt.Sprintf("load failed: %v", err),
 			"run: tether init"), nil
+	}
+	if err := cat.ValidateMCPGrants(); err != nil {
+		return fail("catalog-mcp-grants", err.Error(), "fix the named grant or enable its upstream under mcp-servers/"), nil
 	}
 	if err := cat.Validate(); err != nil {
 		return fail("catalog-valid", fmt.Sprintf("validation failed: %v", err),

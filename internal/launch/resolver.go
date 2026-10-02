@@ -36,13 +36,8 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 	agent := cat.Agents[l.Agent]
 	prov := cat.Providers[l.Provider]
 
-	for owner, ids := range map[string][]string{
-		fmt.Sprintf("project %q mcp.servers", l.Project): proj.MCP.Servers,
-		fmt.Sprintf("launch %q mcp.servers", l.ID):       l.MCP.Servers,
-	} {
-		if err := cat.ValidateMCPGrant(owner, ids); err != nil {
-			return nil, err
-		}
+	if err := cat.ValidateLaunchMCPGrants(in.LaunchID); err != nil {
+		return nil, err
 	}
 
 	var fragments []string

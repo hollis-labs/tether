@@ -114,9 +114,6 @@ func Load(catalogRoot string) (*Catalog, error) {
 	}
 	cat.Paths = layout
 
-	if err := cat.ValidateMCPGrants(); err != nil {
-		return nil, err
-	}
 	return cat, nil
 }
 
@@ -168,9 +165,6 @@ func LoadLayered(catalogRoot string) (*Catalog, error) {
 	}
 	for id, la := range layered.Agents {
 		cat.Agents[id] = la.Agent
-	}
-	if err := cat.ValidateMCPGrants(); err != nil {
-		return nil, err
 	}
 	return cat, nil
 }

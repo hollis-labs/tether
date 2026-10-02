@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 
@@ -94,14 +93,14 @@ func (s *Service) launchCatalog(launchID string) (*config.Catalog, error) {
 	}
 	fresh, err := config.LoadLayered(s.CatalogRoot)
 	if err != nil {
-		if errors.Is(err, config.ErrInvalidMCPGrant) {
-			return nil, err
-		}
 		log.Printf("app: launch %q: re-reading catalog launches failed, using the launches loaded at startup: %v", launchID, err)
 		if _, ok := s.Catalog.Launches[launchID]; !ok {
 			return nil, fmt.Errorf("launch %q %w in the launches loaded at startup, and re-reading the catalog failed: %w", launchID, launch.ErrLaunchNotFound, err)
 		}
 		return s.Catalog, nil
+	}
+	if err := fresh.ValidateLaunchMCPGrants(launchID); err != nil {
+		return nil, err
 	}
 	cat := *s.Catalog
 	cat.Launches = fresh.Launches
