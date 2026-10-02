@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
@@ -35,24 +36,64 @@ func serviceHTTPClientFactory(endpoint, tokenFile string) (func(map[string]strin
 	if !filepath.IsAbs(tokenFile) {
 		return nil, fmt.Errorf("upstream service credential path must be absolute")
 	}
-	origin, err := url.Parse(endpoint)
-	if err != nil || origin.Host == "" || origin.User != nil || (origin.Scheme != "http" && origin.Scheme != "https") {
-		return nil, fmt.Errorf("invalid upstream service credential endpoint")
-	}
 	token, err := identity.ReadBearerTokenFile(tokenFile)
 	if err != nil {
 		return nil, fmt.Errorf("read upstream service credential: %w", err)
+	}
+	return serviceHTTPClientFactoryForToken(endpoint, token, false)
+}
+
+func serviceHTTPClientFactoryForToken(endpoint, token string, sse bool) (func(map[string]string, int) *http.Client, error) {
+	origin, err := url.Parse(endpoint)
+	if err != nil || origin.Host == "" || origin.User != nil || (origin.Scheme != "http" && origin.Scheme != "https") {
+		return nil, fmt.Errorf("invalid upstream service credential endpoint")
 	}
 	return func(headers map[string]string, seconds int) *http.Client {
 		fixed := make(map[string]string, len(headers))
 		for name, value := range headers {
 			fixed[name] = value
 		}
-		client := &http.Client{Transport: &forwardedContextTransport{base: http.DefaultTransport, origin: origin, serviceToken: token, headers: fixed}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		base := http.DefaultTransport
+		if sse {
+			base = &sseLifetimeTransport{base: base}
+		}
+		client := &http.Client{Transport: &forwardedContextTransport{base: base, origin: origin, serviceToken: token, headers: fixed}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		if seconds > 0 {
 			client.Timeout = time.Duration(seconds) * time.Second
 		}
 		return client
+	}, nil
+}
+
+// daemonHTTPPolicies loads credentials only into a private daemon-owner copy.
+// The existing pool redaction paths then include the service secret alongside
+// ordinary upstream credentials, without altering the authored catalog.
+func daemonHTTPPolicies(entries []config.MCPServerEntry) ([]config.MCPServerEntry, func(config.MCPServerEntry) (func(map[string]string, int) *http.Client, error), error) {
+	private := append([]config.MCPServerEntry(nil), entries...)
+	builders := make(map[string]func(map[string]string, int) *http.Client)
+	for i, entry := range private {
+		if !entry.IsEnabled() || entry.ProxyServiceTokenFile == "" {
+			continue
+		}
+		if (entry.Transport != "http" && entry.Transport != "sse") || entry.Token != "" {
+			return nil, nil, fmt.Errorf("proxy service credential requires HTTP/SSE and cannot be combined with token")
+		}
+		if !filepath.IsAbs(entry.ProxyServiceTokenFile) {
+			return nil, nil, fmt.Errorf("upstream service credential path must be absolute")
+		}
+		token, err := identity.ReadBearerTokenFile(entry.ProxyServiceTokenFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read upstream service credential: %w", err)
+		}
+		build, err := serviceHTTPClientFactoryForToken(entry.URL, token, entry.Transport == "sse")
+		if err != nil {
+			return nil, nil, err
+		}
+		private[i].Token = token
+		builders[entry.ID] = build
+	}
+	return private, func(entry config.MCPServerEntry) (func(map[string]string, int) *http.Client, error) {
+		return builders[entry.ID], nil
 	}, nil
 }
 
@@ -81,7 +122,7 @@ func (t *forwardedContextTransport) RoundTrip(req *http.Request) (*http.Response
 	toolCall, _ := req.Context().Value(forwardedToolCallKey{}).(bool)
 	if toolCall && req.Method == http.MethodPost && admitted && resolved && s.Verified && s.Source == "daemon" &&
 		p.Kind == "session" && s.PrincipalKind == p.Kind && s.PrincipalID == p.ID && p.ID != "" &&
-		p.SessionID != "" && s.SessionID == p.SessionID {
+		p.SessionID != "" && s.SessionID == p.SessionID && safeForwardedContext(s) {
 		out.Header.Set("X-Forwarded-User-Id", "session:"+s.SessionID)
 		out.Header.Set("X-Tether-Session-Id", s.SessionID)
 		setContextHeader(out.Header, "X-Tether-Agent-Urn", s.AgentURN)
@@ -91,6 +132,20 @@ func (t *forwardedContextTransport) RoundTrip(req *http.Request) (*http.Response
 		setContextHeader(out.Header, "X-Tether-Logical-Agent-Id", s.LogicalAgentID)
 	}
 	return t.base.RoundTrip(out)
+}
+
+func safeForwardedContext(s callcontext.Snapshot) bool {
+	for _, value := range []string{s.SessionID, s.AgentURN, s.WorkstreamID, s.LaunchID, s.ProjectID, s.LogicalAgentID} {
+		if len(value) > 512 {
+			return false
+		}
+		for _, c := range value {
+			if c <= 0x20 || c >= 0x7f {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func setContextHeader(headers http.Header, name, value string) {

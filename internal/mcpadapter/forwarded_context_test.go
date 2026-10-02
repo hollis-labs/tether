@@ -43,6 +43,9 @@ func TestForwardedContextAdmissionAndIsolation(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}")), Request: req}, nil
 	})}
 	verified := sessionEgressContext("one")
+	unsafeSnapshot, _ := callcontext.FromContext(verified)
+	unsafeSnapshot.WorkstreamID = "bad\r\nheader"
+	unsafeFields := callcontext.WithSnapshot(verified, unsafeSnapshot)
 	snapshotOnly := callcontext.WithSnapshot(context.Background(), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "forged", PrincipalKind: "session", SessionID: "one"})
 	mismatched := identity.WithPrincipal(verified, identity.Principal{ID: "other", Kind: "session", SessionID: "one"})
 	operator := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator"})
@@ -54,6 +57,8 @@ func TestForwardedContextAdmissionAndIsolation(t *testing.T) {
 	}{
 		{"verified", http.MethodPost, verified, "one"},
 		{"anonymous", http.MethodPost, context.Background(), ""},
+		{"unsafe-fields", http.MethodPost, unsafeFields, ""},
+		{"oversized-fields", http.MethodPost, sessionEgressContext(strings.Repeat("a", 513)), ""},
 		{"initialize", http.MethodPost, callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "principal:one", Kind: "session", SessionID: "one"}), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "principal:one", PrincipalKind: "session", SessionID: "one"}), ""},
 		{"snapshot-only", http.MethodPost, snapshotOnly, ""},
 		{"mismatch", http.MethodPost, mismatched, ""},
@@ -207,4 +212,47 @@ func TestRemoteHTTPFactoryReceivesEntryRatherThanURL(t *testing.T) {
 	}
 	_ = a.Close()
 	_ = b.Close()
+}
+
+func TestDaemonServicePoliciesKeepCatalogSecretFreeAndRedact(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	path := filepath.Join(dir, "service.token")
+	if err := os.WriteFile(path, []byte("service-secret-canary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries := []config.MCPServerEntry{{ID: "upstream", Transport: "http", URL: "https://upstream.example/mcp", ProxyServiceTokenFile: path}}
+	private, factory, err := daemonHTTPPolicies(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries[0].Token != "" || private[0].Token != "service-secret-canary" {
+		t.Fatal("catalog mutated or private redaction credential absent")
+	}
+	text := proxyRedactionSet(private).Redact("upstream echoed service-secret-canary")
+	if strings.Contains(text, "service-secret-canary") {
+		t.Fatal("service secret survives proxy error redaction")
+	}
+	build, err := factory(private[0])
+	if err != nil || build == nil {
+		t.Fatal("entry-aware service client not configured")
+	}
+	if build, err := factory(config.MCPServerEntry{ID: "other", URL: entries[0].URL}); err != nil || build != nil {
+		t.Fatal("URL selected another entry's credential")
+	}
+	for _, entry := range []config.MCPServerEntry{
+		{ID: "ambiguous", Transport: "http", URL: entries[0].URL, Token: "ordinary", ProxyServiceTokenFile: path},
+		{ID: "stdio", Transport: "stdio", ProxyServiceTokenFile: path},
+		{ID: "relative", Transport: "http", URL: entries[0].URL, ProxyServiceTokenFile: "relative.token"},
+	} {
+		if _, _, err := daemonHTTPPolicies([]config.MCPServerEntry{entry}); err == nil {
+			t.Fatal("invalid service credential configuration accepted")
+		}
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := daemonHTTPPolicies(entries); err == nil {
+		t.Fatal("unsafe service credential accepted")
+	}
 }
