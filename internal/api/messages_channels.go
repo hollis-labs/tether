@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gomsg "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/tether/internal/app/consumers"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 )
 
@@ -50,7 +51,7 @@ func (s *Server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
 		return
 	}
-	list, err := s.Channels.List(r.Context(), r.URL.Query().Get("as"))
+	list, err := (consumers.ConsumerService{ChannelReader: s.Channels}).ListAll(r.Context(), r.URL.Query().Get("as"))
 	if err != nil {
 		writeChannelError(w, err)
 		return
@@ -103,7 +104,7 @@ func (s *Server) handleChannelsItem(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest, "last must be between 1 and 1000 and cannot be combined with since or limit")
 			return
 		}
-		page, err := s.Channels.Latest(r.Context(), parts[0], q.Get("as"), n)
+		page, err := (consumers.ConsumerService{ChannelReader: s.Channels}).Read(r.Context(), parts[0], q.Get("as"), 0, 0, n)
 		if err != nil {
 			writeChannelError(w, err)
 			return
@@ -124,7 +125,7 @@ func (s *Server) handleChannelsItem(w http.ResponseWriter, r *http.Request) {
 	if since != nil {
 		cursor = *since
 	}
-	page, err := s.Channels.History(r.Context(), parts[0], q.Get("as"), cursor, limit)
+	page, err := (consumers.ConsumerService{ChannelReader: s.Channels}).Read(r.Context(), parts[0], q.Get("as"), cursor, limit, 0)
 	if err != nil {
 		writeChannelError(w, err)
 		return

@@ -30,7 +30,8 @@ belongs to each hop.
 Idle daemon views expire after two minutes for session principals. The forwarder
 reinitializes using the same credential, profile and discovery selector when the
 daemon/SDK explicitly reports expiry for a known session (a generic route 404
-surfaces without recovery). Lists and pings can also reconnect a closed/lost
+surfaces for that operation; a later operation may initialize a fresh view).
+Lists and pings can also reconnect a closed/lost
 transport once; protocol/admission errors and cancellation surface. These
 read-only operations can be retried once on the replacement view. Each tool
 dispatch first pings the view to recover idle expiry,
@@ -39,11 +40,21 @@ missing-session errors during execution: a background stream failure can end
 other in-flight calls whose outcomes are unknown. Network failures, lost responses
 and canceled calls are never replayed. Revoked or expired
 credentials still fail admission; recovery cannot fall back to a local pool.
-The SDK may resume an interrupted SSE stream once using GET and
+The SDK may resume interrupted SSE streams using GET and
 `Last-Event-ID`; this retrieves responses/notifications and never resends a
-`tools/call` POST. A replacement view accepts new calls while calls admitted on
-the previous view finish; SDK teardown runs outside the initialization lock.
+`tools/call` POST. The retry bound applies to consecutive resumes without
+progress, so one call may have multiple resume GETs. A replacement view accepts
+new calls while calls admitted on the previous view finish; SDK teardown runs
+outside the initialization lock.
+Concurrent callers share one initialization attempt, including daemon failures
+and the setup timeout. If its initiating caller cancels or reaches its own
+deadline, live waiters join a new attempt. A later caller can also try again
+after a failed attempt finishes.
 Other refresh/reconnect lifecycle work belongs to 0539 stage 3 (paused).
+The daemon does not configure a resumable EventStore today. With an EventStore,
+a daemon restart can return 404 on a resume GET, which currently surfaces as
+`daemon_mcp_unavailable` (-32002), rather than `daemon_unreachable` (-32001).
+The uncertain tool call is still never replayed.
 
 Every daemon-owned launch first initializes the endpoint using its newly minted
 credential with a 15-second initialization bound, allowing cold upstream startup.
@@ -58,7 +69,9 @@ The selector is validated at daemon startup and by doctor, without changing shar
 catalog loading for stop/status/other clients. It is also re-read and checked at
 each launch: an unknown, explicitly empty/null/blank or non-string value fails
 that launch rather than using another mode. Only an omitted selector defaults to
-`legacy_proxy`. Doctor fails if daemon ownership selects a disabled endpoint.
+`legacy_proxy`. An unrecognized spelling of the YAML key is treated as an
+omitted selector and retains legacy ownership; strict key validation is separate
+work. Doctor fails if daemon ownership selects a disabled endpoint.
 Changing the selector does not require restarting a running daemon; changing its
 endpoint enablement or listen address does. The selected ownership and opt-in
 reference extraction are captured with the session's immutable MCP policy.

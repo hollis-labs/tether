@@ -228,6 +228,7 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		server := &daemon.Server{
+			Docs:                     svc.Docs(),
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
@@ -247,6 +248,7 @@ var daemonRunCmd = &cobra.Command{
 			Digests:                  svc.Store,
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Channels:                 channels.New(svc.Store, nil),
+			Routing:                  svc,
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
 			ProxyEvents:              svc.Store,

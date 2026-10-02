@@ -2,6 +2,7 @@ package mcpforward
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +58,69 @@ func TestRecoveryDoesNotWaitForSameForwarderInflightCall(t *testing.T) {
 	case err := <-result:
 		if err != nil {
 			t.Fatal("replacement retired the admitted call", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+// This deliberately crosses the injected teardown bound while the old POST
+// remains admitted. Removing retiredUsers.Wait must interrupt the real result.
+func TestRetirementPreservesCallBeyondCloseBound(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	started, release := make(chan struct{}), make(chan struct{})
+	daemon := mcp.NewServer(&mcp.Implementation{Name: "retirement", Version: "1"}, &mcp.ServerOptions{SupportedProtocolVersions: []string{"2025-11-25"}})
+	daemon.AddTool(&mcp.Tool{Name: "slow", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "real result"}}}, nil
+	})
+	server := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return daemon }, nil))
+	defer server.Close()
+	relay := &daemonSession{client: client.New("tcp:"+strings.TrimPrefix(server.URL, "http://"), client.WithToken("session")), closeTimeout: 20 * time.Millisecond}
+	defer func() { cancel(); close(release); relay.close() }()
+	results := make(chan error, 1)
+	go func() {
+		result, err := relay.callTool(ctx, &mcp.CallToolParams{Name: "slow"})
+		if err == nil && (len(result.Content) != 1 || result.Content[0].(*mcp.TextContent).Text != "real result") {
+			err = fmt.Errorf("real result lost: %+v", result)
+		}
+		results <- err
+	}()
+	select {
+	case <-started:
+	case err := <-results:
+		t.Fatal(err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	relay.mu.Lock()
+	relay.missing.Store(true)
+	relay.mu.Unlock()
+	if _, err := relay.get(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	// This is a duration boundary, not a fixture failure cap. Keep the admitted
+	// request open for ten teardown bounds after replacement has completed.
+	timer := time.NewTimer(10 * relay.closeTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-results:
+		t.Fatalf("retirement interrupted the admitted call: %v", err)
+	case <-timer.C:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	release <- struct{}{}
+	select {
+	case err := <-results:
+		if err != nil {
+			t.Fatal(err)
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())

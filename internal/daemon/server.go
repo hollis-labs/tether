@@ -38,6 +38,7 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
+	Docs                     api.DocsService
 	Identity                 *identity.Store
 	OperatorIdentityDegraded bool
 	identityAuditMu          sync.Mutex
@@ -82,6 +83,7 @@ type Server struct {
 	// MessageStore is optional; when set, /messages/* endpoints are mounted.
 	MessageStore api.MessageStore
 	Channels     api.ChannelService
+	Routing      api.RoutingService
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
 	// are enabled (T07, messaging vNext) -- durable claim/ack/nack for a
 	// caller pulling its own mailbox on its own initiative. Populated from
@@ -416,8 +418,9 @@ func (s *Server) Handler() http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Channels != nil {
+	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil {
 		apiHandler := api.NewHandler(api.Deps{
+			Docs:                s.Docs,
 			Service:             s.Service,
 			AI:                  s.AI,
 			AIAudit:             s.AIAudit,
@@ -433,6 +436,7 @@ func (s *Server) Handler() http.Handler {
 			Digests:             s.Digests,
 			MessageStore:        s.MessageStore,
 			Channels:            s.Channels,
+			Routing:             s.Routing,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
@@ -633,6 +637,7 @@ func (s *Server) apiMounts() []apiMount {
 		// "/messages/" is a subtree pattern; the explicit siblings below it
 		// are listed because api registers them as exact patterns, and an
 		// exact pattern must be mounted to take precedence over the subtree.
+		{"/routing/capabilities", s.Routing != nil},
 		{"/channels", s.Channels != nil},
 		{"/channels/", s.Channels != nil},
 		{"/messages", s.MessageStore != nil},
@@ -650,6 +655,8 @@ func (s *Server) apiMounts() []apiMount {
 		{"/proxy/events", s.ProxyEvents != nil},
 
 		{"/catalog/projects", s.Catalog != nil},
+		{"/docs/mcp", s.Docs != nil},
+		{"/docs/mcp/", s.Docs != nil},
 		{"/catalog/agents", s.Catalog != nil},
 		{"/catalog/providers", s.Catalog != nil},
 		{"/catalog/launches", s.Catalog != nil},
