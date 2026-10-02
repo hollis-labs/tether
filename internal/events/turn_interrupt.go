@@ -12,6 +12,8 @@ type TurnInterruptEvent struct {
 	SessionID    string `json:"session_id"`
 	TurnID       string `json:"turn_id,omitempty"`
 	OutputTurnID string `json:"output_turn_id,omitempty"`
+	OutputKind   string `json:"output_kind,omitempty"`
+	StopReason   string `json:"stop_reason,omitempty"`
 	Result       string `json:"result"`
 	Error        string `json:"error,omitempty"`
 }

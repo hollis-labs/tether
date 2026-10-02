@@ -49,9 +49,13 @@ type RuntimeFactory func(plan *launch.Plan) (agentsessions.Runtime, error)
 // (plan resolution, workspace creation, persistence of the initial row)
 // and then hands the handle off to the manager.
 type Service struct {
-	turnRouter  *turnrouting.Router
-	turnFeeds   map[string]turnFeedRegistration
-	turnOutputs sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	// Interrupt bounds are configured before use; zero selects 2s cancel/gate
+	// and 30s terminal defaults. Caller deadlines take precedence.
+	InterruptCancelTimeout time.Duration
+	InterruptDoneTimeout   time.Duration
+	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
+	turnRouter             *turnrouting.Router
+	turnFeeds              map[string]turnFeedRegistration
 
 	CatalogRoot string
 	Catalog     *config.Catalog

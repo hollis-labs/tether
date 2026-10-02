@@ -50,7 +50,7 @@ func TestCancelTurnReadinessGap(t *testing.T) {
 					ready = true
 				}
 			}
-			result, err := svc.cancelTurnAndWaitWithClock(context.Background(), "s1", "msg://user/local/alice", state, id, clock)
+			result, err := svc.cancelTurnAndWaitWithClock(interruptTestContext(t), "s1", "msg://user/local/alice", state, id, clock)
 			if readyAfter > 0 {
 				if err != nil || calls != 1 || clock.waits != readyAfter || result.OutputTurnID != id {
 					t.Fatalf("result=%+v err=%v calls=%d waits=%d", result, err, calls, clock.waits)

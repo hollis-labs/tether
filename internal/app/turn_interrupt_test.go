@@ -147,7 +147,7 @@ func TestCancelTurnAndWaitRequiresMatchingOutputAndAuditsActor(t *testing.T) {
 				}
 				audit = append(audit, event)
 			}
-			if len(audit) != 2 || audit[0].Result != "requested" || audit[1].Result != "completed" || audit[1].OutputTurnID != wantOutput {
+			if len(audit) != 2 || audit[0].Result != "requested" || audit[1].Result != "completed" || audit[1].OutputTurnID != wantOutput || audit[1].Error != "" {
 				t.Fatalf("audit = %+v", audit)
 			}
 			for _, event := range audit {
@@ -175,15 +175,15 @@ func TestCancelTurnAndWaitAcknowledgementDoesNotCompleteTurn(t *testing.T) {
 
 func TestCancelTurnAndWaitTypedRefusals(t *testing.T) {
 	svc, output, _ := interruptHarness(t, nil)
-	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	_, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptNoTurn)
 	output.observeProvider(gopevents.Delta{Text: "working"})
-	_, err = svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	_, err = svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptUnsupported)
 	if !errors.Is(err, agentsessions.ErrInterruptUnsupported) {
 		t.Fatal("unsupported lost shared runtime error")
 	}
-	_, err = svc.CancelTurnAndWait(context.Background(), "missing", "actor")
+	_, err = svc.CancelTurnAndWait(interruptTestContext(t), "missing", "actor")
 	if !errors.Is(err, agentsessions.ErrSessionNotRunning) {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestCancelTurnAndWaitProvisionalSubmissionNeverCallsRuntime(t *testing.T) {
 	submitted := make(chan error, 1)
 	go func() { submitted <- svc.SendInput("s1", []byte("start")) }()
 	<-entered
-	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	_, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptNotStarted)
 	if calls.Load() != 0 {
 		t.Fatal("cancel reached a runtime before acceptance")
@@ -224,10 +224,17 @@ func TestCancelTurnAndWaitGateRejectsSnapshotSuccessor(t *testing.T) {
 			intended, _ := output.CurrentTurn()
 			unlock := output.LockSubmission()
 			returned := make(chan error, 1)
+			entered := make(chan struct{})
 			go func() {
-				_, err := svc.cancelTurnAndWait(context.Background(), "s1", "actor", output, intended)
+				_, err := svc.cancelTurnAndWait(interruptTestContext(t), "s1", "actor", enteringInterruptState{TurnOutputState: output, entered: entered}, intended)
 				returned <- err
 			}()
+			ctx := interruptTestContext(t)
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
 			output.observeProvider(gopevents.Done{})
 			if successor {
 				// Emulate the winning successor submission while owning the gate.
@@ -238,7 +245,12 @@ func TestCancelTurnAndWaitGateRejectsSnapshotSuccessor(t *testing.T) {
 			}
 			next, _ := output.CurrentTurn()
 			unlock()
-			err := <-returned
+			var err error
+			select {
+			case err = <-returned:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
 			want := TurnInterruptNoTurn
 			if successor {
 				want = TurnInterruptSuperseded
@@ -261,7 +273,7 @@ func TestCancelTurnAndWaitRejectsSettlementWithoutOutput(t *testing.T) {
 	if err := svc.SendInput("s1", []byte("no output")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	_, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptSuperseded)
 }
 
@@ -274,7 +286,7 @@ func TestCancelTurnAndWaitRejectsDifferentACPOutput(t *testing.T) {
 	})
 	output = state
 	output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnStarted, TurnID: "intended-runtime-turn"})
-	_, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor")
+	_, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor")
 	requireRefusal(t, err, TurnInterruptSuperseded)
 }
 
@@ -294,7 +306,7 @@ func TestCancelTurnAndWaitCompletionDuringAcceptanceCheck(t *testing.T) {
 	output.observeProvider(gopevents.Delta{Text: "working"})
 	intended, _ := output.CurrentTurn()
 	state := completingAcceptanceState{TurnOutputState: output, finish: func() { output.observeProvider(gopevents.Done{}) }}
-	_, err := svc.cancelTurnAndWait(context.Background(), "s1", "actor", state, intended)
+	_, err := svc.cancelTurnAndWait(interruptTestContext(t), "s1", "actor", state, intended)
 	requireRefusal(t, err, TurnInterruptNoTurn)
 	if calls.Load() != 0 {
 		t.Fatal("completed turn reached runtime cancellation")
@@ -308,7 +320,7 @@ func TestCancelTurnAndWaitAuditFailurePreventsCancel(t *testing.T) {
 	if _, err := svc.Store.DB().Exec(`CREATE TRIGGER reject_interrupt BEFORE INSERT ON events BEGIN SELECT RAISE(FAIL,'audit unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CancelTurnAndWait(context.Background(), "s1", "actor"); err == nil {
+	if _, err := svc.CancelTurnAndWait(interruptTestContext(t), "s1", "actor"); err == nil {
 		t.Fatal("unaudited cancel accepted")
 	}
 	if calls.Load() != 0 {
