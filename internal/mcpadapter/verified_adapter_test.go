@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestVerifiedAdapter_RefusesBroaderNativeClientCredential(t *testing.T) {
@@ -84,5 +87,42 @@ func TestVerifiedAdapter_OperatorWildcardDoesNotAlterLegacyScopes(t *testing.T) 
 	legacy := New(nil, "legacy", []string{"*"})
 	if err := legacy.checkScope(ScopeSessionWrite); err == nil {
 		t.Fatal("legacy caller flags widened")
+	}
+}
+
+func TestVerifiedAdapter_NativeSDKResolvesAdmittedCallerContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	f := newDaemonOnlyFixture(t)
+	p := identity.Principal{ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}
+	a, err := NewVerifiedAdapter(identity.WithPrincipal(context.Background(), p), f.inProcess.svc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SessionID = "forged-session"
+	seen := make(chan callcontext.Snapshot, 1)
+	server := a.newBareServer()
+	a.addTool(server, gomcp.Tool{Name: "test_native_context", Description: "test", InputSchema: gomcp.InputSchema(), Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+		snapshot, _ := callcontext.FromContext(ctx)
+		seen <- snapshot
+		return "ok", nil
+	}}, Reads("test native attribution"))
+	forged := callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "imposter"}), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "imposter", SessionID: "forged-session"})
+	st, ct := mcpsdk.NewInMemoryTransports()
+	ss, err := server.SDKServer().Connect(forged, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ss.Close() }()
+	cs, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil).Connect(forged, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	if _, err := cs.CallTool(forged, &mcpsdk.CallToolParams{Name: "test_native_context"}); err != nil {
+		t.Fatal(err)
+	}
+	got := <-seen
+	if !got.Verified || got.Source != "daemon" || got.PrincipalID != p.ID || got.SessionID != p.SessionID {
+		t.Fatalf("native SDK trusted forged attribution: %+v", got)
 	}
 }
