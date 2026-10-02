@@ -75,6 +75,7 @@ func (e *RefreshAllError) Error() string {
 // ClientPool supervises each stdio leaf independently. RPCs are never replayed.
 type ClientPool struct {
 	confineRemote      bool
+	protectedPaths     []string // daemon pools wrap every stdio child; legacy proxies inherit their wrapper
 	runtime            RuntimeObservation
 	entries            []config.MCPServerEntry
 	registry           *ToolRegistry
@@ -364,7 +365,7 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 
 	switch entry.Transport {
 	case "stdio":
-		u, upTransport, err := spawnStdioUpstream(entry)
+		u, upTransport, err := spawnStdioUpstreamConfined(entry, p.protectedPaths)
 		if err != nil {
 			return nil, err
 		}

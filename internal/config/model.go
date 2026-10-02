@@ -31,6 +31,13 @@ type Global struct {
 // IdentityConfig rolls out verified attribution before authorization policy.
 type IdentityConfig struct {
 	Mode string `yaml:"mode"`
+	// MCPGrants is operator-provisioned authority for service/interactive
+	// principals. Omission grants no upstreams, never the operator's inventory.
+	MCPGrants map[string]PrincipalMCPGrant `yaml:"mcp_grants,omitempty"`
+}
+
+type PrincipalMCPGrant struct {
+	Servers []string `yaml:"servers" json:"servers"`
 }
 
 func (c IdentityConfig) EffectiveMode() string {
