@@ -3,15 +3,16 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
-	"time"
-
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"errors"
 
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/redact"
+	"github.com/hollis-labs/tether/internal/telemetry"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // LoggingMiddleware emits tool_call_start and tool_call_end events to an
@@ -23,6 +24,7 @@ type LoggingMiddleware struct {
 	bus              events.Publisher
 	secrets          *redact.Set
 	contextDecorator func(context.Context) context.Context
+	profile, mode    string
 }
 
 // NewLoggingMiddleware creates a LoggingMiddleware backed by bus.
@@ -60,106 +62,69 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	if m.contextDecorator != nil {
 		ctx = m.contextDecorator(ctx)
 	}
-	start := time.Now()
-
-	// Compute args fingerprint — key names only, never values.
 	var argsRaw json.RawMessage
 	if len(call.Args) > 0 {
 		if raw, err := json.Marshal(call.Args); err == nil {
 			argsRaw = raw
 		}
 	}
-	fp := argsSchemaFP(argsRaw)
-
-	// Extract session ID from context if present (best-effort).
 	sessionID := sessionIDFromContext(ctx)
 	attribution, _ := callcontext.FromContext(ctx)
-	claimedSessionID := callcontext.ClaimedSession(ctx)
-	if claimedSessionID == attribution.SessionID && attribution.Verified {
-		claimedSessionID = ""
+	claimed := callcontext.ClaimedSession(ctx)
+	if claimed == attribution.SessionID && attribution.Verified {
+		claimed = ""
 	}
-	if claimedSessionID == "" && !attribution.Verified {
-		claimedSessionID = sessionID
+	if claimed == "" && !attribution.Verified {
+		claimed = sessionID
 	}
-
-	// Look up the server ID for this tool from the registry via context, if available.
-	// Native tether tools never set WithServerID, so default to "tether" to keep the
-	// TUI feed readable and satisfy the POST /proxy/events tool_name-only validation.
-	serverID := serverIDFromContext(ctx)
-	if serverID == "" {
-		serverID = "tether"
+	server := serverIDFromContext(ctx)
+	if server == "" {
+		server = "tether"
 	}
-
-	m.publish(ctx, events.EventTypeToolCallStart, events.ToolCallEvent{
-		Attribution: attribution, ClaimedSessionID: claimedSessionID,
-		SessionID:    sessionID,
-		ToolName:     call.ToolName,
-		Server:       serverID,
-		ArgsSchemaFP: fp,
-		Timestamp:    start,
-	})
-
+	if sc := trace.SpanContextFromContext(extractTraceContext(call.Meta, call.Args)); sc.IsValid() {
+		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+	}
+	service := telemetry.Service{Publisher: m.bus, Secrets: m.secrets}
+	ctx, observation := service.Start(ctx, telemetry.Call{Name: call.ToolName, Server: server, SessionID: sessionID, ClaimedSessionID: claimed, Fingerprint: callFingerprint(call.Args, argsRaw), ArgsBytes: int64(len(argsRaw)), Profile: m.profile, Mode: m.mode})
 	result, err := next(ctx, call)
-
-	durMs := time.Since(start).Milliseconds()
-	ev := events.ToolCallEvent{
-		Attribution: attribution, ClaimedSessionID: claimedSessionID,
-		SessionID:    sessionID,
-		ToolName:     call.ToolName,
-		Server:       serverID,
-		ArgsSchemaFP: fp,
-		DurationMs:   durMs,
-		OK:           err == nil && (result == nil || !result.IsError),
-		Timestamp:    time.Now(),
-	}
-	if err != nil {
-		ev.Error = m.secrets.Redact(err.Error())
-	} else if result != nil && result.IsError {
-		// Extract error text from the first text content block, if present.
-		for _, c := range result.Content {
-			if tc, ok := c.(*mcpsdk.TextContent); ok {
-				ev.Error = m.secrets.Redact(tc.Text)
-				break
-			}
+	out := telemetry.Outcome{OK: err == nil && (result == nil || !result.IsError)}
+	if result != nil {
+		if size, sizeErr := telemetry.JSONSize(result); sizeErr == nil {
+			out.ResultBytes = size
 		}
 	}
-
-	m.publish(ctx, events.EventTypeToolCallEnd, ev)
-
-	slog.Debug("mcp-proxy: tool call completed",
-		"tool", call.ToolName,
-		"server", serverID,
-		"duration_ms", durMs,
-		"ok", ev.OK,
-		"error", ev.Error,
-	)
-
+	if err != nil {
+		out.Error = err.Error()
+		out.Class = telemetry.ErrorClass(err)
+		var rpc *jsonrpc.Error
+		if errors.As(err, &rpc) && rpc.Code == jsonrpc.CodeInvalidParams {
+			out.Class = events.ToolErrorValidation
+		}
+		if clean := m.secrets.Redact(err.Error()); clean != err.Error() {
+			err = &redactedError{text: clean, err: err}
+		}
+	} else if result != nil && result.IsError {
+		// Copy content before scrubbing: an upstream may retain its own result.
+		if serverIDFromContext(ctx) == "" {
+			out.Class = nativeResultClass(result)
+		}
+		copyResult := *result
+		copyResult.StructuredContent = scrubStructuredError(result.StructuredContent, m.secrets)
+		copyResult.Content = append([]mcpsdk.Content(nil), result.Content...)
+		for i, c := range result.Content {
+			if tc, ok := c.(*mcpsdk.TextContent); ok {
+				copyText := *tc
+				copyText.Text = m.secrets.Redact(tc.Text)
+				copyResult.Content[i] = &copyText
+				if out.Error == "" {
+					out.Error = copyText.Text
+				}
+			}
+		}
+		result = &copyResult
+	}
+	service.End(ctx, observation, out)
 	return result, err
-}
-
-// publish encodes ev as JSON and publishes it on the bus. Errors are
-// logged but not returned — observability must not break the call path.
-func (m *LoggingMiddleware) publish(ctx context.Context, kind string, ev events.ToolCallEvent) {
-	if m.bus == nil {
-		return
-	}
-	raw, marshalErr := json.Marshal(ev)
-	if marshalErr != nil {
-		slog.Warn("mcp-proxy: failed to marshal ToolCallEvent", "err", marshalErr)
-		return
-	}
-	scope := events.ScopeSession
-	if ev.SessionID == "" {
-		scope = events.ScopeDaemon
-	}
-	if pubErr := m.bus.Publish(ctx, events.Event{
-		Scope:       scope,
-		SessionID:   ev.SessionID,
-		Kind:        kind,
-		PayloadJSON: string(raw),
-	}); pubErr != nil {
-		slog.Warn("mcp-proxy: failed to publish tool call event", "kind", kind, "err", pubErr)
-	}
 }
 
 // ─── context key helpers ──────────────────────────────────────────────────────
@@ -189,4 +154,12 @@ func sessionIDFromContext(ctx context.Context) string {
 func serverIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(contextKeyServerID).(string)
 	return v
+}
+
+// Preserve the legacy empty-argument fingerprint while measuring canonical JSON.
+func callFingerprint(args map[string]any, raw json.RawMessage) string {
+	if len(args) == 0 {
+		return argsSchemaFP(nil)
+	}
+	return argsSchemaFP(raw)
 }

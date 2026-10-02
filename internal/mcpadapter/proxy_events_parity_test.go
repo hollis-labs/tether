@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -46,7 +47,7 @@ func TestProxyEvents_HTTPClientMCPParity(t *testing.T) {
 	}
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
-			original := store.ProxyEvent{ID: 7, SessionID: "own", Server: "upstream", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 19, OK: false, Error: "upstream failure", Timestamp: time.Date(2026, 10, 2, 1, 2, 3, 123, time.UTC), Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "session:own", SessionID: "own", Source: "daemon"}, ClaimedSessionID: "other"}
+			original := store.ProxyEvent{ToolCallDetails: events.ToolCallDetails{Profile: "reader", DiscoveryMode: "search", ArgsBytes: 71, ResultBytes: 98, ErrorTruncated: true, ErrorClass: events.ToolErrorTimeout, TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef", GatewayMs: 3, ForwardMs: 16}, ID: 7, SessionID: "own", Server: "upstream", ToolName: "tool", ArgsSchemaFP: "fp", DurationMs: 19, OK: false, Error: "upstream failure", Timestamp: time.Date(2026, 10, 2, 1, 2, 3, 123, time.UTC), Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "session:own", SessionID: "own", Source: "daemon"}, ClaimedSessionID: "other"}
 			st := parityProxyRows{rows: []store.ProxyEvent{original}}
 			if fail {
 				st.err = errors.New("query unavailable")
@@ -90,7 +91,7 @@ func TestProxyEvents_HTTPClientMCPParity(t *testing.T) {
 					}
 					continue
 				}
-				wantHTTP := api.ProxyEventDTO{ID: original.ID, Attribution: original.Attribution, ClaimedSessionID: original.ClaimedSessionID, SessionID: original.SessionID, Server: original.Server, ToolName: original.ToolName, ArgsSchemaFP: original.ArgsSchemaFP, DurationMs: original.DurationMs, OK: original.OK, Error: original.Error, Timestamp: original.Timestamp.Format(time.RFC3339Nano)}
+				wantHTTP := api.ProxyEventDTO{ToolCallDetails: original.ToolCallDetails, ID: original.ID, Attribution: original.Attribution, ClaimedSessionID: original.ClaimedSessionID, SessionID: original.SessionID, Server: original.Server, ToolName: original.ToolName, ArgsSchemaFP: original.ArgsSchemaFP, DurationMs: original.DurationMs, OK: original.OK, Error: original.Error, Timestamp: original.Timestamp.Format(time.RFC3339Nano)}
 				if rr.Code != http.StatusOK || res.IsError || clientErr != nil || httpBody.Count != 1 || body.Count != 1 || !reflect.DeepEqual(httpBody.Events, []api.ProxyEventDTO{wantHTTP}) || !reflect.DeepEqual(clientRows, httpBody.Events) || !reflect.DeepEqual(body.Events, st.rows) {
 					t.Fatalf("%s parity HTTP=%+v client=%+v/%v MCP=%s", name, httpBody, clientRows, clientErr, textOf(res))
 				}

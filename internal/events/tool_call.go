@@ -23,6 +23,7 @@ const EventTypeToolCallEnd = "tool_call_end"
 // arg values. This ensures tokens, passwords and other secrets never appear in
 // the event log. See ADR 0021.
 type ToolCallEvent struct {
+	ToolCallDetails
 	Attribution      callcontext.Snapshot `json:"attribution"`
 	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
 	// SessionID is the tether session that originated the call, if known.

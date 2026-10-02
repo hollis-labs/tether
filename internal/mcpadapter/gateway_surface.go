@@ -17,6 +17,7 @@ func gatewaySurfaceMiddleware(gateway *mcpgateway.Service) mcpsdk.Middleware {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
 			if call, ok := req.(*mcpsdk.CallToolRequest); ok && !isGatewayTool(call.Params.Name) {
 				if _, err := gateway.ResolveTarget(call.Params.Name); err != nil {
+					recordTargetError(ctx, err)
 					if gateway.Policy == nil || gateway.Policy.Selection.Profile == nil {
 						known := false
 						for _, e := range gateway.Snapshot().Entries {

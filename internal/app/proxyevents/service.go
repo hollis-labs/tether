@@ -19,6 +19,7 @@ import (
 
 // ProxyEventDTO is the on-the-wire shape for a proxy event row.
 type ProxyEventDTO struct {
+	events.ToolCallDetails
 	Attribution      callcontext.Snapshot `json:"attribution"`
 	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
 	ID               int64                `json:"id"`
@@ -40,6 +41,7 @@ type ProxyEventListResponse struct {
 
 // ProxyEventIngestRequest is the body accepted by POST /proxy/events.
 type ProxyEventIngestRequest struct {
+	events.ToolCallDetails
 	// Attribution is computed by the daemon, never accepted from JSON.
 	Attribution      callcontext.Snapshot `json:"-"`
 	ClaimedSessionID string               `json:"claimed_session_id,omitempty"`
@@ -104,6 +106,7 @@ func TruncateProxyEventError(s string) string {
 // Record is the application query result. Field names intentionally preserve
 // the existing proxy MCP tools' legacy JSON shape, independently of storage.
 type Record struct {
+	events.ToolCallDetails
 	ID               int64
 	SessionID        string
 	Server           string
@@ -199,7 +202,7 @@ func QueryRecords(rows Querier, q Query) ([]Record, error) {
 		out = make([]Record, 0, len(evs))
 	}
 	for _, ev := range evs {
-		out = append(out, Record{ID: ev.ID, SessionID: ev.SessionID, Server: ev.Server, ToolName: ev.ToolName, ArgsSchemaFP: ev.ArgsSchemaFP, DurationMs: ev.DurationMs, OK: ev.OK, Error: ev.Error, Timestamp: ev.Timestamp, Attribution: ev.Attribution, ClaimedSessionID: ev.ClaimedSessionID})
+		out = append(out, Record{ToolCallDetails: ev.ToolCallDetails, ID: ev.ID, SessionID: ev.SessionID, Server: ev.Server, ToolName: ev.ToolName, ArgsSchemaFP: ev.ArgsSchemaFP, DurationMs: ev.DurationMs, OK: ev.OK, Error: ev.Error, Timestamp: ev.Timestamp, Attribution: ev.Attribution, ClaimedSessionID: ev.ClaimedSessionID})
 	}
 	return out, nil
 }
@@ -248,6 +251,7 @@ func (s *Service) Ingest(ctx context.Context, req ProxyEventIngestRequest, resol
 
 	if req.Phase != ProxyEventPhaseStart {
 		ev := store.ProxyEvent{
+			ToolCallDetails:  req.ToolCallDetails,
 			Attribution:      req.Attribution,
 			ClaimedSessionID: req.ClaimedSessionID,
 			SessionID:        req.SessionID,
@@ -275,6 +279,23 @@ func (s *Service) Ingest(ctx context.Context, req ProxyEventIngestRequest, resol
 // truncates an over-long error. It returns the reason a body is refused, or
 // "".
 func validateIngest(req *ProxyEventIngestRequest) string {
+	if req.ArgsBytes < 0 || req.ResultBytes < 0 || req.GatewayMs < 0 || req.ForwardMs < 0 {
+		return "telemetry sizes and latencies must not be negative"
+	}
+	switch req.ErrorClass {
+	case "", events.ToolErrorDenied, events.ToolErrorUpstreamDown, events.ToolErrorTimeout, events.ToolErrorValidation, events.ToolErrorUpstream:
+	default:
+		return "invalid error_class"
+	}
+	if !validTraceID(req.TraceID, 32) || !validTraceID(req.SpanID, 16) {
+		return "trace_id/span_id must be lowercase hex of 32/16 characters"
+	}
+	for _, field := range []string{req.Profile, req.DiscoveryMode} {
+		if len(field) > MaxIDBytes {
+			return "telemetry identifier is too long"
+		}
+	}
+
 	switch req.Phase {
 	case "", ProxyEventPhaseEnd, ProxyEventPhaseStart:
 	default:
@@ -303,6 +324,9 @@ func validateIngest(req *ProxyEventIngestRequest) string {
 	if req.DurationMs < 0 {
 		return "duration_ms must not be negative"
 	}
+	if len(req.Error) > MaxProxyEventErrorBytes {
+		req.ErrorTruncated = true
+	}
 	req.Error = TruncateProxyEventError(req.Error)
 	return ""
 }
@@ -313,6 +337,7 @@ func validateIngest(req *ProxyEventIngestRequest) string {
 func (s *Service) publishToolCallEvent(ctx context.Context, req ProxyEventIngestRequest) error {
 	kind := events.EventTypeToolCallEnd
 	tce := events.ToolCallEvent{
+		ToolCallDetails:  req.ToolCallDetails,
 		Attribution:      req.Attribution,
 		ClaimedSessionID: req.ClaimedSessionID,
 		SessionID:        req.SessionID,
@@ -357,6 +382,7 @@ func truncateUTF8(s string, n int) string {
 
 func ToDTO(ev Record) ProxyEventDTO {
 	return ProxyEventDTO{
+		ToolCallDetails:  ev.ToolCallDetails,
 		Attribution:      ev.Attribution,
 		ClaimedSessionID: ev.ClaimedSessionID,
 		ID:               ev.ID,
@@ -369,4 +395,19 @@ func ToDTO(ev Record) ProxyEventDTO {
 		Error:            ev.Error,
 		Timestamp:        ev.Timestamp.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+func validTraceID(id string, size int) bool {
+	if id == "" {
+		return true
+	}
+	if len(id) != size {
+		return false
+	}
+	for _, ch := range id {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return false
+		}
+	}
+	return true
 }

@@ -38,7 +38,7 @@ func NewDaemonToolCallRecorder(ctx context.Context, bus events.Publisher, writer
 					continue
 				}
 				if event.Kind == events.EventTypeToolCallEnd && writer != nil {
-					row := store.ProxyEvent{Attribution: call.Attribution, ClaimedSessionID: call.ClaimedSessionID, SessionID: call.SessionID, Server: call.Server, ToolName: call.ToolName, ArgsSchemaFP: call.ArgsSchemaFP, DurationMs: call.DurationMs, OK: call.OK, Error: api.TruncateProxyEventError(call.Error), Timestamp: call.Timestamp}
+					row := store.ProxyEvent{ToolCallDetails: call.ToolCallDetails, Attribution: call.Attribution, ClaimedSessionID: call.ClaimedSessionID, SessionID: call.SessionID, Server: call.Server, ToolName: call.ToolName, ArgsSchemaFP: call.ArgsSchemaFP, DurationMs: call.DurationMs, OK: call.OK, Error: api.TruncateProxyEventError(call.Error), Timestamp: call.Timestamp}
 					if err := writer.AppendProxyEvent(row); err != nil {
 						r.failures.Add(1)
 					}
