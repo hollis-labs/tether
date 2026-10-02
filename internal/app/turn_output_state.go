@@ -154,6 +154,7 @@ func (o *sessionTurnOutput) settleTurn() {
 	}
 	o.accepted = false
 	o.unboundTerminal = nil
+	o.unboundAmbiguous = false
 	o.submissions = 0
 	o.turnID = ""
 	o.reducerTurnID = ""
@@ -188,6 +189,7 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 	// establish which concurrent submission ran. Do not lend it to steering.
 	if output.submissions > 0 {
 		output.unboundTerminal = nil
+		output.unboundAmbiguous = true
 	}
 	output.submissions++
 	done := output.turnDone
@@ -229,7 +231,7 @@ type emptyTurnTerminal struct {
 // response. Preserve empty-turn settlement; resolving that ambiguity requires
 // an upstream explicit begin/turn ID, rather than guessing from timing.
 func (o *sessionTurnOutput) emptyTerminal(kind turnoutput.Kind, stopReason string) {
-	if o.turnID == "" || o.reducerTurnID != "" || o.submissions > 1 {
+	if o.turnID == "" || o.reducerTurnID != "" || o.unboundAmbiguous {
 		return
 	}
 	o.unboundTerminal = &emptyTurnTerminal{kind: kind, stopReason: stopReason}

@@ -127,7 +127,7 @@ func TestRejectedEmptySubmissionDoesNotRecordCompletion(t *testing.T) {
 }
 
 func TestAmbiguousProvisionalTerminalIsNotLentToSteering(t *testing.T) {
-	for _, phase := range []string{"before overlap", "during overlap"} {
+	for _, phase := range []string{"before overlap", "during overlap", "after overlap"} {
 		t.Run(phase, func(t *testing.T) {
 			svc, output := outputHarness(t, nil)
 			svc.turnOutputs.Store("s1", output)
@@ -146,6 +146,9 @@ func TestAmbiguousProvisionalTerminalIsNotLentToSteering(t *testing.T) {
 					return nil
 				}); err != nil {
 					t.Fatal(err)
+				}
+				if phase == "after overlap" {
+					output.observeProvider(gopevents.Done{})
 				}
 				return errors.New("creator rejected")
 			})

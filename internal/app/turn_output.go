@@ -32,6 +32,7 @@ type sessionTurnOutput struct {
 	accepted         bool
 	submissions      int
 	unboundTerminal  *emptyTurnTerminal
+	unboundAmbiguous bool
 	routeUnread      bool
 	completed        map[string]string
 	completedDetails map[string]TurnCompletion
