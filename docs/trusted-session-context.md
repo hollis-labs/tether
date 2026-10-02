@@ -86,7 +86,9 @@ An entry combining `token` and `proxy_service_token_file`, or using the service
 field for stdio, is refused. Disabled entries do not read their service file.
 
 Only the daemon's upstream owner loads this file, into a private in-memory
-entry used by existing error redaction. The authored catalog and worker
+entry used by existing error redaction. Every tool result, successful or failed,
+also scrubs the service credential from text and structured content before
+delivery to the caller. The authored catalog and worker
 ENV/boot files receive no service secret. A runtime loads the credential once;
 a changed credential takes effect when that owner is recreated. No automatic
 service-token mint/rotation, install, restart or identity-mode change accompanies
@@ -145,7 +147,10 @@ remains independent of identity.
 
 Actor headers require all of: an admitted session principal, a daemon-resolved
 verified snapshot matching its principal/session, and the private marker set
-only around the actual SDK `CallTool` POST. The preceding Ping/reconnect,
+around the SDK `CallTool`, covering its tool POST and any associated
+`notifications/cancelled` POST for that same verified caller. Cancellation
+notifications retain the originating actor, not another caller's identity.
+The preceding Ping/reconnect,
 initialize, background GET, refresh and probes carry service authentication
 without actor headers. Operator/service principals remain identifiable in
 telemetry but never inherit a claimed session or actor headers. The upstream

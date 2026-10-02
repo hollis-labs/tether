@@ -9,13 +9,13 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Tool-level failures are successful JSON-RPC replies, so the normal Go-error
-// redaction path never sees them. Scrub the daemon-only service credential
-// from error content/structured details before a failure reaches its caller.
-func scrubServiceToolError(result *mcpsdk.CallToolResult, secret string) (*mcpsdk.CallToolResult, error) {
+// Tool results bypass the normal Go-error redaction path. Scrub the daemon-only
+// service credential from every result, including successful content and
+// structured details, before it reaches the caller.
+func scrubServiceToolResult(result *mcpsdk.CallToolResult, secret string) (*mcpsdk.CallToolResult, error) {
 	raw, err := json.Marshal(result)
 	if err != nil {
-		return nil, fmt.Errorf("upstream tool failure could not be scrubbed")
+		return nil, fmt.Errorf("upstream tool result could not be scrubbed")
 	}
 	if !bytes.Contains(raw, []byte(secret)) {
 		return result, nil
@@ -24,15 +24,15 @@ func scrubServiceToolError(result *mcpsdk.CallToolResult, secret string) (*mcpsd
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("upstream tool failure could not be scrubbed")
+		return nil, fmt.Errorf("upstream tool result could not be scrubbed")
 	}
 	raw, err = json.Marshal(scrubServiceValue(value, secret))
 	if err != nil {
-		return nil, fmt.Errorf("upstream tool failure could not be scrubbed")
+		return nil, fmt.Errorf("upstream tool result could not be scrubbed")
 	}
 	var scrubbed mcpsdk.CallToolResult
 	if err := json.Unmarshal(raw, &scrubbed); err != nil {
-		return nil, fmt.Errorf("upstream tool failure could not be scrubbed")
+		return nil, fmt.Errorf("upstream tool result could not be scrubbed")
 	}
 	return &scrubbed, nil
 }

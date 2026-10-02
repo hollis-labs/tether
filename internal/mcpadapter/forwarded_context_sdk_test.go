@@ -37,9 +37,21 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	}
 	upstream := gomcp.NewServer("upstream", "test")
 	registerTestTool(upstream, "probe")
-	upstream.SDKServer().AddTool(&mcpsdk.Tool{Name: "error_probe", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-		return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream echoed Bearer upstream-sdk-service"}}, StructuredContent: map[string]any{"details": []any{"upstream-sdk-service"}}}, nil
-	})
+	var echoMu sync.Mutex
+	echoHeaders := make(map[string]string)
+	for name, isError := range map[string]bool{"error_probe": true, "success_probe": false} {
+		upstream.SDKServer().AddTool(&mcpsdk.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}, func(_ context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+			// SSE's SDK omits RequestExtra headers, so use the actual HTTP
+			// request captured below rather than an assumed credential value.
+			echoMu.Lock()
+			header := echoHeaders[request.Params.Name]
+			echoMu.Unlock()
+			if header == "" {
+				return nil, fmt.Errorf("upstream header echo missing request headers")
+			}
+			return &mcpsdk.CallToolResult{IsError: isError, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream echoed " + header}}, StructuredContent: map[string]any{"details": []any{header}}}, nil
+		})
+	}
 	var sdkHandler http.Handler = mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil)
 	if transport == "sse" {
 		sdkHandler = mcpsdk.NewSSEHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil)
@@ -62,10 +74,16 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 			var rpc struct {
 				Method string `json:"method"`
 				Params struct {
+					Name string         `json:"name"`
 					Meta map[string]any `json:"_meta"`
 				} `json:"params"`
 			}
 			_ = json.Unmarshal(body, &rpc)
+			if rpc.Method == "tools/call" {
+				echoMu.Lock()
+				echoHeaders[rpc.Params.Name] = r.Header.Get("Authorization")
+				echoMu.Unlock()
+			}
 			expected, _ = rpc.Params.Meta["test_expected_session"].(string)
 			if rpc.Method != "" {
 				method = rpc.Method
@@ -115,13 +133,15 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	}
 	call(caller)
 	call(ctx)
-	failure, err := view.Service.Dispatch(ctx, "error_probe", map[string]any{}, nil)
-	if err != nil || failure == nil || !failure.IsError {
-		t.Fatalf("upstream failure not returned: %v", err)
-	}
-	encoded, err := json.Marshal(failure)
-	if err != nil || bytes.Contains(encoded, []byte("upstream-sdk-service")) || !bytes.Contains(encoded, []byte("[redacted]")) {
-		t.Fatal("service credential exposed in tool error result")
+	for tool, isError := range map[string]bool{"error_probe": true, "success_probe": false} {
+		result, err := view.Service.Dispatch(ctx, tool, map[string]any{}, nil)
+		if err != nil || result == nil || result.IsError != isError {
+			t.Fatalf("upstream %s result not returned: %v", tool, err)
+		}
+		encoded, err := json.Marshal(result)
+		if err != nil || bytes.Contains(encoded, []byte("upstream-sdk-service")) || !bytes.Contains(encoded, []byte("[redacted]")) {
+			t.Fatalf("service credential exposed in %s result", tool)
+		}
 	}
 	var calls sync.WaitGroup
 	for i := range 12 {

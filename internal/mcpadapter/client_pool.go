@@ -496,10 +496,10 @@ func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolPara
 		return nil, fmt.Errorf("go-mcp/client: no session open after a successful ping")
 	}
 	result, err := sess.CallTool(withForwardedToolCall(ctx), params)
-	if err != nil || r.serviceToken == "" || result == nil || !result.IsError {
+	if err != nil || r.serviceToken == "" || result == nil {
 		return result, err
 	}
-	return scrubServiceToolError(result, r.serviceToken)
+	return scrubServiceToolResult(result, r.serviceToken)
 }
 
 func (r *remoteClient) ListTools(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {
