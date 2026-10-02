@@ -78,3 +78,86 @@ func TestBadGatewayModeDoesNotBrickCatalog(t *testing.T) {
 		t.Fatal("gateway accepted typo")
 	}
 }
+
+func TestMCPProfileSelectionAndModeTier(t *testing.T) {
+	oldProfile, oldMode := mcpProfiles, mcpDiscoveryMode
+	t.Cleanup(func() { mcpProfiles = oldProfile; mcpDiscoveryMode = oldMode })
+	t.Setenv("TETHER_MCP_PROFILE", "reader")
+	t.Setenv("TETHER_MCP_DISCOVERY_MODE", "")
+	os.Unsetenv("TETHER_MCP_DISCOVERY_MODE")
+	flat, search := "flat", "search"
+	svc := &app.Service{Catalog: &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{DiscoveryMode: &flat, Profiles: map[string]mcpgateway.Profile{"reader": {DiscoveryMode: &search}, "writer": {DiscoveryMode: &flat}}}}}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "")
+	cmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "")
+	selected, err := resolveMCPProfile(cmd, svc)
+	if err != nil || selected.ID != "reader" || selected.Source != "environment" {
+		t.Fatalf("profile=%+v %v", selected, err)
+	}
+	in, err := resolveMCPModeInputs(cmd, svc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, err := mcpgateway.ResolveMode(in)
+	if err != nil || mode.Mode != mcpgateway.Search || mode.Source != "profile" {
+		t.Fatalf("mode=%+v %v", mode, err)
+	}
+	if err := cmd.Flags().Set("profile", "writer"); err != nil {
+		t.Fatal(err)
+	}
+	selected, err = resolveMCPProfile(cmd, svc)
+	if err != nil || selected.ID != "writer" || selected.Source != "argument" {
+		t.Fatalf("profile=%+v %v", selected, err)
+	}
+	t.Setenv("TETHER_MCP_PROFILE", "bogus")
+	if _, err := resolveMCPProfile(cmd, svc); err == nil {
+		t.Fatal("unknown env profile hidden by argument")
+	}
+	t.Setenv("TETHER_MCP_PROFILE", "reader")
+	if err := cmd.Flags().Set("profile", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveMCPProfile(cmd, svc); err == nil {
+		t.Fatal("empty explicit profile fell back")
+	}
+}
+
+func TestRepeatedProfileArgumentsConflictAndUnselectedBadProfile(t *testing.T) {
+	t.Setenv("TETHER_MCP_PROFILE", "")
+	os.Unsetenv("TETHER_MCP_PROFILE")
+	svc := &app.Service{Catalog: &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{Profiles: map[string]mcpgateway.Profile{"ro": {}, "none": {}, "bad": {Instructions: strings.Repeat("x", 2049)}}}}}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	var profiles []string
+	cmd.Flags().StringArrayVar(&profiles, "profile", nil, "")
+	cmd.Flags().String("discovery-mode", "", "")
+	if _, err := resolveMCPModeInputs(cmd, svc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ParseFlags([]string{"--profile", "ro", "--profile", "none"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveMCPProfile(cmd, svc); err == nil {
+		t.Fatal("same-tier profile conflict accepted")
+	}
+}
+
+func TestDoctorValidatesEveryProfileCatalogOrigin(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mcp-servers"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mcp-servers", "gamma.yaml"), []byte("id: gamma\ntransport: stdio\ncommand: /bin/false\nenabled: false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cat := &config.Catalog{Global: config.Global{MCP: mcpgateway.Config{Profiles: map[string]mcpgateway.Profile{"unknown": {Servers: []string{"nonexistent"}}, "disabled": {Servers: []string{"gamma"}}, "bad": {Tools: mcpgateway.ToolRules{Allow: []string{"["}}}, "pins": {Servers: []string{"tether"}, Order: []string{"typo"}}}}}}
+	results := checkMCPProfiles(cat, root)
+	counts := map[string]int{}
+	for _, result := range results {
+		counts[result.Status]++
+	}
+	if len(results) != 4 || counts[statusFail] != 3 || counts[statusWarn] != 1 {
+		t.Fatalf("doctor=%+v", results)
+	}
+}

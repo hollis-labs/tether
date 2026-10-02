@@ -18,10 +18,19 @@ func ValidateMode(value string) error {
 	return nil
 }
 
-// Profile is the typed mode hook for profile selection (CW-20260926-0008).
-// This change does not select or filter profiles.
+// Profile selects upstreams and filters final wire names in every call path.
 type Profile struct {
-	DiscoveryMode *string `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
+	Servers       []string  `yaml:"servers" json:"servers"`
+	Tools         ToolRules `yaml:"tools" json:"tools"`
+	ReadOnly      bool      `yaml:"read_only" json:"read_only"`
+	Order         []string  `yaml:"order" json:"order,omitempty"`
+	AlwaysLoad    []string  `yaml:"always_load" json:"always_load,omitempty"`
+	Instructions  string    `yaml:"instructions" json:"instructions,omitempty"`
+	DiscoveryMode *string   `yaml:"discovery_mode" json:"discovery_mode,omitempty"`
+}
+type ToolRules struct {
+	Allow []string `yaml:"allow" json:"allow"`
+	Deny  []string `yaml:"deny" json:"deny,omitempty"`
 }
 
 type Config struct {
@@ -36,10 +45,11 @@ func (c Config) Validate() error {
 		}
 	}
 	for id, profile := range c.Profiles {
-		if profile.DiscoveryMode != nil {
-			if err := ValidateMode(*profile.DiscoveryMode); err != nil {
-				return fmt.Errorf("mcp.profiles.%s.discovery_mode: %w", id, err)
-			}
+		if id == "" {
+			return fmt.Errorf("mcp.profiles: profile ID must be nonempty")
+		}
+		if err := profile.Validate(); err != nil {
+			return fmt.Errorf("mcp.profiles.%s: %w", id, err)
 		}
 	}
 	return nil

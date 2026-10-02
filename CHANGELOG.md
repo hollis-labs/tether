@@ -28,6 +28,8 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
+- **Named MCP gateway profiles** (CW-20260926-0008): `--profile` / `TETHER_MCP_PROFILE` select origin-based filters, final-name allow/deny globs, advisory read-only filtering, pinned/server/name ordering, eligible alwaysLoad hints and bounded instructions. Profiles apply before ranking and across listing, hydration and dispatch; unknown selectors/origins fail; unknown pins fail when discovery is complete and warn while an upstream is unavailable. Flat ordering intentionally changes from alphabetical to native origins first, then catalog server order, then final name (ADR 0047), even without a profile. Native origin `tether` is explicit in a server list; gateway infrastructure remains visible.
+
 - **MCP grants fail loudly.** Daemon startup and affected launch/session chains reject unknown or disabled upstream IDs; doctor names the owner and bad grant. Explicit empty project/launch `mcp.servers`, boot-profile `mcp_servers`, and environment grants now mean no upstreams; omitted/null lists still inherit. Native Tether tools remain available. (CW-20261001-0443)
 - **Selectable MCP discovery mode** (CW-20261001-0542): flat remains the default with no discovery/dispatch hatch; explicit search exposes `tether_tool_search`, `tether_tool_list`, `tether_tool_call` and `tether_gateway_status`. Argument/env/config/persisted settings select the mode, with every supplied value validated. List supports enumeration and exact schema hydration, search supports summary/schema detail, and cursors reject changed inventories. `--servers` restricts loading and every call path; unknown/disabled IDs fail, and `--broker` is removed. Profile selection follows separately.
 
