@@ -110,6 +110,18 @@ func (s *Store) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
+// RevokeToken revokes only the credential minted by one launch attempt.
+func (s *Store) RevokeToken(ctx context.Context, token string) error {
+	if !validToken(token) {
+		return ErrInvalidToken
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?`, time.Now().UTC().Format(time.RFC3339Nano), HashToken(token))
+	if err != nil {
+		return fmt.Errorf("revoke credential: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) RevokeSession(ctx context.Context, sessionID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE principals SET revoked_at = COALESCE(revoked_at, ?) WHERE kind = 'session' AND session_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), sessionID)
 	if err != nil {

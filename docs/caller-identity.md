@@ -105,7 +105,9 @@ session's boot directory. Same-uid read isolation remains a separate boundary.
 
 Migration 0037 revokes session principals transactionally when the session ends
 as completed, failed or killed, or is deleted; minting against missing/terminal
-sessions is refused. A launch that fails after mint also revokes its credential.
+sessions is refused. Only one unrevoked token may exist per session, so concurrent
+launch attempts cannot mint competing credentials. A launch that fails after mint
+revokes only its own token; terminal transitions revoke all of the session's tokens.
 A resumed session has a new session id and token. Identity-off launches mint no
 principal; their MCP adapter retains the legacy nonsecret presence marker.
 Existing running sessions are not retrofitted.

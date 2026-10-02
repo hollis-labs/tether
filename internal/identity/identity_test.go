@@ -217,3 +217,27 @@ func TestIdentityMultipleTokensForOnePrincipal(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityRevokeTokenPreservesOtherCredential(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, _ := identityStore(t)
+	ctx := context.Background()
+	p := identity.Principal{ID: "svc:replacement", Kind: "service"}
+	first, err := s.Mint(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Mint(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeToken(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Verify(ctx, first); !errors.Is(err, identity.ErrInvalidToken) {
+		t.Fatal("revoked token accepted", err)
+	}
+	if _, err := s.Verify(ctx, second); err != nil {
+		t.Fatal("other token was revoked", err)
+	}
+}

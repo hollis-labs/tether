@@ -339,7 +339,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	launched := false
 	defer func() {
 		if !launched && token != "" {
-			if err := identity.NewStore(s.Store.DB()).RevokeSession(context.Background(), sessionID); err != nil {
+			if err := identity.NewStore(s.Store.DB()).RevokeToken(context.Background(), token); err != nil {
 				log.Print("session credential revocation failed")
 			}
 		}

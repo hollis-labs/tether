@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/setup"
@@ -419,7 +420,7 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	h, err := client.New(cfg.ListenAddr).Health(ctx)
+	h, err := client.New(cfg.ListenAddr, client.WithToken("")).Health(ctx)
 	if err != nil || h.Identity == nil {
 		return warn("caller-identity", string(mode)+" configured; runtime identity unavailable", "check daemon status")
 	}

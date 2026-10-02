@@ -187,3 +187,45 @@ func TestSessionCredentialRevokesAcrossStoreTerminalPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionCredentialConcurrentMintPreservesWinner(t *testing.T) {
+	svc, _, id, _ := credentialLaunch(t)
+	type result struct {
+		token string
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			token, err := svc.mintSessionCredential(context.Background(), id)
+			results <- result{token, err}
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first.err != nil {
+		first, second = second, first
+	}
+	if first.err != nil || second.err == nil {
+		t.Fatal("expected exactly one active session credential", first.err, second.err)
+	}
+	ids := identity.NewStore(svc.Store.DB())
+	if _, err := ids.Verify(context.Background(), first.token); err != nil {
+		t.Fatal("winning credential invalid", err)
+	}
+	if err := ids.RevokeToken(context.Background(), first.token); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := svc.mintSessionCredential(context.Background(), id)
+	if err != nil {
+		t.Fatal("revoked row blocked new mint", err)
+	}
+	if err := ids.RevokeToken(context.Background(), first.token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ids.Verify(context.Background(), replacement); err != nil {
+		t.Fatal("old attempt revoked replacement", err)
+	}
+}

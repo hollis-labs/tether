@@ -1,3 +1,8 @@
+-- A concurrent launch must not mint a second live credential for the same
+-- session. Revoked rows remain history; resume creates a new session.
+CREATE UNIQUE INDEX principals_active_session ON principals(session_id)
+WHERE kind = 'session' AND revoked_at IS NULL;
+
 -- Terminal state and credential revocation commit together, including crash
 -- recovery and launch failures that bypass the runtime's state sink.
 CREATE TRIGGER session_principal_requires_active_session BEFORE INSERT ON principals
