@@ -26,7 +26,7 @@ func TestScopedInterruptInterfaces(t *testing.T) {
 		{"antigravity", gop.NewAntigravityAdapter(), false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := (&PlanScopedAdapter{Inner: tc.adapter}).withInterrupts()
+			a := NewPlanScopedAdapter(nil, tc.adapter)
 			_, stream := a.(gop.TurnInterrupter)
 			_, rpc := a.(gop.RPCTurnInterrupter)
 			if stream != tc.stream || rpc != tc.rpc {
