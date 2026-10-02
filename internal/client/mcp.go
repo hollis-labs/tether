@@ -19,6 +19,9 @@ import (
 const MCPInitializeTimeout = 15 * time.Second
 
 type MCPOptions struct {
+	// OnTransportConnected exposes teardown of the underlying connection after
+	// callers have drained, without waiting on the SDK's graceful RPC close.
+	OnTransportConnected func(mcpsdk.Connection)
 	// OnSessionMissing observes an explicit expiry response for a known SDK session, including
 	// background streams whose errors the SDK reformats without wrapping.
 	OnSessionMissing func()
@@ -53,7 +56,23 @@ func (c *Client) ConnectMCP(ctx context.Context, opts MCPOptions) (*mcpsdk.Clien
 		base = http.DefaultTransport
 	}
 	httpClient.Transport = mcpErrorTransport{base: base, onSessionMissing: opts.OnSessionMissing}
-	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "tether-daemon-client", Version: "1"}, opts.ClientOptions).Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: -1}, nil)
+	// SDK retries resume SSE via GET/Last-Event-ID; they never resend POST.
+	// No OAuth handler is installed (the only SDK path that re-POSTs).
+	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: 1}
+	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "tether-daemon-client", Version: "1"}, opts.ClientOptions).Connect(ctx, mcpObservedTransport{Transport: transport, connected: opts.OnTransportConnected}, nil)
+}
+
+type mcpObservedTransport struct {
+	mcpsdk.Transport
+	connected func(mcpsdk.Connection)
+}
+
+func (t mcpObservedTransport) Connect(ctx context.Context) (mcpsdk.Connection, error) {
+	connection, err := t.Transport.Connect(ctx)
+	if err == nil && t.connected != nil {
+		t.connected(connection)
+	}
+	return connection, err
 }
 
 type mcpErrorTransport struct {
