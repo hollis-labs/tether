@@ -22,7 +22,7 @@ func TestACPInterruptTurnPreservesSession(t *testing.T) {
 		providertest.Recv(`{"jsonrpc":"2.0","id":3,"method":"session/prompt"}`),
 		providertest.Send(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"interrupt-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"running"}}}}`),
 		providertest.Recv(`{"jsonrpc":"2.0","method":"session/cancel"}`),
-		providertest.Send(`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}`),
+		providertest.Send(`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}`), //nolint:misspell // ACP wire stop reason
 		providertest.Recv(`{"jsonrpc":"2.0","id":4,"method":"session/prompt"}`),
 		providertest.Send(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"interrupt-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"next reply"}}}}`),
 		providertest.Send(`{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}`),

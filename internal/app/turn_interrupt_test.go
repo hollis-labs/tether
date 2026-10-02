@@ -93,7 +93,7 @@ func TestCancelTurnAndWaitRequiresMatchingOutputAndAuditsActor(t *testing.T) {
 				case "ACP":
 					output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "ACP-runtime-turn"})
 				default:
-					output.observeProvider(gopevents.Done{StopReason: "cancelled"})
+					output.observeProvider(gopevents.Done{StopReason: "cancelled"}) //nolint:misspell // provider protocol spelling
 				}
 				return nil
 			})
@@ -281,7 +281,7 @@ func TestCancelTurnAndWaitAuditFailurePreventsCancel(t *testing.T) {
 		t.Fatal("unaudited cancel accepted")
 	}
 	if calls.Load() != 0 {
-		t.Fatal("runtime cancelled despite failed intent audit")
+		t.Fatal("runtime canceled despite failed intent audit")
 	}
 }
 
@@ -311,9 +311,9 @@ func TestCancelTurnAndWaitReleasesGateBeforeTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if current, _ := output.CurrentTurn(); current != id {
-		t.Fatal("steering replaced the cancelled marker")
+		t.Fatal("steering replaced the canceled marker")
 	}
-	output.observeProvider(gopevents.Done{StopReason: "cancelled"})
+	output.observeProvider(gopevents.Done{StopReason: "cancelled"}) //nolint:misspell // provider protocol spelling
 	if err := <-returned; err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestCancelTurnAndWaitUnblocksAcceptedSendInput(t *testing.T) {
 	releaseInput := func() { once.Do(func() { close(release) }) }
 	defer releaseInput()
 	svc, state, base := interruptHarness(t, func(context.Context) error {
-		output.observeProvider(gopevents.Done{StopReason: "cancelled"})
+		output.observeProvider(gopevents.Done{StopReason: "cancelled"}) //nolint:misspell // provider protocol spelling
 		releaseInput()
 		return nil
 	})

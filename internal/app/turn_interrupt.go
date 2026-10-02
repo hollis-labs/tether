@@ -22,7 +22,7 @@ func (s *Service) RoutingInterruptWired(providerID string) bool {
 // actor is the verified caller identity supplied by the reply surface.
 //
 // A provisional submission is refused immediately. A turn that ends or changes
-// before the gated runtime call is refused without cancelling a successor.
+// before the gated runtime call is refused without canceling a successor.
 // Runtime acknowledgement alone is insufficient: completion must belong to
 // the captured marker. Call from a caller goroutine, never a runtime callback.
 func (s *Service) CancelTurnAndWait(ctx context.Context, sessionID, actor string) (result TurnInterruptResult, err error) {
@@ -90,11 +90,11 @@ func (s *Service) cancelTurnAndWait(ctx context.Context, sessionID, actor string
 		}); err != nil {
 			return fmt.Errorf("audit turn interruption request: %w", err)
 		}
-		if err := s.Manager.InterruptTurn(ctx, sessionID); errors.Is(err, agentsessions.ErrInterruptUnsupported) {
+		err := s.Manager.InterruptTurn(ctx, sessionID)
+		if errors.Is(err, agentsessions.ErrInterruptUnsupported) {
 			return &TurnInterruptRefusal{Reason: TurnInterruptUnsupported, SessionID: sessionID, TurnID: intended}
-		} else {
-			return err
 		}
+		return err
 	}()
 	if err != nil {
 		return result, err

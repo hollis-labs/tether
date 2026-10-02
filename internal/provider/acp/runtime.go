@@ -280,11 +280,11 @@ func (s *session) InterruptTurn(ctx context.Context) error {
 	if !s.DeliveryCapabilities().Supports(adapters.DeliveryCapabilityCancelTurn) {
 		return agentsessions.ErrInterruptUnsupported
 	}
-	if err := s.w.CancelTurn(ctx); errors.Is(err, wrapper.ErrTurnCancelUnsupported) {
+	err := s.w.CancelTurn(ctx)
+	if errors.Is(err, wrapper.ErrTurnCancelUnsupported) {
 		return agentsessions.ErrInterruptUnsupported
-	} else {
-		return err
 	}
+	return err
 }
 
 func (s *session) Health() agentsessions.HealthStatus {
