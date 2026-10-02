@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
- "errors"
+	"errors"
 	gopevents "github.com/hollis-labs/go-providers/provider/events"
 	"testing"
 	"time"
@@ -70,8 +70,7 @@ func TestCancelTurnReadinessGap(t *testing.T) {
 }
 
 func TestCancelTurnReadinessWaitContextAndCompletion(t *testing.T) {
-	for _, action := range []string{"context"
- "errors", "terminal"} {
+	for _, action := range []string{"context", "terminal"} {
 		t.Run(action, func(t *testing.T) {
 			calls := 0
 			svc, state, session := interruptHarness(t, func(context.Context) error { calls++; return nil })
@@ -84,16 +83,14 @@ func TestCancelTurnReadinessWaitContextAndCompletion(t *testing.T) {
 			defer cancel()
 			clock := &fakeInterruptClock{}
 			clock.tick = func() {
-				if action == "context"
- "errors" {
+				if action == "context" {
 					cancel()
 				} else {
 					state.observeProvider(gopevents.Done{})
 				}
 			}
 			_, err := svc.cancelTurnAndWaitWithClock(ctx, "s1", "msg://user/local/alice", state, id, clock)
-			if action == "context"
- "errors" {
+			if action == "context" {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("error=%v", err)
 				}
