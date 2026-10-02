@@ -270,3 +270,62 @@ func TestOutputEventsCanReorderAcrossRetry(t *testing.T) {
 		}
 	}
 }
+
+// Non-context failures after each stall allow the reader to reach all four
+// operations. Returning ctx.Err on metadata would mask a missing shared cap.
+type everyOperationStallStore struct {
+	*store.Store
+	entered chan struct{}
+	first   atomic.Bool
+}
+
+func (s *everyOperationStallStore) wait(ctx context.Context) {
+	if s.first.CompareAndSwap(false, true) {
+		close(s.entered)
+	}
+	<-ctx.Done()
+}
+func (s *everyOperationStallStore) GetSessionContext(ctx context.Context, _ string) (*store.SessionRow, error) {
+	s.wait(ctx)
+	return nil, errors.New("metadata unavailable")
+}
+func (s *everyOperationStallStore) SessionRoute(ctx context.Context, _ string) (*launchprofile.Route, error) {
+	s.wait(ctx)
+	return nil, errors.New("route unavailable")
+}
+func (s *everyOperationStallStore) StageTurnOutput(ctx context.Context, _ messaging.Envelope) (messaging.Envelope, error) {
+	s.wait(ctx)
+	return messaging.Envelope{}, errors.New("stage unavailable")
+}
+
+type everyOperationStallBus struct{ events.Bus }
+
+func (b everyOperationStallBus) Publish(ctx context.Context, _ events.Event) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func TestObserveProviderBoundsReaderLockAcrossAllPersistenceStalls(t *testing.T) {
+	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	budget := 200 * time.Millisecond
+	svc.turnOutputTimeout = budget
+	storage := &everyOperationStallStore{Store: svc.Store, entered: make(chan struct{})}
+	svc.turnOutputStore = storage
+	svc.Bus = everyOperationStallBus{svc.Bus}
+	output.routeUnread = true
+	output.observeProvider(gopevents.Delta{Text: "answer"})
+	start := time.Now()
+	returned := make(chan time.Duration, 1)
+	go func() { output.observeProvider(gopevents.Done{}); returned <- time.Since(start) }()
+	select {
+	case <-storage.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader never entered persistence")
+	}
+	// This must regain the same mutex held by observeProvider, after every
+	// synchronous persistence attempt and marker completion has finished.
+	output.CurrentTurn()
+	held := <-returned
+	if held >= 2*budget {
+		t.Fatalf("reader lock held %s for %s overall cap", held, budget)
+	}
+}
