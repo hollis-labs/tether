@@ -140,6 +140,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool) error 
 	cat = loadedCat
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
+		checks = append(checks, checkMCPDiscoveryMode(cat))
 		checks = append(checks, ok("events-retention", retentionMessage(cat.Global.Daemon.EventsRetention)))
 	}
 	checks = append(checks, doctorSandboxProtect(cat, catalogRoot)...)
@@ -430,4 +431,11 @@ func checkIdentity(cat *config.Catalog) checkResult {
 		return warn("caller-identity", fmt.Sprintf("audit dropped=%d failures=%d", h.Identity.Audit.Dropped, h.Identity.Audit.Failures), "check queue load and state DB availability")
 	}
 	return ok("caller-identity", string(h.Identity.Mode)+"; operator credentials available")
+}
+
+func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
+	if err := cat.Global.MCP.Validate(); err != nil {
+		return fail("mcp-discovery-mode", err.Error(), "set mcp.discovery_mode and profile discovery_mode to flat or search in global.yaml")
+	}
+	return ok("mcp-discovery-mode", "configured discovery modes are valid")
 }

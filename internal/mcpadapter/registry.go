@@ -170,3 +170,11 @@ func (r *ToolRegistry) ReplaceServer(serverID string, client upstreamClient, too
 	sort.Strings(delta.Removed)
 	return delta
 }
+
+// RegisterLocal stores native definitions and a local protocol dispatch seam.
+// They keep an empty ServerID so upstream confinement never selects them.
+func (r *ToolRegistry) RegisterLocal(tool *mcpsdk.Tool, client upstreamClient) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[tool.Name] = RegisteredTool{Definition: tool, Client: client}
+}

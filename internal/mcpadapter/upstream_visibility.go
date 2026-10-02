@@ -19,26 +19,6 @@ func (a *Adapter) upstreamStatus() []ServerStatus {
 	return a.upstreams.StatusSummary()
 }
 
-func unavailableIDs(statuses []ServerStatus) map[string]bool {
-	out := make(map[string]bool)
-	for _, s := range unavailableServers(statuses) {
-		out[s.ID] = true
-	}
-	return out
-}
-
-func addAvailability(payload map[string]any, statuses []ServerStatus) {
-	if statuses == nil {
-		return
-	}
-	absent := unavailableServers(statuses)
-	payload["complete"] = len(absent) == 0
-	payload["unavailable_servers"] = absent
-	if len(absent) > 0 {
-		payload["availability_hint"] = "Discovery is incomplete: unavailable upstreams were excluded. Empty results do not establish that those products have no matching tool. Inspect tether_catalog_list_mcp_servers for exit, retry and stderr diagnostics."
-	}
-}
-
 func (p *ClientPool) unavailableError(id string, client upstreamClient) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -48,7 +28,7 @@ func (p *ClientPool) unavailableError(id string, client upstreamClient) error {
 		if s != nil {
 			state = s.state
 		}
-		return fmt.Errorf("upstream %q unavailable (%s); request was not sent; inspect tether_catalog_list_mcp_servers", id, state)
+		return fmt.Errorf("upstream %q unavailable (%s); request was not sent; inspect tether_gateway_status", id, state)
 	}
 	return nil
 }

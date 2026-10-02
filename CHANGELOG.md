@@ -26,6 +26,8 @@ Changes on `main` since v0.6.0.
 
 ### Changed
 
+- **Selectable MCP discovery mode** (CW-20261001-0542): flat remains the default with no discovery/dispatch hatch; explicit search exposes `tether_tool_search`, `tether_tool_list`, `tether_tool_call` and `tether_gateway_status`. Argument/env/config/persisted settings select the mode, with every supplied value validated. List supports enumeration and exact schema hydration, search supports summary/schema detail, and cursors reject changed inventories. `--servers` restricts loading and every call path; unknown/disabled IDs fail, and `--broker` is removed. Profile selection follows separately.
+
 - **Retention is on by default for 90 days.** `daemon.events_retention` now governs `events`, `proxy_events` and `ai_events` by age; proxy/AI inserts no longer evict rows above 2,000. Set `days` below 1 or `enabled: false` to disable. **On existing installs the first sweep deletes old rows unless explicitly disabled; back up the state database before cutover.** Every deletion batch writes an atomic durable audit receipt, and the sweep exposes per-table counts for future consumers. The API reference lists lifecycle tables retained outside this policy; archiving remains out of scope. (CW-20261001-0545)
 - CW-20260926-0007: clean break from mux to tether (CLI, MCP tool/server names, environment and socket paths); no compatibility aliases. Durable identity authorities and historical SQL are retained.
 

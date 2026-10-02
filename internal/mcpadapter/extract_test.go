@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"reflect"
 	"strings"
 	"testing"
@@ -170,11 +171,9 @@ func runProxiedToolCall(t *testing.T, a *Adapter, toolName string, args map[stri
 	reg.Register("upstream", mc, []*mcpsdk.Tool{makeTool(toolName)})
 
 	s := gomcp.NewServer("t", "0.0.1")
-	idx := NewDiscoveryIndex()
-	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
 		adapter: a, server: s, registry: reg,
-		router: NewProxyRouter(reg), index: idx, firehose: true,
+		router: NewProxyRouter(reg), firehose: true,
 	}
 	live.addProxyTools(makeTool(toolName))
 
@@ -410,14 +409,14 @@ func TestProxiedCall_TetherCall_ExtractsRefs(t *testing.T) {
 
 	s := gomcp.NewServer("t", "0.0.1")
 	router := NewProxyRouter(reg)
-	a.registerCallTool(s, router)
+	a.registerCallTool(s, a.gatewayService(reg, router, mcpgateway.Selection{Mode: mcpgateway.Search, Source: "test"}, nil))
 
 	c := connectInMemory(t, s)
 	ctx := context.Background()
 	if _, err := c.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name: "tether_tool_call",
 		Arguments: map[string]any{
-			"tool_name": "workspace_write",
+			"name":      "workspace_write",
 			"arguments": map[string]any{"summary": "dispatched draft"},
 		},
 	}); err != nil {
@@ -459,11 +458,9 @@ func TestProxiedCall_DoesNotModifyTheForwardedRequest(t *testing.T) {
 
 	a, _ := newExtractingAdapter("sess-1", true)
 	s := gomcp.NewServer("t", "0.0.1")
-	idx := NewDiscoveryIndex()
-	idx.Build(reg, nil)
 	live := &liveProxyCatalog{
 		adapter: a, server: s, registry: reg,
-		router: NewProxyRouter(reg), index: idx, firehose: true,
+		router: NewProxyRouter(reg), firehose: true,
 	}
 	live.addProxyTools(makeTool("torque_task_get"))
 
