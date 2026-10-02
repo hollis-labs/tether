@@ -185,3 +185,21 @@ func (b *schemaBudget) visit(v reflect.Value, depth int) bool {
 	}
 	return b.bytes <= 256*1024
 }
+
+// SchemaLintCost conservatively accounts for encoding and AST work without
+// marshaling or resolving. Traversal is bounded; values past the per-tool limits
+// are charged the maximum (their actual lint will return unexamined quickly).
+func SchemaLintCost(value any) int {
+	budget := schemaBudget{}
+	if !budget.visit(reflect.ValueOf(value), 0) {
+		return 256 * 1024
+	}
+	cost := budget.bytes*6 + budget.nodes*64
+	if cost < 1024 {
+		return 1024
+	}
+	if cost > 256*1024 {
+		return 256 * 1024
+	}
+	return cost
+}

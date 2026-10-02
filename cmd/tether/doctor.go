@@ -563,7 +563,12 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 	if err != nil {
 		out = append(out, fail("mcp-live-names", err.Error(), "fix the named origin/tool or declare tool_prefix on one upstream"))
 	}
+	unexamined := map[string]int{}
 	for _, finding := range status.Lint {
+		if finding.Code == "conformance_unexamined" {
+			unexamined[finding.Origin]++
+			continue
+		}
 		remedy := "fix the upstream name or declared tool_prefix; names are not rewritten"
 		switch finding.Code {
 		case "missing_annotations", "description_length", "disabled_description", "input_schema":
@@ -580,6 +585,14 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 			message = finding.Name + ": " + message
 		}
 		out = append(out, warn("mcp-name:"+finding.Origin+":"+finding.Code, message, remedy))
+	}
+	ids := make([]string, 0, len(unexamined))
+	for id := range unexamined {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		out = append(out, warn("mcp-name:"+id+":conformance_unexamined", fmt.Sprintf("%d tool declarations unexamined: aggregate conformance budget exhausted", unexamined[id]), "request gateway status again to examine the next bounded batch; no missing findings are implied to be passes"))
 	}
 	for _, origin := range status.Origins {
 		if origin.Status != "connected" {

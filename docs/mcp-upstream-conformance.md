@@ -26,7 +26,20 @@ a report and route findings to the owning upstream project.
 | Initialization instructions fit 2,048 Unicode characters | `instructions_length` | Shorten the upstream's observed initialize instructions. |
 | Input schema is an object JSON Schema | `input_schema` | Fix syntax, keyword constraints, regular expressions or unresolved local references. |
 | External schema references are unexamined | `input_schema_unexamined` | Bundle referenced schemas under local `$defs`/`definitions` for checking without network access. |
+| Aggregate checking is incomplete | `conformance_unexamined` | Inspect the reported remainder; request another status pass or narrow the live-probe selection. |
 | Schema checking has bounded resources | `input_schema_limit` | Simplify the schema; it exceeds the checker limits and is unexamined. |
+
+Each status pass examines at most 128 new declarations and 512 KiB of
+conservatively estimated schema work. Findings are memoized once per accepted
+definition outside registry/pool locks; repeated reads reuse them. Remaining
+named declarations carry `conformance_unexamined`, and status exposes their
+profile-filtered `unexamined_tools` count (also including external/oversized
+schemas). Later passes can examine the next bounded batch; a large accepted
+inventory is never silently called fully checked. Live doctor groups remaining
+aggregate-budget findings by origin and reports their count. A fresh doctor
+probe has a fresh cache; narrow the operator's inherited `TETHER_MCP_SERVERS`
+selection when examining a large upstream portfolio. Collision-only pool status
+and startup checks never invoke metadata/schema lint.
 
 Metadata lint is **report-only**: findings never block startup, rewrite schemas,
 infer safety or remove tools. Title, annotations, schemas and other supported

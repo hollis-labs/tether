@@ -94,3 +94,22 @@ func TestConformanceSchemaBoundsAndReferenceCycles(t *testing.T) {
 		t.Fatalf("valid recursive local reference: %s", code)
 	}
 }
+
+func TestConformanceUnexaminedCountRespectsProfileAndLaunchFloor(t *testing.T) {
+	snapshot := Snapshot{Origins: []OriginStatus{{ID: "alpha", Status: "connected"}, {ID: "beta", Status: "connected"}}}
+	for _, entry := range []Entry{{Origin: "alpha", Tool: &mcpsdk.Tool{Name: "alpha_public"}}, {Origin: "alpha", Tool: &mcpsdk.Tool{Name: "alpha_hidden"}}, {Origin: "beta", Tool: &mcpsdk.Tool{Name: "beta_public"}}} {
+		snapshot.Entries = append(snapshot.Entries, entry)
+		snapshot.Lint = append(snapshot.Lint, NameFinding{Origin: entry.Origin, Name: entry.Tool.Name, Code: "conformance_unexamined"})
+	}
+	policy := &Policy{Selection: ProfileSelection{Profile: &Profile{Servers: []string{"alpha"}, Tools: ToolRules{Allow: []string{"alpha_public"}}}}}
+	service := Service{Snapshot: func() Snapshot { return snapshot }, Policy: policy}
+	got := service.Status("")
+	if got.UnexaminedTools != 1 || len(got.Lint) != 1 || got.Lint[0].Name != "alpha_public" {
+		t.Fatalf("excluded remainder leaked: %+v", got)
+	}
+	policy.Floors = []ProfileSelection{{Profile: &Profile{Servers: []string{"beta"}}}}
+	got = service.Status("")
+	if got.UnexaminedTools != 0 || len(got.Lint) != 0 {
+		t.Fatalf("launch floor remainder leaked: %+v", got)
+	}
+}

@@ -309,6 +309,9 @@ tools/list inventory; the offline doctor cannot establish that inventory.
 Input-schema syntax/local-reference checks and observed initialization instructions
 over 2,048 characters are also reported. External schema references and oversized
 schemas are explicitly unexamined, never fetched or treated as proven valid.
+Findings are memoized per accepted definition outside registry/pool locks; each
+pass has an aggregate schema-work/tool budget. `unexamined_tools` counts eligible
+unexamined declarations, and live doctor reports aggregate remainder counts.
 See [upstream author conformance](mcp-upstream-conformance.md) for rules, limits
 and finding codes.
 

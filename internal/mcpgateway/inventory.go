@@ -317,22 +317,23 @@ func (s *Service) Call(ctx context.Context, name string, args, meta map[string]a
 
 type Status struct {
 	Selection
-	Profile        string          `json:"profile,omitempty"`
-	ProfileSource  string          `json:"profile_source,omitempty"`
-	Warnings       []string        `json:"warnings,omitempty"`
-	Lint           []NameFinding   `json:"lint"`
-	Collisions     []NameCollision `json:"collisions"`
-	Origins        []OriginStatus  `json:"origins"`
-	CatalogedTools int             `json:"cataloged_tools"`
-	EligibleTools  int             `json:"eligible_tools"`
-	AvailableTools int             `json:"available_tools"`
-	HiddenTools    int             `json:"hidden_tools"`
-	Exclusions     map[string]int  `json:"exclusions"`
-	Complete       bool            `json:"complete"`
-	Name           string          `json:"name,omitempty"`
-	Visible        *bool           `json:"visible,omitempty"`
-	Reason         string          `json:"reason,omitempty"`
-	Tool           *Item           `json:"tool,omitempty"`
+	Profile         string          `json:"profile,omitempty"`
+	ProfileSource   string          `json:"profile_source,omitempty"`
+	Warnings        []string        `json:"warnings,omitempty"`
+	Lint            []NameFinding   `json:"lint"`
+	Collisions      []NameCollision `json:"collisions"`
+	Origins         []OriginStatus  `json:"origins"`
+	CatalogedTools  int             `json:"cataloged_tools"`
+	EligibleTools   int             `json:"eligible_tools"`
+	AvailableTools  int             `json:"available_tools"`
+	HiddenTools     int             `json:"hidden_tools"`
+	UnexaminedTools int             `json:"unexamined_tools"`
+	Exclusions      map[string]int  `json:"exclusions"`
+	Complete        bool            `json:"complete"`
+	Name            string          `json:"name,omitempty"`
+	Visible         *bool           `json:"visible,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	Tool            *Item           `json:"tool,omitempty"`
 }
 
 func (s *Service) Status(name string) Status {
@@ -403,6 +404,11 @@ func (s *Service) Status(name string) Status {
 					out.Origins[i].Error = "upstream naming collision; tool details excluded by profile"
 				}
 			}
+		}
+	}
+	for _, finding := range out.Lint {
+		if finding.Code == "conformance_unexamined" || finding.Code == "input_schema_unexamined" || finding.Code == "input_schema_limit" {
+			out.UnexaminedTools++
 		}
 	}
 	if s.Policy != nil {

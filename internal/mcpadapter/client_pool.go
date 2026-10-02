@@ -190,7 +190,7 @@ func (p *ClientPool) Start(ctx context.Context) error {
 		go func() { defer p.workers.Done(); p.supervise(ctx, entry, initial.Done) }()
 	}
 	initial.Wait()
-	_, collisions := p.registry.NameDiagnostics()
+	collisions := p.registry.Collisions()
 	if len(collisions) > 0 {
 		p.mu.Lock()
 		for _, collision := range collisions {
@@ -675,7 +675,7 @@ type ServerStatus struct {
 func (p *ClientPool) StatusSummary() []ServerStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, collisions := p.registry.NameDiagnostics()
+	collisions := p.registry.Collisions()
 	affected := map[string][]mcpgateway.NameCollision{}
 	for _, collision := range collisions {
 		for _, owner := range collision.Owners {
