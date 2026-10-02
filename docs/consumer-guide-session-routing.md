@@ -536,8 +536,8 @@ turn. It does not edit the running prompt or stop the whole session. Planned 409
 codes `interrupt_unsupported` and `turn_not_yet_started` reject acceptance; decide
 whether to retry without interrupt or after the turn starts. Check the sender's
 session capabilities before offering interrupt. A receipt can report
-`interrupt: "canceled"`, or `no_turn_in_progress`, `turn_superseded` or
-`session_not_running` when nothing was canceled and ordinary next-turn delivery
+`interrupt: "cancelled"`, or `no_turn_in_progress`, `turn_superseded` or
+`session_not_running` when nothing was cancelled and ordinary next-turn delivery
 was accepted.
 
 The client currently leaves a `ReplyOptions{Interrupt}` seam; **`Client.Reply`
