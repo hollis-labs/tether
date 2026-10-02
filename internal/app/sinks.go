@@ -296,7 +296,9 @@ func makeProviderTypedEventCallback(bus events.Publisher, sessionID, logicalAgen
 }
 
 func publishSessionEvent(bus events.Publisher, sessionID, logicalAgentID, kind string, payload any) {
-	publishSessionEventContext(context.Background(), bus, sessionID, logicalAgentID, kind, payload)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	publishSessionEventContext(ctx, bus, sessionID, logicalAgentID, kind, payload)
 }
 
 func publishSessionEventContext(ctx context.Context, bus events.Publisher, sessionID, logicalAgentID, kind string, payload any) {

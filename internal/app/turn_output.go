@@ -181,8 +181,10 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
-	if err := job.persist(o.service); err != nil {
+	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
+	ctx, cancel := o.service.outputPersistenceContext()
+	defer cancel()
+	if err := job.persist(ctx, o.service); err != nil {
 		log.Printf("ERROR session %q turn %q: output persistence deferred: %v", o.row.ID, result.TurnID, err)
 		o.route, o.routeUnread = job.route, job.routeUnread
 		o.service.retryTurnOutput(job)
@@ -191,10 +193,17 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	o.route, o.routeUnread = job.route, job.routeUnread
 }
 
+type turnOutputStore interface {
+	GetSessionContext(context.Context, string) (*store.SessionRow, error)
+	SessionRoute(context.Context, string) (*launchprofile.Route, error)
+	StageTurnOutput(context.Context, messaging.Envelope) (messaging.Envelope, error)
+}
+
 // A successful stage is retained across event retries: publishing must never
-// create a second durable body for the same output. Each SQL/bus operation has
-// its own budget so a slow metadata read cannot spend the staging budget.
+// create a second durable body for the same output. The reader supplies one
+// overall deadline; retry workers additionally bound each operation.
 type turnOutputWrite struct {
+	storage     turnOutputStore
 	row         store.SessionRow
 	route       *launchprofile.Route
 	routeUnread bool
@@ -202,18 +211,26 @@ type turnOutputWrite struct {
 	messageID   string
 }
 
-func (w *turnOutputWrite) persist(s *Service) error {
+func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
+	storage := w.storage
+	if storage == nil {
+		storage = s.Store
+	}
 	workstream := ""
-	ctx, cancel := s.outputPersistenceContext()
-	current, err := s.Store.GetSessionContext(ctx, w.row.ID)
+	ctx, cancel := s.outputPersistenceContextFrom(parent)
+	current, err := storage.GetSessionContext(ctx, w.row.ID)
 	cancel()
-	if err != nil {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return err
 	}
-	workstream = current.WorkstreamID.String
+	if err != nil {
+		log.Printf("ERROR session %q: read output workstream: %v", w.row.ID, err)
+	} else {
+		workstream = current.WorkstreamID.String
+	}
 	if w.routeUnread {
-		ctx, cancel = s.outputPersistenceContext()
-		route, routeErr := s.Store.SessionRoute(ctx, w.row.ID)
+		ctx, cancel = s.outputPersistenceContextFrom(parent)
+		route, routeErr := storage.SessionRoute(ctx, w.row.ID)
 		cancel()
 		if errors.Is(routeErr, context.DeadlineExceeded) || errors.Is(routeErr, context.Canceled) {
 			return routeErr
@@ -232,8 +249,8 @@ func (w *turnOutputWrite) persist(s *Service) error {
 		text, _ := json.Marshal(struct {
 			Text string `json:"text"`
 		}{result.Text})
-		ctx, cancel = s.outputPersistenceContext()
-		env, stageErr := s.Store.StageTurnOutput(ctx, messaging.Envelope{
+		ctx, cancel = s.outputPersistenceContextFrom(parent)
+		env, stageErr := storage.StageTurnOutput(ctx, messaging.Envelope{
 			From:     messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: w.row.ID},
 			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
 			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
@@ -255,7 +272,7 @@ func (w *turnOutputWrite) persist(s *Service) error {
 		payload.Text, payload.TextTruncated = turnOutputExcerpt(result.Text)
 	}
 	data, _ := json.Marshal(payload)
-	ctx, cancel = s.outputPersistenceContext()
+	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	defer cancel()
 	return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
 		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})
@@ -274,9 +291,13 @@ func turnOutputExcerpt(text string) (string, bool) {
 }
 
 func (s *Service) outputPersistenceContext() (context.Context, context.CancelFunc) {
+	return s.outputPersistenceContextFrom(context.Background())
+}
+
+func (s *Service) outputPersistenceContextFrom(parent context.Context) (context.Context, context.CancelFunc) {
 	timeout := s.turnOutputTimeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return context.WithTimeout(context.Background(), timeout)
+	return context.WithTimeout(parent, timeout)
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	gomsg "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -19,7 +20,7 @@ import (
 
 func stage(t *testing.T, db *store.Store, kind string) gomsg.Envelope {
 	t.Helper()
-	env, err := db.StageTurnOutput(context.Background(), gomsg.Envelope{From: gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: "routed"}, Payload: []byte(`{"text":"answer"}`), ContentType: "application/json", Metadata: map[string]string{"session_id": "routed", "turn_id": "turn", "kind": kind}})
+	env, err := db.StageTurnOutput(context.Background(), gomsg.Envelope{From: gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: "routed"}, Payload: []byte(`{"text":"answer"}`), ContentType: "application/json", Metadata: map[string]string{"session_id": "routed", "turn_id": uuid.NewString(), "kind": kind}})
 	if err != nil {
 		t.Fatal(err)
 	}
