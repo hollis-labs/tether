@@ -51,6 +51,7 @@ var apiTopLevelPaths = []string{
 	"/messages/notify", "/messages/request", "/messages/retention/candidates",
 	"/messages/subscribe", "/messages/thread/",
 	"/proxy/events",
+	"/routing/capabilities",
 	"/registry/", "/registry/bindings", "/registry/bindings/", "/registry/bootstrap",
 	"/registry/reonboard",
 	"/registry/scoped-bindings", "/registry/scoped-bindings/resolve",
