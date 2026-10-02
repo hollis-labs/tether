@@ -1737,6 +1737,10 @@ interrupt_requested, attempts, next_attempt_at?, created_at, updated_at,
 settled_at?}`. `state` is `queued`, `delivering`, `delivered` or `undeliverable`;
 `pending` is seen only while an interrupting reply's cancel is in flight (or after
 a crash, until the sweep settles it). `detail` is one line of at most 256 bytes.
+It never carries anything a runtime process printed: a process failure is
+reported as its exit code or signal only, because a CLI can echo the reply text on
+its stderr, and `GET /delivery` and the events are readable more widely than the
+reply is.
 The same outcome is published as `routing.reply_delivered` /
 `routing.reply_undeliverable` on the session's event stream, without the reply
 text.
@@ -1744,12 +1748,12 @@ text.
 | `reason` | State | Meaning |
 |---|---|---|
 | `handed_off` | `delivered` | The originating session had ended; the reply went to the session its actor is bound to. |
-| `turn_failed` | `delivered` | The reply was injected and its turn ran, then failed (a subprocess runtime returns that as the submit error); not retried. |
+| `turn_failed` | `delivered` | The reply was injected and its turn ran, then failed (a subprocess runtime returns that as the submit error); not retried. `detail` says how the process ended (exit code or signal), nothing else. |
 | `session_ended_no_binding` | `undeliverable` | The session ended and its actor has no current binding (or the reply has no actor). |
 | `bound_session_not_running` | `undeliverable` | The binding names a session that is not running. |
 | `pull_only_binding` | `undeliverable` | The actor is a published-local bridge; Tether cannot inject a turn into it. |
 | `resolve_failed` | `undeliverable` | The binding lookup kept failing. |
-| `submit_failed` | `undeliverable` | The runtime did not take the turn five times (rejected, would not start, no login, resume target gone); `detail` carries the last error. While retrying the state is `queued` with this reason. |
+| `submit_failed` | `undeliverable` | The runtime did not take the turn five times (rejected, would not start, no login, resume target gone); `detail` carries the last error, or the exit code or signal if a process ended. While retrying the state is `queued` with this reason. |
 | `no_turn_feed` | `undeliverable` | The session's runtime reports no turn lifecycle (a PTY). |
 | `daemon_restarted_during_delivery` | `undeliverable` | See above. |
 | `interrupt_unconfirmed` | `undeliverable` | See above. |

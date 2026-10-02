@@ -34,6 +34,7 @@ import (
 	"github.com/hollis-labs/agentkit/agentsessions"
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-runner/runner"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"
@@ -349,6 +350,33 @@ func replyTurnRan(err error) bool {
 	return errors.As(err, &ran) && !runtimeTookNoTurn(err)
 }
 
+// replyProcessExit describes how a runtime process ended, from its structured
+// exit and nothing it printed.
+func replyProcessExit(err error) (string, bool) {
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) {
+		return "", false
+	}
+	switch {
+	case exit.Cause != "":
+		return fmt.Sprintf("the runtime process was terminated (cause %s)", exit.Cause), true
+	case exit.Signal != 0:
+		return fmt.Sprintf("the runtime process was terminated by signal %d", exit.Signal), true
+	}
+	return fmt.Sprintf("the runtime process exited with code %d", exit.Code), true
+}
+
+// replyErrorDetail is what a consumer is told of a failed submission. A runtime
+// process's failure can carry the tail of its stderr, and a CLI may echo the reply
+// it was given there, so a process exit is reduced to its code or signal: nothing
+// the process printed reaches the row, the delivery view or an event.
+func replyErrorDetail(err error) string {
+	if detail, ok := replyProcessExit(err); ok {
+		return detail
+	}
+	return err.Error()
+}
+
 // deliver injects r's body as sessionID's next turn. r was claimed, so r.Attempts
 // is stale by one: the stored attempt count is authoritative.
 func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
@@ -384,23 +412,27 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonWaitingForIdle, RefundAttempt: true, NotBefore: time.Now().Add(replyIdleBackoff)})
 	case errors.Is(err, agentsessions.ErrSessionNotRunning):
 		// The Manager may not have noticed the exit yet: look again shortly.
-		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: err.Error(), RefundAttempt: true,
+		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: replyErrorDetail(err), RefundAttempt: true,
 			NotBefore: time.Now().Add(replyIdleBackoff)})
 	case replyTurnRan(err):
 		// A subprocess runtime blocks for the whole turn and returns the process's
 		// failure afterwards: the reply was delivered and acted on, and the turn
-		// failed. Report it; never run the reply again.
-		reason := ReplyReasonTurnFailed
-		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, Reason: reason, Detail: err.Error(), DeliveredTo: sessionID})
+		// failed. Report it; never run the reply again. The detail is fixed text
+		// plus how the process ended, never the error: it can carry stderr.
+		detail := "the runtime reported a failure after it took the reply"
+		if exit, ok := replyProcessExit(err); ok {
+			detail += ": " + exit
+		}
+		d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyDelivered, Reason: ReplyReasonTurnFailed, Detail: detail, DeliveredTo: sessionID})
 	default:
 		if cur, getErr := d.st.RoutingReply(d.ctx, r.ReplyID); getErr == nil {
 			r.Attempts = cur.Attempts
 		}
 		if r.Attempts >= replyMaxAttempts {
-			d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonSubmitFailed, Detail: err.Error()})
+			d.settle(r, store.RoutingReplySettlement{State: store.RoutingReplyUndeliverable, Reason: ReplyReasonSubmitFailed, Detail: replyErrorDetail(err)})
 			return
 		}
-		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: err.Error(),
+		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: replyErrorDetail(err),
 			NotBefore: time.Now().Add(time.Duration(r.Attempts) * replySubmitBackoff)})
 	}
 }
