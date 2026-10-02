@@ -10,6 +10,7 @@ import (
 )
 
 type MCPOptions struct {
+	ClientOptions *mcpsdk.ClientOptions
 	Profile       *string
 	DiscoveryMode *string
 }
@@ -40,7 +41,7 @@ func (c *Client) ConnectMCP(ctx context.Context, opts MCPOptions) (*mcpsdk.Clien
 		base = http.DefaultTransport
 	}
 	httpClient.Transport = mcpErrorTransport{base: base}
-	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "tether-daemon-client", Version: "1"}, nil).Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient}, nil)
+	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "tether-daemon-client", Version: "1"}, opts.ClientOptions).Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &httpClient, MaxRetries: -1}, nil)
 }
 
 type mcpErrorTransport struct{ base http.RoundTripper }

@@ -21,18 +21,24 @@ import (
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
+	"github.com/hollis-labs/tether/internal/mcpforward"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/store"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+type forwardedContextKey struct{}
+
 type transportFixture struct {
+	bus         events.Bus
 	db          *store.Store
 	ids         *identity.Store
 	verifier    *switchableVerifier
@@ -91,9 +97,11 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := &app.Service{Store: db, Catalog: f.cat, CatalogRoot: catalog}
+	f.bus = events.NewBus(events.BusOptions{Persister: db})
+	recordCtx, stopRecorder := context.WithCancel(context.Background())
+	svc := &app.Service{Store: db, Catalog: f.cat, CatalogRoot: catalog, Bus: f.bus}
 	h, err := NewHandler(context.Background(), HandlerConfig{
-		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, RecheckInterval: 20 * time.Millisecond, SessionTimeout: time.Minute, MaxViews: 16,
+		ListenAddr: f.addr, IdentityMode: identity.Observe, Verifier: f.verifier, Service: svc, Publisher: mcpadapter.NewDaemonToolCallRecorder(recordCtx, f.bus, db), RecheckInterval: 20 * time.Millisecond, SessionTimeout: time.Minute, MaxViews: 16,
 		NativeClient: func(token string) *client.Client { return client.New(f.addr, client.WithToken(token)) },
 		Resolver: CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) {
 			f.catMu.Lock()
@@ -114,7 +122,13 @@ func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
 	daemonServer := &daemon.Server{Config: daemon.Config{ListenAddr: f.addr, IdentityMode: identity.Observe}, Identity: f.ids, MCP: h}
 	server := &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { h.Close(); _ = server.Close(); daemonServer.CloseIdentityAudit(); _ = db.Close() })
+	t.Cleanup(func() {
+		stopRecorder()
+		h.Close()
+		_ = server.Close()
+		daemonServer.CloseIdentityAudit()
+		_ = db.Close()
+	})
 	return f
 }
 
@@ -475,8 +489,16 @@ func TestTransportUpstreamProcess(t *testing.T) {
 	_, _ = file.WriteString("started\n")
 	_ = file.Close()
 	s := gomcp.NewServer("transport-fixture", "1")
-	s.RegisterTool(gomcp.Tool{Name: "app_echo", Description: "Read-only echo", InputSchema: gomcp.InputSchema(gomcp.StringProp("message", "message", false)), ReadOnlyHint: true, Handler: func(_ context.Context, args map[string]any) (any, error) {
-		return map[string]any{"pid": os.Getpid(), "message": args["message"]}, nil
+	s.SDKServer().AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			if method == "tools/call" {
+				ctx = context.WithValue(ctx, forwardedContextKey{}, req.GetParams().GetMeta()["tether.context"])
+			}
+			return next(ctx, method, req)
+		}
+	})
+	s.RegisterTool(gomcp.Tool{Name: "app_echo", Description: "Read-only echo", InputSchema: gomcp.InputSchema(gomcp.StringProp("message", "message", false)), ReadOnlyHint: true, Handler: func(ctx context.Context, args map[string]any) (any, error) {
+		return map[string]any{"pid": os.Getpid(), "message": args["message"], "context": ctx.Value(forwardedContextKey{})}, nil
 	}})
 	s.RegisterTool(gomcp.Tool{Name: "app_slow", Description: "Slow fixture", InputSchema: gomcp.InputSchema(), ReadOnlyHint: true, Handler: func(ctx context.Context, _ map[string]any) (any, error) {
 		if err := os.WriteFile(path+".call", []byte("started"), 0600); err != nil {
@@ -737,5 +759,86 @@ func TestTransportManyHealthyViewsRetainSessionIDs(t *testing.T) {
 			t.Fatal("healthy session evicted", r.StatusCode)
 		}
 		closeResponse(r)
+	}
+}
+
+func TestThinForwardersShareDaemonPoolOverUnix(t *testing.T) {
+	f := newTransportFixture(t, true, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, id := range []string{"alpha", "beta"} {
+		if err := f.db.CreateSession(store.SessionRow{ID: id, LogicalAgentID: "agent-" + id, State: "running"}, &launch.Plan{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.db.SaveSessionMCPPolicy(ctx, mcpgateway.SessionPolicy{SessionID: id, AgentID: "agent-" + id, Servers: []string{"app"}}.Seal()); err != nil {
+			t.Fatal(err)
+		}
+		token, err := f.ids.Mint(ctx, identity.Principal{ID: "session:" + id, Kind: "session", SessionID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, stop, err := f.bus.Subscribe(ctx, events.Filter{SessionID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stop()
+		left, right := mcpsdk.NewInMemoryTransports()
+		done := make(chan error, 1)
+		go func() {
+			done <- mcpforward.Run(ctx, client.New(f.addr, client.WithToken(token)), client.MCPOptions{}, right)
+		}()
+		session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "thin-test", Version: "1"}, nil).Connect(ctx, left, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "app_echo", Arguments: map[string]any{"message": id}, Meta: mcpsdk.Meta{"Tether.Context": map[string]any{"session_id": "forged"}, "tether.provenance": map[string]any{"session_id": "forged"}}})
+		if err != nil || result.IsError {
+			t.Fatalf("forwarded call: %+v %v", result, err)
+		}
+		body, _ := json.Marshal(result)
+		if !strings.Contains(string(body), id) {
+			t.Fatalf("caller result crossed: %s", body)
+		}
+
+		var forwarded struct {
+			Context callcontext.Snapshot `json:"context"`
+		}
+		content := result.Content[0].(*mcpsdk.TextContent)
+		if err := json.Unmarshal([]byte(content.Text), &forwarded); err != nil {
+			t.Fatal(err)
+		}
+		if !forwarded.Context.Verified || forwarded.Context.SessionID != id || forwarded.Context.PrincipalID != "session:"+id {
+			t.Fatalf("wrong forwarded session: %+v", forwarded.Context)
+		}
+		var telemetry events.ToolCallEvent
+		for telemetry.ToolName == "" {
+			select {
+			case event := <-stream:
+				if event.Kind == events.EventTypeToolCallEnd {
+					if err := json.Unmarshal([]byte(event.PayloadJSON), &telemetry); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case <-ctx.Done():
+				t.Fatal("daemon telemetry lost")
+			}
+		}
+		rows, err := f.db.QueryProxyEvents(store.ProxyEventFilter{SessionID: id, ToolName: "app_echo"})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("durable attribution lost/duplicated: %+v %v", rows, err)
+		}
+		if rows[0].Attribution != forwarded.Context || telemetry.Attribution != forwarded.Context {
+			t.Fatalf("forwarded/persisted/telemetry attribution diverged: %+v %+v %+v", forwarded.Context, rows[0].Attribution, telemetry.Attribution)
+		}
+		_ = session.Close()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal("relay leaked")
+		}
+	}
+	raw, err := os.ReadFile(f.childStarts)
+	if err != nil || string(raw) != "started\n" {
+		t.Fatalf("thin proxies spawned multiple upstreams: %q %v", raw, err)
 	}
 }

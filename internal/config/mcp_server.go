@@ -56,6 +56,7 @@ type MCPServerEntry struct {
 	// argumentRedactionValues carries resolved argument and URL secret material
 	// to the process owner without exposing it through YAML serialization.
 	argumentRedactionValues []string
+	workerExcludedEnv       []string
 
 	// catalogDir is the catalog this entry was read from. A file:// credential
 	// that is a symlink may resolve only into it or the operator's home.
@@ -110,6 +111,13 @@ func (e *MCPServerEntry) IsEnabled() bool {
 // references and environment substitutions in them. The caller receives a copy.
 func (e *MCPServerEntry) ArgumentRedactionValues() []string {
 	return append([]string(nil), e.argumentRedactionValues...)
+}
+
+// WorkerExcludedEnvironmentKeys names catalog-owned upstream environment and
+// referenced variables. Workers using daemon ownership must not inherit them.
+// This returns names only and never resolves helper/file credentials.
+func (e MCPServerEntry) WorkerExcludedEnvironmentKeys() []string {
+	return append([]string(nil), e.workerExcludedEnv...)
 }
 
 var envVarRE = regexp.MustCompile(`\$\{([^}]+)\}`)
@@ -434,6 +442,9 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 			if isSecretRef(raw) {
 				entry.secretRefs[field] = true
 			}
+			for _, match := range envVarRE.FindAllStringSubmatch(raw, -1) {
+				entry.workerExcludedEnv = append(entry.workerExcludedEnv, match[1])
+			}
 			return expandEnvRefs(raw)
 		}
 		if !isFileRef(entry.URL) {
@@ -450,6 +461,7 @@ func LoadMCPServerCatalog(catalogDir string) ([]MCPServerEntry, error) {
 		}
 		expanded := make(map[string]string, len(entry.Env))
 		for k, v := range entry.Env {
+			entry.workerExcludedEnv = append(entry.workerExcludedEnv, k)
 			expanded[k] = expand("env."+k, v)
 		}
 		entry.Env = expanded

@@ -148,6 +148,10 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if _, err := svc.Catalog.Global.Daemon.MCPUpstreamOwnership(); err != nil {
+			_ = svc.Store.Close()
+			return err
+		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
 		logControlPlaneProtection(log.Printf, svc.ProtectionHealth())
 		logCodexProtection(log.Printf, svc.ProtectionHealth())
@@ -254,7 +258,11 @@ var daemonRunCmd = &cobra.Command{
 			EventRetention:           svc,
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
-				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason}
+				countCtx, cancelCounts := context.WithTimeout(ctx, 200*time.Millisecond)
+				counts, _ := svc.Store.MCPUpstreamSessionCounts(countCtx)
+				cancelCounts()
+				dropped, failures := mcpHandler.ToolCallRecorderStats()
+				return &daemon.HealthHardening{ClaudeStrictMCP: st.Enabled, ClaudeStrictMCPReason: st.Reason, MCPUpstreamSessions: counts, MCPRecorder: map[string]uint64{"dropped": dropped, "failures": failures}}
 			},
 			LogsDir:          filepath.Join(stateRoot, "logs"),
 			SandboxProtect:   func() *daemon.SandboxProtectHealth { return sandboxProtectHealth(svc.ProtectionHealth()) },

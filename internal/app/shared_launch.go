@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
@@ -59,6 +60,21 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
+	if plant.DaemonOwned {
+		values := make([]string, 0, len(lp.Provider.Env))
+		for key, value := range lp.Provider.Env {
+			values = append(values, key+"="+value)
+		}
+		values, err = s.daemonWorkerEnv(values)
+		if err != nil {
+			return nil, err
+		}
+		lp.Provider.Env = map[string]string{}
+		for _, value := range values {
+			key, val, _ := strings.Cut(value, "=")
+			lp.Provider.Env[key] = val
+		}
+	}
 	lp.Workspace.TempPrefix = bootRoot
 	compiled, err := launcher.Compile(ctx, lp, launcher.WithSourceCatalog(s.CatalogRoot, s.Catalog.Global.Version))
 	if err != nil {
@@ -86,6 +102,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 }
 
 type plantContextInput struct {
+	DaemonOwned   bool
 	TetherCommand string
 	TetherArgs    []string
 	TetherEnv     map[string]string
