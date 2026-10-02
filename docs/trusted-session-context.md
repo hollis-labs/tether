@@ -79,7 +79,8 @@ upstream principal or reuse a session bearer/operator token. Store the
 credential in a current-user-owned regular file with exactly mode 0600. The
 path must be absolute; it is never expanded from worker environment variables.
 The reader checks the opened inode, refuses a final symlink or special file,
-and bounds the file at 4096 bytes. Content must be one opaque bearer value,
+and bounds the file at 4096 bytes. Content must be one opaque bearer value of
+at least four bytes (the shared redactor's minimum),
 with optional surrounding whitespace, never a header or multiline secret.
 An entry combining `token` and `proxy_service_token_file`, or using the service
 field for stdio, is refused. Disabled entries do not read their service file.

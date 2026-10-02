@@ -21,6 +21,7 @@ func TestServiceBearerFileFailsClosed(t *testing.T) {
 		{"opaque", "upstream-issued.secret+/=\n", true},
 		{"jwt", strings.Repeat("a", 300) + ".payload.signature", true},
 		{"empty", "\n", false},
+		{"too-short-to-redact", "abc", false},
 		{"header", "Bearer secret", false},
 		{"injection", "secret\r\nX-Forwarded-User-Id: operator", false},
 		{"padding", "abc=def", false},

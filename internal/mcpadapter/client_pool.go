@@ -426,7 +426,11 @@ func (p *ClientPool) connect(ctx context.Context, entry config.MCPServerEntry) (
 		if err := gc.Ping(handshakeCtx); err != nil {
 			return nil, fmt.Errorf("start %s transport: %w", entry.Transport, err)
 		}
-		return &remoteClient{gc: gc}, nil
+		remote := &remoteClient{gc: gc}
+		if p.remoteHTTPClientFactory != nil && entry.ProxyServiceTokenFile != "" {
+			remote.serviceToken = entry.Token
+		}
+		return remote, nil
 	default:
 		return nil, fmt.Errorf("unknown transport %q (want stdio, sse, or http)", entry.Transport)
 	}
@@ -479,7 +483,8 @@ func (p *ClientPool) remoteClientPool() *gomcpclient.Pool {
 // Client's own dial-if-needed and lazy-probe-triggered reconnect run before
 // SDKSession is read -- SDKSession returns nil when no connection is open.
 type remoteClient struct {
-	gc *gomcpclient.Client
+	gc           *gomcpclient.Client
+	serviceToken string
 }
 
 func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
@@ -490,7 +495,11 @@ func (r *remoteClient) CallTool(ctx context.Context, params *mcpsdk.CallToolPara
 	if sess == nil {
 		return nil, fmt.Errorf("go-mcp/client: no session open after a successful ping")
 	}
-	return sess.CallTool(withForwardedToolCall(ctx), params)
+	result, err := sess.CallTool(withForwardedToolCall(ctx), params)
+	if err != nil || r.serviceToken == "" || result == nil || !result.IsError {
+		return result, err
+	}
+	return scrubServiceToolError(result, r.serviceToken)
 }
 
 func (r *remoteClient) ListTools(ctx context.Context, _ *mcpsdk.ListToolsParams) (*mcpsdk.ListToolsResult, error) {

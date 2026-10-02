@@ -37,6 +37,9 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	}
 	upstream := gomcp.NewServer("upstream", "test")
 	registerTestTool(upstream, "probe")
+	upstream.SDKServer().AddTool(&mcpsdk.Tool{Name: "error_probe", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return &mcpsdk.CallToolResult{IsError: true, Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "upstream echoed Bearer upstream-sdk-service"}}, StructuredContent: map[string]any{"details": []any{"upstream-sdk-service"}}}, nil
+	})
 	var sdkHandler http.Handler = mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil)
 	if transport == "sse" {
 		sdkHandler = mcpsdk.NewSSEHandler(func(*http.Request) *mcpsdk.Server { return upstream.SDKServer() }, nil)
@@ -112,6 +115,14 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	}
 	call(caller)
 	call(ctx)
+	failure, err := view.Service.Dispatch(ctx, "error_probe", map[string]any{}, nil)
+	if err != nil || failure == nil || !failure.IsError {
+		t.Fatalf("upstream failure not returned: %v", err)
+	}
+	encoded, err := json.Marshal(failure)
+	if err != nil || bytes.Contains(encoded, []byte("upstream-sdk-service")) || !bytes.Contains(encoded, []byte("[redacted]")) {
+		t.Fatal("service credential exposed in tool error result")
+	}
 	var calls sync.WaitGroup
 	for i := range 12 {
 		calls.Add(1)

@@ -25,7 +25,9 @@ func ReadBearerTokenFile(path string) (string, error) {
 }
 
 func validBearerToken(token string) bool {
-	if token == "" {
+	// The shared upstream error redactor ignores values shorter than four
+	// bytes to avoid treating ordinary flags/numbers as secrets.
+	if len(token) < 4 {
 		return false
 	}
 	padding := false
