@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -188,8 +189,19 @@ func TestForwardDaemonRecoversExpiredView(t *testing.T) {
 		calls.Add(1)
 		return &mcp.CallToolResult{}, nil
 	})
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return daemon }, &mcp.StreamableHTTPOptions{SessionTimeout: 60 * time.Millisecond})
+	var expired atomic.Bool
+	var original atomic.Pointer[string]
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return daemon }, nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := r.Header.Get("Mcp-Session-Id"); id != "" {
+			original.CompareAndSwap(nil, &id)
+			if expired.Load() && id == *original.Load() {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, "session not found")
+				return
+			}
+		}
+
 		if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") == "" {
 			body, _ := io.ReadAll(r.Body)
 			_ = r.Body.Close()
@@ -210,7 +222,7 @@ func TestForwardDaemonRecoversExpiredView(t *testing.T) {
 	if _, err := consumer.ListTools(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(150 * time.Millisecond)
+	expired.Store(true)
 	if _, err := consumer.CallTool(context.Background(), &mcp.CallToolParams{Name: "mutate"}); err != nil {
 		t.Fatal("expired view never recovered", err)
 	}
@@ -280,6 +292,13 @@ func TestRelayErrorCancellationAndTimeout(t *testing.T) {
 	}{
 		{context.Canceled, -32003, "canceled"},
 		{errors.New("request terminated without response"), -32001, "daemon_unreachable"},
+		{errors.New("standalone SSE stream: exceeded 0 retries without progress (session ID: example)"), -32001, "daemon_unreachable"},
+		{errors.New("standalone SSE request failed (session ID: example): daemon unreachable: connection refused"), -32001, "daemon_unreachable"},
+		{&net.OpError{Op: "read", Net: "unix", Err: context.DeadlineExceeded}, -32001, "daemon_unreachable"},
+		{errors.New("sending tools/list: 404 Not Found"), -32002, "daemon_mcp_unavailable"},
+		{errors.New("standalone SSE request failed: 401 Unauthorized"), -32002, "daemon_mcp_unavailable"},
+		{errors.New("503 Service Unavailable: mcp_stopping"), -32002, "daemon_mcp_unavailable"},
+		{&jsonrpc.Error{Code: -32603, Message: "connection refused"}, -32603, "connection refused"},
 		{context.DeadlineExceeded, -32004, "timeout"},
 	} {
 		var protocol *jsonrpc.Error
@@ -353,5 +372,10 @@ func TestForwardDaemonUnknown404DoesNotRecover(t *testing.T) {
 	}
 	if initializes.Load() != 1 {
 		t.Fatalf("unknown 404 triggered recovery: %d initializes", initializes.Load())
+	}
+	// A later operation may initialize a fresh view once the SDK marks its
+	// previous connection closed; each unknown 404 still surfaces to its caller.
+	if _, err := consumer.ListTools(context.Background(), nil); err == nil {
+		t.Fatal("second unknown 404 swallowed")
 	}
 }

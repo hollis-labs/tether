@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -249,32 +251,61 @@ func (d *daemonSession) close() {
 }
 
 func relayError(err error) *jsonrpc.Error {
+	// Transport failures may also wrap the SDK's ErrRejected protocol sentinel.
+	// Classify that typed cause before preserving an explicit daemon response.
+	if daemonTransportFailure(err) {
+		return &jsonrpc.Error{Code: -32001, Message: "daemon_unreachable: daemon connection lost; tool outcome may be unknown"}
+	}
+	var protocol *jsonrpc.Error
+	if errors.As(err, &protocol) {
+		return protocol
+	}
 	if errors.Is(err, context.Canceled) {
 		return &jsonrpc.Error{Code: -32003, Message: "daemon_mcp_canceled: request canceled; outcome may be unknown"}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &jsonrpc.Error{Code: -32004, Message: "daemon_mcp_timeout: request deadline exceeded; cold upstream initialization may need more time"}
 	}
-	if errors.Is(err, client.ErrDaemonUnreachable) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return &jsonrpc.Error{Code: -32001, Message: "daemon_unreachable: start the daemon MCP endpoint or explicitly select legacy_proxy"}
+	// Never expose transport errors or response bodies which could echo a token.
+	return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: daemon did not accept this MCP request"}
+}
+
+func daemonTransportFailure(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
 	}
-	// Protocol errors retain their structured category. Never expose transport
-	// errors or response bodies which could echo a bearer credential.
+	if errors.Is(err, client.ErrDaemonUnreachable) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var operation *net.OpError
+	var request *url.Error
+	if errors.As(err, &operation) || errors.As(err, &request) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var network net.Error
+	if errors.As(err, &network) {
+		return true
+	}
 	var protocol *jsonrpc.Error
 	if errors.As(err, &protocol) {
-		return protocol
+		return false
 	}
 	// The SDK synthesizes this untyped error when an HTTP/SSE call ends before
 	// receiving a response, and formats body/reconnect failures with %v. These
 	// transport failures cannot retain an errors.Is sentinel through the SDK.
 	detail := err.Error()
-	if strings.Contains(detail, "session not found") || strings.Contains(detail, "Not Found") {
-		return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: daemon did not accept this MCP session"}
+	if strings.Contains(detail, "session not found") || strings.Contains(detail, "Not Found") || strings.Contains(detail, "Forbidden") || strings.Contains(detail, "Unauthorized") {
+		return false
 	}
-	if strings.Contains(detail, "request terminated without response") || strings.Contains(detail, "failed to read body:") || strings.Contains(detail, "failed to reconnect (session ID:") || (strings.Contains(detail, "client is closing") && !strings.Contains(detail, "Not Found") && !strings.Contains(detail, "Forbidden") && !strings.Contains(detail, "Unauthorized")) {
-		return &jsonrpc.Error{Code: -32001, Message: "daemon_unreachable: daemon connection lost; tool outcome may be unknown"}
+	for _, marker := range []string{"daemon unreachable", "request terminated without response", "failed to read body:", "failed to reconnect (session ID:", "client is closing", "connection refused", "connection reset", "use of closed network connection", "unexpected EOF", "i/o timeout"} {
+		if strings.Contains(detail, marker) {
+			return true
+		}
 	}
-	return &jsonrpc.Error{Code: -32002, Message: "daemon_mcp_unavailable: endpoint disabled, credential rejected or connection lost"}
+	return strings.Contains(detail, "standalone SSE stream: exceeded ") && strings.Contains(detail, " retries without progress (session ID:")
 }
 
 // Protocol negotiation belongs to each hop. Preserve application metadata and

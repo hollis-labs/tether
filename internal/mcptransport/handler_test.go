@@ -48,6 +48,7 @@ type transportFixture struct {
 	catMu       sync.Mutex
 	childStarts string
 	closeHTTP   func() error
+	restartHTTP func() error
 }
 
 func newTransportFixture(t *testing.T, unix, upstream bool) *transportFixture {
@@ -134,6 +135,20 @@ func newTransportFixtureWithTimeout(t *testing.T, unix, upstream bool, timeout t
 	server := &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
 	f.closeHTTP = server.Close
 	go func() { _ = server.Serve(listener) }()
+	f.restartHTTP = func() error {
+		network, address := "unix", strings.TrimPrefix(f.addr, "unix:")
+		if strings.HasPrefix(f.addr, "tcp:") {
+			network, address = "tcp", strings.TrimPrefix(f.addr, "tcp:")
+		}
+		restarted, err := net.Listen(network, address)
+		if err != nil {
+			return err
+		}
+		server = &http.Server{Handler: daemonServer.Handler(), ReadHeaderTimeout: time.Second}
+		f.closeHTTP = server.Close
+		go func() { _ = server.Serve(restarted) }()
+		return nil
+	}
 	t.Cleanup(func() {
 		stopRecorder()
 		h.Close()

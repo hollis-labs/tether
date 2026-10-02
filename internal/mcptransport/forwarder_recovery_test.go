@@ -45,20 +45,6 @@ func thinSession(ctx context.Context, t *testing.T, f *transportFixture, id stri
 	return session
 }
 
-func waitFixtureFile(ctx context.Context, t *testing.T, path string) {
-	t.Helper()
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("fixture never reached its execution barrier", ctx.Err())
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
-}
-
 func TestThinForwarderIdleRecoveryPreservesOtherCalls(t *testing.T) {
 	f := newTransportFixtureWithTimeout(t, true, true, 2*time.Minute)
 	bound := 45 * time.Second
@@ -152,8 +138,23 @@ func TestThinForwarderEndpointLossNeverReplaysSideEffect(t *testing.T) {
 	session := thinSession(ctx, t, f, "effect-session")
 	result := make(chan error, 1)
 	go func() { _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "app_count"}); result <- err }()
-	waitFixtureFile(ctx, t, f.childStarts+".effects")
+	for {
+		body, err := os.ReadFile(f.childStarts + ".effects")
+		if err == nil && string(body) == "effect\n" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("side effect was not committed", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	if err := f.closeHTTP(); err != nil {
+		t.Fatal(err)
+	}
+	// Replay is now possible on the same UDS; a second dispatch would execute
+	// another effect successfully instead of failing against a dead listener.
+	if err := f.restartHTTP(); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(f.childStarts+".release", []byte("release"), 0600); err != nil {
