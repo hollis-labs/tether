@@ -139,7 +139,8 @@ type DaemonConfig struct {
 	// reach a terminal state. Go duration string; defaults to "10s".
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
 	// EventsRetention controls the hourly age-based sweep of events,
-	// proxy_events, ai_events and identity_audit. Enabled by default for 90 days.
+	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
+	// Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
 }
 

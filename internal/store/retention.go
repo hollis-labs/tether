@@ -8,6 +8,13 @@ package store
 // no scheduler, cron, or background sweep anywhere in internal/app or
 // internal/store references retention/expiry/purge.
 //
+// Legacy broker_envelopes is permanently outside this messages-only purge
+// mechanism: neither this manual path nor automatic retention will purge it.
+// Its delivery obligations and request/reply correlation history have no
+// delivery-core eligibility contract; age or consumed_at alone cannot establish
+// that content is safe to discard. It remains indefinitely, including bodies.
+// A broker-specific policy would require a separately designed purge mechanism.
+//
 // Scope: this purges the CONTENT columns of one `messages` row (payload,
 // metadata) -- never the structural/trace columns (id, kind, from_urn,
 // to_urn, thread_id, created_at, delivery_id) a trace still needs to
@@ -174,8 +181,13 @@ func (s *Store) ListRetentionCandidates(ctx context.Context, olderThan time.Time
 // purging an already-purged (or never-had-a-body) message returns
 // purged=false with no error, rather than erroring, matching this
 // sprint's established idempotent-repair convention (repair.go's
-// redrive).
-func (s *Store) PurgeMessageBody(ctx context.Context, messageID string) (purged bool, err error) {
+// redrive). Each actual removal commits with a message_purge_audit receipt
+// containing the table, message ID, self-asserted authorizing URN and timestamp.
+// Receipts never contain message content and survive message/history deletion.
+func (s *Store) PurgeMessageBody(ctx context.Context, messageID, authorizedBy string) (purged bool, err error) {
+	if _, err := messaging.ParseURN(authorizedBy); err != nil {
+		return false, fmt.Errorf("store: retention: authorized_by must be a valid URN: %w", err)
+	}
 	var payload, metadata, consumedStr, canceledStr, delID sql.NullString
 	row := s.db.QueryRowContext(ctx,
 		`SELECT payload, metadata, consumed_at, canceled_at, delivery_id FROM messages WHERE id = ?`,
@@ -207,10 +219,32 @@ func (s *Store) PurgeMessageBody(ctx context.Context, messageID string) (purged 
 		return false, nil
 	}
 
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE messages SET payload = NULL, metadata = NULL WHERE id = ?`, messageID,
-	); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Recheck body presence under the write transaction: concurrent retries
+	// must not create multiple receipts for the same content removal.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE messages SET payload = NULL, metadata = NULL WHERE id = ? AND (payload IS NOT NULL OR metadata IS NOT NULL)`, messageID)
+	if err != nil {
 		return false, fmt.Errorf("store: retention: purge %s: %w", messageID, err)
+	}
+	removed, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if removed == 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO message_purge_audit (at, table_name, message_id, authorized_by) VALUES (?, 'messages', ?, ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano), messageID, authorizedBy); err != nil {
+		return false, fmt.Errorf("store: retention: audit purge %s: %w", messageID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
 	return true, nil
 }

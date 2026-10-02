@@ -34,9 +34,9 @@ func settingsCmd() *cobra.Command {
 func retentionMessage(c config.EventsRetentionConfig) string {
 	window := c.Window()
 	if window == 0 {
-		return "catalog: disabled for events, proxy_events, ai_events, identity_audit (enabled: false or days < 1); restart applies changes"
+		return "catalog: disabled for events, proxy_events, ai_events, identity_audit, terminal a2a_tasks (enabled: false or days < 1); restart applies changes"
 	}
-	return fmt.Sprintf("catalog: enabled, %d days for events, proxy_events, ai_events, identity_audit; restart applies changes", window/(24*time.Hour))
+	return fmt.Sprintf("catalog: enabled, %d days for events, proxy_events, ai_events, identity_audit, terminal a2a_tasks; restart applies changes", window/(24*time.Hour))
 }
 
 func printRetentionSettings(out io.Writer, c config.EventsRetentionConfig, jsonOut bool) error {
@@ -52,7 +52,7 @@ func printRetentionSettings(out io.Writer, c config.EventsRetentionConfig, jsonO
 		}{Source: "catalog (restart applies changes)"}
 		value.Retention.Enabled = window > 0
 		value.Retention.Days = int64(window / (24 * time.Hour))
-		value.Retention.Tables = []string{"events", "proxy_events", "ai_events", "identity_audit"}
+		value.Retention.Tables = []string{"events", "proxy_events", "ai_events", "identity_audit", "a2a_tasks"}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(value); err != nil {
