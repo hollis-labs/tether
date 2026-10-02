@@ -151,7 +151,7 @@ func (s *operationStallStore) SessionRoute(ctx context.Context, id string) (*lau
 	return s.Store.SessionRoute(ctx, id)
 }
 func (s *operationStallStore) StageTurnOutput(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
-	if s.operation == "stage" && s.calls.Add(1) == 1 {
+	if s.operation == "stage" && s.calls.Add(1) <= 2 {
 		conn, err := s.DB().Conn(ctx)
 		if err != nil {
 			return messaging.Envelope{}, err
@@ -194,6 +194,9 @@ func TestOutputRetriesIsolatedRouteAndStageStalls(t *testing.T) {
 				if len(got) == 1 {
 					if got[0].MessageID == "" {
 						t.Fatal("retry lost routed body")
+					}
+					if operation == "stage" && storage.calls.Load() < 3 {
+						t.Fatal("worker staging timeout was not retried", storage.calls.Load())
 					}
 					break
 				}
