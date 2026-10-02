@@ -156,3 +156,36 @@ func TestIngestFailureAndStartSemantics(t *testing.T) {
 		})
 	}
 }
+
+func TestCallQueriesPreserveLimitsAndStrictSince(t *testing.T) {
+	for _, operation := range []struct {
+		name     string
+		query    func(Querier, CallQuery) ([]Record, error)
+		fallback int
+	}{
+		{"tool calls", QueryToolCalls, 50}, {"proxy calls", QueryProxyCalls, 100},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, limit := range []int{-2, 0, 1, 50, 500, 501} {
+				st := &testRows{}
+				_, err := operation.query(st, CallQuery{Limit: limit, Since: "2026-10-02T01:02:03Z", SessionID: "own", ServerID: "upstream", ToolName: "tool", ErrorsOnly: true})
+				want := limit
+				if want < 1 {
+					want = operation.fallback
+				}
+				if want > 500 {
+					want = 500
+				}
+				if err != nil || st.filter.Limit != want || st.filter.Since.IsZero() || st.filter.SessionID != "own" || st.filter.ServerID != "upstream" || st.filter.ToolName != "tool" || !st.filter.ErrorsOnly {
+					t.Fatalf("limit=%d filter=%+v err=%v", limit, st.filter, err)
+				}
+			}
+			st := &testRows{}
+			_, err := operation.query(st, CallQuery{Since: "invalid"})
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Code != "invalid_request" || !strings.HasPrefix(failure.Message, "since must be an RFC3339 timestamp: ") || st.filter.Limit != 0 {
+				t.Fatalf("timestamp validation=%v filter=%+v", err, st.filter)
+			}
+		})
+	}
+}

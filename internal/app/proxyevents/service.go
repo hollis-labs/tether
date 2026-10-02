@@ -123,6 +123,41 @@ type Query struct {
 	ErrorsOnly bool
 }
 
+// CallQuery is a decoded MCP query. The application owns limit policy and
+// strict timestamp validation; HTTP keeps its existing forgiving decoding.
+type CallQuery struct {
+	ServerID   string
+	ToolName   string
+	SessionID  string
+	Limit      int
+	Since      string
+	ErrorsOnly bool
+}
+
+// QueryToolCalls retains the proxy tool's default of 50 records.
+func QueryToolCalls(rows Querier, q CallQuery) ([]Record, error) { return queryCalls(rows, q, 50) }
+
+// QueryProxyCalls retains the observation tool's default of 100 records.
+func QueryProxyCalls(rows Querier, q CallQuery) ([]Record, error) { return queryCalls(rows, q, 100) }
+func queryCalls(rows Querier, q CallQuery, defaultLimit int) ([]Record, error) {
+	limit := q.Limit
+	if limit > 500 {
+		limit = 500
+	}
+	if limit < 1 {
+		limit = defaultLimit
+	}
+	f := Query{ServerID: q.ServerID, ToolName: q.ToolName, SessionID: q.SessionID, Limit: limit, ErrorsOnly: q.ErrorsOnly}
+	if q.Since != "" {
+		stamp, err := time.Parse(time.RFC3339, q.Since)
+		if err != nil {
+			return nil, &Error{Code: "invalid_request", Message: "since must be an RFC3339 timestamp: " + err.Error()}
+		}
+		f.Since = stamp
+	}
+	return QueryRecords(rows, f)
+}
+
 type Querier interface {
 	QueryProxyEvents(store.ProxyEventFilter) ([]store.ProxyEvent, error)
 }

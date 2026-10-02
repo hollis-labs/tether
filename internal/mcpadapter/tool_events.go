@@ -2,7 +2,7 @@ package mcpadapter
 
 import (
 	"context"
-	"time"
+	"errors"
 
 	gomcp "github.com/hollis-labs/go-mcp/server"
 
@@ -81,7 +81,7 @@ func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEv
 			gomcp.BooleanProp("errors_only", "When true, return only events where the tool call failed", false),
 		),
 		Handler: func(_ context.Context, args map[string]any) (any, error) {
-			f := proxyevents.Query{}
+			f := proxyevents.CallQuery{}
 
 			if v := str(args, "server"); v != "" {
 				f.ServerID = v
@@ -93,30 +93,20 @@ func (a *Adapter) registerToolCallEventsTool(s *gomcp.Server, proxyStore ProxyEv
 				f.SessionID = v
 			}
 
-			limit := intArg(args, "limit", 50)
-			if limit > 500 {
-				limit = 500
-			}
-			if limit < 1 {
-				limit = 50
-			}
-			f.Limit = limit
-
-			if since := str(args, "since"); since != "" {
-				t, parsedErr := time.Parse(time.RFC3339, since)
-				if parsedErr != nil {
-					return nil, toolError("invalid_request",
-						"since must be an RFC3339 timestamp: "+parsedErr.Error())
-				}
-				f.Since = t
-			}
+			f.Limit = intArg(args, "limit", 0)
+			f.Since = str(args, "since")
 
 			if b, ok := args["errors_only"].(bool); ok {
 				f.ErrorsOnly = b
 			}
 
-			results, err := proxyevents.QueryRecords(proxyStore, f)
+			results, err := proxyevents.QueryToolCalls(proxyStore, f)
 			if err != nil {
+				var failure *proxyevents.Error
+				if errors.As(err, &failure) {
+					return nil, toolError(failure.Code, failure.Message)
+				}
+
 				return nil, toolError("internal_error", "query proxy events: "+err.Error())
 			}
 			return toolJSON(map[string]any{
