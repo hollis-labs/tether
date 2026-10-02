@@ -125,6 +125,13 @@ type Deps struct {
 	// Absent the dep, both actions respond 404 (matches every other
 	// optional dependency).
 	Retention RetentionStore
+
+	// RoutingReplies, when non-nil, enables POST /messages/{id}/reply, the
+	// in_reply_to routing on POST /messages and GET /messages/{id}/delivery
+	// (CW-20261002-0065): a reply to a routed message is delivered to the
+	// session that sent it. *app.Service satisfies it. Absent the dep, those
+	// routes respond 404 like every other optional dependency.
+	RoutingReplies RoutingReplyService
 }
 
 // Server carries the dependencies required by handlers. Tests construct
@@ -159,6 +166,7 @@ type Server struct {
 	DeliveryTrace       DeliveryTraceStore
 	DeliveryRepair      DeliveryTraceStore
 	Retention           RetentionStore
+	RoutingReplies      RoutingReplyService
 }
 
 // NewHandler builds the http.Handler serving every route owned by the
@@ -194,6 +202,7 @@ func NewHandler(deps Deps) http.Handler {
 		DeliveryTrace:       deps.DeliveryTrace,
 		DeliveryRepair:      deps.DeliveryRepair,
 		Retention:           deps.Retention,
+		RoutingReplies:      deps.RoutingReplies,
 	}
 	router := http.NewServeMux()
 	s.registerDocsRoutes(router)

@@ -31,6 +31,7 @@ type sessionTurnOutput struct {
 	submissionGate   sync.Mutex
 	accepted         bool
 	submissions      int
+	activity         uint64
 	unboundTerminal  *emptyTurnTerminal
 	unboundAmbiguous bool
 	routeUnread      bool
@@ -59,6 +60,7 @@ func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) 
 	out := &sessionTurnOutput{service: s, row: row, route: route, routeUnread: err != nil, runtimeID: config.CanonicalRuntimeID(plan.ProviderBrand)}
 	out.reducer = turnoutput.New(turnoutput.Config{SessionID: row.ID, Runtime: config.CanonicalRuntimeID(plan.ProviderBrand), QuestionTools: s.questionTools(config.CanonicalRuntimeID(plan.ProviderBrand)), NewTurnID: func() string {
 		out.ensureTurn()
+		out.noteTurnActivity()
 		out.reducerTurnID = out.turnID
 		out.accepted = true
 		return out.turnID
@@ -143,6 +145,8 @@ func (o *sessionTurnOutput) flush() {
 	}
 	// A process can end before its first reduced event.
 	o.settleTurn()
+	// The session is gone: queued replies hand off or become undeliverable.
+	o.service.notifyReplyIdle(o.row.ID)
 }
 
 // wire is used for every native runtime. ACP's wrapper supplies runtimeevents

@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/go-runner/runner"
 	"github.com/hollis-labs/go-runtime-events/runtimeevents"
 )
 
@@ -111,6 +115,7 @@ func (o *sessionTurnOutput) ensureTurn() {
 // bindTurn associates a raw runtime turn with a stable submission snapshot.
 // Called with mu held; native providers bind through the NewTurnID hook.
 func (o *sessionTurnOutput) bindTurn(id string) {
+	o.noteTurnActivity()
 	if o.reducerTurnID != "" && o.reducerTurnID != id {
 		o.settleTurn()
 	}
@@ -122,6 +127,7 @@ func (o *sessionTurnOutput) bindTurn(id string) {
 // completeTurn follows Output processing, including an empty final, before the
 // synchronous reader callback returns. Failed submissions use settleTurn.
 func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded bool) {
+	o.noteTurnActivity()
 	id := output.TurnID
 	// Reducer completion is authoritative even when out-of-order output does
 	// not complete our current marker. Late frames for that turn stay closed.
@@ -151,6 +157,9 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 func (o *sessionTurnOutput) settleTurn() {
 	if o.turnDone != nil {
 		close(o.turnDone)
+		// A turn ended, however it ended: the session is at an idle boundary.
+		// notifyReplyIdle only queues a drain, so it is safe under mu.
+		o.service.notifyReplyIdle(o.row.ID)
 	}
 	o.accepted = false
 	o.unboundTerminal = nil
@@ -161,9 +170,56 @@ func (o *sessionTurnOutput) settleTurn() {
 	o.turnDone = nil
 }
 
+// turnRanError wraps a submission error that came back after the runtime had
+// taken the turn and run it: a subprocess runtime's SendInput blocks for the
+// whole turn and returns the process's failure afterwards. The model has already
+// acted on the input, so the submission must not be repeated. errors.Is/As still
+// see the original error.
+type turnRanError struct{ err error }
+
+func (e *turnRanError) Error() string { return e.err.Error() }
+func (e *turnRanError) Unwrap() error { return e.err }
+
+// runtimeTookNoTurn reports a submission failure that says the runtime did not take
+// the turn, whatever the turn feed shows. It rejected the submission (a turn is in
+// flight, the session is gone), the process could not start or be sandboxed, the
+// CLI had no login, or the session it was asked to resume was lost. A launched
+// subprocess emits a synthesized terminal on every exit, so for these the feed's
+// activity is not evidence that the model saw the input. A bare process exit is
+// not in this list: it counts as the turn having run (see replyTurnRan).
+func runtimeTookNoTurn(err error) bool {
+	var start *runner.StartError
+	var sandbox *runner.SandboxError
+	return errors.Is(err, agentsessions.ErrTurnInFlight) || errors.Is(err, agentsessions.ErrSessionNotRunning) ||
+		errors.Is(err, provider.ErrProviderSessionLost) || errors.Is(err, provider.ErrProviderNotAuthenticated) ||
+		errors.As(err, &start) || errors.As(err, &sandbox)
+}
+
+// noteTurnActivity records, with mu held, that the turn feed showed the runtime
+// doing something with a turn: it opened or bound one, finished one, or reported
+// a terminal (even one dropped as ambiguous). trackTurnSubmissionContext compares
+// the count at entry and at exit.
+func (o *sessionTurnOutput) noteTurnActivity() { o.activity++ }
+
+// tookTurn reports, with mu held, whether the turn feed shows the runtime took a
+// turn since activity was read at a submission's entry: the submission's marker
+// finished, a terminal is retained, or any turn event was observed. The feed is
+// per session and a retained terminal carries no turn id, so overlapping or
+// steering submissions cannot be told apart and another submission's activity
+// counts too: overlap errs toward "the turn ran", i.e. toward not repeating a
+// reply.
+func (o *sessionTurnOutput) tookTurn(marker string, activity uint64) bool {
+	_, finished := o.completed[marker]
+	return finished || o.unboundTerminal != nil || o.activity != activity
+}
+
 // Publish a provisional marker before calling the runtime: it may synchronously
 // emit its final output during submit. A successful return never resurrects it.
-// Failed steering cannot settle an existing turn or a later turn's marker.
+// Failed steering cannot settle an existing turn or a later turn's marker. A
+// failure that comes back after the turn feed showed the runtime take a turn is a
+// turnRanError (see tookTurn), unless the failure itself says the runtime took
+// none (runtimeTookNoTurn). The evidence is read before the failure path below
+// discards the retained terminal and settles the marker.
 func (s *Service) trackTurnSubmission(id string, submit func() error) error {
 	return s.trackTurnSubmissionContext(context.Background(), id, submit)
 }
@@ -193,6 +249,8 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 	}
 	output.submissions++
 	done := output.turnDone
+	marker := output.turnID
+	activity := output.activity
 	output.mu.Unlock()
 	unlock()
 	err = ctx.Err()
@@ -200,6 +258,7 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		err = submit()
 	}
 	output.mu.Lock()
+	ran := err != nil && output.tookTurn(marker, activity) && !runtimeTookNoTurn(err)
 	if output.turnDone == done {
 		output.submissions--
 		if err == nil {
@@ -215,6 +274,9 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		}
 	}
 	output.mu.Unlock()
+	if ran {
+		err = &turnRanError{err}
+	}
 	return err
 }
 
@@ -231,6 +293,7 @@ type emptyTurnTerminal struct {
 // response. Preserve empty-turn settlement; resolving that ambiguity requires
 // an upstream explicit begin/turn ID, rather than guessing from timing.
 func (o *sessionTurnOutput) emptyTerminal(kind turnoutput.Kind, stopReason string) {
+	o.noteTurnActivity()
 	if o.turnID == "" || o.reducerTurnID != "" || o.unboundAmbiguous {
 		return
 	}

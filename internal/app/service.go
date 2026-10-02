@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentruntime/turn"
@@ -134,6 +135,14 @@ type Service struct {
 	// directories as ProtectedPaths; nil uses the daemon's OS and
 	// environment. See protected_paths.go.
 	protectionStatus func() ProtectionStatus
+
+	// replies is the reply-to-sender dispatcher (CW-20261002-0065), set by
+	// StartRoutingReplies. Nil means the reply path is not installed.
+	replies atomic.Pointer[replyDispatcher]
+	// interrupter backs interrupt:true on a reply; see routing_reply.go.
+	interrupter turnInterrupter
+	// ReplyAuthorization is the reply caller-identity hook; nil is observe mode.
+	ReplyAuthorization ReplyAuthorization
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the
@@ -456,6 +465,7 @@ func (s *Service) Close() error {
 			return err
 		}
 	}
+	s.stopRoutingReplies()
 	// Complete output persistence before closing the store. Session watchers
 	// also flush; the reducer lock makes this idempotent against those races.
 	s.turnOutputs.Range(func(_, value any) bool {
