@@ -100,8 +100,10 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 		t.Fatalf("resolved context: %+v", want)
 	}
 	var forwarded *ContextEnvelope
+	var legacy *ProvenanceEnvelope
 	mock := &mockClient{callToolFunc: func(_ context.Context, p *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
 		forwarded = ExtractContextMeta(map[string]any(p.Meta))
+		legacy = ExtractProvenanceMeta(map[string]any(p.Meta))
 		return &mcpsdk.CallToolResult{}, nil
 	}}
 	tools := NewToolRegistry()
@@ -113,6 +115,9 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	}
 	if forwarded == nil || forwarded.Snapshot != want {
 		t.Fatalf("forwarded=%+v want=%+v", forwarded, want)
+	}
+	if legacy == nil || legacy.SchemaVersion != 1 || legacy.SessionID != want.SessionID || legacy.WorkstreamID != want.WorkstreamID {
+		t.Fatalf("production schema-1 stamp=%+v want session=%s workstream=%s", legacy, want.SessionID, want.WorkstreamID)
 	}
 	if len(publisher.telemetry) != 2 {
 		t.Fatalf("telemetry count %d", len(publisher.telemetry))
