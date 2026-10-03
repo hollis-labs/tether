@@ -95,6 +95,12 @@ type ProtectionHealth struct {
 	// plant a layer. Listed while the placeholder is all there is, including after
 	// a restart. Each is a stale catalog entry to fix.
 	CreatedProjectRoots []config.CreatedProjectRoot
+	// AnchoredProjectAncestors are registered projects whose repo_root is missing
+	// under a directory that is not writable but that an agent can get past (it
+	// runs as the user who owns it, or can write the directory above it), so
+	// protection anchored that directory read-only. Each is a stale catalog entry to
+	// fix; launches of every other project work.
+	AnchoredProjectAncestors []config.AnchoredAncestor
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until it is fixed. It is NOT a
 	// bubblewrap problem, and BwrapChecked/BwrapUsable still say what the probe
@@ -143,13 +149,14 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 			}
 		}
 		var err error
-		if _, prepared, err = s.controlPlane(""); err != nil {
+		if _, prepared, err = s.controlPlane(config.ProtectionOptions{}); err != nil {
 			planErr = err.Error()
 		}
 	}
 	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
 	h.SkippedProjectLayers = prepared.Skipped
 	h.CreatedProjectRoots = prepared.CreatedRoots
+	h.AnchoredProjectAncestors = prepared.AnchoredAncestors
 	h.PlanError = planErr
 	sort.Slice(h.CreatedProjectRoots, func(i, j int) bool { return h.CreatedProjectRoots[i].Project < h.CreatedProjectRoots[j].Project })
 	return h

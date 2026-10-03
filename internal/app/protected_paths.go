@@ -108,19 +108,7 @@ func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsess
 	}
 	dirs, err = s.controlPlaneDirsFor(planProject(plan))
 	if err != nil {
-		// The project this launch is for has no usable repo_root: say so, typed,
-		// rather than as a bare internal error.
-		var rootErr *config.ProjectRootError
-		if errors.As(err, &rootErr) {
-			return nil, false, fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing, err)
-		}
-		// Another project's layer cannot be protected and cannot be left open: the
-		// launch is refused, as for any host that cannot provide protection.
-		var layerErr *config.UnprotectableLayerError
-		if errors.As(err, &layerErr) {
-			return nil, false, fmt.Errorf("%w: %w", launch.ErrProtectionUnavailable, err)
-		}
-		return nil, false, err
+		return nil, false, typedProtectionError(err)
 	}
 	if plan != nil && plan.ProviderBrand == "codex" {
 		ok, why := codexOwnsSandbox(plan, opts, dirs)
@@ -134,6 +122,24 @@ func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsess
 		}
 	}
 	return dirs, true, nil
+}
+
+// typedProtectionError says what a failure to work out the protection plan means
+// to a launch, typed rather than as a bare internal error: the project this launch
+// is for has no usable repo_root (launch.ErrLaunchProjectRootMissing), or another
+// project's layer cannot be protected and cannot be left open
+// (launch.ErrProjectLayerUnprotectable, a catalog problem with its own code, not a
+// host that cannot provide protection). Anything else is returned as it is.
+func typedProtectionError(err error) error {
+	var rootErr *config.ProjectRootError
+	if errors.As(err, &rootErr) {
+		return fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing, err)
+	}
+	var layerErr *config.UnprotectableLayerError
+	if errors.As(err, &layerErr) {
+		return fmt.Errorf("%w: %w", launch.ErrProjectLayerUnprotectable, err)
+	}
+	return err
 }
 
 // refuseUnprotectable refuses, while protection is on, a launch that could
@@ -238,7 +244,7 @@ func planProject(plan *launch.Plan) string {
 // *config.ProjectRootError says which project and path. Any other project with
 // an unusable repo_root is left out (and reported, see controlPlane).
 func (s *Service) controlPlaneDirsFor(launching string) ([]string, error) {
-	dirs, _, err := s.controlPlane(launching)
+	dirs, _, err := s.controlPlane(config.ProtectionOptions{Launching: launching})
 	return dirs, err
 }
 
@@ -247,7 +253,7 @@ func (s *Service) controlPlaneDirsFor(launching string) ([]string, error) {
 // cannot be used (Skipped) and the ones whose missing root it created
 // (CreatedRoots). Each is warned about once per daemon, and a layer it had to
 // create is logged, so neither the skip nor the side effect is silent.
-func (s *Service) controlPlane(launching string) ([]string, config.CatalogProtection, error) {
+func (s *Service) controlPlane(opts config.ProtectionOptions) ([]string, config.CatalogProtection, error) {
 	catalogRoot := config.Expand(s.CatalogRoot)
 	if catalogRoot == "" {
 		return nil, config.CatalogProtection{}, errors.New("protect control plane: the catalog root is not set")
@@ -256,7 +262,7 @@ func (s *Service) controlPlane(launching string) ([]string, config.CatalogProtec
 	if err != nil {
 		return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: catalog root: %w", err)
 	}
-	prepared, err := config.PrepareCatalogProtection(catalog, s.Catalog, launching)
+	prepared, err := config.PrepareCatalogProtectionWith(catalog, s.Catalog, opts)
 	if err != nil {
 		return nil, config.CatalogProtection{}, err
 	}
@@ -316,6 +322,18 @@ func (s *Service) reportProtectionLayers(p config.CatalogProtection) {
 			continue
 		}
 		log.Printf("WARN: protect: project %q is left out of control-plane protection: its repo_root %s %s: there is nothing an agent could plant into. Fix or remove the project", skipped.Project, skipped.RepoRoot, skipped.Reason)
+	}
+	for _, anchored := range p.AnchoredAncestors {
+		if _, seen := s.protectionWarned.LoadOrStore("anchored\x00"+anchored.Project+"\x00"+anchored.Ancestor, struct{}{}); seen {
+			continue
+		}
+		log.Printf("WARN: protect: project %q: its repo_root %s %s. Fix or remove the project", anchored.Project, anchored.RepoRoot, anchored.Reason)
+	}
+	for _, open := range p.Unprotected {
+		if _, seen := s.protectionWarned.LoadOrStore("unprotected\x00"+open.Project+"\x00"+open.RepoRoot, struct{}{}); seen {
+			continue
+		}
+		log.Printf("WARN: protect: project %q: its layer cannot be protected, and is LEFT OPEN to what this call confines (the MCP gateway, or a Codex launch's planted proxy; launches of agents Tether protects are refused until it is fixed): its repo_root %s %s. Fix or remove the project", open.Project, open.RepoRoot, open.Why)
 	}
 	for _, created := range p.Created {
 		log.Printf("protect: created the empty layer directory %s so that no agent can plant one there", created)
@@ -430,10 +448,23 @@ func (s *Service) refuseWidenedCodex(sessionID string) error {
 // gets no protect-path either, so the server behaves as it did.
 //
 // The proxy is now confined even while the Codex agent guard is dormant, so
-// failure to name the directories fails every protected launch closed.
+// failure to name the directories fails every protected launch closed, except
+// that a Codex launch is not refused for another project's broken catalog entry:
+// the agent itself is unprotected while Codex ships as not protected (see
+// protectionPlan), so the proxy is confined as far as the catalog allows, the
+// layer that cannot be protected is left out and reported, and the launch runs.
+// Its own project's missing root is still the typed refusal.
 func (s *Service) mcpProtectedPaths(plan *launch.Plan) ([]string, error) {
 	if !s.protectsControlPlane() {
 		return nil, nil
 	}
-	return s.controlPlaneDirsFor(planProject(plan))
+	opts := config.ProtectionOptions{Launching: planProject(plan)}
+	if plan != nil && plan.ProviderBrand == "codex" && codexProtectionMode == CodexNotProtected {
+		opts.Tolerate = true
+	}
+	dirs, _, err := s.controlPlane(opts)
+	if err != nil {
+		return nil, typedProtectionError(err)
+	}
+	return dirs, nil
 }

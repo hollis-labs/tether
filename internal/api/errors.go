@@ -42,6 +42,15 @@ const (
 	// skipped (see /health sandbox_protect.skipped_project_layers).
 	CodeProjectRootMissing = "project_root_missing"
 
+	// CodeProjectLayerUnprotectable (403) means a registered project's catalog
+	// layer cannot be protected and cannot be left open, because of that
+	// project's catalog entry or the file system under it (its repo_root runs
+	// through a file or a symlink an agent could replace, cannot be examined, or
+	// had its layer turn up while protection was creating it). The message names
+	// the project and the path. It is not a host that cannot provide protection:
+	// that is "forbidden" (bubblewrap missing). Fix or remove the project.
+	CodeProjectLayerUnprotectable = "project_layer_unprotectable"
+
 	// CodeIdempotencyConflict (409) means an idempotency key was reused with
 	// a different request. The key stays bound to its original session
 	// (CW-20260930-0229).

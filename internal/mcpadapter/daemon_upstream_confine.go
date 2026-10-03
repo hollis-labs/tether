@@ -2,6 +2,7 @@ package mcpadapter
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,8 @@ func daemonUpstreamEnvironment(inherited []string, configured map[string]string)
 
 // DaemonProtectedRoots names all three control-plane trees. Unlike a planted
 // proxy, a daemon pool must protect them regardless of the caller's sandbox or
-// TETHER_SANDBOX_PROTECT. Missing roots fail closed before any upstream starts.
+// TETHER_SANDBOX_PROTECT. Missing roots fail closed before any upstream starts; a
+// project's broken catalog entry does not (see paths).
 type DaemonProtectedRoots struct {
 	Catalog       string
 	Run           string
@@ -61,11 +63,18 @@ func (r DaemonProtectedRoots) paths() ([]string, error) {
 		}
 		out = append(out, resolved)
 	}
-	layers, err := config.CatalogProtectionDirs(r.Catalog, r.CatalogConfig)
+	// Tolerant: a project whose catalog entry is broken (its repo_root runs through a
+	// file or a symlink an agent could replace, cannot be examined) must not stop
+	// the gateway from building. That layer is left out of the confinement of the
+	// upstreams' children, loudly; everything else is protected.
+	prepared, err := config.PrepareCatalogProtectionWith(r.Catalog, r.CatalogConfig, config.ProtectionOptions{Tolerate: true})
 	if err != nil {
 		return nil, err
 	}
-	out = append(out, layers...)
+	for _, open := range prepared.Unprotected {
+		log.Printf("WARN: protect: project %q: its layer cannot be protected, and is LEFT OPEN to the daemon's MCP upstream children (the gateway keeps running; launches of agents Tether protects are refused until it is fixed): its repo_root %s %s. Fix or remove the project", open.Project, open.RepoRoot, open.Why)
+	}
+	out = append(out, prepared.Dirs...)
 	return out, nil
 }
 

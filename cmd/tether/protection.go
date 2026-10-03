@@ -23,18 +23,23 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 	for _, c := range h.CreatedProjectRoots {
 		created = append(created, daemon.CreatedProjectRoot{Project: c.Project, RepoRoot: c.RepoRoot, Reason: c.Reason})
 	}
+	var anchored []daemon.AnchoredProjectAncestor
+	for _, a := range h.AnchoredProjectAncestors {
+		anchored = append(anchored, daemon.AnchoredProjectAncestor{Project: a.Project, RepoRoot: a.RepoRoot, Ancestor: a.Ancestor, Reason: a.Reason})
+	}
 	return &daemon.SandboxProtectHealth{
-		Enabled:              h.Enabled,
-		DisabledByOperator:   h.DisabledByOperator,
-		Reason:               h.Reason,
-		Codex:                h.Codex.State,
-		CodexReason:          h.Codex.Reason,
-		BwrapChecked:         h.BwrapChecked,
-		BwrapUsable:          h.BwrapUsable,
-		BwrapError:           h.BwrapError,
-		SkippedProjectLayers: skipped,
-		CreatedProjectRoots:  created,
-		PlanError:            h.PlanError,
+		Enabled:                  h.Enabled,
+		DisabledByOperator:       h.DisabledByOperator,
+		Reason:                   h.Reason,
+		Codex:                    h.Codex.State,
+		CodexReason:              h.Codex.Reason,
+		BwrapChecked:             h.BwrapChecked,
+		BwrapUsable:              h.BwrapUsable,
+		BwrapError:               h.BwrapError,
+		SkippedProjectLayers:     skipped,
+		CreatedProjectRoots:      created,
+		AnchoredProjectAncestors: anchored,
+		PlanError:                h.PlanError,
 	}
 }
 
@@ -43,6 +48,15 @@ func createdRootsSummary(created []daemon.CreatedProjectRoot) string {
 	parts := make([]string, 0, len(created))
 	for _, c := range created {
 		parts = append(parts, fmt.Sprintf("%s (%s)", c.Project, c.RepoRoot))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// anchoredAncestorsSummary names the unwritable directories protection anchored.
+func anchoredAncestorsSummary(anchored []daemon.AnchoredProjectAncestor) string {
+	parts := make([]string, 0, len(anchored))
+	for _, a := range anchored {
+		parts = append(parts, fmt.Sprintf("%s (%s, anchored: %s)", a.Project, a.RepoRoot, a.Ancestor))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -136,13 +150,21 @@ func checkSandboxProtect(h *daemon.SandboxProtectHealth, fromDaemon bool) checkR
 		return fail(name, fmt.Sprintf("on, but bubblewrap cannot build the sandbox, so Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected (%s): %s", source, h.BwrapError),
 			fmt.Sprintf("install bubblewrap and allow unprivileged user namespaces, or set %s=0 in tetherd's environment to run agents unprotected", app.ProtectEnv))
 	}
+	var notes []string
+	remedy := "restore or remove those projects in the catalog and restart the daemon"
 	if len(h.CreatedProjectRoots) > 0 {
-		return warn(name, fmt.Sprintf("%s (%s); %d project root(s) were missing and are placeholders holding only a read-only .tether, so a protected agent cannot plant a layer there: %s", h.Reason, source, len(h.CreatedProjectRoots), createdRootsSummary(h.CreatedProjectRoots)),
-			"these projects are stale catalog entries: restore their repositories or remove the projects, and restart the daemon")
+		notes = append(notes, fmt.Sprintf("%d project root(s) were missing and are placeholders holding only a read-only .tether, so a protected agent cannot plant a layer there: %s", len(h.CreatedProjectRoots), createdRootsSummary(h.CreatedProjectRoots)))
+		remedy = "these projects are stale catalog entries: restore their repositories or remove the projects, and restart the daemon"
+	}
+	if len(h.AnchoredProjectAncestors) > 0 {
+		notes = append(notes, fmt.Sprintf("%d project root(s) are missing under a directory that is not writable but that an agent can get past (it owns it, or can move it aside), so that directory is anchored read-only for protected agents: %s", len(h.AnchoredProjectAncestors), anchoredAncestorsSummary(h.AnchoredProjectAncestors)))
+		remedy = "these projects are stale catalog entries: restore their repositories or remove the projects, and restart the daemon"
 	}
 	if len(h.SkippedProjectLayers) > 0 {
-		return warn(name, fmt.Sprintf("%s (%s); %d project(s) left out of protection because their repo_root is unusable and no agent could create it either: %s", h.Reason, source, len(h.SkippedProjectLayers), skippedLayersSummary(h.SkippedProjectLayers)),
-			"restore or remove those projects in the catalog and restart the daemon")
+		notes = append(notes, fmt.Sprintf("%d project(s) left out of protection because their repo_root is unusable and no agent could create it either: %s", len(h.SkippedProjectLayers), skippedLayersSummary(h.SkippedProjectLayers)))
+	}
+	if len(notes) > 0 {
+		return warn(name, fmt.Sprintf("%s (%s); %s", h.Reason, source, strings.Join(notes, "; ")), remedy)
 	}
 	return ok(name, fmt.Sprintf("%s (%s)", h.Reason, source))
 }

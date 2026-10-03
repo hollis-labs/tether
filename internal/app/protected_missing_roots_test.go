@@ -162,8 +162,9 @@ func TestALaunchForAProjectWithAMissingRepoRootIsATypedRefusal(t *testing.T) {
 
 // A file where a project's root should be, in a directory an agent can write to,
 // is something an agent could replace with a directory and plant a layer into,
-// and Tether will not delete a user's file: the launch is refused as a host that
-// cannot provide protection, naming the project.
+// and Tether will not delete a user's file: the launch is refused, naming the
+// project, with its own sentinel (and API code): this is a catalog problem, not a
+// host that cannot provide protection (no bubblewrap), which reads the same way.
 func TestAFileInTheWayOfAProjectRootRefusesTheLaunch(t *testing.T) {
 	svc, existing, _ := deadRootService(t)
 	file := filepath.Join(t.TempDir(), "not-a-repo")
@@ -173,8 +174,8 @@ func TestAFileInTheWayOfAProjectRootRefusesTheLaunch(t *testing.T) {
 	svc.Catalog.Projects["isfile"] = config.Project{RepoRoot: file}
 	_, _, err := svc.protectionPlan(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", nil, false)
 	var layerErr *config.UnprotectableLayerError
-	if !errors.Is(err, launch.ErrProtectionUnavailable) || !errors.As(err, &layerErr) || layerErr.Project != "isfile" {
-		t.Fatalf("err = %v; want launch.ErrProtectionUnavailable wrapping an UnprotectableLayerError for isfile", err)
+	if !errors.Is(err, launch.ErrProjectLayerUnprotectable) || errors.Is(err, launch.ErrProtectionUnavailable) || !errors.As(err, &layerErr) || layerErr.Project != "isfile" {
+		t.Fatalf("err = %v; want launch.ErrProjectLayerUnprotectable (and not ErrProtectionUnavailable) wrapping an UnprotectableLayerError for isfile", err)
 	}
 	if !strings.Contains(err.Error(), `"isfile"`) || !strings.Contains(err.Error(), "a file is in the way") {
 		t.Fatalf("message %q must name the project and the cause", err.Error())
@@ -197,7 +198,7 @@ func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 			t.Fatalf("call %d: created roots = %+v; want the %d dead projects", i, h.CreatedProjectRoots, len(dead))
 		}
 		for _, c := range h.CreatedProjectRoots {
-			if dead[c.Project] != c.RepoRoot || !strings.Contains(c.Reason, "read-only .tether") {
+			if dead[c.Project] != c.RepoRoot || !strings.Contains(c.Reason, "read-only") {
 				t.Fatalf("call %d: created entry %+v does not match the catalog (%v)", i, c, dead)
 			}
 		}
@@ -234,11 +235,13 @@ func TestProtectionHealthReportsSkippedProjectLayersOnlyWhereNoAgentCouldCreateT
 	t.Skip("no system directory that this user can neither write nor get past")
 }
 
-// A directory that is not writable but that this user owns is not a reason to
-// skip: the agent can chmod it. /health says so as a plan failure (no launch is
-// protected until the entry is fixed), and the launch is refused naming the
-// project, and nothing is created.
-func TestAReadOnlyDirectoryTheUserOwnsIsNotASkip(t *testing.T) {
+// A directory that is not writable but that this user owns is not a reason to skip
+// (the agent can chmod it), and not a reason to refuse every launch either (one dead
+// project under an unmounted mountpoint used to refuse every protected launch, 500
+// every Codex launch and break the MCP gateway): it is anchored read-only. /health
+// says so, no launch is refused, and the cost is the one every anchor has: a launch
+// whose own directories lie inside it is refused.
+func TestAReadOnlyDirectoryTheUserOwnsIsAnchoredNotSkippedOrRefused(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("write permission cannot be taken away from root")
 	}
@@ -251,19 +254,31 @@ func TestAReadOnlyDirectoryTheUserOwnsIsNotASkip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o750) })
+	realRO, err := filepath.EvalSymlinks(ro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	svc.Catalog.Projects = map[string]config.Project{"live-a": {RepoRoot: existing["live-a"]}, "ro": {RepoRoot: filepath.Join(ro, "repo")}}
 
 	h := svc.ProtectionHealth()
-	if len(h.SkippedProjectLayers) != 0 || !strings.Contains(h.PlanError, `project "ro"`) || !strings.Contains(h.PlanError, "owned by this user") {
-		t.Fatalf("skipped = %+v, plan error = %q; want no skip and a plan failure naming ro and the way past", h.SkippedProjectLayers, h.PlanError)
+	if h.PlanError != "" || len(h.SkippedProjectLayers) != 0 {
+		t.Fatalf("plan error = %q, skipped = %+v; want neither: nothing is refused and nothing is left open", h.PlanError, h.SkippedProjectLayers)
 	}
-	_, _, err := svc.protectionPlan(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", nil, false)
-	var layerErr *config.UnprotectableLayerError
-	if !errors.Is(err, launch.ErrProtectionUnavailable) || !errors.As(err, &layerErr) || layerErr.Project != "ro" {
-		t.Fatalf("err = %v; want launch.ErrProtectionUnavailable wrapping an UnprotectableLayerError for ro", err)
+	if len(h.AnchoredProjectAncestors) != 1 || h.AnchoredProjectAncestors[0].Project != "ro" || h.AnchoredProjectAncestors[0].Ancestor != realRO {
+		t.Fatalf("anchored ancestors = %+v; want ro anchored at %s", h.AnchoredProjectAncestors, realRO)
 	}
-	if _, err := os.Stat(filepath.Join(existing["live-a"], ".tether")); !os.IsNotExist(err) {
-		t.Fatalf("the refused call created a layer (%v)", err)
+	dirs, _, err := svc.protectionPlan(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", nil, false)
+	if err != nil || !containsPath(dirs, realRO) {
+		t.Fatalf("protection plan: dirs = %q, err = %v; want no refusal and %s anchored", dirs, err, realRO)
+	}
+	// The cost: a launch that would work inside the anchored directory is refused,
+	// like one inside any other anchor, with the reason.
+	opts := agentsessions.StartOptions{Workdir: filepath.Join(ro, "work"), WorkspaceDir: t.TempDir()}
+	if err := svc.applyControlPlaneProtection(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", &opts); !errors.Is(err, launch.ErrLaunchInsideProtectedPath) {
+		t.Fatalf("a launch working inside the anchored directory: err = %v; want launch.ErrLaunchInsideProtectedPath", err)
+	}
+	if _, err := os.Stat(filepath.Join(ro, "repo")); !os.IsNotExist(err) {
+		t.Fatalf("something was created under the anchored directory (%v)", err)
 	}
 }
 

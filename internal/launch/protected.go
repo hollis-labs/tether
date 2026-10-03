@@ -31,6 +31,18 @@ var ErrProtectionUnavailable = errors.New("launch refused: Tether write-protects
 // refuses anything, it is skipped and reported (see config.PrepareCatalogProtection).
 var ErrLaunchProjectRootMissing = errors.New("launch refused: the project's repo_root is not usable")
 
+// ErrProjectLayerUnprotectable refuses a launch because a registered project's
+// catalog layer cannot be protected and cannot be left open, and the cause is that
+// project's catalog entry or the file system under it: a repo_root that runs through
+// a file or a symlink an agent could replace, or that cannot be examined, or whose
+// layer turned up while protection was creating it. The wrapped
+// *config.UnprotectableLayerError names the project and the path. It is NOT a host
+// that cannot provide protection (see ErrProtectionUnavailable, which is about
+// bubblewrap): the fix is the catalog entry, not the host. A project whose root is
+// merely missing is never this: that is anchored or skipped (see
+// config.PrepareCatalogProtectionWith).
+var ErrProjectLayerUnprotectable = errors.New("launch refused: a project's catalog layer cannot be protected")
+
 // ErrCodexSandboxWidened refuses a turn on a codex session that Tether left to
 // codex's own sandbox when it launched, because something that shapes that
 // sandbox has since changed: a project .codex/config.toml appeared in a work
