@@ -129,7 +129,7 @@ Content-Type: application/json
 {
   "props": {
     "docs_url": "https://tether.example.com",
-    "project_root": "/Users/chrispian/dev/hollis-labs/apps/tether"
+    "project_root": "/srv/example/dev/hollis-labs/apps/tether"
   },
   "tags": ["runtime", "control-plane", "go"],
   "guidelines": "Always verify with `make check` before closing tasks."

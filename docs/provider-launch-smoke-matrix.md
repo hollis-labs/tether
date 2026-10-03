@@ -54,7 +54,7 @@ unauthenticated is recorded as `SKIPPED (provider unavailable)`, not `FAIL`.
 | 8 | Boot-dir overlay | any | catalog `injection.boot_dir_overlay` | PASS | Explicit overlay smoke planted `overlay-smoke.md` with expected content. |
 | 9 | Caller-provided injection (CW-0114) | any | `tether launch --injection` | PASS | `notes/extra.md` and `overlay-smoke.md` were persisted in plan and planted in boot dir. |
 | 10 | Compiled Claude/Codex skills | Claude, Codex | agent `skills:` | PASS | Temporary `smoke-skill` compiled to Claude `.claude/skills/smoke-skill.md` and Codex `AGENTS.md`. |
-| 11 | Worktree isolation | any | `workspace.mode: worktree` | PASS | Two `torque-claude-worktree` launches produced independent work roots; `/Users/chrispian/tether` resolves through a symlink to `/Users/chrispian/tether`. |
+| 11 | Worktree isolation | any | `workspace.mode: worktree` | PASS | Two `torque-claude-worktree` launches produced independent work roots; `/srv/example/tether` resolves through a symlink to `/srv/example/tether`. |
 | 12 | Same-profile multiple launches | any | repeated `tether launch` | PASS | Repeated worktree launch created distinct sessions and worktrees with no collision. |
 
 ## Scenarios

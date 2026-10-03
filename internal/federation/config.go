@@ -42,7 +42,7 @@ type Peer struct {
 	Authority string `yaml:"authority" json:"authority"`
 
 	// BaseURL is the root of that daemon's HTTP messaging surface, e.g.
-	// "http://10.0.0.4:7777". The go-messaging /messages/* routes are
+	// "http://192.0.2.4:7777". The go-messaging /messages/* routes are
 	// resolved against it.
 	BaseURL string `yaml:"base_url" json:"base_url"`
 }

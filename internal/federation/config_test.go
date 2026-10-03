@@ -25,7 +25,7 @@ func TestConfigValidate(t *testing.T) {
 			cfg: Config{
 				Enabled:        true,
 				LocalAuthority: "tether",
-				Peers:          []Peer{{Authority: "torque", BaseURL: "http://10.0.0.4:7777"}},
+				Peers:          []Peer{{Authority: "torque", BaseURL: "http://192.0.2.4:7777"}},
 			},
 		},
 		{

@@ -4,7 +4,7 @@ provider: antigravity
 runtime_kind: subprocess
 # command may be a bare name (resolved via your daemon's PATH) or an absolute
 # path. Set an absolute path when PATH is not stable for daemon launches.
-# Example: command: /Users/you/.local/bin/agy
+# Example: command: /srv/you/.local/bin/agy
 command: agy
 # The runtime adapter owns agy's flags (--output-format stream-json, -p=).
 args: []
