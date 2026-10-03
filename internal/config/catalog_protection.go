@@ -62,9 +62,10 @@ func LayeredCatalogLayers(cat *Catalog) []LayerSpec {
 
 // SkippedProjectLayer is a registered project whose layer protection left out:
 // its repo_root cannot be used on this host (it does not exist, or is not a
-// directory) AND no agent could create it either, because the nearest existing
-// directory above it is not writable by this user. Nothing can be planted there;
-// see PrepareCatalogProtection.
+// directory) AND no agent could create it either: the agent runs as this user, and
+// nothing from the nearest existing directory above the root up to / is writable
+// by this user or owned by this user (who could make it writable, or move it
+// aside). Nothing can be planted there; see PrepareCatalogProtection.
 type SkippedProjectLayer struct {
 	Project  string `json:"project"`
 	RepoRoot string `json:"repo_root"`
@@ -205,13 +206,24 @@ type layerPlan struct {
 //     writable, the root is created holding only .tether (0700, with
 //     PlaceholderMarker in it) and that layer is anchored like any other
 //     (CreatedRoots, and Created); the project is still
-//     a stale entry to fix, so this is reported. If it is not writable, the agent
-//     cannot create the root either, there is nothing to plant into, and the
-//     project is skipped (Skipped).
-//   - a file in the way (a root that is a file, or runs through one) under a
-//     writable directory: an agent could replace the file with a directory, and a
-//     user's file is not Tether's to delete, so the call fails closed with a
-//     *UnprotectableLayerError naming the project.
+//     a stale entry to fix, so this is reported.
+//   - if it is not writable, that is not the end of it, because the agent is this
+//     user: a directory this user owns can be made writable (chmod), and a
+//     directory can be moved aside, with a directory of the agent's own put in its
+//     place, by anyone who can write the directory above it (a sticky directory
+//     only lets a user move what that user owns, which is covered by the first).
+//     So the whole chain from that directory up to / is examined, and the project
+//     is skipped (Skipped) only when no directory in it is owned by this user or
+//     writable by it: then nothing the agent can do creates the root.
+//   - otherwise (not writable, but the agent can get past it) the root cannot be
+//     anchored either: creating it needs a permission Tether will not take by
+//     changing the user's directory. The call fails closed with a
+//     *UnprotectableLayerError naming the project and the way past.
+//   - a file in the way (a root that is a file, or runs through one): the same
+//     test on the directory that holds it. Where an agent can write to it, or get
+//     past it, the agent could replace the file with a directory and plant a
+//     layer, and a user's file is not Tether's to delete, so the call fails closed
+//     with a *UnprotectableLayerError naming the project; otherwise it is skipped.
 //
 // Every project root is examined, and every one of those outcomes decided,
 // before any directory is created, so a call that returns an error because of a
@@ -248,10 +260,20 @@ func PrepareCatalogProtection(catalogRoot string, cat *Catalog, launching string
 		if err != nil {
 			return CatalogProtection{}, fmt.Errorf("protect catalog layer: project %q: %w", p.id, err)
 		}
+		canWrite := agentCanWrite(ancestor)
+		past := ""
+		if !canWrite {
+			if past, err = agentGetsPast(ancestor); err != nil {
+				return CatalogProtection{}, fmt.Errorf("protect catalog layer: project %q: %w", p.id, err)
+			}
+		}
 		switch {
-		case !agentCanWrite(ancestor):
+		case !canWrite && past == "":
 			out.Skipped = append(out.Skipped, SkippedProjectLayer{Project: p.id, RepoRoot: p.repoRoot,
-				Reason: fmt.Sprintf("%s, and an agent cannot create it either (%s is not writable)", reason, ancestor)})
+				Reason: fmt.Sprintf("%s, and an agent cannot create it either (%s is not writable, and no directory from it up to / is owned by or writable by this user)", reason, ancestor)})
+		case !canWrite:
+			return CatalogProtection{}, &UnprotectableLayerError{Project: p.id, Root: p.repoRoot,
+				Why: fmt.Sprintf("%s: %s is not writable, but an agent runs as this user and can get past that (%s), so the layer cannot be left open, and cannot be anchored without changing the permissions of a directory that is not Tether's", reason, ancestor, past)}
 		case blocked:
 			return CatalogProtection{}, &UnprotectableLayerError{Project: p.id, Root: p.repoRoot,
 				Why: fmt.Sprintf("%s: a file is in the way inside %s, which an agent can write to, so it could replace the file with a directory and plant a layer", reason, ancestor)}
@@ -350,6 +372,50 @@ func nearestExistingDir(path string) (dir string, blocked bool, err error) {
 		}
 		cur = parent
 	}
+}
+
+// dirFacts is what decides whether an agent running as this user can get past a
+// directory, collected for each directory from the nearest existing ancestor of a
+// missing project root up to /.
+type dirFacts struct {
+	path     string
+	uid      uint32 // owner
+	sticky   bool   // sticky bit: only an entry's owner (or the directory's) may move it
+	writable bool   // access(2) W_OK|X_OK as this user
+}
+
+// bypassVia says how an agent running as this user could create entries in
+// chain[0] (the nearest existing ancestor, which access(2) says is not writable),
+// or "" when nothing it can do gets past. chain runs from that directory up to /;
+// euid is the agent's user.
+//
+// access(2) alone is the wrong test, because the agent is the same user as the
+// daemon: a directory this user owns can be made writable with chmod, and any
+// directory in the chain can be moved aside and replaced (mv ro ro-old; mkdir ro)
+// by someone who can write the directory above it.
+func bypassVia(chain []dirFacts, euid uint32) string {
+	for i, d := range chain {
+		if d.uid == euid {
+			if i == 0 {
+				return fmt.Sprintf("%s is owned by this user, who can make it writable (chmod) and create the root in it", d.path)
+			}
+			return fmt.Sprintf("%s, above it, is owned by this user, who can make it writable (chmod) and move %s aside to put a directory of their own in its place", d.path, chain[i-1].path)
+		}
+		if !d.writable {
+			continue
+		}
+		if i == 0 {
+			return fmt.Sprintf("%s is writable by this user", d.path)
+		}
+		// A directory above the first is a way past when it can be written, unless it
+		// is sticky: a sticky directory lets a user move only what that user owns,
+		// and an entry this user owns was already caught above.
+		if d.sticky {
+			continue
+		}
+		return fmt.Sprintf("%s, above it, is writable by this user, who can rename %s out of the way and put a directory of their own in its place", d.path, chain[i-1].path)
+	}
+	return ""
 }
 
 // projectRootProblem says why a project's repo_root cannot hold a layer, or ""

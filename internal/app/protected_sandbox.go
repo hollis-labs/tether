@@ -84,9 +84,10 @@ type ProtectionHealth struct {
 	BwrapError   string
 	// SkippedProjectLayers are registered projects left out of protection
 	// because their repo_root cannot be used on this host AND no agent could
-	// create it either (the nearest existing directory above it is not writable),
-	// so there is nothing to plant into. The launches of every other project
-	// still work; each entry is a catalog problem to fix.
+	// create it either: nothing from the nearest existing directory above it up
+	// to / is owned by or writable by the daemon's user, who is the agent. There
+	// is nothing to plant into. The launches of every other project still work;
+	// each entry is a catalog problem to fix.
 	SkippedProjectLayers []config.SkippedProjectLayer
 	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
 	// it was missing, an agent could have created it, so protection created it

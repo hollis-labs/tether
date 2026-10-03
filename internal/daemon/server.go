@@ -548,8 +548,9 @@ type SandboxProtectHealth struct {
 	BwrapError string `json:"bwrap_error,omitempty"`
 	// SkippedProjectLayers are registered projects left out of protection because
 	// their repo_root does not exist or is not a directory AND no agent could
-	// create it either (the nearest existing directory above it is not writable).
-	// Launches of every other project work; each entry is a catalog problem to fix.
+	// create it either: nothing from the nearest existing directory above it up to
+	// / is owned by or writable by the daemon's user, who is the agent. Launches of
+	// every other project work; each entry is a catalog problem to fix.
 	SkippedProjectLayers []SkippedProjectLayer `json:"skipped_project_layers,omitempty"`
 	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
 	// it was missing, an agent could have created it, so protection created it

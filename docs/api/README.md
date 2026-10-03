@@ -481,9 +481,13 @@ project layer there. An entry is listed while the root is still only that
 placeholder, including after a daemon restart, and is a stale catalog entry to
 fix; the project's own launches are refused (409 `project_root_missing`) until
 the repository is restored. `skipped_project_layers` lists projects whose `repo_root` is
-unusable AND that no agent could create (that directory is not writable), so there
-is nothing to plant into; their layer is left out. Every project's launches work
-either way. `plan_error` is present when Tether cannot work out
+unusable AND that no agent could create: the agent runs as the daemon's user, so
+nothing from the nearest existing directory above the root up to `/` may be owned by
+that user or writable by it. There is nothing to plant into; their layer is left
+out. A root under a directory that is not writable but that the user owns, or can
+move aside, is not skipped: it cannot be anchored, so it is a `plan_error` and
+protected launches are refused until the entry is fixed. Every project's launches
+work otherwise. `plan_error` is present when Tether cannot work out
 what to protect at all, and every launch it must protect is refused until that is
 fixed; it is a catalog or filesystem problem, never a bubblewrap one, and
 `bwrap_checked`/`bwrap_usable` still report the host probe on their own. `codex` is how
