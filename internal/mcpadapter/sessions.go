@@ -22,9 +22,9 @@ import (
 func (a *Adapter) registerSessionTools(s *gomcp.Server) {
 	a.addTool(s, gomcp.Tool{
 		Name:        "tether_session_list",
-		Description: "List agent sessions. Optionally filter by state (created, running, stopped, failed) and paginate with cursor and limit.",
+		Description: "List agent sessions. Optionally filter by state (created, ready, launching, running, detached, orphaned, completed, failed, killed) and paginate with cursor and limit.",
 		InputSchema: gomcp.InputSchema(
-			gomcp.StringProp("state", "Filter by session state: created, running, stopped, failed", false),
+			gomcp.StringProp("state", "Filter by session state: created, ready, launching, running, detached, orphaned, completed, failed, killed", false),
 			gomcp.StringProp("cursor", "RFC3339 pagination cursor — returns sessions older than this timestamp", false),
 			gomcp.NumberProp("limit", "Max results (default 50, max 200)", false),
 		),

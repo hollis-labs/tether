@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -73,9 +74,27 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("agent %q has never launched a session; cannot resume", logicalAgentID)
 	}
 
+	detachedID, err := s.Store.DetachedSessionIDForAgent(ctx, logicalAgentID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("check detached agent sessions: %w", err)
+	}
+	if detachedID != "" {
+		return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, detachedID)
+	}
+
 	ck, err := s.Store.GetLatestCheckpointForAgent(logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
+	}
+
+	if ck.SourceSessionID != "" {
+		parent, err := s.Store.GetSession(ck.SourceSessionID)
+		if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
+			return api.LaunchResult{}, fmt.Errorf("get resume source session: %w", err)
+		}
+		if parent != nil && session.State(parent.State) == session.StateDetached {
+			return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, parent.ID)
+		}
 	}
 
 	// Preserve the original opt-in before resolving the current catalog route.
