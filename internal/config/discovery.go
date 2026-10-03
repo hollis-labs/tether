@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Layer identifies which discovery layer a catalog entry originated from.
@@ -110,11 +113,19 @@ func Discover(layers []LayerSpec) (*LayeredCatalog, error) {
 	return cat, nil
 }
 
+// layerDirMissing says a layer has no such directory: it is not there, or a project
+// root above it is a file (ENOTDIR, not ENOENT), which is a project whose
+// repo_root is wrong, not a layer that is broken. The daemon used to refuse to
+// start over it.
+func layerDirMissing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
 func discoverAgents(cat *LayeredCatalog, l LayerSpec) error {
 	dir := filepath.Join(l.Root, "agents")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if layerDirMissing(err) {
 			return nil
 		}
 		return fmt.Errorf("read %s: %w", dir, err)
@@ -144,7 +155,7 @@ func discoverPathsInto(target map[string]LayeredPath, l LayerSpec, subdir, ext s
 	dir := filepath.Join(l.Root, subdir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if layerDirMissing(err) {
 			return nil
 		}
 		return fmt.Errorf("read %s: %w", dir, err)

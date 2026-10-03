@@ -1,13 +1,16 @@
 package mcpadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -245,5 +248,48 @@ func TestSharedUpstreams_RemoteExclusionVisible(t *testing.T) {
 	s := v.Service.Snapshot()
 	if len(s.Origins) != 1 || s.Origins[0].Status != "excluded" || !strings.Contains(s.Origins[0].Error, "cannot be confined locally") || strings.Contains(s.Origins[0].Error, "private-secret") {
 		t.Fatalf("remote status: %+v", s)
+	}
+}
+
+// A project whose catalog entry cannot be protected (its repo_root runs through a
+// file, here) used to make DaemonProtectedRoots.paths() fail, so NewSharedUpstreams
+// failed, so every new /mcp view failed after a restart while the runtime was nil:
+// one dead project took out the whole mcp__tether__* gateway. The gateway must
+// build; that one layer is left out of the confinement and reported, and every
+// other layer is still protected.
+func TestDaemonProtectedRoots_ABrokenProjectDoesNotTakeOutTheGateway(t *testing.T) {
+	roots := daemonTestRoots(t)
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roots.CatalogConfig.Projects["broken"] = config.Project{RepoRoot: filepath.Join(file, "child")}
+
+	var logged bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&logged)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+
+	paths, err := roots.paths()
+	if err != nil {
+		t.Fatalf("a broken project's catalog entry failed the gateway's protected roots: %v", err)
+	}
+	projectLayer, err := filepath.EvalSymlinks(filepath.Join(roots.CatalogConfig.Projects["project"].RepoRoot, ".tether"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(paths, projectLayer) {
+		t.Fatalf("paths = %q; the other project's layer must still be protected", paths)
+	}
+	for _, want := range []string{`project "broken"`, "LEFT OPEN", "a file is in the way"} {
+		if !strings.Contains(logged.String(), want) {
+			t.Fatalf("the layer left open was not reported (missing %q):\n%s", want, logged.String())
+		}
+	}
+	if r, err := NewSharedUpstreams(nil, roots, true); err != nil {
+		t.Fatalf("the gateway runtime did not build: %v", err)
+	} else {
+		r.Close()
 	}
 }

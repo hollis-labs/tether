@@ -69,6 +69,7 @@ func TestCheckSandboxProtect(t *testing.T) {
 		// though the probe on its own found bubblewrap fine.
 		{"plan error", withPlanError(healthFor("linux", nil, nil), "protect control plane: catalog root: no such file"), true, statusFail, "not bubblewrap"},
 		{"skipped layers", withSkipped(healthFor("linux", nil, nil), deadProjects()...), true, statusWarn, "left out of protection"},
+		{"anchored ancestors", withAnchored(healthFor("linux", nil, nil), anchoredProjects()...), true, statusWarn, "anchored read-only for protected agents"},
 		{"created roots", withCreated(healthFor("linux", nil, nil), createdProjects()...), true, statusWarn, "placeholders holding only a read-only .tether, so a protected agent cannot plant a layer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +88,9 @@ func TestCheckSandboxProtect(t *testing.T) {
 			}
 			if tc.name == "created roots" && (!strings.Contains(r.Message, "chrispian (/gone/chrispian)") || !strings.Contains(r.Message, "2 project root(s) were missing") || !strings.Contains(r.Remedy, "stale catalog entries")) {
 				t.Fatalf("the warning must name each project and path and call it a stale entry: %+v", r)
+			}
+			if tc.name == "anchored ancestors" && (!strings.Contains(r.Message, "nas (/mnt/nas/repo, anchored: /mnt/nas)") || !strings.Contains(r.Message, "1 project root(s) are missing under a directory") || !strings.Contains(r.Remedy, "stale catalog entries")) {
+				t.Fatalf("the warning must name the project, its path and the anchored directory: %+v", r)
 			}
 			if tc.fromDaemon && !strings.Contains(r.Message, "(daemon)") {
 				t.Fatalf("message does not say it is the daemon's answer: %q", r.Message)
@@ -121,6 +125,27 @@ func createdProjects() []config.CreatedProjectRoot {
 	}
 }
 
+func anchoredProjects() []config.AnchoredAncestor {
+	return []config.AnchoredAncestor{{Project: "nas", RepoRoot: "/mnt/nas/repo", Ancestor: "/mnt/nas", Reason: "anchored read-only"}}
+}
+
+func withAnchored(h app.ProtectionHealth, anchored ...config.AnchoredAncestor) app.ProtectionHealth {
+	h.AnchoredProjectAncestors = anchored
+	return h
+}
+
+// Anchored ancestors, created roots and skipped layers are all in one warning when
+// they co-occur, not the first of them only.
+func TestCheckSandboxProtectReportsEveryNoteAtOnce(t *testing.T) {
+	h := withAnchored(withCreated(withSkipped(healthFor("linux", nil, nil), deadProjects()...), createdProjects()...), anchoredProjects()...)
+	r := checkSandboxProtect(sandboxProtectHealth(h), true)
+	for _, want := range []string{"placeholders holding only a read-only .tether", "anchored read-only for protected agents", "left out of protection"} {
+		if r.Status != statusWarn || !strings.Contains(r.Message, want) {
+			t.Fatalf("check = %+v; want one warning that also says %q", r, want)
+		}
+	}
+}
+
 func withCreated(h app.ProtectionHealth, created ...config.CreatedProjectRoot) app.ProtectionHealth {
 	h.CreatedProjectRoots = created
 	return h
@@ -147,6 +172,14 @@ func TestSandboxProtectHealthCarriesSkippedLayersAndPlanError(t *testing.T) {
 	wantCreated := []daemon.CreatedProjectRoot{
 		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
 		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
+	}
+	withUnprotectable := healthFor("linux", nil, nil)
+	withUnprotectable.UnprotectableProjectLayers = []config.UnprotectedProjectLayer{{Project: "linked", RepoRoot: "/home/u/linked", Why: "runs through a symlink"}}
+	if got := sandboxProtectHealth(withUnprotectable).UnprotectableProjectLayers; !reflect.DeepEqual(got, []daemon.UnprotectableProjectLayer{{Project: "linked", RepoRoot: "/home/u/linked", Why: "runs through a symlink"}}) {
+		t.Fatalf("unprotectable layers in /health = %+v", got)
+	}
+	if got := sandboxProtectHealth(withAnchored(healthFor("linux", nil, nil), anchoredProjects()...)).AnchoredProjectAncestors; !reflect.DeepEqual(got, []daemon.AnchoredProjectAncestor{{Project: "nas", RepoRoot: "/mnt/nas/repo", Ancestor: "/mnt/nas", Reason: "anchored read-only"}}) {
+		t.Fatalf("anchored ancestors in /health = %+v", got)
 	}
 	if !reflect.DeepEqual(h.SkippedProjectLayers, want) || !reflect.DeepEqual(h.CreatedProjectRoots, wantCreated) || h.PlanError != "boom" {
 		t.Fatalf("health = %+v; want skipped %+v, created %+v and plan error boom", *h, want, wantCreated)

@@ -115,3 +115,47 @@ func TestProjectRootMissingIsAConflictWithItsOwnCode(t *testing.T) {
 		})
 	}
 }
+
+// CW-20261003-0096: a launch refused because a project's catalog layer cannot be
+// protected is a 403 with its own code, naming the project and the path, on create,
+// launch and resume. Its 403 used to read "this host cannot", which sends the
+// operator to bubblewrap when the fix is a catalog entry; bubblewrap missing stays
+// "forbidden".
+func TestProjectLayerUnprotectableIsForbiddenWithItsOwnCode(t *testing.T) {
+	refusal := fmt.Errorf("%w: %w", launch.ErrProjectLayerUnprotectable,
+		&config.UnprotectableLayerError{Project: "nas", Root: "/home/u/mnt/nas/repo", Why: "runs through a symlink an agent can replace"})
+	for _, tc := range []struct {
+		name   string
+		svc    *fakeLaunchService
+		method string
+		path   string
+		body   string
+	}{
+		{"create", &fakeLaunchService{createErr: refusal}, http.MethodPost, "/sessions", `{"launch":"l1"}`},
+		{"launch", &fakeLaunchService{launchErr: refusal}, http.MethodPost, "/sessions/s1/launch", ``},
+		{"resume", &fakeLaunchService{resumeErr: refusal}, http.MethodPost, "/logical-agents/agent-1/resume", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			newTestHandler(tc.svc).ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body)))
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status = %d (%s); want 403", rr.Code, rr.Body.String())
+			}
+			env := decodeErr(t, rr)
+			if env.Error.Code != CodeProjectLayerUnprotectable || env.Error.Code == CodeForbidden {
+				t.Fatalf("code = %q; want %q, not the generic forbidden", env.Error.Code, CodeProjectLayerUnprotectable)
+			}
+			for _, want := range []string{`"nas"`, "/home/u/mnt/nas/repo", "symlink an agent can replace"} {
+				if !strings.Contains(env.Error.Message, want) {
+					t.Fatalf("message %q does not mention %s", env.Error.Message, want)
+				}
+			}
+		})
+	}
+	// bubblewrap missing is still the generic forbidden
+	rr := httptest.NewRecorder()
+	newTestHandler(&fakeLaunchService{createErr: fmt.Errorf("%w: bwrap: not found", launch.ErrProtectionUnavailable)}).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewBufferString(`{"launch":"l1"}`)))
+	if env := decodeErr(t, rr); rr.Code != http.StatusForbidden || env.Error.Code != CodeForbidden {
+		t.Fatalf("protection unavailable: status %d code %q; want 403 forbidden", rr.Code, env.Error.Code)
+	}
+}

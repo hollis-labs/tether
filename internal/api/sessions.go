@@ -556,10 +556,16 @@ func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Req
 // agent would work inside a protected directory
 // (launch.ErrLaunchInsideProtectedPath), or any launch while protection is on
 // and the host cannot provide it (launch.ErrProtectionUnavailable: bubblewrap
-// is missing; CW-20261001-0142).
+// is missing; CW-20261001-0142). A launch refused because a project's catalog layer
+// cannot be protected (launch.ErrProjectLayerUnprotectable) is 403 too but with its
+// own code, since the fix is that project's catalog entry and not the host.
 func writeLaunchRefused(w http.ResponseWriter, err error) bool {
 	if errors.Is(err, launch.ErrLaunchProjectRootMissing) {
 		writeError(w, http.StatusConflict, CodeProjectRootMissing, err.Error())
+		return true
+	}
+	if errors.Is(err, launch.ErrProjectLayerUnprotectable) {
+		writeError(w, http.StatusForbidden, CodeProjectLayerUnprotectable, err.Error())
 		return true
 	}
 	if !errors.Is(err, launch.ErrACPLaunchUnprotected) &&
