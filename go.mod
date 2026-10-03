@@ -22,7 +22,7 @@ require (
 	github.com/hollis-labs/go-runner v0.8.2
 	github.com/hollis-labs/go-runtime-events v0.2.2
 	github.com/hollis-labs/go-sandbox v0.6.0
-	github.com/hollis-labs/substrate/mesh v0.0.0-20261003194625-84dbabe28e9a
+	github.com/hollis-labs/substrate/mesh v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
@@ -104,7 +104,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

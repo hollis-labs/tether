@@ -57,5 +57,5 @@ and rechecks record versions after I/O. An unexpired binding for another request
 session is an explicit error. Expired bindings are not reported as current and
 are not released as a side effect. Resolution does not enroll, acquire/renew
 leases, launch, or decide that an expired process is dead. Launch admission must
-revalidate authority independently. The exact mesh commit pin remains unchanged;
-a maintainer-approved release tag is required before deployment or activation.
+revalidate authority independently. The root module pins mesh v0.1.0. This package
+remains unwired; deployment and activation are separate host decisions.
