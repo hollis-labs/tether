@@ -23,7 +23,13 @@ func TestFabricMigrationPreservesLegacySchemaAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := fstest.MapFS{}
+	// Keep this migration fixture fixed; later additive migrations have their
+	// own tests and must not change the legacy-schema comparison below.
+	throughFabric := fstest.MapFS{}
 	for _, m := range migrations {
+		if m.version <= 48 {
+			throughFabric[fmt.Sprintf("%04d_%s.sql", m.version, m.name)] = &fstest.MapFile{Data: []byte(m.sql)}
+		}
 		if m.version < 48 {
 			before[fmt.Sprintf("%04d_%s.sql", m.version, m.name)] = &fstest.MapFile{Data: []byte(m.sql)}
 		}
@@ -40,7 +46,7 @@ func TestFabricMigrationPreservesLegacySchemaAndIdentity(t *testing.T) {
 	snapshot := legacySchema(t, db)
 	sessionBefore := legacyRow(t, db, "sessions", "id", "legacy-session")
 	registryBefore := legacyRow(t, db, "registry_entries", "urn", "msg://agent/example/preserved")
-	result, err := Migrate(db)
+	result, err := migrateFS(db, throughFabric)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +70,7 @@ func TestFabricMigrationPreservesLegacySchemaAndIdentity(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM fabric_actors").Scan(&count); err != nil || count != 0 {
 		t.Fatal("migration performed implicit enrollment", count, err)
 	}
-	result, err = Migrate(db)
+	result, err = migrateFS(db, throughFabric)
 	if err != nil || len(result.Applied) != 0 {
 		t.Fatal("reopen is not idempotent", result, err)
 	}
