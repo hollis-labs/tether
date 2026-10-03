@@ -207,32 +207,63 @@ func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 	}
 }
 
-// Only a root no agent could create is skipped, and that is what /health lists
-// as skipped.
+// Only a root no agent could create is skipped, and that is what /health lists as
+// skipped. The agent is this user, so that takes a directory nothing in its reach
+// controls: a system directory (every directory a test makes is the user's own).
 func TestProtectionHealthReportsSkippedProjectLayersOnlyWhereNoAgentCouldCreateTheRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("write permission cannot be taken away from root")
 	}
 	svc, _, _ := deadRootService(t)
-	locked := filepath.Join(t.TempDir(), "locked")
-	if err := os.MkdirAll(locked, 0o750); err != nil {
+	for _, sys := range []string{"/usr/share", "/usr/lib", "/usr/include", "/opt", "/etc"} {
+		root := filepath.Join(sys, "tether-protection-test-no-such-dir", "repo")
+		svc.Catalog.Projects["ro"] = config.Project{RepoRoot: root}
+		h := svc.ProtectionHealth()
+		if h.PlanError != "" { // this host lets the user get past it: try the next
+			continue
+		}
+		if len(h.SkippedProjectLayers) != 1 || h.SkippedProjectLayers[0].Project != "ro" ||
+			!strings.Contains(h.SkippedProjectLayers[0].Reason, "an agent cannot create it either") {
+			t.Fatalf("skipped = %+v; want only the project under %s", h.SkippedProjectLayers, sys)
+		}
+		if _, err := os.Stat(filepath.Dir(root)); !os.IsNotExist(err) {
+			t.Fatalf("a root no agent could create was created (%v)", err)
+		}
+		return
+	}
+	t.Skip("no system directory that this user can neither write nor get past")
+}
+
+// A directory that is not writable but that this user owns is not a reason to
+// skip: the agent can chmod it. /health says so as a plan failure (no launch is
+// protected until the entry is fixed), and the launch is refused naming the
+// project, and nothing is created.
+func TestAReadOnlyDirectoryTheUserOwnsIsNotASkip(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("write permission cannot be taken away from root")
+	}
+	svc, existing, _ := deadRootService(t)
+	ro := filepath.Join(t.TempDir(), "read-only")
+	if err := os.MkdirAll(ro, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(locked, 0o500); err != nil {
+	if err := os.Chmod(ro, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
-	svc.Catalog.Projects["ro"] = config.Project{RepoRoot: filepath.Join(locked, "repo")}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o750) })
+	svc.Catalog.Projects = map[string]config.Project{"live-a": {RepoRoot: existing["live-a"]}, "ro": {RepoRoot: filepath.Join(ro, "repo")}}
+
 	h := svc.ProtectionHealth()
-	if h.PlanError != "" {
-		t.Fatalf("plan error = %q", h.PlanError)
+	if len(h.SkippedProjectLayers) != 0 || !strings.Contains(h.PlanError, `project "ro"`) || !strings.Contains(h.PlanError, "owned by this user") {
+		t.Fatalf("skipped = %+v, plan error = %q; want no skip and a plan failure naming ro and the way past", h.SkippedProjectLayers, h.PlanError)
 	}
-	if len(h.SkippedProjectLayers) != 1 || h.SkippedProjectLayers[0].Project != "ro" ||
-		!strings.Contains(h.SkippedProjectLayers[0].Reason, "an agent cannot create it either") {
-		t.Fatalf("skipped = %+v; want only the project under the read-only directory", h.SkippedProjectLayers)
+	_, _, err := svc.protectionPlan(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", nil, false)
+	var layerErr *config.UnprotectableLayerError
+	if !errors.Is(err, launch.ErrProtectionUnavailable) || !errors.As(err, &layerErr) || layerErr.Project != "ro" {
+		t.Fatalf("err = %v; want launch.ErrProtectionUnavailable wrapping an UnprotectableLayerError for ro", err)
 	}
-	if _, err := os.Stat(filepath.Join(locked, "repo")); !os.IsNotExist(err) {
-		t.Fatalf("a root no agent could create was created (%v)", err)
+	if _, err := os.Stat(filepath.Join(existing["live-a"], ".tether")); !os.IsNotExist(err) {
+		t.Fatalf("the refused call created a layer (%v)", err)
 	}
 }
 

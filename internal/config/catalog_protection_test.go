@@ -168,54 +168,6 @@ func TestPrepareCatalogProtectionAnchorsEveryMissingRootAnAgentCouldCreate(t *te
 	}
 }
 
-// Only a root that no agent could create is left alone: the nearest existing
-// directory above it is not writable by this user, so there is nothing to plant
-// into. It is reported, and nothing is created under it.
-func TestPrepareCatalogProtectionSkipsOnlyARootNoAgentCouldCreate(t *testing.T) {
-	skipAsRoot(t)
-	s := newLiveShape(t)
-	locked := filepath.Join(t.TempDir(), "locked")
-	if err := os.MkdirAll(filepath.Join(locked, "inside"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Join(locked, "inside"), 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(locked, "inside"), 0o750) })
-	if err := os.Chmod(locked, 0o500); err != nil { // can enter and read, cannot create
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
-	s.cat.Projects["ro-direct"] = Project{RepoRoot: filepath.Join(locked, "ro-direct")}
-	s.cat.Projects["ro-deep"] = Project{RepoRoot: filepath.Join(locked, "inside", "a", "b")}
-
-	got, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Skipped) != 2 {
-		t.Fatalf("skipped = %+v; want exactly the two roots under the read-only directories", got.Skipped)
-	}
-	byID := map[string]SkippedProjectLayer{}
-	for _, sk := range got.Skipped {
-		byID[sk.Project] = sk
-	}
-	for id, ancestor := range map[string]string{"ro-direct": locked, "ro-deep": filepath.Join(locked, "inside")} {
-		sk, ok := byID[id]
-		if !ok || !strings.Contains(sk.Reason, "does not exist") || !strings.Contains(sk.Reason, "an agent cannot create it either") || !strings.Contains(sk.Reason, ancestor+" is not writable") {
-			t.Fatalf("project %s: skip = %+v; want a reason naming %s", id, sk, ancestor)
-		}
-	}
-	for _, root := range []string{filepath.Join(locked, "ro-direct"), filepath.Join(locked, "inside", "a")} {
-		if _, err := os.Stat(root); !os.IsNotExist(err) {
-			t.Fatalf("%s was created although no agent could create it (%v)", root, err)
-		}
-	}
-	if len(got.CreatedRoots) != 7 { // the 7 writable dead projects of the live shape are still anchored
-		t.Fatalf("created roots = %d; want the 7 writable dead ones", len(got.CreatedRoots))
-	}
-}
-
 // The project a launch is for is different: if ITS root is unusable the launch
 // fails with an error naming the project and the path, its root is never created,
 // and, because every root is decided before anything is created, the failed call
@@ -395,41 +347,6 @@ func TestPrepareCatalogProtectionAFileInTheWay(t *testing.T) {
 	}
 }
 
-// Where the file's own directory is not writable, an agent cannot replace the
-// file, so there is nothing to plant into and the project is skipped.
-func TestPrepareCatalogProtectionAFileInAnUnwritableDirectoryIsSkipped(t *testing.T) {
-	skipAsRoot(t)
-	base := t.TempDir()
-	t.Setenv("HOME", filepath.Join(base, "home"))
-	catalogRoot := filepath.Join(base, "catalog")
-	locked := filepath.Join(base, "locked")
-	for _, d := range []string{filepath.Join(base, "home"), catalogRoot, locked} {
-		if err := os.MkdirAll(d, 0o750); err != nil {
-			t.Fatal(err)
-		}
-	}
-	file := filepath.Join(locked, "a-file")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(locked, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
-	cat := &Catalog{Projects: map[string]Project{"isfile": {RepoRoot: file}, "underit": {RepoRoot: filepath.Join(file, "child")}}}
-	got, err := PrepareCatalogProtection(catalogRoot, cat, "")
-	if err != nil || len(got.Skipped) != 2 {
-		t.Fatalf("skipped=%+v err=%v; want both skipped: an agent cannot replace a file in a directory it cannot write", got.Skipped, err)
-	}
-	reasons := map[string]string{}
-	for _, sk := range got.Skipped {
-		reasons[sk.Project] = sk.Reason
-	}
-	if !strings.HasPrefix(reasons["isfile"], "is not a directory") || !strings.HasPrefix(reasons["underit"], "does not exist") {
-		t.Fatalf("reasons = %v", reasons)
-	}
-}
-
 // A dangling symlink as a root: an agent's mkdir through it lands where it
 // points, so that is where the layer is anchored, and the link is left alone.
 func TestPrepareCatalogProtectionAnchorsTheTargetOfADanglingSymlinkRoot(t *testing.T) {
@@ -561,5 +478,215 @@ func TestAgentCanWrite(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o750) })
 	if agentCanWrite(dir) {
 		t.Fatal("a read-only directory is reported as writable")
+	}
+}
+
+// systemDirNoAgentCanWrite finds a directory that a process running as this user
+// can neither write, nor chmod, nor move aside: it and every directory above it is
+// owned by someone else and not writable. That takes a real system directory,
+// because every directory a test can make is owned by this user, and so is one an
+// agent can get past. The test is skipped where there is none.
+func systemDirNoAgentCanWrite(t *testing.T) string {
+	t.Helper()
+	skipAsRoot(t)
+	for _, dir := range []string{"/usr/share", "/usr/lib", "/usr/include", "/opt", "/etc"} {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() || agentCanWrite(dir) {
+			continue
+		}
+		if past, err := agentGetsPast(dir); err == nil && past == "" {
+			return dir
+		}
+	}
+	t.Skip("no system directory that this user can neither write nor get past")
+	return ""
+}
+
+// Only a root that no agent could create is left alone. The agent is this user, so
+// "not writable" is not enough: the nearest existing directory above the root and
+// everything up to / must be out of this user's hands (not owned, not writable).
+// It is reported, and nothing is created under it.
+func TestPrepareCatalogProtectionSkipsOnlyARootNoAgentCouldCreate(t *testing.T) {
+	sys := systemDirNoAgentCanWrite(t)
+	s := newLiveShape(t)
+	direct := filepath.Join(sys, "tether-protection-test-no-such-dir")
+	deep := filepath.Join(sys, "tether-protection-test-no-such-dir", "a", "b")
+	s.cat.Projects["ro-direct"] = Project{RepoRoot: direct}
+	s.cat.Projects["ro-deep"] = Project{RepoRoot: deep}
+
+	got, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Skipped) != 2 {
+		t.Fatalf("skipped = %+v; want exactly the two roots under %s", got.Skipped, sys)
+	}
+	for _, sk := range got.Skipped {
+		if !strings.Contains(sk.Reason, "does not exist") || !strings.Contains(sk.Reason, "an agent cannot create it either") || !strings.Contains(sk.Reason, sys+" is not writable") {
+			t.Fatalf("skip = %+v; want a reason naming %s", sk, sys)
+		}
+	}
+	if _, err := os.Stat(direct); !os.IsNotExist(err) {
+		t.Fatalf("%s was created although no agent could create it (%v)", direct, err)
+	}
+	if len(got.CreatedRoots) != 7 { // the 7 writable dead projects of the live shape are still anchored
+		t.Fatalf("created roots = %d; want the 7 writable dead ones", len(got.CreatedRoots))
+	}
+}
+
+// A file in a directory no agent can touch cannot be replaced either, so the
+// project is skipped.
+func TestPrepareCatalogProtectionAFileInADirectoryNoAgentCanTouchIsSkipped(t *testing.T) {
+	sys := systemDirNoAgentCanWrite(t)
+	var file string
+	entries, err := os.ReadDir(sys)
+	if err != nil {
+		t.Skip(err)
+	}
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			file = filepath.Join(sys, e.Name())
+			break
+		}
+	}
+	if file == "" {
+		t.Skipf("no regular file directly in %s", sys)
+	}
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	catalogRoot := filepath.Join(base, "catalog")
+	for _, d := range []string{filepath.Join(base, "home"), catalogRoot} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat := &Catalog{Projects: map[string]Project{"isfile": {RepoRoot: file}, "underit": {RepoRoot: filepath.Join(file, "child")}}}
+	got, err := PrepareCatalogProtection(catalogRoot, cat, "")
+	if err != nil || len(got.Skipped) != 2 {
+		t.Fatalf("skipped=%+v err=%v; want both skipped: nothing an agent does replaces a file in %s", got.Skipped, err, sys)
+	}
+	reasons := map[string]string{}
+	for _, sk := range got.Skipped {
+		reasons[sk.Project] = sk.Reason
+	}
+	if !strings.HasPrefix(reasons["isfile"], "is not a directory") || !strings.HasPrefix(reasons["underit"], "does not exist") {
+		t.Fatalf("reasons = %v", reasons)
+	}
+}
+
+// The agent runs as the user who owns the directory, so a directory that is not
+// writable is not out of its reach: it can chmod what the user owns, and rename
+// any directory it can write the parent of. Skipping such a root was fail-open
+// (reproduced: chmod u+w, mkdir, plant; then the next catalog load read the
+// layer). Creating the root there is impossible without changing the user's
+// directory, so protection fails closed, naming the project and the way past, and
+// creates nothing.
+func TestPrepareCatalogProtectionFailsClosedWhereAnAgentCanGetPastAnUnwritableDirectory(t *testing.T) {
+	skipAsRoot(t)
+	s := newLiveShape(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	inside := filepath.Join(locked, "inside")
+	if err := os.MkdirAll(inside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(locked, "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{inside, locked} { // can enter and read, cannot create
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		d := d
+		t.Cleanup(func() { _ = os.Chmod(d, 0o750) })
+	}
+	for name, root := range map[string]string{
+		"direct":    filepath.Join(locked, "repo"),
+		"deep":      filepath.Join(inside, "a", "b"),
+		"isfile":    file,
+		"underfile": filepath.Join(file, "child"),
+	} {
+		cat := &Catalog{Projects: map[string]Project{}}
+		for id, r := range s.existing {
+			cat.Projects[id] = Project{RepoRoot: r}
+		}
+		cat.Projects["ro-"+name] = Project{RepoRoot: root}
+		_, err := PrepareCatalogProtection(s.catalogRoot, cat, "")
+		var layerErr *UnprotectableLayerError
+		if !errors.As(err, &layerErr) || layerErr.Project != "ro-"+name {
+			t.Fatalf("%s: err = %v; want an *UnprotectableLayerError naming ro-%s", name, err, name)
+		}
+		for _, want := range []string{`"ro-` + name + `"`, "is not writable", "owned by this user", "can get past"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: message %q does not mention %q", name, err.Error(), want)
+			}
+		}
+		// the refused call created nothing, anywhere
+		for id, r := range s.existing {
+			if _, err := os.Stat(filepath.Join(r, ".tether")); !os.IsNotExist(err) {
+				t.Fatalf("%s: the refused call created %s/.tether for %s (%v)", name, r, id, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(s.home, ".tether")); !os.IsNotExist(err) {
+			t.Fatalf("%s: the refused call created the user layer (%v)", name, err)
+		}
+	}
+}
+
+// bypassVia, case by case. chain runs from the nearest existing ancestor up to /.
+func TestBypassVia(t *testing.T) {
+	const me, other = 1000, 0
+	d := func(path string, uid uint32, sticky, writable bool) dirFacts {
+		return dirFacts{path: path, uid: uid, sticky: sticky, writable: writable}
+	}
+	for _, c := range []struct {
+		name  string
+		chain []dirFacts
+		want  string // "" = no way past; else a substring of the way
+	}{
+		{"nothing owned or writable up to /", []dirFacts{d("/usr/share", other, false, false), d("/usr", other, false, false), d("/", other, false, false)}, ""},
+		{"the ancestor is owned by this user: chmod", []dirFacts{d("/h/ro", me, false, false), d("/h", other, false, false), d("/", other, false, false)}, "/h/ro is owned by this user"},
+		{"owned by this user, mode 555, deep in the chain", []dirFacts{d("/a/ro", other, false, false), d("/a", me, false, false), d("/", other, false, false)}, "/a, above it, is owned by this user"},
+		{"not owned, but the directory above is writable: rename it aside", []dirFacts{d("/h/ro", other, false, false), d("/h", other, false, true), d("/", other, false, false)}, "/h, above it, is writable by this user, who can rename /h/ro"},
+		{"not owned, the directory above is writable but sticky (a /tmp)", []dirFacts{d("/tmp/ro", other, false, false), d("/tmp", other, true, true), d("/", other, false, false)}, ""},
+		{"sticky above, but the grandparent is writable and not sticky", []dirFacts{d("/x/tmp/ro", other, false, false), d("/x/tmp", other, true, true), d("/x", other, false, true), d("/", other, false, false)}, "/x, above it, is writable by this user, who can rename /x/tmp"},
+		{"sticky above, but this user owns it", []dirFacts{d("/tmp/ro", other, false, false), d("/tmp", me, true, true), d("/", other, false, false)}, "/tmp, above it, is owned by this user"},
+		{"the first directory is itself writable", []dirFacts{d("/w", other, false, true), d("/", other, false, false)}, "/w is writable by this user"},
+		{"root owns /, and this user is root", []dirFacts{d("/usr/share", 0, false, false), d("/", 0, false, false)}, ""},
+	} {
+		euid := uint32(me)
+		if c.name == "root owns /, and this user is root" {
+			euid = 0
+			c.want = "/usr/share is owned by this user" // root owns everything root-owned
+		}
+		got := bypassVia(c.chain, euid)
+		if (c.want == "") != (got == "") || (c.want != "" && !strings.Contains(got, c.want)) {
+			t.Errorf("%s: bypassVia = %q; want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// agentGetsPast examines the real directories: an owned read-only directory is a
+// way past, a directory nothing in reach controls is not, and what cannot be
+// examined is an error.
+func TestAgentGetsPast(t *testing.T) {
+	skipAsRoot(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(locked, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
+	if got, err := agentGetsPast(locked); err != nil || !strings.Contains(got, "is owned by this user") {
+		t.Fatalf("an owned read-only directory: got %q, err %v; want a way past through ownership", got, err)
+	}
+	if got, err := agentGetsPast(filepath.Join(locked, "does-not-exist")); err == nil {
+		t.Fatalf("a directory that does not exist: got %q; want an error: nothing was examined", got)
+	}
+	if sys := systemDirNoAgentCanWrite(t); sys != "" {
+		if got, err := agentGetsPast(sys); err != nil || got != "" {
+			t.Fatalf("%s: got %q, err %v; want no way past", sys, got, err)
+		}
 	}
 }
