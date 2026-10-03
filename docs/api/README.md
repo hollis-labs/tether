@@ -45,6 +45,7 @@ Defined codes:
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
+| `project_layer_unprotectable` | 403 | a registered project's catalog layer cannot be protected and cannot be left open, because of that project's catalog entry or the file system under it: its `repo_root` runs through a file in a directory an agent can write, or through a symlink an agent could replace, or cannot be examined, or its layer turned up while protection was creating it. The message names the project and the path. It is not a host that cannot provide protection (that is `forbidden`, bubblewrap missing): fix or remove the project. A project whose root is merely missing is never this: it is anchored or skipped |
 | `project_root_missing` | 409 | the project a launch is for has a `repo_root` that does not exist or is not a directory, so the launch cannot run: it does not exist, is not a directory, or is only the placeholder protection created for it (see `/health` `sandbox_protect.created_project_roots`); the message names the project and the path. Another project's dead `repo_root` does not cause it: that root is created as a placeholder holding only an anchored `.tether`, or skipped where no agent could create it (`skipped_project_layers`) |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
@@ -480,16 +481,26 @@ one-file note) and anchored it read-only, so a protected agent cannot plant a
 project layer there. An entry is listed while the root is still only that
 placeholder, including after a daemon restart, and is a stale catalog entry to
 fix; the project's own launches are refused (409 `project_root_missing`) until
-the repository is restored. `skipped_project_layers` lists projects whose `repo_root` is
+the repository is restored and its marker removed (a placeholder is a placeholder
+while it holds `.tether/created-by-tether-protection`, whatever else has been put in
+the directory since). `anchored_project_ancestors` lists projects whose `repo_root`
+is missing under a directory that is not writable but that an agent can get past
+(it runs as the daemon's user, who owns the directory, or can write the one above
+it): protection anchored that directory read-only (it cannot be made writable,
+written to or renamed inside the sandbox), so nothing can be planted under it, and
+no launch is refused for it except one whose own directories lie inside it.
+`skipped_project_layers` lists projects whose `repo_root` is
 unusable AND that no agent could create: the agent runs as the daemon's user, so
 nothing from the nearest existing directory above the root up to `/` may be owned by
-that user or writable by it. There is nothing to plant into; their layer is left
-out. A root under a directory that is not writable but that the user owns, or can
-move aside, is not skipped: it cannot be anchored, so it is a `plan_error` and
-protected launches are refused until the entry is fixed. Every project's launches
-work otherwise. `plan_error` is present when Tether cannot work out
-what to protect at all, and every launch it must protect is refused until that is
-fixed; it is a catalog or filesystem problem, never a bubblewrap one, and
+that user or writable by it, and no symlink in the path may be one the agent can
+replace. There is nothing to plant into; their layer is left out. Every project's
+launches work otherwise. `plan_error` is present when Tether cannot work out
+what to protect at all (for instance a project whose `repo_root` runs through a
+file or a symlink an agent could replace, or cannot be examined), and every launch it
+must protect is refused until that is fixed (403 `project_layer_unprotectable`,
+which names the project; the planted proxy of a Codex launch and the daemon's MCP
+gateway are not refused, and leave that one layer out of their confinement with a
+warning); it is a catalog or filesystem problem, never a bubblewrap one, and
 `bwrap_checked`/`bwrap_usable` still report the host probe on their own. `codex` is how
 Codex is protected: `not protected` as shipped (Codex runs as it did before
 protection, under its own sandbox, and spawns MCP servers outside it, so an MCP

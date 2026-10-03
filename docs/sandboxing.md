@@ -382,11 +382,19 @@ on whether an agent could:
   `<layer>/<kind>/*.yaml`, so the note is ignored). The daemon logs one warning
   per project, `GET /health` lists it under `sandbox_protect.created_project_roots`,
   and `tether doctor` warns. The directory it leaves at the dead project's path is
-  the cost of closing the hole; the entry should be fixed or removed. The note is
-  how a placeholder is told from a project directory that merely holds nothing yet,
-  so the report does not depend on the daemon having made it: it is still there
-  after a restart, for as long as the placeholder is all there is. To use the
-  project, remove the placeholder directory and restore the repository.
+  the cost of closing the hole; the entry should be fixed or removed.
+  - The layer is made with `mkdir`, not `mkdir -p`, and checked afterwards: if
+    something made `.tether` first, or put anything in it while Tether was making
+    it (a racing agent planting `.tether/agents/x.yaml`), protection refuses with
+    a typed error naming the project and the layer and leaves what it found as it
+    is. It does not anchor a planted layer and call it clean.
+  - A root is a placeholder **while it holds the marker** `.tether/created-by-tether-protection`,
+    whatever else has been put in the root since (only `.tether` is anchored; an
+    agent can drop files into the rest). So a file dropped in the root does not
+    turn it back into a project that launches, and the report does not depend on
+    the daemon having made it: it survives a restart. To use the project, restore
+    the repository and remove the marker, or remove the placeholder directory
+    first.
 - Where it is **not writable**, that is not the end of it, because the agent runs
   as the same user as the daemon. A directory that user **owns** can be made
   writable (`chmod u+w`), and any directory can be **moved aside** and replaced
@@ -396,29 +404,69 @@ on whether an agent could:
   skip" rule. So the whole chain from that directory up to `/` is examined, and the
   layer is skipped, with one warning, `sandbox_protect.skipped_project_layers` and a
   doctor warning, **only when no directory in it is owned by the daemon's user or
-  writable by it**: then nothing the agent can do creates the root (in practice a
-  root under a system directory such as `/usr/share`).
+  writable by it, and no symlink in the path is one the agent can replace (below)**:
+  then nothing the agent can do creates the root (in practice a root under a
+  system directory such as `/usr/share`).
 - Not writable, but the agent **can get past it** (the chain has a directory the
-  daemon's user owns, or can write): the root cannot be anchored either, because
-  creating it needs a permission Tether will not take by changing a directory that
-  is not its own. The launch is refused (403 `forbidden`, protection unavailable)
-  naming the project and the way past, and `/health` reports it as `plan_error`
-  until the catalog entry is fixed. This errs toward refusing: a user-owned
-  directory on a read-only mount is refused too.
+  daemon's user owns, or can write; realistically a project under an unmounted
+  mountpoint inside the home, such as `~/mnt/nas`): the nearest existing directory
+  is **anchored read-only** itself, listed in `sandbox_protect.anchored_project_ancestors`
+  with a doctor warning. Inside the sandbox it cannot be made writable (`chmod` is
+  `EROFS`), cannot be written to (`mkdir` is `EROFS`), and neither it nor any
+  directory above it can be renamed (each is a mount point: `EBUSY`), so the root
+  cannot be created under it. This used to refuse **every** protected launch, 500
+  every Codex launch and break the daemon's MCP gateway; now it refuses nothing.
+  The cost is the one every anchor has: that directory is read-only for the
+  agent, so a launch whose own work directory or workspace lies inside it is
+  refused (`ErrLaunchInsideProtectedPath`).
 - A **file in the way** (a root that is a file, or runs through one): the same test
-  on the directory that holds it. Where an agent can write to it, or get past it,
-  it could replace the file with a directory, and a user's file is not Tether's to
-  delete, so the launch is refused (403 `forbidden`, protection unavailable) naming
-  the project. Otherwise the project is skipped.
+  on the directory that holds it. Where an agent can write to it, it could replace
+  the file with a directory, and a user's file is not Tether's to delete, so the
+  launch is refused (403 `project_layer_unprotectable`) naming the project. Where
+  the agent cannot write to it but can get past it, that directory is anchored as
+  above; otherwise the project is skipped.
+- A **symlink in the `repo_root`** that an agent can replace (the directory holding
+  the link is writable by the daemon's user, or can be got past as above) cannot be
+  protected: the agent can unlink the link and put a real directory with a planted
+  layer where it was, and the loader reads the layer through the link, so anchoring
+  the link's target does not pin anything. This was reproduced, for a dangling link
+  whose target chain is root-owned (skipped, then planted), and holds for a link
+  whose target exists. The launch is refused (403 `project_layer_unprotectable`)
+  naming the link; the fix is to point the project at the real path. A link out of
+  the agent's reach (a system link such as `/lib -> usr/lib`) is followed. This is
+  the one place where a layout that used to launch now refuses: it was never
+  protected.
+- A root that **cannot be examined** (permission denied, a symlink loop) is the same
+  typed refusal, not a bare 500. A root with a **name too long to exist** is
+  skipped: nobody can create it.
 - The project the launch is **for** is never created by its own launch, and its
   launch is refused with 409 `project_root_missing` naming the project and the
-  path: when its root is missing, and also when its root is only the placeholder
+  path: when its root is missing, and also when its root is a placeholder
   protection made for it (a daemon creates every other project's root the first
   time it protects a launch, so without this the refusal could not fire and the
-  agent would run in an empty directory that is not the project).
+  agent would run in an empty directory that is not the project). This holds for
+  Codex too.
 
 Every project root is examined, and each of those outcomes decided, before any
-directory is created, so a refused launch leaves nothing behind.
+directory is created, so a launch refused for a project leaves nothing behind. (The
+one error that can come later is a layer found planted while it is being made;
+placeholders made before it stay, and are idempotent.)
+
+**A catalog problem never takes out the gateway or a Codex launch.** What is
+refused above (the typed `project_layer_unprotectable`) is refused for the agents
+Tether protects (Claude, OpenCode and every agent it wraps), because leaving a layer
+open to them is what protection exists to prevent. Two callers are not those agents
+and keep working: the daemon's MCP gateway (a project's broken entry used to make
+`NewSharedUpstreams` fail, so every new `/mcp` view failed after a restart while the
+runtime was nil, taking out `mcp__tether__*`), and the planted `tether mcp` proxy of a
+Codex launch while Codex ships as not protected (the launch used to answer create
+201 and then launch 500). For them that one layer is **left out of the confinement
+and reported**: a `WARN: protect: project ...: its layer cannot be protected, and is
+LEFT OPEN to ...` line per project, once per daemon. So a Codex agent's proxy and the
+gateway's upstream children can write that one project's layer until the entry is
+fixed; every other layer, and the catalog, run and state directories, stay protected.
+`GET /health` reports the strict view (`plan_error`), so the problem is visible
+wherever the refusal is.
 
 Before this, one project with a missing `repo_root` made every protected launch fail
 with a 500 (`protect catalog layer: parent unavailable`), and `/health` blamed
@@ -578,8 +626,12 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 | The launching project's `repo_root` does not exist, is not a directory, or is only a placeholder protection made | Launch refused with 409 `project_root_missing`, naming the project and the path; nothing is created |
 | Another project's `repo_root` is missing, under a directory the daemon's user can write | The root is created as a placeholder holding only an anchored `.tether` (with a one-file note), so an agent cannot plant a layer; a warning, `/health` `created_project_roots` (until the repository is restored), a doctor warning; every other project's launch works |
 | Another project's `repo_root` is missing, and nothing from its nearest existing directory up to `/` is owned by or writable by the daemon's user | The layer is skipped (an agent cannot create the root either), with a warning, `/health` `skipped_project_layers` and a doctor warning; every launch works |
-| Another project's `repo_root` is missing under a directory that is not writable, but the daemon's user owns it or can move it aside | Launch refused (403 `forbidden`, protection unavailable) naming the project and the way past (the root cannot be anchored without changing the user's directory); nothing is created |
-| Another project's `repo_root` is a file, or runs through one, where an agent can write or get past the directory holding it | Launch refused (403 `forbidden`, protection unavailable) naming the project; nothing is created |
+| Another project's `repo_root` is missing under a directory that is not writable, but the daemon's user owns it or can move it aside | That directory is anchored read-only (`/health` `anchored_project_ancestors`, a warning, a doctor warning); every launch works, except one whose own directories lie inside it |
+| Another project's `repo_root` is a file, or runs through one, where an agent can write the directory holding it | Launch refused (403 `project_layer_unprotectable`) naming the project; nothing is created |
+| Another project's `repo_root` runs through a symlink an agent can replace | Launch refused (403 `project_layer_unprotectable`) naming the link: point the project at the real path |
+| Another project's `repo_root` cannot be examined (permissions, a loop) | Launch refused (403 `project_layer_unprotectable`), typed, not a 500 |
+| A project's layer turns up, or gets content, while protection is making it | Launch refused (403 `project_layer_unprotectable`); what was found is left as it is |
+| Any of the three above, for the planted proxy of a Codex launch or the MCP gateway | Not refused: that layer is left out of their confinement and reported (`WARN ... LEFT OPEN`) |
 
 ## Follow-ups
 
