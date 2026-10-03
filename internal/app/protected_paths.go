@@ -106,8 +106,20 @@ func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsess
 		// none of the guard (see codexProtectionMode).
 		return nil, false, nil
 	}
-	dirs, err = s.controlPlaneDirs()
+	dirs, err = s.controlPlaneDirsFor(planProject(plan))
 	if err != nil {
+		// The project this launch is for has no usable repo_root: say so, typed,
+		// rather than as a bare internal error.
+		var rootErr *config.ProjectRootError
+		if errors.As(err, &rootErr) {
+			return nil, false, fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing, err)
+		}
+		// Another project's layer cannot be protected and cannot be left open: the
+		// launch is refused, as for any host that cannot provide protection.
+		var layerErr *config.UnprotectableLayerError
+		if errors.As(err, &layerErr) {
+			return nil, false, fmt.Errorf("%w: %w", launch.ErrProtectionUnavailable, err)
+		}
 		return nil, false, err
 	}
 	if plan != nil && plan.ProviderBrand == "codex" {
@@ -211,21 +223,47 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 // (writes there fail, and a launch whose work directory or workspace is
 // inside it is refused), but it is a footgun: the state database belongs in a
 // directory of its own, as the seeded ~/.tether/state/ is.
-func (s *Service) controlPlaneDirs() ([]string, error) {
+func (s *Service) controlPlaneDirs() ([]string, error) { return s.controlPlaneDirsFor("") }
+
+// planProject is the project a launch plan is for, or "" when there is no plan.
+func planProject(plan *launch.Plan) string {
+	if plan == nil {
+		return ""
+	}
+	return plan.ProjectID
+}
+
+// controlPlaneDirsFor is controlPlaneDirs for a launch of project launching: if
+// that project's repo_root is unusable the launch cannot be protected and a
+// *config.ProjectRootError says which project and path. Any other project with
+// an unusable repo_root is left out (and reported, see controlPlane).
+func (s *Service) controlPlaneDirsFor(launching string) ([]string, error) {
+	dirs, _, err := s.controlPlane(launching)
+	return dirs, err
+}
+
+// controlPlane returns what controlPlaneDirsFor does, plus what protection
+// decided about project layers: the projects it left out because their repo_root
+// cannot be used (Skipped) and the ones whose missing root it created
+// (CreatedRoots). Each is warned about once per daemon, and a layer it had to
+// create is logged, so neither the skip nor the side effect is silent.
+func (s *Service) controlPlane(launching string) ([]string, config.CatalogProtection, error) {
 	catalogRoot := config.Expand(s.CatalogRoot)
 	if catalogRoot == "" {
-		return nil, errors.New("protect control plane: the catalog root is not set")
+		return nil, config.CatalogProtection{}, errors.New("protect control plane: the catalog root is not set")
 	}
 	catalog, err := realDir(catalogRoot)
 	if err != nil {
-		return nil, fmt.Errorf("protect control plane: catalog root: %w", err)
+		return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: catalog root: %w", err)
 	}
-	dirs, err := config.CatalogProtectionDirs(catalog, s.Catalog)
+	prepared, err := config.PrepareCatalogProtection(catalog, s.Catalog, launching)
 	if err != nil {
-		return nil, err
+		return nil, config.CatalogProtection{}, err
 	}
+	s.reportProtectionLayers(prepared)
+	dirs := prepared.Dirs
 	if s.Catalog == nil {
-		return dirs, nil
+		return dirs, prepared, nil
 	}
 	roots := []string{filepath.Dir(catalog)}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -239,7 +277,7 @@ func (s *Service) controlPlaneDirs() ([]string, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("protect control plane: run directory: %w", err)
+			return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: run directory: %w", err)
 		}
 		if containsPath(dirs, dir) || !insideAnyRoot(roots, dir) {
 			continue
@@ -251,12 +289,37 @@ func (s *Service) controlPlaneDirs() ([]string, error) {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 		case err != nil:
-			return nil, fmt.Errorf("protect control plane: state directory: %w", err)
+			return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: state directory: %w", err)
 		case !containsPath(dirs, dir):
 			dirs = append(dirs, dir)
 		}
 	}
-	return dirs, nil
+	return dirs, prepared, nil
+}
+
+// reportProtectionLayers makes what protection did to project layers visible.
+// A project whose root is a placeholder protection created (an agent could have)
+// is warned about once per daemon; a project left out because no agent could
+// create its root is warned about once; an empty layer protection created is
+// logged, since that writes into the user's directories. Health and doctor read
+// the same CreatedRoots and Skipped from the plan, so they need no memory of it.
+func (s *Service) reportProtectionLayers(p config.CatalogProtection) {
+	for _, created := range p.CreatedRoots {
+		key := created.Project + "\x00" + created.RepoRoot
+		if _, seen := s.protectionWarned.LoadOrStore("created\x00"+key, struct{}{}); seen {
+			continue
+		}
+		log.Printf("WARN: protect: project %q: its repo_root %s %s. Fix or remove the project", created.Project, created.RepoRoot, created.Reason)
+	}
+	for _, skipped := range p.Skipped {
+		if _, seen := s.protectionWarned.LoadOrStore(skipped.Project+"\x00"+skipped.RepoRoot, struct{}{}); seen {
+			continue
+		}
+		log.Printf("WARN: protect: project %q is left out of control-plane protection: its repo_root %s %s: there is nothing an agent could plant into. Fix or remove the project", skipped.Project, skipped.RepoRoot, skipped.Reason)
+	}
+	for _, created := range p.Created {
+		log.Printf("protect: created the empty layer directory %s so that no agent can plant one there", created)
+	}
 }
 
 // insideAnyRoot reports whether dir lies strictly beneath one of roots.
@@ -368,9 +431,9 @@ func (s *Service) refuseWidenedCodex(sessionID string) error {
 //
 // The proxy is now confined even while the Codex agent guard is dormant, so
 // failure to name the directories fails every protected launch closed.
-func (s *Service) mcpProtectedPaths(_ *launch.Plan) ([]string, error) {
+func (s *Service) mcpProtectedPaths(plan *launch.Plan) ([]string, error) {
 	if !s.protectsControlPlane() {
 		return nil, nil
 	}
-	return s.controlPlaneDirs()
+	return s.controlPlaneDirsFor(planProject(plan))
 }

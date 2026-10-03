@@ -24,6 +24,13 @@ var ErrACPLaunchUnprotected = errors.New("ACP launches are refused: Tether write
 // (TETHER_SANDBOX_PROTECT=0).
 var ErrProtectionUnavailable = errors.New("launch refused: Tether write-protects its catalog, run and state directories for every agent, and this host cannot")
 
+// ErrLaunchProjectRootMissing refuses a launch for a project whose repo_root
+// cannot be used on this host (it does not exist, or is not a directory). The
+// wrapped *config.ProjectRootError names the project and the path. It is
+// specific to the launching project: another project's dead repo_root no longer
+// refuses anything, it is skipped and reported (see config.PrepareCatalogProtection).
+var ErrLaunchProjectRootMissing = errors.New("launch refused: the project's repo_root is not usable")
+
 // ErrCodexSandboxWidened refuses a turn on a codex session that Tether left to
 // codex's own sandbox when it launched, because something that shapes that
 // sandbox has since changed: a project .codex/config.toml appeared in a work

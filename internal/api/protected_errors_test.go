@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )
 
@@ -73,6 +74,43 @@ func TestSendInputAndTurn_SandboxWidenedIsForbidden(t *testing.T) {
 			env := decodeErr(t, rr)
 			if env.Error.Code != CodeForbidden || !strings.Contains(env.Error.Message, ".codex/config.toml") || !strings.Contains(env.Error.Message, "relaunch") {
 				t.Fatalf("error = %+v; want forbidden naming the file and the recovery", env.Error)
+			}
+		})
+	}
+}
+
+// CW-20261003-0092: a launch for a project whose repo_root is gone is a 409 with
+// its own code, naming the project and the path, on create, launch and resume. It
+// is not the 500 internal_error the live daemon answered, and not a 403: nobody
+// is being denied anything, the catalog entry is stale.
+func TestProjectRootMissingIsAConflictWithItsOwnCode(t *testing.T) {
+	refusal := fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing,
+		&config.ProjectRootError{Project: "chrispian", Root: "/home/u/dev/chrispian", Reason: "does not exist"})
+	for _, tc := range []struct {
+		name   string
+		svc    *fakeLaunchService
+		method string
+		path   string
+		body   string
+	}{
+		{"create", &fakeLaunchService{createErr: refusal}, http.MethodPost, "/sessions", `{"launch":"l1"}`},
+		{"launch", &fakeLaunchService{launchErr: refusal}, http.MethodPost, "/sessions/s1/launch", ``},
+		{"resume", &fakeLaunchService{resumeErr: refusal}, http.MethodPost, "/logical-agents/agent-1/resume", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			newTestHandler(tc.svc).ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body)))
+			if rr.Code != http.StatusConflict {
+				t.Fatalf("status = %d (%s); want 409", rr.Code, rr.Body.String())
+			}
+			env := decodeErr(t, rr)
+			if env.Error.Code != CodeProjectRootMissing {
+				t.Fatalf("code = %q; want %q", env.Error.Code, CodeProjectRootMissing)
+			}
+			for _, want := range []string{`"chrispian"`, "/home/u/dev/chrispian", "does not exist"} {
+				if !strings.Contains(env.Error.Message, want) {
+					t.Fatalf("message %q does not mention %s", env.Error.Message, want)
+				}
 			}
 		})
 	}

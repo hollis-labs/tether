@@ -135,6 +135,9 @@ type Service struct {
 	// directories as ProtectedPaths; nil uses the daemon's OS and
 	// environment. See protected_paths.go.
 	protectionStatus func() ProtectionStatus
+	// protectionWarned remembers which skipped project layers were already
+	// warned about, so a launch does not repeat the warning every time.
+	protectionWarned sync.Map
 
 	// replies is the reply-to-sender dispatcher (CW-20261002-0065), set by
 	// StartRoutingReplies. Nil means the reply path is not installed.

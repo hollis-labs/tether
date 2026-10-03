@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 )
 
@@ -63,6 +65,11 @@ func TestCheckSandboxProtect(t *testing.T) {
 		{"switch off", healthFor("linux", map[string]string{app.ProtectEnv: "false"}, nil), true, statusWarn, "DISABLED by TETHER_SANDBOX_PROTECT=false"},
 		{"darwin", healthFor("darwin", nil, nil), true, statusWarn, "CW-20261001-0138"},
 		{"no daemon", healthFor("linux", nil, nil), false, statusOK, "this shell's environment"},
+		// A plan failure is a catalog problem, never blamed on bubblewrap, even
+		// though the probe on its own found bubblewrap fine.
+		{"plan error", withPlanError(healthFor("linux", nil, nil), "protect control plane: catalog root: no such file"), true, statusFail, "not bubblewrap"},
+		{"skipped layers", withSkipped(healthFor("linux", nil, nil), deadProjects()...), true, statusWarn, "left out of protection"},
+		{"created roots", withCreated(healthFor("linux", nil, nil), createdProjects()...), true, statusWarn, "placeholders holding only a read-only .tether, so a protected agent cannot plant a layer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := checkSandboxProtect(sandboxProtectHealth(tc.health), tc.fromDaemon)
@@ -71,6 +78,15 @@ func TestCheckSandboxProtect(t *testing.T) {
 			}
 			if r.Name != "sandbox-protect" || r.Status != tc.want || !strings.Contains(r.Message, tc.message) {
 				t.Fatalf("check = %+v; want %s with a message containing %q", r, tc.want, tc.message)
+			}
+			if tc.name == "plan error" && (!strings.Contains(r.Message, "no such file") || strings.Contains(r.Message, "install bubblewrap") || strings.Contains(r.Remedy, "install bubblewrap")) {
+				t.Fatalf("a plan failure must carry its own reason and not send the operator to bubblewrap: %+v", r)
+			}
+			if tc.name == "skipped layers" && (!strings.Contains(r.Message, "chrispian") || !strings.Contains(r.Message, "/gone/chrispian does not exist") || !strings.Contains(r.Message, "2 project(s)")) {
+				t.Fatalf("the warning must name each dead project, its path and why: %+v", r)
+			}
+			if tc.name == "created roots" && (!strings.Contains(r.Message, "chrispian (/gone/chrispian)") || !strings.Contains(r.Message, "2 project root(s) were missing") || !strings.Contains(r.Remedy, "stale catalog entries")) {
+				t.Fatalf("the warning must name each project and path and call it a stale entry: %+v", r)
 			}
 			if tc.fromDaemon && !strings.Contains(r.Message, "(daemon)") {
 				t.Fatalf("message does not say it is the daemon's answer: %q", r.Message)
@@ -86,8 +102,67 @@ func TestCheckSandboxProtect(t *testing.T) {
 func TestSandboxProtectHealth(t *testing.T) {
 	h := sandboxProtectHealth(healthFor("linux", nil, fmt.Errorf("denied")))
 	want := daemon.SandboxProtectHealth{Enabled: true, Reason: h.Reason, Codex: "not protected", CodexReason: h.CodexReason, BwrapChecked: true, BwrapUsable: false, BwrapError: "denied"}
-	if *h != want {
+	if !reflect.DeepEqual(*h, want) {
 		t.Fatalf("health = %+v, want %+v", *h, want)
+	}
+}
+
+func deadProjects() []config.SkippedProjectLayer {
+	return []config.SkippedProjectLayer{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist"},
+	}
+}
+
+func createdProjects() []config.CreatedProjectRoot {
+	return []config.CreatedProjectRoot{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
+	}
+}
+
+func withCreated(h app.ProtectionHealth, created ...config.CreatedProjectRoot) app.ProtectionHealth {
+	h.CreatedProjectRoots = created
+	return h
+}
+
+func withPlanError(h app.ProtectionHealth, msg string) app.ProtectionHealth {
+	h.PlanError = msg
+	return h
+}
+
+func withSkipped(h app.ProtectionHealth, skipped ...config.SkippedProjectLayer) app.ProtectionHealth {
+	h.SkippedProjectLayers = skipped
+	return h
+}
+
+// The daemon's /health carries the skipped project layers and the plan error as
+// their own fields, so a consumer never has to infer either from a bubblewrap one.
+func TestSandboxProtectHealthCarriesSkippedLayersAndPlanError(t *testing.T) {
+	h := sandboxProtectHealth(withPlanError(withCreated(withSkipped(healthFor("linux", nil, nil), deadProjects()...), createdProjects()...), "boom"))
+	want := []daemon.SkippedProjectLayer{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist"},
+	}
+	wantCreated := []daemon.CreatedProjectRoot{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
+	}
+	if !reflect.DeepEqual(h.SkippedProjectLayers, want) || !reflect.DeepEqual(h.CreatedProjectRoots, wantCreated) || h.PlanError != "boom" {
+		t.Fatalf("health = %+v; want skipped %+v, created %+v and plan error boom", *h, want, wantCreated)
+	}
+	if h.BwrapChecked != true || !h.BwrapUsable || h.BwrapError != "" {
+		t.Fatalf("the bubblewrap probe must stay its own answer: %+v", *h)
+	}
+}
+
+// Startup logs a plan failure as what it is, not as a bubblewrap problem.
+func TestLogControlPlaneProtectionPlanError(t *testing.T) {
+	var lines []string
+	logControlPlaneProtection(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) },
+		withPlanError(healthFor("linux", nil, nil), "protect control plane: catalog root: no such file"))
+	if len(lines) != 1 || !strings.Contains(lines[0], "no such file") || !strings.Contains(lines[0], "not a bubblewrap problem") || strings.Contains(lines[0], app.ProtectEnv+"=0") {
+		t.Fatalf("log = %q; want the real reason, not a bubblewrap hint", lines)
 	}
 }
 

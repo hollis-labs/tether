@@ -45,6 +45,7 @@ Defined codes:
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
+| `project_root_missing` | 409 | the project a launch is for has a `repo_root` that does not exist or is not a directory, so the launch cannot run: it does not exist, is not a directory, or is only the placeholder protection created for it (see `/health` `sandbox_protect.created_project_roots`); the message names the project and the path. Another project's dead `repo_root` does not cause it: that root is created as a placeholder holding only an anchored `.tether`, or skipped where no agent could create it (`skipped_project_layers`) |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
 | `reply_target_not_a_session` | 400 | `POST /messages/{id}/reply` named a message that is not a channel publication from a Tether session (an ordinary mailbox message keeps the mailbox path), so there is no session to deliver to |
@@ -455,7 +456,10 @@ Response:
     "codex": "not protected",
     "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
     "bwrap_checked": true,
-    "bwrap_usable": true
+    "bwrap_usable": true,
+    "created_project_roots": [
+      {"project": "old-site", "repo_root": "/home/me/dev/old-site", "reason": "does not exist and an agent could have created it (/home/me/dev is writable): it was created holding only a read-only .tether, so a protected agent cannot plant a layer there"}
+    ]
   }
 }
 ```
@@ -467,7 +471,22 @@ own shell. `enabled` says whether launches are protected; `disabled_by_operator`
 is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the
 state means for an agent. On Linux with protection on, the daemon probes
 bubblewrap: `bwrap_usable` is false, with `bwrap_error`, when it cannot build the
-sandbox, in which case every launch except Codex's is refused. `codex` is how
+sandbox, in which case every launch except Codex's is refused (`bwrap_usable` is
+omitted, not `null`, when it is false). `created_project_roots` lists registered
+projects whose `repo_root` did not exist and that an agent could have created
+(the nearest existing directory above it is writable by the daemon's user):
+protection created the root as a placeholder holding only a `.tether` (with a
+one-file note) and anchored it read-only, so a protected agent cannot plant a
+project layer there. An entry is listed while the root is still only that
+placeholder, including after a daemon restart, and is a stale catalog entry to
+fix; the project's own launches are refused (409 `project_root_missing`) until
+the repository is restored. `skipped_project_layers` lists projects whose `repo_root` is
+unusable AND that no agent could create (that directory is not writable), so there
+is nothing to plant into; their layer is left out. Every project's launches work
+either way. `plan_error` is present when Tether cannot work out
+what to protect at all, and every launch it must protect is refused until that is
+fixed; it is a catalog or filesystem problem, never a bubblewrap one, and
+`bwrap_checked`/`bwrap_usable` still report the host probe on their own. `codex` is how
 Codex is protected: `not protected` as shipped (Codex runs as it did before
 protection, under its own sandbox, and spawns MCP servers outside it, so an MCP
 tool can reach the catalog; the catalog-writing `tether` tools are still refused for

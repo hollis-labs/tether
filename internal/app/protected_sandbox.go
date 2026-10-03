@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,23 @@ type ProtectionHealth struct {
 	BwrapChecked bool
 	BwrapUsable  bool
 	BwrapError   string
+	// SkippedProjectLayers are registered projects left out of protection
+	// because their repo_root cannot be used on this host AND no agent could
+	// create it either (the nearest existing directory above it is not writable),
+	// so there is nothing to plant into. The launches of every other project
+	// still work; each entry is a catalog problem to fix.
+	SkippedProjectLayers []config.SkippedProjectLayer
+	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
+	// it was missing, an agent could have created it, so protection created it
+	// holding only an anchored .tether and a marker, so a protected agent cannot
+	// plant a layer. Listed while the placeholder is all there is, including after
+	// a restart. Each is a stale catalog entry to fix.
+	CreatedProjectRoots []config.CreatedProjectRoot
+	// PlanError is why Tether cannot work out what to protect, when it cannot:
+	// every launch it must protect is refused until it is fixed. It is NOT a
+	// bubblewrap problem, and BwrapChecked/BwrapUsable still say what the probe
+	// found, so the two are never mistaken for each other.
+	PlanError string
 }
 
 // ComputeProtectionHealth combines a protection decision with a probe of the
@@ -111,13 +129,29 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 	if s.protectionStatus != nil {
 		st = s.protectionStatus()
 	}
-	dir := ""
+	// The probe needs only the catalog root, so it runs whether or not the full
+	// plan can be worked out: a plan failure used to leave this empty and report
+	// "the catalog root is not set", blaming bubblewrap for a catalog problem.
+	probeDir := ""
+	var prepared config.CatalogProtection
+	planErr := ""
 	if st.Enabled {
-		if dirs, err := s.controlPlaneDirs(); err == nil {
-			dir = dirs[0]
+		if root := config.Expand(s.CatalogRoot); root != "" {
+			if resolved, err := realDir(root); err == nil {
+				probeDir = resolved
+			}
+		}
+		var err error
+		if _, prepared, err = s.controlPlane(""); err != nil {
+			planErr = err.Error()
 		}
 	}
-	return ComputeProtectionHealth(st, runtime.GOOS, dir, bwrapAvailable)
+	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
+	h.SkippedProjectLayers = prepared.Skipped
+	h.CreatedProjectRoots = prepared.CreatedRoots
+	h.PlanError = planErr
+	sort.Slice(h.CreatedProjectRoots, func(i, j int) bool { return h.CreatedProjectRoots[i].Project < h.CreatedProjectRoots[j].Project })
+	return h
 }
 
 // codexExtraWritableRoots lists the directories codex's workspace-write

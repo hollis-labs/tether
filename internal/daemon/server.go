@@ -546,6 +546,36 @@ type SandboxProtectHealth struct {
 	BwrapUsable bool `json:"bwrap_usable,omitempty"`
 	// BwrapError is why it cannot, when it cannot.
 	BwrapError string `json:"bwrap_error,omitempty"`
+	// SkippedProjectLayers are registered projects left out of protection because
+	// their repo_root does not exist or is not a directory AND no agent could
+	// create it either (the nearest existing directory above it is not writable).
+	// Launches of every other project work; each entry is a catalog problem to fix.
+	SkippedProjectLayers []SkippedProjectLayer `json:"skipped_project_layers,omitempty"`
+	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
+	// it was missing, an agent could have created it, so protection created it
+	// holding only an anchored .tether and a marker, so a protected agent cannot
+	// plant a layer there. Listed while the placeholder is all there is, including
+	// after a restart; each is a stale catalog entry to fix.
+	CreatedProjectRoots []CreatedProjectRoot `json:"created_project_roots,omitempty"`
+	// PlanError is why Tether cannot work out what to protect, when it cannot:
+	// every launch it must protect is refused until that is fixed. It is a
+	// catalog or filesystem problem, not a bubblewrap one; bwrap_checked and
+	// bwrap_usable still report the host probe on its own.
+	PlanError string `json:"plan_error,omitempty"`
+}
+
+// SkippedProjectLayer is one project protection left out, and why.
+type SkippedProjectLayer struct {
+	Project  string `json:"project"`
+	RepoRoot string `json:"repo_root"`
+	Reason   string `json:"reason"`
+}
+
+// CreatedProjectRoot is one missing project root protection created, and why.
+type CreatedProjectRoot struct {
+	Project  string `json:"project"`
+	RepoRoot string `json:"repo_root"`
+	Reason   string `json:"reason"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
