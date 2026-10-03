@@ -90,6 +90,15 @@ func (s *Store) fencedImmediate(ctx context.Context, fn func(*sql.Conn) error) e
 	})
 }
 
+// WithTransaction composes sibling storage mutations under the same write lock
+// and optional launch fence. fn must use conn, never the pool or external ports.
+func (s *Store) WithTransaction(ctx context.Context, fn func(*sql.Conn) error) error {
+	if fn == nil {
+		return errors.New("team transaction: callback required")
+	}
+	return s.fencedImmediate(ctx, fn)
+}
+
 var runName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,58}$`)
 
 // ChannelName names the implicit run channel without creating it. Rejects names
@@ -112,6 +121,12 @@ type RunContainer struct {
 // the run ID. LaunchWorkflow must create this container before roster/signals
 // can be written. Run status is immutable here.
 func (s *Store) CreateRun(ctx context.Context, run teams.TeamRun) (RunContainer, error) {
+	return s.CreateRunAtomic(ctx, run, nil)
+}
+
+// CreateRunAtomic commits related host metadata together with run creation.
+// commit also runs on an identical retry and must use only the supplied conn.
+func (s *Store) CreateRunAtomic(ctx context.Context, run teams.TeamRun, commit func(*sql.Conn) error) (RunContainer, error) {
 	channel, err := ChannelName(run.ID)
 	if err != nil {
 		return RunContainer{}, err
@@ -139,6 +154,9 @@ func (s *Store) CreateRun(ctx context.Context, run teams.TeamRun) (RunContainer,
 			if !reflect.DeepEqual(old, normalized) {
 				return teams.ErrConflict
 			}
+			if commit != nil {
+				return commit(conn)
+			}
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -164,6 +182,9 @@ func (s *Store) CreateRun(ctx context.Context, run teams.TeamRun) (RunContainer,
 		}
 		if _, err = conn.ExecContext(ctx, `INSERT INTO team_runs(run_id,session_group_id,team_id,team_version,payload,created_at) VALUES(?,?,?,?,?,?)`, run.ID, channel, run.TeamID, run.TeamVersion, payload, now); err != nil {
 			return fmt.Errorf("create team run: %w", err)
+		}
+		if commit != nil {
+			return commit(conn)
 		}
 		return nil
 	})

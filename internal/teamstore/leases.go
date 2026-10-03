@@ -109,3 +109,12 @@ func launchToken(ctx context.Context, key string) (leaseToken, error) {
 	}
 	return token, nil
 }
+
+// WithLeasedTransaction composes a sibling mutation requiring a matching lease.
+// The callback must use conn and must not call external ports or the pool.
+func (s *Store) WithLeasedTransaction(ctx context.Context, key string, fn func(*sql.Conn) error) error {
+	if _, err := launchToken(ctx, key); err != nil {
+		return err
+	}
+	return s.WithTransaction(ctx, fn)
+}
