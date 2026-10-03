@@ -551,10 +551,11 @@ type SandboxProtectHealth struct {
 	// create it either (the nearest existing directory above it is not writable).
 	// Launches of every other project work; each entry is a catalog problem to fix.
 	SkippedProjectLayers []SkippedProjectLayer `json:"skipped_project_layers,omitempty"`
-	// CreatedProjectRoots are registered projects whose missing repo_root an agent
-	// could have created: protection created it, empty but for an anchored
-	// .tether, so a protected agent cannot plant a layer there. Reported for the
-	// daemon's lifetime; each is a stale catalog entry to fix.
+	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
+	// it was missing, an agent could have created it, so protection created it
+	// holding only an anchored .tether and a marker, so a protected agent cannot
+	// plant a layer there. Listed while the placeholder is all there is, including
+	// after a restart; each is a stale catalog entry to fix.
 	CreatedProjectRoots []CreatedProjectRoot `json:"created_project_roots,omitempty"`
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until that is fixed. It is a

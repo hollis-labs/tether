@@ -121,6 +121,9 @@ func TestPrepareCatalogProtectionAnchorsEveryMissingRootAnAgentCouldCreate(t *te
 		if err != nil || len(entries) != 1 || entries[0].Name() != ".tether" {
 			t.Fatalf("project %s: the created root must hold only .tether, has %v (%v)", id, entries, err)
 		}
+		if layerEntries, err := os.ReadDir(layer); err != nil || len(layerEntries) != 1 || layerEntries[0].Name() != PlaceholderMarker {
+			t.Fatalf("project %s: the created layer must hold only %s, has %v (%v)", id, PlaceholderMarker, layerEntries, err)
+		}
 		want = append(want, canonical(t, layer))
 	}
 	if !sameSet(got.Dirs, want) {
@@ -137,7 +140,7 @@ func TestPrepareCatalogProtectionAnchorsEveryMissingRootAnAgentCouldCreate(t *te
 	}
 	for id, root := range s.dead {
 		c, ok := reported[id]
-		if !ok || c.RepoRoot != root || !strings.Contains(c.Reason, "does not exist") || !strings.Contains(c.Reason, "only an empty .tether") {
+		if !ok || c.RepoRoot != root || !strings.Contains(c.Reason, "does not exist") || !strings.Contains(c.Reason, "only a read-only .tether") {
 			t.Fatalf("project %s: report = %+v", id, c)
 		}
 	}
@@ -152,10 +155,16 @@ func TestPrepareCatalogProtectionAnchorsEveryMissingRootAnAgentCouldCreate(t *te
 	}
 
 	// A second call: the roots exist now, so nothing is created and the layers are
-	// still anchored.
+	// still anchored. They are still placeholders, and still reported as such: the
+	// report does not depend on remembering the call that created them.
 	again, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "")
-	if err != nil || len(again.Created) != 0 || len(again.CreatedRoots) != 0 || !sameSet(again.Dirs, want) {
+	if err != nil || len(again.Created) != 0 || len(again.CreatedRoots) != 7 || !sameSet(again.Dirs, want) {
 		t.Fatalf("second call: created=%q roots=%d err=%v dirs match=%v", again.Created, len(again.CreatedRoots), err, sameSet(again.Dirs, want))
+	}
+	for _, c := range again.CreatedRoots {
+		if !strings.Contains(c.Reason, "still the placeholder") {
+			t.Fatalf("second call: %+v does not say the root is still a placeholder", c)
+		}
 	}
 }
 
@@ -245,6 +254,101 @@ func TestPrepareCatalogProtectionTheLaunchingProjectWithADeadRootIsATypedErrorWi
 	got, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "live-c")
 	if err != nil || len(got.CreatedRoots) != 7 {
 		t.Fatalf("launching live-c: created roots=%d err=%v; want success with the 7 dead roots anchored", len(got.CreatedRoots), err)
+	}
+}
+
+// The refusal for the launching project has to survive the protection that comes
+// before it. Any protected call creates every other project's missing root, and
+// the first one after the daemon starts does it for all of them, so a launch for a
+// dead project would otherwise find its root there, empty, and run in it: the
+// typed error would never fire. The placeholder is told by its marker, so it holds
+// across a restart; a directory that merely holds an empty .tether (what
+// protection leaves in every project root) is an ordinary project.
+func TestPrepareCatalogProtectionTheLaunchingProjectWithAPlaceholderRootIsStillRefused(t *testing.T) {
+	s := newLiveShape(t)
+	if _, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "live-a"); err != nil {
+		t.Fatal(err)
+	}
+	root := s.dead["dead-b"]
+	var rootErr *ProjectRootError
+	_, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-b")
+	if !errors.As(err, &rootErr) || rootErr.Project != "dead-b" || rootErr.Root != root || !strings.Contains(rootErr.Reason, "placeholder") || !strings.Contains(rootErr.Reason, PlaceholderMarker) {
+		t.Fatalf("err = %v; want a *ProjectRootError naming dead-b and the placeholder", err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 1 || entries[0].Name() != ".tether" {
+		t.Fatalf("the refused call changed the placeholder: %v (%v)", entries, err)
+	}
+
+	// An ordinary project whose root holds only the empty .tether protection leaves
+	// in every root is launchable, and is not reported as a placeholder.
+	got, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "live-c")
+	if err != nil || len(got.CreatedRoots) != 7 {
+		t.Fatalf("launching live-c: created roots=%d err=%v; want success and only the 7 dead projects reported", len(got.CreatedRoots), err)
+	}
+	for _, c := range got.CreatedRoots {
+		if _, live := s.existing[c.Project]; live {
+			t.Fatalf("an ordinary project is reported as a placeholder: %+v", c)
+		}
+	}
+
+	// Once the repository is restored into the root, it is no longer a placeholder.
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("restored\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	got, err = PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-b")
+	if err != nil {
+		t.Fatalf("launching dead-b with its repository back: %v", err)
+	}
+	for _, c := range got.CreatedRoots {
+		if c.Project == "dead-b" {
+			t.Fatalf("a restored project is still reported as a placeholder: %+v", c)
+		}
+	}
+
+	// So is a root whose layer has been given content: that is somebody's layer.
+	other := s.dead["dead-c"]
+	if err := os.MkdirAll(filepath.Join(other, ".tether", "agents"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-c"); err != nil {
+		t.Fatalf("launching dead-c with its own layer content: %v", err)
+	}
+}
+
+// The marker must not be read as catalog content: LoadLayered reads
+// <layer>/<kind>/*.yaml, and an anchored placeholder yields nothing and no error.
+func TestLoadLayeredIgnoresAPlaceholderLayer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	catalogRoot := t.TempDir()
+	dead := filepath.Join(t.TempDir(), "gone")
+	for path, body := range map[string]string{
+		filepath.Join(catalogRoot, "global.yaml"):                 "version: 0.1.0\n",
+		filepath.Join(catalogRoot, "projects", "gone.yaml"):       "id: gone\nname: Gone\nrepo_root: " + dead + "\n",
+		filepath.Join(catalogRoot, "providers", "cli.yaml"):       "id: cli\ntype: cli\ncommand: echo\n",
+		filepath.Join(catalogRoot, "agents", "system-agent.yaml"): "id: system-agent\nname: System\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat, err := Load(catalogRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := PrepareCatalogProtection(catalogRoot, cat, "")
+	if err != nil || len(got.CreatedRoots) != 1 || !placeholderRoot(dead) {
+		t.Fatalf("created roots = %+v, err = %v, placeholder = %v; want the dead root made into a placeholder", got.CreatedRoots, err, placeholderRoot(dead))
+	}
+	layered, err := LoadLayered(catalogRoot)
+	if err != nil {
+		t.Fatalf("LoadLayered with a placeholder layer: %v", err)
+	}
+	if _, ok := layered.Agents["system-agent"]; !ok || len(layered.Agents) != 1 {
+		t.Fatalf("agents = %v; want only the system agent", layered.Agents)
 	}
 }
 

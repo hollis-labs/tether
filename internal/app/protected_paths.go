@@ -242,27 +242,28 @@ func (s *Service) controlPlaneDirsFor(launching string) ([]string, error) {
 	return dirs, err
 }
 
-// controlPlane returns what controlPlaneDirsFor does, plus the registered
-// projects whose layer it had to leave out because their repo_root cannot be
-// used. Each such project is warned about once per daemon, and a layer it had
-// to create is logged, so neither the skip nor the side effect is silent.
-func (s *Service) controlPlane(launching string) ([]string, []config.SkippedProjectLayer, error) {
+// controlPlane returns what controlPlaneDirsFor does, plus what protection
+// decided about project layers: the projects it left out because their repo_root
+// cannot be used (Skipped) and the ones whose missing root it created
+// (CreatedRoots). Each is warned about once per daemon, and a layer it had to
+// create is logged, so neither the skip nor the side effect is silent.
+func (s *Service) controlPlane(launching string) ([]string, config.CatalogProtection, error) {
 	catalogRoot := config.Expand(s.CatalogRoot)
 	if catalogRoot == "" {
-		return nil, nil, errors.New("protect control plane: the catalog root is not set")
+		return nil, config.CatalogProtection{}, errors.New("protect control plane: the catalog root is not set")
 	}
 	catalog, err := realDir(catalogRoot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("protect control plane: catalog root: %w", err)
+		return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: catalog root: %w", err)
 	}
 	prepared, err := config.PrepareCatalogProtection(catalog, s.Catalog, launching)
 	if err != nil {
-		return nil, nil, err
+		return nil, config.CatalogProtection{}, err
 	}
 	s.reportProtectionLayers(prepared)
 	dirs := prepared.Dirs
 	if s.Catalog == nil {
-		return dirs, prepared.Skipped, nil
+		return dirs, prepared, nil
 	}
 	roots := []string{filepath.Dir(catalog)}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -276,7 +277,7 @@ func (s *Service) controlPlane(launching string) ([]string, []config.SkippedProj
 			continue
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("protect control plane: run directory: %w", err)
+			return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: run directory: %w", err)
 		}
 		if containsPath(dirs, dir) || !insideAnyRoot(roots, dir) {
 			continue
@@ -288,24 +289,23 @@ func (s *Service) controlPlane(launching string) ([]string, []config.SkippedProj
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 		case err != nil:
-			return nil, nil, fmt.Errorf("protect control plane: state directory: %w", err)
+			return nil, config.CatalogProtection{}, fmt.Errorf("protect control plane: state directory: %w", err)
 		case !containsPath(dirs, dir):
 			dirs = append(dirs, dir)
 		}
 	}
-	return dirs, prepared.Skipped, nil
+	return dirs, prepared, nil
 }
 
 // reportProtectionLayers makes what protection did to project layers visible.
-// A project whose missing repo_root protection had to create (an agent could
-// have) is warned about once per daemon and remembered for health and doctor; a
-// project left out because no agent could create its root is warned about once;
-// an empty layer protection created is logged, since that writes into the
-// user's directories.
+// A project whose root is a placeholder protection created (an agent could have)
+// is warned about once per daemon; a project left out because no agent could
+// create its root is warned about once; an empty layer protection created is
+// logged, since that writes into the user's directories. Health and doctor read
+// the same CreatedRoots and Skipped from the plan, so they need no memory of it.
 func (s *Service) reportProtectionLayers(p config.CatalogProtection) {
 	for _, created := range p.CreatedRoots {
 		key := created.Project + "\x00" + created.RepoRoot
-		s.protectionCreatedRoots.Store(key, created)
 		if _, seen := s.protectionWarned.LoadOrStore("created\x00"+key, struct{}{}); seen {
 			continue
 		}

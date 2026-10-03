@@ -88,10 +88,11 @@ type ProtectionHealth struct {
 	// so there is nothing to plant into. The launches of every other project
 	// still work; each entry is a catalog problem to fix.
 	SkippedProjectLayers []config.SkippedProjectLayer
-	// CreatedProjectRoots are registered projects whose missing repo_root an agent
-	// could have created: protection created it, empty but for an anchored
-	// .tether, so a protected agent cannot plant a layer. Kept for the daemon's
-	// lifetime. Each is a stale catalog entry to fix.
+	// CreatedProjectRoots are registered projects whose repo_root is a placeholder:
+	// it was missing, an agent could have created it, so protection created it
+	// holding only an anchored .tether and a marker, so a protected agent cannot
+	// plant a layer. Listed while the placeholder is all there is, including after
+	// a restart. Each is a stale catalog entry to fix.
 	CreatedProjectRoots []config.CreatedProjectRoot
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until it is fixed. It is NOT a
@@ -132,7 +133,7 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 	// plan can be worked out: a plan failure used to leave this empty and report
 	// "the catalog root is not set", blaming bubblewrap for a catalog problem.
 	probeDir := ""
-	var skipped []config.SkippedProjectLayer
+	var prepared config.CatalogProtection
 	planErr := ""
 	if st.Enabled {
 		if root := config.Expand(s.CatalogRoot); root != "" {
@@ -141,17 +142,14 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 			}
 		}
 		var err error
-		if _, skipped, err = s.controlPlane(""); err != nil {
+		if _, prepared, err = s.controlPlane(""); err != nil {
 			planErr = err.Error()
 		}
 	}
 	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
-	h.SkippedProjectLayers = skipped
+	h.SkippedProjectLayers = prepared.Skipped
+	h.CreatedProjectRoots = prepared.CreatedRoots
 	h.PlanError = planErr
-	s.protectionCreatedRoots.Range(func(_, v any) bool {
-		h.CreatedProjectRoots = append(h.CreatedProjectRoots, v.(config.CreatedProjectRoot))
-		return true
-	})
 	sort.Slice(h.CreatedProjectRoots, func(i, j int) bool { return h.CreatedProjectRoots[i].Project < h.CreatedProjectRoots[j].Project })
 	return h
 }

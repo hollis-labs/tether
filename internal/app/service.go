@@ -138,10 +138,6 @@ type Service struct {
 	// protectionWarned remembers which skipped project layers were already
 	// warned about, so a launch does not repeat the warning every time.
 	protectionWarned sync.Map
-	// protectionCreatedRoots remembers the missing project roots protection created
-	// (project+root -> config.CreatedProjectRoot), for health and doctor: the root
-	// exists afterwards, so a later call no longer sees it as missing.
-	protectionCreatedRoots sync.Map
 
 	// replies is the reply-to-sender dispatcher (CW-20261002-0065), set by
 	// StartRoutingReplies. Nil means the reply path is not installed.

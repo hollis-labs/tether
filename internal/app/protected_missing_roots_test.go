@@ -138,6 +138,26 @@ func TestALaunchForAProjectWithAMissingRepoRootIsATypedRefusal(t *testing.T) {
 	if err := svc.refuseUnprotectable(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli"); err != nil {
 		t.Fatalf("create for a live project was refused: %v", err)
 	}
+
+	// That call created every dead root, so the dead projects' own roots now exist,
+	// as placeholders. A launch for one of them is still the typed refusal (a daemon
+	// anchors every root when it starts, so otherwise the refusal could never fire),
+	// and it runs nothing in the placeholder.
+	for _, id := range []string{"dead-a", "dead-b"} {
+		for name, call := range map[string]func() error{
+			"create": func() error {
+				return svc.refuseUnprotectable(&launch.Plan{ProviderBrand: "claude", ProjectID: id}, "cli")
+			},
+			"launch": func() error {
+				return svc.applyControlPlaneProtection(&launch.Plan{ProviderBrand: "claude", ProjectID: id}, "cli", &agentsessions.StartOptions{Workdir: t.TempDir(), WorkspaceDir: t.TempDir()})
+			},
+		} {
+			err := call()
+			if !errors.Is(err, launch.ErrLaunchProjectRootMissing) || !errors.As(err, &rootErr) || rootErr.Project != id || !strings.Contains(err.Error(), "placeholder") {
+				t.Fatalf("%s for %s after its root became a placeholder: err = %v; want the typed refusal naming the placeholder", name, id, err)
+			}
+		}
+	}
 }
 
 // A file where a project's root should be, in a directory an agent can write to,
@@ -162,12 +182,13 @@ func TestAFileInTheWayOfAProjectRootRefusesTheLaunch(t *testing.T) {
 	noLayerCreatedIn(t, existing)
 }
 
-// The created roots are visible in /health for the daemon's lifetime, even though
-// the root exists (so a later call no longer sees it as missing), and nothing is
-// reported as skipped, because nothing was left open.
+// The created roots are visible in /health on every call, not only the one that
+// created them: the root exists afterwards, but it is still only the placeholder,
+// and that is what the report says. Nothing is reported as skipped, because
+// nothing was left open.
 func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 	svc, _, dead := deadRootService(t)
-	for i := 0; i < 3; i++ { // each call after the first sees existing roots
+	for i := 0; i < 3; i++ { // each call after the first sees the placeholders it left
 		h := svc.ProtectionHealth()
 		if h.PlanError != "" || len(h.SkippedProjectLayers) != 0 {
 			t.Fatalf("call %d: plan error %q, skipped %+v; want neither", i, h.PlanError, h.SkippedProjectLayers)
@@ -176,7 +197,7 @@ func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 			t.Fatalf("call %d: created roots = %+v; want the %d dead projects", i, h.CreatedProjectRoots, len(dead))
 		}
 		for _, c := range h.CreatedProjectRoots {
-			if dead[c.Project] != c.RepoRoot || !strings.Contains(c.Reason, "only an empty .tether") {
+			if dead[c.Project] != c.RepoRoot || !strings.Contains(c.Reason, "read-only .tether") {
 				t.Fatalf("call %d: created entry %+v does not match the catalog (%v)", i, c, dead)
 			}
 		}

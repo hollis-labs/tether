@@ -73,19 +73,49 @@ type SkippedProjectLayer struct {
 
 // CreatedProjectRoot is a registered project whose repo_root did not exist and
 // that an agent COULD have created (the nearest existing directory above it is
-// writable). Protection created the root with only an empty .tether in it and
-// anchored that layer read-only, so an agent cannot plant a layer there. The
-// project is still a stale catalog entry to fix.
+// writable). Protection created the root with only a .tether in it (holding
+// PlaceholderMarker) and anchored that layer read-only, so an agent cannot plant
+// a layer there. It is reported on every call while the placeholder is all there
+// is, not only the call that created it. The project is still a stale catalog
+// entry to fix.
 type CreatedProjectRoot struct {
 	Project  string `json:"project"`
 	RepoRoot string `json:"repo_root"`
 	Reason   string `json:"reason"`
 }
 
+// PlaceholderMarker is the one file protection writes inside the .tether layer of
+// a project root it had to create. It is how a placeholder is told from a real
+// project directory that happens to hold nothing yet: after a restart, or when
+// another project's launch created the root, nothing else says that the root is
+// a stand-in for a missing repository. The loader reads only <layer>/<kind>/*.yaml,
+// so it ignores this file.
+const PlaceholderMarker = "created-by-tether-protection"
+
+const placeholderNote = `Tether created this directory because the project's repo_root did not exist.
+A protected agent runs in a sandbox where the whole host is writable, so it could
+have created a .tether here and planted a catalog layer; this read-only .tether
+closes that. The directory holds nothing else. To use the project, remove this
+directory and restore the repository, or point the project at one that exists.
+`
+
+// placeholderRoot reports whether root is exactly what protection leaves for a
+// missing project root: a directory holding only .tether, which holds only the
+// marker. A project directory that merely holds an empty .tether is not one: that
+// is what protection leaves in any project root that exists.
+func placeholderRoot(root string) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != ".tether" || !entries[0].IsDir() {
+		return false
+	}
+	layer, err := os.ReadDir(filepath.Join(root, ".tether"))
+	return err == nil && len(layer) == 1 && layer[0].Name() == PlaceholderMarker && layer[0].Type().IsRegular()
+}
+
 // ProjectRootError is returned when the project a launch is for has a repo_root
-// that cannot be used: its own layer cannot be protected, and neither can the
-// workspace the launch would run in. It names the project and the path so the
-// caller can say which catalog entry to fix.
+// that cannot be used: it is missing, is not a directory, or is only the
+// placeholder protection created for it. The launch cannot run in it. It names the
+// project and the path so the caller can say which catalog entry to fix.
 type ProjectRootError struct {
 	Project string
 	Root    string
@@ -93,7 +123,7 @@ type ProjectRootError struct {
 }
 
 func (e *ProjectRootError) Error() string {
-	return fmt.Sprintf("project %q: its repo_root %s %s, so a launch for it cannot be protected: restore the directory, or point the project at one that exists", e.Project, e.Root, e.Reason)
+	return fmt.Sprintf("project %q: its repo_root %s %s, so a launch for it cannot run: restore the directory, or point the project at one that exists", e.Project, e.Root, e.Reason)
 }
 
 // UnprotectableLayerError is returned when a project's layer cannot be protected
@@ -122,8 +152,9 @@ type CatalogProtection struct {
 	// Created are the empty layer directories this call had to create so that no
 	// child can create one first (see PrepareCatalogProtection).
 	Created []string
-	// CreatedRoots are projects whose missing repo_root this call created, empty
-	// but for the .tether layer it anchors, because an agent could have.
+	// CreatedRoots are the projects whose repo_root is a placeholder: this call
+	// created it, empty but for the .tether layer it anchors, because an agent
+	// could have; or an earlier call did, and it is still all there is.
 	CreatedRoots []CreatedProjectRoot
 }
 
@@ -163,13 +194,17 @@ type layerPlan struct {
 // reproduced). So what happens depends on whether an agent could create it:
 //
 //   - launching names the project the launch is for. If that project's root is
-//     unusable the launch cannot be protected or run: a *ProjectRootError names
-//     the project and path. Its root is never created.
+//     unusable, or is only a placeholder protection created for it earlier, the
+//     launch cannot run: a *ProjectRootError names the project and path. Its
+//     root is never created by its own launch. Without the placeholder rule the
+//     refusal would be unreachable in practice: the first protected call of the
+//     daemon creates every other project's root, this one's included.
 //   - any other project whose root is unusable: the nearest existing directory
 //     above where the root would land (following a dangling symlink) is tested
 //     with access(2) as this user, who is who the agent runs as. If it is
-//     writable, the root is created holding only .tether (0700) and that layer is
-//     anchored like any other (CreatedRoots, and Created); the project is still
+//     writable, the root is created holding only .tether (0700, with
+//     PlaceholderMarker in it) and that layer is anchored like any other
+//     (CreatedRoots, and Created); the project is still
 //     a stale entry to fix, so this is reported. If it is not writable, the agent
 //     cannot create the root either, there is nothing to plant into, and the
 //     project is skipped (Skipped).
@@ -194,6 +229,14 @@ func PrepareCatalogProtection(catalogRoot string, cat *Catalog, launching string
 			return CatalogProtection{}, fmt.Errorf("protect catalog layer: project %q: %w", p.id, err)
 		}
 		if reason == "" {
+			if placeholderRoot(p.repoRoot) {
+				if p.id == launching {
+					return CatalogProtection{}, &ProjectRootError{Project: p.id, Root: p.repoRoot,
+						Reason: "is only the placeholder Tether created when it was missing (it holds nothing but .tether/" + PlaceholderMarker + "): remove it and restore the repository"}
+				}
+				out.CreatedRoots = append(out.CreatedRoots, CreatedProjectRoot{Project: p.id, RepoRoot: p.repoRoot,
+					Reason: "is still the placeholder Tether created when it was missing: it holds only a read-only .tether, so a protected agent cannot plant a layer there"})
+			}
 			plans[p.id] = layerPlan{project: p.id, layer: p.root}
 			continue
 		}
@@ -215,7 +258,7 @@ func PrepareCatalogProtection(catalogRoot string, cat *Catalog, launching string
 		default:
 			plans[p.id] = layerPlan{project: p.id, layer: filepath.Join(target, ".tether"), chain: true, note: CreatedProjectRoot{
 				Project: p.id, RepoRoot: p.repoRoot,
-				Reason: fmt.Sprintf("%s and an agent could have created it (%s is writable): it was created holding only an empty .tether, anchored read-only, so a protected agent cannot plant a layer there", reason, ancestor)}}
+				Reason: fmt.Sprintf("%s and an agent could have created it (%s is writable): it was created holding only a read-only .tether, so a protected agent cannot plant a layer there", reason, ancestor)}}
 		}
 	}
 
@@ -246,6 +289,9 @@ func PrepareCatalogProtection(catalogRoot string, cat *Catalog, launching string
 			// The project's own root is missing: create the chain down to its
 			// layer. Only here: a repository is never created otherwise.
 			if err := os.MkdirAll(root, 0700); err != nil {
+				return CatalogProtection{}, fmt.Errorf("prepare catalog layer: %w", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, PlaceholderMarker), []byte(placeholderNote), 0600); err != nil {
 				return CatalogProtection{}, fmt.Errorf("prepare catalog layer: %w", err)
 			}
 			out.Created = append(out.Created, root)

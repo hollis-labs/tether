@@ -56,12 +56,13 @@ func TestProtectedAgentCannotPlantALayerInAMissingProjectRoot(t *testing.T) {
 			t.Fatalf("the agent planted %s (stat err = %v)", planted, err)
 		}
 	}
-	// What protection left for the dead project is the root with only .tether.
+	// What protection left for the dead project is the root with only .tether, which
+	// holds only the placeholder marker.
 	entries, err := os.ReadDir(dead)
 	if err != nil || len(entries) != 1 || entries[0].Name() != ".tether" {
 		t.Fatalf("the created root = %v (%v); want only .tether", entries, err)
 	}
-	if layer, err := os.ReadDir(filepath.Join(dead, ".tether")); err != nil || len(layer) != 0 {
-		t.Fatalf("the anchored layer is not empty: %v (%v)", layer, err)
+	if layer, err := os.ReadDir(filepath.Join(dead, ".tether")); err != nil || len(layer) != 1 || layer[0].Name() != config.PlaceholderMarker {
+		t.Fatalf("the anchored layer holds %v (%v); want only %s", layer, err, config.PlaceholderMarker)
 	}
 }

@@ -69,7 +69,7 @@ func TestCheckSandboxProtect(t *testing.T) {
 		// though the probe on its own found bubblewrap fine.
 		{"plan error", withPlanError(healthFor("linux", nil, nil), "protect control plane: catalog root: no such file"), true, statusFail, "not bubblewrap"},
 		{"skipped layers", withSkipped(healthFor("linux", nil, nil), deadProjects()...), true, statusWarn, "left out of protection"},
-		{"created roots", withCreated(healthFor("linux", nil, nil), createdProjects()...), true, statusWarn, "created empty with only .tether so a protected agent cannot plant a layer"},
+		{"created roots", withCreated(healthFor("linux", nil, nil), createdProjects()...), true, statusWarn, "placeholders holding only a read-only .tether, so a protected agent cannot plant a layer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := checkSandboxProtect(sandboxProtectHealth(tc.health), tc.fromDaemon)

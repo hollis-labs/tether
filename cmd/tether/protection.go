@@ -137,7 +137,7 @@ func checkSandboxProtect(h *daemon.SandboxProtectHealth, fromDaemon bool) checkR
 			fmt.Sprintf("install bubblewrap and allow unprivileged user namespaces, or set %s=0 in tetherd's environment to run agents unprotected", app.ProtectEnv))
 	}
 	if len(h.CreatedProjectRoots) > 0 {
-		return warn(name, fmt.Sprintf("%s (%s); %d project root(s) were missing and were created empty with only .tether so a protected agent cannot plant a layer there: %s", h.Reason, source, len(h.CreatedProjectRoots), createdRootsSummary(h.CreatedProjectRoots)),
+		return warn(name, fmt.Sprintf("%s (%s); %d project root(s) were missing and are placeholders holding only a read-only .tether, so a protected agent cannot plant a layer there: %s", h.Reason, source, len(h.CreatedProjectRoots), createdRootsSummary(h.CreatedProjectRoots)),
 			"these projects are stale catalog entries: restore their repositories or remove the projects, and restart the daemon")
 	}
 	if len(h.SkippedProjectLayers) > 0 {
