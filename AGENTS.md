@@ -4,9 +4,9 @@ Tether is the local agent session control plane: a per-user daemon (`tetherd`) t
 owns session lifecycle, PTY and process management, sandboxed execution,
 checkpoint/resume, brokered messaging and event streams for CLI-backed agents.
 Clients reach it over a Unix socket through the `tether` CLI, the HTTP API, the MCP
-stdio adapter, the ACP surface or `go-tether-client`. It is the runtime, not the
-orchestrator: it does not own tasks, workflows, agent authorship, or the business
-meaning of the messages it delivers.
+stdio adapter, the ACP surface or `go-tether-client`. It is the agent session, mesh
+and orchestration layer; agent authorship and the business meaning of work remain
+with its consumers.
 
 ## Start Here
 
