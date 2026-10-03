@@ -387,14 +387,29 @@ on whether an agent could:
   so the report does not depend on the daemon having made it: it is still there
   after a restart, for as long as the placeholder is all there is. To use the
   project, remove the placeholder directory and restore the repository.
-- Where it is **not writable**, the agent cannot create the root either, so there
-  is nothing to plant into and the project's layer is skipped: one warning,
-  `sandbox_protect.skipped_project_layers`, a doctor warning.
-- A **file in the way** (a root that is a file, or runs through one) under a
-  writable directory: an agent could replace the file with a directory, and a
-  user's file is not Tether's to delete, so the launch is refused (403 `forbidden`,
-  protection unavailable) naming the project. Under a directory the agent cannot
-  write, the project is skipped.
+- Where it is **not writable**, that is not the end of it, because the agent runs
+  as the same user as the daemon. A directory that user **owns** can be made
+  writable (`chmod u+w`), and any directory can be **moved aside** and replaced
+  (`mv ro ro-old; mkdir ro`) by someone who can write the directory above it (a
+  sticky directory, like `/tmp`, only lets a user move what that user owns, which
+  is the first case). Both were reproduced against the earlier "not writable, so
+  skip" rule. So the whole chain from that directory up to `/` is examined, and the
+  layer is skipped, with one warning, `sandbox_protect.skipped_project_layers` and a
+  doctor warning, **only when no directory in it is owned by the daemon's user or
+  writable by it**: then nothing the agent can do creates the root (in practice a
+  root under a system directory such as `/usr/share`).
+- Not writable, but the agent **can get past it** (the chain has a directory the
+  daemon's user owns, or can write): the root cannot be anchored either, because
+  creating it needs a permission Tether will not take by changing a directory that
+  is not its own. The launch is refused (403 `forbidden`, protection unavailable)
+  naming the project and the way past, and `/health` reports it as `plan_error`
+  until the catalog entry is fixed. This errs toward refusing: a user-owned
+  directory on a read-only mount is refused too.
+- A **file in the way** (a root that is a file, or runs through one): the same test
+  on the directory that holds it. Where an agent can write to it, or get past it,
+  it could replace the file with a directory, and a user's file is not Tether's to
+  delete, so the launch is refused (403 `forbidden`, protection unavailable) naming
+  the project. Otherwise the project is skipped.
 - The project the launch is **for** is never created by its own launch, and its
   launch is refused with 409 `project_root_missing` naming the project and the
   path: when its root is missing, and also when its root is only the placeholder
@@ -562,8 +577,9 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 | Control-plane protection on and `bwrap` not installed or unable to build a namespace | Launch refused with 403 `forbidden` (not for Codex) |
 | The launching project's `repo_root` does not exist, is not a directory, or is only a placeholder protection made | Launch refused with 409 `project_root_missing`, naming the project and the path; nothing is created |
 | Another project's `repo_root` is missing, under a directory the daemon's user can write | The root is created as a placeholder holding only an anchored `.tether` (with a one-file note), so an agent cannot plant a layer; a warning, `/health` `created_project_roots` (until the repository is restored), a doctor warning; every other project's launch works |
-| Another project's `repo_root` is missing, under a directory the daemon's user cannot write | The layer is skipped (an agent cannot create the root either), with a warning, `/health` `skipped_project_layers` and a doctor warning; every launch works |
-| Another project's `repo_root` is a file, or runs through one, under a writable directory | Launch refused (403 `forbidden`, protection unavailable) naming the project; nothing is created |
+| Another project's `repo_root` is missing, and nothing from its nearest existing directory up to `/` is owned by or writable by the daemon's user | The layer is skipped (an agent cannot create the root either), with a warning, `/health` `skipped_project_layers` and a doctor warning; every launch works |
+| Another project's `repo_root` is missing under a directory that is not writable, but the daemon's user owns it or can move it aside | Launch refused (403 `forbidden`, protection unavailable) naming the project and the way past (the root cannot be anchored without changing the user's directory); nothing is created |
+| Another project's `repo_root` is a file, or runs through one, where an agent can write or get past the directory holding it | Launch refused (403 `forbidden`, protection unavailable) naming the project; nothing is created |
 
 ## Follow-ups
 
