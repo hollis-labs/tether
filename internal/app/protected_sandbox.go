@@ -81,6 +81,17 @@ type ProtectionHealth struct {
 	BwrapChecked bool
 	BwrapUsable  bool
 	BwrapError   string
+	// SkippedProjectLayers are registered projects left out of protection
+	// because their repo_root cannot be used on this host. The launches of every
+	// other project still work; each entry is a catalog problem to fix, and
+	// until it is fixed a protected agent could create that directory and plant
+	// a layer in it.
+	SkippedProjectLayers []config.SkippedProjectLayer
+	// PlanError is why Tether cannot work out what to protect, when it cannot:
+	// every launch it must protect is refused until it is fixed. It is NOT a
+	// bubblewrap problem, and BwrapChecked/BwrapUsable still say what the probe
+	// found, so the two are never mistaken for each other.
+	PlanError string
 }
 
 // ComputeProtectionHealth combines a protection decision with a probe of the
@@ -111,13 +122,27 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 	if s.protectionStatus != nil {
 		st = s.protectionStatus()
 	}
-	dir := ""
+	// The probe needs only the catalog root, so it runs whether or not the full
+	// plan can be worked out: a plan failure used to leave this empty and report
+	// "the catalog root is not set", blaming bubblewrap for a catalog problem.
+	probeDir := ""
+	var skipped []config.SkippedProjectLayer
+	planErr := ""
 	if st.Enabled {
-		if dirs, err := s.controlPlaneDirs(); err == nil {
-			dir = dirs[0]
+		if root := config.Expand(s.CatalogRoot); root != "" {
+			if resolved, err := realDir(root); err == nil {
+				probeDir = resolved
+			}
+		}
+		var err error
+		if _, skipped, err = s.controlPlane(""); err != nil {
+			planErr = err.Error()
 		}
 	}
-	return ComputeProtectionHealth(st, runtime.GOOS, dir, bwrapAvailable)
+	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
+	h.SkippedProjectLayers = skipped
+	h.PlanError = planErr
+	return h
 }
 
 // codexExtraWritableRoots lists the directories codex's workspace-write

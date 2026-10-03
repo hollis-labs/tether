@@ -558,6 +558,10 @@ func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Req
 // and the host cannot provide it (launch.ErrProtectionUnavailable: bubblewrap
 // is missing; CW-20261001-0142).
 func writeLaunchRefused(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, launch.ErrLaunchProjectRootMissing) {
+		writeError(w, http.StatusConflict, CodeProjectRootMissing, err.Error())
+		return true
+	}
 	if !errors.Is(err, launch.ErrACPLaunchUnprotected) &&
 		!errors.Is(err, launch.ErrLaunchInsideProtectedPath) &&
 		!errors.Is(err, launch.ErrProtectionUnavailable) {

@@ -546,6 +546,22 @@ type SandboxProtectHealth struct {
 	BwrapUsable bool `json:"bwrap_usable,omitempty"`
 	// BwrapError is why it cannot, when it cannot.
 	BwrapError string `json:"bwrap_error,omitempty"`
+	// SkippedProjectLayers are registered projects left out of protection because
+	// their repo_root does not exist or is not a directory. Launches of every
+	// other project work; each entry is a catalog problem to fix.
+	SkippedProjectLayers []SkippedProjectLayer `json:"skipped_project_layers,omitempty"`
+	// PlanError is why Tether cannot work out what to protect, when it cannot:
+	// every launch it must protect is refused until that is fixed. It is a
+	// catalog or filesystem problem, not a bubblewrap one; bwrap_checked and
+	// bwrap_usable still report the host probe on its own.
+	PlanError string `json:"plan_error,omitempty"`
+}
+
+// SkippedProjectLayer is one project protection left out, and why.
+type SkippedProjectLayer struct {
+	Project  string `json:"project"`
+	RepoRoot string `json:"repo_root"`
+	Reason   string `json:"reason"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

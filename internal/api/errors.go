@@ -35,6 +35,13 @@ const (
 	// (CW-20261001-0033).
 	CodeTurnFailed = "turn_failed"
 
+	// CodeProjectRootMissing (409) means the project a launch is for has a
+	// repo_root that does not exist or is not a directory, so the launch can
+	// be neither protected nor run. The message names the project and the path.
+	// Another project's dead repo_root does not cause it: that project is
+	// skipped (see /health sandbox_protect.skipped_project_layers).
+	CodeProjectRootMissing = "project_root_missing"
+
 	// CodeIdempotencyConflict (409) means an idempotency key was reused with
 	// a different request. The key stays bound to its original session
 	// (CW-20260930-0229).

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/app"
@@ -14,16 +15,31 @@ import (
 
 // sandboxProtectHealth is the daemon's /health view of protection.
 func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
-	return &daemon.SandboxProtectHealth{
-		Enabled:            h.Enabled,
-		DisabledByOperator: h.DisabledByOperator,
-		Reason:             h.Reason,
-		Codex:              h.Codex.State,
-		CodexReason:        h.Codex.Reason,
-		BwrapChecked:       h.BwrapChecked,
-		BwrapUsable:        h.BwrapUsable,
-		BwrapError:         h.BwrapError,
+	var skipped []daemon.SkippedProjectLayer
+	for _, s := range h.SkippedProjectLayers {
+		skipped = append(skipped, daemon.SkippedProjectLayer{Project: s.Project, RepoRoot: s.RepoRoot, Reason: s.Reason})
 	}
+	return &daemon.SandboxProtectHealth{
+		Enabled:              h.Enabled,
+		DisabledByOperator:   h.DisabledByOperator,
+		Reason:               h.Reason,
+		Codex:                h.Codex.State,
+		CodexReason:          h.Codex.Reason,
+		BwrapChecked:         h.BwrapChecked,
+		BwrapUsable:          h.BwrapUsable,
+		BwrapError:           h.BwrapError,
+		SkippedProjectLayers: skipped,
+		PlanError:            h.PlanError,
+	}
+}
+
+// skippedLayersSummary names the projects protection left out, for a message.
+func skippedLayersSummary(skipped []daemon.SkippedProjectLayer) string {
+	parts := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		parts = append(parts, fmt.Sprintf("%s (%s %s)", s.Project, s.RepoRoot, s.Reason))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // logControlPlaneProtection records at daemon startup whether the agents it
@@ -37,6 +53,8 @@ func logControlPlaneProtection(logf func(string, ...any), h app.ProtectionHealth
 	switch {
 	case !h.Enabled:
 		logf("WARN: control-plane protection %s", h.Reason)
+	case h.PlanError != "":
+		logf("WARN: control-plane protection is on but Tether cannot work out what to protect, so launches of Claude, OpenCode and every agent it wraps are refused (this is not a bubblewrap problem): %s", h.PlanError)
 	case h.BwrapChecked && !h.BwrapUsable:
 		logf("WARN: control-plane protection is on but unusable: %s. Launches of Claude, OpenCode and every agent Tether wraps will be refused until bubblewrap works, or %s=0 is set in this daemon's environment to run agents unprotected; Codex launches are not affected", h.BwrapError, app.ProtectEnv)
 	default:
@@ -97,9 +115,16 @@ func checkSandboxProtect(h *daemon.SandboxProtectHealth, fromDaemon bool) checkR
 			fmt.Sprintf("unset %s in tetherd's environment and restart the daemon to protect them", app.ProtectEnv))
 	case !h.Enabled:
 		return warn(name, fmt.Sprintf("%s (%s)", h.Reason, source), "")
+	case h.PlanError != "":
+		return fail(name, fmt.Sprintf("on, but Tether cannot work out what to protect, so Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected. This is a catalog or filesystem problem, not bubblewrap (%s): %s", source, h.PlanError),
+			"fix what the message names, then restart the daemon; do not change "+app.ProtectEnv)
 	case h.BwrapChecked && !h.BwrapUsable:
 		return fail(name, fmt.Sprintf("on, but bubblewrap cannot build the sandbox, so Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected (%s): %s", source, h.BwrapError),
 			fmt.Sprintf("install bubblewrap and allow unprivileged user namespaces, or set %s=0 in tetherd's environment to run agents unprotected", app.ProtectEnv))
+	}
+	if len(h.SkippedProjectLayers) > 0 {
+		return warn(name, fmt.Sprintf("%s (%s); %d project(s) left out of protection because their repo_root is unusable: %s", h.Reason, source, len(h.SkippedProjectLayers), skippedLayersSummary(h.SkippedProjectLayers)),
+			"restore or remove those projects in the catalog and restart the daemon; until then a protected agent could create that directory and plant a project layer in it")
 	}
 	return ok(name, fmt.Sprintf("%s (%s)", h.Reason, source))
 }
