@@ -332,3 +332,44 @@ func TestCreatedProjectRootsAreWarnedAboutOncePerDaemon(t *testing.T) {
 		}
 	}
 }
+
+// /health lists every project whose layer cannot be protected, with the reason, not
+// only the first one in plan_error: each is a catalog entry to fix, and a launch of an
+// agent Tether protects is refused while any is there.
+func TestProtectionHealthListsEveryUnprotectableProject(t *testing.T) {
+	svc, _, _ := deadRootService(t)
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "a-link")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "nowhere"), link); err != nil {
+		t.Fatal(err)
+	}
+	svc.Catalog.Projects["underit"] = config.Project{RepoRoot: filepath.Join(file, "child")}
+	svc.Catalog.Projects["linked"] = config.Project{RepoRoot: link}
+
+	h := svc.ProtectionHealth()
+	got := map[string]string{}
+	for _, u := range h.UnprotectableProjectLayers {
+		got[u.Project] = u.Why
+	}
+	if len(got) != 2 || !strings.Contains(got["underit"], "a file is in the way") || !strings.Contains(got["linked"], "replace the symlink with the real directory") {
+		t.Fatalf("unprotectable project layers = %+v; want underit and linked, each with its reason", h.UnprotectableProjectLayers)
+	}
+	for _, want := range []string{`project "underit"`, `project "linked"`} {
+		if !strings.Contains(h.PlanError, want) {
+			t.Fatalf("plan error %q does not name %s", h.PlanError, want)
+		}
+	}
+	for _, u := range h.UnprotectableProjectLayers {
+		if u.RepoRoot == "" {
+			t.Fatalf("%+v has no repo_root", u)
+		}
+	}
+	// A plan failure that is about something else lists none.
+	svc.Catalog.Projects = map[string]config.Project{"rootfs": {RepoRoot: "/"}}
+	if h := svc.ProtectionHealth(); h.PlanError == "" || len(h.UnprotectableProjectLayers) != 1 {
+		t.Fatalf("plan error %q, layers %+v; a repo_root of / is an unprotectable layer too", h.PlanError, h.UnprotectableProjectLayers)
+	}
+}

@@ -27,19 +27,24 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 	for _, a := range h.AnchoredProjectAncestors {
 		anchored = append(anchored, daemon.AnchoredProjectAncestor{Project: a.Project, RepoRoot: a.RepoRoot, Ancestor: a.Ancestor, Reason: a.Reason})
 	}
+	var unprotectable []daemon.UnprotectableProjectLayer
+	for _, u := range h.UnprotectableProjectLayers {
+		unprotectable = append(unprotectable, daemon.UnprotectableProjectLayer{Project: u.Project, RepoRoot: u.RepoRoot, Why: u.Why})
+	}
 	return &daemon.SandboxProtectHealth{
-		Enabled:                  h.Enabled,
-		DisabledByOperator:       h.DisabledByOperator,
-		Reason:                   h.Reason,
-		Codex:                    h.Codex.State,
-		CodexReason:              h.Codex.Reason,
-		BwrapChecked:             h.BwrapChecked,
-		BwrapUsable:              h.BwrapUsable,
-		BwrapError:               h.BwrapError,
-		SkippedProjectLayers:     skipped,
-		CreatedProjectRoots:      created,
-		AnchoredProjectAncestors: anchored,
-		PlanError:                h.PlanError,
+		Enabled:                    h.Enabled,
+		DisabledByOperator:         h.DisabledByOperator,
+		Reason:                     h.Reason,
+		Codex:                      h.Codex.State,
+		CodexReason:                h.Codex.Reason,
+		BwrapChecked:               h.BwrapChecked,
+		BwrapUsable:                h.BwrapUsable,
+		BwrapError:                 h.BwrapError,
+		SkippedProjectLayers:       skipped,
+		CreatedProjectRoots:        created,
+		AnchoredProjectAncestors:   anchored,
+		UnprotectableProjectLayers: unprotectable,
+		PlanError:                  h.PlanError,
 	}
 }
 

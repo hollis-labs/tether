@@ -185,6 +185,45 @@ type UnprotectedProjectLayer struct {
 	Why      string `json:"why"`
 }
 
+// UnprotectableLayersError is what a strict call returns when SEVERAL projects'
+// layers cannot be protected: all of them, so that one broken entry does not hide
+// the next. Each is an *UnprotectableLayerError (errors.As finds the first; see
+// UnprotectableLayers for all of them). A single one is returned as itself.
+type UnprotectableLayersError struct {
+	Layers []*UnprotectableLayerError
+}
+
+func (e *UnprotectableLayersError) Error() string {
+	parts := make([]string, 0, len(e.Layers))
+	for _, l := range e.Layers {
+		parts = append(parts, l.Error())
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Unwrap lets errors.As find each *UnprotectableLayerError.
+func (e *UnprotectableLayersError) Unwrap() []error {
+	out := make([]error, 0, len(e.Layers))
+	for _, l := range e.Layers {
+		out = append(out, l)
+	}
+	return out
+}
+
+// UnprotectableLayers lists every project layer err says cannot be protected, or
+// nil when err is not about that.
+func UnprotectableLayers(err error) []*UnprotectableLayerError {
+	var many *UnprotectableLayersError
+	if errors.As(err, &many) {
+		return many.Layers
+	}
+	var one *UnprotectableLayerError
+	if errors.As(err, &one) {
+		return []*UnprotectableLayerError{one}
+	}
+	return nil
+}
+
 // CatalogProtection is what PrepareCatalogProtection decided.
 type CatalogProtection struct {
 	// Dirs are the real paths to bind read-only, in a stable order.
@@ -353,10 +392,16 @@ func PrepareCatalogProtectionWith(catalogRoot string, cat *Catalog, opts Protect
 		out.Unprotected = append(out.Unprotected, UnprotectedProjectLayer{Project: project, RepoRoot: repoRoot, Why: layerErr.Why})
 		return true
 	}
+	var broken []*UnprotectableLayerError // strict: every project that cannot be protected, not the first only
 	for _, p := range projects {
 		d, err := decideProject(p, opts.Launching)
 		if err != nil {
 			if tolerated(p.id, p.repoRoot, err) {
+				continue
+			}
+			var layerErr *UnprotectableLayerError
+			if errors.As(err, &layerErr) {
+				broken = append(broken, layerErr)
 				continue
 			}
 			return CatalogProtection{}, err
@@ -374,6 +419,16 @@ func PrepareCatalogProtectionWith(catalogRoot string, cat *Catalog, opts Protect
 		if d.placeholder != nil {
 			out.CreatedRoots = append(out.CreatedRoots, *d.placeholder)
 		}
+	}
+
+	// Every project was examined and nothing has been created yet: a strict call that
+	// found layers it cannot protect fails here, naming all of them.
+	switch len(broken) {
+	case 0:
+	case 1:
+		return CatalogProtection{}, broken[0]
+	default:
+		return CatalogProtection{}, &UnprotectableLayersError{Layers: broken}
 	}
 
 	roots := []string{Expand(catalogRoot)}
@@ -472,7 +527,7 @@ func decideProject(p projectLayer, launching string) (decision, error) {
 		if link, err := replaceableSymlink(p.repoRoot); err != nil {
 			return decision{}, unprotectable(p, "cannot be examined: %v", err)
 		} else if link != "" {
-			return decision{}, unprotectable(p, "runs through a symlink an agent can replace (%s): it could put a real directory with a planted layer where the link is, and protection cannot pin a symlink: point the project at the real path", link)
+			return decision{}, unprotectable(p, "runs through a symlink an agent can replace (%s): it could put a real directory with a planted layer where the link is, and protection cannot pin a symlink: replace the symlink with the real directory, or fix the project's repo_root to the real path", link)
 		}
 		d.plan = &layerPlan{project: p.id, repoRoot: p.repoRoot, layer: p.root}
 		return d, nil
@@ -487,7 +542,7 @@ func decideProject(p projectLayer, launching string) (decision, error) {
 	if link, err := replaceableSymlink(p.repoRoot); err != nil {
 		return decision{}, unprotectable(p, "cannot be examined: %v", err)
 	} else if link != "" {
-		return decision{}, unprotectable(p, "runs through a symlink an agent can replace (%s): it could unlink it and create the root itself, and protection cannot pin a symlink: point the project at the real path", link)
+		return decision{}, unprotectable(p, "runs through a symlink an agent can replace (%s): it could unlink it and create the root itself, and protection cannot pin a symlink: replace the symlink with the real directory, or fix the project's repo_root to the real path", link)
 	}
 	target := RealPath(p.repoRoot) // where an agent's mkdir would land
 	ancestor, blocked, err := nearestExistingDir(target)

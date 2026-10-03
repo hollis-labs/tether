@@ -173,6 +173,11 @@ func TestSandboxProtectHealthCarriesSkippedLayersAndPlanError(t *testing.T) {
 		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
 		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
 	}
+	withUnprotectable := healthFor("linux", nil, nil)
+	withUnprotectable.UnprotectableProjectLayers = []config.UnprotectedProjectLayer{{Project: "linked", RepoRoot: "/home/u/linked", Why: "runs through a symlink"}}
+	if got := sandboxProtectHealth(withUnprotectable).UnprotectableProjectLayers; !reflect.DeepEqual(got, []daemon.UnprotectableProjectLayer{{Project: "linked", RepoRoot: "/home/u/linked", Why: "runs through a symlink"}}) {
+		t.Fatalf("unprotectable layers in /health = %+v", got)
+	}
 	if got := sandboxProtectHealth(withAnchored(healthFor("linux", nil, nil), anchoredProjects()...)).AnchoredProjectAncestors; !reflect.DeepEqual(got, []daemon.AnchoredProjectAncestor{{Project: "nas", RepoRoot: "/mnt/nas/repo", Ancestor: "/mnt/nas", Reason: "anchored read-only"}}) {
 		t.Fatalf("anchored ancestors in /health = %+v", got)
 	}

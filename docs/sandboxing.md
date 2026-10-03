@@ -431,11 +431,20 @@ on whether an agent could:
   layer where it was, and the loader reads the layer through the link, so anchoring
   the link's target does not pin anything. This was reproduced, for a dangling link
   whose target chain is root-owned (skipped, then planted), and holds for a link
-  whose target exists. The launch is refused (403 `project_layer_unprotectable`)
-  naming the link; the fix is to point the project at the real path. A link out of
-  the agent's reach (a system link such as `/lib -> usr/lib`) is followed. This is
-  the one place where a layout that used to launch now refuses: it was never
-  protected.
+  whose target exists. The launch is refused (403 `project_layer_unprotectable`),
+  naming the project, the path and the link, with the remedy: replace the symlink
+  with the real directory, or fix the project's `repo_root` to the real path. Every
+  such project is listed in `sandbox_protect.unprotectable_project_layers` (all of
+  them, with why), and `plan_error` carries the same. A link out of the agent's
+  reach (a system link such as `/lib -> usr/lib`) is followed. This is the one place
+  where a layout that used to launch now refuses: it was never protected.
+  **Unavoidably, this refuses every launch of an agent Tether protects, not only
+  that project's:** the loader reads every project's layer on every launch, so the
+  agent of any project could plant into the symlinked one. The two ways to narrow it
+  were rejected: anchoring the directory that holds the link (normally the user's
+  writable work area, so it would refuse or break far more), and not loading that
+  project's layer (a silent change to what the catalog resolves). The planted proxy of
+  a Codex launch and the MCP gateway are not refused (see below).
 - A root that **cannot be examined** (permission denied, a symlink loop) is the same
   typed refusal, not a bare 500. A root with a **name too long to exist** is
   skipped: nobody can create it.

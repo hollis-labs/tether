@@ -564,6 +564,11 @@ type SandboxProtectHealth struct {
 	// protection anchored that directory read-only: inside the sandbox it cannot be
 	// made writable, written to or renamed. Each is a stale catalog entry to fix.
 	AnchoredProjectAncestors []AnchoredProjectAncestor `json:"anchored_project_ancestors,omitempty"`
+	// UnprotectableProjectLayers lists EVERY project whose layer cannot be protected
+	// and cannot be left open, each with why and what to fix (plan_error carries the
+	// same, joined). Launches of agents Tether protects are refused with 403
+	// project_layer_unprotectable while any is listed.
+	UnprotectableProjectLayers []UnprotectableProjectLayer `json:"unprotectable_project_layers,omitempty"`
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until that is fixed. It is a
 	// catalog or filesystem problem, not a bubblewrap one; bwrap_checked and
@@ -576,6 +581,13 @@ type SkippedProjectLayer struct {
 	Project  string `json:"project"`
 	RepoRoot string `json:"repo_root"`
 	Reason   string `json:"reason"`
+}
+
+// UnprotectableProjectLayer is one project whose layer cannot be protected, and why.
+type UnprotectableProjectLayer struct {
+	Project  string `json:"project"`
+	RepoRoot string `json:"repo_root"`
+	Why      string `json:"why"`
 }
 
 // AnchoredProjectAncestor is one unwritable directory protection anchored

@@ -401,7 +401,7 @@ func TestPrepareCatalogProtectionRefusesASymlinkRootAnAgentCanReplace(t *testing
 		if !errors.As(err, &layerErr) || layerErr.Project != "p" {
 			t.Fatalf("%s: err = %v; want an *UnprotectableLayerError naming p", name, err)
 		}
-		for _, want := range []string{"symlink an agent can replace", " -> ", "point the project at the real path"} {
+		for _, want := range []string{"symlink an agent can replace", " -> ", "replace the symlink with the real directory, or fix the project's repo_root to the real path"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("%s: message %q does not mention %q", name, err.Error(), want)
 			}
@@ -1031,5 +1031,67 @@ func TestPrepareCatalogProtectionTypesAFailureToCreateAPlaceholder(t *testing.T)
 	got, err := PrepareCatalogProtectionWith(s2.catalogRoot, s2.cat, ProtectionOptions{Tolerate: true})
 	if err != nil || len(got.Unprotected) != 1 || got.Unprotected[0].Project != "dead-a" {
 		t.Fatalf("tolerant: unprotected=%+v err=%v", got.Unprotected, err)
+	}
+}
+
+// A strict call names EVERY project it cannot protect, not the first (so one broken
+// entry does not hide the next, and /health can list them all), and it does so
+// before anything is created. One broken project comes back as itself.
+func TestPrepareCatalogProtectionStrictNamesEveryProjectItCannotProtect(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	catalogRoot := filepath.Join(base, "catalog")
+	fine := filepath.Join(base, "repos", "fine")
+	for _, d := range []string{filepath.Join(base, "home"), catalogRoot, fine} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(base, "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "a-link")
+	if err := os.Symlink(filepath.Join(base, "nowhere"), link); err != nil {
+		t.Fatal(err)
+	}
+	cat := &Catalog{Projects: map[string]Project{
+		"fine":     {RepoRoot: fine},
+		"underit":  {RepoRoot: filepath.Join(file, "child")},
+		"linked":   {RepoRoot: link},
+		"gone-now": {RepoRoot: filepath.Join(base, "repos", "gone-now")},
+	}}
+	_, err := PrepareCatalogProtection(catalogRoot, cat, "fine")
+	layers := UnprotectableLayers(err)
+	names := []string{}
+	for _, l := range layers {
+		names = append(names, l.Project)
+	}
+	sort.Strings(names)
+	if strings.Join(names, ",") != "linked,underit" {
+		t.Fatalf("unprotectable layers = %v (err %v); want linked and underit, both", names, err)
+	}
+	for _, want := range []string{`project "linked"`, `project "underit"`, "replace the symlink with the real directory", "a file is in the way"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q does not mention %q", err.Error(), want)
+		}
+	}
+	var one *UnprotectableLayerError
+	if !errors.As(err, &one) {
+		t.Fatalf("errors.As cannot find an *UnprotectableLayerError in %v", err)
+	}
+	for _, d := range []string{filepath.Join(fine, ".tether"), filepath.Join(base, "repos", "gone-now"), filepath.Join(base, "home", ".tether")} {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Fatalf("the refused call created %s (%v)", d, err)
+		}
+	}
+	delete(cat.Projects, "linked")
+	_, err = PrepareCatalogProtection(catalogRoot, cat, "fine")
+	var many *UnprotectableLayersError
+	if errors.As(err, &many) || len(UnprotectableLayers(err)) != 1 || UnprotectableLayers(err)[0].Project != "underit" {
+		t.Fatalf("one broken project: err = %v (%T); want it as an *UnprotectableLayerError for underit", err, err)
+	}
+	if got := UnprotectableLayers(errors.New("something else")); got != nil {
+		t.Fatalf("UnprotectableLayers of an unrelated error = %v; want nil", got)
 	}
 }

@@ -489,7 +489,13 @@ is missing under a directory that is not writable but that an agent can get past
 it): protection anchored that directory read-only (it cannot be made writable,
 written to or renamed inside the sandbox), so nothing can be planted under it, and
 no launch is refused for it except one whose own directories lie inside it.
-`skipped_project_layers` lists projects whose `repo_root` is
+`unprotectable_project_layers` lists every project whose layer cannot be protected
+and cannot be left open (`project`, `repo_root`, and `why`, which says what to fix:
+for a symlink, to replace it with the real directory or fix `repo_root`); `plan_error`
+carries the same joined. Launches of agents Tether protects are refused with 403
+`project_layer_unprotectable` while any is listed, whichever project is launched (the
+loader reads every project's layer on every launch). `skipped_project_layers` lists
+projects whose `repo_root` is
 unusable AND that no agent could create: the agent runs as the daemon's user, so
 nothing from the nearest existing directory above the root up to `/` may be owned by
 that user or writable by it, and no symlink in the path may be one the agent can

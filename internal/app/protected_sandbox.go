@@ -101,6 +101,14 @@ type ProtectionHealth struct {
 	// protection anchored that directory read-only. Each is a stale catalog entry to
 	// fix; launches of every other project work.
 	AnchoredProjectAncestors []config.AnchoredAncestor
+	// UnprotectableProjectLayers lists EVERY project whose layer cannot be protected
+	// and cannot be left open (a repo_root through a file or a symlink an agent can
+	// replace, or that cannot be examined). Launches of agents Tether protects are
+	// refused while any is listed (403 project_layer_unprotectable): the loader reads
+	// every project's layer for every launch, so one is enough to plant into. The
+	// MCP gateway and a Codex launch's proxy are not refused. Empty when
+	// PlanError is about something else.
+	UnprotectableProjectLayers []config.UnprotectedProjectLayer
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until it is fixed. It is NOT a
 	// bubblewrap problem, and BwrapChecked/BwrapUsable still say what the probe
@@ -141,6 +149,7 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 	// "the catalog root is not set", blaming bubblewrap for a catalog problem.
 	probeDir := ""
 	var prepared config.CatalogProtection
+	var unprotectable []config.UnprotectedProjectLayer
 	planErr := ""
 	if st.Enabled {
 		if root := config.Expand(s.CatalogRoot); root != "" {
@@ -151,12 +160,16 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 		var err error
 		if _, prepared, err = s.controlPlane(config.ProtectionOptions{}); err != nil {
 			planErr = err.Error()
+			for _, l := range config.UnprotectableLayers(err) {
+				unprotectable = append(unprotectable, config.UnprotectedProjectLayer{Project: l.Project, RepoRoot: l.Root, Why: l.Why})
+			}
 		}
 	}
 	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
 	h.SkippedProjectLayers = prepared.Skipped
 	h.CreatedProjectRoots = prepared.CreatedRoots
 	h.AnchoredProjectAncestors = prepared.AnchoredAncestors
+	h.UnprotectableProjectLayers = unprotectable
 	h.PlanError = planErr
 	sort.Slice(h.CreatedProjectRoots, func(i, j int) bool { return h.CreatedProjectRoots[i].Project < h.CreatedProjectRoots[j].Project })
 	return h
