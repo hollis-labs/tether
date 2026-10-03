@@ -1949,7 +1949,7 @@ Body: `UpdatePatch` JSON. Partial-merge semantics:
 {
   "title": "Tether Sprint Implementer",
   "skills": {"mode": "append", "value": [{"name": "go-generics", "learned_at": "2026-05-20T00:00:00Z"}]},
-  "last_updated_by": "chrispian@local"
+  "last_updated_by": "operator@example"
 }
 ```
 
