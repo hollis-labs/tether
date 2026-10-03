@@ -45,7 +45,7 @@ Defined codes:
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
-| `project_root_missing` | 409 | the project a launch is for has a `repo_root` that does not exist or is not a directory, so the launch can be neither protected nor run; the message names the project and the path. Another project's dead `repo_root` does not cause it: that project is skipped and listed in `/health` `sandbox_protect.skipped_project_layers` |
+| `project_root_missing` | 409 | the project a launch is for has a `repo_root` that does not exist or is not a directory, so the launch can be neither protected nor run; the message names the project and the path. Another project's dead `repo_root` does not cause it: the root is created holding only an anchored `.tether` (see `/health` `sandbox_protect.created_project_roots`), or skipped where no agent could create it (`skipped_project_layers`) |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
 | `reply_target_not_a_session` | 400 | `POST /messages/{id}/reply` named a message that is not a channel publication from a Tether session (an ordinary mailbox message keeps the mailbox path), so there is no session to deliver to |
@@ -457,8 +457,8 @@ Response:
     "codex_reason": "not protected (CW-20261001-0230): codex runs under its own workspace-write sandbox … and codex spawns every MCP server it is given outside that sandbox …",
     "bwrap_checked": true,
     "bwrap_usable": true,
-    "skipped_project_layers": [
-      {"project": "old-site", "repo_root": "/home/me/dev/old-site", "reason": "does not exist"}
+    "created_project_roots": [
+      {"project": "old-site", "repo_root": "/home/me/dev/old-site", "reason": "does not exist and an agent could have created it (/home/me/dev is writable): it was created holding only an empty .tether, anchored read-only, so a protected agent cannot plant a layer there"}
     ]
   }
 }
@@ -472,11 +472,16 @@ is present when `TETHER_SANDBOX_PROTECT=0` turned it off; `reason` says what the
 state means for an agent. On Linux with protection on, the daemon probes
 bubblewrap: `bwrap_usable` is false, with `bwrap_error`, when it cannot build the
 sandbox, in which case every launch except Codex's is refused (`bwrap_usable` is
-omitted, not `null`, when it is false). `skipped_project_layers` lists registered
-projects whose `repo_root` does not exist or is not a directory: protection leaves
-their layer out, every other project's launches work, and each entry is a catalog
-problem to fix (until it is, a protected agent could create that directory and
-plant a project layer in it). `plan_error` is present when Tether cannot work out
+omitted, not `null`, when it is false). `created_project_roots` lists registered
+projects whose `repo_root` did not exist and that an agent could have created
+(the nearest existing directory above it is writable by the daemon's user):
+protection created the root holding only an empty `.tether` and anchored it
+read-only, so a protected agent cannot plant a project layer there. It is kept
+for the daemon's lifetime (afterwards the root exists), and each entry is a stale
+catalog entry to fix. `skipped_project_layers` lists projects whose `repo_root` is
+unusable AND that no agent could create (that directory is not writable), so there
+is nothing to plant into; their layer is left out. Every project's launches work
+either way. `plan_error` is present when Tether cannot work out
 what to protect at all, and every launch it must protect is refused until that is
 fixed; it is a catalog or filesystem problem, never a bubblewrap one, and
 `bwrap_checked`/`bwrap_usable` still report the host probe on their own. `codex` is how
