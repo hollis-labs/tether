@@ -5110,6 +5110,8 @@ func writeDaemonActionError(w http.ResponseWriter, err error) {
 	writeJSON(w, status, actionResponse{Error: err.Error()})
 }
 
+// Detached and orphaned sessions are non-terminal; preserve their workspaces
+// and checkpoints for reconciliation or resume.
 func cleanupCandidateSessionIDs(db *sql.DB, cutoff string, limit int) ([]string, error) {
 	rows, err := db.Query(
 		`SELECT id FROM sessions

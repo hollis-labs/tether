@@ -12,9 +12,9 @@ const (
 
 	// KindSessionStateChanged is emitted by the eventSinkAdapter wired
 	// into agentsessions.Manager on each session lifecycle transition
-	// (created → launching → running → completed|failed|killed; the
-	// adapter maps the lib's "done" to "completed", and a terminal state
-	// after a stop request to "killed").
+	// (including detached/orphaned recovery; only completed/failed/killed
+	// are terminal). The adapter maps the lib's "done" to "completed", and a terminal state
+	// after a stop request to "killed".
 	// Payload schema:
 	//   {"from":"<prev>","to":"<next>","exit_code":<int,optional>,"reason":"<string,optional>"}
 	KindSessionStateChanged = "session.state_changed"
