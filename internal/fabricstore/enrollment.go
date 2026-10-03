@@ -151,7 +151,25 @@ func (r *Repository) Snapshot(ctx context.Context, agentURN, sessionURN mesh.URN
 				return result, err
 			}
 			result.Instance = &instance
+			if sessionURN == "" {
+				session, err := read[mesh.Session](ctx, tx, sessions, string(head.Value.Lease.SessionURN))
+				if err != nil {
+					return result, err
+				}
+				if session.Value.AgentURN != agentURN {
+					return result, invalid("binding session belongs to another agent")
+				}
+				result.Session = &session
+			}
 		}
 	}
 	return result, tx.Commit()
+}
+
+// Definition and Artifact read within the reserved writer transaction.
+func (tx *Tx) Definition(id, revision string) (Record[DefinitionRevision], error) {
+	return read[DefinitionRevision](tx.ctx, tx.conn, definitions, tuple(id, revision))
+}
+func (tx *Tx) Artifact(pin mesh.DefinitionRef, digest string) (Record[DefinitionArtifact], error) {
+	return read[DefinitionArtifact](tx.ctx, tx.conn, artifacts, tuple(pin.ID, pin.Revision, digest))
 }
