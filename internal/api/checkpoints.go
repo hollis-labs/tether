@@ -15,6 +15,7 @@ import (
 	agentmodel "github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -323,7 +324,7 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 			strings.Contains(msg, "no checkpoint"),
 			strings.Contains(msg, "no rows"):
 			writeError(w, http.StatusNotFound, CodeNotFound, "no checkpoint found for agent "+agentID)
-		case strings.Contains(msg, "never launched"):
+		case errors.Is(err, session.ErrDetached), strings.Contains(msg, "never launched"):
 			writeError(w, http.StatusConflict, CodeConflict, msg)
 		default:
 			writeError(w, http.StatusInternalServerError, CodeInternalError, msg)

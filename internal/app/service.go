@@ -308,7 +308,9 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 }
 
 // ReconcileStaleState settles sessions the previous daemon left in
-// launching/running, and any open client_attachments. Intended for daemon
+// launching/running/detached, and any open client_attachments. Detached
+// sessions without shim reconciliation become orphaned, with authority revoked;
+// existing orphaned rows are left alone. Intended for daemon
 // startup only — `tether mcp` and other catalog-reading subcommands MUST
 // NOT call this, because they may run concurrently with a live daemon
 // (e.g. when a session spawns tether mcp as an MCP subprocess), and
@@ -317,7 +319,8 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 //
 // A session whose process survived the restart is spared (CW-20260912-0085):
 // its row keeps its state, though this daemon holds no runtime handle for it
-// and cannot steer or stop it. A truthful state for that is CW-20260912-0086.
+// and cannot steer or stop it. Shim reconciliation handles detached sessions
+// separately; direct-launch process survivors keep this legacy behavior.
 // Every other one is failed with exit_code -1, "swept at daemon start", and
 // its bindings are revoked below. On a systemd host with the default
 // KillMode=control-group the agents die with the daemon, so a restart there
@@ -329,7 +332,16 @@ func (s *Service) ReconcileStaleState() {
 	if err != nil {
 		log.Printf("store: startup sweep failed: %v", err)
 	}
-	s.reportSweep(swept, spared)
+	var failed []string
+	for _, id := range swept {
+		row, err := s.Store.GetSession(id)
+		if err == nil && row.State == string(session.StateOrphaned) {
+			s.publishSessionStateChange(store.SessionStateChange{SessionID: id, LogicalAgentID: row.LogicalAgentID, From: string(session.StateDetached), To: row.State, Reason: "shim_reconcile_disabled"})
+		} else {
+			failed = append(failed, id)
+		}
+	}
+	s.reportSweep(failed, spared)
 	if swept, err := s.Store.SweepStaleAttachments(now); err == nil && swept > 0 {
 		log.Printf("store: swept %d stale client_attachments row(s)", swept)
 	}
@@ -345,6 +357,9 @@ func (s *Service) ReconcileStaleState() {
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
 func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
+	if row.State == string(session.StateDetached) {
+		return false
+	}
 	procs := s.procs
 	if procs == nil {
 		procs = osProcessInspector{}
@@ -445,7 +460,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 			continue // not a Tether session, or unreadable: not ours to revoke
 		}
 		switch session.State(row.State) {
-		case session.StateCompleted, session.StateFailed, session.StateKilled:
+		case session.StateCompleted, session.StateFailed, session.StateKilled, session.StateOrphaned:
 		default:
 			continue
 		}

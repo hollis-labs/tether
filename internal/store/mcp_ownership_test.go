@@ -20,6 +20,7 @@ func TestMCPUpstreamSessionCountsUsesCapturedActiveOwnership(t *testing.T) {
 		{"old", "", "running", "cli"}, {"legacy", "legacy_proxy", "running", "cli"},
 		{"thin", "daemon", "launching", "cli"}, {"ended", "daemon", "completed", "cli"},
 		{"api", "daemon", "running", "api"},
+		{"detached", "daemon", "detached", "cli"}, {"orphaned", "daemon", "orphaned", "cli"},
 	} {
 		if err := db.CreateSession(SessionRow{ID: tc.id, LogicalAgentID: "agent", State: "created", ProviderKind: tc.provider}, &launch.Plan{}); err != nil {
 			t.Fatal(err)
@@ -34,7 +35,7 @@ func TestMCPUpstreamSessionCountsUsesCapturedActiveOwnership(t *testing.T) {
 		}
 	}
 	counts, err := db.MCPUpstreamSessionCounts(ctx)
-	if err != nil || counts["legacy_proxy"] != 1 || counts["daemon"] != 1 || counts["unknown"] != 1 {
+	if err != nil || counts["legacy_proxy"] != 1 || counts["daemon"] != 2 || counts["unknown"] != 1 {
 		t.Fatalf("captured active counts: %v %v", counts, err)
 	}
 }

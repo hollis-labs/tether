@@ -527,9 +527,12 @@ sandbox). An older daemon omits the field.
 
 ## Sessions
 
-Sessions move through `created → launching → running → {completed|failed|killed}`.
+Direct-launch sessions move through `created → launching → running → {completed|failed|killed}`.
+Shim recovery additionally uses the non-terminal `detached` and `orphaned` states.
 `POST /sessions` creates (state=created); `POST /sessions/{id}/launch` starts.
-What each terminal state means is under
+The full vocabulary is `created`, `ready`, `launching`, `running`, `detached`,
+`orphaned`, `completed`, `failed`, and `killed`. State filters use exact matches.
+What each state means is under
 [Driving sessions from an orchestrator](#driving-sessions-from-an-orchestrator).
 
 ### `POST /sessions`
@@ -791,6 +794,9 @@ launching | running ──crash, then restart, process gone──▶ failed   ex
 |-------------|----------|-------------------------------------------------------------------|-------------------------------------|
 | `created`   | no       | `POST /sessions`, or resume                                       | —                                   |
 | `launching` | no       | `POST /sessions/{id}/launch`                                      | —                                   |
+| `ready`     | no       | reserved runtime preparation state (currently not written)        | —                                   |
+| `detached`  | no       | child alive, daemon disconnected; shim reconciliation can reattach | —                                  |
+| `orphaned`  | no       | shim and child gone, or shim reconciliation disabled at restart   | —                                   |
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
 | `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
@@ -809,9 +815,27 @@ previous daemon left `launching` or `running`:
 Each sweep that acts publishes one `daemon.sessions_swept` event that names
 both sets.
 
-A spared session is still `running`, but the new daemon holds no runtime
-handle for it, so it cannot be steered or stopped through Tether. A state
-that says so is CW-20260912-0086.
+A spared direct-launch session is still `running`, but the new daemon holds no
+runtime handle for it, so it cannot be steered or stopped through Tether.
+
+`detached` means a shim-hosted child is alive while the daemon is disconnected.
+It preserves the child PID, credentials, bindings and workspace. This is distinct
+from client detach (`client_attachments.detached_at`, CLI Ctrl-]), which does not
+change the session state. `orphaned` means the shim and child are gone: credentials
+and all binding generations are revoked, and the stale PID is cleared. Neither
+state is terminal; no exit code or `ended_at` is invented. Workspace cleanup
+preserves both states. Resume from an orphaned checkpoint creates a new session;
+resume from a detached checkpoint returns HTTP 409 `conflict`, because its child
+is still alive and the shim reconciler must reattach it.
+
+The state plumbing alone does not move launches into these states. The opt-in
+shim integration owns those transitions. With the shim path disabled, existing
+launching/running sweep and shutdown behavior stays as described here. If startup
+finds a detached row with no shim reconciler, it moves to orphaned with reason
+`shim_reconcile_disabled`, regardless of PID liveness. Already orphaned rows are
+left alone. Recovery transitions emit the existing `session.state_changed`
+payload `{from, to, reason}`; reasons include `daemon-shutdown`,
+`shim_unreachable`, `shim_reconcile_disabled`, and `shim_gone`.
 
 Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
 liveness and are not backfilled. Treat their `exit_code` -1 the same way.
