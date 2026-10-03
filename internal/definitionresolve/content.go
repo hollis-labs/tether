@@ -34,7 +34,9 @@ type ContentPin struct {
 
 // ContentProvider is a trusted, explicitly configured content port. Implementors
 // must enforce confinement and stable read ownership; verification grants no
-// authority to use a subsequently reopened mutable resource.
+// authority to use a subsequently reopened mutable resource. Missing authored
+// content must return ErrContent, while a missing host root is operational; bare
+// ENOENT from a provider fails directory queries rather than omitting a row.
 type ContentProvider interface {
 	ReadDefinition(context.Context, string) ([]byte, error)
 	Pin(context.Context, string) (ContentPin, error)
@@ -43,10 +45,17 @@ type ContentProvider interface {
 // LocalContent keeps a descriptor for a host-authorized, canonicalized root.
 // It never expands environment values or fetches network content. The host must
 // keep this authored tree stable during verification and any later use.
-type LocalContent struct{ root *os.Root }
+type LocalContent struct {
+	root      *os.Root
+	canonical string
+}
 
 func NewLocalContent(authorizedRoot string) (*LocalContent, error) {
 	canonical, err := filepath.EvalSymlinks(authorizedRoot)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err = filepath.Abs(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +63,28 @@ func NewLocalContent(authorizedRoot string) (*LocalContent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &LocalContent{root: root}, nil
+	return &LocalContent{root: root, canonical: canonical}, nil
 }
 func (p *LocalContent) Close() error { return p.root.Close() }
 
 func contentError(reason string) error { return fmt.Errorf("%w: %s", ErrContent, reason) }
+
+// Missing paths inside an already opened root are stale authored content.
+// A vanished or replaced host root and other I/O faults retain operational errors.
+func (p *LocalContent) localContentError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		current, statErr := os.Stat(p.canonical)
+		if statErr != nil || !current.IsDir() {
+			return err
+		}
+		opened, statErr := p.root.Stat(".")
+		if statErr != nil || !os.SameFile(current, opened) {
+			return err
+		}
+		return contentError("content no longer exists beneath authorized root")
+	}
+	return err
+}
 func relative(uri string) (string, error) {
 	name, ok := strings.CutPrefix(uri, "catalog:")
 	if !ok {
@@ -92,7 +118,7 @@ func (p *LocalContent) inspect(name string) (fs.FileInfo, error) {
 		var err error
 		info, err = p.root.Lstat(strings.Join(parts[:i+1], "/"))
 		if err != nil {
-			return nil, err
+			return nil, p.localContentError(err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			return nil, contentError("symlink beneath authorized root")
@@ -114,50 +140,50 @@ const maxContentDepth = 64
 
 func (p *LocalContent) readFile(ctx context.Context, name string, limit int64) ([]byte, fs.FileInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	before, err := p.inspect(name)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	if !before.Mode().IsRegular() {
 		return nil, nil, contentError("expected a regular file")
 	}
 	file, err := openRegular(p.root, name)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
 		return nil, nil, contentError("file changed while opening")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	if int64(len(data)) > limit {
 		return nil, nil, contentError("content size limit exceeded")
 	}
 	after, err := file.Stat()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	if opened.Size() != after.Size() || !opened.ModTime().Equal(after.ModTime()) || opened.Mode() != after.Mode() {
 		return nil, nil, contentError("file changed during read")
 	}
 	current, err := p.inspect(name)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	if !os.SameFile(opened, current) {
 		return nil, nil, contentError("file replaced during read")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, p.localContentError(err)
 	}
 	return data, opened, nil
 }
@@ -211,7 +237,7 @@ func (p *LocalContent) Pin(ctx context.Context, uri string) (ContentPin, error) 
 		visited := 0
 		err = fs.WalkDir(p.root.FS(), name, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
-				return walkErr
+				return p.localContentError(walkErr)
 			}
 			if err := ctx.Err(); err != nil {
 				return err

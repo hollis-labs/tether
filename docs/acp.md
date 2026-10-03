@@ -77,7 +77,7 @@ name you pick here shows up in the Assistant panel's agent picker.
       "command": "tether",
       "args": ["acp", "--agent", "claude-stream"],
       "env": {
-        "TETHER_ACP_TOKEN": "your-token-here"
+        "TETHER_ACP_TOKEN": "<your-token>"
       }
     }
   }
@@ -111,7 +111,7 @@ root. Place this in your repo (or `~/.config/acp.json` for global default):
   "command": "tether",
   "args": ["acp", "--agent", "claude-stream"],
   "env": {
-    "TETHER_ACP_TOKEN": "your-token-here"
+    "TETHER_ACP_TOKEN": "<your-token>"
   }
 }
 ```
@@ -133,7 +133,7 @@ require('avante').setup({
     tether = {
       command = 'tether',
       args = {'acp', '--agent', 'claude-stream'},
-      env = {TETHER_ACP_TOKEN = 'your-token-here'},
+      env = {TETHER_ACP_TOKEN = '<your-token>'},
     },
   },
 })

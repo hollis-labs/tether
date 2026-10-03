@@ -25,8 +25,8 @@ func TestReonboardProjects(t *testing.T) {
 	tetherYAML := `
 id: tether
 name: Tether Control Plane
-repo_root: /Users/chrispian/dev/hollis-labs/apps/tether
-tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
+repo_root: /srv/example/repos/tether
+tracking_root: /srv/example/tracking/tether
 `
 	if err := os.WriteFile(filepath.Join(projDir, "tether.yaml"), []byte(tetherYAML), 0o644); err != nil {
 		t.Fatalf("write tether.yaml: %v", err)
@@ -34,8 +34,8 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 
 	// 2. Seed a legacy imported row in the database
 	legacyMeta, _ := json.Marshal(map[string]any{
-		"repo_root":     "/Users/chrispian/dev/hollis-labs/apps/legacy",
-		"tracking_root": "/Users/chrispian/dev/agent-os/workspaces/execution/legacy",
+		"repo_root":     "/srv/example/repos/legacy",
+		"tracking_root": "/srv/example/tracking/legacy",
 	})
 	legacyProfile, err := svc.Register(ctx, registry.KindProject, registry.Profile{
 		DisplayName:   "Legacy Project",
@@ -70,7 +70,7 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 	if tetherRow.DisplayName != "Tether Control Plane" {
 		t.Errorf("DisplayName = %q, want 'Tether Control Plane'", tetherRow.DisplayName)
 	}
-	if tetherRow.Props["repo_root"] != "/Users/chrispian/dev/hollis-labs/apps/tether" {
+	if tetherRow.Props["repo_root"] != "/srv/example/repos/tether" {
 		t.Errorf("Props[repo_root] = %q", tetherRow.Props["repo_root"])
 	}
 	if tetherRow.Props["tesseract_namespace"] != "user/chrispian/knowledge/tether" {
@@ -94,7 +94,7 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 	if len(legacyRow.KindMeta) != 0 {
 		t.Errorf("legacy KindMeta = %s, want nil/empty", string(legacyRow.KindMeta))
 	}
-	if legacyRow.Props["repo_root"] != "/Users/chrispian/dev/hollis-labs/apps/legacy" {
+	if legacyRow.Props["repo_root"] != "/srv/example/repos/legacy" {
 		t.Errorf("legacy Props[repo_root] = %q", legacyRow.Props["repo_root"])
 	}
 	if legacyRow.Props["tesseract_namespace"] == "" {
@@ -128,7 +128,7 @@ tracking_root: /Users/chrispian/dev/agent-os/workspaces/execution/tether
 	tetherYAMLUpdated := `
 id: tether
 name: Tether Control Plane Updated
-repo_root: /Users/chrispian/dev/hollis-labs/apps/tether-v2
+repo_root: /srv/example/repos/tether-v2
 `
 	if err := os.WriteFile(filepath.Join(projDir, "tether.yaml"), []byte(tetherYAMLUpdated), 0o644); err != nil {
 		t.Fatalf("write updated tether.yaml: %v", err)
@@ -150,7 +150,7 @@ repo_root: /Users/chrispian/dev/hollis-labs/apps/tether-v2
 	if tetherUpdated.DisplayName != "Tether Control Plane Updated" {
 		t.Errorf("DisplayName = %q, want 'Tether Control Plane Updated'", tetherUpdated.DisplayName)
 	}
-	if tetherUpdated.Props["repo_root"] != "/Users/chrispian/dev/hollis-labs/apps/tether-v2" {
+	if tetherUpdated.Props["repo_root"] != "/srv/example/repos/tether-v2" {
 		t.Errorf("Props[repo_root] = %q, want .../tether-v2", tetherUpdated.Props["repo_root"])
 	}
 }

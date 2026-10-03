@@ -85,7 +85,7 @@ func TestSendInputAndTurn_SandboxWidenedIsForbidden(t *testing.T) {
 // is being denied anything, the catalog entry is stale.
 func TestProjectRootMissingIsAConflictWithItsOwnCode(t *testing.T) {
 	refusal := fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing,
-		&config.ProjectRootError{Project: "chrispian", Root: "/home/u/dev/chrispian", Reason: "does not exist"})
+		&config.ProjectRootError{Project: "chrispian", Root: "/srv/u/dev/chrispian", Reason: "does not exist"})
 	for _, tc := range []struct {
 		name   string
 		svc    *fakeLaunchService
@@ -107,7 +107,7 @@ func TestProjectRootMissingIsAConflictWithItsOwnCode(t *testing.T) {
 			if env.Error.Code != CodeProjectRootMissing {
 				t.Fatalf("code = %q; want %q", env.Error.Code, CodeProjectRootMissing)
 			}
-			for _, want := range []string{`"chrispian"`, "/home/u/dev/chrispian", "does not exist"} {
+			for _, want := range []string{`"chrispian"`, "/srv/u/dev/chrispian", "does not exist"} {
 				if !strings.Contains(env.Error.Message, want) {
 					t.Fatalf("message %q does not mention %s", env.Error.Message, want)
 				}
@@ -123,7 +123,7 @@ func TestProjectRootMissingIsAConflictWithItsOwnCode(t *testing.T) {
 // "forbidden".
 func TestProjectLayerUnprotectableIsForbiddenWithItsOwnCode(t *testing.T) {
 	refusal := fmt.Errorf("%w: %w", launch.ErrProjectLayerUnprotectable,
-		&config.UnprotectableLayerError{Project: "nas", Root: "/home/u/mnt/nas/repo", Why: "runs through a symlink an agent can replace"})
+		&config.UnprotectableLayerError{Project: "nas", Root: "/srv/u/mnt/nas/repo", Why: "runs through a symlink an agent can replace"})
 	for _, tc := range []struct {
 		name   string
 		svc    *fakeLaunchService
@@ -145,7 +145,7 @@ func TestProjectLayerUnprotectableIsForbiddenWithItsOwnCode(t *testing.T) {
 			if env.Error.Code != CodeProjectLayerUnprotectable || env.Error.Code == CodeForbidden {
 				t.Fatalf("code = %q; want %q, not the generic forbidden", env.Error.Code, CodeProjectLayerUnprotectable)
 			}
-			for _, want := range []string{`"nas"`, "/home/u/mnt/nas/repo", "symlink an agent can replace"} {
+			for _, want := range []string{`"nas"`, "/srv/u/mnt/nas/repo", "symlink an agent can replace"} {
 				if !strings.Contains(env.Error.Message, want) {
 					t.Fatalf("message %q does not mention %s", env.Error.Message, want)
 				}

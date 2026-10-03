@@ -698,7 +698,7 @@ func TestRegistry_Lookup_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *tes
 	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
 		DisplayName:   "Secretive",
 		LastUpdatedBy: "tester",
-		Callback:      &registry.Callback{Scheme: "file", Target: "file:///Users/tester/.tether/catalog/agents/secretive.yaml"},
+		Callback:      &registry.Callback{Scheme: "file", Target: "file:///srv/tester/.tether/catalog/agents/secretive.yaml"},
 		KindMeta:      json.RawMessage(`{"internal_note":"do not leak"}`),
 	})
 	if resp.StatusCode != http.StatusCreated {
@@ -712,7 +712,7 @@ func TestRegistry_Lookup_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *tes
 	// is redacted to prevent using writes as an un-audited leak vector.
 	assertNoLeakedRegistryFields(t, body)
 
-	hostAddr := "10.0.0.7:9999"
+	hostAddr := "192.0.2.7:9999"
 	if _, err := r.svc.UpdateSelf(context.Background(), created.URN, registry.UpdatePatch{
 		HostAddress: &hostAddr, LastUpdatedBy: "tester",
 	}); err != nil {
@@ -825,7 +825,7 @@ func assertNoLeakedRegistryFields(t *testing.T, body []byte) {
 			t.Errorf("response leaks redacted field %s: %s", key, body)
 		}
 	}
-	for _, secret := range []string{"do not leak", "shh", "secret-provider-id", "10.0.0.7", "launch-with-secrets", "abc123"} {
+	for _, secret := range []string{"do not leak", "shh", "secret-provider-id", "192.0.2.7", "launch-with-secrets", "abc123"} {
 		if bytes.Contains(body, []byte(secret)) {
 			t.Errorf("response leaks secret value %q: %s", secret, body)
 		}
@@ -886,7 +886,7 @@ func TestRegistry_WriteRoutes_RedactedByDefault(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. POST /registry/agents (Register)
-	hostAddr := "192.168.1.50:8080"
+	hostAddr := "198.51.100.50:8080"
 	resp, body := r.do(http.MethodPost, "/registry/agents", registry.Profile{
 		DisplayName:   "Writable Agent",
 		LastUpdatedBy: "tester",
@@ -1253,7 +1253,7 @@ func TestRegistry_Redaction_FieldMetadata(t *testing.T) {
 		"display_name":    "Secretive Project",
 		"description":     "Project with private operational metadata",
 		"callback":        map[string]any{"scheme": "cli", "target": "/usr/local/bin/run --token=supersecret"},
-		"host_address":    "10.0.0.88",
+		"host_address":    "192.0.2.88",
 		"kind_meta":       map[string]any{"api_token": "shh-secret"},
 		"tags":            []string{"internal", "confidential"},
 		"guidelines":      "Keep operational coordinates secret.",
@@ -1628,7 +1628,7 @@ func TestRegistry_Props_HTTP(t *testing.T) {
 		"description":  "Testing props visible by default over HTTP",
 		"props": map[string]string{
 			"docs_url":     "https://props.example.com",
-			"project_root": "/Users/chrispian/dev/props",
+			"project_root": "/srv/example/dev/props",
 		},
 	}
 	resp, body := r.do(http.MethodPost, "/registry/projects", regBody)
@@ -1652,7 +1652,7 @@ func TestRegistry_Props_HTTP(t *testing.T) {
 	if err := json.Unmarshal(bodyGet, &loaded); err != nil {
 		t.Fatalf("unmarshal loaded: %v", err)
 	}
-	if len(loaded.Props) != 2 || loaded.Props["project_root"] != "/Users/chrispian/dev/props" {
+	if len(loaded.Props) != 2 || loaded.Props["project_root"] != "/srv/example/dev/props" {
 		t.Fatalf("loaded.Props = %v; want visible by default", loaded.Props)
 	}
 
@@ -1700,7 +1700,7 @@ func TestRegistry_Props_HTTP(t *testing.T) {
 	if patched.Props["inbox"] != "msg://agent/agent-mux/inbox" {
 		t.Errorf("inbox = %q", patched.Props["inbox"])
 	}
-	if patched.Props["project_root"] != "/Users/chrispian/dev/props" {
+	if patched.Props["project_root"] != "/srv/example/dev/props" {
 		t.Errorf("project_root = %q", patched.Props["project_root"])
 	}
 }

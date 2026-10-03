@@ -349,7 +349,7 @@ required) and gates mutating operations behind a token + scope.
 tether mcp
 
 # With mutating tool access:
-TETHER_TOKEN='tth_<issued-token>' \
+TETHER_TOKEN='<tth_issued-token>' \
 TETHER_MCP_SCOPES=session.write,message.write \
 tether mcp
 ```

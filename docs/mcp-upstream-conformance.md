@@ -63,7 +63,7 @@ observed initialize instruction length is retained, and a later initialization
 replaces it. Profile instructions retain their separate hard config limit.
 
 Tangent's clean-break tool rename and consumer updates belong to
-[CW-20261001-0646](https://torque.nanite.cloud/tasks/CW-20261001-0646).
+CW-20261001-0646.
 Envelope type IDs are a separate namespace and are not MCP tool names. Tether's
 CW-20260926-0011 supplies checking/reporting and this guidance, not changes to
 other upstream repositories or live service deployments.

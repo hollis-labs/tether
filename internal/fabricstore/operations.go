@@ -73,11 +73,13 @@ func (r *Repository) Candidate(ctx context.Context, id string) (Record[Migration
 }
 
 type ImportReceipt struct {
-	ID          string    `json:"id"`
-	CandidateID string    `json:"candidate_id"`
-	ActorURN    mesh.URN  `json:"actor_urn"`
-	ApprovalRef string    `json:"approval_ref"`
-	At          time.Time `json:"at"`
+	ID                   string    `json:"id"`
+	CandidateID          string    `json:"candidate_id"`
+	ActorURN             mesh.URN  `json:"actor_urn"`
+	ApprovalRef          string    `json:"approval_ref"`
+	At                   time.Time `json:"at"`
+	SourceSnapshotDigest string    `json:"source_snapshot_digest,omitempty"`
+	MappingDigest        string    `json:"mapping_digest,omitempty"`
 }
 
 func (tx *Tx) AddReceipt(value ImportReceipt) error {

@@ -50,10 +50,10 @@ func TestHandleHealth_SandboxProtect(t *testing.T) {
 // from the bubblewrap probe (CW-20261003-0092).
 func TestHandleHealth_SandboxProtectSkippedLayersAndPlanError(t *testing.T) {
 	want := SandboxProtectHealth{Enabled: true, Reason: "on", BwrapChecked: true, BwrapUsable: true,
-		SkippedProjectLayers:       []SkippedProjectLayer{{Project: "old-site", RepoRoot: "/home/u/old-site", Reason: "does not exist"}},
-		CreatedProjectRoots:        []CreatedProjectRoot{{Project: "gone", RepoRoot: "/home/u/gone", Reason: "created"}},
-		UnprotectableProjectLayers: []UnprotectableProjectLayer{{Project: "linked", RepoRoot: "/home/u/linked", Why: "runs through a symlink"}},
-		AnchoredProjectAncestors:   []AnchoredProjectAncestor{{Project: "nas", RepoRoot: "/home/u/mnt/nas/repo", Ancestor: "/home/u/mnt/nas", Reason: "anchored"}},
+		SkippedProjectLayers:       []SkippedProjectLayer{{Project: "old-site", RepoRoot: "/srv/u/old-site", Reason: "does not exist"}},
+		CreatedProjectRoots:        []CreatedProjectRoot{{Project: "gone", RepoRoot: "/srv/u/gone", Reason: "created"}},
+		UnprotectableProjectLayers: []UnprotectableProjectLayer{{Project: "linked", RepoRoot: "/srv/u/linked", Why: "runs through a symlink"}},
+		AnchoredProjectAncestors:   []AnchoredProjectAncestor{{Project: "nas", RepoRoot: "/srv/u/mnt/nas/repo", Ancestor: "/srv/u/mnt/nas", Reason: "anchored"}},
 		PlanError:                  "protect catalog layer: project \"x\": boom"}
 	rr := httptest.NewRecorder()
 	(&Server{SandboxProtect: func() *SandboxProtectHealth { return &want }}).handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -64,7 +64,7 @@ func TestHandleHealth_SandboxProtectSkippedLayersAndPlanError(t *testing.T) {
 	if h.SandboxProtect == nil || !reflect.DeepEqual(*h.SandboxProtect, want) {
 		t.Fatalf("sandbox_protect = %+v, want %+v (%s)", h.SandboxProtect, want, rr.Body.String())
 	}
-	for _, field := range []string{`"skipped_project_layers":[{"project":"old-site","repo_root":"/home/u/old-site","reason":"does not exist"}]`, `"created_project_roots":[{"project":"gone","repo_root":"/home/u/gone","reason":"created"}]`, `"unprotectable_project_layers":[{"project":"linked","repo_root":"/home/u/linked","why":"runs through a symlink"}]`, `"anchored_project_ancestors":[{"project":"nas","repo_root":"/home/u/mnt/nas/repo","ancestor":"/home/u/mnt/nas","reason":"anchored"}]`, `"plan_error":"protect catalog layer: project \"x\": boom"`, `"bwrap_usable":true`} {
+	for _, field := range []string{`"skipped_project_layers":[{"project":"old-site","repo_root":"/srv/u/old-site","reason":"does not exist"}]`, `"created_project_roots":[{"project":"gone","repo_root":"/srv/u/gone","reason":"created"}]`, `"unprotectable_project_layers":[{"project":"linked","repo_root":"/srv/u/linked","why":"runs through a symlink"}]`, `"anchored_project_ancestors":[{"project":"nas","repo_root":"/srv/u/mnt/nas/repo","ancestor":"/srv/u/mnt/nas","reason":"anchored"}]`, `"plan_error":"protect catalog layer: project \"x\": boom"`, `"bwrap_usable":true`} {
 		if !strings.Contains(rr.Body.String(), field) {
 			t.Errorf("/health body lacks %s: %s", field, rr.Body.String())
 		}
