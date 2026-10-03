@@ -8,6 +8,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Protected launches survive catalog projects with a missing `repo_root` (CW-20261003-0092): one registered project whose `repo_root` did not exist made every launch Tether must protect (Claude, OpenCode, every agent it wraps) fail at create with `500 internal_error` `protect catalog layer: parent unavailable`, since the layered-catalog protection landed (CW-20261001-0539). Such a project is now skipped (one warning per project, `sandbox_protect.skipped_project_layers` in `GET /health`, a `tether doctor` warning); a launch for the project whose own root is missing is refused with `409 project_root_missing` naming the project and path, before anything is created. `/health` no longer blames bubblewrap for a catalog problem: `plan_error` carries the real reason and the bubblewrap probe stays its own answer. Existing project layers are protected exactly as before; the empty `.tether` that protection creates in each existing project root is now logged.
+
 - Upstream conformance (CW-20260926-0011): report-only input-schema syntax/local-reference checks, explicit unexamined external/oversized schemas, and origin-scoped observed initialization instructions over 2,048 characters through gateway status and live doctor. Schema lint is memoized outside locks with per-tool and aggregate budgets, explicit unexamined counts, and no remote fetch or metadata changes; upstream-author guidance links Tangent's separate rename task CW-20261001-0646.
 
 Changes on `main` since v0.6.0.

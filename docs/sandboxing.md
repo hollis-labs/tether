@@ -359,6 +359,30 @@ is reporting its own shell's environment. A second check, `sandbox-protect-codex
 reports how Codex is protected: a warning, `codex: not protected
 (CW-20261001-0230)`, as shipped, and ok only if the dormant guard is switched on.
 
+**Projects with a missing `repo_root`.** Every registered project has a layer,
+`<repo_root>/.tether`, that the next catalog load reads, so protection binds every
+existing one read-only and creates the empty directory when it is missing: otherwise
+an agent could create it and plant configuration. That is why a protected launch
+creates `.tether` in the roots of projects other than its own (once; the daemon
+logs each creation), and why it cannot be limited to the launching project. A
+project whose `repo_root` does not exist (or is not a directory) has nothing to
+anchor and nothing is created for it (Tether never creates a missing repository):
+
+- if it is **another** project, its layer is skipped, the daemon logs one warning
+  per project, `GET /health` lists it under `sandbox_protect.skipped_project_layers`
+  and `tether doctor` warns. Launches of every other project work. While the root
+  stays missing, a protected agent could create that directory and a `.tether` in
+  it, so the entry should be fixed or removed;
+- if it is the project the launch is **for**, the launch is refused with 409
+  `project_root_missing` naming the project and the path. Every project root is
+  checked before any directory is created, so a refused launch leaves nothing behind.
+
+Before this, one project with a missing `repo_root` made every protected launch fail
+with a 500 (`protect catalog layer: parent unavailable`), and `/health` blamed
+bubblewrap (`bwrap_error: the catalog root is not set`). A failure to work out what
+to protect is now `plan_error` in `/health` and a `sandbox-protect` failure in
+`tether doctor` that says so, separate from the bubblewrap probe.
+
 **Turning it off:** set `TETHER_SANDBOX_PROTECT=0` (or `false`) in tetherd's
 environment and restart the daemon. The daemon logs `WARN: control-plane
 protection DISABLED by TETHER_SANDBOX_PROTECT=0, so agents can write the
@@ -506,6 +530,8 @@ is lifted when per-caller identity (CW-20260930-0253) lands.
 | Agent has no `default_sandbox` field | No profile; on Linux the session runs under control-plane protection only |
 | Work directory or workspace inside a protected directory, the state directory included | Launch refused with 403 `forbidden` (not for Codex, which is not protected) |
 | Control-plane protection on and `bwrap` not installed or unable to build a namespace | Launch refused with 403 `forbidden` (not for Codex) |
+| The launching project's `repo_root` does not exist or is not a directory | Launch refused with 409 `project_root_missing`, naming the project and the path; nothing is created |
+| Another project's `repo_root` does not exist or is not a directory | That project's layer is skipped, with a warning, in `/health` `skipped_project_layers` and in `tether doctor`; every other launch works |
 
 ## Follow-ups
 
