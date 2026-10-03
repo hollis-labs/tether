@@ -45,7 +45,7 @@ Defined codes:
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
-| `project_layer_unprotectable` | 403 | a registered project's catalog layer cannot be protected and cannot be left open, because of that project's catalog entry or the file system under it: its `repo_root` runs through a file in a directory an agent can write, or through a symlink an agent could replace, or cannot be examined, or its layer turned up while protection was creating it. The message names the project and the path. It is not a host that cannot provide protection (that is `forbidden`, bubblewrap missing): fix or remove the project. A project whose root is merely missing is never this: it is anchored or skipped |
+| `project_layer_unprotectable` | 403 | a registered project's catalog layer cannot be protected and cannot be left open, because of that project's catalog entry or the file system under it: its `repo_root` runs through a file in a directory an agent can write, or through a symlink an agent could replace, or cannot be examined, or its layer turned up while protection was creating it. The message names the project and the path. It is not a host that cannot provide protection (that is `forbidden`, bubblewrap missing): fix or remove the project. A project whose root is merely missing is never this: it is anchored or skipped. **Not every unprotectable shape is typed yet:** a `<root>/.tether` that is a file, and a user-owned unwritable `/` as the nearest ancestor, still surface as an untyped 500 (see "Known limits" in [sandboxing.md](../sandboxing.md), CW-20261003-0106) |
 | `project_root_missing` | 409 | the project a launch is for has a `repo_root` that does not exist or is not a directory, so the launch cannot run: it does not exist, is not a directory, or is only the placeholder protection created for it (see `/health` `sandbox_protect.created_project_roots`); the message names the project and the path. Another project's dead `repo_root` does not cause it: that root is created as a placeholder holding only an anchored `.tether`, or skipped where no agent could create it (`skipped_project_layers`) |
 | `idempotency_conflict` | 409 | an `idempotency_key` was reused with a different request; the key stays bound to the session its first request created |
 | `payload_too_large` | 413  | body exceeded per-route cap                   |
@@ -507,7 +507,14 @@ must protect is refused until that is fixed (403 `project_layer_unprotectable`,
 which names the project; the planted proxy of a Codex launch and the daemon's MCP
 gateway are not refused, and leave that one layer out of their confinement with a
 warning); it is a catalog or filesystem problem, never a bubblewrap one, and
-`bwrap_checked`/`bwrap_usable` still report the host probe on their own. `codex` is how
+`bwrap_checked`/`bwrap_usable` still report the host probe on their own. **Known
+limits** (see "Known limits" in [sandboxing.md](../sandboxing.md), CW-20261003-0106):
+the gateway and the Codex proxy are not spared by a `<root>/.tether` that is a file
+or by a root under a file (`/mcp` answers 503; protected launches get an untyped 500
+for the former); a project added to the catalog while the daemon runs is not in what
+`plan_error` and the lists above are computed from until the next restart; and
+`EACCES`/`ENAMETOOLONG` roots are typed or skipped only in unit tests, because a
+running daemon does not start with one. `codex` is how
 Codex is protected: `not protected` as shipped (Codex runs as it did before
 protection, under its own sandbox, and spawns MCP servers outside it, so an MCP
 tool can reach the catalog; the catalog-writing `tether` tools are still refused for
