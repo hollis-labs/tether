@@ -42,20 +42,24 @@ type DirectoryPage struct {
 // a future public route must not expose this host pagination state as metadata.
 func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, limit int) (DirectoryPage, error) {
 	result := DirectoryPage{Records: []DirectoryRecord{}}
-	if err := s.allow(ctx, caller, owner, owner, ReadDirectory); err != nil {
+	if err := s.allow(ctx, Authorization{Caller: caller, Owner: owner, Target: owner, Action: ReadDirectory}); err != nil {
 		return result, err
 	}
 	records, err := s.repo.Enrollments(ctx, owner, after, limit)
 	if err != nil {
 		return result, err
 	}
+	observed := s.now().UTC()
+	if observed.IsZero() {
+		return DirectoryPage{}, fabricstore.ErrInvalid
+	}
 	for _, record := range records {
 		result.Cursor = record.Actor.Value.URN
 		if record.Actor.Value.Lifecycle != mesh.EnrollmentActive {
 			continue
 		}
-		auth := Authorization{caller, owner, record.Actor.Value.URN, ReadDirectory}
-		if err := s.allow(ctx, caller, owner, record.Actor.Value.URN, ReadDirectory); err != nil {
+		auth := Authorization{Caller: caller, Owner: owner, Target: record.Actor.Value.URN, Action: ReadDirectory}
+		if err := s.allow(ctx, auth); err != nil {
 			if errors.Is(err, ErrDenied) {
 				continue
 			}
@@ -84,7 +88,7 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 		if !publication.Publish {
 			continue
 		}
-		ids := append([]string{}, publication.Capabilities...)
+		ids := []string{}
 		offered := map[string]bool{}
 		if verified.Definition != nil {
 			for _, capability := range verified.Definition.Capabilities {
@@ -92,11 +96,14 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 			}
 		}
 		seen := map[string]bool{}
-		for _, id := range ids {
-			if !offered[id] || seen[id] {
+		for _, id := range publication.Capabilities {
+			if seen[id] {
 				return DirectoryPage{}, fabricstore.ErrInvalid
 			}
 			seen[id] = true
+			if offered[id] {
+				ids = append(ids, id)
+			}
 		}
 		sort.Strings(ids)
 		projection := DirectoryRecord{URN: record.Actor.Value.URN, Kind: record.Actor.Value.Kind, Lifecycle: record.Actor.Value.Lifecycle, Capabilities: ids, RecordRevision: fmt.Sprintf("%d", record.Actor.Version)}
@@ -116,10 +123,6 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 	}
 	if err := ctx.Err(); err != nil {
 		return DirectoryPage{}, err
-	}
-	observed := s.now().UTC()
-	if observed.IsZero() {
-		return DirectoryPage{}, fabricstore.ErrInvalid
 	}
 	for i := range result.Records {
 		result.Records[i].VerifiedAt = observed

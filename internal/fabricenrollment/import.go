@@ -50,6 +50,8 @@ type importPlan struct {
 	receiptIDs  []string
 }
 
+const maxImportTextBytes = 4096
+
 func digest(version string, value any) (string, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -60,7 +62,7 @@ func digest(version string, value any) (string, error) {
 }
 func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 	plan := importPlan{source: SourceSnapshot{Source: source.Source, Identities: append([]SourceIdentity{}, source.Identities...)}, mappings: append([]Mapping{}, mappings...)}
-	if source.Source == "" || !utf8.ValidString(source.Source) || len(source.Identities) == 0 || len(source.Identities) > 100 || len(mappings) > 100 {
+	if source.Source == "" || len(source.Source) > maxImportTextBytes || !utf8.ValidString(source.Source) || len(source.Identities) == 0 || len(source.Identities) > 100 || len(mappings) > 100 {
 		return plan, ErrManifest
 	}
 	for i := range plan.mappings {
@@ -75,7 +77,7 @@ func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 	sourceKeys := map[string]bool{}
 	urns := map[mesh.URN]bool{}
 	for _, identity := range plan.source.Identities {
-		if identity.Key == "" || !utf8.ValidString(identity.Key) || !utf8.ValidString(string(identity.Actor.URN)) || !utf8.ValidString(string(identity.Owner)) || sourceKeys[identity.Key] || urns[identity.Actor.URN] || identity.Actor.Validate() != nil || identity.Owner.Validate() != nil {
+		if identity.Key == "" || len(identity.Key) > maxImportTextBytes || !utf8.ValidString(identity.Key) || !utf8.ValidString(string(identity.Actor.URN)) || !utf8.ValidString(string(identity.Owner)) || sourceKeys[identity.Key] || urns[identity.Actor.URN] || identity.Actor.Validate() != nil || identity.Owner.Validate() != nil {
 			return plan, ErrManifest
 		}
 		sourceKeys[identity.Key] = true
@@ -120,7 +122,14 @@ func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 }
 func (s *Service) authorizeImport(ctx context.Context, caller mesh.URN, plan importPlan) error {
 	for _, identity := range plan.source.Identities {
-		if err := s.allow(ctx, caller, identity.Owner, identity.Actor.URN, Import); err != nil {
+		var pin *mesh.DefinitionRef
+		for _, mapping := range plan.mappings {
+			if mapping.Key == identity.Key {
+				pin = mapping.Definition
+				break
+			}
+		}
+		if err := s.allow(ctx, Authorization{Caller: caller, Owner: identity.Owner, Target: identity.Actor.URN, Action: Import, Definition: pin, Source: plan.source.Source}); err != nil {
 			return err
 		}
 	}
@@ -204,7 +213,7 @@ func (s *Service) ApplyImport(ctx context.Context, caller mesh.URN, source Sourc
 	if err != nil {
 		return nil, err
 	}
-	if approvalRef == "" || len(plan.preview.Problems) != 0 {
+	if approvalRef == "" || !utf8.ValidString(approvalRef) || len(approvalRef) > maxImportTextBytes || len(plan.preview.Problems) != 0 {
 		return nil, ErrManifest
 	}
 	if err := s.authorizeImport(ctx, caller, plan); err != nil {

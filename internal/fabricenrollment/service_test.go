@@ -290,8 +290,16 @@ func TestDirectoryPublicationAuthorizationRedactionAndConflict(t *testing.T) {
 	s.advertise = func(context.Context, Authorization, definitionresolve.VerifiedDefinition) (Publication, error) {
 		return Publication{Publish: true, Capabilities: []string{"unoffered"}}, nil
 	}
-	if _, err := s.Directory(t.Context(), owner, owner, "", 100); !errors.Is(err, fabricstore.ErrInvalid) {
-		t.Fatal("invented capability accepted", err)
+	filtered, err := s.Directory(t.Context(), owner, owner, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range filtered.Records {
+		for _, id := range row.Capabilities {
+			if id == "unoffered" {
+				t.Fatal("invented capability published")
+			}
+		}
 	}
 	s.advertise = func(context.Context, Authorization, definitionresolve.VerifiedDefinition) (Publication, error) {
 		return Publication{Publish: true}, nil

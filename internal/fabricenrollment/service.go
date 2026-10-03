@@ -37,7 +37,13 @@ const (
 type Authorization struct {
 	Caller, Owner, Target mesh.URN
 	Action                Action
+	Definition            *mesh.DefinitionRef
+	Source                string
 }
+
+// Authorizer owns URN and source-namespace ownership, pin admission and delegation.
+// Non-context errors become ErrDenied without disclosing their cause. Cancellation
+// and deadlines propagate. The supplied pin is a private copy, never mutable input.
 type Authorizer func(context.Context, Authorization) error
 type Definitions interface {
 	Load(context.Context, mesh.DefinitionRef) (definitionresolve.VerifiedDefinition, error)
@@ -66,14 +72,27 @@ func New(repo *fabricstore.Repository, definitions Definitions, authorize Author
 	}
 	return &Service{repo: repo, definitions: definitions, authorize: authorize, advertise: advertise, now: now, directoryTTL: directoryTTL}, nil
 }
-func (s *Service) allow(ctx context.Context, caller, owner, target mesh.URN, action Action) error {
-	if !utf8.ValidString(string(caller)) || !utf8.ValidString(string(owner)) || caller.Validate() != nil || owner.Validate() != nil {
+func (s *Service) allow(ctx context.Context, auth Authorization) error {
+	if !utf8.ValidString(string(auth.Caller)) || !utf8.ValidString(string(auth.Owner)) || auth.Caller.Validate() != nil || auth.Owner.Validate() != nil {
 		return ErrDenied
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.authorize(ctx, Authorization{caller, owner, target, action})
+	if auth.Definition != nil {
+		pin := *auth.Definition
+		auth.Definition = &pin
+	}
+	if err := s.authorize(ctx, auth); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w", ErrDenied)
+	}
+	return ctx.Err()
 }
 
 type Enrollment struct {
@@ -131,7 +150,7 @@ func (s *Service) EnrollActor(ctx context.Context, caller mesh.URN, request Enro
 	if err := validateEnrollment(request); err != nil {
 		return err
 	}
-	if err := s.allow(ctx, caller, request.Owner, request.Actor.URN, Enroll); err != nil {
+	if err := s.allow(ctx, Authorization{Caller: caller, Owner: request.Owner, Target: request.Actor.URN, Action: Enroll, Definition: request.Definition}); err != nil {
 		return err
 	}
 	if err := s.verify(ctx, request); err != nil {
@@ -159,7 +178,7 @@ func (s *Service) RebindAgent(ctx context.Context, caller, urn mesh.URN, pin mes
 		}
 		return err
 	}
-	if err := s.allow(ctx, caller, old.Value.Owner, urn, Rebind); err != nil {
+	if err := s.allow(ctx, Authorization{Caller: caller, Owner: old.Value.Owner, Target: urn, Action: Rebind, Definition: &pin}); err != nil {
 		return err
 	}
 	if old.Version != expected {
@@ -216,7 +235,7 @@ func (s *Service) RetireActor(ctx context.Context, caller, urn mesh.URN, expecte
 		}
 		return err
 	}
-	if err := s.allow(ctx, caller, old.Value.Owner, urn, Retire); err != nil {
+	if err := s.allow(ctx, Authorization{Caller: caller, Owner: old.Value.Owner, Target: urn, Action: Retire}); err != nil {
 		return err
 	}
 	if old.Version != expected {

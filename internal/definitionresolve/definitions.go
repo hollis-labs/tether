@@ -146,6 +146,9 @@ func (s *DefinitionStore) Load(ctx context.Context, pin mesh.DefinitionRef) (Ver
 		return VerifiedDefinition{}, ErrPinMismatch
 	}
 	artifact, err := s.repository.Artifact(ctx, pin, verified.ArtifactDigest)
+	if errors.Is(err, fabricstore.ErrNotFound) {
+		return VerifiedDefinition{}, fmt.Errorf("%w: artifact not indexed", ErrPinMismatch)
+	}
 	if err != nil {
 		return VerifiedDefinition{}, err
 	}
