@@ -370,6 +370,11 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	if r.Journal != "" && r.Journal != c.Journal {
 		return fail("journal_mismatch", "refusing stop of another journal")
 	}
+	// A persisted PID may be absent or stale after an uncertain placement.
+	// Prefer the peer of the authenticated socket for host teardown.
+	if pid, peerErr := peerPID(r.SocketPath); peerErr == nil && pid > 0 {
+		r.HostPID = pid
+	}
 	if err = c.Send(spec.Session, "control", map[string]string{"action": "kill", "expected_generation": strconv.FormatUint(spec.Generation, 10)}); err != nil {
 		return err
 	}

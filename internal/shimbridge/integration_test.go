@@ -606,3 +606,39 @@ func TestAttachRejectsJournalOrIdentityBeforeInput(t *testing.T) {
 		})
 	}
 }
+
+func TestAttachDiagnosticCountsReplayAndKeepsProviderAlive(t *testing.T) {
+	f := startFixture(t, 16<<20)
+	descriptor := filepath.Join(f.root, "launch.json")
+	if err := saveJSON(descriptor, f.cfg.Launch); err != nil {
+		t.Fatal(err)
+	}
+	observer, err := shim.Connect(filepath.Join(f.cfg.Launch.ControlDir, "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "observer", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := observer.Journal
+	_ = observer.Close()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close(); _ = writer.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var events []AttachEvent
+	output := &bytes.Buffer{}
+	_, err = Run(ctx, Options{DescriptorPath: descriptor, Attach: true, ExpectedJournal: journal, OnAttach: func(event AttachEvent) error { events = append(events, event); cancel(); return nil }}, reader, output, io.Discard)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("attach catch-up: %v", err)
+	}
+	if len(events) != 1 || events[0].ReplayedEvents == 0 || events[0].Epoch == "" || events[0].Journal != journal {
+		t.Fatalf("attach diagnostic: %+v", events)
+	}
+	if strings.Count(output.String(), `"subtype":"init"`) != 1 {
+		t.Fatalf("bootstrap replay: %q", output.String())
+	}
+	if !alive(f.child) {
+		t.Fatal("attach detach killed provider")
+	}
+}
