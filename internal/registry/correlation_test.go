@@ -378,7 +378,7 @@ func TestService_Sync_NeverTouchesAuthoredFields(t *testing.T) {
 		"display_name": "Synced Derived Name",
 		"project": "synced-project",
 		"health_status": "degraded",
-		"host_address": "10.0.0.1:9090",
+		"host_address": "192.0.2.1:9090",
 		"description": "Attempted overwrite description",
 		"tags": ["overwritten-tag"],
 		"guidelines": "Attempted overwrite guidelines",
@@ -451,8 +451,8 @@ func TestService_Sync_NeverTouchesAuthoredFields(t *testing.T) {
 	if synced.HealthStatus != "degraded" {
 		t.Errorf("HealthStatus = %q; want %q", synced.HealthStatus, "degraded")
 	}
-	if synced.HostAddress != "10.0.0.1:9090" {
-		t.Errorf("HostAddress = %q; want %q", synced.HostAddress, "10.0.0.1:9090")
+	if synced.HostAddress != "192.0.2.1:9090" {
+		t.Errorf("HostAddress = %q; want %q", synced.HostAddress, "192.0.2.1:9090")
 	}
 
 	// 2. Authored fields MUST remain byte-for-byte untouched (CW-20260912-0095 Scope Item 3)
@@ -810,7 +810,7 @@ func TestProfile_Props(t *testing.T) {
 		Description: "A project with open props",
 		Props: map[string]string{
 			"docs_url":      "https://docs.example.com",
-			"project_root":  "/Users/chrispian/dev/project",
+			"project_root":  "/srv/example/dev/project",
 			"primary_agent": "msg://agent/agent-mux/agt_main",
 		},
 	})
@@ -836,7 +836,7 @@ func TestProfile_Props(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
-	if loaded.Props["project_root"] != "/Users/chrispian/dev/project" {
+	if loaded.Props["project_root"] != "/srv/example/dev/project" {
 		t.Errorf("loaded.Props[project_root] = %q", loaded.Props["project_root"])
 	}
 

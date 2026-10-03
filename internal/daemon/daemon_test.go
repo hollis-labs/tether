@@ -377,14 +377,14 @@ func stubVerify(t *testing.T, ok bool, err error) {
 
 func TestDaemonCmdRegex(t *testing.T) {
 	for cmdline, want := range map[string]bool{
-		"/Users/x/go/bin/tether daemon run --catalog /Users/x/.tether": true,
-		"tether daemon run":                              true,
-		"/usr/local/bin/tetherd daemon run --catalog c":  true,
-		"/Users/x/go/bin/tether mcp --proxy --servers a": false,
-		"/Users/x/go/bin/tether daemon start":            false,
-		"/usr/bin/vim tether daemon run":                 false,
-		"sleep 300":                                      false,
-		"/Applications/Slack.app/slack --type=renderer":  false,
+		"/srv/x/go/bin/tether daemon run --catalog /srv/x/.tether": true,
+		"tether daemon run":                             true,
+		"/usr/local/bin/tetherd daemon run --catalog c": true,
+		"/srv/x/go/bin/tether mcp --proxy --servers a":  false,
+		"/srv/x/go/bin/tether daemon start":             false,
+		"/usr/bin/vim tether daemon run":                false,
+		"sleep 300":                                     false,
+		"/Applications/Slack.app/slack --type=renderer": false,
 	} {
 		if got := daemonCmdRegex.MatchString(cmdline); got != want {
 			t.Errorf("daemonCmdRegex.MatchString(%q) = %v, want %v", cmdline, got, want)

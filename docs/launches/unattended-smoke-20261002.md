@@ -1,7 +1,7 @@
 # Unattended provider acceptance — 2026-10-02
 
 Task: CW-20261001-0251. Candidate: `task/CW-20261001-0251-unattended`,
-based on `761cf29`. Host: agent-os, Linux amd64. Providers: codex-cli 0.159.3,
+based on `761cf29`. Host: Linux amd64. Providers: codex-cli 0.159.3,
 agy 1.2.14. Shared dependencies: agentkit v0.21.0, go-providers v0.42.0.
 
 ## Isolation and procedure

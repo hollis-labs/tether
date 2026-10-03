@@ -5,7 +5,7 @@ runtime_kind: subprocess
 # Leave command empty to let the adapter auto-detect agy ($AGY_CLI_PATH,
 # then PATH and ~/.local/bin). Set an absolute path if agy is not on your
 # daemon's PATH.
-# Example: command: /Users/you/.local/bin/agy
+# Example: command: /srv/you/.local/bin/agy
 command: ""
 # The runtime adapter owns agy's flags (--output-format stream-json, -p=).
 args: []

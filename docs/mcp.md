@@ -855,7 +855,7 @@ skill locations:
   "description": "Apply Go refactoring patterns.",
   "triggers": ["refactor", "cleanup"],
   "body": "Prefer small, tested changes.",
-  "path": "/home/user/.nanite/skills/refactor-go.md",
+  "path": "/srv/user/.nanite/skills/refactor-go.md",
   "layer": "legacy-nanite"
 }
 ```
@@ -876,7 +876,7 @@ Read-only; no auth required.
       "name": "Refactor Go",
       "description": "Apply Go refactoring patterns.",
       "triggers": ["refactor", "cleanup"],
-      "path": "/home/user/.nanite/skills/refactor-go.md",
+      "path": "/srv/user/.nanite/skills/refactor-go.md",
       "layer": "legacy-nanite"
     }
   ],
@@ -912,7 +912,7 @@ Read-only; no auth required.
       "name": "Refactor Go",
       "description": "Apply Go refactoring patterns.",
       "triggers": ["refactor", "cleanup"],
-      "path": "/home/user/.nanite/skills/refactor-go.md",
+      "path": "/srv/user/.nanite/skills/refactor-go.md",
       "layer": "legacy-nanite",
       "score": {
         "query_matches": 1,
@@ -982,7 +982,7 @@ is not running yet. Follow with `tether_session_launch`.
 
 ```json
 // Response
-{ "ok": true, "session_id": "01abc...", "workspace": "/home/user/.tether/workspaces/...", "log": "..." }
+{ "ok": true, "session_id": "01abc...", "workspace": "/srv/user/.tether/workspaces/...", "log": "..." }
 ```
 
 #### `tether_session_launch` _(session.write)_

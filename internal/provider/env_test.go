@@ -6,27 +6,27 @@ import (
 )
 
 func TestBuildEnv_MergeDefault_InheritsParent(t *testing.T) {
-	parent := []string{"PATH=/usr/bin", "HOME=/home/user", "SHELL=/bin/zsh"}
+	parent := []string{"PATH=/usr/bin", "HOME=/srv/user", "SHELL=/bin/zsh"}
 	got := BuildEnv(EnvModeMerge, nil, nil, nil, parent)
-	want := []string{"HOME=/home/user", "PATH=/usr/bin", "SHELL=/bin/zsh"}
+	want := []string{"HOME=/srv/user", "PATH=/usr/bin", "SHELL=/bin/zsh"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("merge with no overrides/redact should pass parent through sorted\n got=%v\nwant=%v", got, want)
 	}
 }
 
 func TestBuildEnv_EmptyMode_DefaultsToMerge(t *testing.T) {
-	parent := []string{"PATH=/usr/bin", "HOME=/home/user"}
+	parent := []string{"PATH=/usr/bin", "HOME=/srv/user"}
 	got := BuildEnv("", nil, nil, nil, parent)
-	want := []string{"HOME=/home/user", "PATH=/usr/bin"}
+	want := []string{"HOME=/srv/user", "PATH=/usr/bin"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("empty mode should behave as merge\n got=%v\nwant=%v", got, want)
 	}
 }
 
 func TestBuildEnv_UnknownMode_DefaultsToMerge(t *testing.T) {
-	parent := []string{"PATH=/usr/bin", "HOME=/home/user"}
+	parent := []string{"PATH=/usr/bin", "HOME=/srv/user"}
 	got := BuildEnv("strict", nil, nil, nil, parent)
-	want := []string{"HOME=/home/user", "PATH=/usr/bin"}
+	want := []string{"HOME=/srv/user", "PATH=/usr/bin"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknown mode should behave as merge\n got=%v\nwant=%v", got, want)
 	}
@@ -62,19 +62,19 @@ func TestBuildEnv_MergeRedactThenOverrideReintroducesKey(t *testing.T) {
 }
 
 func TestBuildEnv_Whitelist_OnlyListedKeys(t *testing.T) {
-	parent := []string{"PATH=/usr/bin", "HOME=/home/user", "SECRET=shh", "EXTRA=x"}
+	parent := []string{"PATH=/usr/bin", "HOME=/srv/user", "SECRET=shh", "EXTRA=x"}
 	got := BuildEnv(EnvModeWhitelist, []string{"PATH", "HOME"}, nil, nil, parent)
-	want := []string{"HOME=/home/user", "PATH=/usr/bin"}
+	want := []string{"HOME=/srv/user", "PATH=/usr/bin"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whitelist should include only listed keys\n got=%v\nwant=%v", got, want)
 	}
 }
 
 func TestBuildEnv_Whitelist_OverridesWin(t *testing.T) {
-	parent := []string{"PATH=/usr/bin", "HOME=/home/user"}
+	parent := []string{"PATH=/usr/bin", "HOME=/srv/user"}
 	overrides := map[string]string{"PATH": "/override/bin", "NEW": "added"}
 	got := BuildEnv(EnvModeWhitelist, []string{"PATH", "HOME"}, nil, overrides, parent)
-	want := []string{"HOME=/home/user", "NEW=added", "PATH=/override/bin"}
+	want := []string{"HOME=/srv/user", "NEW=added", "PATH=/override/bin"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whitelist overrides should win and add new keys\n got=%v\nwant=%v", got, want)
 	}

@@ -449,7 +449,7 @@ Response:
   "status": "ok",
   "pid": 12345,
   "uptime_sec": 42,
-  "listener": "unix:/Users/me/.tether/run/tetherd.sock",
+  "listener": "unix:/srv/me/.tether/run/tetherd.sock",
   "sessions": 2,
   "sandbox_protect": {
     "enabled": true,
@@ -459,7 +459,7 @@ Response:
     "bwrap_checked": true,
     "bwrap_usable": true,
     "created_project_roots": [
-      {"project": "old-site", "repo_root": "/home/me/dev/old-site", "reason": "does not exist and an agent could have created it (/home/me/dev is writable): it was created holding only a read-only .tether, so a protected agent cannot plant a layer there"}
+      {"project": "old-site", "repo_root": "/srv/me/dev/old-site", "reason": "does not exist and an agent could have created it (/srv/me/dev is writable): it was created holding only a read-only .tether, so a protected agent cannot plant a layer there"}
     ]
   }
 }
@@ -1949,7 +1949,7 @@ Body: `UpdatePatch` JSON. Partial-merge semantics:
 {
   "title": "Tether Sprint Implementer",
   "skills": {"mode": "append", "value": [{"name": "go-generics", "learned_at": "2026-05-20T00:00:00Z"}]},
-  "last_updated_by": "chrispian@local"
+  "last_updated_by": "operator@example"
 }
 ```
 

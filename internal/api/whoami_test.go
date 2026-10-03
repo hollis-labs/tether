@@ -177,11 +177,11 @@ func TestWhoami_RedactsCallbackHostAddressKindMetaAndExternalIDs(t *testing.T) {
 	srv, svc := newWhoamiServer(t)
 	ctx := context.Background()
 
-	hostAddr := "10.0.0.9:9999"
+	hostAddr := "192.0.2.9:9999"
 	agent, err := svc.Register(ctx, registry.KindAgent, registry.Profile{
 		DisplayName:   "Secretive Whoami Target",
 		LastUpdatedBy: "tester",
-		Callback:      &registry.Callback{Scheme: "file", Target: "file:///Users/tester/.tether/catalog/agents/secretive.yaml"},
+		Callback:      &registry.Callback{Scheme: "file", Target: "file:///srv/tester/.tether/catalog/agents/secretive.yaml"},
 		KindMeta:      json.RawMessage(`{"internal_note":"do not leak via whoami"}`),
 		HostAddress:   hostAddr,
 	})

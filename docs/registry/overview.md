@@ -40,7 +40,7 @@ Each registry row carries a `callback` URI:
 
 ```json
 {
-  "callback": {"scheme": "file", "target": "file:///Users/chrispian/.tether/catalog/agents/reviewer.yaml"}
+  "callback": {"scheme": "file", "target": "file:///srv/example/.tether/catalog/agents/reviewer.yaml"}
 }
 ```
 

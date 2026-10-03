@@ -157,8 +157,8 @@ Returns `201 Created`. Follow with `POST /sessions/{id}/launch`.
 ## Library client
 
 ```go
-import "github.com/chrispian/tether/internal/client"
-import "github.com/chrispian/tether/internal/api"
+import "github.com/hollis-labs/tether/internal/client"
+import "github.com/hollis-labs/tether/internal/api"
 
 c, _ := client.NewLocal()
 res, err := c.LaunchWithInput(ctx, api.LaunchRequest{

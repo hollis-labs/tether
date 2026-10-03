@@ -1251,7 +1251,7 @@ func TestRunWakeSweep_RetriesBusyDelivery_ThenDelivers(t *testing.T) {
 // ─── RunWakeSweep: parking unresolvable deliveries (CW-20261001-0012) ─────
 
 // TestRunWakeSweep_UnresolvableBacklog_DoesNotStarveFreshDelivery
-// reproduces the agent-os backlog: more ready deliveries than one batch,
+// reproduces the observed backlog: more ready deliveries than one batch,
 // all addressed to recipients with no live session, ahead of one fresh
 // delivery to a live session. Delivery IDs are time-ordered, so before
 // parking every sweep re-read the same unresolvable head rows and never

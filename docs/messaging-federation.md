@@ -31,9 +31,9 @@ federation:
   strict: false                  # optional; see "Strict mode" below
   peers:
     - authority: torque           # a foreign URN authority
-      base_url: http://10.0.0.4:7777
+      base_url: http://192.0.2.4:7777
     - authority: nanite
-      base_url: http://10.0.0.5:8080
+      base_url: http://192.0.2.5:8080
 ```
 
 - **`enabled`** — when `false` (the default) the whole block is ignored and
