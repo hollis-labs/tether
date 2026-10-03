@@ -10,3 +10,6 @@ func agentCanWrite(string) bool { return true }
 func agentGetsPast(string) (string, error) {
 	return "this platform cannot tell who owns the directories above it", nil
 }
+
+// replaceableSymlink cannot examine ownership here either, so it says nothing.
+func replaceableSymlink(string) (string, error) { return "", nil }

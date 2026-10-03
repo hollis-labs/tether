@@ -243,27 +243,51 @@ func TestPrepareCatalogProtectionTheLaunchingProjectWithAPlaceholderRootIsStillR
 		}
 	}
 
-	// Once the repository is restored into the root, it is no longer a placeholder.
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("restored\n"), 0o640); err != nil {
+	// An agent can drop files into the root (only .tether is anchored). That must not
+	// turn the placeholder back into a project that launches (the typed 409 and the
+	// report would both be defeated): it is a placeholder while the marker is there.
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("dropped by something\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(s.dead["dead-c"], "nested", "deeper"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"dead-b", "dead-c"} {
+		if _, err := PrepareCatalogProtection(s.catalogRoot, s.cat, id); !errors.As(err, &rootErr) || rootErr.Project != id || !strings.Contains(rootErr.Reason, PlaceholderMarker) {
+			t.Fatalf("launching %s after something was put in its placeholder root: err = %v; want the typed refusal naming the marker", id, err)
+		}
+	}
+	got, err = PrepareCatalogProtection(s.catalogRoot, s.cat, "live-c")
+	if err != nil || len(got.CreatedRoots) != 7 {
+		t.Fatalf("launching live-c: created roots=%d err=%v; the 7 placeholders must still be reported", len(got.CreatedRoots), err)
+	}
+	for _, c := range got.CreatedRoots {
+		if c.Project == "dead-b" && !strings.Contains(c.Reason, "something else has been put in the directory since") {
+			t.Fatalf("dead-b is reported as %q; want it to say something was put in the directory", c.Reason)
+		}
+	}
+
+	// Content in the layer beside the marker does not change that either.
+	if err := os.MkdirAll(filepath.Join(s.dead["dead-d"], ".tether", "agents"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-d"); !errors.As(err, &rootErr) || rootErr.Project != "dead-d" {
+		t.Fatalf("launching dead-d with content beside its marker: err = %v; want the typed refusal", err)
+	}
+
+	// Removing the marker is how the repository is restored: then it launches, and
+	// is no longer reported.
+	if err := os.Remove(filepath.Join(root, ".tether", PlaceholderMarker)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-b")
 	if err != nil {
-		t.Fatalf("launching dead-b with its repository back: %v", err)
+		t.Fatalf("launching dead-b with the marker removed: %v", err)
 	}
 	for _, c := range got.CreatedRoots {
 		if c.Project == "dead-b" {
 			t.Fatalf("a restored project is still reported as a placeholder: %+v", c)
 		}
-	}
-
-	// So is a root whose layer has been given content: that is somebody's layer.
-	other := s.dead["dead-c"]
-	if err := os.MkdirAll(filepath.Join(other, ".tether", "agents"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "dead-c"); err != nil {
-		t.Fatalf("launching dead-c with its own layer content: %v", err)
 	}
 }
 
@@ -347,9 +371,71 @@ func TestPrepareCatalogProtectionAFileInTheWay(t *testing.T) {
 	}
 }
 
-// A dangling symlink as a root: an agent's mkdir through it lands where it
-// points, so that is where the layer is anchored, and the link is left alone.
-func TestPrepareCatalogProtectionAnchorsTheTargetOfADanglingSymlinkRoot(t *testing.T) {
+// A symlink in a repo_root that an agent can replace cannot be protected: it can
+// unlink the link and put a real directory with a planted layer where it was, and
+// the loader reads the layer through the link. Anchoring the link's target (what an
+// earlier version did for a dangling link) does not pin the link. So the project is
+// refused, naming the link and why, whether the link dangles or not, and nothing is
+// created; a tolerant caller leaves the layer out and reports it.
+func TestPrepareCatalogProtectionRefusesASymlinkRootAnAgentCanReplace(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	catalogRoot := filepath.Join(base, "catalog")
+	realDir := filepath.Join(base, "real-repo")
+	for _, d := range []string{filepath.Join(base, "home"), catalogRoot, realDir} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dangling, live := filepath.Join(base, "dangling-link"), filepath.Join(base, "live-link")
+	if err := os.Symlink(filepath.Join(base, "nowhere", "target"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDir, live); err != nil {
+		t.Fatal(err)
+	}
+	for name, root := range map[string]string{"dangling": dangling, "live": live, "below-a-link": filepath.Join(live, "sub", "dir")} {
+		cat := &Catalog{Projects: map[string]Project{"p": {RepoRoot: root}}}
+		_, err := PrepareCatalogProtection(catalogRoot, cat, "")
+		var layerErr *UnprotectableLayerError
+		if !errors.As(err, &layerErr) || layerErr.Project != "p" {
+			t.Fatalf("%s: err = %v; want an *UnprotectableLayerError naming p", name, err)
+		}
+		for _, want := range []string{"symlink an agent can replace", " -> ", "point the project at the real path"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: message %q does not mention %q", name, err.Error(), want)
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(base, "nowhere")); !os.IsNotExist(err) {
+			t.Fatalf("%s: the refused call created something under the link's target (%v)", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(realDir, ".tether")); !os.IsNotExist(err) {
+			t.Fatalf("%s: the refused call created a layer (%v)", name, err)
+		}
+		if fi, err := os.Lstat(root); name != "below-a-link" && (err != nil || fi.Mode()&os.ModeSymlink == 0) {
+			t.Fatalf("%s: the link was replaced or removed (%v)", name, err)
+		}
+		// A tolerant caller is not refused: it leaves the layer out and says so.
+		got, err := PrepareCatalogProtectionWith(catalogRoot, cat, ProtectionOptions{Tolerate: true})
+		if err != nil || len(got.Unprotected) != 1 || got.Unprotected[0].Project != "p" || !strings.Contains(got.Unprotected[0].Why, "symlink an agent can replace") {
+			t.Fatalf("%s: tolerant call: unprotected=%+v err=%v; want p listed with the reason", name, got.Unprotected, err)
+		}
+	}
+}
+
+// A symlink out of every agent's reach (a system one, like /lib -> usr/lib) is
+// followed: the root under it is judged on where it lands, as before.
+func TestPrepareCatalogProtectionFollowsASymlinkNoAgentCanReplace(t *testing.T) {
+	skipAsRoot(t)
+	if fi, err := os.Lstat("/lib"); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Skip("/lib is not a symlink on this host")
+	}
+	if past, err := agentGetsPast("/"); err != nil || past != "" || agentCanWrite("/") {
+		t.Skip("the root directory is not out of this user's reach here")
+	}
+	if sys := systemDirNoAgentCanWrite(t); sys == "" {
+		return
+	}
 	base := t.TempDir()
 	t.Setenv("HOME", filepath.Join(base, "home"))
 	catalogRoot := filepath.Join(base, "catalog")
@@ -358,37 +444,52 @@ func TestPrepareCatalogProtectionAnchorsTheTargetOfADanglingSymlinkRoot(t *testi
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(base, "nowhere", "target")
-	link := filepath.Join(base, "link")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	cat := &Catalog{Projects: map[string]Project{"dangling": {RepoRoot: link}}}
+	cat := &Catalog{Projects: map[string]Project{"under-lib": {RepoRoot: "/lib/tether-protection-test-no-such-dir/repo"}}}
 	got, err := PrepareCatalogProtection(catalogRoot, cat, "")
-	if err != nil {
+	if err != nil || len(got.Skipped) != 1 || got.Skipped[0].Project != "under-lib" {
+		t.Fatalf("skipped=%+v err=%v; want the root under /lib skipped: nothing an agent can do creates it", got.Skipped, err)
+	}
+}
+
+// replaceableSymlink on real paths.
+func TestReplaceableSymlink(t *testing.T) {
+	skipAsRoot(t)
+	base := t.TempDir()
+	realDir := filepath.Join(base, "realDir")
+	if err := os.MkdirAll(filepath.Join(realDir, "sub"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("the symlink root was replaced or removed (%v)", err)
+	if got, err := replaceableSymlink(filepath.Join(realDir, "sub")); err != nil || got != "" {
+		t.Fatalf("a path with no symlink: got %q, err %v", got, err)
 	}
-	layer := filepath.Join(target, ".tether")
-	if fi, err := os.Stat(layer); err != nil || !fi.IsDir() {
-		t.Fatalf("the layer was not created where the link lands: %v", err)
+	if got, err := replaceableSymlink(filepath.Join(base, "no-such", "dir")); err != nil || got != "" {
+		t.Fatalf("a path that does not exist: got %q, err %v", got, err)
 	}
-	// The path the catalog loader reads (through the link) is the anchored directory.
-	viaLink, err1 := os.Stat(filepath.Join(link, ".tether"))
-	direct, err2 := os.Stat(layer)
-	if err1 != nil || err2 != nil || !os.SameFile(viaLink, direct) {
-		t.Fatalf("the loader's path through the link is not the anchored layer (%v %v)", err1, err2)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink("realDir", link); err != nil { // relative target
+		t.Fatal(err)
 	}
-	found := false
-	for _, d := range got.Dirs {
-		if d == canonical(t, layer) {
-			found = true
-		}
+	if got, err := replaceableSymlink(filepath.Join(link, "sub")); err != nil || !strings.Contains(got, link+" -> realDir") || !strings.Contains(got, "is owned by this user") {
+		t.Fatalf("a link in a directory the user can write: got %q, err %v", got, err)
 	}
-	if !found || len(got.CreatedRoots) != 1 {
-		t.Fatalf("dirs = %q created roots = %+v; want the layer anchored and reported", got.Dirs, got.CreatedRoots)
+	// a chain of two: the first is the one an agent can replace
+	link2 := filepath.Join(base, "link2")
+	if err := os.Symlink(link, link2); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := replaceableSymlink(link2); err != nil || !strings.Contains(got, link2+" -> ") {
+		t.Fatalf("a chain of links: got %q, err %v", got, err)
+	}
+	// a loop is an error, not a pass
+	a, b := filepath.Join(base, "loop-a"), filepath.Join(base, "loop-b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := replaceableSymlink(a); err == nil && got == "" {
+		t.Fatalf("a symlink loop passed (%q): want a reason or an error", got)
 	}
 }
 
@@ -577,10 +678,12 @@ func TestPrepareCatalogProtectionAFileInADirectoryNoAgentCanTouchIsSkipped(t *te
 // writable is not out of its reach: it can chmod what the user owns, and rename
 // any directory it can write the parent of. Skipping such a root was fail-open
 // (reproduced: chmod u+w, mkdir, plant; then the next catalog load read the
-// layer). Creating the root there is impossible without changing the user's
-// directory, so protection fails closed, naming the project and the way past, and
-// creates nothing.
-func TestPrepareCatalogProtectionFailsClosedWhereAnAgentCanGetPastAnUnwritableDirectory(t *testing.T) {
+// layer), and refusing it made one dead project under an unmounted mountpoint
+// refuse every launch. So the nearest existing directory is anchored read-only
+// instead: inside the sandbox it cannot be made writable, written or renamed, and
+// the root cannot be created under it. Nothing is created, nothing is refused,
+// and the project is reported, not skipped.
+func TestPrepareCatalogProtectionAnchorsAnUnwritableAncestorAnAgentCanGetPast(t *testing.T) {
 	skipAsRoot(t)
 	s := newLiveShape(t)
 	locked := filepath.Join(t.TempDir(), "locked")
@@ -599,35 +702,46 @@ func TestPrepareCatalogProtectionFailsClosedWhereAnAgentCanGetPastAnUnwritableDi
 		d := d
 		t.Cleanup(func() { _ = os.Chmod(d, 0o750) })
 	}
-	for name, root := range map[string]string{
-		"direct":    filepath.Join(locked, "repo"),
-		"deep":      filepath.Join(inside, "a", "b"),
-		"isfile":    file,
-		"underfile": filepath.Join(file, "child"),
+	for name, c := range map[string]struct{ root, anchor string }{
+		"direct":    {filepath.Join(locked, "repo"), locked},
+		"deep":      {filepath.Join(inside, "a", "b"), inside},
+		"isfile":    {file, locked},
+		"underfile": {filepath.Join(file, "child"), locked},
 	} {
 		cat := &Catalog{Projects: map[string]Project{}}
 		for id, r := range s.existing {
 			cat.Projects[id] = Project{RepoRoot: r}
 		}
-		cat.Projects["ro-"+name] = Project{RepoRoot: root}
-		_, err := PrepareCatalogProtection(s.catalogRoot, cat, "")
-		var layerErr *UnprotectableLayerError
-		if !errors.As(err, &layerErr) || layerErr.Project != "ro-"+name {
-			t.Fatalf("%s: err = %v; want an *UnprotectableLayerError naming ro-%s", name, err, name)
-		}
-		for _, want := range []string{`"ro-` + name + `"`, "is not writable", "owned by this user", "can get past"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("%s: message %q does not mention %q", name, err.Error(), want)
+		cat.Projects["ro-"+name] = Project{RepoRoot: c.root}
+		for _, opts := range []ProtectionOptions{{}, {Tolerate: true}} {
+			got, err := PrepareCatalogProtectionWith(s.catalogRoot, cat, opts)
+			if err != nil {
+				t.Fatalf("%s (tolerate=%v): a dead project under an unwritable directory refused the call: %v", name, opts.Tolerate, err)
+			}
+			if len(got.Skipped) != 0 || len(got.Unprotected) != 0 {
+				t.Fatalf("%s: skipped=%+v unprotected=%+v; the agent can get past this directory, so it is neither", name, got.Skipped, got.Unprotected)
+			}
+			if len(got.AnchoredAncestors) != 1 || got.AnchoredAncestors[0].Project != "ro-"+name || got.AnchoredAncestors[0].Ancestor != canonical(t, c.anchor) {
+				t.Fatalf("%s: anchored ancestors = %+v; want ro-%s anchored at %s", name, got.AnchoredAncestors, name, c.anchor)
+			}
+			for _, want := range []string{"is not writable", "can get past that", "anchored read-only"} {
+				if !strings.Contains(got.AnchoredAncestors[0].Reason, want) {
+					t.Fatalf("%s: reason %q does not say %q", name, got.AnchoredAncestors[0].Reason, want)
+				}
+			}
+			found := false
+			for _, d := range got.Dirs {
+				if d == canonical(t, c.anchor) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("%s: the ancestor %s is not among the anchored dirs %q", name, c.anchor, got.Dirs)
 			}
 		}
-		// the refused call created nothing, anywhere
-		for id, r := range s.existing {
-			if _, err := os.Stat(filepath.Join(r, ".tether")); !os.IsNotExist(err) {
-				t.Fatalf("%s: the refused call created %s/.tether for %s (%v)", name, r, id, err)
-			}
-		}
-		if _, err := os.Stat(filepath.Join(s.home, ".tether")); !os.IsNotExist(err) {
-			t.Fatalf("%s: the refused call created the user layer (%v)", name, err)
+		// Nothing was created under the ancestor, and no layer anywhere for the dead root.
+		if _, err := os.Stat(filepath.Join(locked, "repo")); !os.IsNotExist(err) {
+			t.Fatalf("%s: something was created under the anchored directory (%v)", name, err)
 		}
 	}
 }
@@ -688,5 +802,234 @@ func TestAgentGetsPast(t *testing.T) {
 		if got, err := agentGetsPast(sys); err != nil || got != "" {
 			t.Fatalf("%s: got %q, err %v; want no way past", sys, got, err)
 		}
+	}
+}
+
+// A layer that turns up while protection is creating it was not made by Tether, and
+// must not be anchored and reported as a clean created root (a racing agent could
+// otherwise plant .tether/agents/x.yaml first: the layer was anchored with the
+// planted file in it and the marker written beside it). Mkdir fails on EEXIST, and
+// the layer is checked to hold the marker and nothing else. The call fails with a
+// typed error naming the project and the layer, and leaves what it found as it is.
+func TestPrepareCatalogProtectionRefusesALayerPlantedWhileItIsCreated(t *testing.T) {
+	plant := func(layer string) {
+		if err := os.MkdirAll(filepath.Join(layer, "agents"), 0o750); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(layer, "agents", "x.yaml"), []byte("id: planted\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	for name, hook := range map[string]*func(string){"before": &testHookBeforeLayerCreate, "after": &testHookAfterLayerCreate} {
+		s := newLiveShape(t)
+		victim := s.dead["dead-c"]
+		layer := filepath.Join(victim, ".tether")
+		*hook = func(l string) {
+			if l == layer {
+				plant(l)
+			}
+		}
+		t.Cleanup(func() { *hook = nil })
+
+		_, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "")
+		var layerErr *UnprotectableLayerError
+		if !errors.As(err, &layerErr) || layerErr.Project != "dead-c" || !strings.Contains(err.Error(), layer) {
+			t.Fatalf("%s: err = %v; want an *UnprotectableLayerError naming dead-c and %s", name, err, layer)
+		}
+		want := "created by something else"
+		if name == "after" {
+			want = "had something put in its layer"
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: message %q does not say %q", name, err.Error(), want)
+		}
+		if _, err := os.Stat(filepath.Join(layer, "agents", "x.yaml")); err != nil {
+			t.Fatalf("%s: the planted file was touched (%v); it must be left as it is", name, err)
+		}
+		if name == "before" {
+			if _, err := os.Stat(filepath.Join(layer, PlaceholderMarker)); !os.IsNotExist(err) {
+				t.Fatalf("before: a marker was written next to a layer Tether did not create (%v)", err)
+			}
+		}
+
+		// A tolerant caller leaves that layer out, and reports it; the rest are anchored.
+		*hook = func(l string) {
+			if l == layer {
+				plant(l)
+			}
+		}
+		s2 := newLiveShape(t)
+		layer = filepath.Join(s2.dead["dead-c"], ".tether")
+		got, err := PrepareCatalogProtectionWith(s2.catalogRoot, s2.cat, ProtectionOptions{Tolerate: true})
+		if err != nil || len(got.Unprotected) != 1 || got.Unprotected[0].Project != "dead-c" {
+			t.Fatalf("%s: tolerant: unprotected=%+v err=%v; want dead-c listed", name, got.Unprotected, err)
+		}
+		if len(got.CreatedRoots) != 6 {
+			t.Fatalf("%s: tolerant: %d created roots; want the 6 that were created cleanly", name, len(got.CreatedRoots))
+		}
+		for _, d := range got.Dirs {
+			if d == canonical(t, layer) {
+				t.Fatalf("%s: tolerant: the planted layer %s was anchored as if clean", name, layer)
+			}
+		}
+	}
+}
+
+// What cannot be examined is a typed refusal, not a bare 500, and a root with a name
+// too long to exist is skipped (nobody can create it).
+func TestPrepareCatalogProtectionTypesWhatItCannotExamine(t *testing.T) {
+	skipAsRoot(t)
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	catalogRoot := filepath.Join(base, "catalog")
+	locked := filepath.Join(base, "locked")
+	for _, d := range []string{filepath.Join(base, "home"), catalogRoot, locked} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(locked, 0); err != nil { // no search permission: stat of anything below is EACCES
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
+
+	cat := &Catalog{Projects: map[string]Project{"hidden": {RepoRoot: filepath.Join(locked, "repo")}}}
+	_, err := PrepareCatalogProtection(catalogRoot, cat, "")
+	var layerErr *UnprotectableLayerError
+	if !errors.As(err, &layerErr) || layerErr.Project != "hidden" || !strings.Contains(err.Error(), "cannot be examined") {
+		t.Fatalf("an unreadable root: err = %v; want an *UnprotectableLayerError naming hidden", err)
+	}
+	got, err := PrepareCatalogProtectionWith(catalogRoot, cat, ProtectionOptions{Tolerate: true})
+	if err != nil || len(got.Unprotected) != 1 {
+		t.Fatalf("tolerant: unprotected=%+v err=%v", got.Unprotected, err)
+	}
+
+	long := filepath.Join(base, strings.Repeat("x", 300))
+	cat = &Catalog{Projects: map[string]Project{"toolong": {RepoRoot: long}}}
+	got, err = PrepareCatalogProtection(catalogRoot, cat, "")
+	if err != nil || len(got.Skipped) != 1 || got.Skipped[0].Project != "toolong" || !strings.Contains(got.Skipped[0].Reason, "too long") {
+		t.Fatalf("a name too long to exist: skipped=%+v err=%v; want it skipped with the reason", got.Skipped, err)
+	}
+	if len(got.CreatedRoots) != 0 {
+		t.Fatalf("created roots = %+v; nothing can be created at that path", got.CreatedRoots)
+	}
+}
+
+// What a strict call refuses, a tolerant call leaves out and reports, so that a
+// catalog problem cannot take out the MCP gateway or an unprotected Codex launch.
+// The launching project's own missing root is the typed error either way: it is
+// that launch's problem, not the catalog's.
+func TestPrepareCatalogProtectionTolerantLeavesOutWhatStrictRefuses(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", filepath.Join(base, "home"))
+	catalogRoot := filepath.Join(base, "catalog")
+	for _, d := range []string{filepath.Join(base, "home"), catalogRoot, filepath.Join(base, "repos", "fine")} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(base, "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat := &Catalog{Projects: map[string]Project{
+		"fine":    {RepoRoot: filepath.Join(base, "repos", "fine")},
+		"underit": {RepoRoot: filepath.Join(file, "child")},
+		"gone":    {RepoRoot: filepath.Join(base, "repos", "gone")},
+	}}
+	var layerErr *UnprotectableLayerError
+	if _, err := PrepareCatalogProtection(catalogRoot, cat, ""); !errors.As(err, &layerErr) {
+		t.Fatalf("strict: err = %v; want the refusal", err)
+	}
+	got, err := PrepareCatalogProtectionWith(catalogRoot, cat, ProtectionOptions{Tolerate: true})
+	if err != nil {
+		t.Fatalf("tolerant: %v", err)
+	}
+	if len(got.Unprotected) != 1 || got.Unprotected[0].Project != "underit" || !strings.Contains(got.Unprotected[0].Why, "a file is in the way") {
+		t.Fatalf("tolerant: unprotected = %+v; want underit with the reason", got.Unprotected)
+	}
+	fineLayer := canonical(t, filepath.Join(base, "repos", "fine", ".tether"))
+	goneLayer := canonical(t, filepath.Join(base, "repos", "gone", ".tether"))
+	foundFine, foundGone := false, false
+	for _, d := range got.Dirs {
+		foundFine = foundFine || d == fineLayer
+		foundGone = foundGone || d == goneLayer
+	}
+	if !foundFine || !foundGone {
+		t.Fatalf("tolerant: dirs %q; the other projects' layers must still be anchored", got.Dirs)
+	}
+	var rootErr *ProjectRootError
+	if _, err := PrepareCatalogProtectionWith(catalogRoot, cat, ProtectionOptions{Launching: "underit", Tolerate: true}); !errors.As(err, &rootErr) || rootErr.Project != "underit" {
+		t.Fatalf("tolerant, launching the broken project: err = %v; want its own typed *ProjectRootError", err)
+	}
+}
+
+// A project whose repo_root runs through a file made the daemon refuse to start:
+// the layered loader read <root>/.tether/agents and got ENOTDIR, not "not found",
+// before protection ever ran. A layer that cannot be there because something
+// above it is a file is a missing layer.
+func TestLoadLayeredSurvivesAProjectRootUnderAFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	catalogRoot := t.TempDir()
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		filepath.Join(catalogRoot, "global.yaml"):                 "version: 0.1.0\n",
+		filepath.Join(catalogRoot, "projects", "broken.yaml"):     "id: broken\nname: Broken\nrepo_root: " + filepath.Join(file, "child") + "\n",
+		filepath.Join(catalogRoot, "projects", "isfile.yaml"):     "id: isfile\nname: IsFile\nrepo_root: " + file + "\n",
+		filepath.Join(catalogRoot, "providers", "cli.yaml"):       "id: cli\ntype: cli\ncommand: echo\n",
+		filepath.Join(catalogRoot, "agents", "system-agent.yaml"): "id: system-agent\nname: System\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	layered, err := LoadLayered(catalogRoot)
+	if err != nil {
+		t.Fatalf("LoadLayered with a project root under a file: %v", err)
+	}
+	if _, ok := layered.Agents["system-agent"]; !ok || len(layered.Agents) != 1 {
+		t.Fatalf("agents = %v; want only the system agent", layered.Agents)
+	}
+}
+
+// Failing to create a placeholder (a directory that turned unwritable after the
+// check, a full disk) is a typed refusal naming the project, not a bare internal
+// error, and a tolerant caller leaves the layer out.
+func TestPrepareCatalogProtectionTypesAFailureToCreateAPlaceholder(t *testing.T) {
+	skipAsRoot(t)
+	var victim, layer string
+	testHookBeforeLayerCreate = func(l string) {
+		if l == layer {
+			_ = os.Chmod(victim, 0o500) // now Mkdir under it is EACCES
+		}
+	}
+	t.Cleanup(func() { testHookBeforeLayerCreate = nil })
+	arm := func(s *liveShape) {
+		victim = s.dead["dead-a"] // the root Tether just made: the hook takes its write permission away
+		layer = filepath.Join(victim, ".tether")
+		t.Cleanup(func() { _ = os.Chmod(victim, 0o750) })
+	}
+
+	s := newLiveShape(t)
+	arm(s)
+	_, err := PrepareCatalogProtection(s.catalogRoot, s.cat, "")
+	var layerErr *UnprotectableLayerError
+	if !errors.As(err, &layerErr) || layerErr.Project != "dead-a" || !strings.Contains(err.Error(), "could not be created as a placeholder") {
+		t.Fatalf("err = %v; want an *UnprotectableLayerError naming dead-a", err)
+	}
+
+	s2 := newLiveShape(t)
+	arm(s2)
+	got, err := PrepareCatalogProtectionWith(s2.catalogRoot, s2.cat, ProtectionOptions{Tolerate: true})
+	if err != nil || len(got.Unprotected) != 1 || got.Unprotected[0].Project != "dead-a" {
+		t.Fatalf("tolerant: unprotected=%+v err=%v", got.Unprotected, err)
 	}
 }
