@@ -22,6 +22,7 @@ require (
 	github.com/hollis-labs/go-runner v0.8.2
 	github.com/hollis-labs/go-runtime-events v0.2.2
 	github.com/hollis-labs/go-sandbox v0.6.0
+	github.com/hollis-labs/substrate/mesh v0.0.0-20261003194625-84dbabe28e9a
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
