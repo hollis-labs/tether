@@ -13,8 +13,8 @@ not inject turns themselves after submitting a reply.
 ## Availability and deployment
 
 This guide describes interfaces merged through Tether main `508c922` and
-go-tether-client main `94f6f71` (PR #10). A merge does not establish that your
-daemon is deployed or that a client tag exists. Check deployed capabilities.
+go-tether-client v0.10.0 (`6477021`, includes PR #9/#10). A merge does not
+establish that your daemon is deployed. Check deployed capabilities.
 
 | Surface | Merged implementation |
 |---|---|
@@ -43,11 +43,19 @@ A route contains a channel **name** and selected output kinds:
 {"route":{"channel":"ops","kinds":["question","approval"]}}
 ```
 
-Put that `route` field on a catalog agent or launch, supply it in an override JSON file,
-or pass it in the session-create API. Each explicit route block replaces the
-lower-precedence route, rather than merging its kinds. API route overrides the
-JSON override route, which overrides the selected agent's route. The resolved
-route is persisted with the launch; later catalog edits do not change it.
+Put `route` on a catalog agent or launch, in an agent YAML file or inline agent,
+in the inline JSON `override` string, or directly on the session-create request.
+Each explicit route replaces the lower-precedence route rather than merging kinds.
+Precedence, lowest to highest: catalog agent, catalog launch, agent file, inline
+agent, override JSON, explicit API/CLI route. For example:
+
+```bash
+tether launch --launch demo-launch --override '{"route":{"channel":"ops","kinds":["final"]}}'
+```
+
+`--override` is a JSON string, not a file path. The resolved route is persisted
+with the **session at create**, in `sessions.route_json`; later catalog edits do
+not change it.
 
 No route means no routing. With a route, omitted or null `kinds` means all four supported
 kinds: `final`, `question`, `approval`, `failure`. An explicit empty list selects
@@ -86,7 +94,10 @@ A private mailbox message with the same `channel` label stays private.
 
 No membership is needed to read or subscribe. Caller identity still follows the
 daemon's authentication mode: a verified principal takes precedence over an
-asserted `as` URN. The default channel authorization hooks operate in observe
+asserted `as` URN. Without a verified bearer, `as` is required on channel list,
+history and subscribe: missing/invalid values return 400 `invalid_request`.
+Under ENFORCE a verified bearer is required instead; `as` cannot replace it.
+The default channel authorization hooks operate in observe
 mode; this does not establish future grants or enforcement policy.
 
 | Read | Behavior |
@@ -96,7 +107,9 @@ mode; this does not establish future grants or enforcement policy.
 | `GET /channels/{name}/messages?as=<caller>&last=20` | Latest 20, returned oldest first; excludes `since` and `limit` |
 | `GET /channels/{name}/subscribe?as=<caller>&since=0` | SSE replay, then live publications |
 
-History `limit` defaults to 100 and is capped at 1000; `last` accepts 1–1000.
+An omitted history `limit` defaults to 100. Explicit `limit` and `last` must be
+1–1000; values outside that range, including zero, return 400 `invalid_request`
+rather than being capped. MCP read/list bounds are also validated.
 Publication `seq` determines order, even when timestamps disagree. Sequences may
 have gaps; do not calculate the next message id from a count. Continue history
 with `since=next_since`. Channel cursors and event-bus cursors are separate.
@@ -140,6 +153,10 @@ Routed output has envelope kind `notice`; the turn's classification is
   "kind":"notice",
   "channel":"ops",
   "thread_id":"session-id",
+  "created_at":"2026-10-03T00:00:00Z",
+  "delivered_at":null,
+  "consumed_at":null,
+  "content_type":"application/json",
   "payload":{"text":"The change is ready for review."},
   "metadata":{
     "session_id":"session-id",
@@ -168,7 +185,7 @@ by sender session within the channel. Runtime ids use registry primary ids:
 | `question` | Ended turn whose unresolved question signal still needs a response |
 | `approval` | Ended turn whose unresolved refusal/approval signal still needs a response |
 | `failure` | Failed turn; inspect its stop reason and text |
-| `terminal` | Turn ended without routable user-facing output; bus only |
+| `terminal` | Turn cut short by interruption/cancellation or process exit; partial text or a reason, bus excerpt only, never routed |
 
 `stop_reason` describes how the turn ended. Normalized values include
 `end_turn`, `max_tokens`, `tool_use`, `turn_limit`, `refusal`, `cancelled` and
@@ -178,7 +195,10 @@ extensible string, not a closed enum or a task-success indicator.
 Output `confidence` describes **text extraction**, not the certainty of the
 question/approval classification. Exact terminal text or final-phase deltas are
 `exact`; a fallback last text block is `heuristic`. Never interpret exact text as
-an exact inference that the agent cannot proceed without approval.
+an exact inference that the agent cannot proceed without approval. Failure and
+terminal confidence is exact for runtime error text, heuristic for a synthesized
+reason. Terminal stop reasons are `cancelled` or `error`; an interrupting reply
+can produce one for the interrupted turn.
 
 Capability `final_text_confidence` values are `exact`, `heuristic`, `none` and
 `unknown`. Supported Claude, Codex, Antigravity and OpenCode run modes have an
@@ -191,14 +211,20 @@ not a request still pending inside an open turn. A later successful tool call
 can show a refusal was worked around; a text-only workaround can still be
 classified question/approval. Antigravity refusals lack tool ids, so a worked
 around refusal can still surface as approval. Claude AskUserQuestion and Codex
-declined/requestUserInput paths have protocol/code coverage; captured live
-acceptance evidence remains pending. Approval text can contain a refused
+declined/requestUserInput detectors have protocol/code coverage. However,
+headless Claude Code 2.1.288 (streaming-stdio) does not offer AskUserQuestion:
+`question` does not surface for Claude as launched today despite capability
+advertisement (CW-20261003-0070). `kinds_available` describes detector wiring,
+not proof that the capture path can produce a signal. Claude approval through
+permission denials is a separate path, unexercised under bypass; remaining live
+signal acceptance evidence is pending. Approval text can contain a refused
 command, path, URL or description, including inline credentials; redaction is
 not guaranteed. Choose what your consumer exposes to its audience.
 
 ## Turn-output events and bridge migration
 
-The canonical event is `session.turn_output`.
+The canonical event is `session.turn_output`. Empty-text finals publish no event;
+failure/terminal can carry empty text. An event for every turn is not guaranteed.
 Tangent's Agent Turns bridge previously waited for `session.turn_waiting_input`,
 which Tether has never emitted. Migrate the bridge to `session.turn_output` and
 handle the message-id-versus-excerpt distinction.
@@ -237,7 +263,9 @@ exposes the same id and body. An excerpt is not an independently stored full bod
 streams the event. SSE `data` wraps `scope`, `session_id` and `payload_json`.
 Decode `data` as JSON, then decode the JSON **string** in `payload_json` to obtain
 the payload above. Historical records likewise use `payload_json`, alongside
-sequence, time and kind. Event-bus sequences and channel publication cursors differ.
+sequence, time and kind. Event-bus sequences and channel publication cursors differ. Bus excerpts of up
+to 4 KiB are retained in event history for 90 days for every session, routed or
+unrouted; this can expose text beyond the channel audience.
 
 Persistence retries can publish later turns before earlier ones. Recovery scans
 attach in staging-time order (message id breaks timestamp ties), but live events,
@@ -255,7 +283,8 @@ produce neither a failure `session.turn_output` event nor a routed failure
 message. See [runtime turn output](runtime-turn-output.md) for these limits.
 
 Attachment records `session.turn_routed` transactionally with publication. This
-audit is available through durable event history, **not live bus/SSE fanout**;
+audit is available via
+`GET /events?kind=session.turn_routed&session_id=<id>`, **not live bus/SSE fanout**;
 its fields are `actor`, `publisher`, `session_id`, `turn_id`, `channel` and
 `message_id`. The router is the audit actor and the sender session the publisher.
 The internal router does not synthesize token scopes; future scope policies must
@@ -265,12 +294,14 @@ explicitly authorize it.
 
 `GET /routing/capabilities` describes the gateway. Add `?session_id=<id>` to
 inspect that session's persisted runtime/mode; an unknown session returns 404.
-The response includes gateway flags, `delivery: "next-turn"`, and a `runtimes`
+Per-session responses also echo `session_id`. The response includes gateway
+flags, `delivery: "next-turn"`, and a `runtimes`
 map keyed by the registry ids above. Each runtime entry carries `route_supported`,
 `reply_to_sender`, `interrupt`, `kinds_available` and `final_text_confidence`.
 
 True means the path is wired: publication plus a running router for routing;
-installed dispatcher for replies; actual adapter `cancel_turn` advertisement
+installed dispatcher plus available publisher kinds for replies; actual adapter
+`cancel_turn` advertisement
 **and** Tether's interrupt path for interrupt. Stopping a session is not evidence
 that cancel-turn is supported. Question/approval availability requires that
 runtime's installed detector and publication feed, not just a tagged library.
@@ -282,13 +313,17 @@ about one sender; do not use another runtime's gateway-level support.
 
 Installed detectors expose question and approval for Claude/Codex, approval for
 Antigravity, and final/failure for other registered sources. Actual availability
-also depends on the runtime mode and installed feed.
+also depends on the runtime mode and installed feed. A `none` or `unknown`
+final-text source yields empty `kinds_available` and false `route_supported`.
 
 ## HTTP and SSE example
 
 These commands use the default Unix socket and an asserted local caller in
-observe mode. With verified authentication, use your configured bearer mechanism;
-identity policy is still applied. Replace the socket path for another deployment.
+observe mode. With verified authentication, use your configured bearer mechanism.
+Under ENFORCE every route here requires a verified bearer; without it the daemon
+returns 401. In observe/off mode channel calls require the asserted `as`;
+`/routing/capabilities` and `/delivery` handlers require no assertion. Replace the
+socket path for another deployment.
 
 ```bash
 TETHER_SOCKET="$HOME/.tether/run/tetherd.sock"
@@ -313,8 +348,8 @@ Last-Event-ID; its higher cursor wins over the original query.
 
 ## Go client example
 
-Use go-tether-client v0.10.0 once tagged, or merged source `94f6f71`, containing
-PR #9 (channels/capabilities) and PR #10 (replies/delivery). Save this as `main.go`
+Use go-tether-client **v0.10.0**, containing PR #9 (channels/capabilities) and
+PR #10 (replies/delivery). Save this as `main.go`
 in a Go module requiring that version,
 then run `go run .`. It loads recent history, then subscribes from `NextSince`:
 
@@ -411,10 +446,22 @@ List pages return `next_offset` when more exist; read pages return `next_since`.
 Use `since`/`limit` instead of `last` to continue. The calls are read-only thin
 wrappers over the same services as HTTP, including identity and tombstones.
 MCP tools cannot hold an SSE subscription; use HTTP or the Go client for streaming.
-For ordinary replies, the existing `tether_message_send` tool accepts
-`in_reply_to` naming the channel message and a text payload through the 201
-compatibility path below. There is no dedicated interrupting-reply MCP tool;
-use HTTP or `Client.Reply` for `interrupt: true`.
+For ordinary replies, `tether_message_send` requires `from`, `to`, `kind` and
+`message.write` scope. Set `to` to the sender session URN (omitting `to` is an
+HTTP-only option), `in_reply_to` to the channel message id, and put the payload
+in `payload_json` as encoded JSON:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tether_message_send","arguments":{"from":"msg://service/local/consumer-example","to":"msg://session/local/session-id","kind":"response","in_reply_to":"message-id","payload_json":"\"Approved\""}}}
+```
+
+The result is `{"ok":true,"message":<envelope>}`; `message.id` is the reply id.
+It does **not** expose `routing_reply`, and the tool has no Idempotency-Key
+parameter: retrying an MCP call can queue a second reply. Use a known published
+parent; the compatibility fallback described below is not distinguishable by
+that receipt alone. There is no dedicated interrupting-reply or delivery-read
+MCP tool. Use HTTP/Go for interrupt and `/delivery`; MCP-only consumers can read
+`routing.reply_*` outcomes with `tether_session_events` or `tether_events_history`.
 
 ## Plugin example: a Tangent docs consumer
 
@@ -425,8 +472,10 @@ example integration, not a shipped plugin or automatic forwarding policy.
 Use it as a callback in your separately packaged plugin, with the host-provided
 context and `TANGENT_MCP_URL`. It imports public packages, not either app's internals.
 
-Save as a separate `main.go`; require the channel-capable Go client and a Tangent
-version exporting `pkg/plugin/hostclient`. Set `TANGENT_MCP_URL` to your local
+Save as a separate `main.go`; require go-tether-client **v0.10.0** and Tangent
+**v0.15.0 or later**, exporting `pkg/plugin/hostclient`. The plugin module itself
+must require that client version; Tangent main pins v0.8.0. Set
+`TANGENT_MCP_URL` to your local
 Tangent MCP endpoint, then `go run .`. It creates docs inbox items; a repeated run
 uses stable idempotency keys. Real plugins should page from a durable cursor and
 apply their own audience policy before presenting text.
@@ -467,7 +516,7 @@ func main() {
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal(m.Payload, &payload); err != nil {
-			log.Fatal(err)
+			continue // ordinary channel publications may have other payload shapes
 		}
 		if payload.Text == "" {
 			continue
@@ -528,15 +577,21 @@ optional `delivered_to_session_id`, `interrupt_requested`, `attempts`, optional
 Detail is one line of at most 256 bytes; a process failure reports exit code or
 signal rather than stderr.
 
-Reply authorization is **not installed even under identity ENFORCE**
-(CW-20261002-0116). Caller identity is recorded, but does not establish a reply
-permission check. `GET /messages/{reply_id}/delivery` currently requires no
-identity. Do not assume ENFORCE restricts either surface.
+Under identity **ENFORCE**, the daemon requires a verified bearer for every
+route except `/health` and `/a2a` (including its subpaths). Anonymous reply and
+delivery requests therefore return 401. Beyond authentication, reply-specific
+authorization is not installed (CW-20261002-0116): any verified caller may reply
+to any routed message and read any reply's delivery record. The `/delivery`
+handler checks neither identity nor ownership itself. In observe/off mode the
+reply requires a valid `as` (or compatibility envelope `from`) without a verified
+principal; `/delivery` requires no identity assertion.
+
+HTTP errors use `{"error":{"code":"...","message":"..."}}`.
 
 Supply `Idempotency-Key` for retry-safe acceptance. A matching retry returns the
 original reply with `duplicate: true`, its current stored state, and no repeated
-interrupt; the earlier interrupt outcome may be omitted. Keys are scoped to
-parent id and actor. Changed body, interrupt flag or target within that scope
+interrupt; the earlier interrupt outcome is omitted on duplicate receipts. Keys
+are scoped to parent id and actor. Changed body, interrupt flag or target within that scope
 returns 409 `idempotency_conflict`.
 
 | Refusal | Meaning |
@@ -549,19 +604,26 @@ returns 409 `idempotency_conflict`.
 | 409 `interrupt_unsupported` | Runtime cannot cancel a turn; nothing queued |
 | 409 `turn_not_yet_started` | Submitted turn has not started; nothing queued |
 | 400 `reply_not_mailbox` | Mailbox operation aimed at a routing reply |
-| 501 `not_implemented` | Installed service's dispatcher is not running; older/nil endpoints may instead return 404 |
+| 501 `not_implemented` | Service installed but dispatcher stopped; a nil reply service gives dedicated endpoint 404 and compatibility mailbox fallback |
 
 `POST /messages` with `in_reply_to` naming a routed channel message returns
 **201 with the stored reply envelope plus `routing_reply`**, rather than the
 dedicated endpoint's 202 receipt. Envelope `id` equals receipt `reply_id`, and
 `in_reply_to` names the parent. Omit `to` or set it to the sender session; another
-recipient returns 400 `invalid_request`. Text comes from a string payload, an
+recipient returns 400 `invalid_request`. This send also requires a valid `kind`. Text comes from a string payload, an
 object's `body`/`text`/`message`, or otherwise the raw payload. Ordinary mailbox
 replies, including messages that merely have session senders, keep their behavior.
+If the parent is unknown, still staged/hidden, or the reply service is nil, this
+compatibility path silently falls back to mailbox delivery: 201 without
+`routing_reply`, no routed turn queued. Treat a 201 **without `routing_reply`** as
+not a routed reply. Prefer the dedicated endpoint to detect that failure as 404
+`not_found` (for an unknown/hidden parent or absent endpoint).
 
 `POST /messages/notify` with a routed `in_reply_to` also queues the reply body:
 201 in notify's shape with the stored `message`, `routing_reply`, and
-`wake_attempted: false`. It ignores `wake`, `wake_text` and `urgency`; no mailbox
+`wake_attempted: false`. Notify requires both `from` and `to` before checking routing (omit-`to` works
+only on `POST /messages`). For a recognized routed parent it ignores `wake`,
+`wake_text` and `urgency`; no mailbox
 copy or reminder turn is created. Interrupt needs the dedicated endpoint.
 Cancel, consume, read, archive, claim, ack, nack, redrive and delete aimed at a
 routing reply return 400 `reply_not_mailbox`; read its state from `/delivery`.
@@ -569,11 +631,12 @@ routing reply return 400 `reply_not_mailbox`; read its state from `/delivery`.
 If the original session ended, Tether resolves its stable agent binding to a
 running successor, never a newest-running guess. Queues are FIFO, including
 backoff, except an interrupting reply is reserved before cancel and takes
-priority over ordinary queued replies.
+priority over ordinary queued replies. A `handed_off` reason alone does not prove
+delivery: handoff first requeues on the successor.
 
 | Delivery reason | State / action |
 |---|---|
-| `handed_off` | Delivered to the actor's bound successor; inspect `delivered_to_session_id` |
+| `handed_off` | First queued with retargeted `target_session_id`; delivered only after injection. Inspect `state` and `delivered_to_session_id` |
 | `turn_failed` | Delivered: turn activity or subprocess exit was observed; failure is terminal and not retried |
 | `session_ended_no_binding` | Undeliverable: no usable current actor binding |
 | `bound_session_not_running` | Undeliverable: bound successor is not running |
