@@ -23,6 +23,9 @@ This package does not dispatch that outbox. An absent rebind/retirement target
 returns authorization denied, so those operations do not expose an identity
 existence oracle before ownership can be authorized.
 
+An authorizer outage during a per-row check is mapped to denied and omits that
+row; the non-denied authorization branch in Directory carries only context errors.
+
 Directory queries first authorize the entire owner-scoped identity index, then
 check row visibility and explicit publication policy. Enrollment alone publishes
 nothing. A private projection contains mesh identity/kind/lifecycle, a pin,
@@ -38,8 +41,9 @@ available. I/O, cancellation, store and unknown errors still fail the query,
 including operational causes wrapped by a validation callback. Its cursor is
 private owner-scope pagination state and can carry a URN hidden by per-row
 policy, but only after index authorization for the entire owner scope. Per-row
-checks and publication control details, not the existence of URNs in a scope the
-caller may enumerate. A future route must not publish it as agent metadata.
+checks and publication policy control record details; index authorization grants
+permission to enumerate URNs in that owner scope. A future route must not publish
+it as agent metadata.
 This is a Tether host type, not a second shared directory wire contract.
 
 Import input is an explicitly supplied identity-only snapshot and reviewed

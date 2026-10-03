@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,8 +18,11 @@ import (
 )
 
 func TestDirectoryRealStoreStaleSourceAndDependencyIsolation(t *testing.T) {
-	for _, mutation := range []string{"presentation", "source removed", "dependency removed"} {
+	for _, mutation := range []string{"presentation", "source removed", "dependency removed", "root removed", "root replaced", "source permission"} {
 		t.Run(mutation, func(t *testing.T) {
+			if mutation == "source permission" && os.Geteuid() == 0 {
+				t.Skip("root bypasses file permission refusal")
+			}
 			s, repo, _ := harness(t)
 			root := t.TempDir()
 			write := func(name, body string) {
@@ -87,6 +91,21 @@ Authored instructions.
 				}
 			}
 			switch mutation {
+			case "root removed", "root replaced":
+				if err := os.RemoveAll(root); err != nil {
+					t.Fatal(err)
+				}
+				if mutation == "root replaced" {
+					if err := os.Mkdir(root, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "source permission":
+				path := filepath.Join(root, "stale.md")
+				if err := os.Chmod(path, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(path, 0600) })
 			case "presentation":
 				write("stale.md", strings.Replace(stale, "description: Integration fixture", "description: Changed presentation", 1))
 			case "source removed":
@@ -99,6 +118,16 @@ Authored instructions.
 				}
 			}
 			page, err := s.Directory(t.Context(), owner, owner, "", 100)
+			if mutation == "root removed" || mutation == "root replaced" || mutation == "source permission" {
+				want := fs.ErrNotExist
+				if mutation == "source permission" {
+					want = fs.ErrPermission
+				}
+				if !errors.Is(err, want) || errors.Is(err, definitionresolve.ErrContent) {
+					t.Fatal("operational root or permission fault omitted", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
