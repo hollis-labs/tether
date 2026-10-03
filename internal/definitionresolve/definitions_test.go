@@ -96,7 +96,7 @@ func TestIndexAndLoadImmutablePinsAndArtifacts(t *testing.T) {
 	d := minimalDefinition()
 	d.Title = "Presentation only"
 	provider.documents["catalog:definition"] = authored(t, d)
-	if _, err := definitions.Load(ctx, original.Pin); !errors.Is(err, fabricstore.ErrNotFound) {
+	if _, err := definitions.Load(ctx, original.Pin); !errors.Is(err, ErrPinMismatch) {
 		t.Fatal("unindexed artifact accepted", err)
 	}
 	presentation, err := definitions.Index(ctx, "catalog:definition")
