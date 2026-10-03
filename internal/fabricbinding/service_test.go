@@ -540,3 +540,43 @@ func TestOutboxFailureRollsBackEveryWriterAndReservation(t *testing.T) {
 		})
 	}
 }
+
+func TestFenceExhaustionCannotWrapOrReserve(t *testing.T) {
+	f := setup(t)
+	r := admitted(t, f, "first")
+	head, err := f.r1.BindingHead(t.Context(), agentURN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const exhausted = uint64(1<<63 - 1)
+	instance := r.Instance
+	instance.ID = "exhaustion-fixture"
+	instance.BindingFence = exhausted
+	lease := r.Lease
+	lease.InstanceID = instance.ID
+	lease.FencingToken = exhausted
+	err = f.r1.Write(t.Context(), func(tx *fabricstore.Tx) error {
+		if e := tx.PutInstance(instance, 0); e != nil {
+			return e
+		}
+		return tx.PutBindingHead(fabricstore.BindingHead{AgentURN: agentURN, HighWater: exhausted, Lease: &lease}, head.Version)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.c.Advance(2 * time.Minute)
+	before, err := f.r1.BindingHead(t.Context(), agentURN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s2.Admit(t.Context(), owner, request("overflow")); !errors.Is(err, fabricstore.ErrInvalid) {
+		t.Fatal("exhausted fence wrapped", err)
+	}
+	after, err := f.r2.BindingHead(t.Context(), agentURN)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal(before, after, err)
+	}
+	if _, err := f.r2.Instance(t.Context(), "instance-overflow"); !errors.Is(err, fabricstore.ErrNotFound) {
+		t.Fatal("overflow reserved instance", err)
+	}
+}
