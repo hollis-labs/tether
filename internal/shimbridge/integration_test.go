@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +48,7 @@ func await(t *testing.T, what string, fn func() bool) {
 	t.Fatal("timeout: " + what)
 }
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
-func startFixture(t *testing.T, cap int64) *fixture {
+func startFixture(t *testing.T, journalCap int64) *fixture {
 	t.Helper()
 	root, e := os.MkdirTemp(os.Getenv("TMPDIR"), "g1-")
 	if e != nil {
@@ -90,9 +92,9 @@ func startFixture(t *testing.T, cap int64) *fixture {
 	if e = os.WriteFile(filepath.Join(root, "pin"), nil, 0600); e != nil {
 		t.Fatal(e)
 	}
-	spec := shim.Launch{Session: "urn:session:g1", Instance: "urn:instance:g1", Generation: 1, Actor: mesh.Actor{URN: "msg://service/shim/g1", Kind: mesh.ActorService}, Subject: "urn:session:g1", Argv: []string{exe, "-test.run=^TestSpikeProcess$"}, Cwd: root, ControlDir: filepath.Join(root, "c"), JournalDir: filepath.Join(root, "j"), Secret: strings.Repeat("s", 32), PinPath: filepath.Join(root, "pin"), PinKey: "g1", BootGeneration: "g1", Reservation: "g1", JournalBytes: cap, StopGrace: 50 * time.Millisecond, Heartbeat: time.Second, ClientQueue: 256}
+	spec := shim.Launch{Session: "urn:session:g1", Instance: "urn:instance:g1", Generation: 1, Actor: mesh.Actor{URN: "msg://service/shim/g1", Kind: mesh.ActorService}, Subject: "urn:session:g1", Argv: []string{exe, "-test.run=^TestSpikeProcess$"}, Cwd: root, ControlDir: filepath.Join(root, "c"), JournalDir: filepath.Join(root, "j"), Secret: strings.Repeat("s", 32), PinPath: filepath.Join(root, "pin"), PinKey: "g1", BootGeneration: "g1", Reservation: "g1", JournalBytes: journalCap, StopGrace: 50 * time.Millisecond, Heartbeat: time.Second, ClientQueue: 256}
 	spec.Env = []string{"G1_PROCESS=child", "G1_CONFIG=" + f.config, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root}
-	f.cfg = bridgeConfig{Launch: spec, StatePath: filepath.Join(root, "state.json"), ReplayInit: true}
+	f.cfg = bridgeConfig{Launch: spec, StatePath: filepath.Join(root, "state.json")}
 	if e = saveJSON(f.config, f.cfg); e != nil {
 		t.Fatal(e)
 	}
@@ -342,27 +344,6 @@ func TestAttachCarriesPartialLine(t *testing.T) {
 	}
 	t.Log("mid-line cursor resumed using atomically persisted partial stdout")
 }
-func TestAttachPresetWithoutInit(t *testing.T) {
-	f := startFixture(t, 16<<20)
-	s, c := startSession(t, f, false, "")
-	await(t, "init", func() bool { return c.idCount() == 1 })
-	stateAt(t, f, func(v bridgeState) bool { return len(v.Init) > 0 })
-	crashBridge(t, s)
-	f.cfg.ReplayInit = false
-	if e := saveJSON(f.config, f.cfg); e != nil {
-		t.Fatal(e)
-	}
-	s2, c2 := startSession(t, f, true, "fake-native")
-	if s2.(interface{ ProviderSessionID() string }).ProviderSessionID() != "fake-native" {
-		t.Fatal("preset missing")
-	}
-	send(t, s2, "without-init")
-	await(t, "turn without replayed init", func() bool { return c2.has("reply:without-init") })
-	if c2.idCount() != 0 {
-		t.Fatal("unexpected init callback without replay")
-	}
-	t.Log("Start and turns work without init; preset does not invoke OnSessionID")
-}
 func TestBridgeReportsCapAsJournalUnavailable(t *testing.T) {
 	f := startFixture(t, 2<<20)
 	s, c := startSession(t, f, false, "")
@@ -594,4 +575,34 @@ func TestFinalLineWithoutNewlineOnExit(t *testing.T) {
 		t.Fatal("final EOF-delimited line lost")
 	}
 	t.Log("last stdout fragment flushed on shim.exit before agentkit reader EOF")
+}
+
+func TestAttachRejectsJournalOrIdentityBeforeInput(t *testing.T) {
+	f := startFixture(t, 16<<20)
+	descriptor := filepath.Join(f.root, "launch.json")
+	if e := saveJSON(descriptor, f.cfg.Launch); e != nil {
+		t.Fatal(e)
+	}
+	for _, test := range []struct {
+		name, code string
+		opts       Options
+	}{
+		{"journal", "journal_mismatch", Options{DescriptorPath: descriptor, Attach: true, ExpectedJournal: "foreign"}},
+		{"identity", "identity_mismatch", Options{DescriptorPath: descriptor, Attach: true, ExpectedSession: "urn:session:foreign", ExpectedJournal: "foreign"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, e := Run(context.Background(), test.opts, io.NopCloser(strings.NewReader("must-not-inject\n")), io.Discard, io.Discard)
+			var fault *Failure
+			if !errors.As(e, &fault) || fault.Code != test.code {
+				t.Fatalf("mismatch: %v", e)
+			}
+			state, e := ReadCheckpoint(filepath.Join(f.root, "bridge.json"))
+			if e != nil && !os.IsNotExist(e) {
+				t.Fatal(e)
+			}
+			if state.Counter != 0 {
+				t.Fatal("input injected before mismatch refusal")
+			}
+		})
+	}
 }

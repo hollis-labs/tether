@@ -201,7 +201,22 @@ type CatalogPaths struct {
 	Boot      string `yaml:"boot"`
 }
 
+// ShimHostConfig is an inactive foundation until launch-host wiring is enabled.
+type ShimHostConfig struct {
+	JournalBytes int64 `yaml:"journal_bytes"`
+	SystemdUser  bool  `yaml:"systemd_user"`
+}
+
+func (c ShimHostConfig) EffectiveJournalBytes() int64 {
+	if c.JournalBytes == 0 {
+		return 256 << 20
+	}
+	return c.JournalBytes
+}
+
 type Defaults struct {
+	ShimHost ShimHostConfig `yaml:"shim_host"`
+
 	WorkspaceRoot string `yaml:"workspace_root"`
 	StateDB       string `yaml:"state_db"`
 	TempRoot      string `yaml:"temp_root"`
