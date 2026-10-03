@@ -212,27 +212,21 @@ func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 // skipped. The agent is this user, so that takes a directory nothing in its reach
 // controls: a system directory (every directory a test makes is the user's own).
 func TestProtectionHealthReportsSkippedProjectLayersOnlyWhereNoAgentCouldCreateTheRoot(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("write permission cannot be taken away from root")
-	}
+	// The directory is chosen from who owns and can write every directory above it,
+	// not from what the planner reports, so the planner is what is being checked.
+	// A host where this user can write or get past every candidate skips the test.
+	sys := systemTreeNoAgentCanChange(t)
 	svc, _, _ := deadRootService(t)
-	for _, sys := range []string{"/usr/share", "/usr/lib", "/usr/include", "/opt", "/etc"} {
-		root := filepath.Join(sys, "tether-protection-test-no-such-dir", "repo")
-		svc.Catalog.Projects["ro"] = config.Project{RepoRoot: root}
-		h := svc.ProtectionHealth()
-		if h.PlanError != "" { // this host lets the user get past it: try the next
-			continue
-		}
-		if len(h.SkippedProjectLayers) != 1 || h.SkippedProjectLayers[0].Project != "ro" ||
-			!strings.Contains(h.SkippedProjectLayers[0].Reason, "an agent cannot create it either") {
-			t.Fatalf("skipped = %+v; want only the project under %s", h.SkippedProjectLayers, sys)
-		}
-		if _, err := os.Stat(filepath.Dir(root)); !os.IsNotExist(err) {
-			t.Fatalf("a root no agent could create was created (%v)", err)
-		}
-		return
+	root := filepath.Join(sys, "tether-protection-test-no-such-dir", "repo")
+	svc.Catalog.Projects["ro"] = config.Project{RepoRoot: root}
+	h := svc.ProtectionHealth()
+	if h.PlanError != "" || len(h.SkippedProjectLayers) != 1 || h.SkippedProjectLayers[0].Project != "ro" ||
+		!strings.Contains(h.SkippedProjectLayers[0].Reason, "an agent cannot create it either") {
+		t.Fatalf("plan error %q, skipped = %+v; want only the project under %s", h.PlanError, h.SkippedProjectLayers, sys)
 	}
-	t.Skip("no system directory that this user can neither write nor get past")
+	if _, err := os.Stat(filepath.Dir(root)); !os.IsNotExist(err) {
+		t.Fatalf("a root no agent could create was created (%v)", err)
+	}
 }
 
 // A directory that is not writable but that this user owns is not a reason to skip
