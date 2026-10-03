@@ -72,11 +72,11 @@ func (s *DefinitionStore) parse(ctx context.Context, source string) (VerifiedDef
 	}
 	definition, err := agentdef.Parse(raw, s.options()...)
 	if err != nil {
-		return VerifiedDefinition{}, err
+		return VerifiedDefinition{}, fmt.Errorf("%w: %w", ErrContent, err)
 	}
 	digest, err := agentdef.Digest(definition)
 	if err != nil {
-		return VerifiedDefinition{}, err
+		return VerifiedDefinition{}, fmt.Errorf("%w: %w", ErrContent, err)
 	}
 	if err := s.verifyRefs(ctx, definition); err != nil {
 		return VerifiedDefinition{}, err

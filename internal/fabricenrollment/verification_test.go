@@ -69,12 +69,25 @@ Private authored instructions.
 		t.Fatal(err)
 	}
 	content.body = append(content.body, []byte("Changed behavior.\n")...)
-	if _, err := s.Directory(t.Context(), owner, owner, "", 100); !errors.Is(err, definitionresolve.ErrPinMismatch) {
-		t.Fatal("directory accepted stale authored content", err)
+	page, err := s.Directory(t.Context(), owner, owner, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range page.Records {
+		if record.URN == actorURN {
+			t.Fatal("directory published stale authored content")
+		}
 	}
 	enrollment.Actor.URN = "msg://agent/example/changed-source"
 	if err := s.EnrollActor(t.Context(), owner, enrollment); !errors.Is(err, definitionresolve.ErrPinMismatch) {
 		t.Fatal("enrollment accepted stale authored content", err)
 	}
 	requireNotEnrolled(t, repo, enrollment.Actor.URN)
+	content.body = []byte("invalid authored frontmatter")
+	if _, err := s.Directory(t.Context(), owner, owner, "", 100); err != nil {
+		t.Fatal("malformed row blocked page", err)
+	}
+	if err := s.EnrollActor(t.Context(), owner, enrollment); !errors.Is(err, definitionresolve.ErrContent) {
+		t.Fatal("malformed content lost verification classification", err)
+	}
 }

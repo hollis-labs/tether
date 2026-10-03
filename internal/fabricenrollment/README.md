@@ -14,7 +14,9 @@ version, changes only future sessions and requires an explicitly released bindin
 Even an expired stored lease refuses rebind or retirement: expiry is not proof
 of process death. Retirement preserves URNs and history and cannot reactivate.
 Each mutation and its redacted durable outbox event commit in one transaction.
-This package does not dispatch that outbox.
+This package does not dispatch that outbox. An absent rebind/retirement target
+returns authorization denied, so those operations do not expose an identity
+existence oracle before ownership can be authorized.
 
 Directory queries first authorize the entire owner-scoped identity index, then
 check row visibility and explicit publication policy. Enrollment alone publishes
@@ -23,7 +25,10 @@ filtered offered service IDs, record revision and bounded verification freshness
 It exposes no owner, content, policy, source path, locator or execution claim.
 The host must not advertise an ID absent from the verified definition. The
 projection uses current verified pins and checks record versions after content
-I/O. Its cursor is private owner-scope pagination state and can cover unpublished
+I/O. Stale pins and typed content refusals omit only that row; healthy rows stay
+available. I/O, cancellation, store and unknown errors still fail the query,
+including operational causes wrapped by a validation callback. Its cursor is
+private owner-scope pagination state and can cover unpublished
 identities in that authorized scope; a future route must not publish it as agent
 metadata. This is a Tether host type, not a second shared directory wire contract.
 
@@ -49,5 +54,7 @@ then SHA-256 the version string plus LF and compact Go JSON of the declared inpu
 structs (no terminal LF). Versions are `fabric-import-source-v1` and
 `fabric-import-mapping-v1`. Receipt IDs hash `fabric-import-receipt-v1` plus LF
 and a JSON array of source digest, mapping digest and source key. Prefix each
-hex digest with `sha256:`. No name, URN or path normalization occurs. Import is
+hex digest with `sha256:`. Invalid UTF-8 source names, keys and identity references
+refuse rather than undergoing JSON replacement; serialization errors propagate.
+No name, URN or path normalization occurs. Import is
 bounded at 100 identities; there is no partial-batch resume or automatic matching.

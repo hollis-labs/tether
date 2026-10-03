@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/fabricstore"
@@ -48,14 +50,17 @@ type importPlan struct {
 	receiptIDs  []string
 }
 
-func digest(version string, value any) string {
-	raw, _ := json.Marshal(value)
+func digest(version string, value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrManifest, err)
+	}
 	sum := sha256.Sum256(append([]byte(version+"\n"), raw...))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 	plan := importPlan{source: SourceSnapshot{Source: source.Source, Identities: append([]SourceIdentity{}, source.Identities...)}, mappings: append([]Mapping{}, mappings...)}
-	if source.Source == "" || len(source.Identities) == 0 || len(source.Identities) > 100 || len(mappings) > 100 {
+	if source.Source == "" || !utf8.ValidString(source.Source) || len(source.Identities) == 0 || len(source.Identities) > 100 || len(mappings) > 100 {
 		return plan, ErrManifest
 	}
 	for i := range plan.mappings {
@@ -70,20 +75,27 @@ func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 	sourceKeys := map[string]bool{}
 	urns := map[mesh.URN]bool{}
 	for _, identity := range plan.source.Identities {
-		if identity.Key == "" || sourceKeys[identity.Key] || urns[identity.Actor.URN] || identity.Actor.Validate() != nil || identity.Owner.Validate() != nil {
+		if identity.Key == "" || !utf8.ValidString(identity.Key) || !utf8.ValidString(string(identity.Actor.URN)) || !utf8.ValidString(string(identity.Owner)) || sourceKeys[identity.Key] || urns[identity.Actor.URN] || identity.Actor.Validate() != nil || identity.Owner.Validate() != nil {
 			return plan, ErrManifest
 		}
 		sourceKeys[identity.Key] = true
 		urns[identity.Actor.URN] = true
 	}
 	for _, mapping := range plan.mappings {
-		if _, duplicate := byKey[mapping.Key]; duplicate || !sourceKeys[mapping.Key] {
+		if _, duplicate := byKey[mapping.Key]; duplicate || !utf8.ValidString(mapping.Key) || !sourceKeys[mapping.Key] {
 			return plan, ErrManifest
 		}
 		byKey[mapping.Key] = mapping
 	}
-	plan.preview.SourceSnapshotDigest = digest("fabric-import-source-v1", plan.source)
-	plan.preview.MappingDigest = digest("fabric-import-mapping-v1", plan.mappings)
+	var err error
+	plan.preview.SourceSnapshotDigest, err = digest("fabric-import-source-v1", plan.source)
+	if err != nil {
+		return plan, err
+	}
+	plan.preview.MappingDigest, err = digest("fabric-import-mapping-v1", plan.mappings)
+	if err != nil {
+		return plan, err
+	}
 	for _, identity := range plan.source.Identities {
 		mapping, found := byKey[identity.Key]
 		if !found {
@@ -98,7 +110,11 @@ func prepare(source SourceSnapshot, mappings []Mapping) (importPlan, error) {
 			return plan, ErrManifest
 		}
 		plan.enrollments = append(plan.enrollments, enrollment)
-		plan.receiptIDs = append(plan.receiptIDs, digest("fabric-import-receipt-v1", []string{plan.preview.SourceSnapshotDigest, plan.preview.MappingDigest, identity.Key}))
+		id, err := digest("fabric-import-receipt-v1", []string{plan.preview.SourceSnapshotDigest, plan.preview.MappingDigest, identity.Key})
+		if err != nil {
+			return plan, err
+		}
+		plan.receiptIDs = append(plan.receiptIDs, id)
 	}
 	return plan, nil
 }

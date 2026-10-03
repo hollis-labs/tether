@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"net"
 	"reflect"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/hollis-labs/substrate/mesh"
@@ -61,10 +65,16 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 		if record.Agent != nil {
 			verified, err = s.definitions.Load(ctx, record.Agent.Value.Definition)
 			if err != nil {
+				if ctx.Err() != nil {
+					return DirectoryPage{}, ctx.Err()
+				}
+				if verificationFailure(err) {
+					continue
+				}
 				return DirectoryPage{}, err
 			}
 			if verified.Pin != record.Agent.Value.Definition || verified.Definition == nil {
-				return DirectoryPage{}, definitionresolve.ErrPinMismatch
+				continue
 			}
 		}
 		publication, err := s.advertise(ctx, auth, verified)
@@ -116,4 +126,21 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 		result.Records[i].ValidUntil = observed.Add(s.directoryTTL)
 	}
 	return result, nil
+}
+
+// Known operational causes take precedence, even when a validation callback
+// wrapped them in a content error. Unknown errors are never silently omitted.
+func verificationFailure(err error) bool {
+	for _, fault := range []error{context.Canceled, context.DeadlineExceeded, io.EOF, io.ErrUnexpectedEOF, io.ErrClosedPipe, io.ErrShortWrite, fs.ErrNotExist, fs.ErrExist, fs.ErrPermission, fs.ErrClosed, fs.ErrInvalid, fabricstore.ErrNotFound, fabricstore.ErrConflict, fabricstore.ErrInvalid, definitionresolve.ErrConfiguration} {
+		if errors.Is(err, fault) {
+			return false
+		}
+	}
+	var pathError *fs.PathError
+	var networkError net.Error
+	var systemError syscall.Errno
+	if errors.As(err, &pathError) || errors.As(err, &networkError) || errors.As(err, &systemError) {
+		return false
+	}
+	return errors.Is(err, definitionresolve.ErrPinMismatch) || errors.Is(err, definitionresolve.ErrContent)
 }

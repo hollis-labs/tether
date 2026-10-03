@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/definitionresolve"
@@ -66,7 +67,7 @@ func New(repo *fabricstore.Repository, definitions Definitions, authorize Author
 	return &Service{repo: repo, definitions: definitions, authorize: authorize, advertise: advertise, now: now, directoryTTL: directoryTTL}, nil
 }
 func (s *Service) allow(ctx context.Context, caller, owner, target mesh.URN, action Action) error {
-	if caller.Validate() != nil || owner.Validate() != nil {
+	if !utf8.ValidString(string(caller)) || !utf8.ValidString(string(owner)) || caller.Validate() != nil || owner.Validate() != nil {
 		return ErrDenied
 	}
 	if err := ctx.Err(); err != nil {
@@ -82,18 +83,21 @@ type Enrollment struct {
 }
 
 func validateEnrollment(request Enrollment) error {
-	if request.Actor.Validate() != nil || request.Owner.Validate() != nil {
+	if !utf8.ValidString(string(request.Actor.URN)) || !utf8.ValidString(string(request.Owner)) || request.Actor.Validate() != nil || request.Owner.Validate() != nil {
 		return fabricstore.ErrInvalid
 	}
 	if (request.Actor.Kind == mesh.ActorAgent) != (request.Definition != nil) {
 		return fabricstore.ErrInvalid
 	}
-	if request.Definition != nil && (request.Definition.ID == "" || request.Definition.Revision == "" || request.Definition.Digest == "") {
+	if request.Definition != nil && (request.Definition.ID == "" || request.Definition.Revision == "" || request.Definition.Digest == "" || !utf8.ValidString(request.Definition.ID) || !utf8.ValidString(request.Definition.Revision) || !utf8.ValidString(request.Definition.Digest)) {
 		return fabricstore.ErrInvalid
 	}
 	return nil
 }
 func (s *Service) verify(ctx context.Context, request Enrollment) error {
+	if err := validateEnrollment(request); err != nil {
+		return err
+	}
 	if request.Definition == nil {
 		return nil
 	}
@@ -149,6 +153,10 @@ func (s *Service) RebindAgent(ctx context.Context, caller, urn mesh.URN, pin mes
 	}
 	old, err := s.repo.Agent(ctx, urn)
 	if err != nil {
+		// Owner is unknown; absence must not become an enrollment oracle.
+		if errors.Is(err, fabricstore.ErrNotFound) {
+			return ErrDenied
+		}
 		return err
 	}
 	if err := s.allow(ctx, caller, old.Value.Owner, urn, Rebind); err != nil {
@@ -203,6 +211,9 @@ func (s *Service) RetireActor(ctx context.Context, caller, urn mesh.URN, expecte
 	}
 	old, err := s.repo.Actor(ctx, urn)
 	if err != nil {
+		if errors.Is(err, fabricstore.ErrNotFound) {
+			return ErrDenied
+		}
 		return err
 	}
 	if err := s.allow(ctx, caller, old.Value.Owner, urn, Retire); err != nil {
@@ -260,6 +271,9 @@ func (s *Service) event(tx *fabricstore.Tx, request Enrollment, action Action, v
 	if err != nil {
 		return err
 	}
-	id := digest("fabric-enrollment-event-v1", []string{string(request.Actor.URN), string(action), fmt.Sprint(version)})
+	id, err := digest("fabric-enrollment-event-v1", []string{string(request.Actor.URN), string(action), fmt.Sprint(version)})
+	if err != nil {
+		return err
+	}
 	return tx.AppendEvent(fabricstore.Event{ID: id, AggregateURN: request.Actor.URN, Type: "enrollment." + string(action), Payload: payload, CreatedAt: s.now().UTC()})
 }
