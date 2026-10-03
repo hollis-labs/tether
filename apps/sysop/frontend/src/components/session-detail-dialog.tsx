@@ -27,6 +27,8 @@ export function sessionLifecycleLabel(state: string): string {
   if (state === 'created') return 'Created only'
   if (state === 'ready' || state === 'launching') return 'Launching'
   if (state === 'running') return 'Live runtime'
+  if (state === 'detached') return 'Daemon disconnected'
+  if (state === 'orphaned') return 'Resumable'
   if (isTerminalSessionState(state)) return 'Ended'
   return 'Unknown'
 }
@@ -36,6 +38,8 @@ export function sessionLifecycleHint(state: string): string {
   if (state === 'ready') return 'Runtime is allocated and preparing to hand off to normal interaction.'
   if (state === 'launching') return 'Daemon is still bringing the runtime up.'
   if (state === 'running') return 'Session is live; stream, input, wait, and stop apply here.'
+  if (state === 'detached') return 'Child is alive, but the daemon is disconnected. Wait for shim reconciliation to reattach it.'
+  if (state === 'orphaned') return 'Shim and child are gone. Resume starts a new session from checkpoint.'
   if (state === 'completed') return 'Session exited normally. Resume starts a new session from checkpoint.'
   if (state === 'failed') return 'Session exited with failure. Resume starts a new session from checkpoint.'
   if (state === 'killed') return 'Session was stopped or killed. Resume starts a new session from checkpoint.'
@@ -210,9 +214,11 @@ export function SessionDetailDialog({
                 variant="outline"
                 size="sm"
                 onClick={() => onAction?.('resume', detail)}
-                disabled={!s.logical_agent_id}
+                disabled={!s.logical_agent_id || s.state === 'detached'}
                 title={
-                  s.logical_agent_id
+                  s.state === 'detached'
+                    ? 'Child is alive; wait for shim reconciliation before resuming.'
+                    : s.logical_agent_id
                     ? 'Start a new session from the latest checkpoint for this logical agent.'
                     : 'No logical agent is associated.'
                 }
