@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -47,12 +48,45 @@ func (s *Store) UpsertSessionShim(ctx context.Context, row SessionShimRow) error
 	if row.HostBackend != "detached" && row.HostBackend != "systemd-user" {
 		return fmt.Errorf("invalid shim host backend")
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	previous, err := scanShim(tx.QueryRowContext(ctx, `SELECT `+shimColumns+` FROM session_shims WHERE session_id=?`, row.SessionID))
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && previous.JournalID != "" && previous.JournalID != row.JournalID {
+		return ErrSessionShimConflict
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		var found int
+		if e := tx.QueryRowContext(ctx, `SELECT 1 FROM sessions WHERE id=?`, row.SessionID).Scan(&found); errors.Is(e, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		} else if e != nil {
+			return e
+		}
+	}
+	nextCursor, cursorErr := shimCursorPosition(row.JournalID, row.LastCommittedCursor)
+	if cursorErr != nil {
+		return cursorErr
+	}
+	if err == nil {
+		oldCursor, cursorErr := shimCursorPosition(previous.JournalID, previous.LastCommittedCursor)
+		if cursorErr != nil {
+			return cursorErr
+		}
+		if row.InjectCounter < previous.InjectCounter || row.ControllerEpoch < previous.ControllerEpoch || nextCursor < oldCursor {
+			return ErrSessionShimConflict
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
 	}
 	row.UpdatedAt = now
-	result, err := s.db.ExecContext(ctx, `INSERT INTO session_shims (`+shimColumns+`)
+	result, err := tx.ExecContext(ctx, `INSERT INTO session_shims (`+shimColumns+`)
  SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=?)
  ON CONFLICT(session_id) DO UPDATE SET
  unit_name=excluded.unit_name, journal_id=excluded.journal_id,
@@ -74,7 +108,7 @@ func (s *Store) UpsertSessionShim(ctx context.Context, row SessionShimRow) error
 	}
 	if n == 0 {
 		var found int
-		err = s.db.QueryRowContext(ctx, `SELECT 1 FROM sessions WHERE id=?`, row.SessionID).Scan(&found)
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM sessions WHERE id=?`, row.SessionID).Scan(&found)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSessionNotFound
 		}
@@ -83,7 +117,7 @@ func (s *Store) UpsertSessionShim(ctx context.Context, row SessionShimRow) error
 		}
 		return ErrSessionShimConflict
 	}
-	return nil
+	return tx.Commit()
 }
 func scanShim(scanner interface{ Scan(...any) error }) (SessionShimRow, error) {
 	var row SessionShimRow
@@ -126,4 +160,20 @@ func (s *Store) ListSessionShims(ctx context.Context) ([]SessionShimRow, error) 
 		result = append(result, row)
 	}
 	return result, rows.Err()
+}
+
+func shimCursorPosition(journal, cursor string) (uint64, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	i := strings.LastIndexByte(cursor, ':')
+	if i < 0 {
+		return 0, fmt.Errorf("invalid shim cursor")
+	}
+	prefix, position := cursor[:i], cursor[i+1:]
+	n, err := strconv.ParseUint(position, 10, 64)
+	if journal == "" || prefix != journal || err != nil || strconv.FormatUint(n, 10) != position {
+		return 0, fmt.Errorf("invalid shim cursor")
+	}
+	return n, nil
 }

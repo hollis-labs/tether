@@ -41,11 +41,17 @@ func TestHostProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, "host refused")
 			os.Exit(3)
 		}
+		if os.Getenv("TETHER_TEST_IGNORE_TERM") != "" {
+			signal.Ignore(syscall.SIGTERM)
+			select {}
+		}
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 		<-sig
 		_ = h.Close()
 		os.Exit(0)
+	case "child-exit":
+		os.Exit(7)
 	case "child":
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
@@ -53,7 +59,7 @@ func TestHostProcess(t *testing.T) {
 }
 func hostSpec(t *testing.T) (Config, shim.Launch) {
 	t.Helper()
-	root, e := os.MkdirTemp(os.Getenv("TMPDIR"), "h2-")
+	root, e := os.MkdirTemp("/var/tmp", "sh-")
 	if e != nil {
 		t.Fatal(e)
 	}

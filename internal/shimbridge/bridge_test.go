@@ -38,12 +38,12 @@ func readState(path string) (Checkpoint, error) {
 func saveJSON(path string, v any) error { return shimhost.WritePrivateJSON(path, v) }
 
 // The helper is the compiled test binary. No model CLI is ever discovered.
-func TestSpikeProcess(t *testing.T) {
-	mode := os.Getenv("G1_PROCESS")
+func TestProviderProcess(t *testing.T) {
+	mode := os.Getenv("SHIM_TEST_PROCESS")
 	if mode == "" {
 		return
 	}
-	b, e := os.ReadFile(os.Getenv("G1_CONFIG"))
+	b, e := os.ReadFile(os.Getenv("SHIM_TEST_CONFIG"))
 	if e != nil {
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(90)

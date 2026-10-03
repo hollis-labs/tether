@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/hollis-labs/tether/internal/shimbridge"
@@ -17,7 +16,7 @@ func shimBridgeCmd() *cobra.Command {
 	var opts shimbridge.Options
 	cmd := &cobra.Command{Use: "shim-bridge", Short: "Connect stdio to an explicitly placed shim", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
 		if opts.DescriptorPath == "" {
-			return fmt.Errorf("--descriptor is required")
+			return &shimBridgeFailure{cause: fmt.Errorf("--descriptor is required")}
 		}
 		opts.OnAttach = func(event shimbridge.AttachEvent) error { return json.NewEncoder(cmd.ErrOrStderr()).Encode(event) }
 		input, ok := cmd.InOrStdin().(interface {
@@ -25,15 +24,11 @@ func shimBridgeCmd() *cobra.Command {
 			Close() error
 		})
 		if !ok {
-			return fmt.Errorf("bridge stdin must be closable")
+			return &shimBridgeFailure{cause: fmt.Errorf("bridge stdin must be closable")}
 		}
 		code, err := shimbridge.Run(cmd.Context(), opts, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		if err != nil {
-			var fault *shimbridge.Failure
-			if errors.As(err, &fault) {
-				return fault
-			}
-			return err
+			return &shimBridgeFailure{cause: err}
 		}
 		if code != 0 {
 			return &shimBridgeExit{code: code}
@@ -57,3 +52,12 @@ func (e *shimBridgeExit) Error() string {
 func init() { rootCmd.AddCommand(shimBridgeCmd()) }
 
 func (e *shimBridgeExit) ExitCode() int { return e.code }
+
+// InfrastructureFailureExit distinguishes bridge failure from ordinary child exit.
+const InfrastructureFailureExit = 93
+
+type shimBridgeFailure struct{ cause error }
+
+func (e *shimBridgeFailure) Error() string { return e.cause.Error() }
+func (e *shimBridgeFailure) Unwrap() error { return e.cause }
+func (e *shimBridgeFailure) ExitCode() int { return InfrastructureFailureExit }

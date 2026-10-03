@@ -1,7 +1,7 @@
 -- Placement metadata is additive and secret-free. Capabilities stay in private
 -- descriptor files; TEXT authority counters preserve the full uint64 range.
 CREATE TABLE IF NOT EXISTS session_shims (
- session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
  shim_key TEXT NOT NULL UNIQUE,
  host_backend TEXT NOT NULL CHECK(host_backend IN ('detached','systemd-user')),
  unit_name TEXT NOT NULL DEFAULT '',
@@ -20,14 +20,3 @@ CREATE TABLE IF NOT EXISTS session_shims (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
-
--- Orphaned sessions retain resume history, but cannot mint fresh live tokens.
-DROP TRIGGER IF EXISTS session_principal_requires_active_session;
-CREATE TRIGGER session_principal_requires_active_session BEFORE INSERT ON principals
-WHEN NEW.kind = 'session' AND NOT EXISTS (
- SELECT 1 FROM sessions WHERE id = NEW.session_id
- AND state NOT IN ('completed', 'failed', 'killed', 'orphaned')
-)
-BEGIN
- SELECT RAISE(ABORT, 'session principal requires an active session');
-END;

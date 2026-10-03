@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package shimhost contains test-only G1 host boundary checks.
+// Package shimhost contains host boundary checks.
 package shimhost
 
 import (
@@ -17,7 +17,7 @@ import (
 )
 
 func TestJournalCapRetainsTerminalReserve(t *testing.T) {
-	root, e := os.MkdirTemp(os.Getenv("TMPDIR"), "g1j-")
+	root, e := os.MkdirTemp("/var/tmp", "sj-")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -26,7 +26,7 @@ func TestJournalCapRetainsTerminalReserve(t *testing.T) {
 			t.Error(e)
 		}
 	}()
-	j, e := shim.OpenJournal(root, "urn:session:g1-cap", 1, 2<<20)
+	j, e := shim.OpenJournal(root, "urn:session:test-cap", 1, 2<<20)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -36,7 +36,7 @@ func TestJournalCapRetainsTerminalReserve(t *testing.T) {
 		}
 	}()
 	payload, _ := json.Marshal(map[string]string{"data": strings.Repeat("x", 64<<10)})
-	event := mesh.Event{SchemaVersion: "1", ID: "g1", Kind: "shim.output", Time: time.Now().UTC(), App: "spike", SessionID: "urn:session:g1-cap", Source: mesh.EventSource{Channel: "shim", Confidence: 1}, Actor: mesh.Actor{URN: "msg://service/shim/g1", Kind: mesh.ActorService}, Subject: "urn:session:g1-cap", Generation: 1, ContentType: "application/json", PayloadSchema: "shim/v1", Visibility: "private", Payload: payload}
+	event := mesh.Event{SchemaVersion: "1", ID: "test", Kind: "shim.output", Time: time.Now().UTC(), App: "test-provider", SessionID: "urn:session:test-cap", Source: mesh.EventSource{Channel: "shim", Confidence: 1}, Actor: mesh.Actor{URN: "msg://service/test/shim", Kind: mesh.ActorService}, Subject: "urn:session:test-cap", Generation: 1, ContentType: "application/json", PayloadSchema: "shim/v1", Visibility: "private", Payload: payload}
 	for {
 		_, e = j.Append(event, false)
 		if e != nil {
@@ -60,7 +60,7 @@ func TestFrameAndChunkBounds(t *testing.T) {
 		t.Fatal("unexpected protocol limits")
 	}
 	var b bytes.Buffer
-	f := shim.Frame{Major: 1, Type: "event", Session: "urn:session:g1", Body: json.RawMessage(`{"data":"` + strings.Repeat("x", 1<<20) + `"}`)}
+	f := shim.Frame{Major: 1, Type: "event", Session: "urn:session:test", Body: json.RawMessage(`{"data":"` + strings.Repeat("x", 1<<20) + `"}`)}
 	var fault *shim.Error
 	e := shim.WriteFrame(&b, f)
 	if !errors.As(e, &fault) || fault.Code != "invalid_frame" {

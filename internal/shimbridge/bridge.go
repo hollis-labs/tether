@@ -39,14 +39,15 @@ func (e *Failure) Error() string     { return e.Code + ": " + e.Message }
 func failure(code, msg string) error { return &Failure{Code: code, Message: msg} }
 
 type Checkpoint struct {
-	Cursor     string `json:"cursor"`
-	Journal    string `json:"journal"`
-	Counter    uint64 `json:"inject_counter,string"`
-	Partial    []byte `json:"partial,omitempty"`
-	Init       []byte `json:"init,omitempty"`
-	Session    string `json:"session"`
-	Instance   string `json:"instance"`
-	Generation uint64 `json:"generation,string"`
+	Cursor     string     `json:"cursor"`
+	Journal    string     `json:"journal"`
+	Counter    uint64     `json:"inject_counter,string"`
+	Partial    []byte     `json:"partial,omitempty"`
+	Init       []byte     `json:"init,omitempty"`
+	Session    string     `json:"session"`
+	Instance   string     `json:"instance"`
+	Generation uint64     `json:"generation,string"`
+	Exit       *shim.Exit `json:"exit,omitempty"`
 }
 
 // AttachEvent describes catch-up once per attach, even with zero replayed events.
@@ -145,8 +146,14 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 		return 0, failure("bridge_busy", "checkpoint has another owner")
 	}
 	defer func() { _ = lock.Close() }()
+	if err = shimhost.ClearCommitTemps(filepath.Dir(opts.StatePath)); err != nil {
+		return 0, err
+	}
 	state, err := ReadCheckpoint(opts.StatePath)
 	if os.IsNotExist(err) {
+		if opts.Attach {
+			return 0, failure("checkpoint_missing", "attach requires the durable checkpoint; explicit recovery is required")
+		}
 		state = Checkpoint{Session: spec.Session, Instance: spec.Instance, Generation: spec.Generation}
 	} else if err != nil {
 		return 0, failure("checkpoint_invalid", "cannot read private checkpoint")
@@ -156,6 +163,9 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 	}
 	if len(state.Partial) > maxCarryBytes || len(state.Init) > MaxLineBytes+1 {
 		return 0, failure("line_too_long", "stored stdout carry exceeds limit")
+	}
+	if opts.ExpectedJournal != "" && state.Journal != "" && opts.ExpectedJournal != state.Journal {
+		return 0, failure("journal_mismatch", "requested journal differs from checkpoint")
 	}
 	expected := opts.ExpectedJournal
 	if expected == "" {
@@ -168,8 +178,12 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 		return 0, failure("cursor_mismatch", "cursor differs from partial-line checkpoint")
 	}
 	generation := strconv.FormatUint(spec.Generation, 10)
-	c, err := shim.Connect(filepath.Join(spec.ControlDir, "control.sock"), spec.Secret, spec.Session, spec.Instance, generation, "controller", opts.Takeover)
+	c, err := shimhost.Connect(ctx, filepath.Join(spec.ControlDir, "control.sock"), spec.Secret, spec.Session, spec.Instance, generation, "controller", expected, opts.Takeover)
 	if err != nil {
+		var fault *shimhost.Failure
+		if errors.As(err, &fault) {
+			return 0, failure(fault.Code, "cannot authenticate pinned shim")
+		}
 		return 0, failure("host_unreachable", "cannot authenticate shim")
 	}
 	defer func() { _ = c.Close() }()
@@ -192,11 +206,20 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 			v.Cursor = state.Cursor
 			v.Partial = bytes.Clone(state.Partial)
 			v.Init = bytes.Clone(state.Init)
+			v.Exit = state.Exit
 		})
 	}
 	drain := func() error { return drainLines(&state, MaxLineBytes, out, checkpoint, afterWrite) }
 	if err = drain(); err != nil {
 		return 0, err
+	}
+	if opts.Attach && state.Exit != nil {
+		if opts.OnAttach != nil {
+			if err = opts.OnAttach(AttachEvent{Type: "shim.attach", Journal: c.Journal, Epoch: c.Epoch, Delivery: "write-before-commit; crash may duplicate an uncommitted line or lose unread pipe bytes"}); err != nil {
+				return 0, err
+			}
+		}
+		return providerExitCode(*state.Exit), nil
 	}
 	if err = c.Replay(spec.Session, state.Cursor); err != nil {
 		return 0, err
@@ -277,12 +300,18 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		case err := <-inputErr:
+			if ctx.Err() != nil {
+				return 0, ctx.Err()
+			}
 			if errors.Is(err, io.EOF) {
 				return 0, emitAttach()
 			}
 			return 0, err
 		case f, ok := <-c.Frames:
 			if !ok {
+				if ctx.Err() != nil {
+					return 0, ctx.Err()
+				}
 				return 0, failure("host_unreachable", "shim disconnected")
 			}
 			if strings.HasPrefix(f.ReplyTo, "bridge-") {
@@ -331,7 +360,23 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 				replayed++
 			}
 			if ev.Kind == "shim.output_gap" {
-				return 0, failure("journal_unavailable", "journal exhausted or unwritable; output truncated")
+				var gap struct {
+					Code string `json:"code"`
+				}
+				if json.Unmarshal(ev.Payload, &gap) != nil {
+					return 0, failure("invalid_frame", "invalid output gap")
+				}
+				if gap.Code == "journal_unavailable" || gap.Code == "journal_full" {
+					return 0, failure("journal_unavailable", "journal exhausted or unwritable; output truncated")
+				}
+				diagnostic, _ := json.Marshal(struct {
+					Type   string `json:"type"`
+					Code   string `json:"code"`
+					Cursor string `json:"cursor"`
+				}{"shim.output_gap", gap.Code, ev.Cursor})
+				if err = writeAll(errout, append(diagnostic, '\n')); err != nil {
+					return 0, err
+				}
 			}
 			state.Cursor = ev.Cursor
 			if ev.Kind == "shim.output" {
@@ -373,6 +418,13 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 				}
 				state.Partial = nil
 			}
+			if ev.Kind == "shim.exit" {
+				var exit shim.Exit
+				if json.Unmarshal(ev.Payload, &exit) != nil {
+					return 0, failure("invalid_frame", "invalid exit payload")
+				}
+				state.Exit = &exit
+			}
 			if err = checkpoint(); err != nil {
 				return 0, err
 			}
@@ -388,14 +440,7 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 				if err = emitAttach(); err != nil {
 					return 0, err
 				}
-				var exit shim.Exit
-				if json.Unmarshal(ev.Payload, &exit) != nil {
-					return 0, failure("invalid_frame", "invalid exit payload")
-				}
-				if exit.Signal != 0 {
-					return 128 + exit.Signal, nil
-				}
-				return exit.Status, nil
+				return providerExitCode(*state.Exit), nil
 			}
 		}
 	}
@@ -445,4 +490,11 @@ func drainLines(state *Checkpoint, limit int, out io.Writer, commit func() error
 			return err
 		}
 	}
+}
+
+func providerExitCode(exit shim.Exit) int {
+	if exit.Signal != 0 {
+		return 128 + exit.Signal
+	}
+	return exit.Status
 }

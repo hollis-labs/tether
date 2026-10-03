@@ -3,12 +3,16 @@
 package shimhost
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 )
 
 // PrivateDir refuses existing symlinks, foreign ownership or loose permissions.
@@ -91,6 +95,11 @@ func WritePrivateJSON(path string, value any) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	commit, err := LockWait(context.Background(), filepath.Join(dir, "record.lock"), 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = commit.Close() }()
 	b, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -146,4 +155,64 @@ func Lock(path string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// LockWait bounds contention without converting an uncertain placement into retry.
+func LockWait(ctx context.Context, path string, limit time.Duration) (*os.File, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	for {
+		lock, err := Lock(path)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fail("busy", "private record is busy")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// ClearCommitTemps serializes with every writer before deleting abandoned files.
+func ClearCommitTemps(dir string) error {
+	if err := checkPrivateDir(dir); err != nil {
+		return err
+	}
+	lock, err := LockWait(context.Background(), filepath.Join(dir, "record.lock"), 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".commit-") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		f, err := privateFile(path)
+		if err != nil {
+			return err
+		}
+		_ = f.Close()
+		if err = os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return syncPrivateDir(dir)
+}
+
+func syncPrivateDir(dir string) error {
+	f, err := os.Open(dir) //nolint:gosec // Owned private directory checked before cleanup.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Sync()
 }

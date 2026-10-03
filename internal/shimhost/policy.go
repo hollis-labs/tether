@@ -12,7 +12,9 @@ import (
 )
 
 // PrepareProvider applies resolved sandbox and limit wrappers to the REAL
-// provider, before it is placed. Keep cleanup until the host/provider exits.
+// provider, before it is placed. The policy MUST deny the per-session state
+// directory to the provider: same-uid filesystem ownership alone cannot hide
+// the descriptor or controller capability. Keep cleanup until the host exits.
 // A caller requiring protection must pass that policy and treat any error as
 // refusal of the shim path; the bridge is a separate privileged control client.
 func PrepareProvider(spec shim.Launch, policy *sandbox.ResolvedAccessPolicy, limits runner.ResourceLimits) (shim.Launch, func(), error) {

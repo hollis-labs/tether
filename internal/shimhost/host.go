@@ -1,6 +1,7 @@
 //go:build !windows
 
-// Package shimhost places a shim independently of the controller's lifetime.
+// Package shimhost places a shim with its own control connection. Detached
+// placement stays in the daemon cgroup; systemd-user isolates the host cgroup.
 // It accepts the REAL provider's already resolved argv and complete environment;
 // sandbox/limits must be applied to that argv before Place, never only to a bridge.
 package shimhost
@@ -15,8 +16,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,17 +40,25 @@ func (e *Failure) Error() string  { return e.Code + ": " + e.Message }
 func fail(code, msg string) error { return &Failure{Code: code, Message: msg} }
 
 type Config struct {
-	StateDir     string
-	ShimCommand  []string
-	HostEnv      []string
-	Backend      string
-	AllowSystemd bool
-	JournalBytes int64
+	StateDir        string
+	ShimCommand     []string
+	HostEnv         []string
+	Backend         string
+	AllowSystemd    bool
+	JournalBytes    int64
+	VolatileEnvKeys []string
+	StopGrace       time.Duration
+	StopTimeout     time.Duration
+	LockWait        time.Duration
 	// Command is the systemd control seam; nil uses exec.CommandContext. Detached
 	// placement always executes the shim itself, not this seam.
 	Command func(context.Context, []string) ([]byte, error)
 }
-type Provider struct{ cfg Config }
+type Provider struct {
+	cfg    Config
+	mu     sync.Mutex
+	reaped map[int]chan struct{}
+}
 
 // Receipt contains paths and identity, never the capability or provider env.
 type Receipt struct {
@@ -66,6 +77,7 @@ type Receipt struct {
 	ProviderPID    int    `json:"provider_pid"`
 	Fingerprint    string `json:"fingerprint"`
 	Attempted      bool   `json:"attempted"`
+	Retired        bool   `json:"retired,omitempty"`
 }
 type Inspection struct {
 	Receipt Receipt
@@ -102,7 +114,19 @@ func New(cfg Config) (*Provider, error) {
 			return cmd.Output()
 		}
 	}
-	return &Provider{cfg: cfg}, nil
+	if cfg.StopGrace == 0 {
+		cfg.StopGrace = 250 * time.Millisecond
+	}
+	if cfg.StopTimeout == 0 {
+		cfg.StopTimeout = 10 * time.Second
+	}
+	if cfg.LockWait == 0 {
+		cfg.LockWait = 2 * time.Second
+	}
+	if cfg.StopGrace < 0 || cfg.StopTimeout < 0 || cfg.LockWait < 0 {
+		return nil, fail("invalid_config", "host durations must be positive")
+	}
+	return &Provider{cfg: cfg, reaped: make(map[int]chan struct{})}, nil
 }
 func hash(s string) string                    { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:])[:16] }
 func (p *Provider) dir(session string) string { return filepath.Join(p.cfg.StateDir, hash(session)) }
@@ -128,11 +152,14 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if err := PrivateDir(dir); err != nil {
 		return zero, err
 	}
-	lock, err := Lock(filepath.Join(dir, "placement.lock"))
+	lock, err := LockWait(ctx, filepath.Join(dir, "placement.lock"), p.cfg.LockWait)
 	if err != nil {
 		return zero, err
 	}
 	defer func() { _ = lock.Close() }()
+	if err = ClearCommitTemps(dir); err != nil {
+		return zero, err
+	}
 	spec.Secret = ""
 	spec.ControlDir = filepath.Join(dir, "c")
 	spec.JournalDir = filepath.Join(dir, "j")
@@ -142,7 +169,31 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if len(filepath.Join(spec.ControlDir, "control.sock")) >= 104 {
 		return zero, fail("invalid_request", "control socket path too long")
 	}
-	raw, err := json.Marshal(spec) //nolint:gosec // Secret cleared above; fingerprint contains no capability.
+	fingerprintSpec := spec
+	fingerprintSpec.Env = nil
+	type envIdentity struct {
+		Key      string
+		Value    string
+		Volatile bool
+	}
+	env := make([]envIdentity, 0, len(spec.Env))
+	volatile := make(map[string]bool, len(p.cfg.VolatileEnvKeys))
+	for _, key := range p.cfg.VolatileEnvKeys {
+		volatile[key] = true
+	}
+	for _, entry := range spec.Env {
+		key, value, _ := strings.Cut(entry, "=")
+		field := envIdentity{Key: key, Volatile: volatile[key]}
+		if !field.Volatile {
+			field.Value = value
+		}
+		env = append(env, field)
+	}
+	sort.SliceStable(env, func(i, j int) bool { return env[i].Key < env[j].Key })
+	raw, err := json.Marshal(struct {
+		Launch shim.Launch
+		Env    []envIdentity
+	}{fingerprintSpec, env}) //nolint:gosec // Capability cleared; caller-declared secret env values excluded.
 	if err != nil {
 		return zero, err
 	}
@@ -158,12 +209,15 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 			return zero, fail("idempotency_conflict", "placement key/launch changed")
 		}
 		if old.Attempted {
-			inspection, e := p.Inspect(ctx, old)
+			inspection, e := p.inspect(ctx, old)
 			if e != nil {
 				return old, e
 			}
 			if inspection.Gone {
 				return old, fail("outcome_unknown", "previous submit has no live host; native recovery is required")
+			}
+			if e = WritePrivateJSON(metadataPath(r), inspection.Receipt); e != nil {
+				return r, e
 			}
 			return inspection.Receipt, nil
 		}
@@ -216,7 +270,11 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		}
 		r.HostPID = cmd.Process.Pid
 		r.ShimPID = r.HostPID
-		go func() { _ = cmd.Wait() }() // Reap independently; daemon disappearance does not stop the host.
+		reaped := make(chan struct{})
+		p.mu.Lock()
+		p.reaped[r.HostPID] = reaped
+		p.mu.Unlock()
+		go func() { _ = cmd.Wait(); close(reaped) }() // Reap a child owned by this process.
 	} else {
 		args := []string{"systemd-run", "--user", "--no-block", "--collect", "--service-type=exec", "--unit=" + r.UnitName, "--property=Restart=no", "--property=KillMode=control-group", "--"}
 		args = append(args, argv...)
@@ -232,8 +290,11 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		inspection, e := p.Inspect(ctx, r)
+		inspection, e := p.inspect(ctx, r)
 		if e == nil && !inspection.Gone {
+			if e = WritePrivateJSON(metadataPath(r), inspection.Receipt); e != nil {
+				return r, e
+			}
 			return inspection.Receipt, nil
 		}
 		select {
@@ -257,7 +318,7 @@ func Descriptor(r Receipt) (shim.Launch, error) {
 	}
 	return spec, nil
 }
-func health(ctx context.Context, c *shim.Client, session string) (bool, int, shim.Exit, error) {
+func health(ctx context.Context, c *Client, session string) (bool, int, shim.Exit, error) {
 	var exit shim.Exit
 	payload, _ := json.Marshal(map[string]string{"ping": "inspect"})
 	if err := c.SendFrame(shim.Frame{Major: 1, Type: "health", RequestID: "inspect-health", Session: session, Epoch: c.Epoch, Body: payload}); err != nil {
@@ -272,7 +333,16 @@ func health(ctx context.Context, c *shim.Client, session string) (bool, int, shi
 				return false, 0, exit, fail("host_unreachable", "shim disconnected")
 			}
 			if f.Type == "error" {
-				return false, 0, exit, fail("host_unreachable", "shim refused health")
+				var refusal struct {
+					Code string `json:"code"`
+				}
+				if json.Unmarshal(f.Body, &refusal) != nil {
+					return false, 0, exit, fail("invalid_frame", "invalid host refusal")
+				}
+				if f.ReplyTo != "inspect-health" && refusal.Code == "target_offline" {
+					continue
+				}
+				return false, 0, exit, fail(refusal.Code, "shim refused request")
 			}
 			if f.Type != "result" || f.ReplyTo != "inspect-health" {
 				continue
@@ -292,14 +362,29 @@ func health(ctx context.Context, c *shim.Client, session string) (bool, int, shi
 
 // Inspect uses authenticated shim health, never a bridge PID. Gone is asserted
 // only with a known dead host, or an absent uniquely named systemd unit.
-func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
+func (p *Provider) inspect(ctx context.Context, r Receipt) (Inspection, error) {
+	var saved Receipt
+	if err := ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); err == nil && saved.Retired {
+		if !samePlacement(saved, r) {
+			return Inspection{}, fail("identity_mismatch", "retired placement differs")
+		}
+		return Inspection{Receipt: saved, Gone: true}, nil
+	}
+	if saved.Session != "" {
+		if !samePlacement(saved, r) {
+			return Inspection{}, fail("identity_mismatch", "placement differs")
+		}
+		if r.Journal == "" {
+			r.Journal = saved.Journal
+		}
+	}
 	spec, err := Descriptor(r)
 	if err != nil {
 		return Inspection{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	c, err := shim.Connect(r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", false)
+	c, err := Connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
 	if err != nil {
 		gone := false
 		if r.Backend == Detached && r.HostPID > 0 {
@@ -328,7 +413,7 @@ func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
 	r.Journal = c.Journal
 	r.Epoch = c.Epoch
 	r.ProviderPID = pid
-	if peer, peerErr := peerPID(r.SocketPath); peerErr == nil && peer > 0 {
+	if peer, peerErr := peerPID(c.socket); peerErr == nil && peer > 0 {
 		r.ShimPID = peer
 		r.HostPID = peer
 	}
@@ -339,9 +424,6 @@ func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
 		}
 		r.HostPID, _ = strconv.Atoi(strings.TrimSpace(string(b)))
 		r.ShimPID = r.HostPID
-	}
-	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
-		return Inspection{}, err
 	}
 	return Inspection{Receipt: r, Running: running, Exit: exit}, nil
 }
@@ -354,70 +436,155 @@ func (p *Provider) Reattach(ctx context.Context, r Receipt) (Inspection, error) 
 // Stop requests the shim's bounded process-group kill and waits for provider
 // exit. It then tears down the host; detached/controller shutdown never calls it.
 func (p *Provider) Stop(ctx context.Context, r Receipt) error {
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.StopTimeout)
+	defer cancel()
+	lock, err := LockWait(ctx, filepath.Join(filepath.Dir(r.DescriptorPath), "placement.lock"), p.cfg.LockWait)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	var saved Receipt
+	if e := ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); e == nil {
+		if !samePlacement(saved, r) {
+			return fail("identity_mismatch", "placement differs")
+		}
+		if saved.Retired {
+			return cleanupRetired(saved)
+		}
+		if r.Journal == "" {
+			r.Journal = saved.Journal
+		}
+	}
 	spec, err := Descriptor(r)
 	if err != nil {
 		return err
 	}
-	c, err := shim.Connect(r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "controller", true)
+	if r.Backend == SystemdUser && (!p.cfg.AllowSystemd || r.UnitName != p.unit(spec)) {
+		return fail("identity_mismatch", "foreign or disabled unit")
+	}
+	c, err := Connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "controller", r.Journal, true, r.HostPID)
 	if err != nil {
-		inspection, e := p.Inspect(ctx, r)
-		if e == nil && inspection.Gone {
-			return nil
-		}
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	if r.Journal != "" && r.Journal != c.Journal {
-		return fail("journal_mismatch", "refusing stop of another journal")
-	}
-	// A persisted PID may be absent or stale after an uncertain placement.
-	// Prefer the peer of the authenticated socket for host teardown.
-	if pid, peerErr := peerPID(r.SocketPath); peerErr == nil && pid > 0 {
-		r.HostPID = pid
-	}
-	if err = c.Send(spec.Session, "control", map[string]string{"action": "kill", "expected_generation": strconv.FormatUint(spec.Generation, 10)}); err != nil {
+	process, err := authenticatedProcess(c, r.HostPID)
+	if err != nil {
 		return err
 	}
-	for {
-		running, _, _, e := health(ctx, c, spec.Session)
-		if e != nil {
-			return e
+	defer process.close()
+	running, _, _, err := health(ctx, c, spec.Session)
+	if err != nil {
+		return err
+	}
+	if running {
+		if err = c.Send(spec.Session, "control", map[string]string{"action": "kill", "expected_generation": strconv.FormatUint(spec.Generation, 10)}); err != nil {
+			return err
 		}
-		if !running {
-			break
+	}
+	for running {
+		running, _, _, err = health(ctx, c, spec.Session)
+		if err != nil {
+			return err
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
+		if running {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
 		}
 	}
 	_ = c.Close()
-	if r.Backend == SystemdUser {
-		if !p.cfg.AllowSystemd || r.UnitName != p.unit(spec) {
-			return fail("identity_mismatch", "foreign unit")
-		}
-		if _, err = p.cfg.Command(ctx, []string{"systemctl", "--user", "stop", r.UnitName}); err != nil {
-			return err
-		}
-		_, err = p.cfg.Command(ctx, []string{"systemctl", "--user", "reset-failed", r.UnitName})
+	if err = process.signal(syscall.SIGTERM); err != nil {
 		return err
 	}
-	// Authenticate the socket before trusting its host pid. Wait for the exact
-	// process to vanish; never kill a stored PID when authentication failed.
-	if r.HostPID > 0 {
-		if err = syscall.Kill(r.HostPID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	grace, graceCancel := context.WithTimeout(ctx, p.cfg.StopGrace)
+	err = process.wait(grace)
+	graceCancel()
+	if err != nil {
+		if err = process.signal(syscall.SIGKILL); err != nil {
+			return err
+		}
+		if err = process.wait(ctx); err != nil {
 			return err
 		}
 	}
-	for r.HostPID > 0 && !errors.Is(syscall.Kill(r.HostPID, 0), syscall.ESRCH) {
+	p.mu.Lock()
+	reaped := p.reaped[process.pid]
+	p.mu.Unlock()
+	if reaped != nil {
 		select {
+		case <-reaped:
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	return nil
+	var serviceErr error
+	if r.Backend == SystemdUser {
+		_, serviceErr = p.cfg.Command(ctx, []string{"systemctl", "--user", "stop", r.UnitName})
+		if serviceErr == nil {
+			_, serviceErr = p.cfg.Command(ctx, []string{"systemctl", "--user", "reset-failed", r.UnitName})
+		}
+	}
+	// Only a verified terminal host licenses deletion of its capability.
+	if saved.Attempted {
+		r = saved
+	}
+	r.Retired = true
+	r.Epoch = c.Epoch
+	r.Journal = c.Journal
+	r.HostPID = process.pid
+	r.ShimPID = process.pid
+	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	delete(p.reaped, process.pid)
+	p.mu.Unlock()
+	if err = cleanupRetired(r); err != nil {
+		return err
+	}
+	return serviceErr
+}
+func samePlacement(a, b Receipt) bool {
+	return a.Session == b.Session && a.Instance == b.Instance && a.Generation == b.Generation && a.Backend == b.Backend && a.DescriptorPath == b.DescriptorPath && a.SocketPath == b.SocketPath && a.UnitName == b.UnitName && (a.Journal == "" || b.Journal == "" || a.Journal == b.Journal)
+}
+
+// Inspect preserves the durable operation intent and merges only observed facts.
+func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
+	observed, err := p.inspect(ctx, r)
+	if err != nil {
+		return observed, err
+	}
+	lock, err := LockWait(ctx, filepath.Join(filepath.Dir(r.DescriptorPath), "placement.lock"), p.cfg.LockWait)
+	if err != nil {
+		return Inspection{}, err
+	}
+	defer func() { _ = lock.Close() }()
+	var saved Receipt
+	if err = ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); err != nil {
+		return observed, err
+	}
+	if !samePlacement(saved, observed.Receipt) {
+		return Inspection{}, fail("identity_mismatch", "observed placement differs")
+	}
+	if saved.Retired {
+		return Inspection{Receipt: saved, Gone: true}, nil
+	}
+	saved.Journal = observed.Receipt.Journal
+	oldEpoch, _ := strconv.ParseUint(saved.Epoch, 10, 64)
+	newEpoch, _ := strconv.ParseUint(observed.Receipt.Epoch, 10, 64)
+	if newEpoch >= oldEpoch {
+		saved.Epoch = observed.Receipt.Epoch
+	}
+	saved.HostPID = observed.Receipt.HostPID
+	saved.ShimPID = observed.Receipt.ShimPID
+	saved.ProviderPID = observed.Receipt.ProviderPID
+	if err = WritePrivateJSON(metadataPath(r), saved); err != nil {
+		return Inspection{}, err
+	}
+	observed.Receipt = saved
+	return observed, nil
 }
 
 // ReadDescriptor is the CLI entry point: no catalog or ambient-home lookup.
@@ -425,4 +592,16 @@ func ReadDescriptor(path string) (shim.Launch, error) {
 	var spec shim.Launch
 	err := ReadPrivateJSON(path, shim.MaxFrame, &spec)
 	return spec, err
+}
+
+func cleanupRetired(r Receipt) error {
+	if f, err := privateFile(r.DescriptorPath); err == nil {
+		_ = f.Close()
+		if err = os.Remove(r.DescriptorPath); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return ClearCommitTemps(filepath.Dir(r.DescriptorPath))
 }

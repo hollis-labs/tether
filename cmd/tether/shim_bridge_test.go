@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -20,6 +21,11 @@ import (
 )
 
 func TestShimBridgeCLIChild(t *testing.T) {
+	if os.Getenv("TETHER_BRIDGE_CLI_CHILD") == "bridge-error" {
+		os.Args = []string{os.Args[0], "shim-bridge", "--descriptor", "/missing/launch.json"}
+		main()
+		os.Exit(0)
+	}
 	if os.Getenv("TETHER_BRIDGE_CLI_CHILD") == "" {
 		return
 	}
@@ -34,7 +40,7 @@ func TestShimBridgeCommandExitAndExplicitDescriptor(t *testing.T) {
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("implicit descriptor accepted")
 	}
-	dir, err := os.MkdirTemp(os.Getenv("TMPDIR"), "bc-")
+	dir, err := os.MkdirTemp("/var/tmp", "sc-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,4 +120,36 @@ func TestShimBridgeCommandExitAndExplicitDescriptor(t *testing.T) {
 	if child.Status != 7 || child.Signal != 0 {
 		t.Fatal("fake child not exited")
 	}
+}
+
+func TestShimBridgeInfrastructureFailureHasDistinctExitCode(t *testing.T) {
+	cmd := shimBridgeCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--descriptor", "/missing/launch.json"})
+	err := cmd.Execute()
+	var classified exitCoder
+	if !errors.As(err, &classified) || classified.ExitCode() != 93 {
+		t.Fatalf("infrastructure exit: %v", err)
+	}
+}
+
+func TestShimBridgeMainMapsInfrastructureFailure(t *testing.T) {
+	dir, err := os.MkdirTemp("/var/tmp", "sm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestShimBridgeCLIChild$")
+	cmd.Env = []string{"TETHER_BRIDGE_CLI_CHILD=bridge-error", "OTEL_SDK_DISABLED=true", "HOME=" + dir, "TMPDIR=" + dir}
+	output, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 93 {
+		t.Fatalf("main mapped failure to %v: %s", err, output)
+	}
+	t.Logf("bridge pid=%d exited=93", cmd.Process.Pid)
 }

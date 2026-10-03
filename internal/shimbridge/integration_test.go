@@ -50,7 +50,7 @@ func await(t *testing.T, what string, fn func() bool) {
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 func startFixture(t *testing.T, journalCap int64) *fixture {
 	t.Helper()
-	root, e := os.MkdirTemp(os.Getenv("TMPDIR"), "g1-")
+	root, e := os.MkdirTemp("/var/tmp", "sb-")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -92,14 +92,14 @@ func startFixture(t *testing.T, journalCap int64) *fixture {
 	if e = os.WriteFile(filepath.Join(root, "pin"), nil, 0600); e != nil {
 		t.Fatal(e)
 	}
-	spec := shim.Launch{Session: "urn:session:g1", Instance: "urn:instance:g1", Generation: 1, Actor: mesh.Actor{URN: "msg://service/shim/g1", Kind: mesh.ActorService}, Subject: "urn:session:g1", Argv: []string{exe, "-test.run=^TestSpikeProcess$"}, Cwd: root, ControlDir: filepath.Join(root, "c"), JournalDir: filepath.Join(root, "j"), Secret: strings.Repeat("s", 32), PinPath: filepath.Join(root, "pin"), PinKey: "g1", BootGeneration: "g1", Reservation: "g1", JournalBytes: journalCap, StopGrace: 50 * time.Millisecond, Heartbeat: time.Second, ClientQueue: 256}
-	spec.Env = []string{"G1_PROCESS=child", "G1_CONFIG=" + f.config, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root}
+	spec := shim.Launch{Session: "urn:session:test", Instance: "urn:instance:test", Generation: 1, Actor: mesh.Actor{URN: "msg://service/test/shim", Kind: mesh.ActorService}, Subject: "urn:session:test", Argv: []string{exe, "-test.run=^TestProviderProcess$"}, Cwd: root, ControlDir: filepath.Join(root, "c"), JournalDir: filepath.Join(root, "j"), Secret: strings.Repeat("s", 32), PinPath: filepath.Join(root, "pin"), PinKey: "test", BootGeneration: "test", Reservation: "test", JournalBytes: journalCap, StopGrace: 50 * time.Millisecond, Heartbeat: time.Second, ClientQueue: 256}
+	spec.Env = []string{"SHIM_TEST_PROCESS=child", "SHIM_TEST_CONFIG=" + f.config, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root}
 	f.cfg = bridgeConfig{Launch: spec, StatePath: filepath.Join(root, "state.json")}
 	if e = saveJSON(f.config, f.cfg); e != nil {
 		t.Fatal(e)
 	}
-	cmd := exec.Command(exe, "-test.run=^TestSpikeProcess$")
-	cmd.Env = []string{"G1_PROCESS=host", "G1_CONFIG=" + f.config, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root}
+	cmd := exec.Command(exe, "-test.run=^TestProviderProcess$")
+	cmd.Env = []string{"SHIM_TEST_PROCESS=host", "SHIM_TEST_CONFIG=" + f.config, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root}
 	cmd.Dir = root
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	log, e := os.Create(filepath.Join(root, "host.log"))
@@ -181,13 +181,13 @@ func startSession(t *testing.T, f *fixture, attach bool, preset string, change .
 	if e != nil {
 		t.Fatal(e)
 	}
-	args := []provider.ArgTemplate{{Kind: provider.ArgLiteral, Value: "-test.run=^TestSpikeProcess$"}, {Kind: provider.ArgLiteral, Value: "--"}}
+	args := []provider.ArgTemplate{{Kind: provider.ArgLiteral, Value: "-test.run=^TestProviderProcess$"}, {Kind: provider.ArgLiteral, Value: "--"}}
 	if attach {
 		args = append(args, provider.ArgTemplate{Kind: provider.ArgLiteral, Value: "--attach"})
 	}
 	template := &agentlaunch.TurnTemplate{Convention: provider.LaunchConvention{Executable: exe, Mode: runtimes.ModeStreamingStdio, Argv: args}}
 	c := &collector{}
-	opts := agentsessions.StartOptions{Workdir: f.root, LogPath: filepath.Join(f.root, fmt.Sprintf("session-%v.log", attach)), Env: []string{"G1_PROCESS=bridge", "G1_CONFIG=" + f.config, "HOME=" + filepath.Join(f.root, "home"), "TMPDIR=" + f.root}, Launch: template, SessionIDPreset: preset, Fanout: c, OnSessionID: c.id, TypedEventCallback: c.event}
+	opts := agentsessions.StartOptions{Workdir: f.root, LogPath: filepath.Join(f.root, fmt.Sprintf("session-%v.log", attach)), Env: []string{"SHIM_TEST_PROCESS=bridge", "SHIM_TEST_CONFIG=" + f.config, "HOME=" + filepath.Join(f.root, "home"), "TMPDIR=" + f.root}, Launch: template, SessionIDPreset: preset, Fanout: c, OnSessionID: c.id, TypedEventCallback: c.event}
 	for _, fn := range change {
 		fn(&opts)
 	}
@@ -535,7 +535,7 @@ func TestResourceLimitSeamAffectsBridgeOnly(t *testing.T) {
 	t.Logf("Health PID=%d is bridge; host=%d child=%d; bridge limit=%s; child limit=%s", s.Health().PID, f.host.Process.Pid, f.child, limitLine(bridgeLimits), limitLine(childLimits))
 }
 
-// D4 is weaker than arbitrary-crash exactly-once delivery: a pipe write and
+// Pipe delivery is weaker than arbitrary-crash exactly-once delivery: a pipe write and
 // cursor commit are separate effects. Prove the duplicate side of that window.
 func TestCrashAfterPipeWriteCanDuplicate(t *testing.T) {
 	f := startFixture(t, 16<<20)
@@ -583,6 +583,9 @@ func TestAttachRejectsJournalOrIdentityBeforeInput(t *testing.T) {
 	if e := saveJSON(descriptor, f.cfg.Launch); e != nil {
 		t.Fatal(e)
 	}
+	if e := saveJSON(filepath.Join(f.root, "bridge.json"), Checkpoint{Session: f.cfg.Launch.Session, Instance: f.cfg.Launch.Instance, Generation: 1, Journal: "recorded"}); e != nil {
+		t.Fatal(e)
+	}
 	for _, test := range []struct {
 		name, code string
 		opts       Options
@@ -619,6 +622,10 @@ func TestAttachDiagnosticCountsReplayAndKeepsProviderAlive(t *testing.T) {
 	}
 	journal := observer.Journal
 	_ = observer.Close()
+	if e := saveJSON(filepath.Join(f.root, "bridge.json"), Checkpoint{Session: f.cfg.Launch.Session, Instance: f.cfg.Launch.Instance, Generation: 1, Journal: journal}); e != nil {
+		t.Fatal(e)
+	}
+
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)

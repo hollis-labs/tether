@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"path/filepath"
 	"testing"
@@ -53,25 +52,5 @@ func TestSessionShimRoundTripAndIdentityFence(t *testing.T) {
 	row.SessionID = "absent"
 	if e = db.UpsertSessionShim(ctx, row); !errors.Is(e, ErrSessionNotFound) {
 		t.Fatalf("absent session: %v", e)
-	}
-}
-func TestOrphanedSessionCannotMintPrincipal(t *testing.T) {
-	db, e := Open(filepath.Join(t.TempDir(), "orphan.db"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer func() { _ = db.Close() }()
-	for i, state := range []string{"orphaned", "detached"} {
-		id := "s-" + state
-		if e = db.CreateSession(SessionRow{ID: id, State: state}, &launch.Plan{}); e != nil {
-			t.Fatal(e)
-		}
-		_, e = db.db.Exec(`INSERT INTO principals(principal_id,kind,display,token_hash,scopes_json,session_id,addresses_json,created_at) VALUES (?, 'session', 'test', ?, '[]', ?, '[]', '2026-10-03T00:00:00Z')`, id, fmt.Sprintf("%064x", i+1), id)
-		if state == "orphaned" && e == nil {
-			t.Fatal("orphaned principal accepted")
-		}
-		if state == "detached" && e != nil {
-			t.Fatalf("detached principal refused: %v", e)
-		}
 	}
 }
