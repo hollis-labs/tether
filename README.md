@@ -42,7 +42,7 @@ adapter, the ACP surface, or `go-tether-client`.
          ▼                        MCP client or the tether CLI/HTTP API
    ┌───────────┐
    │  tetherd     │   session lifecycle, messaging, events, AI gateway,
-   │ (Tether)  │   sandboxing — the substrate, not the orchestrator
+   │ (Tether)  │   sandboxing — the agent session, mesh and orchestration layer
    └───────────┘
          │
    launched sessions      the actual coding-agent processes Tether
