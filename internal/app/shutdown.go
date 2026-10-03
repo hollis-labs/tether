@@ -49,8 +49,8 @@ func (s *Service) DrainSessions(ctx context.Context) error {
 	for _, id := range live {
 		row, gerr := s.Store.GetSession(id)
 		if gerr == nil {
-			switch session.State(row.State) {
-			case session.StateCompleted, session.StateFailed, session.StateKilled:
+			switch {
+			case session.State(row.State).Terminal():
 				ended = append(ended, id)
 				continue
 			default:

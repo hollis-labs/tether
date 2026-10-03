@@ -11,6 +11,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
@@ -104,7 +105,7 @@ bare directory delete would leave a stale worktree registration behind.`,
 					shouldPrune = true
 					reason = "not in database"
 				} else {
-					terminal := row.State == "completed" || row.State == "failed" || row.State == "killed"
+					terminal := session.State(row.State).Terminal()
 					if !terminal {
 						skipped++
 						continue

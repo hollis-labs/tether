@@ -245,11 +245,11 @@ func (s *Store) UpdateSessionState(id, state string, pid int, exit *int) error {
 	return err
 }
 
-// StaleSession is a session the previous daemon left in 'launching' or
-// 'running', with what the daemon-start sweep needs to decide whether its
-// process survived.
+// StaleSession carries the state and process identity needed by startup
+// recovery for a launching, running or detached session.
 type StaleSession struct {
 	ID        string
+	State     string
 	PID       int
 	CreatedAt string
 	// PIDStartedAt is the start time the OS reported for PID when it was
@@ -259,20 +259,22 @@ type StaleSession struct {
 }
 
 // SweepStaleSessions settles every session the previous daemon left in
-// 'launching' or 'running'. A session spare approves keeps its state; every
-// other one becomes 'failed' with exit_code -1, which means "swept at daemon
+// 'launching', 'running' or 'detached'. A session spare approves keeps its
+// state. Other launching/running rows become 'failed' with exit_code -1,
+// which means "swept at daemon
 // start", not an observed exit (CW-20260912-0085). spare may be nil, which
 // spares none. Intended for call-once-on-daemon-start. Returns the swept and
-// spared session ids.
+// spared session ids. Detached sessions not explicitly spared become orphaned
+// with reason shim_reconcile_disabled; orphaned rows are left alone.
 func (s *Store) SweepStaleSessions(now string, spare func(StaleSession) bool) (swept, spared []string, err error) {
-	rows, err := s.db.Query(`SELECT id, COALESCE(pid, 0), created_at, COALESCE(pid_started_at, '') FROM sessions WHERE state IN ('launching', 'running') ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT id, state, COALESCE(pid, 0), created_at, COALESCE(pid_started_at, '') FROM sessions WHERE state IN ('launching', 'running', 'detached') ORDER BY created_at`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sweep stale sessions: list: %w", err)
 	}
 	var stale []StaleSession
 	for rows.Next() {
 		var r StaleSession
-		if err := rows.Scan(&r.ID, &r.PID, &r.CreatedAt, &r.PIDStartedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.State, &r.PID, &r.CreatedAt, &r.PIDStartedAt); err != nil {
 			_ = rows.Close()
 			return nil, nil, fmt.Errorf("sweep stale sessions: scan: %w", err)
 		}
@@ -287,6 +289,13 @@ func (s *Store) SweepStaleSessions(now string, spare func(StaleSession) bool) (s
 	for _, r := range stale {
 		if spare != nil && spare(r) {
 			spared = append(spared, r.ID)
+			continue
+		}
+		if r.State == "detached" {
+			if _, err := s.MarkSessionOrphaned(r.ID, "shim_reconcile_disabled"); err != nil {
+				return swept, spared, err
+			}
+			swept = append(swept, r.ID)
 			continue
 		}
 		res, err := s.db.Exec(
@@ -320,8 +329,8 @@ func (s *Store) SetSessionProcessStart(id string, pid int, startedAt string) err
 // Cursor is an RFC3339 timestamp; the query returns rows strictly
 // older than it. State, when non-empty, restricts to a single session
 // state ('created', 'launching', 'running', 'completed', 'failed',
-// 'killed'). GroupID, when non-empty, restricts to sessions in the
-// named session group. Limit caps the page size; 0 falls back to the
+// 'killed', 'ready', 'detached', 'orphaned'). GroupID, when non-empty,
+// restricts to sessions in the named session group. Limit caps the page size; 0 falls back to the
 // default (100) and values above the hard cap (1000) are clamped.
 type ListSessionsOptions struct {
 	Limit   int
