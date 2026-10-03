@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -82,11 +83,16 @@ type ProtectionHealth struct {
 	BwrapUsable  bool
 	BwrapError   string
 	// SkippedProjectLayers are registered projects left out of protection
-	// because their repo_root cannot be used on this host. The launches of every
-	// other project still work; each entry is a catalog problem to fix, and
-	// until it is fixed a protected agent could create that directory and plant
-	// a layer in it.
+	// because their repo_root cannot be used on this host AND no agent could
+	// create it either (the nearest existing directory above it is not writable),
+	// so there is nothing to plant into. The launches of every other project
+	// still work; each entry is a catalog problem to fix.
 	SkippedProjectLayers []config.SkippedProjectLayer
+	// CreatedProjectRoots are registered projects whose missing repo_root an agent
+	// could have created: protection created it, empty but for an anchored
+	// .tether, so a protected agent cannot plant a layer. Kept for the daemon's
+	// lifetime. Each is a stale catalog entry to fix.
+	CreatedProjectRoots []config.CreatedProjectRoot
 	// PlanError is why Tether cannot work out what to protect, when it cannot:
 	// every launch it must protect is refused until it is fixed. It is NOT a
 	// bubblewrap problem, and BwrapChecked/BwrapUsable still say what the probe
@@ -142,6 +148,11 @@ func (s *Service) ProtectionHealth() ProtectionHealth {
 	h := ComputeProtectionHealth(st, runtime.GOOS, probeDir, bwrapAvailable)
 	h.SkippedProjectLayers = skipped
 	h.PlanError = planErr
+	s.protectionCreatedRoots.Range(func(_, v any) bool {
+		h.CreatedProjectRoots = append(h.CreatedProjectRoots, v.(config.CreatedProjectRoot))
+		return true
+	})
+	sort.Slice(h.CreatedProjectRoots, func(i, j int) bool { return h.CreatedProjectRoots[i].Project < h.CreatedProjectRoots[j].Project })
 	return h
 }
 

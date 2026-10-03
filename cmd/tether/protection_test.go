@@ -69,6 +69,7 @@ func TestCheckSandboxProtect(t *testing.T) {
 		// though the probe on its own found bubblewrap fine.
 		{"plan error", withPlanError(healthFor("linux", nil, nil), "protect control plane: catalog root: no such file"), true, statusFail, "not bubblewrap"},
 		{"skipped layers", withSkipped(healthFor("linux", nil, nil), deadProjects()...), true, statusWarn, "left out of protection"},
+		{"created roots", withCreated(healthFor("linux", nil, nil), createdProjects()...), true, statusWarn, "created empty with only .tether so a protected agent cannot plant a layer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := checkSandboxProtect(sandboxProtectHealth(tc.health), tc.fromDaemon)
@@ -83,6 +84,9 @@ func TestCheckSandboxProtect(t *testing.T) {
 			}
 			if tc.name == "skipped layers" && (!strings.Contains(r.Message, "chrispian") || !strings.Contains(r.Message, "/gone/chrispian does not exist") || !strings.Contains(r.Message, "2 project(s)")) {
 				t.Fatalf("the warning must name each dead project, its path and why: %+v", r)
+			}
+			if tc.name == "created roots" && (!strings.Contains(r.Message, "chrispian (/gone/chrispian)") || !strings.Contains(r.Message, "2 project root(s) were missing") || !strings.Contains(r.Remedy, "stale catalog entries")) {
+				t.Fatalf("the warning must name each project and path and call it a stale entry: %+v", r)
 			}
 			if tc.fromDaemon && !strings.Contains(r.Message, "(daemon)") {
 				t.Fatalf("message does not say it is the daemon's answer: %q", r.Message)
@@ -110,6 +114,18 @@ func deadProjects() []config.SkippedProjectLayer {
 	}
 }
 
+func createdProjects() []config.CreatedProjectRoot {
+	return []config.CreatedProjectRoot{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
+	}
+}
+
+func withCreated(h app.ProtectionHealth, created ...config.CreatedProjectRoot) app.ProtectionHealth {
+	h.CreatedProjectRoots = created
+	return h
+}
+
 func withPlanError(h app.ProtectionHealth, msg string) app.ProtectionHealth {
 	h.PlanError = msg
 	return h
@@ -123,13 +139,17 @@ func withSkipped(h app.ProtectionHealth, skipped ...config.SkippedProjectLayer) 
 // The daemon's /health carries the skipped project layers and the plan error as
 // their own fields, so a consumer never has to infer either from a bubblewrap one.
 func TestSandboxProtectHealthCarriesSkippedLayersAndPlanError(t *testing.T) {
-	h := sandboxProtectHealth(withPlanError(withSkipped(healthFor("linux", nil, nil), deadProjects()...), "boom"))
+	h := sandboxProtectHealth(withPlanError(withCreated(withSkipped(healthFor("linux", nil, nil), deadProjects()...), createdProjects()...), "boom"))
 	want := []daemon.SkippedProjectLayer{
 		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist"},
 		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist"},
 	}
-	if !reflect.DeepEqual(h.SkippedProjectLayers, want) || h.PlanError != "boom" {
-		t.Fatalf("health = %+v; want skipped %+v and plan error boom", *h, want)
+	wantCreated := []daemon.CreatedProjectRoot{
+		{Project: "chrispian", RepoRoot: "/gone/chrispian", Reason: "does not exist and an agent could have created it"},
+		{Project: "lnklst", RepoRoot: "/gone/lnklst", Reason: "does not exist and an agent could have created it"},
+	}
+	if !reflect.DeepEqual(h.SkippedProjectLayers, want) || !reflect.DeepEqual(h.CreatedProjectRoots, wantCreated) || h.PlanError != "boom" {
+		t.Fatalf("health = %+v; want skipped %+v, created %+v and plan error boom", *h, want, wantCreated)
 	}
 	if h.BwrapChecked != true || !h.BwrapUsable || h.BwrapError != "" {
 		t.Fatalf("the bubblewrap probe must stay its own answer: %+v", *h)

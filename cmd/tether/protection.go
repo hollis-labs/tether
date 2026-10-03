@@ -19,6 +19,10 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 	for _, s := range h.SkippedProjectLayers {
 		skipped = append(skipped, daemon.SkippedProjectLayer{Project: s.Project, RepoRoot: s.RepoRoot, Reason: s.Reason})
 	}
+	var created []daemon.CreatedProjectRoot
+	for _, c := range h.CreatedProjectRoots {
+		created = append(created, daemon.CreatedProjectRoot{Project: c.Project, RepoRoot: c.RepoRoot, Reason: c.Reason})
+	}
 	return &daemon.SandboxProtectHealth{
 		Enabled:              h.Enabled,
 		DisabledByOperator:   h.DisabledByOperator,
@@ -29,8 +33,18 @@ func sandboxProtectHealth(h app.ProtectionHealth) *daemon.SandboxProtectHealth {
 		BwrapUsable:          h.BwrapUsable,
 		BwrapError:           h.BwrapError,
 		SkippedProjectLayers: skipped,
+		CreatedProjectRoots:  created,
 		PlanError:            h.PlanError,
 	}
+}
+
+// createdRootsSummary names the missing project roots protection created.
+func createdRootsSummary(created []daemon.CreatedProjectRoot) string {
+	parts := make([]string, 0, len(created))
+	for _, c := range created {
+		parts = append(parts, fmt.Sprintf("%s (%s)", c.Project, c.RepoRoot))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // skippedLayersSummary names the projects protection left out, for a message.
@@ -122,9 +136,13 @@ func checkSandboxProtect(h *daemon.SandboxProtectHealth, fromDaemon bool) checkR
 		return fail(name, fmt.Sprintf("on, but bubblewrap cannot build the sandbox, so Claude, OpenCode and every agent Tether wraps will be refused; Codex launches are not affected (%s): %s", source, h.BwrapError),
 			fmt.Sprintf("install bubblewrap and allow unprivileged user namespaces, or set %s=0 in tetherd's environment to run agents unprotected", app.ProtectEnv))
 	}
+	if len(h.CreatedProjectRoots) > 0 {
+		return warn(name, fmt.Sprintf("%s (%s); %d project root(s) were missing and were created empty with only .tether so a protected agent cannot plant a layer there: %s", h.Reason, source, len(h.CreatedProjectRoots), createdRootsSummary(h.CreatedProjectRoots)),
+			"these projects are stale catalog entries: restore their repositories or remove the projects, and restart the daemon")
+	}
 	if len(h.SkippedProjectLayers) > 0 {
-		return warn(name, fmt.Sprintf("%s (%s); %d project(s) left out of protection because their repo_root is unusable: %s", h.Reason, source, len(h.SkippedProjectLayers), skippedLayersSummary(h.SkippedProjectLayers)),
-			"restore or remove those projects in the catalog and restart the daemon; until then a protected agent could create that directory and plant a project layer in it")
+		return warn(name, fmt.Sprintf("%s (%s); %d project(s) left out of protection because their repo_root is unusable and no agent could create it either: %s", h.Reason, source, len(h.SkippedProjectLayers), skippedLayersSummary(h.SkippedProjectLayers)),
+			"restore or remove those projects in the catalog and restart the daemon")
 	}
 	return ok(name, fmt.Sprintf("%s (%s)", h.Reason, source))
 }

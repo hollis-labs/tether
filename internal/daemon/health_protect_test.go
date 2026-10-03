@@ -39,7 +39,7 @@ func TestHandleHealth_SandboxProtect(t *testing.T) {
 		}
 	}
 	// With nothing skipped and no plan failure, neither field is in the body.
-	for _, absent := range []string{"skipped_project_layers", "plan_error"} {
+	for _, absent := range []string{"skipped_project_layers", "created_project_roots", "plan_error"} {
 		if strings.Contains(raw, absent) {
 			t.Errorf("/health body carries %s with nothing to report: %s", absent, raw)
 		}
@@ -51,6 +51,7 @@ func TestHandleHealth_SandboxProtect(t *testing.T) {
 func TestHandleHealth_SandboxProtectSkippedLayersAndPlanError(t *testing.T) {
 	want := SandboxProtectHealth{Enabled: true, Reason: "on", BwrapChecked: true, BwrapUsable: true,
 		SkippedProjectLayers: []SkippedProjectLayer{{Project: "old-site", RepoRoot: "/home/u/old-site", Reason: "does not exist"}},
+		CreatedProjectRoots:  []CreatedProjectRoot{{Project: "gone", RepoRoot: "/home/u/gone", Reason: "created"}},
 		PlanError:            "protect catalog layer: project \"x\": boom"}
 	rr := httptest.NewRecorder()
 	(&Server{SandboxProtect: func() *SandboxProtectHealth { return &want }}).handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -61,7 +62,7 @@ func TestHandleHealth_SandboxProtectSkippedLayersAndPlanError(t *testing.T) {
 	if h.SandboxProtect == nil || !reflect.DeepEqual(*h.SandboxProtect, want) {
 		t.Fatalf("sandbox_protect = %+v, want %+v (%s)", h.SandboxProtect, want, rr.Body.String())
 	}
-	for _, field := range []string{`"skipped_project_layers":[{"project":"old-site","repo_root":"/home/u/old-site","reason":"does not exist"}]`, `"plan_error":"protect catalog layer: project \"x\": boom"`, `"bwrap_usable":true`} {
+	for _, field := range []string{`"skipped_project_layers":[{"project":"old-site","repo_root":"/home/u/old-site","reason":"does not exist"}]`, `"created_project_roots":[{"project":"gone","repo_root":"/home/u/gone","reason":"created"}]`, `"plan_error":"protect catalog layer: project \"x\": boom"`, `"bwrap_usable":true`} {
 		if !strings.Contains(rr.Body.String(), field) {
 			t.Errorf("/health body lacks %s: %s", field, rr.Body.String())
 		}

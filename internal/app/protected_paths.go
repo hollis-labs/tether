@@ -114,6 +114,12 @@ func (s *Service) protectionPlan(plan *launch.Plan, kind string, opts *agentsess
 		if errors.As(err, &rootErr) {
 			return nil, false, fmt.Errorf("%w: %w", launch.ErrLaunchProjectRootMissing, err)
 		}
+		// Another project's layer cannot be protected and cannot be left open: the
+		// launch is refused, as for any host that cannot provide protection.
+		var layerErr *config.UnprotectableLayerError
+		if errors.As(err, &layerErr) {
+			return nil, false, fmt.Errorf("%w: %w", launch.ErrProtectionUnavailable, err)
+		}
 		return nil, false, err
 	}
 	if plan != nil && plan.ProviderBrand == "codex" {
@@ -291,15 +297,25 @@ func (s *Service) controlPlane(launching string) ([]string, []config.SkippedProj
 }
 
 // reportProtectionLayers makes what protection did to project layers visible.
-// A project left out because its repo_root is unusable is warned about once per
-// daemon (the warning says what that leaves open); an empty layer protection had
-// to create is logged, since that writes into a project's repository.
+// A project whose missing repo_root protection had to create (an agent could
+// have) is warned about once per daemon and remembered for health and doctor; a
+// project left out because no agent could create its root is warned about once;
+// an empty layer protection created is logged, since that writes into the
+// user's directories.
 func (s *Service) reportProtectionLayers(p config.CatalogProtection) {
+	for _, created := range p.CreatedRoots {
+		key := created.Project + "\x00" + created.RepoRoot
+		s.protectionCreatedRoots.Store(key, created)
+		if _, seen := s.protectionWarned.LoadOrStore("created\x00"+key, struct{}{}); seen {
+			continue
+		}
+		log.Printf("WARN: protect: project %q: its repo_root %s %s. Fix or remove the project", created.Project, created.RepoRoot, created.Reason)
+	}
 	for _, skipped := range p.Skipped {
 		if _, seen := s.protectionWarned.LoadOrStore(skipped.Project+"\x00"+skipped.RepoRoot, struct{}{}); seen {
 			continue
 		}
-		log.Printf("WARN: protect: project %q is left out of control-plane protection: its repo_root %s %s. A protected agent could create that directory and a .tether layer in it, which the next catalog load would read for this project: fix or remove the project", skipped.Project, skipped.RepoRoot, skipped.Reason)
+		log.Printf("WARN: protect: project %q is left out of control-plane protection: its repo_root %s %s: there is nothing an agent could plant into. Fix or remove the project", skipped.Project, skipped.RepoRoot, skipped.Reason)
 	}
 	for _, created := range p.Created {
 		log.Printf("protect: created the empty layer directory %s so that no agent can plant one there", created)

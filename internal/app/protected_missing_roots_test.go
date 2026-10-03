@@ -19,6 +19,7 @@ import (
 // deadRootService is a protected Service whose catalog registers projects the
 // way the live one did when every protected launch was refused
 // (CW-20261003-0092): some with a real repo_root, some whose repo_root is gone.
+// Every dead root is under a writable temp directory, so an agent could create it.
 func deadRootService(t *testing.T) (svc *Service, existing, dead map[string]string) {
 	t.Helper()
 	svc, _, _ = tetherLayoutKeepingMode(t)
@@ -51,9 +52,21 @@ func noLayerCreatedIn(t *testing.T, roots map[string]string) {
 	}
 }
 
+func noneExist(t *testing.T, roots map[string]string) {
+	t.Helper()
+	for id, root := range roots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("project %s: %s exists although the call was refused (%v)", id, root, err)
+		}
+	}
+}
+
 // One project with a repo_root that is gone must not refuse the launches of
 // every other project. This is the live failure: POST /sessions answered 500
-// 'protect catalog layer: parent unavailable' for any protected launch.
+// 'protect catalog layer: parent unavailable' for any protected launch. And it
+// must not be fixed by leaving the dead project's layer open: an agent could
+// create that root and plant a layer, so each missing root an agent could create
+// is created holding only .tether, and that layer is protected like the others.
 func TestAProtectedLaunchSurvivesProjectsWithAMissingRepoRoot(t *testing.T) {
 	svc, existing, dead := deadRootService(t)
 	opts := agentsessions.StartOptions{Workdir: t.TempDir(), WorkspaceDir: t.TempDir()}
@@ -61,27 +74,26 @@ func TestAProtectedLaunchSurvivesProjectsWithAMissingRepoRoot(t *testing.T) {
 	if err := svc.applyControlPlaneProtection(plan, "cli", &opts); err != nil {
 		t.Fatalf("a dead project refused another project's launch: %v", err)
 	}
-	for id, root := range existing {
-		layer, err := filepath.EvalSymlinks(filepath.Join(root, ".tether"))
-		if err != nil || !containsPath(opts.ProtectedPaths, layer) {
-			t.Fatalf("project %s: its layer is not protected: %q (%v)", id, opts.ProtectedPaths, err)
+	for _, roots := range []map[string]string{existing, dead} {
+		for id, root := range roots {
+			layer, err := filepath.EvalSymlinks(filepath.Join(root, ".tether"))
+			if err != nil || !containsPath(opts.ProtectedPaths, layer) {
+				t.Fatalf("project %s: its layer is not protected: %q (%v)", id, opts.ProtectedPaths, err)
+			}
 		}
 	}
 	for id, root := range dead {
-		if _, err := os.Stat(root); !os.IsNotExist(err) {
-			t.Fatalf("project %s: a missing repo_root %s was created (%v)", id, root, err)
-		}
-		for _, p := range opts.ProtectedPaths {
-			if strings.Contains(p, id) {
-				t.Fatalf("project %s: a dead project's path is among the protected paths: %q", id, opts.ProtectedPaths)
-			}
+		entries, err := os.ReadDir(root)
+		if err != nil || len(entries) != 1 || entries[0].Name() != ".tether" {
+			t.Fatalf("project %s: the created root = %v (%v); want only .tether", id, entries, err)
 		}
 	}
 }
 
 // The project a launch is for is different: if its own repo_root is gone the
 // launch is refused with a typed error naming the project and path, not a bare
-// internal error, and the refusal creates nothing.
+// internal error, and the refusal creates nothing: not its root, not a layer in
+// any live project, not the other dead projects' roots.
 func TestALaunchForAProjectWithAMissingRepoRootIsATypedRefusal(t *testing.T) {
 	svc, existing, dead := deadRootService(t)
 	opts := agentsessions.StartOptions{Workdir: t.TempDir(), WorkspaceDir: t.TempDir()}
@@ -103,52 +115,110 @@ func TestALaunchForAProjectWithAMissingRepoRootIsATypedRefusal(t *testing.T) {
 		t.Fatalf("a refused launch was given protected paths: %q", opts.ProtectedPaths)
 	}
 	noLayerCreatedIn(t, existing)
+	noneExist(t, dead)
 
+	// Session create goes through refuseUnprotectable: that is the call the live
+	// daemon answered 500 for.
+	if err := svc.refuseUnprotectable(plan, "cli"); !errors.Is(err, launch.ErrLaunchProjectRootMissing) {
+		t.Fatalf("create for a dead project: err = %v; want launch.ErrLaunchProjectRootMissing", err)
+	}
 	// The same refusal for the other kind of dead root (its parent is missing too).
 	if err := svc.applyControlPlaneProtection(&launch.Plan{ProviderBrand: "claude", ProjectID: "dead-b"}, "cli", &opts); !errors.Is(err, launch.ErrLaunchProjectRootMissing) {
 		t.Fatalf("dead-b: err = %v", err)
 	}
-
-	// Session create goes through refuseUnprotectable: that is the call the live
-	// daemon answered 500 for. A dead project refuses only its own launches.
-	if err := svc.refuseUnprotectable(plan, "cli"); !errors.Is(err, launch.ErrLaunchProjectRootMissing) {
-		t.Fatalf("create for a dead project: err = %v; want launch.ErrLaunchProjectRootMissing", err)
-	}
-	if err := svc.refuseUnprotectable(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli"); err != nil {
-		t.Fatalf("create for a live project was refused: %v", err)
-	}
-
 	// An MCP proxy launch for that project is refused the same way.
 	if _, err := svc.mcpProtectedPaths(plan); !errors.As(err, &rootErr) {
 		t.Fatalf("mcpProtectedPaths for a dead project: %v", err)
 	}
+	noLayerCreatedIn(t, existing)
+	noneExist(t, dead)
+
+	// A launch for a live project is unaffected by the dead ones (and is the call
+	// that anchors them).
+	if err := svc.refuseUnprotectable(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli"); err != nil {
+		t.Fatalf("create for a live project was refused: %v", err)
+	}
 }
 
-// The skip is visible: /health reports each skipped layer, and the bubblewrap
-// probe stays its own answer.
-func TestProtectionHealthReportsSkippedProjectLayers(t *testing.T) {
+// A file where a project's root should be, in a directory an agent can write to,
+// is something an agent could replace with a directory and plant a layer into,
+// and Tether will not delete a user's file: the launch is refused as a host that
+// cannot provide protection, naming the project.
+func TestAFileInTheWayOfAProjectRootRefusesTheLaunch(t *testing.T) {
+	svc, existing, _ := deadRootService(t)
+	file := filepath.Join(t.TempDir(), "not-a-repo")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc.Catalog.Projects["isfile"] = config.Project{RepoRoot: file}
+	_, _, err := svc.protectionPlan(&launch.Plan{ProviderBrand: "claude", ProjectID: "live-a"}, "cli", nil, false)
+	var layerErr *config.UnprotectableLayerError
+	if !errors.Is(err, launch.ErrProtectionUnavailable) || !errors.As(err, &layerErr) || layerErr.Project != "isfile" {
+		t.Fatalf("err = %v; want launch.ErrProtectionUnavailable wrapping an UnprotectableLayerError for isfile", err)
+	}
+	if !strings.Contains(err.Error(), `"isfile"`) || !strings.Contains(err.Error(), "a file is in the way") {
+		t.Fatalf("message %q must name the project and the cause", err.Error())
+	}
+	noLayerCreatedIn(t, existing)
+}
+
+// The created roots are visible in /health for the daemon's lifetime, even though
+// the root exists (so a later call no longer sees it as missing), and nothing is
+// reported as skipped, because nothing was left open.
+func TestProtectionHealthReportsCreatedProjectRoots(t *testing.T) {
 	svc, _, dead := deadRootService(t)
-	h := svc.ProtectionHealth()
-	if h.PlanError != "" {
-		t.Fatalf("plan error = %q; a dead project must not be one", h.PlanError)
-	}
-	if len(h.SkippedProjectLayers) != len(dead) {
-		t.Fatalf("skipped = %+v; want %d dead projects", h.SkippedProjectLayers, len(dead))
-	}
-	for _, sk := range h.SkippedProjectLayers {
-		if dead[sk.Project] != sk.RepoRoot || sk.Reason != "does not exist" {
-			t.Fatalf("skipped entry %+v does not match the catalog (%v)", sk, dead)
+	for i := 0; i < 3; i++ { // each call after the first sees existing roots
+		h := svc.ProtectionHealth()
+		if h.PlanError != "" || len(h.SkippedProjectLayers) != 0 {
+			t.Fatalf("call %d: plan error %q, skipped %+v; want neither", i, h.PlanError, h.SkippedProjectLayers)
+		}
+		if len(h.CreatedProjectRoots) != len(dead) {
+			t.Fatalf("call %d: created roots = %+v; want the %d dead projects", i, h.CreatedProjectRoots, len(dead))
+		}
+		for _, c := range h.CreatedProjectRoots {
+			if dead[c.Project] != c.RepoRoot || !strings.Contains(c.Reason, "only an empty .tether") {
+				t.Fatalf("call %d: created entry %+v does not match the catalog (%v)", i, c, dead)
+			}
+		}
+		if runtime.GOOS == "linux" && (!h.BwrapChecked || !h.BwrapUsable || h.BwrapError != "") {
+			t.Fatalf("call %d: the bubblewrap probe must report on its own: %+v", i, h)
 		}
 	}
-	if runtime.GOOS == "linux" && (!h.BwrapChecked || !h.BwrapUsable || h.BwrapError != "") {
-		t.Fatalf("the bubblewrap probe must report on its own: %+v", h)
+}
+
+// Only a root no agent could create is skipped, and that is what /health lists
+// as skipped.
+func TestProtectionHealthReportsSkippedProjectLayersOnlyWhereNoAgentCouldCreateTheRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("write permission cannot be taken away from root")
+	}
+	svc, _, _ := deadRootService(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(locked, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) })
+	svc.Catalog.Projects["ro"] = config.Project{RepoRoot: filepath.Join(locked, "repo")}
+	h := svc.ProtectionHealth()
+	if h.PlanError != "" {
+		t.Fatalf("plan error = %q", h.PlanError)
+	}
+	if len(h.SkippedProjectLayers) != 1 || h.SkippedProjectLayers[0].Project != "ro" ||
+		!strings.Contains(h.SkippedProjectLayers[0].Reason, "an agent cannot create it either") {
+		t.Fatalf("skipped = %+v; want only the project under the read-only directory", h.SkippedProjectLayers)
+	}
+	if _, err := os.Stat(filepath.Join(locked, "repo")); !os.IsNotExist(err) {
+		t.Fatalf("a root no agent could create was created (%v)", err)
 	}
 }
 
-// A plan failure that is not a skippable dead project is reported as what it is.
-// It used to leave the probe directory empty and report bubblewrap as failing
-// with 'the catalog root is not set', which sent operators after the wrong thing
-// (the live /health said exactly that while bubblewrap worked).
+// A plan failure that is not a missing root is reported as what it is. It used to
+// leave the probe directory empty and report bubblewrap as failing with 'the
+// catalog root is not set', which sent operators after the wrong thing (the live
+// /health said exactly that while bubblewrap worked).
 func TestProtectionHealthNamesAPlanFailureInsteadOfBlamingBubblewrap(t *testing.T) {
 	svc, _, _ := deadRootService(t)
 	svc.Catalog.Projects["rootfs"] = config.Project{RepoRoot: "/"}
@@ -164,10 +234,10 @@ func TestProtectionHealthNamesAPlanFailureInsteadOfBlamingBubblewrap(t *testing.
 	}
 }
 
-// Each skipped project is warned about once per daemon, and the layers that had
-// to be created are logged, so neither the skip nor the side effect is silent
+// What protection does to a missing root is logged: a root it created is warned
+// about once per daemon, and the layer creation is logged, so neither is silent
 // and neither repeats on every launch.
-func TestSkippedProjectsAreWarnedAboutOncePerDaemon(t *testing.T) {
+func TestCreatedProjectRootsAreWarnedAboutOncePerDaemon(t *testing.T) {
 	svc, existing, dead := deadRootService(t)
 	var buf bytes.Buffer
 	prevOut, prevFlags := log.Writer(), log.Flags()
@@ -181,17 +251,17 @@ func TestSkippedProjectsAreWarnedAboutOncePerDaemon(t *testing.T) {
 		}
 	}
 	out := buf.String()
-	for id := range dead {
-		if n := strings.Count(out, `project "`+id+`" is left out of control-plane protection`); n != 1 {
+	for id, root := range dead {
+		if n := strings.Count(out, `WARN: protect: project "`+id+`": its repo_root `+root+` does not exist and an agent could have created it`); n != 1 {
 			t.Fatalf("project %s was warned about %d times in 3 launches; want exactly once:\n%s", id, n, out)
 		}
-	}
-	for id := range existing {
-		if n := strings.Count(out, "created the empty layer directory "+filepath.Join(existing[id], ".tether")); n != 1 {
+		if n := strings.Count(out, "created the empty layer directory "+filepath.Join(root, ".tether")); n != 1 {
 			t.Fatalf("project %s: its layer creation was logged %d times in 3 launches; want once:\n%s", id, n, out)
 		}
 	}
-	if !strings.Contains(out, "WARN: protect: project") {
-		t.Fatalf("the skip is not a warning:\n%s", out)
+	for id, root := range existing {
+		if n := strings.Count(out, "created the empty layer directory "+filepath.Join(root, ".tether")); n != 1 {
+			t.Fatalf("project %s: its layer creation was logged %d times in 3 launches; want once:\n%s", id, n, out)
+		}
 	}
 }
