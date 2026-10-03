@@ -14,7 +14,7 @@ the promoted package rather than maintaining its own copy.
 
 **Rules that preserve extractability** (enforce in code review):
 
-1. No imports from `github.com/chrispian/tether/internal/...`.
+1. No imports from `github.com/hollis-labs/tether/internal/...`.
 2. No tether-specific naming on the public API (event types, field
    names, function signatures).
 3. Test fixtures live alongside the package, not in tether test
@@ -31,7 +31,7 @@ When all Sprint 2 tasks stabilize, the promotion plan runs:
 ## Usage
 
 ```go
-import "github.com/chrispian/tether/pkg/claudestream"
+import "github.com/hollis-labs/tether/pkg/claudestream"
 
 func readClaude(r io.Reader) error {
     sc := claudestream.NewScanner(r)
@@ -81,7 +81,7 @@ claude --print --output-format stream-json --verbose [--input-format stream-json
 ## Source lineage
 
 Parser logic was copied from
-[Nanite](https://github.com/chrispian/nanite)'s `pkg/provider/pty_claude.go`
+[Nanite](https://github.com/hollis-labs/nanite)'s `pkg/provider/pty_claude.go`
 on 2026-04-19 with the original author's permission (same author on both
 projects). Event-type naming was reshaped (`Kind` string constants
 instead of bare string literals; single `Event` type per claude
