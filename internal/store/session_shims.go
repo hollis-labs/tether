@@ -162,6 +162,13 @@ func (s *Store) ListSessionShims(ctx context.Context) ([]SessionShimRow, error) 
 	return result, rows.Err()
 }
 
+// RemoveUnstartedSessionShim removes pre-submit bookkeeping only after the
+// caller has positive evidence that no hosted child was started.
+func (s *Store) RemoveUnstartedSessionShim(ctx context.Context, id, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM session_shims WHERE session_id=? AND shim_key=? AND host_pid=0 AND provider_pid=0`, id, key)
+	return err
+}
+
 func shimCursorPosition(journal, cursor string) (uint64, error) {
 	if cursor == "" {
 		return 0, nil
