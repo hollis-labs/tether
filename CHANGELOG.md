@@ -60,6 +60,8 @@ Changes on `main` since v0.6.0.
 - **Runtimes.** An `opencode` runtime on the structured go-providers adapter (with resume verification and a skills compiler) and an Antigravity (`agy`) runtime with detect/seed/doctor support and provider events.
 - **MCP proxy:** typed identifier extraction from proxied calls into session refs, and bounded workstream provenance on forwarded calls.
 
+- An inert team service centralizes formation, membership, messaging, cancellation and result reporting behind authenticated principal and host-policy ports. Caller-scoped durable receipts retain selected recipients and completed results across retries; mesh team operations enforce grants and spawn limits. No daemon routes or runtime wiring are enabled.
+
 ### Changed
 
 - **MCP names are explicit and collision-safe** (CW-20260926-0009): catalog `tool_prefix` prepends exactly the declared value and preserves the upstream call name; final-name collisions (including gateway names) fail startup instead of creating arrival-order aliases. A colliding refresh/reconnect retains accepted schemas and reports degraded status. Catalog origin `tether` is reserved; naming checks do not block generic catalog/daemon commands. Gateway status reports portable-name, origin and client-qualified length lint without rewriting names. Default doctor checks declarations offline; `doctor --mcp-live` explicitly spawns upstreams for a bounded tools/list-only probe with credential/URL-redacted findings.
