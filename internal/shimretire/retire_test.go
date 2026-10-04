@@ -188,3 +188,30 @@ func TestCancellationAfterIntentRetainsDurableObligation(t *testing.T) {
 		t.Fatalf("acknowledged canceled intent loses obligation: %+v receipt:%+v", out, s.receipt)
 	}
 }
+
+// A final authority callback may consume the observed proof's remaining budget.
+func TestRetirementFreshProofAfterFinalAuthority(t *testing.T) {
+	for _, kind := range []string{"expired", "valid"} {
+		t.Run(kind, func(t *testing.T) {
+			r, p, _, lease, events := retireFixture()
+			now := p.Now()
+			p.Now = func() time.Time { return now }
+			calls := 0
+			p.Validate = func(context.Context, Request) error {
+				calls++
+				if calls == 3 && kind == "expired" {
+					now = lease.proof.ValidUntil
+				}
+				return nil
+			}
+			got := RetireAbsent(context.Background(), r, p)
+			if kind == "expired" {
+				if got.Outcome != RetainedUnknown || len(*events) != 0 || lease.observations != 1 || calls != 3 {
+					t.Fatalf("expired proof admitted state machine: %+v events=%v observations=%d calls=%d", got, *events, lease.observations, calls)
+				}
+			} else if got.Outcome != Retired {
+				t.Fatalf("unchanged proof refused: %+v", got)
+			}
+		})
+	}
+}

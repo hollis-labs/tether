@@ -87,9 +87,19 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 		return fail(RetainedUnknown, "receipt_unavailable", "receipt_pending")
 	}
 	if exists {
-		if !receiptBound(r, digest, saved) {
+		if !receiptBound(r, digest, saved) || ValidateReceipt(saved) != nil {
 			return fail(RefusedIdentity, "receipt_binding", "placement_unknown")
 		}
+		// Admit prior recovery facts only after binding the original receipt.
+		// Carry them even when authority or acquisition refuses before a lease.
+		prior := append([]string(nil), saved.Obligations...)
+		defer func() {
+			for _, obligation := range prior {
+				if !contains(out.Obligations, obligation) {
+					out.Obligations = append(out.Obligations, obligation)
+				}
+			}
+		}()
 		if saved.Phase == StateReconciled {
 			return Result{Outcome: AlreadyRetired, Code: "retirement_complete", Obligations: append([]string(nil), saved.Obligations...)}
 		}
@@ -142,9 +152,12 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 		}
 		// Recheck authority after the observation callback. Concrete mutations must
 		// revalidate actual custody and proof under the complete exclusion lease.
-		verified := Verify(r, s, o, p.Now())
 		if ctx.Err() != nil || p.Validate(ctx, r) != nil || ctx.Err() != nil {
 			return s, o, fail(RetainedUnknown, "authority_refused", "placement_unknown")
+		}
+		verified := Verify(r, s, o, p.Now())
+		if ctx.Err() != nil {
+			return s, o, fail(RetainedUnknown, "observation_unavailable", "placement_unknown")
 		}
 		return s, o, verified
 	}

@@ -17,7 +17,7 @@ import (
 
 func TestRetirementCleanupFinalAudit(t *testing.T) {
 	for _, category := range []shimretire.Category{shimretire.HostLog, shimretire.Descriptor} {
-		for _, change := range []string{"pending", "revision", "unchanged", "read_error", "cancel"} {
+		for _, change := range []string{"pending", "revision", "unchanged", "read_error", "cancel", "validate_expiry", "read_expiry"} {
 			t.Run(string(category)+"/"+change, func(t *testing.T) {
 				testRetirementCleanupFinalAudit(t, category, change)
 			})
@@ -94,8 +94,12 @@ func testRetirementCleanupFinalAudit(t *testing.T, category shimretire.Category,
 	}
 	rs := ri.Sys().(*syscall.Stat_t)
 	calls := 0
-	cleanup := shimretire.ConfinedCleanup{Root: root, RootID: a.RootID, OwnerID: a.OwnerID, CustodyRevision: a.CustodyRevision, RootIdentity: shimretire.FileIdentity{Device: rs.Dev, Inode: rs.Ino, Kind: "directory"}, Store: adapter, Now: func() time.Time { return r.Proof.ObservedAt }, Validate: func(context.Context, shimretire.Request) error {
+	now := r.Proof.ObservedAt
+	cleanup := shimretire.ConfinedCleanup{Root: root, RootID: a.RootID, OwnerID: a.OwnerID, CustodyRevision: a.CustodyRevision, RootIdentity: shimretire.FileIdentity{Device: rs.Dev, Inode: rs.Ino, Kind: "directory"}, Store: adapter, Now: func() time.Time { return now }, Validate: func(context.Context, shimretire.Request) error {
 		calls++
+		if calls == 2 && change == "validate_expiry" {
+			now = r.Proof.ValidUntil
+		}
 		if calls == 2 && (change == "pending" || change == "revision") {
 			t.Logf("before final callback SQL CAS: revision=%s obligations=%v", r.Revision, r.Obligations)
 			if change == "pending" {
@@ -112,6 +116,9 @@ func testRetirementCleanupFinalAudit(t *testing.T, category shimretire.Category,
 	}}
 	cleanup.Store = retirementAuditReadPort{Store: adapter, load: func(readCtx context.Context, operation string) (shimretire.Receipt, error) {
 		current, err := adapter.Load(readCtx, operation)
+		if calls == 2 && change == "read_expiry" {
+			now = r.Proof.ValidUntil
+		}
 		if calls == 2 && change == "read_error" {
 			return shimretire.Receipt{}, errors.New("final audit unavailable")
 		}
@@ -161,7 +168,7 @@ func testRetirementCleanupFinalAudit(t *testing.T, category shimretire.Category,
 		if (change == "pending" || change == "revision") && saved.Revision == beforeAudit.Revision {
 			t.Fatal("final callback did not commit a changed audit")
 		}
-		if (change == "read_error" || change == "cancel") && saved.Revision != beforeAudit.Revision {
+		if (change == "read_error" || change == "cancel" || change == "validate_expiry" || change == "read_expiry") && saved.Revision != beforeAudit.Revision {
 			t.Fatal("read refusal changed audit")
 		}
 		if change == "pending" && (len(saved.Obligations) != 1 || saved.Obligations[0] != "cleanup_pending") {

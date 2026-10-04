@@ -53,6 +53,11 @@ func (c ConfinedCleanup) remove(ctx context.Context, operation string, a Artifac
 	if err != nil || ctx.Err() != nil || ValidateReceipt(current) != nil || current.Version != receipt.Version || current.OperationID != receipt.OperationID || current.RequestDigest != receipt.RequestDigest || current.Revision != receipt.Revision || current.Snapshot != receipt.Snapshot || current.Phase != receipt.Phase || !current.RetiredAt.Equal(receipt.RetiredAt) || !slices.Equal(current.Inventory, receipt.Inventory) || !slices.Equal(current.Obligations, receipt.Obligations) || (retention && len(current.Obligations) != 0) {
 		return refuse()
 	}
+	// Final authority and durable reads may exhaust the original proof budget.
+	// Sample the trusted clock before the final physical custody observations.
+	if Verify(receipt.Request, snapshot, proof, c.Now()).Outcome != Eligible || ctx.Err() != nil {
+		return refuse()
+	}
 	// The trusted Observe seam includes current complete proof and authority under
 	// exclusive custody. It cannot manufacture success for Unsupported backends.
 	// No callback follows the filesystem observations below. The custody contract must
