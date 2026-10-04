@@ -19,6 +19,7 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/shimhost"
+	"golang.org/x/sys/unix"
 )
 
 type bridgeConfig struct {
@@ -42,6 +43,10 @@ func TestProviderProcess(t *testing.T) {
 	mode := os.Getenv("SHIM_TEST_PROCESS")
 	if mode == "" {
 		return
+	}
+	parent := os.Getppid()
+	if parent <= 1 || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != parent {
+		os.Exit(96)
 	}
 	b, e := os.ReadFile(os.Getenv("SHIM_TEST_CONFIG"))
 	if e != nil {

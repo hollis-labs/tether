@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -46,7 +48,38 @@ func TestShimLaunchProcess(t *testing.T) {
 		}
 		return ""
 	}
+	if role != "" {
+		// Follow-up: helpers outliving a killed test can hold inherited runner lock
+		// fds. Parent-death signals and identity-checked cleanup cover that case.
+		// Configure the death signal in each helper, never in production hosting.
+		parent := os.Getppid()
+		if parent <= 1 || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != parent {
+			os.Exit(96)
+		}
+	}
 	switch role {
+	case "guardian":
+		exe, err := os.Executable()
+		if err != nil {
+			os.Exit(97)
+		}
+		cmd := exec.Command(exe, "-test.run=^TestShimLaunchProcess$", "--", "provider")
+		input, err := cmd.StdinPipe()
+		if err != nil {
+			os.Exit(98)
+		}
+		defer input.Close()
+		output, err := cmd.StdoutPipe()
+		if err != nil || cmd.Start() != nil {
+			os.Exit(99)
+		}
+		reader := bufio.NewScanner(output)
+		if !reader.Scan() {
+			os.Exit(100)
+		}
+		fmt.Println(cmd.Process.Pid)
+		_ = cmd.Wait()
+		os.Exit(0)
 	case "host":
 		spec, err := shim.ReadLaunch(value("--launch"))
 		if err != nil {
@@ -85,6 +118,9 @@ func TestShimLaunchProcess(t *testing.T) {
 			return false
 		}
 		code, err := shimbridge.Run(context.Background(), shimbridge.Options{DescriptorPath: value("--descriptor"), Attach: has("--attach"), Takeover: has("--takeover"), ExpectedJournal: value("--journal")}, os.Stdin, os.Stdout, os.Stderr)
+		if has("--hold-after-exit") {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(93)
@@ -176,6 +212,7 @@ func shimFixture(t *testing.T) *shimAppFixture {
 			if receipt, err := loadShimReceipt(row); err == nil && receipt.HostPID > 0 {
 				if err = p.Stop(context.Background(), receipt); err != nil {
 					t.Errorf("owned host cleanup: %v", err)
+					terminateOwnedShimFixture(t, receipt)
 				}
 			}
 		}

@@ -21,9 +21,16 @@ import (
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/testutil"
+	"golang.org/x/sys/unix"
 )
 
 func TestHostProcess(t *testing.T) {
+	if os.Getenv("TETHER_TEST_SHIM") != "" {
+		parent := os.Getppid()
+		if parent <= 1 || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != parent {
+			os.Exit(96)
+		}
+	}
 	switch os.Getenv("TETHER_TEST_SHIM") {
 	case "host":
 		path := ""
