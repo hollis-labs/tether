@@ -169,7 +169,7 @@ func TestShimStopMissingCanonicalReceiptRetainsState(t *testing.T) {
 	}
 	defer func() { _ = os.Rename(path+".held", path) }()
 	err := f.svc.StopSession(f.req.ID)
-	if shimFailureCode(err) != "outcome_unknown" {
+	if err == nil || shimFailureCode(err) != "outcome_unknown" {
 		t.Fatalf("missing receipt: %v", err)
 	}
 	row, _ := f.svc.Store.GetSession(f.req.ID)
@@ -228,7 +228,7 @@ func TestShimStopRefusalsKeepStateAndCanonicalIdentity(t *testing.T) {
 				}
 				return &shimhost.Failure{Code: code}
 			}
-			if err := f.svc.StopSession(f.req.ID); shimFailureCode(err) != code {
+			if err := f.svc.StopSession(f.req.ID); err == nil || shimFailureCode(err) != code {
 				t.Fatalf("stop: %v", err)
 			}
 			row, _ := f.svc.Store.GetSession(f.req.ID)
@@ -254,7 +254,7 @@ func TestShimUncertainPlacementNeverLaunchesAnotherChild(t *testing.T) {
 		return r, &shimhost.Failure{Code: "outcome_unknown", Message: "lost placement response"}
 	}
 	_, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req)
-	if shimFailureCode(err) != "outcome_unknown" || calls != 1 {
+	if err == nil || shimFailureCode(err) != "outcome_unknown" || calls != 1 {
 		t.Fatalf("uncertain placement: %v calls=%d", err, calls)
 	}
 	if _, live := f.svc.Manager.Get(f.req.ID); live {

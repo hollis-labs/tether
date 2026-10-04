@@ -14,6 +14,9 @@ import (
 )
 
 func shimFailureCode(err error) string {
+	if err == nil {
+		return ""
+	}
 	var host *shimhost.Failure
 	if errors.As(err, &host) {
 		return host.Code

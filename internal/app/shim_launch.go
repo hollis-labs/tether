@@ -145,10 +145,17 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	}
 	if err = initializeShimCheckpoint(intent); err != nil {
 		cleanup()
-		_ = s.MarkSessionDetached(req.ID, shimFailureCode(err))
-		return req, err
+		if removeErr := s.Store.RemoveUnstartedSessionShim(ctx, req.ID, intent.OperationKey); removeErr != nil {
+			return req, removeErr
+		}
+		_ = s.Store.UpdateSessionState(req.ID, string(session.StateCreated), 0, nil)
+		return fallback(shimFailureCode(err))
 	}
 	receipt, err := host.placeProvider(ctx, intent.OperationKey, spec)
+	// Placement can outlive the client request. Complete bookkeeping under its
+	// own bounded context before handing the provider to a bridge.
+	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	if err != nil && !receipt.Attempted {
 		var saved shimhost.Receipt
 		readErr := shimhost.ReadPrivateJSON(filepath.Join(filepath.Dir(intent.DescriptorPath), "placement.json"), shim.MaxFrame, &saved)
@@ -163,7 +170,7 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	}
 	if err != nil && (!receipt.Attempted || receipt.PlacementFailure == "placement_failed" || receipt.Retired) {
 		cleanup()
-		if removeErr := s.Store.RemoveUnstartedSessionShim(ctx, req.ID, intent.OperationKey); removeErr != nil {
+		if removeErr := s.Store.RemoveUnstartedSessionShim(postCtx, req.ID, intent.OperationKey); removeErr != nil {
 			return req, &shimhost.Failure{Code: "outcome_unknown", Message: "unstarted placement bookkeeping could not be cleared"}
 		}
 		_ = s.Store.UpdateSessionState(req.ID, string(session.StateCreated), 0, nil)
@@ -171,7 +178,7 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	}
 	if receipt.Attempted {
 		host.cleanup.Store(req.ID, cleanup)
-		if saveErr := s.persistShim(ctx, req.ID, plan.ProviderID, spec.BootGeneration, receipt); saveErr != nil {
+		if saveErr := s.persistShim(postCtx, req.ID, plan.ProviderID, spec.BootGeneration, receipt); saveErr != nil {
 			err = &shimhost.Failure{Code: "outcome_unknown", Message: "placement exists but its database identity could not be saved"}
 		}
 	}

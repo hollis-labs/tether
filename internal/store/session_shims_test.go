@@ -54,3 +54,37 @@ func TestSessionShimRoundTripAndIdentityFence(t *testing.T) {
 		t.Fatalf("absent session: %v", e)
 	}
 }
+
+func TestRemoveUnstartedSessionShimGuardsIdentityAndProcesses(t *testing.T) {
+	for _, tc := range []struct {
+		name, key      string
+		host, provider int
+		remove         bool
+	}{
+		{"unstarted", "host-key", 0, 0, true}, {"other-key", "other", 0, 0, false}, {"host", "host-key", 123, 0, false}, {"provider", "host-key", 0, 456, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := Open(filepath.Join(t.TempDir(), "shim.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			if err := db.CreateSession(SessionRow{ID: "s", State: "created"}, &launch.Plan{}); err != nil {
+				t.Fatal(err)
+			}
+			row := SessionShimRow{SessionID: "s", ShimKey: "host-key", HostBackend: "detached", SocketPath: "/private/control.sock", DescriptorPath: "/private/launch.json", Runtime: "claude", RuntimeGeneration: 1, BootGeneration: "boot", HostPID: tc.host, ProviderPID: tc.provider}
+			ctx := context.Background()
+			if err := db.UpsertSessionShim(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			err = db.RemoveUnstartedSessionShim(ctx, "s", tc.key)
+			if tc.remove && err != nil || !tc.remove && !errors.Is(err, ErrSessionShimConflict) {
+				t.Fatalf("remove guard: %v", err)
+			}
+			_, err = db.SessionShim(ctx, "s")
+			if tc.remove && !errors.Is(err, ErrSessionShimNotFound) || !tc.remove && err != nil {
+				t.Fatalf("row retention: %v", err)
+			}
+		})
+	}
+}

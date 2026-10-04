@@ -559,11 +559,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 	launched = true
-	go func() {
-		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
-		turnOutput.flush()
-		s.turnOutputs.Delete(sessionID)
-	}()
+	s.finalizeSessionOutput(ctx, sessionID, turnOutput)
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.
 	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {
@@ -761,7 +757,11 @@ func (s *Service) watchSessionBindings(sessionID string) {
 	}
 	go func() {
 		if settled != nil {
-			defer close(settled)
+			defer func() {
+				close(settled)
+				s.shimBindingWait.CompareAndDelete(sessionID, settled)
+				s.shimDraining.CompareAndDelete(sessionID, settled)
+			}()
 		}
 		_, _ = s.Manager.WaitSession(context.Background(), sessionID)
 		s.settleShimBridgeExit(sessionID)

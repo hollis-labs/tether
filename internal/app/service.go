@@ -332,7 +332,9 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 // kills its children (`tether daemon start`, launchd).
 func (s *Service) ReconcileStaleState() {
 	now := time.Now().UTC().Format(time.RFC3339)
-	swept, spared, err := s.Store.SweepStaleSessions(now, s.sessionProcessSurvived)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	swept, spared, err := s.Store.SweepStaleSessions(now, func(row store.StaleSession) bool { return s.sessionProcessSurvivedContext(ctx, row) })
 	if err != nil {
 		log.Printf("store: startup sweep failed: %v", err)
 	}
@@ -361,7 +363,10 @@ func (s *Service) ReconcileStaleState() {
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
 func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
-	if s.reconcileShim(row) {
+	return s.sessionProcessSurvivedContext(context.Background(), row)
+}
+func (s *Service) sessionProcessSurvivedContext(ctx context.Context, row store.StaleSession) bool {
+	if s.reconcileShimContext(ctx, row) {
 		return true
 	}
 	if row.State == string(session.StateDetached) {
@@ -408,7 +413,7 @@ func (s *Service) reportSweep(swept, spared []string) {
 		log.Printf("store: startup sweep failed %d session(s) whose process did not survive the restart (exit_code -1): %s", len(swept), strings.Join(swept, ", "))
 	}
 	if len(spared) > 0 {
-		log.Printf("store: startup sweep left %d session(s) in place whose process is still alive; this daemon cannot steer or stop them: %s", len(spared), strings.Join(spared, ", "))
+		log.Printf("store: startup sweep left %d session(s) in place retained or handled by process recovery: %s", len(spared), strings.Join(spared, ", "))
 	}
 	if s.Bus == nil {
 		return

@@ -39,10 +39,15 @@ func (s *Service) settleShimBridgeExit(id string) {
 		return
 	}
 	if result.Gone {
+		if err := host.stopProvider(ctx, receipt); err != nil {
+			s.retainShim(row, &receipt, shimFailureCode(err))
+			return
+		}
 		_ = s.MarkSessionOrphaned(id, "shim_gone")
 		return
 	}
 	if result.Running {
+		s.retainShim(row, &receipt, "bridge_disconnected")
 		return
 	}
 	if err = host.stopProvider(ctx, receipt); err != nil {
@@ -76,7 +81,11 @@ func (s *Service) detachShimSession(ctx context.Context, id string) bool {
 	if err != nil {
 		return false
 	}
-	s.shimDraining.Store(id, true)
+	draining := any(true)
+	if value, ok := s.shimBindingWait.Load(id); ok {
+		draining = value
+	}
+	s.shimDraining.Store(id, draining)
 	s.retainShim(shimRow, nil, ShutdownStopReason)
 	// Agentkit closes only bridge stdin; bridge EOF disconnects without
 	// closing the hosted provider's stdin or retiring its placement.
@@ -85,21 +94,20 @@ func (s *Service) detachShimSession(ctx context.Context, id string) bool {
 }
 
 func (s *Service) completeShimExit(row store.SessionShimRow, receipt shimhost.Receipt, result shim.Exit) {
-	before, err := s.Store.GetSession(row.SessionID)
-	if err != nil {
-		s.retainShim(row, &receipt, "outcome_unknown")
-		return
-	}
 	exit := result.Status
 	state := session.StateCompleted
 	if exit != 0 || result.Signal != 0 {
 		state = session.StateFailed
 	}
-	if err := s.Store.UpdateSessionState(row.SessionID, string(state), 0, &exit); err != nil {
+	change, changed, err := s.Store.CompleteSessionShim(context.Background(), row.SessionID, string(state), exit)
+	if err != nil {
 		s.retainShim(row, &receipt, "outcome_unknown")
 		return
 	}
-	publishSessionEvent(s.Bus, row.SessionID, before.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: before.State, To: string(state), ExitCode: &exit, Reason: "provider_exit"})
+	if !changed {
+		return
+	}
+	publishSessionEvent(s.Bus, row.SessionID, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: string(state), ExitCode: &exit, Reason: "provider_exit"})
 	if host, err := s.shimHost(); err == nil {
 		if cleanup, ok := host.cleanup.LoadAndDelete(row.SessionID); ok {
 			cleanup.(func())()

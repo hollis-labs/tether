@@ -102,6 +102,10 @@ func TestShimLaunchProcess(t *testing.T) {
 			if json.Unmarshal(scanner.Bytes(), &input) != nil {
 				os.Exit(5)
 			}
+			if input.Message.Content == "partial-exit" {
+				fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"unfinished response"}]}}`)
+				os.Exit(7)
+			}
 			if input.Message.Content == "exit" {
 				os.Exit(7)
 			}

@@ -304,3 +304,13 @@ func (s *Service) outputPersistenceContextFrom(parent context.Context) (context.
 	}
 	return context.WithTimeout(parent, timeout)
 }
+
+// Every bridge lifecycle, including reattachment, settles pending output and
+// wakes queued replies after process exit.
+func (s *Service) finalizeSessionOutput(ctx context.Context, id string, output *sessionTurnOutput) {
+	go func() {
+		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), id)
+		output.flush()
+		s.turnOutputs.CompareAndDelete(id, output)
+	}()
+}

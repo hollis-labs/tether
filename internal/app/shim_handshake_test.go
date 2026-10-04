@@ -28,7 +28,7 @@ func uncertainShim(t *testing.T, f *shimAppFixture) (store.SessionShimRow, shimh
 		}
 		return r, &shimhost.Failure{Code: "outcome_unknown"}
 	}
-	if _, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req); shimFailureCode(err) != "outcome_unknown" {
+	if _, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req); err == nil || shimFailureCode(err) != "outcome_unknown" {
 		t.Fatalf("placement: %v", err)
 	}
 	row, err := f.svc.Store.SessionShim(context.Background(), f.req.ID)
@@ -228,7 +228,7 @@ func TestShimHandshakeRequiresFreshMatchingEpoch(t *testing.T) {
 				}
 				return
 			}
-			if shimFailureCode(err) != want {
+			if err == nil || shimFailureCode(err) != want {
 				t.Fatalf("readiness: %v, want %s", err, want)
 			}
 		})

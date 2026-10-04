@@ -41,14 +41,17 @@ privileged control client; wrapping only it does not protect the provider. Its
 environment excludes provider credentials. The host receives only the explicit
 descriptor and a small infrastructure environment. Policies needing
 daemon-owned loopback forwarding and resource wrappers that create an additional
-service scope currently fall back before placement.
+service scope currently fall back before placement. Legacy workspace binds are
+translated explicitly. A missing requested deny path yields `policy_path_missing`
+before placement; a policy that cannot protect private state is refused.
 
 Descriptors are owned 0600 files under 0700 directories. These permissions do
-**not** hide them from a same-uid provider. The provider policy denies the entire
+**not** hide them from a same-uid provider. While the flag is enabled, every Tether-sandboxed launch denies the entire
 private shim root, including every per-session state directory and
 the launch descriptor, journal and control socket. Without that denial the
 provider could otherwise read its environment secrets and controller capability.
-The state parent is write-protected to prevent renaming the denied tree, and
+Unsandboxed sessions and arbitrary same-UID processes remain able to read these
+files. The state parent is write-protected to prevent renaming the denied tree, and
 user-service-manager access is denied so it cannot escape through a new unit. The
 database and placement receipt contain paths and facts, never capability values.
 Environment keys containing TOKEN, SECRET, KEY, PASSWORD or CREDENTIAL
@@ -158,8 +161,10 @@ a different start time, a live matching process or an unreadable stat is retaine
 Peer-pidfd ESRCH requires that positive identity evidence too.
 An unreachable socket, a timeout, or bare ESRCH on a stale PID is unknown and
 retains the capability files; a host might have restarted under another PID.
-Repeated Stop after verified retirement is idempotent,
-including after a host crash or a timeout after SIGKILL. A collected systemd unit
+The host Stop operation after verified retirement is idempotent,
+including after a host crash or a timeout after SIGKILL. The session API refuses
+Stop on completed, failed, killed or orphaned sessions with `session_not_running`;
+it preserves the original state and exit code. A collected systemd unit
 is a successful stop outcome after its absence is verified. The journal and
 secret-free receipt remain as evidence. Retired placements are terminal: there
 is no retirement/re-place API, and a new placement requires a NEW session ID.
@@ -170,7 +175,10 @@ same-key Place return the terminal receipt with `placement_failed`. Stop of
 that receipt succeeds idempotently.
 
 A dead host whose PID or start time was never recorded stays retained with
-`outcome_unknown`; repeated Stop and matching Place cannot resolve it. This
+`outcome_unknown: host PID was never recorded; explicit retirement is unavailable`;
+repeated Stop and matching Place cannot resolve it. The session stays detached
+until an explicit operator retirement operation exists. This must be resolved
+before the shim path is enabled by default. This
 package has no operator recovery or explicit retirement operation for that
 wedge. A wrapper ShimCommand that forks its host and exits also fails closed:
 the child owning the socket differs from the recorded submitted process.
@@ -184,25 +192,38 @@ next Stop; retirement requires verified unit absence.
 Startup recovery reattaches a running host with the recorded journal and bridge
 checkpoint. Positive host absence becomes `orphaned`, revoking session principals
 and binding generations in one transaction. A timeout, typed refusal, missing
-receipt or unknown outcome stays `detached`; later sweeps retry it. Doctor,
+receipt or unknown outcome stays `detached`. Reconciliation runs once at daemon
+startup; it does not retry automatically during the daemon's lifetime. Inspection
+is bounded to ten seconds per placement and a thirty-second total startup budget.
+Placements beyond that budget remain detached with `startup_budget_exhausted`.
+A launching intent with no descriptor, no receipt and zero recorded process IDs
+is failed as `shim_not_submitted` after checking absence under the placement lock.
+Positive host absence retires its descriptor before revoking authority. Doctor,
 runtime health and `session.shim_status` report the typed reason and placement
 key, backend, unit and socket. They never expose the capability or environment.
 Disabling the flag retains detached placements with `shim_reconcile_disabled`
 and leaves their children alone. Orphaned sessions cannot mint new principals.
 
 Operators can inspect the named unit and restore connectivity or an original
-verified private receipt, then retry reconciliation. They must not synthesize a
+verified private receipt, then arrange a daemon restart to retry reconciliation. They must not synthesize a
 PID/start-time witness or delete retained capability files. A dead host with no
 recorded identity has no recovery operation in this release; explicit retirement
 is a follow-up. A loaded unit after failed stop similarly remains retained until
 its absence is positively established. A new launch uses a new session ID;
 ordinary same-key placement after retirement remains refused.
 
-Dev acceptance uses a separate HOME, catalog, database, socket and port, a fake
-Claude CLI and transient `tether-dev-shim-*` units. No unit files are installed,
-no existing units are edited, and no daemon reload is needed. Detached acceptance
-comes first; systemd-user acceptance requires explicit approval, complete unit
-and process teardown, and verification that the live daemon was unchanged.
-
 Placement and attach clear abandoned `.commit-*` files under the same lock used
 by record writers, so a live atomic commit is never deleted.
+
+Retirement removes the secret-bearing descriptor. The secret-free placement
+receipt, bridge checkpoint, host log and journal remain as recovery evidence;
+the journal defaults to a 256 MiB cap per session. No retention sweep exists yet.
+Sandbox temporary directories are remembered only by the current daemon and can
+remain after detach followed by a daemon restart; reattachment cannot recover
+that cleanup handle. Explicit retirement and retained-artifact cleanup are
+required follow-ups before production activation.
+
+The session API credential expires after seven days. It is copied into the
+immutable provider environment: neither reattachment nor a matching placement
+retry refreshes it. A hosted provider lasting beyond that limit loses API access.
+Credential refresh is a separate follow-up.

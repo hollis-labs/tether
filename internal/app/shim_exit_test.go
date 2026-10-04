@@ -77,7 +77,7 @@ func TestShimReattachRefusesConflictingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, _ := f.svc.Store.SessionShim(context.Background(), f.req.ID)
-	if err := f.svc.reattachShim(context.Background(), row, r); shimFailureCode(err) != "journal_mismatch" {
+	if err := f.svc.reattachShim(context.Background(), row, r); err == nil || shimFailureCode(err) != "journal_mismatch" {
 		t.Fatalf("attach accepted conflict: %v", err)
 	}
 	if _, live := f.svc.Manager.Get(f.req.ID); live {

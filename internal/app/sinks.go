@@ -129,9 +129,10 @@ func terminalState(state agentsessions.State, stopRequested bool) string {
 }
 
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
-	if !a.stops.requested(id) && shimBridgeTerminal(a.db, id, state) {
-		_, err := a.db.MarkSessionDetached(id, "bridge_disconnected")
-		return err
+	if shimBridgeTerminal(a.db, id, state) {
+		// The bridge ending does not establish provider exit. Its watcher settles
+		// the canonical host outcome; Stop commits its own guarded outcome.
+		return nil
 	}
 	if err := a.db.UpdateSessionState(id, terminalState(state, a.stops.requested(id)), pid, exit); err != nil {
 		return err
@@ -210,10 +211,8 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 	}
 	from, to := mapLifecycleStates(ev, a.stops.requested(ev.SessionID))
 	reason := ev.Reason
-	if !a.stops.requested(ev.SessionID) && shimBridgeTerminal(a.db, ev.SessionID, ev.To) {
-		to = string(session.StateDetached)
-		ev.ExitCode = nil
-		reason = "bridge_disconnected"
+	if shimBridgeTerminal(a.db, ev.SessionID, ev.To) {
+		return
 	}
 	if to == string(session.StateKilled) {
 		if r := a.stops.reason(ev.SessionID); r != "" {

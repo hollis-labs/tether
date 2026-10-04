@@ -165,8 +165,48 @@ func (s *Store) ListSessionShims(ctx context.Context) ([]SessionShimRow, error) 
 // RemoveUnstartedSessionShim removes pre-submit bookkeeping only after the
 // caller has positive evidence that no hosted child was started.
 func (s *Store) RemoveUnstartedSessionShim(ctx context.Context, id, key string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM session_shims WHERE session_id=? AND shim_key=? AND host_pid=0 AND provider_pid=0`, id, key)
-	return err
+	result, err := s.db.ExecContext(ctx, `DELETE FROM session_shims WHERE session_id=? AND shim_key=? AND host_pid=0 AND provider_pid=0`, id, key)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrSessionShimConflict
+	}
+	return nil
+}
+
+// CompleteSessionShim preserves whichever terminal outcome committed first.
+// Recovery and Stop may finish concurrently; neither can rewrite that outcome.
+func (s *Store) CompleteSessionShim(ctx context.Context, id, state string, exit int) (SessionStateChange, bool, error) {
+	change := SessionStateChange{SessionID: id, To: state}
+	if state != "completed" && state != "failed" && state != "killed" {
+		return change, false, fmt.Errorf("invalid shim terminal state")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return change, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = tx.QueryRowContext(ctx, `SELECT state, COALESCE(logical_agent_id,'') FROM sessions WHERE id=?`, id).Scan(&change.From, &change.LogicalAgentID); err != nil {
+		return change, false, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET state=?, pid=0, exit_code=?, updated_at=?, ended_at=? WHERE id=? AND state IN ('created','launching','running','detached') AND EXISTS (SELECT 1 FROM session_shims WHERE session_id=?)`, state, exit, now, now, id, id)
+	if err != nil {
+		return change, false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return change, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return change, false, err
+	}
+	return change, n == 1, nil
 }
 
 func shimCursorPosition(journal, cursor string) (uint64, error) {
