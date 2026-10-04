@@ -3,9 +3,11 @@
 package shimhost
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -186,6 +188,169 @@ func TestRetirementFenceBlocksActualSubmit(t *testing.T) {
 			if e == nil || calls != 0 || r.Attempted {
 				raw, _ := json.Marshal(r)
 				t.Fatalf("fenced submission accepted: %s %v calls%d", raw, e, calls)
+			}
+		})
+	}
+}
+
+// Fixture-only canonical transition; no production containment is asserted.
+func TestRetirementFenceSavedInventoryRetry(t *testing.T) {
+	p, r, _, _ := uncertainAttempt(t)
+	f, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := f.CommitRetired(context.Background())
+	if !changed || err != nil {
+		t.Fatalf("commit: %v %v", changed, err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(r.DescriptorPath); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = retry.Close() }()
+	saved, err := retry.RefreshRetirement(context.Background())
+	if err != nil || !saved.Retired || saved.DescriptorPath != r.DescriptorPath {
+		t.Fatalf("saved inventory: %+v %v", saved, err)
+	}
+	if changed, err = retry.CommitRetired(context.Background()); changed || err != nil {
+		t.Fatalf("repeated commit: %v %v", changed, err)
+	}
+	if retry.ProofCapability() == nil {
+		t.Fatal("fixture retirement invented containment proof")
+	}
+	saved.Retired = false
+	if err = WritePrivateJSON(metadataPath(saved), saved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = retry.RefreshRetirement(context.Background()); err == nil {
+		t.Fatal("retirement regression accepted")
+	}
+}
+
+func TestLegacySubmissionLineageRemainsUnsupported(t *testing.T) {
+	for _, id := range []string{"", "not-an-attempt", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"} {
+		t.Run(id, func(t *testing.T) {
+			p, r, _, _ := uncertainAttempt(t)
+			r.SubmissionAttemptID = id
+			if err := WritePrivateJSON(metadataPath(r), r); err != nil {
+				t.Fatal(err)
+			}
+			fence, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+			if fence != nil {
+				_ = fence.Close()
+			}
+			var failure *Failure
+			if !errors.As(err, &failure) || failure.Code != "unsupported" {
+				t.Fatalf("legacy lineage accepted: %v", err)
+			}
+			if _, err = Descriptor(r); err != nil {
+				t.Fatalf("legacy descriptor lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestLegacyStopCannotBypassFencedRetirementAudit(t *testing.T) {
+	p, r, _, _ := uncertainAttempt(t)
+	original, err := os.ReadFile(r.DescriptorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fence.CommitRetired(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.Close(); err != nil {
+		t.Fatal(err)
+	}
+	signals := 0
+	p.cfg.Command = func(context.Context, []string) ([]byte, error) { signals++; return nil, nil }
+	if err = p.Stop(context.Background(), r); err == nil {
+		t.Fatal("legacy Stop bypassed fenced audit")
+	}
+	remaining, err := os.ReadFile(r.DescriptorPath)
+	if err != nil || !bytes.Equal(remaining, original) {
+		t.Fatal("legacy Stop lost unaudited private descriptor")
+	}
+	if signals != 0 {
+		t.Fatalf("legacy Stop issued %d control commands", signals)
+	}
+}
+
+func TestClosedRetirementFenceCannotMutateCanonicalReceipt(t *testing.T) {
+	p, r, _, _ := uncertainAttempt(t)
+	fence, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fence.Close(); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := fence.CommitRetired(context.Background())
+	if err == nil || changed {
+		t.Fatalf("closed fence mutated canonical receipt: %v %v", changed, err)
+	}
+	var saved Receipt
+	if err = ReadPrivateJSON(metadataPath(r), 1<<20, &saved); err != nil || saved.Retired {
+		t.Fatalf("closed fence advanced retirement: %v", err)
+	}
+}
+
+func TestRetirementFenceRefusesReplacedLockAndUnknownControlShape(t *testing.T) {
+	for _, kind := range []string{"replaced-lock", "unknown-control"} {
+		t.Run(kind, func(t *testing.T) {
+			p, r, _, _ := uncertainAttempt(t)
+			if kind == "unknown-control" {
+				raw, err := os.ReadFile(metadataPath(r))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var body map[string]any
+				if err = json.Unmarshal(raw, &body); err != nil {
+					t.Fatal(err)
+				}
+				body["recovery_required"] = true
+				if err = WritePrivateJSON(metadataPath(r), body); err != nil {
+					t.Fatal(err)
+				}
+				fence, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+				if fence != nil {
+					_ = fence.Close()
+				}
+				if err == nil {
+					t.Fatal("unknown control shape accepted")
+				}
+				return
+			}
+			fence, err := p.AcquireRetirementFence(context.Background(), r, "retirement")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = fence.Close() }()
+			lock := filepath.Join(p.SessionDir(r.Session), "placement.lock")
+			if err = os.Rename(lock, lock+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(lock, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			changed, err := fence.CommitRetired(context.Background())
+			if err == nil || changed {
+				t.Fatalf("replaced lock permits mutation: %v %v", changed, err)
+			}
+			var saved Receipt
+			if err = ReadPrivateJSON(metadataPath(r), 1<<20, &saved); err != nil || saved.Retired {
+				t.Fatal("lost custody advanced canonical retirement")
 			}
 		})
 	}

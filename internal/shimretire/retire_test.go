@@ -157,3 +157,34 @@ func TestCleanupPendingRetry(t *testing.T) {
 		t.Fatalf("cleanup retry: %+v %v", got, *events)
 	}
 }
+
+func TestRetirementRechecksAuthorityAfterObservation(t *testing.T) {
+	r, p, _, l, events := retireFixture()
+	revoked := false
+	p.Validate = func(context.Context, Request) error {
+		if revoked {
+			return errors.New("revoked")
+		}
+		return nil
+	}
+	l.observeHook = func(*fakeLease) { revoked = true }
+	out := RetireAbsent(context.Background(), r, p)
+	if len(*events) != 0 || len(out.Obligations) == 0 {
+		t.Fatalf("observation revocation ignored: %+v events:%v", out, *events)
+	}
+}
+
+func TestCancellationAfterIntentRetainsDurableObligation(t *testing.T) {
+	r, p, s, _, _ := retireFixture()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.recordHook = func(receipt Receipt) {
+		if receipt.Phase == IntentRecorded {
+			cancel()
+		}
+	}
+	out := RetireAbsent(ctx, r, p)
+	if len(out.Obligations) == 0 || !contains(s.receipt.Obligations, "receipt_pending") {
+		t.Fatalf("acknowledged canceled intent loses obligation: %+v receipt:%+v", out, s.receipt)
+	}
+}
