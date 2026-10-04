@@ -194,7 +194,7 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	}
 	bridge, err := s.shimBridgeRuntime(req.ID, plan.ProviderID, host.bridge, req.Runtime.Caps())
 	if err != nil {
-		return req, &shimhost.Failure{Code: "outcome_unknown", Message: "placed host has no bridge runtime"}
+		return req, s.retainShimStartFailure(req.ID, err)
 	}
 	req.Runtime = bridge
 	req.Options = shimBridgeOptions(req.Options, host.bridge, receipt, false)

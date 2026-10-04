@@ -12,6 +12,8 @@ import (
 
 type shimHosting struct{}
 
+func (s *Service) retainShimStartFailure(_ string, cause error) error { return cause }
+
 func (s *Service) waitShimBinding(context.Context, string) error { return nil }
 
 func (s *Service) shimHealth(string) *api.ShimHealthStatus { return nil }

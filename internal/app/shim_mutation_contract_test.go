@@ -320,7 +320,17 @@ func shimRealLaunchFixture(t *testing.T) *shimAppFixture {
 	f.plan.WorkRoot = f.plan.RepoRoot
 	f.plan.WriteHome = t.TempDir()
 	f.plan.WorkspaceMode = "shared"
-	f.plan.Args = []string{"-test.run=^TestShimLaunchProcess$", "--", "provider"}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(f.plan.RepoRoot, "fake-provider")
+	script := "#!/bin/sh\nexec '" + strings.ReplaceAll(exe, "'", "'\\''") + "' -test.run='^TestShimLaunchProcess$' -- provider \"$@\"\n"
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f.plan.Command = fake
+	f.plan.Args = nil
 	f.plan.PermissionMode = config.PermissionModeBypass
 	ws, err := workspace.Create(f.plan.WriteHome, f.req.ID, f.plan)
 	if err != nil {
@@ -489,7 +499,15 @@ func TestShimCleanupLifetime(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			shimAwait(t, "cleanup after retirement", func() bool { return cleaned.Load() == 1 })
+			if end == "exit" {
+				shimAwait(t, "provider terminal outcome", func() bool { row, _ := f.svc.Store.GetSession(f.req.ID); return row.State == "failed" })
+				if err := f.svc.waitShimBinding(ctx, f.req.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if cleaned.Load() != 1 {
+				t.Fatalf("retired provider cleanup count=%d", cleaned.Load())
+			}
 		})
 	}
 }
@@ -917,5 +935,83 @@ func TestShimBridgeTerminalIsNotProviderOutcome(t *testing.T) {
 		if state.To == "failed" || state.To == "completed" || state.To == "detached" {
 			t.Fatal("bridge exit published provider outcome")
 		}
+	}
+}
+
+func TestShimCancelledBootLaunchStillStartsBridge(t *testing.T) {
+	f := shimRealLaunchFixture(t)
+	f.plan.BootMode = "stdin"
+	f.plan.BootPrompt = "boot-turn"
+	encoded, err := json.Marshal(f.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(encoded), f.req.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.svc.shimHosting.place = func(ctx context.Context, key string, spec shim.Launch) (shimhost.Receipt, error) {
+		r, err := f.svc.shimHosting.provider.Place(ctx, key, spec)
+		if err == nil {
+			cancel()
+		}
+		return r, err
+	}
+	if _, err := f.svc.LaunchSessionWithContext(ctx, f.req.ID); err != nil {
+		t.Fatalf("cancelled client abandoned placed boot session: %v", err)
+	}
+	shimAwait(t, "boot turn from owned bridge", func() bool { return len(outputEvents(t, f.svc)) == 1 })
+	if err := f.svc.SendTurn(context.Background(), f.req.ID, "next"); err != nil {
+		t.Fatal(err)
+	}
+	shimAwait(t, "next turn after cancelled boot", func() bool { return len(outputEvents(t, f.svc)) == 2 })
+}
+
+func TestShimBridgeStartFailureRetainsPlacementAndCredential(t *testing.T) {
+	for _, mode := range []string{"missing", "exec-format"} {
+		t.Run(mode, func(t *testing.T) {
+			f := shimRealLaunchFixture(t)
+			command := filepath.Join(f.root, "failed-bridge")
+			if mode == "exec-format" {
+				if err := os.WriteFile(command, []byte("invalid executable\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.svc.shimHosting.bridge = []string{command}
+			if _, err := f.svc.LaunchSession(f.req.ID); err == nil || shimFailureCode(err) != "outcome_unknown" {
+				t.Fatalf("bridge start failure lost typed placement outcome: %v", err)
+			}
+			row, _ := f.svc.Store.GetSession(f.req.ID)
+			if row.State != "detached" {
+				t.Fatalf("placed provider not detached after failed bridge: %s", row.State)
+			}
+			shimRow, err := f.svc.Store.SessionShim(context.Background(), f.req.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := loadShimReceipt(shimRow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var spec shim.Launch
+			if err := shimhost.ReadPrivateJSON(receipt.DescriptorPath, shim.MaxFrame, &spec); err != nil {
+				t.Fatal(err)
+			}
+			token := ""
+			for _, entry := range spec.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				if key == "TETHER_TOKEN" {
+					token = value
+				}
+			}
+			if _, err := identity.NewStore(f.svc.Store.DB()).Verify(context.Background(), token); err != nil {
+				t.Fatal("bridge failure revoked retained provider credential")
+			}
+			result, err := f.svc.shimHosting.provider.Inspect(context.Background(), receipt)
+			if err != nil || !result.Running {
+				t.Fatalf("bridge failure killed provider: %+v %v", result, err)
+			}
+		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
@@ -540,13 +541,21 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		s.turnOutputs.Delete(sessionID)
 		return nil, err
 	}
+	launchCtx := ctx
+	if s.shimSessionRetained(sessionID) {
+		// After placement, client cancellation cannot abandon bridge startup or
+		// its automatic boot submission. Keep this bookkeeping bounded.
+		var cancel context.CancelFunc
+		launchCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+	}
 	start := func() error { return s.Manager.Start(context.Background(), req) }
 	// Track an automatic boot submission through the same provisional/accepted
 	// marker path as explicit turns, without holding a gate across Start.
 	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
-		err = s.trackTurnSubmissionContext(ctx, sessionID, start)
+		err = s.trackTurnSubmissionContext(launchCtx, sessionID, start)
 	} else {
 		err = start()
 	}
@@ -556,7 +565,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		if procLog != nil {
 			_ = procLog.Close()
 		}
-		return nil, err
+		return nil, s.retainShimStartFailure(sessionID, err)
 	}
 	launched = true
 	s.finalizeSessionOutput(ctx, sessionID, turnOutput)

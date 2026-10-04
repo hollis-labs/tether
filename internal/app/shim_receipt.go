@@ -76,6 +76,20 @@ func (s *Service) retainShim(row store.SessionShimRow, receipt *shimhost.Receipt
 	s.shimDiagnostic(row.SessionID, receipt, "detached", reason)
 }
 
+// A placed provider survives bridge startup failure. Keep its credential and
+// placement available for recovery instead of reporting a direct-launch error.
+func (s *Service) retainShimStartFailure(id string, cause error) error {
+	if s.Store == nil {
+		return cause
+	}
+	row, err := s.Store.SessionShim(context.Background(), id)
+	if err != nil {
+		return cause
+	}
+	s.retainShim(row, nil, "bridge_start_failed")
+	return &shimhost.Failure{Code: "outcome_unknown", Message: "placed provider retained after bridge startup failed"}
+}
+
 func (s *Service) persistShim(ctx context.Context, id, runtime, boot string, r shimhost.Receipt) error {
 	return s.Store.UpsertSessionShim(ctx, store.SessionShimRow{SessionID: id, ShimKey: r.OperationKey, HostBackend: r.Backend, UnitName: r.UnitName, SocketPath: r.SocketPath, DescriptorPath: r.DescriptorPath, JournalID: r.Journal, Runtime: runtime, RuntimeGeneration: r.Generation, BootGeneration: boot, HostPID: r.HostPID, ShimPID: r.ShimPID, ProviderPID: r.ProviderPID})
 }
