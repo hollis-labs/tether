@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -87,7 +86,7 @@ func opaque(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return fmt.Errorf("%w", ErrDenied)
+	return ErrDenied
 }
 
 const validationTimeout = 100 * time.Millisecond

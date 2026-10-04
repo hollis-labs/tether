@@ -286,8 +286,8 @@ func TestBoundedValidatorContextOpacityAndReportSecondHeldCheck(t *testing.T) {
 	r := admitted(t, f, "first")
 	a := authority(t, f, r)
 	f.s1.validate = func(ctx context.Context, _ mesh.URN, _ Observation) error {
-		_, err := f.r1.Agent(ctx, agentURN)
-		return fmt.Errorf("private host: %w", err)
+		<-ctx.Done()
+		return fmt.Errorf("private host: %w", ctx.Err())
 	}
 	f.db.SetMaxOpenConns(1)
 	began := time.Now()
@@ -302,9 +302,7 @@ func TestBoundedValidatorContextOpacityAndReportSecondHeldCheck(t *testing.T) {
 		if errors.Is(fault, context.Canceled) || errors.Is(fault, context.DeadlineExceeded) {
 			requireBareError(t, err, fault)
 		} else {
-			if !errors.Is(err, ErrDenied) || err.Error() != ErrDenied.Error() {
-				t.Fatal(err)
-			}
+			requireBareError(t, err, ErrDenied)
 		}
 	}
 	for _, fault := range []error{context.Canceled, context.DeadlineExceeded} {
@@ -444,5 +442,152 @@ func requireBareError(t *testing.T, err, expected error) {
 	//nolint:errorlint // Exact sentinel identity prevents private wrapper text leaking.
 	if err != expected {
 		t.Fatal("context result is not the bare sentinel", err)
+	}
+}
+
+func TestCurrentBetweenReceiptExpiryAndRenewedHeadExpiry(t *testing.T) {
+	f := setup(t)
+	r := admitted(t, f, "first")
+	f.c.Advance(time.Second)
+	if _, err := f.s1.RenewLease(t.Context(), owner, authority(t, f, r), 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	f.c.Advance(time.Minute)
+	retry, err := f.s1.Admit(t.Context(), owner, request("first"))
+	if err != nil || !retry.Current || retry.Lease != r.Lease || !f.c.Now().After(retry.Lease.ExpiresAt) {
+		t.Fatal("renewed head authority incorrectly depends on receipt expiry", retry, err)
+	}
+}
+
+func TestLateValidatorRefusedWithoutBlockingIndependentWriter(t *testing.T) {
+	for _, action := range []Action{Lifecycle, Report} {
+		t.Run(string(action), func(t *testing.T) {
+			f := setup(t)
+			r := admitted(t, f, "first")
+			o := observation(t, f, r, mesh.InstanceRunning, mesh.InstanceDetail{}, mesh.SessionRunning)
+			entered, finish := make(chan struct{}), make(chan struct{})
+			defer close(finish)
+			f.s1.validate = func(context.Context, mesh.URN, Observation) error {
+				close(entered)
+				<-finish // deliberately ignores cancellation
+				return nil
+			}
+			done := make(chan error, 1)
+			go func() {
+				if action == Lifecycle {
+					done <- observeErr(t.Context(), f.s1, owner, o)
+				} else {
+					done <- f.s1.ReportReference(t.Context(), owner, o.Authority, o.ReportRef)
+				}
+			}()
+			<-entered
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			if err := f.r2.Write(ctx, func(*fabricstore.Tx) error { return nil }); err != nil {
+				t.Fatal("validator held SQLite writer", err)
+			}
+			// Release the late callback after its own deadline, then require refusal.
+			time.Sleep(150 * time.Millisecond)
+			finish <- struct{}{}
+			requireBareError(t, <-done, context.DeadlineExceeded)
+			current, err := f.r2.Instance(t.Context(), r.Instance.ID)
+			if err != nil || current.Version != r.InstanceVersion {
+				t.Fatal("late validator changed state", current, err)
+			}
+			called := false
+			f.s1.validate = func(context.Context, mesh.URN, Observation) error { called = true; return nil }
+			f.c.Advance(time.Minute)
+			if err := f.s1.ReportReference(t.Context(), owner, o.Authority, "urn:report:stale"); !errors.Is(err, ErrStale) || called {
+				t.Fatal("stale authority reached validator", called, err)
+			}
+		})
+	}
+}
+
+func TestEveryWriterOutboxContract(t *testing.T) {
+	for _, kind := range []string{"acquired", "renewed", "released", "expired", "observed", "report", "terminal released"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			r := admitted(t, f, "first")
+			a := authority(t, f, r)
+			id, eventType, bindingKind := r.OperationRef+"/acquired", "binding.acquired", "acquired"
+			switch kind {
+			case "acquired":
+			case "renewed":
+				f.c.Advance(time.Second)
+				lease, err := f.s1.RenewLease(t.Context(), owner, a, 2*time.Minute)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, _ = digest([]any{a.Fence, a.AgentURN, lease.ExpiresAt, "renewed"})
+				eventType, bindingKind = "binding.renewed", "renewed"
+			case "released":
+				if err := f.s1.ReleaseLease(t.Context(), owner, a, "urn:proof:quiesced"); err != nil {
+					t.Fatal(err)
+				}
+				id, _ = digest([]any{a, "released"})
+				eventType, bindingKind = "binding.released", "released"
+			case "expired":
+				f.c.Advance(time.Minute)
+				next := admitted(t, f, "second")
+				id, eventType, bindingKind = next.OperationRef+"/expired", "binding.expired", "expired"
+			case "observed", "terminal released":
+				o := observation(t, f, r, mesh.InstanceRunning, mesh.InstanceDetail{}, mesh.SessionRunning)
+				if kind == "terminal released" {
+					o.Status, o.Detail.Stopped, o.SessionState = mesh.InstanceStopped, mesh.StopCanceled, mesh.SessionEnded
+				}
+				if _, err := f.s1.Observe(t.Context(), owner, o); err != nil {
+					t.Fatal(err)
+				}
+				id, _ = digest([]any{a, o.InstanceVersion, "observed"})
+				eventType, bindingKind = "instance.observed", ""
+				if kind == "terminal released" {
+					id += "/released"
+					eventType, bindingKind = "binding.released", "released"
+				}
+			case "report":
+				if err := f.s1.ReportReference(t.Context(), owner, a, "urn:report:result"); err != nil {
+					t.Fatal(err)
+				}
+				id, _ = digest([]any{a, "urn:report:result", "report"})
+				eventType, bindingKind = "instance.report", ""
+			}
+			if err := f.r2.Write(t.Context(), func(tx *fabricstore.Tx) error {
+				e, err := tx.Event(id)
+				if err != nil {
+					return err
+				}
+				if e.Type != eventType || e.AggregateURN != agentURN {
+					t.Fatalf("outbox contract: got %s %s, want %s %s", e.Type, e.AggregateURN, eventType, agentURN)
+				}
+				if bindingKind != "" {
+					b, err := tx.BindingEvent(id)
+					if err != nil {
+						return err
+					}
+					if b.Value.Kind != bindingKind || b.Value.Lease.AgentURN != a.AgentURN || b.Value.Lease.SessionURN != a.SessionURN || b.Value.Lease.InstanceID != a.InstanceID || b.Value.Lease.FencingToken != a.Fence {
+						t.Fatalf("binding history contract: %+v", b)
+					}
+					var payload mesh.BindingLease
+					if err := json.Unmarshal(e.Payload, &payload); err != nil {
+						return err
+					}
+					if payload != b.Value.Lease {
+						t.Fatalf("outbox lease differs from durable history: %+v %+v", payload, b.Value.Lease)
+					}
+				} else {
+					var payload Observation
+					if err := json.Unmarshal(e.Payload, &payload); err != nil {
+						return err
+					}
+					if payload.Authority != a || !textOK(payload.ReportRef) {
+						t.Fatalf("outbox observation identity: %+v", payload)
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

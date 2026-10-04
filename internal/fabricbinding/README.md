@@ -51,10 +51,12 @@ Identical repeated referenced reports are idempotent while the binding is curren
 
 The rejecting HostPort carries authenticated holder identity separately from the
 observation, which carries the full binding identity and fence. Its mandatory
-Validator is a pure, bounded policy check inside the writer: no I/O, side effects,
+Validator is a pure, bounded policy check before the writer: no I/O, side effects,
 or reentrant repository use. Validators receive a 100ms timeout context and must
-respect its cancellation; arbitrary callbacks that ignore context are outside the
-contract. Authorizer and Validator errors other than context
+respect its cancellation. A late return is refused even if it returns nil; callbacks
+that ignore cancellation can delay their own request but hold no write transaction.
+A pre-read rejects stale fences before validation; the transaction rechecks full
+authority, expiry and record versions before changing state. Authorizer and Validator errors other than context
 cancellation/deadline become opaque denied errors. Wrapped context errors return
 only the bare context sentinel, preserving no private cause text. Operational storage and content
 faults propagate; none are silently treated as successful admission. Authoritative

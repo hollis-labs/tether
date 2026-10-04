@@ -41,6 +41,23 @@ func (s *Service) held(tx *fabricstore.Tx, caller mesh.URN, a Authority, at time
 	if err != nil {
 		return head, err
 	}
+	return s.checkHeld(head, caller, a, at)
+}
+
+// preHeld prevents a stale observation from reaching policy. The writer still
+// checks the complete authority again after validation, under serialization.
+func (s *Service) preHeld(ctx context.Context, caller mesh.URN, a Authority, at time.Time) error {
+	head, err := s.repo.BindingHead(ctx, a.AgentURN)
+	if errors.Is(err, fabricstore.ErrNotFound) {
+		return ErrStale
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.checkHeld(head, caller, a, at)
+	return err
+}
+func (s *Service) checkHeld(head fabricstore.Record[fabricstore.BindingHead], caller mesh.URN, a Authority, at time.Time) (fabricstore.Record[fabricstore.BindingHead], error) {
 	lease := head.Value.Lease
 	checked, err := s.clock()
 	if err != nil {
@@ -192,6 +209,12 @@ func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) (
 	if err != nil {
 		return result, err
 	}
+	if err = s.preHeld(ctx, caller, o.Authority, at); err != nil {
+		return result, err
+	}
+	if err = s.validateObservation(ctx, caller, o); err != nil {
+		return result, err
+	}
 	err = s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
 		if e := checkAgent(tx, agent, !terminal(o.Status)); e != nil {
 			return e
@@ -216,13 +239,6 @@ func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) (
 		}
 		if !transition(instance.Value.Status, o.Status) {
 			return fabricstore.ErrInvalid
-		}
-		if e = s.validateObservation(ctx, caller, o); e != nil {
-			return e
-		}
-		// A policy callback may consume time; recheck expiry before any mutation.
-		if _, e = s.held(tx, caller, o.Authority, at); e != nil {
-			return e
 		}
 		instance.Value.Status = o.Status
 		instance.Value.Detail = o.Detail
@@ -271,15 +287,15 @@ func (s *Service) ReportReference(ctx context.Context, caller mesh.URN, a Author
 	if err != nil {
 		return err
 	}
+	if err = s.preHeld(ctx, caller, a, at); err != nil {
+		return err
+	}
+	observation := Observation{Authority: a, ReportRef: ref}
+	if err = s.validateObservation(ctx, caller, observation); err != nil {
+		return err
+	}
 	return s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
 		if e := checkAgent(tx, agent, true); e != nil {
-			return e
-		}
-		if _, e := s.held(tx, caller, a, at); e != nil {
-			return e
-		}
-		observation := Observation{Authority: a, ReportRef: ref}
-		if e := s.validateObservation(ctx, caller, observation); e != nil {
 			return e
 		}
 		if _, e := s.held(tx, caller, a, at); e != nil {
