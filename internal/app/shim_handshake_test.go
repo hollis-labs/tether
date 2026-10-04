@@ -222,6 +222,9 @@ func TestShimHandshakeRequiresFreshMatchingEpoch(t *testing.T) {
 
 func TestShimHandshakeCheckpointWaitsForCommit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bridge.json")
+	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	state := shimbridge.Checkpoint{ControllerEpoch: "fresh"}
 	if err := shimhost.WritePrivateJSON(path, state); err != nil {
 		t.Fatal(err)
