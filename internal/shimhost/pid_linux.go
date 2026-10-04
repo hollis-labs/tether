@@ -116,21 +116,30 @@ func (p *processHandle) wait(ctx context.Context) error {
 	}
 }
 
+// readProcessStat is the process-identity source; state and start time come from
+// the same read, including when an exited child has not yet been reaped.
+var readProcessStat = func(pid int) ([]byte, error) { return os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) }
+
 // processStartTime is the Linux process identity witness, not a liveness test.
 func processStartTime(pid int) (uint64, error) {
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	start, _, err := processIdentity(pid)
+	return start, err
+}
+func processIdentity(pid int) (uint64, string, error) {
+	raw, err := readProcessStat(pid)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	end := strings.LastIndexByte(string(raw), ')')
 	if end < 0 {
-		return 0, fail("outcome_unknown", "host identity unavailable")
+		return 0, "", fail("outcome_unknown", "host identity unavailable")
 	}
 	fields := strings.Fields(string(raw[end+1:]))
 	if len(fields) < 20 {
-		return 0, fail("outcome_unknown", "host identity unavailable")
+		return 0, "", fail("outcome_unknown", "host identity unavailable")
 	}
-	return strconv.ParseUint(fields[19], 10, 64)
+	start, err := strconv.ParseUint(fields[19], 10, 64)
+	return start, fields[0], err
 }
 func peerStartTime(p *processHandle) (uint64, error) {
 	if err := unix.PidfdSendSignal(p.fd, 0, nil, 0); err != nil {
@@ -153,8 +162,17 @@ func recordedIdentityGone(pid int, start uint64) bool {
 	if _, err := processStartTime(os.Getpid()); err != nil {
 		return false
 	}
-	current, err := processStartTime(pid)
-	return errors.Is(err, os.ErrNotExist) || err == nil && current != start
+	current, state, err := processIdentity(pid)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	if state == "Z" || state == "X" {
+		return current == start
+	}
+	return current != start
 }
 
 func reapedIdentityGone(pid int, start uint64) bool { return recordedIdentityGone(pid, start) }

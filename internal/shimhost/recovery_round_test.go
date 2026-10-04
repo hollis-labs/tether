@@ -8,7 +8,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -366,6 +369,106 @@ func TestStopNonConnectionFailureRetainsGoneHost(t *testing.T) {
 				t.Errorf("nonconnection failure changed: %v", err)
 			}
 			retainedCapability(t, r)
+		})
+	}
+}
+
+func TestPIDFDExitWithDelayedOwnedReaping(t *testing.T) {
+	for _, witnessed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "witnessed", false: "missing-witness"}[witnessed], func(t *testing.T) {
+			originalWait := waitHostChild
+			blocked := make(chan struct{})
+			release := make(chan struct{})
+			finished := make(chan struct{})
+			waitHostChild = func(cmd *exec.Cmd) error { close(blocked); <-release; err := cmd.Wait(); close(finished); return err }
+			p, r := placedHost(t, nil)
+			<-blocked
+			waitHostChild = originalWait
+			restorePlacement(t, r)
+			// The owned waiter is held until after Stop returns, forcing a zombie rather
+			// than relying on scheduler timing between pidfd exit and cmd.Wait.
+			t.Cleanup(func() { close(release); <-finished })
+			handle := testHostHandle(t, r)
+			expected := r
+			if !witnessed {
+				expected.HostStartTime = 0
+				if err := WritePrivateJSON(metadataPath(r), expected); err != nil {
+					t.Fatal(err)
+				}
+			}
+			originalFD := getPeerPIDFD
+			getPeerPIDFD = func(int) (int, error) {
+				if err := handle.signal(syscall.SIGKILL); err != nil {
+					return -1, err
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				if err := handle.wait(ctx); err != nil {
+					return -1, err
+				}
+				raw, err := os.ReadFile("/proc/" + strconv.Itoa(r.HostPID) + "/stat")
+				if err != nil {
+					t.Error(err)
+				} else if fields := strings.Fields(string(raw[strings.LastIndexByte(string(raw), ')')+1:])); len(fields) == 0 || fields[0] != "Z" {
+					t.Error("fixture did not force unreaped exit")
+				}
+				return -1, syscall.ESRCH
+			}
+			err := p.Stop(context.Background(), expected)
+			getPeerPIDFD = originalFD
+			if witnessed {
+				if err != nil {
+					t.Errorf("witnessed unreaped exit: %v", err)
+				}
+				assertRetiredStop(t, p, r)
+			} else {
+				var fault *Failure
+				if !errors.As(err, &fault) || fault.Code != "outcome_unknown" {
+					t.Errorf("missing witness: %v", err)
+				}
+				retainedCapability(t, r)
+			}
+		})
+	}
+}
+
+func TestRecordedTerminalProcessIdentity(t *testing.T) {
+	cases := []struct {
+		name, state string
+		current     uint64
+		err         error
+		gone        bool
+	}{
+		{"zombie same start", "Z", 42, nil, true},
+		{"dead same start", "X", 42, nil, true},
+		{"zombie different start", "Z", 43, nil, false},
+		{"dead different start", "X", 43, nil, false},
+		{"live same start", "S", 42, nil, false},
+		{"unreadable stat", "", 0, os.ErrPermission, false},
+	}
+	original := readProcessStat
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			readProcessStat = func(pid int) ([]byte, error) {
+				if pid != 123456 {
+					return original(pid)
+				}
+				if c.err != nil {
+					return nil, c.err
+				}
+				fields := make([]string, 20)
+				for i := range fields {
+					fields[i] = "0"
+				}
+				fields[0] = c.state
+				fields[19] = strconv.FormatUint(c.current, 10)
+				return []byte("123456 (fake host) " + strings.Join(fields, " ")), nil
+			}
+			gone := recordedIdentityGone(123456, 42)
+			readProcessStat = original
+			if gone != c.gone {
+				t.Errorf("terminal identity gone=%t want=%t", gone, c.gone)
+			}
 		})
 	}
 }

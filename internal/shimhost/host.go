@@ -55,6 +55,10 @@ type Config struct {
 	// placement always executes the shim itself, not this seam.
 	Command func(context.Context, []string) ([]byte, error)
 }
+
+// waitHostChild is the owned-child reaping boundary.
+var waitHostChild = func(cmd *exec.Cmd) error { return cmd.Wait() }
+
 type Provider struct {
 	cfg    Config
 	mu     sync.Mutex
@@ -305,7 +309,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		p.mu.Lock()
 		p.reaped[identity(r)] = reaped
 		p.mu.Unlock()
-		go func() { _ = cmd.Wait(); close(reaped) }() // Reap a child owned by this process.
+		go func() { _ = waitHostChild(cmd); close(reaped) }() // Reap a child owned by this process.
 	} else {
 		args := []string{"systemd-run", "--user", "--no-block", "--collect", "--service-type=exec", "--unit=" + r.UnitName, "--property=Restart=no", "--property=KillMode=control-group", "--"}
 		args = append(args, argv...)

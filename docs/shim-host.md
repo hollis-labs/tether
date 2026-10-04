@@ -117,7 +117,10 @@ missing socket permits retirement only when the recorded process identity is
 shown gone: a recorded start time identifies an absent or replaced process, or
 the owned child's waiter proves it exited (with the recorded start time
 rechecked on Linux). Systemd-user also requires the named
-unit to be absent. Peer-pidfd ESRCH requires that positive identity evidence too.
+unit to be absent. An unreaped Linux child is proven exited only when one
+stat read of the same PID contains the recorded start time and state `Z` or `X`;
+a different start time, a live matching process or an unreadable stat is retained.
+Peer-pidfd ESRCH requires that positive identity evidence too.
 An unreachable socket, a timeout, or bare ESRCH on a stale PID is unknown and
 retains the capability files; a host might have restarted under another PID.
 Repeated Stop after verified retirement is idempotent,
