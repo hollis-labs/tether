@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -298,9 +299,7 @@ func TestShimDrainNeverInspectsOrStopsProvider(t *testing.T) {
 	f.svc.shimHosting.stop = func(context.Context, shimhost.Receipt) error { t.Error("drain stopped provider"); return nil }
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := f.svc.DrainSessions(ctx); err != nil {
-		t.Fatal(err)
-	}
+	shimDrainWithDiagnostics(t, f, ctx)
 	statuses := shimStatusEvents(t, f)
 	if len(statuses) != 1 || statuses[0].Reason != ShutdownStopReason {
 		t.Fatalf("drain reason=%+v", statuses)
@@ -624,9 +623,7 @@ func TestShimDetachedStopRevokesBindingImmediately(t *testing.T) {
 	ids, token := recoveryCredential(t, f.svc, f.req.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := f.svc.DrainSessions(ctx); err != nil {
-		t.Fatal(err)
-	}
+	shimDrainWithDiagnostics(t, f, ctx)
 	if _, err := currentWorkerBinding(f.svc); err != nil {
 		t.Fatal("detach revoked binding")
 	}
@@ -1014,5 +1011,16 @@ func TestShimBridgeStartFailureRetainsPlacementAndCredential(t *testing.T) {
 				t.Fatalf("bridge failure killed provider: %+v %v", result, err)
 			}
 		})
+	}
+}
+
+func shimDrainWithDiagnostics(t *testing.T, f *shimAppFixture, ctx context.Context) {
+	t.Helper()
+	if err := f.svc.DrainSessions(ctx); err != nil {
+		buf := make([]byte, 128<<10)
+		n := runtime.Stack(buf, true)
+		t.Logf("drain manager state: %+v", f.svc.Manager.List())
+		t.Logf("drain deadline stacks:\n%s", buf[:n])
+		t.Fatal(err)
 	}
 }
