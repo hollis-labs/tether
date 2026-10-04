@@ -117,9 +117,20 @@ func TestShimLaunchProcess(t *testing.T) {
 			}
 			return false
 		}
+		var heldInput *os.File
+		if has("--hold-after-exit") {
+			// Run closes its input. Keep a separate descriptor so this seam only
+			// releases when the manager closes the pipe's writer explicitly.
+			fd, err := unix.Dup(int(os.Stdin.Fd()))
+			if err != nil {
+				os.Exit(95)
+			}
+			heldInput = os.NewFile(uintptr(fd), "held-bridge-input")
+			defer heldInput.Close()
+		}
 		code, err := shimbridge.Run(context.Background(), shimbridge.Options{DescriptorPath: value("--descriptor"), Attach: has("--attach"), Takeover: has("--takeover"), ExpectedJournal: value("--journal")}, os.Stdin, os.Stdout, os.Stderr)
 		if has("--hold-after-exit") {
-			_, _ = io.Copy(io.Discard, os.Stdin)
+			_, _ = io.Copy(io.Discard, heldInput)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
