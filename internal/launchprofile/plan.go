@@ -10,9 +10,12 @@ type Plan struct {
 	LaunchID       string `json:"launch_id"`
 	ProjectID      string `json:"project_id"`
 	LogicalAgentID string `json:"logical_agent_id"`
-	ProviderID     string `json:"provider_id"`
-	ProviderBrand  string `json:"provider_brand,omitempty"`
-	RuntimeKind    string `json:"runtime_kind,omitempty"`
+	// TeamMember is set only by the internal team create path. Catalog identity
+	// still resolves sandbox policy; the enrollment adapter owns actor binding.
+	TeamMember    bool   `json:"team_member,omitempty"`
+	ProviderID    string `json:"provider_id"`
+	ProviderBrand string `json:"provider_brand,omitempty"`
+	RuntimeKind   string `json:"runtime_kind,omitempty"`
 	// ResumeProviderSessionID is set only by checkpoint resume. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.

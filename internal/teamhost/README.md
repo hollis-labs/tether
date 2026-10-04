@@ -29,7 +29,7 @@ external resources when the run ends; a host acquisition missing its intent is
 refused. The host persists the tombstone before calling them. Atomic, exclusive
 binding ownership at the enroller spans all users of that registry, not just this
 package's own binding table. Pool and durable identities must already be enrolled;
-fresh enrollment is deterministic per intent and disappears on retirement.
+fresh enrollment is minted by the registry and retained per intent and disappears on retirement.
 
 Workflow creation and failure share transactions with the run container. Library
 channel metadata stays `team/<run>`, while the session group and transport name
@@ -49,11 +49,18 @@ Attempts and last errors are durable. Retryable failures back off from one secon
 up to one minute, without an attempt limit. Explicit `ErrInvalidRequest` causes
 operator-visible dead letters; `ErrSessionGone` dead-letters deliveries, while
 `ErrSessionUnavailable` (including detached sessions) and ordinary errors retry.
+Recovery clamps future retry timestamps to at most one minute on read,
+persisting the clamp so a backwards clock step cannot hide work indefinitely.
 Cleanup treats Stop `ErrNotFound`/`ErrSessionGone` as already gone, and preserves
-binding/enrollment on other Stop failures. Dead-lettered delegates become failed
-in the same transaction. `ListDeadLetters` exposes retained errors and attempts;
+binding/enrollment on other Stop failures. Treating Stop ErrNotFound as success
+requires that the port first durably tombstone the intent key. Dead-lettered delegates become failed
+in the same transaction. `ListDeadLetters` pages retained errors and attempts after a (kind, sequence)
+cursor;
 `ReviveDeadLetter` explicitly clears a row's dead state/backoff without retargeting
-or reopening terminal delegation outcomes. Cleanup preserves resource ownership
+or reopening terminal delegation outcomes. Revival of a terminal delegation
+is refused with ErrConflict, leaving its dead-letter evidence untouched. Same-key
+same-content SendMessage still replays its recorded receipt; a new authorized
+delegation key is needed to do new work. Cleanup preserves resource ownership
 until Stop succeeds. The messenger must
 refuse unavailable sessions and unsupported policies rather than retarget or
 inject an at-idle reply immediately. Activation must schedule this flush and
