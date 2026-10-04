@@ -83,7 +83,9 @@ func TestShimReadinessWaitsForDurableHandshake(t *testing.T) {
 		case <-proceed:
 		case <-ctx.Done():
 		}
-		return waitShimHandshake(ctx, receipt, previous, shimbridge.ReadCheckpoint)
+		return waitShimHandshake(ctx, receipt, previous, func(path string) (shimbridge.Checkpoint, error) {
+			return readShimHandshakeCheckpoint(ctx, path)
+		})
 	}
 	done := make(chan struct{})
 	go func() { f.svc.ReconcileStaleState(); close(done) }()
@@ -215,5 +217,32 @@ func TestShimHandshakeRequiresFreshMatchingEpoch(t *testing.T) {
 				t.Fatalf("readiness: %v, want %s", err, want)
 			}
 		})
+	}
+}
+
+func TestShimHandshakeCheckpointWaitsForCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bridge.json")
+	state := shimbridge.Checkpoint{ControllerEpoch: "fresh"}
+	if err := shimhost.WritePrivateJSON(path, state); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := shimhost.Lock(filepath.Join(filepath.Dir(path), "record.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	// Model a visible rename whose writer still holds the commit lock. Even
+	// an already-visible fresh epoch cannot pass this barrier.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := readShimHandshakeCheckpoint(ctx, path); err == nil {
+		t.Fatal("accepted epoch before commit lock released")
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readShimHandshakeCheckpoint(context.Background(), path)
+	if err != nil || got.ControllerEpoch != "fresh" {
+		t.Fatalf("completed commit: %+v %v", got, err)
 	}
 }
