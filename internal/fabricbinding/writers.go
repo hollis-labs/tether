@@ -11,17 +11,16 @@ import (
 	"github.com/hollis-labs/tether/internal/fabricstore"
 )
 
-// Authority carries immutable lease identity plus the expected head version.
+// Authority carries immutable lease identity; head versions stay inside the writer.
 // The caller must equal Holder; owners cannot inject reports as another holder.
 type Authority struct {
 	AgentURN, SessionURN mesh.URN
 	InstanceID           string
 	Fence                uint64
-	HeadVersion          int64
 }
 
 func (a Authority) valid() bool {
-	return urnOK(a.AgentURN) && urnOK(a.SessionURN) && textOK(a.InstanceID) && a.Fence > 0 && a.HeadVersion > 0
+	return urnOK(a.AgentURN) && urnOK(a.SessionURN) && textOK(a.InstanceID) && a.Fence > 0
 }
 func (s *Service) writerAuth(ctx context.Context, caller mesh.URN, a Authority, action Action, proof string) (fabricstore.Record[mesh.Agent], error) {
 	if !a.valid() {
@@ -50,9 +49,6 @@ func (s *Service) held(tx *fabricstore.Tx, caller mesh.URN, a Authority, at time
 	if lease == nil || lease.Holder != caller || lease.AgentURN != a.AgentURN || lease.SessionURN != a.SessionURN || lease.InstanceID != a.InstanceID || lease.FencingToken != a.Fence || head.Value.HighWater != a.Fence || !lease.ExpiresAt.After(at) || !lease.ExpiresAt.After(checked) {
 		return head, ErrStale
 	}
-	if head.Version != a.HeadVersion {
-		return head, fabricstore.ErrConflict
-	}
 	return head, nil
 }
 func (s *Service) RenewLease(ctx context.Context, caller mesh.URN, a Authority, ttl time.Duration) (mesh.BindingLease, error) {
@@ -69,7 +65,7 @@ func (s *Service) RenewLease(ctx context.Context, caller mesh.URN, a Authority, 
 		return result, err
 	}
 	err = s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
-		if e := checkAgent(tx, agent); e != nil {
+		if e := checkAgent(tx, agent, true); e != nil {
 			return e
 		}
 		head, e := s.held(tx, caller, a, at)
@@ -86,7 +82,7 @@ func (s *Service) RenewLease(ctx context.Context, caller mesh.URN, a Authority, 
 		if e = tx.PutBindingHead(head.Value, head.Version); e != nil {
 			return e
 		}
-		id, e := digest([]any{a, "renewed"})
+		id, e := digest([]any{a.Fence, a.AgentURN, lease.ExpiresAt, "renewed"})
 		if e != nil {
 			return e
 		}
@@ -117,7 +113,7 @@ func (s *Service) ReleaseLease(ctx context.Context, caller mesh.URN, a Authority
 		return err
 	}
 	return s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
-		if e := checkAgent(tx, agent); e != nil {
+		if e := checkAgent(tx, agent, false); e != nil {
 			return e
 		}
 		head, e := s.held(tx, caller, a, at)
@@ -149,7 +145,7 @@ type Observation struct {
 	ReportRef                       string
 }
 type HostPort interface {
-	Observe(context.Context, mesh.URN, Observation) error
+	Observe(context.Context, mesh.URN, Observation) (ObservationResult, error)
 	ReportReference(context.Context, mesh.URN, Authority, string) error
 }
 
@@ -171,29 +167,33 @@ func transition(from, to mesh.InstanceStatus) bool {
 	}
 	return false
 }
-func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) error {
+
+type ObservationResult struct{ SessionVersion, InstanceVersion int64 }
+
+func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) (ObservationResult, error) {
+	var result ObservationResult
 	at, err := s.clock()
 	if err != nil {
-		return err
+		return result, err
 	}
 	if o.InstanceVersion <= 0 || o.SessionVersion <= 0 || !textOK(o.ReportRef) {
-		return fabricstore.ErrInvalid
+		return result, fabricstore.ErrInvalid
 	}
 	if _, err = mesh.ProjectState(o.Status, o.Detail, o.SessionState); err != nil {
-		return fabricstore.ErrInvalid
+		return result, fabricstore.ErrInvalid
 	}
 	if terminal(o.Status) && (o.SessionState != mesh.SessionEnded && o.SessionState != mesh.SessionOrphaned) {
-		return fabricstore.ErrInvalid
+		return result, fabricstore.ErrInvalid
 	}
-	if !terminal(o.Status) && (o.SessionState == mesh.SessionEnded || o.SessionState == mesh.SessionOrphaned) {
-		return fabricstore.ErrInvalid
+	if !terminal(o.Status) && o.SessionState == mesh.SessionEnded {
+		return result, fabricstore.ErrInvalid
 	}
 	agent, err := s.writerAuth(ctx, caller, o.Authority, Lifecycle, "")
 	if err != nil {
-		return err
+		return result, err
 	}
-	return s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
-		if e := checkAgent(tx, agent); e != nil {
+	err = s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
+		if e := checkAgent(tx, agent, !terminal(o.Status)); e != nil {
 			return e
 		}
 		head, e := s.held(tx, caller, o.Authority, at)
@@ -217,7 +217,7 @@ func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) e
 		if !transition(instance.Value.Status, o.Status) {
 			return fabricstore.ErrInvalid
 		}
-		if e = opaque(ctx, s.validate(ctx, caller, o)); e != nil {
+		if e = s.validateObservation(ctx, caller, o); e != nil {
 			return e
 		}
 		// A policy callback may consume time; recheck expiry before any mutation.
@@ -242,6 +242,7 @@ func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) e
 		if e = appendEvent(tx, id, o.Authority.AgentURN, "instance.observed", o, at); e != nil {
 			return e
 		}
+		result = ObservationResult{SessionVersion: session.Version + 1, InstanceVersion: instance.Version + 1}
 		if terminal(o.Status) {
 			lease := *head.Value.Lease
 			head.Value.Lease = nil
@@ -252,7 +253,12 @@ func (s *Service) Observe(ctx context.Context, caller mesh.URN, o Observation) e
 		}
 		return nil
 	})
+	if err != nil {
+		return ObservationResult{}, err
+	}
+	return result, nil
 }
+
 func (s *Service) ReportReference(ctx context.Context, caller mesh.URN, a Authority, ref string) error {
 	at, err := s.clock()
 	if err != nil {
@@ -266,14 +272,14 @@ func (s *Service) ReportReference(ctx context.Context, caller mesh.URN, a Author
 		return err
 	}
 	return s.repo.Write(ctx, func(tx *fabricstore.Tx) error {
-		if e := checkAgent(tx, agent); e != nil {
+		if e := checkAgent(tx, agent, true); e != nil {
 			return e
 		}
 		if _, e := s.held(tx, caller, a, at); e != nil {
 			return e
 		}
 		observation := Observation{Authority: a, ReportRef: ref}
-		if e := opaque(ctx, s.validate(ctx, caller, observation)); e != nil {
+		if e := s.validateObservation(ctx, caller, observation); e != nil {
 			return e
 		}
 		if _, e := s.held(tx, caller, a, at); e != nil {
@@ -281,6 +287,20 @@ func (s *Service) ReportReference(ctx context.Context, caller mesh.URN, a Author
 		}
 		id, e := digest([]any{a, ref, "report"})
 		if e != nil {
+			return e
+		}
+		raw, e := json.Marshal(observation)
+		if e != nil {
+			return e
+		}
+		prior, e := tx.Event(id)
+		if e == nil {
+			if prior.AggregateURN != a.AgentURN || prior.Type != "instance.report" || string(prior.Payload) != string(raw) {
+				return fabricstore.ErrConflict
+			}
+			return nil
+		}
+		if !errors.Is(e, fabricstore.ErrNotFound) {
 			return e
 		}
 		return appendEvent(tx, id, a.AgentURN, "instance.report", observation, at)

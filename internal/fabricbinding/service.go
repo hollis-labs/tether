@@ -76,16 +76,29 @@ func urnOK(u mesh.URN) bool           { return textOK(string(u)) && u.Validate()
 func pinOK(p mesh.DefinitionRef) bool { return textOK(p.ID) && textOK(p.Revision) && textOK(p.Digest) }
 func opaque(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		err = ctx.Err()
 	}
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
 	}
 	return fmt.Errorf("%w", ErrDenied)
 }
+
+const validationTimeout = 100 * time.Millisecond
+
+// Validators must respect this short context and must not use the repository.
+func (s *Service) validateObservation(ctx context.Context, caller mesh.URN, o Observation) error {
+	bounded, cancel := context.WithTimeout(ctx, validationTimeout)
+	defer cancel()
+	return opaque(bounded, s.validate(bounded, caller, o))
+}
+
 func (s *Service) clock() (time.Time, error) {
 	at := s.now().UTC()
 	if at.IsZero() {
@@ -138,15 +151,15 @@ func (s *Service) verify(ctx context.Context, p mesh.DefinitionRef) error {
 	}
 	return nil
 }
-func checkAgent(tx *fabricstore.Tx, before fabricstore.Record[mesh.Agent]) error {
+func checkAgent(tx *fabricstore.Tx, before fabricstore.Record[mesh.Agent], requireActive bool) error {
 	a, err := tx.Agent(before.Value.URN)
 	if err != nil {
 		return err
 	}
-	if a != before {
+	if a.Version != before.Version {
 		return fabricstore.ErrConflict
 	}
-	if a.Value.Lifecycle != mesh.EnrollmentActive {
+	if requireActive && a.Value.Lifecycle != mesh.EnrollmentActive {
 		return ErrDenied
 	}
 	return nil
