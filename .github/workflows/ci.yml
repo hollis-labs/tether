@@ -21,7 +21,8 @@ jobs:
     name: fmt / vet / lint / test-race / vuln
     runs-on: ubuntu-latest
     # A go.sum change gives a cold build cache that can take about 10 minutes; PR caches are not shared with main, so the first push to main after a bump is cold too.
-    timeout-minutes: 15
+    # The full gate itself now takes about 15 minutes on a hosted runner (two consecutive runs of one PR were cancelled at 15m16s and 15m15s while the store package's race tests were still running), so 15 left no headroom; 25 keeps a limit that still catches a hung job.
+    timeout-minutes: 25
     env:
       # hollis-labs/go-messaging and hollis-labs/go-providers are private.
       # GOPRIVATE skips the proxy and sum database for these modules.
