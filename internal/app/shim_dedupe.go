@@ -8,8 +8,6 @@ import (
 	llmtypes "github.com/hollis-labs/go-llm-types"
 	gop "github.com/hollis-labs/go-providers/provider"
 	pevents "github.com/hollis-labs/go-providers/provider/events"
-	"github.com/hollis-labs/tether/internal/events"
-	"github.com/hollis-labs/tether/internal/store"
 )
 
 // A result's own UUID is carried into the durable published output. Replay
@@ -32,14 +30,14 @@ func (a *shimClaudeAdapter) ParseLine(line []byte) ([]llmtypes.StreamEvent, erro
 		identity = result.UUID
 	}
 	if identity != "" {
-		rows, err := a.service.Store.QueryEvents(store.EventFilter{SessionID: a.sessionID, Kinds: []string{events.KindSessionTurnOutput}, Limit: 1})
-		if err == nil && len(rows) == 1 {
-			var published events.TurnOutputEvent
-			if json.Unmarshal([]byte(rows[0].PayloadJSON), &published) == nil {
-				a.duplicate = published.ProviderResultID == identity
-			}
+		ctx, cancel := a.service.outputPersistenceContext()
+		published, err := a.service.Store.HasPublishedProviderResult(ctx, a.sessionID, identity)
+		cancel()
+		if err == nil {
+			a.duplicate = published
 		}
 	}
+
 	if a.duplicate {
 		return nil, nil
 	}

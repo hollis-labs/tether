@@ -21,3 +21,12 @@ func TestHandleStopSessionPreservesTypedShimFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchRefusalPreservesTypedShimFailure(t *testing.T) {
+	for _, code := range []string{"outcome_unknown", "identity_mismatch", "handshake_pending", "policy_path_missing"} {
+		rr := httptest.NewRecorder()
+		if !writeLaunchRefused(rr, shimStopFault{code: code}) || rr.Code != http.StatusConflict || decodeErr(t, rr).Error.Code != code {
+			t.Fatalf("typed launch code lost: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+}

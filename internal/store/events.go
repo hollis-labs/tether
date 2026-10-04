@@ -254,3 +254,14 @@ func scanEvents(rows *sql.Rows) ([]events.Event, error) {
 	}
 	return out, rows.Err()
 }
+
+// HasPublishedProviderResult checks the full durable session history. Comparing
+// only the newest event would re-publish older results in a multi-result replay.
+func (s *Store) HasPublishedProviderResult(ctx context.Context, id, resultID string) (bool, error) {
+	if resultID == "" {
+		return false, nil
+	}
+	var found bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE session_id=? AND kind=? AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json,'$.provider_result_id') END=?)`, id, events.KindSessionTurnOutput, resultID).Scan(&found)
+	return found, err
+}

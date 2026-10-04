@@ -36,3 +36,11 @@ func TestLogOpenFailureIsPrechildPlacementFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUnitPrefixRequiresTrailingDash(t *testing.T) {
+	_, err := New(Config{StateDir: t.TempDir(), ShimCommand: []string{"fake"}, UnitPrefix: "host"})
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != "invalid_config" {
+		t.Fatalf("accepted ambiguous unit prefix: %v", err)
+	}
+}

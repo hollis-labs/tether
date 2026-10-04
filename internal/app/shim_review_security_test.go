@@ -139,3 +139,47 @@ func TestShimGoneRemovesSecretDescriptor(t *testing.T) {
 		t.Fatalf("orphan retained provider secrets: %v", err)
 	}
 }
+
+func TestShimStateParentProtectionRealProbe(t *testing.T) {
+	for _, protected := range []bool{false, true} {
+		t.Run(strconv.FormatBool(protected), func(t *testing.T) {
+			root := t.TempDir()
+			parent := filepath.Join(root, "state")
+			private := filepath.Join(parent, "shims")
+			if err := os.MkdirAll(private, 0700); err != nil {
+				t.Fatal(err)
+			}
+			work := t.TempDir()
+			opts := agentsessions.StartOptions{Workdir: work, Profile: sandbox.Profile{ID: "probe", HostFilesystem: true, Net: true, Subprocess: true}}
+			policy, err := shimSandboxPolicy(opts, private)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !protected {
+				policy.FS.Protect = nil
+			}
+			cmd := exec.Command("/bin/sh", "-c", `if touch "$1/probe" 2>/dev/null; then echo write; fi
+if mv "$1" "$2" 2>/dev/null; then echo rename; fi`, "probe", parent, filepath.Join(root, "renamed"))
+			cmd.Dir = work
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
+			_, cleanup, err := sandbox.ApplyResolved(cmd, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			output, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrote := strings.Contains(string(output), "write")
+			renamed := strings.Contains(string(output), "rename")
+			t.Logf("protected=%t write=%t rename=%t", protected, wrote, renamed)
+			if protected && (wrote || renamed) {
+				t.Fatal("protected state parent was mutable")
+			}
+			if !protected && (!wrote || !renamed) {
+				t.Fatal("unprotected control did not demonstrate parent write and rename access")
+			}
+		})
+	}
+}

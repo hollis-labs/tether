@@ -97,6 +97,9 @@ func TestShimFlagOffRetainsDetachedChildIdentity(t *testing.T) {
 	if err := f.svc.DrainSessions(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.svc.Store.UpdateSessionState(f.req.ID, "running", 0, nil); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(EnvLaunchHost, "direct")
 	f.svc.shimHosting.inspect = func(context.Context, shimhost.Receipt) (shimhost.Inspection, error) {
 		t.Fatal("flag off inspected shim")

@@ -93,7 +93,7 @@ with or without `--attach`.
 
 Two stdout crash windows remain. A line consumed downstream before its checkpoint
 can be delivered again. A replayed Claude `result` is suppressed when its own UUID
-matches the last durably published turn output's `provider_result_id`. Equal
+matches any durably published turn output's `provider_result_id` for that session. Equal
 text alone never establishes identity; results without a UUID retain the
 at-least-once window. Bytes written and committed while still unread in a dead
 pipe can be lost. This does not promise exactly-once turn delivery. Result
@@ -194,7 +194,8 @@ checkpoint. Positive host absence becomes `orphaned`, revoking session principal
 and binding generations in one transaction. A timeout, typed refusal, missing
 receipt or unknown outcome stays `detached`. Reconciliation runs once at daemon
 startup; it does not retry automatically during the daemon's lifetime. Inspection
-is bounded to ten seconds per placement and a thirty-second total startup budget.
+is bounded to ten seconds per placement and a shared thirty-second inspection/
+attachment budget, plus up to three seconds to close a pending bridge.
 Placements beyond that budget remain detached with `startup_budget_exhausted`.
 A launching intent with no descriptor, no receipt and zero recorded process IDs
 is failed as `shim_not_submitted` after checking absence under the placement lock.
