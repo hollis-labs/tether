@@ -1,11 +1,12 @@
 # Team runtime adapters
 
-These adapters are unregistered. Constructing them performs no enrollment,
-launch, publication, recovery or background work. The owner supplies one shared
-migrated database and schedules `Reconciler.Reconcile` explicitly. Normal launch
-and message methods remain available without constructing any team component.
-The later daemon composition must gate construction and all recovery on the
-explicit `teams.enabled` flag, whose default is false.
+The daemon constructs these adapters only under `teams.enabled`, default false.
+Construction performs no enrollment, launch, publication, recovery or background
+work. HTTP and native MCP share one service over the daemon's existing migrated
+database and runtime. Normal launch and message methods remain available without
+constructing any team component. The daemon does not schedule
+`Reconciler.Reconcile`; formation refuses with empty trust and execution targets
+until activation readiness is resolved in CW-20261004-0002.
 
 `LegacyEnroller` implements the entire enrollment port over the legacy registry.
 It also owns the current session launch-target lookup, binding attachment and

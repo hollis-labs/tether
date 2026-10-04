@@ -37,6 +37,7 @@ func NewVerifiedAdapter(ctx context.Context, svc *app.Service, dc *client.Client
 	}
 	a := NewWithDaemon(svc, dc, "verified-principal", p.Scopes)
 	a.principal = &p
+	a.connectionContext = identity.WithConnectionContext(context.Background(), ctx)
 	a.SessionID = p.SessionID
 	return a, nil
 }
@@ -45,6 +46,7 @@ func NewVerifiedAdapter(ctx context.Context, svc *app.Service, dc *client.Client
 // resolver result. SDK native dispatch binds the admitted view principal here;
 // neither an SDK metadata claim nor a cached stdio lookup establishes identity.
 func (a *Adapter) verifiedCallerContext(ctx context.Context) context.Context {
+	ctx = identity.WithConnectionContext(ctx, a.connectionContext)
 	ctx = identity.WithPrincipal(ctx, *a.principal)
 	ctx = callcontext.WithClaimedSession(ctx, a.principal.SessionID)
 	var sessions api.CallerSessionLookup

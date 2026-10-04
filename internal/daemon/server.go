@@ -28,6 +28,7 @@ const tetherVersion = "0.2.0"
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
 type Config struct {
+	TeamsEnabled    bool
 	IdentityMode    identity.Mode
 	ListenAddr      string
 	PIDFile         string
@@ -84,6 +85,8 @@ type Server struct {
 	MessageStore api.MessageStore
 	Channels     api.ChannelService
 	Routing      api.RoutingService
+	// Teams is supplied only by the opt-in daemon composition path.
+	Teams api.TeamOps
 	// DeliveryClaims is optional; when set, POST /messages/{id}/claim|ack|nack
 	// are enabled (T07, messaging vNext) -- durable claim/ack/nack for a
 	// caller pulling its own mailbox on its own initiative. Populated from
@@ -337,6 +340,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	httpSrv := &http.Server{
 		Handler:           s.Handler(),
+		ConnContext:       identity.ConnectionContext,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -436,6 +440,10 @@ func (s *Server) Run(ctx context.Context) error {
 // /health is always registered; api routes are delegated to the api
 // package when Service is non-nil.
 func (s *Server) Handler() http.Handler {
+	var teams api.TeamOps
+	if s.Config.TeamsEnabled && api.HasTeamOps(s.Teams) {
+		teams = s.Teams
+	}
 	router := http.NewServeMux()
 	router.HandleFunc("/health", s.handleHealth)
 	if s.MCP != nil {
@@ -449,7 +457,7 @@ func (s *Server) Handler() http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil {
+	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
 			Docs:                s.Docs,
 			Service:             s.Service,
@@ -468,6 +476,7 @@ func (s *Server) Handler() http.Handler {
 			MessageStore:        s.MessageStore,
 			Channels:            s.Channels,
 			Routing:             s.Routing,
+			Teams:               teams,
 			DeliveryClaims:      s.DeliveryClaims,
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
@@ -685,6 +694,7 @@ func (s *Server) apiMounts() []apiMount {
 	hasService := s.Service != nil
 	hasAI := s.AI != nil
 	return []apiMount{
+		{"/teams/", s.Config.TeamsEnabled && api.HasTeamOps(s.Teams)},
 		{"/sessions", hasService},
 		{"/sessions/", hasService},
 

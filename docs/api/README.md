@@ -63,12 +63,19 @@ Defined codes:
 
 ## Team verbs
 
-Team wrappers are available for host wiring, but the daemon does not yet read
-`teams.enabled` or mount these routes. The catalog key lives in `global.yaml`
-and defaults to false. Setting it to true exposes the CLI command tree without
-activating a daemon host. A host supplying no team service has no team routes
-(404) or MCP tools; with the key off the CLI namespace is absent. The CLI setting
-controls discovery; the daemon service enforces authentication and authority.
+The daemon constructs the team host and mounts these routes only when
+`teams.enabled` in `global.yaml` is explicitly true; the default is false.
+The same service supplies native MCP team tools. A disabled or missing service
+has no team routes (404) or MCP tools; with the key off the CLI namespace is absent.
+The daemon service enforces authentication and authority. Construction does no
+enrollment, launch, publication or recovery work, and recovery is not scheduled.
+
+Production formation remains unavailable: host formation policy refuses it,
+and actor/pin trust and exact-pin legacy launch targets are empty. They must be
+explicitly provisioned after activation readiness is resolved in
+CW-20261004-0002. Neither catalog launch names nor caller-authored definitions
+grant trust. Do not enable the flag or restart/deploy the live daemon as part of
+this wiring change.
 
 All verbs use POST and the `Idempotency-Key` header (required, at most 256 bytes,
 valid UTF-8 without control characters). MCP and CLI reject surrounding key

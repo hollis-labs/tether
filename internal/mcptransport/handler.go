@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -26,6 +27,8 @@ import (
 
 // HandlerConfig is daemon composition, never caller-controlled configuration.
 type HandlerConfig struct {
+	TeamsEnabled        bool
+	Teams               api.TeamOps
 	Publisher           events.Publisher
 	ListenAddr          string
 	IdentityMode        identity.Mode
@@ -55,7 +58,8 @@ type admissionKey struct{}
 type preparedViewKey struct{}
 
 type transportView struct {
-	view *mcpadapter.GatewayView
+	view            *mcpadapter.GatewayView
+	localConnection bool
 	// Retained only in memory for stream revocation checks; never exported.
 	token                  string
 	selectors              selectors
@@ -260,7 +264,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			transportError(w, http.StatusNotFound, "mcp_session_not_found")
 			return
 		}
-		if v.fingerprint != a.fingerprint {
+		if v.fingerprint != a.fingerprint || v.localConnection != identity.LocalConnection(r.Context()) {
 			transportError(w, http.StatusForbidden, "mcp_session_policy_mismatch")
 			return
 		}
@@ -334,6 +338,7 @@ func initializeRequest(w http.ResponseWriter, r *http.Request) bool {
 
 func (h *Handler) prepare(ctx context.Context, a admission, token string, s selectors) (*transportView, error) {
 	v := &transportView{token: token, selectors: s, fingerprint: a.fingerprint, principalKey: a.caller.Principal.Kind + ":" + a.caller.Principal.ID, operator: a.caller.Principal.Kind == "operator" && a.caller.Principal.ID == identity.OperatorID, lastUsed: time.Now()}
+	v.localConnection = identity.LocalConnection(ctx)
 	v.callCtx, v.cancelCalls = context.WithCancel(h.ctx)
 	v.streamCtx, v.cancelStreams = context.WithCancel(h.ctx)
 	h.mu.Lock()
@@ -402,6 +407,9 @@ func (h *Handler) prepare(ctx context.Context, a admission, token string, s sele
 		return nil, err
 	}
 	adapter.ExtractRefs = a.caller.Policy.ExtractRefs
+	if h.cfg.TeamsEnabled && api.HasTeamOps(h.cfg.Teams) {
+		adapter.SetTeams(h.cfg.Teams)
+	}
 	if dc != nil {
 		adapter.SetRefAttacher(daemonRefAttacher{client: dc})
 	}

@@ -79,6 +79,7 @@ type Adapter struct {
 	token                 string
 	scopes                map[string]struct{}
 	principal             *identity.Principal // daemon view only; derived from verified middleware
+	connectionContext     context.Context     // accepted-socket proof for in-memory native dispatch
 	callerContextResolver func(context.Context) (callcontext.Snapshot, error)
 	callerContextCache    callerContextCache
 

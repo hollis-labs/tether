@@ -59,6 +59,7 @@ var apiTopLevelPaths = []string{
 	"/session-groups", "/session-groups/",
 	"/sessions", "/sessions/", "/sessions/bootstrap",
 	"/settings/mcp", "/settings/onboarding", "/settings/onboarding/",
+	"/teams/",
 	"/whoami",
 	"/workstreams", "/workstreams/",
 }
