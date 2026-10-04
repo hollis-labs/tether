@@ -125,6 +125,16 @@ func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow
 		return err
 	}
 	s.watchSessionBindings(row.ID)
+	if err = host.waitHandshake(ctx, receipt, checkpoint.ControllerEpoch); err != nil {
+		// Close only the unsettled bridge. Its provider and canonical placement
+		// remain available for a later reconciliation attempt.
+		stopCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = s.Manager.Stop(stopCtx, row.ID)
+		_, _ = s.Manager.WaitSession(stopCtx, row.ID)
+		_ = s.waitShimBinding(stopCtx, row.ID)
+		return err
+	}
 	s.shimDiagnostic(row.ID, &receipt, "running", "reattached")
 	return nil
 }

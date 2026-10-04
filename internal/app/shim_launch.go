@@ -38,6 +38,7 @@ type shimHosting struct {
 	prepare    func(shim.Launch, *sandbox.ResolvedAccessPolicy, runner.ResourceLimits) (shim.Launch, func(), error)
 	capability func() error
 	inspect    func(context.Context, shimhost.Receipt) (shimhost.Inspection, error)
+	handshake  func(context.Context, shimhost.Receipt, string) error
 	cleanup    sync.Map
 }
 

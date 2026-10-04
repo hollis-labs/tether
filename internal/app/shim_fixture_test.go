@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -64,6 +65,17 @@ func TestShimLaunchProcess(t *testing.T) {
 		}
 		os.Exit(0)
 	case "bridge":
+		if gate := value("--handshake-gate"); gate != "" {
+			f, err := os.Open(gate)
+			if err != nil {
+				os.Exit(94)
+			}
+			_, err = io.ReadFull(f, make([]byte, 1))
+			_ = f.Close()
+			if err != nil {
+				os.Exit(95)
+			}
+		}
 		has := func(key string) bool {
 			for _, arg := range os.Args {
 				if arg == key {

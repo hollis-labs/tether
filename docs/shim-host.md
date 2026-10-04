@@ -66,6 +66,18 @@ facts while preserving the operation key, fingerprint and attempted-submit flag.
 
 ## Delivery and recovery
 
+The shim-specific `session.shim_status` event with state `running` and reason
+`reattached` is a readiness signal: the bridge's controller hello has completed
+and its fresh controller epoch has been durably saved in `bridge.json`. An
+observer may then send a turn or Stop without racing that starting bridge.
+The generic Manager `running` event still means only that the bridge process
+started. A Stop before shim readiness can return the typed, retryable
+`controller_busy` refusal; epoch fencing makes either controller order safe.
+Recovery waits at most ten seconds for durable readiness. On expiry it closes
+only the unsettled bridge and reports `detached` with reason `handshake_pending`,
+retaining the provider and placement for later reconciliation. It never reports
+shim readiness on expiry. Bridge closure has a separate three-second bound.
+
 The bridge writes each complete stdout line before atomically saving its source
 cursor and remaining bytes. Reconnect drains saved complete lines and partial
 carry before the journal tail, and replays the captured `system/init` once for a
