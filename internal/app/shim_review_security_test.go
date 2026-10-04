@@ -38,22 +38,26 @@ func TestShimOtherSandboxedLaunchDeniesPrivateRoot(t *testing.T) {
 	if opts.SandboxPolicy == nil || opts.SandboxPolicy.AccessFor(descriptor) != sandbox.AccessDenied {
 		t.Fatal("another sandboxed launch can read private shim state")
 	}
-	cmd := exec.Command("/bin/sh", "-c", `if cat "$1" >/dev/null 2>&1; then exit 9; fi`, "probe", descriptor)
-	cmd.Dir = work
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
-	_, cleanup, err := sandbox.ApplyResolved(cmd, *opts.SandboxPolicy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("other sandbox read the descriptor: %v", err)
-	}
+	t.Run("real_backend", func(t *testing.T) {
+		requireShimProtectingBackend(t, privateRoot)
+		cmd := exec.Command("/bin/sh", "-c", `if cat "$1" >/dev/null 2>&1; then exit 9; fi`, "probe", descriptor)
+		cmd.Dir = work
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
+		_, cleanup, err := sandbox.ApplyResolved(cmd, *opts.SandboxPolicy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("other sandbox read the descriptor: %v", err)
+		}
+	})
 }
 
 func TestShimImplicitWorkspacePolicyIsCompleteBeforePlacement(t *testing.T) {
-	f := shimFixture(t)
+	// Allocate outside the private parent before the fixture changes TMPDIR.
 	work := t.TempDir()
+	f := shimFixture(t)
 	f.req.Options.Workdir = work
 	f.req.Options.Profile = sandbox.Profile{ID: "legacy-workspace", Net: true, Subprocess: true}
 	prepare := f.svc.shimHosting.prepare
@@ -75,8 +79,10 @@ func TestShimImplicitWorkspacePolicyIsCompleteBeforePlacement(t *testing.T) {
 }
 
 func TestShimMissingDenyPathRefusesBeforePlacementWithReason(t *testing.T) {
+	// Allocate outside the private parent before the fixture changes TMPDIR.
+	work := t.TempDir()
 	f := shimFixture(t)
-	f.req.Options.Workdir = t.TempDir()
+	f.req.Options.Workdir = work
 	f.req.Options.Profile = sandbox.Profile{ID: "workspace", Net: true, Subprocess: true, FS: sandbox.FSSpec{Deny: []string{filepath.Join(f.root, "absent-credentials")}}}
 	f.svc.shimHosting.place = func(context.Context, string, shim.Launch) (shimhost.Receipt, error) {
 		t.Fatal("underspecified policy reached placement")
@@ -158,28 +164,49 @@ func TestShimStateParentProtectionRealProbe(t *testing.T) {
 			if !protected {
 				policy.FS.Protect = nil
 			}
-			cmd := exec.Command("/bin/sh", "-c", `if touch "$1/probe" 2>/dev/null; then echo write; fi
-if mv "$1" "$2" 2>/dev/null; then echo rename; fi`, "probe", parent, filepath.Join(root, "renamed"))
-			cmd.Dir = work
-			cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
-			_, cleanup, err := sandbox.ApplyResolved(cmd, policy)
-			if err != nil {
-				t.Fatal(err)
+			if !policy.DenyUserServiceManager || policy.AccessFor(private) != sandbox.AccessDenied {
+				t.Fatal("policy lost private-state or service-manager denial")
 			}
-			defer cleanup()
-			output, err := cmd.Output()
-			if err != nil {
-				t.Fatal(err)
+			want := sandbox.AccessReadWrite
+			if protected {
+				want = sandbox.AccessReadOnly
 			}
-			wrote := strings.Contains(string(output), "write")
-			renamed := strings.Contains(string(output), "rename")
-			t.Logf("protected=%t write=%t rename=%t", protected, wrote, renamed)
-			if protected && (wrote || renamed) {
-				t.Fatal("protected state parent was mutable")
+			if policy.AccessFor(parent) != want {
+				t.Fatalf("parent access = %s, want %s", policy.AccessFor(parent), want)
 			}
-			if !protected && (!wrote || !renamed) {
-				t.Fatal("unprotected control did not demonstrate parent write and rename access")
-			}
+			t.Run("real_backend", func(t *testing.T) {
+				requireShimProtectingBackend(t, parent)
+				cmd := exec.Command("/bin/sh", "-c", `if touch "$1/probe" 2>/dev/null; then echo write; fi
+	if mv "$1" "$2" 2>/dev/null; then echo rename; fi`, "probe", parent, filepath.Join(root, "renamed"))
+				cmd.Dir = work
+				cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
+				_, cleanup, err := sandbox.ApplyResolved(cmd, policy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer cleanup()
+				output, err := cmd.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				wrote := strings.Contains(string(output), "write")
+				renamed := strings.Contains(string(output), "rename")
+				t.Logf("protected=%t write=%t rename=%t", protected, wrote, renamed)
+				if protected && (wrote || renamed) {
+					t.Fatal("protected state parent was mutable")
+				}
+				if !protected && (!wrote || !renamed) {
+					t.Fatal("unprotected control did not demonstrate parent write and rename access")
+				}
+			})
 		})
+	}
+}
+
+func requireShimProtectingBackend(t *testing.T, dir string) {
+	t.Helper()
+	// Probe the actual namespace capability, bypassing fixture protection stubs.
+	if err := ProbeBwrap(dir); err != nil {
+		t.Skipf("real protecting backend unavailable on this host: %v", err)
 	}
 }
