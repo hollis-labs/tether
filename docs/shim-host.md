@@ -1,7 +1,7 @@
-# Shim host foundation
+# Opt-in shim hosting
 
-The host and bridge packages provide a Claude streaming-stdio foundation. They
-are not connected to the daemon's session launch path yet. The explicit
+The daemon can host Claude streaming-stdio providers through a persistent shim.
+Direct execution remains the default. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
 existing private checkpoint; it never places another provider.
@@ -14,25 +14,42 @@ with that service on stop or restart. It survives a controller process crash onl
 when the surrounding service or supervisor does not kill that cgroup. A
 production deployment that needs providers to survive daemon restarts must use
 **systemd-user**, which puts each host in a separate transient unit and cgroup.
-That backend requires explicit enablement. Configuration foundations under
+That backend requires explicit enablement and an activation plan before any
+production use. Configuration under
 `catalog.defaults`:
 
 ```yaml
+launch_host: direct        # direct (default) or shim
 shim_host:
   journal_bytes: 268435456  # 256 MiB; minimum 2 MiB
   systemd_user: false      # explicit opt-in for the service backend
+  unit_prefix: tether-shim- # names new transient units only
 ```
 
-The launch-host selector and daemon integration are separate work. The host
-accepts the provider's resolved executable, argv, complete environment and pin
-identity. Sandbox and resource limits must be applied to that provider before
-placement. Wrapping only the bridge does not protect the provider.
+`TETHER_LAUNCH_HOST` overrides `catalog.defaults.launch_host` and is read on each
+launch. Only the exact value `shim` enables hosting; any other non-empty value
+selects `direct`, even when the catalog requests a shim. Doctor reports the
+selection without creating a host. Unsupported runtimes, missing Linux peer
+pidfds, and unavailable required confinement fall back to the existing direct
+request with a diagnostic. A placement positively known not to have started a
+child also falls back. Once a child may exist, an uncertain result retains the
+placement and never launches a second child.
+
+The descriptor carries the real provider's resolved command, sandbox and
+resource-limit wrappers, and complete environment policy. The bridge is a
+privileged control client; wrapping only it does not protect the provider. Its
+environment excludes provider credentials. The host receives only the explicit
+descriptor and a small infrastructure environment. Policies needing
+daemon-owned loopback forwarding and resource wrappers that create an additional
+service scope currently fall back before placement.
 
 Descriptors are owned 0600 files under 0700 directories. These permissions do
-**not** hide them from a same-uid provider. The daemon integration MUST deny the
-entire per-session state directory in the provider's sandbox policy, including
+**not** hide them from a same-uid provider. The provider policy denies the entire
+private shim root, including every per-session state directory and
 the launch descriptor, journal and control socket. Without that denial the
-provider can read its environment secrets and controller capability. The
+provider could otherwise read its environment secrets and controller capability.
+The state parent is write-protected to prevent renaming the denied tree, and
+user-service-manager access is denied so it cannot escape through a new unit. The
 database and placement receipt contain paths and facts, never capability values.
 Environment keys containing TOKEN, SECRET, KEY, PASSWORD or CREDENTIAL
 (case-insensitive) are volatile by default. Callers add other volatile or secret
@@ -60,9 +77,12 @@ cursor, so a later bridge run returns that status without waiting for another ev
 with or without `--attach`.
 
 Two stdout crash windows remain. A line consumed downstream before its checkpoint
-can be delivered again. Bytes written and committed while still unread in a dead
-pipe can be lost. This does not promise exactly-once turn delivery. A later daemon
-integration can suppress repeated result messages by their own identity. Stderr
+can be delivered again. A replayed Claude `result` is suppressed when its own UUID
+matches the last durably published turn output's `provider_result_id`. Equal
+text alone never establishes identity; results without a UUID retain the
+at-least-once window. Bytes written and committed while still unread in a dead
+pipe can be lost. This does not promise exactly-once turn delivery. Result
+deduplication does not remove the pipe-consumption window. Stderr
 has no line framing or durable carry; a crash after a stderr write but before its
 checkpoint can duplicate those bytes. Journal order is preserved between stdout
 and stderr events, but cannot reconstruct the provider's original ordering across
@@ -90,7 +110,10 @@ neither its exit code nor agentkit's bridge PID establishes provider liveness.
 
 ## Teardown
 
-Bridge stdin EOF detaches and leaves the provider alive. Explicit user stop calls
+Bridge stdin EOF detaches and leaves the provider alive. Graceful daemon shutdown
+marks hosted sessions `detached`, closes only their bridges and keeps their
+placements unretired. This does not override a supervisor's cgroup kill policy.
+Explicit user/API stop calls
 host `Stop`: request the provider's bounded kill if it is still running, then
 terminate the checked peer through a pidfd, escalate from SIGTERM to
 SIGKILL after the configured grace and wait within a total timeout. An already
@@ -140,11 +163,34 @@ package has no operator recovery or explicit retirement operation for that
 wedge. A wrapper ShimCommand that forks its host and exits also fails closed:
 the child owning the socket differs from the recorded submitted process.
 
-Future daemon integration must load the canonical `placement.json` receipt for
+The daemon loads the canonical `placement.json` receipt for Inspect, Reattach and
 Stop: the database placement row does not contain the process start time.
 Inspect and Reattach preserve typed refusals and never merge Gone results.
 Systemd teardown retains a loaded unit after stop failure and retries on the
 next Stop; retirement requires verified unit absence.
+
+Startup recovery reattaches a running host with the recorded journal and bridge
+checkpoint. Positive host absence becomes `orphaned`, revoking session principals
+and binding generations in one transaction. A timeout, typed refusal, missing
+receipt or unknown outcome stays `detached`; later sweeps retry it. Doctor,
+runtime health and `session.shim_status` report the typed reason and placement
+key, backend, unit and socket. They never expose the capability or environment.
+Disabling the flag retains detached placements with `shim_reconcile_disabled`
+and leaves their children alone. Orphaned sessions cannot mint new principals.
+
+Operators can inspect the named unit and restore connectivity or an original
+verified private receipt, then retry reconciliation. They must not synthesize a
+PID/start-time witness or delete retained capability files. A dead host with no
+recorded identity has no recovery operation in this release; explicit retirement
+is a follow-up. A loaded unit after failed stop similarly remains retained until
+its absence is positively established. A new launch uses a new session ID;
+ordinary same-key placement after retirement remains refused.
+
+Dev acceptance uses a separate HOME, catalog, database, socket and port, a fake
+Claude CLI and transient `tether-dev-shim-*` units. No unit files are installed,
+no existing units are edited, and no daemon reload is needed. Detached acceptance
+comes first; systemd-user acceptance requires explicit approval, complete unit
+and process teardown, and verification that the live daemon was unchanged.
 
 Placement and attach clear abandoned `.commit-*` files under the same lock used
 by record writers, so a live atomic commit is never deleted.

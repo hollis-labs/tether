@@ -147,6 +147,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 	catalogCheck, loadedCat := checkCatalog(catalogRoot)
 	checks = append(checks, catalogCheck)
 	cat = loadedCat
+	checks = append(checks, checkShimHosting(cat)...)
 	if cat != nil {
 		checks = append(checks, checkSandboxProfiles(cat))
 		checks = append(checks, checkMCPDiscoveryMode(cat), checkMCPEndpoint(cat))

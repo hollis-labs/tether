@@ -4,6 +4,23 @@ Tether's two-tier agent configuration model. See ADR 0033 for the design rationa
 For launch profile, boot profile, workspace, and slot fields, see
 `docs/catalog-launch-profiles.md`.
 
+## Provider hosting
+
+`catalog.defaults.launch_host` selects `direct` (the default) or opt-in `shim`
+hosting for Claude streaming-stdio. `TETHER_LAUNCH_HOST` takes precedence and is
+read on every launch; any non-empty value other than `shim` selects `direct`.
+Unsupported runtimes and known pre-child placement or confinement failures keep
+the direct launch path. Uncertain placement outcomes retain the child identity
+and never create another provider. `tether doctor` reports this selection and
+retained detached placements without contacting the host.
+
+`catalog.defaults.shim_host` contains `journal_bytes` (256 MiB by default,
+minimum 2 MiB), `systemd_user` (false by default), and `unit_prefix`
+(`tether-shim-` by default). Production restart survival requires a planned
+systemd-user activation. Detached hosting stays in the daemon's cgroup. See
+[shim hosting](shim-host.md) for sandbox requirements, delivery windows and
+operator-visible recovery limits.
+
 ## Discovery layers
 
 Three layers, searched in order. Later layers override earlier ones on ID collision; missing layers are skipped silently.
