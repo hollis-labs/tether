@@ -316,8 +316,10 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			// production (nothing reads it back) and shared across every
 			// provider kind rather than scoped per session; kept as-is so
 			// nothing that might still depend on it regresses.
-			if err := storeRef.SetClaudeSessionID(logicalAgentID, id); err != nil {
-				log.Printf("%s: persist session_id for %q failed: %v", providerID, logicalAgentID, err)
+			if !plan.TeamMember {
+				if err := storeRef.SetClaudeSessionID(logicalAgentID, id); err != nil {
+					log.Printf("%s: persist session_id for %q failed: %v", providerID, logicalAgentID, err)
+				}
 			}
 			// Canonical mapping (T02, messaging vNext): scoped to THIS
 			// session and THIS provider, not a single shared slot on the
@@ -589,21 +591,23 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 
 	// Record this launch profile on the logical agent so the resume
 	// endpoint knows which catalog config to use next time.
-	if err := s.Store.SetLogicalAgentLaunchID(plan.LogicalAgentID, plan.LaunchID); err != nil {
-		log.Printf("app: set launch_id on logical_agent %q: %v (non-fatal)", plan.LogicalAgentID, err)
-	}
+	if !plan.TeamMember {
+		if err := s.Store.SetLogicalAgentLaunchID(plan.LogicalAgentID, plan.LaunchID); err != nil {
+			log.Printf("app: set launch_id on logical_agent %q: %v (non-fatal)", plan.LogicalAgentID, err)
+		}
 
-	// T06 (messaging vNext): this session becomes the durable actor's home
-	// host. Leasing a binding here is what makes ResolveActorSession's
-	// binding-first resolution (wake.go) actually authoritative in
-	// practice, rather than dead T02 infrastructure -- LeaseBinding always
-	// mints max-generation+1, so this call alone fences out whatever
-	// session previously held the binding (concurrent-actor-session /
-	// stale-generation handling), with no separate revoke step required on
-	// the replaced side. Best-effort: a lease failure must not fail an
-	// otherwise-successful launch (established enhancement-write pattern,
-	// e.g. SetClaudeSessionID above).
-	s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+		// T06 (messaging vNext): this session becomes the durable actor's home
+		// host. Leasing a binding here is what makes ResolveActorSession's
+		// binding-first resolution (wake.go) actually authoritative in
+		// practice, rather than dead T02 infrastructure -- LeaseBinding always
+		// mints max-generation+1, so this call alone fences out whatever
+		// session previously held the binding (concurrent-actor-session /
+		// stale-generation handling), with no separate revoke step required on
+		// the replaced side. Best-effort: a lease failure must not fail an
+		// otherwise-successful launch (established enhancement-write pattern,
+		// e.g. SetClaudeSessionID above).
+		s.leaseActorBinding(sessionID, plan.LogicalAgentID)
+	}
 	s.watchSessionBindings(sessionID)
 
 	return &Launched{

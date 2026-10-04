@@ -184,9 +184,26 @@ func (h *Host) FlushMessages(ctx context.Context, limit int) error {
 	for _, e := range entries {
 		d, err := h.GetDelivery(ctx, e.key)
 		if err == nil {
-			err = h.ports.Messenger.Deliver(ctx, d)
+			err = h.retainedSessionEnded(ctx, d)
+			if err == nil {
+				err = h.ports.Messenger.Deliver(ctx, d)
+			}
 		}
 		failures = append(failures, err, h.finishAttempt(ctx, "deliveries", e.key, err))
 	}
 	return errors.Join(failures...)
+}
+
+// Cleanup ownership is retained after retirement; never ask a transport to
+// deliver to a session the host already stopped successfully.
+func (h *Host) retainedSessionEnded(ctx context.Context, d teams.Delivery) error {
+	var stopped bool
+	err := h.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_host_intents WHERE tombstone<>'' AND cleaned=1 AND json_extract(member,'$.actor')=? AND json_extract(member,'$.session_id')=?)`, d.Recipient.Actor, d.Recipient.SessionID).Scan(&stopped)
+	if err != nil {
+		return err
+	}
+	if stopped {
+		return ErrSessionGone
+	}
+	return nil
 }

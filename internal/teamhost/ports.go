@@ -27,8 +27,8 @@ type SessionRequest struct {
 
 // Enroller verifies a supplied definition pin during Ensure; stable identities
 // without a supplied pin resolve their own enrolled definition. Stable resolutions
-// require an already enrolled requested identity; fresh creates the supplied
-// ephemeral identity under the intent key. All methods are durable/idempotent.
+// require an already enrolled requested identity; fresh mints an
+// ephemeral identity keyed to the intent (Actor must be empty). All methods are durable/idempotent.
 // AcquireBinding is exclusive by actor across all consumers. ReleaseBinding
 // permanently fences acquisition for that intent and releases only its lease.
 // Release/Retire permanently fence Ensure; Retire removes only the ephemeral
@@ -57,7 +57,7 @@ type Enrollment struct {
 // content. Success means accepted by the retained session, including durable
 // queueing for DeliveryAtIdle. Unavailable sessions/unsupported policies return
 // errors; the adapter must never retarget to a newer session of the same actor.
-// ErrUnavailable means the retained session is gone and becomes a dead letter.
+// ErrSessionGone means the retained session ended and becomes a dead letter.
 // Temporary transport failures use ordinary retryable errors; ErrPermanent marks
 // another permanent refusal. No delivery policy may substitute immediate send.
 type Messenger interface {
