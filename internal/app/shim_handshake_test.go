@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -65,12 +66,13 @@ func TestShimReadinessWaitsForDurableHandshake(t *testing.T) {
 	if err := syscall.Mkfifo(gate, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// O_RDWR keeps a reader available for cleanup even if an assertion fails.
-	fifo, err := os.OpenFile(gate, os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release := sync.OnceFunc(func() { _, _ = fifo.Write([]byte{1}); _ = fifo.Close() })
+	var fifo *os.File
+	release := sync.OnceFunc(func() {
+		if fifo != nil {
+			_, _ = fifo.Write([]byte{1})
+			_ = fifo.Close()
+		}
+	})
 	defer release()
 	f.svc.shimHosting.bridge = append(f.svc.shimHosting.bridge, "--handshake-gate", gate)
 	observed := make(chan struct{})
@@ -105,6 +107,19 @@ func TestShimReadinessWaitsForDurableHandshake(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("handshake wait never entered")
 	}
+	// Nonblocking writer open succeeds only after the child opened its reader.
+	// Hold this fd until release so the byte cannot precede the real wait.
+	shimAwait(t, "bridge blocked before hello", func() bool {
+		fd, err := syscall.Open(gate, syscall.O_WRONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0600)
+		if errors.Is(err, syscall.ENXIO) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		fifo = os.NewFile(uintptr(fd), gate)
+		return true
+	})
 	for _, status := range shimStatusEvents(t, f) {
 		if status.State == "running" || status.Reason == "reattached" {
 			t.Fatalf("premature readiness: %+v", status)
