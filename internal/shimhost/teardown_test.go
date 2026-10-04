@@ -4,6 +4,7 @@ package shimhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -72,7 +73,11 @@ func TestStopRetiresCrashedHost(t *testing.T) {
 	recovered := r
 	recovered.HostPID = 0
 	recovered.ShimPID = 0
-	assertRetiredStop(t, p, recovered)
+	cold, err := New(p.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetiredStop(t, cold, recovered)
 }
 func TestStopRetiresAfterKillTimeout(t *testing.T) {
 	p, r := placedHost(t, func(c *Config, _ *shim.Launch) {
@@ -348,5 +353,88 @@ func TestCleanupDoesNotSignalAfterSuccessfulStop(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if _, err := in.Write([]byte("alive")); err != nil {
 		t.Fatalf("cleanup killed unrelated child: %v", err)
+	}
+}
+
+func exitedTestPID(t *testing.T) int {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(exe, "-test.run=^TestHostProcess$")
+	child.Env = []string{"TETHER_TEST_SHIM=child-exit"}
+	if err = child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	return child.Process.Pid
+}
+func TestLiveHostStalePIDRefusalRetainsCapability(t *testing.T) {
+	p, r := placedHost(t, nil)
+	spec, err := Descriptor(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = WritePrivateJSON(r.DescriptorPath, spec); _ = WritePrivateJSON(metadataPath(r), r) })
+	stale := r
+	stale.HostPID = exitedTestPID(t)
+	err = p.Stop(context.Background(), stale)
+	var fault *Failure
+	if !errors.As(err, &fault) || fault.Code != "identity_mismatch" {
+		t.Errorf("identity refusal: %v", err)
+	}
+	if _, err = os.Stat(r.DescriptorPath); err != nil {
+		t.Errorf("live host capability removed: %v", err)
+	}
+	if inspection, e := p.Inspect(context.Background(), r); e != nil || inspection.Gone || !inspection.Running {
+		t.Errorf("live placement retired: %+v %v", inspection, e)
+	}
+}
+func TestUnknownRecordedIdentityRetainsLivePlacement(t *testing.T) {
+	p, r := placedHost(t, nil)
+	spec, err := Descriptor(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden := r.SocketPath + ".hidden"
+	if err = os.Rename(r.SocketPath, hidden); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Rename(hidden, r.SocketPath)
+		_ = WritePrivateJSON(r.DescriptorPath, spec)
+		_ = WritePrivateJSON(metadataPath(r), r)
+	})
+	stale := r
+	stale.HostPID = exitedTestPID(t)
+	// A PID without its process-identity witness cannot prove this host absent.
+	raw, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err = json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	delete(record, "host_start_time")
+	if err = WritePrivateJSON(metadataPath(r), record); err != nil {
+		t.Fatal(err)
+	}
+	cold, err := New(p.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = cold.Stop(context.Background(), stale)
+	var fault *Failure
+	if !errors.As(err, &fault) || fault.Code != "outcome_unknown" {
+		t.Errorf("unknown absence: %v", err)
+	}
+	if _, err = os.Stat(r.DescriptorPath); err != nil {
+		t.Errorf("unknown host capability removed: %v", err)
+	}
+	var saved Receipt
+	if err = ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); err != nil || saved.Retired {
+		t.Errorf("unknown placement retired: %+v %v", saved, err)
 	}
 }

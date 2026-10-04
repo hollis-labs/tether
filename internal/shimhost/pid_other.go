@@ -23,3 +23,11 @@ func (p *processHandle) signal(_ syscall.Signal) error {
 func (p *processHandle) wait(_ context.Context) error {
 	return fail("unsupported", "authenticated host teardown requires Linux")
 }
+
+func processStartTime(int) (uint64, error) {
+	return 0, fail("unsupported", "host identity requires Linux")
+}
+func peerStartTime(*processHandle) (uint64, error) {
+	return 0, fail("unsupported", "host identity requires Linux")
+}
+func recordedIdentityGone(int, uint64) bool { return false }

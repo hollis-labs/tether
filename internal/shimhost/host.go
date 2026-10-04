@@ -74,6 +74,7 @@ type Receipt struct {
 	Journal        string `json:"journal,omitempty"`
 	Epoch          string `json:"epoch,omitempty"`
 	HostPID        int    `json:"host_pid"`
+	HostStartTime  uint64 `json:"host_start_time,string,omitempty"`
 	ShimPID        int    `json:"shim_pid"`
 	ProviderPID    int    `json:"provider_pid"`
 	Fingerprint    string `json:"fingerprint"`
@@ -278,6 +279,8 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 			return r, fail("outcome_unknown", "shim spawn did not become inspectable")
 		}
 		r.HostPID = cmd.Process.Pid
+		// The owned child cannot reuse its PID before our waiter starts.
+		r.HostStartTime, _ = processStartTime(r.HostPID)
 		r.ShimPID = r.HostPID
 		reaped := make(chan struct{})
 		p.mu.Lock()
@@ -386,6 +389,13 @@ func (p *Provider) inspect(ctx context.Context, r Receipt) (Inspection, error) {
 		if r.Journal == "" {
 			r.Journal = saved.Journal
 		}
+		if saved.HostPID > 0 && r.HostPID > 0 && saved.HostPID != r.HostPID {
+			return Inspection{}, fail("identity_mismatch", "recorded host PID differs")
+		}
+		if r.HostPID == 0 {
+			r.HostPID = saved.HostPID
+		}
+		r.HostStartTime = saved.HostStartTime
 	}
 	spec, err := Descriptor(r)
 	if err != nil {
@@ -425,13 +435,27 @@ func (p *Provider) inspect(ctx context.Context, r Receipt) (Inspection, error) {
 	if peer, peerErr := peerPID(c.socket); peerErr == nil && peer > 0 {
 		r.ShimPID = peer
 		r.HostPID = peer
+		if handle, e := authenticatedProcess(c, peer); e == nil {
+			start, e := peerStartTime(handle)
+			handle.close()
+			if e != nil {
+				return Inspection{}, fail("outcome_unknown", "host identity unavailable")
+			}
+			if r.HostStartTime != 0 && r.HostStartTime != start {
+				return Inspection{}, fail("identity_mismatch", "host process identity changed")
+			}
+			r.HostStartTime = start
+		}
 	}
 	if r.Backend == SystemdUser {
 		b, e := p.cfg.Command(ctx, []string{"systemctl", "--user", "show", r.UnitName, "--property=MainPID", "--value"})
 		if e != nil {
 			return Inspection{}, fail("outcome_unknown", "unit pid unavailable")
 		}
-		r.HostPID, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		unitPID, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		if unitPID != r.HostPID {
+			return Inspection{}, fail("identity_mismatch", "unit and socket peer differ")
+		}
 		r.ShimPID = r.HostPID
 	}
 	return Inspection{Receipt: r, Running: running, Exit: exit}, nil
@@ -460,6 +484,13 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		if saved.Retired {
 			return cleanupRetired(saved)
 		}
+		if saved.HostPID > 0 && r.HostPID > 0 && saved.HostPID != r.HostPID {
+			return fail("identity_mismatch", "recorded host PID differs")
+		}
+		if saved.HostStartTime > 0 && r.HostStartTime > 0 && saved.HostStartTime != r.HostStartTime {
+			return fail("identity_mismatch", "recorded host process identity differs")
+		}
+		r.HostStartTime = saved.HostStartTime
 		if r.Journal == "" {
 			r.Journal = saved.Journal
 		}
@@ -481,6 +512,16 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		var e error
 		process, e = authenticatedProcess(&Client{socket: socket}, r.HostPID)
 		peerGone = errors.Is(e, syscall.ESRCH)
+		if e == nil {
+			start, identityErr := peerStartTime(process)
+			if identityErr != nil {
+				return fail("outcome_unknown", "connected host identity unavailable")
+			}
+			if r.HostStartTime != 0 && r.HostStartTime != start {
+				return fail("identity_mismatch", "connected host process identity differs")
+			}
+			r.HostStartTime = start
+		}
 		return e
 	})
 	if process != nil {
@@ -489,8 +530,17 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	if err != nil {
 		// ESRCH from the peer-pidfd source proves that the connected peer exited.
 		// Failed dialing alone never establishes absence.
-		if peerGone || p.knownGone(ctx, r) {
+		var refusal *Failure
+		if errors.As(err, &refusal) {
+			return err
+		}
+		var connection *net.OpError
+		connectionFailed := errors.As(err, &connection) && connection.Op == "dial" && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT))
+		if (connectionFailed || peerGone) && p.knownGone(ctx, r) {
 			return p.retire(r, saved)
+		}
+		if connectionFailed || peerGone {
+			return fail("outcome_unknown", "recorded host identity is not verified gone")
 		}
 		return err
 	}
@@ -567,8 +617,8 @@ func (p *Provider) unitGone(ctx context.Context, r Receipt) bool {
 	return err == nil && strings.TrimSpace(string(b)) == "not-found"
 }
 func (p *Provider) knownGone(ctx context.Context, r Receipt) bool {
-	if r.Backend == SystemdUser {
-		return p.unitGone(ctx, r)
+	if r.Backend == SystemdUser && !p.unitGone(ctx, r) {
+		return false
 	}
 	if r.HostPID <= 0 {
 		return false
@@ -583,7 +633,7 @@ func (p *Provider) knownGone(ctx context.Context, r Receipt) bool {
 		default:
 		}
 	}
-	return errors.Is(syscall.Kill(r.HostPID, 0), syscall.ESRCH)
+	return recordedIdentityGone(r.HostPID, r.HostStartTime)
 }
 func (p *Provider) retire(r, saved Receipt) error {
 	if saved.Attempted {
@@ -594,6 +644,9 @@ func (p *Provider) retire(r, saved Receipt) error {
 			saved.Journal = r.Journal
 		}
 		saved.HostPID = r.HostPID
+		if r.HostStartTime != 0 {
+			saved.HostStartTime = r.HostStartTime
+		}
 		saved.ShimPID = r.ShimPID
 		r = saved
 	}
@@ -639,6 +692,7 @@ func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
 		saved.Epoch = observed.Receipt.Epoch
 	}
 	saved.HostPID = observed.Receipt.HostPID
+	saved.HostStartTime = observed.Receipt.HostStartTime
 	saved.ShimPID = observed.Receipt.ShimPID
 	saved.ProviderPID = observed.Receipt.ProviderPID
 	if err = WritePrivateJSON(metadataPath(r), saved); err != nil {

@@ -96,17 +96,25 @@ SIGKILL after the configured grace and wait within a total timeout. An already
 exited provider is a successful kill outcome. Teardown refuses stale PID identity
 and requires Linux with peer-pidfd support; other platforms return
 `unsupported`, never signal a stored bare PID. Before sending takeover hello,
-Stop checks the same-uid socket peer credentials, equality with a recorded
-`HostPID` when available, and acquires that socket's pidfd. Unsupported kernels
+Stop checks the same-uid socket peer credentials, equality with the recorded
+`HostPID` and Linux process start time when available, and acquires that socket's
+pidfd. The secret-free private receipt persists the process start time as an
+identity witness. Unsupported kernels
 refuse before changing the epoch or journal. The pinned hello checks session,
 instance, generation and journal. The client does not verify that the server
 knows the secret: these checks do not provide mutual secret authentication or
 protect against a malicious same-uid peer outside the provider sandbox.
 
 After verified host exit, a durable retired receipt is written and the
-secret-bearing launch descriptor is removed. A failed dial alone proves nothing;
-a previously checked PID that is absent, an exited owned child, a peer-pidfd
-ESRCH or an absent named unit permits retirement. Repeated Stop is idempotent,
+secret-bearing launch descriptor is removed. Typed peer and hello refusals are
+decisive and never permit an absence fallback. A connection-level refusal or
+missing socket permits retirement only when the recorded process identity is
+shown gone: a recorded start time identifies an absent or replaced process, or
+the owned child's waiter proves it exited. Systemd-user also requires the named
+unit to be absent. Peer-pidfd ESRCH requires that positive identity evidence too.
+An unreachable socket, a timeout, or bare ESRCH on a stale PID is unknown and
+retains the capability files; a host might have restarted under another PID.
+Repeated Stop is idempotent,
 including after a host crash or a timeout after SIGKILL. A collected systemd unit
 is a successful stop outcome after its absence is verified. The journal and
 secret-free receipt remain as evidence. Retired placements are terminal: there

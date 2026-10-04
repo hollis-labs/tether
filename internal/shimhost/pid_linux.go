@@ -5,9 +5,12 @@ package shimhost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -111,4 +114,41 @@ func (p *processHandle) wait(ctx context.Context) error {
 		case <-time.After(time.Millisecond):
 		}
 	}
+}
+
+// processStartTime is the Linux process identity witness, not a liveness test.
+func processStartTime(pid int) (uint64, error) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	end := strings.LastIndexByte(string(raw), ')')
+	if end < 0 {
+		return 0, fail("outcome_unknown", "host identity unavailable")
+	}
+	fields := strings.Fields(string(raw[end+1:]))
+	if len(fields) < 20 {
+		return 0, fail("outcome_unknown", "host identity unavailable")
+	}
+	return strconv.ParseUint(fields[19], 10, 64)
+}
+func peerStartTime(p *processHandle) (uint64, error) {
+	if err := unix.PidfdSendSignal(p.fd, 0, nil, 0); err != nil {
+		return 0, err
+	}
+	start, err := processStartTime(p.pid)
+	if err != nil {
+		return 0, err
+	}
+	if err := unix.PidfdSendSignal(p.fd, 0, nil, 0); err != nil {
+		return 0, err
+	}
+	return start, nil
+}
+func recordedIdentityGone(pid int, start uint64) bool {
+	if pid <= 0 || start == 0 {
+		return false
+	}
+	current, err := processStartTime(pid)
+	return errors.Is(err, os.ErrNotExist) || err == nil && current != start
 }
