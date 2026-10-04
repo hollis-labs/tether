@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -13,7 +14,7 @@ import (
 	"github.com/hollis-labs/tether/internal/mcptransport"
 )
 
-func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store) (*mcptransport.Handler, error) {
+func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store, teams api.TeamOps) (*mcptransport.Handler, error) {
 	if !svc.Catalog.Global.Daemon.MCPEndpoint.Enabled {
 		return nil, nil
 	}
@@ -23,6 +24,7 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 	}
 	cache := &mcptransport.CatalogCache{Root: svc.CatalogRoot}
 	return mcptransport.NewHandler(ctx, mcptransport.HandlerConfig{
+		TeamsEnabled: cfg.TeamsEnabled, Teams: teams,
 		Publisher:  mcpadapter.NewDaemonToolCallRecorder(ctx, svc.Bus, svc.Store),
 		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityMode, Verifier: verifier, Service: svc,
 		NativeClient: func(token string) *client.Client { return client.New(cfg.ListenAddr, client.WithToken(token)) },
