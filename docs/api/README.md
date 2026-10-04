@@ -61,6 +61,95 @@ Defined codes:
 
 ---
 
+## Team verbs
+
+Team wrappers are available for host wiring, but the daemon does not yet read
+`teams.enabled` or mount these routes. The catalog key lives in `global.yaml`
+and defaults to false. Setting it to true exposes the CLI command tree without
+activating a daemon host. A host supplying no team service has no team routes
+(404) or MCP tools; with the key off the CLI namespace is absent. The CLI setting
+controls discovery; the daemon service enforces authentication and authority.
+
+All verbs use POST and the `Idempotency-Key` header (required, at most 256 bytes,
+valid UTF-8 without control characters). MCP and CLI reject surrounding key
+whitespace. Go trims HTTP header whitespace on a real socket before the handler
+sees it, so an HTTP caller's padded header arrives as the unpadded key.
+The key is scoped by authenticated caller and verb across runs. Reusing it with
+changed content conflicts; retries return the retained result and recipients.
+No caller, verified, operator or session claim is accepted in the body. Caller
+identity comes exclusively from the daemon's authenticated request context;
+unverified or asserted identities are refused. The authenticated local operator
+exception affects verification only, never membership, grants or host ceilings.
+
+| Route | Body fields |
+|---|---|
+| `/teams/form` | `team`, optional `launch` (`counts`, `limits`, `pool_identities`) |
+| `/teams/dissolve` | `run_id` |
+| `/teams/member_add` | `run_id`, `slot`, optional `limits` |
+| `/teams/member_remove` | `run_id`, `member_id` |
+| `/teams/assign` | `run_id`, `body`, optional `address`, `kind`, `history` |
+| `/teams/delegate` | `run_id`, `body`, optional `address`, `kind`, `history` |
+| `/teams/address` | `run_id`, `body`, optional `address`, `kind`, `history` |
+| `/teams/cancel` | `run_id`, `member_id`, optional `cascade` (default false) |
+| `/teams/report_result` | `run_id`, `delegate_key`, `body` |
+
+`team` follows the mesh team definition schema. `limits` uses snake_case mesh
+limit fields, such as `max_depth`, `max_children`, `fan_out`, `budget`, `timeout` (integer nanoseconds),
+`max_rounds` and `max_stalls`. `history` and `kind` use mesh vocabulary. Formation
+refuses ungoverned authority and limits above the host policy before storing the
+definition. Addressing, assignment, delegation and cancellation retain library
+grant checks and spawn limits; these wrappers add no authority.
+
+Successful requests return HTTP 200 with the unchanged service Result: optional
+`run` metadata, `member`, `recipients`, and `delivery_keys`. Member views contain
+only `id`, `slot`, `actor`, `status`, and `kind`. Provision intents, workspaces,
+quotas, sessions and internal retry routes are never response fields.
+
+Fields outside a verb's table row are rejected. Required fields must be present;
+required strings must be nonempty. Message addresses remain optional: an empty
+or omitted address uses the library's authored routing rules and coordinator
+fallback. Empty `member_id` and `slot` now return `invalid_request` (400) on all
+three surfaces; the underlying service would return typed `not_found` (404).
+Top-level field names are case-sensitive; nested JSON field names remain case-insensitive and
+duplicate keys take the last value. The service still validates team definitions,
+membership and library requests after transport validation.
+
+Team errors use the standard error envelope with cause-free code/message:
+`unauthenticated` (401), `unavailable` (503), `denied` (403), `not_found` (404),
+`conflict` (409), `invalid_request` (400), or `internal_error` (500). Raw bodies
+are limited to 64 KiB; encoded team definitions to 64 KiB; whole transport
+requests to 128 KiB. Unknown fields, trailing JSON and oversized inputs are
+invalid requests. CLI transport-only codes include `method_not_allowed` (405)
+and `teams_disabled` (404, absent route without a team error envelope). The client
+maps non-envelope 5xx responses to `unavailable` (503); canonical team
+`internal_error` envelopes retain 500. Existing endpoints retain their own error
+conventions.
+
+The CLI sends the same JSON request through the daemon, using the normal bearer
+credential configuration (`--token-file` or the existing credential lookup):
+
+```sh
+tether team assign --key work-1 --request '{"run_id":"run-id","address":"@workers","body":"Review the change"}'
+tether team cancel --key stop-1 --request '{"run_id":"run-id","member_id":"member-id","cascade":true}'
+tether team form --key start-1 --request-file team-request.json
+```
+
+Every route suffix is also a CLI verb, including `member_add`, `member_remove`
+and `report_result`. `--request-file -` reads stdin. Results are JSON; CLI errors
+retain the same typed code and HTTP status without server causes. There is no
+CLI flag or environment variable that enables teams.
+
+Activation follow-ups: agent session credentials currently lack `team.write`
+(`workerScopes` mints session, message and catalog write scopes). Agents cannot
+use the MCP team verbs until scope minting is deliberately changed; who receives
+that scope is an activation policy decision. HTTP has no token-scope checks
+anywhere under the existing convention, so HTTP and CLI can reach the team
+service with a verified read-only-scoped bearer while MCP refuses it. Membership
+and service grants remain the authority gate; HTTP scope enforcement is a
+separate hardening follow-up. This change does not alter session minting.
+
+---
+
 ## AI Gateway
 
 The AI gateway is optional. `tetherd` only mounts `/ai/*` when `global.yaml`

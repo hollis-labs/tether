@@ -40,6 +40,7 @@ import (
 	"github.com/hollis-labs/go-mcp/sanitize"
 	gomcp "github.com/hollis-labs/go-mcp/server"
 	hotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/callcontext"
 	"github.com/hollis-labs/tether/internal/client"
@@ -54,6 +55,8 @@ import (
 const (
 	ScopeSessionWrite = "session.write"
 	ScopeMessageWrite = "message.write"
+	// ScopeTeamWrite gates all team verb tools; service grants remain authoritative.
+	ScopeTeamWrite = "team.write"
 	// ScopeAIInvoke gates model-invocation tools on the AI gateway surface.
 	// Read-side AI introspection and durable audit/usage queries remain
 	// scope-free.
@@ -67,6 +70,7 @@ const (
 
 // Adapter exposes the tether runtime as MCP tools over stdio.
 type Adapter struct {
+	teams                 api.TeamOps
 	runtime               RuntimeObservation                          // captured from this process, never the installed path
 	upstreams             interface{ StatusSummary() []ServerStatus } // scoped source for daemon views; legacy pool otherwise
 	svc                   *app.Service
@@ -225,11 +229,11 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 		var failure *budget.ToolError
 		if errors.As(err, &failure) {
 			switch failure.Code {
-			case "auth_required", "insufficient_scope":
+			case "auth_required", "insufficient_scope", "unauthenticated", "denied":
 				telemetry.SetErrorClass(ctx, events.ToolErrorDenied)
 			case "invalid_request", "bad_request":
 				telemetry.SetErrorClass(ctx, events.ToolErrorValidation)
-			case "daemon_unavailable":
+			case "daemon_unavailable", "unavailable":
 				telemetry.SetErrorClass(ctx, events.ToolErrorUpstreamDown)
 			}
 		}

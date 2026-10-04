@@ -34,7 +34,7 @@ func main() {
 		defer func() { _ = shutdown(ctx) }()
 	}
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := buildRootCommand(rootCmd, os.Args[1:], catalogPath).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var ec exitCoder
 		if errors.As(err, &ec) {

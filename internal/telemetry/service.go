@@ -183,11 +183,11 @@ func IsObserved(ctx context.Context) bool {
 // used at a native boundary: an upstream's arbitrary code is not our policy.
 func NativeErrorClass(code string) events.ToolErrorClass {
 	switch code {
-	case "auth_required", "insufficient_scope", "forbidden":
+	case "auth_required", "insufficient_scope", "forbidden", "unauthenticated", "denied":
 		return events.ToolErrorDenied
 	case "invalid_request", "bad_request", "invalid_argument":
 		return events.ToolErrorValidation
-	case "daemon_unavailable":
+	case "daemon_unavailable", "unavailable":
 		return events.ToolErrorUpstreamDown
 	case "timeout":
 		return events.ToolErrorTimeout

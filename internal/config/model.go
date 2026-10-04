@@ -15,6 +15,7 @@ import (
 )
 
 type Global struct {
+	Teams    TeamsConfig       `yaml:"teams"`
 	MCP      mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
 	Version  string            `yaml:"version"`
 	Catalog  CatalogRoots      `yaml:"catalog"`
@@ -26,6 +27,12 @@ type Global struct {
 	// behavior identical to pre-federation Tether. See internal/federation
 	// and docs/messaging-federation.md.
 	Federation federation.Config `yaml:"federation"`
+}
+
+// TeamsConfig controls optional team surfaces and host activation.
+// Omission keeps teams disabled.
+type TeamsConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // IdentityConfig rolls out verified attribution before authorization policy.

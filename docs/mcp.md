@@ -14,6 +14,40 @@ subprocess; no daemon needs to be running first.
 
 ---
 
+## Team tools
+
+When the host supplies an enabled team service, its native tool catalog adds
+`tether_team_form`, `tether_team_dissolve`, `tether_team_member_add`,
+`tether_team_member_remove`, `tether_team_assign`, `tether_team_delegate`,
+`tether_team_address`, `tether_team_cancel`, and `tether_team_report_result`.
+With teams disabled these tools are absent, including the gateway's native
+catalog. Every team verb requires the `team.write` token scope in addition to
+service authentication and grants. HTTP has no token-scope check; the daemon
+service enforces caller membership and grants on both paths. Each is a mutation with the existing tool annotations; cancellation,
+removal and dissolution are destructive. Registration follows host activation,
+which is separate from the wrapper implementation.
+
+Arguments are `key` (required caller-scoped idempotency key) and `request` (the
+verb's JSON object); legacy `_traceparent` and `_tracestate` string arguments
+are accepted as trace metadata. The [HTTP team reference](api/README.md#team-verbs) defines
+request fields, sizes, results, CLI commands and error classifications. Tools
+publish input/output schemas and return the unchanged service Result as
+structured JSON, mirrored as text. Typed failures use those same stable codes
+without exposing causes. Principal or operator claims are never arguments;
+identity comes from the authenticated daemon view, and the service refuses
+unverified identities. Team services require strict authority; no development
+mode bypass exists. An idempotent retry retains the original selection/result.
+
+Activation follow-ups: agent session credentials are currently minted without
+`team.write`, making all nine MCP team verbs unreachable to agents until the
+minting list is deliberately changed. Scope issuance is an activation policy
+decision; this change does not alter session minting. HTTP has no token-scope
+checks anywhere under the existing convention, including team routes: a verified
+read-only-scoped bearer can reach service membership/grant checks via HTTP or
+CLI while MCP refuses it. HTTP scope enforcement is a separate hardening item.
+
+---
+
 ## Quick start
 
 ### 1. Build the binary
