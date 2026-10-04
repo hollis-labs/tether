@@ -177,7 +177,7 @@ func startSession(t *testing.T, f *fixture, attach bool, preset string, change .
 	}
 	adapter := provider.NewClaudeAdapterStreamingStdio()
 	adapter.Binary = exe
-	rt, e := agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{ID: "g1-claude", Adapter: adapter, Caps: agentsessions.Capabilities{StreamingStdio: true, ProviderSessionID: true}})
+	rt, e := agentsessions.NewFromAdapter(agentsessions.AdapterRuntimeConfig{ID: "test-claude", Adapter: adapter, Caps: agentsessions.Capabilities{StreamingStdio: true, ProviderSessionID: true}})
 	if e != nil {
 		t.Fatal(e)
 	}
