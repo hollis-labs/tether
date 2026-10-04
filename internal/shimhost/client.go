@@ -15,7 +15,8 @@ import (
 )
 
 // Client pins identity and journal in hello, before any controller takeover.
-// Its authenticated socket is also the authority for host process signaling.
+// Teardown checks same-uid peer credentials and a pidfd before sending hello.
+// This protocol authenticates the client to the server, not the reverse.
 type Client struct {
 	socket      *net.UnixConn
 	Epoch       string
@@ -30,6 +31,10 @@ type Client struct {
 }
 
 func Connect(ctx context.Context, path, secret, session, instance, generation, role, journal string, takeover bool, expectedPID ...int) (*Client, error) {
+	return connect(ctx, path, secret, session, instance, generation, role, journal, takeover, expectedPID, nil)
+}
+
+func connect(ctx context.Context, path, secret, session, instance, generation, role, journal string, takeover bool, expectedPID []int, beforeHello func(*net.UnixConn) error) (*Client, error) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
 		return nil, err
@@ -48,6 +53,12 @@ func Connect(ctx context.Context, path, secret, session, instance, generation, r
 		if pid <= 0 || expectedPID[0] > 0 && pid != expectedPID[0] {
 			_ = socket.Close()
 			return nil, fail("identity_mismatch", "authenticated peer differs from recorded host")
+		}
+	}
+	if beforeHello != nil {
+		if err := beforeHello(socket); err != nil {
+			_ = socket.Close()
+			return nil, err
 		}
 	}
 	success := false

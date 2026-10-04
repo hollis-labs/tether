@@ -34,13 +34,16 @@ entire per-session state directory in the provider's sandbox policy, including
 the launch descriptor, journal and control socket. Without that denial the
 provider can read its environment secrets and controller capability. The
 database and placement receipt contain paths and facts, never capability values.
-Callers declare volatile and secret environment keys through `VolatileEnvKeys`;
-the placement fingerprint includes their keys and excludes their values. Stable
-non-secret values still fence a changed launch request.
+Environment keys containing TOKEN, SECRET, KEY, PASSWORD or CREDENTIAL
+(case-insensitive) are volatile by default. Callers add other volatile or secret
+keys through `VolatileEnvKeys`; their values never enter the fingerprint. Stable
+non-secret values still fence a changed launch request. A matching retry with
+re-minted volatile values returns the original placement, whose descriptor and
+provider environment retain the FIRST values; it does not refresh credentials.
 
 Placement persists intent before submission and waits briefly for lock ownership.
 An uncertain submission is inspected, never automatically launched again. A
-journal pin is included in authenticated hello, so an identity or journal mismatch
+journal pin is included in the client's hello, so an identity or journal mismatch
 is refused before takeover changes the controller epoch. Inspect merges observed
 facts while preserving the operation key, fingerprint and attempted-submit flag.
 
@@ -53,7 +56,8 @@ fresh agentkit session. Each attach reports the journal, epoch and replayed-even
 count on stderr. A missing checkpoint is refused: recovery cannot reset input
 keys or silently replay the entire journal. An explicit journal conflicting with
 the checkpoint is also refused. A committed terminal exit is saved with the
-cursor, so a later attach returns that status without waiting for another event.
+cursor, so a later bridge run returns that status without waiting for another event,
+with or without `--attach`.
 
 Two stdout crash windows remain. A line consumed downstream before its checkpoint
 can be delivered again. Bytes written and committed while still unread in a dead
@@ -78,7 +82,8 @@ continues to flush the suffix and propagate the exit. The journal retains
 acknowledged history without compaction.
 
 Bridge infrastructure failures use reserved exit code **93**. Provider status
-and signals otherwise propagate unchanged. The daemon MUST consult authenticated
+and signals otherwise propagate unchanged; a provider that itself exits 93 has
+the same bridge status. The daemon MUST consult authenticated
 shim health to decide whether the provider ended, even when the bridge exits;
 neither its exit code nor agentkit's bridge PID establishes provider liveness.
 
@@ -86,14 +91,25 @@ neither its exit code nor agentkit's bridge PID establishes provider liveness.
 
 Bridge stdin EOF detaches and leaves the provider alive. Explicit user stop calls
 host `Stop`: request the provider's bounded kill if it is still running, then
-terminate the authenticated host through a pidfd, escalate from SIGTERM to
+terminate the checked peer through a pidfd, escalate from SIGTERM to
 SIGKILL after the configured grace and wait within a total timeout. An already
 exited provider is a successful kill outcome. Teardown refuses stale PID identity
-and requires Linux with authenticated peer-pidfd support; other platforms return
-`unsupported`, never signal a stored bare PID.
+and requires Linux with peer-pidfd support; other platforms return
+`unsupported`, never signal a stored bare PID. Before sending takeover hello,
+Stop checks the same-uid socket peer credentials, equality with a recorded
+`HostPID` when available, and acquires that socket's pidfd. Unsupported kernels
+refuse before changing the epoch or journal. The pinned hello checks session,
+instance, generation and journal. The client does not verify that the server
+knows the secret: these checks do not provide mutual secret authentication or
+protect against a malicious same-uid peer outside the provider sandbox.
 
 After verified host exit, a durable retired receipt is written and the
-secret-bearing launch descriptor is removed. Repeated Stop is idempotent. The
-journal and secret-free receipt remain as evidence until explicit retirement.
+secret-bearing launch descriptor is removed. A failed dial alone proves nothing;
+a previously checked PID that is absent, an exited owned child, a peer-pidfd
+ESRCH or an absent named unit permits retirement. Repeated Stop is idempotent,
+including after a host crash or a timeout after SIGKILL. A collected systemd unit
+is a successful stop outcome after its absence is verified. The journal and
+secret-free receipt remain as evidence. Retired placements are terminal: there
+is no retirement/re-place API, and a new placement requires a NEW session ID.
 Placement and attach clear abandoned `.commit-*` files under the same lock used
 by record writers, so a live atomic commit is never deleted.

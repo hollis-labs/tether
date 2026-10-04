@@ -162,6 +162,9 @@ func LockWait(ctx context.Context, path string, limit time.Duration) (*os.File, 
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	for {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, context.Canceled
+		}
 		lock, err := Lock(path)
 		if err == nil {
 			return lock, nil
@@ -171,6 +174,9 @@ func LockWait(ctx context.Context, path string, limit time.Duration) (*os.File, 
 		}
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return nil, context.Canceled
+			}
 			return nil, fail("busy", "private record is busy")
 		case <-time.After(10 * time.Millisecond):
 		}

@@ -14,13 +14,11 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 func TestJournalCapRetainsTerminalReserve(t *testing.T) {
-	root, e := os.MkdirTemp("/var/tmp", "sj-")
-	if e != nil {
-		t.Fatal(e)
-	}
+	root := testutil.ShortDir(t)
 	defer func() {
 		if e := os.RemoveAll(root); e != nil {
 			t.Error(e)

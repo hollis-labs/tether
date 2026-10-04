@@ -19,20 +19,18 @@ import (
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/shimhost"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 // This wire fixture models a final pipe gap without starting an escaping child.
 func terminalWire(t *testing.T, gap ...bool) (string, string) {
 	includeGap := len(gap) == 0 || gap[0]
 	t.Helper()
-	root, err := os.MkdirTemp("/var/tmp", "bw-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := testutil.ShortDir(t)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	spec := shim.Launch{Session: "urn:session:wire", Instance: "urn:instance:wire", Generation: 1, Secret: "01234567890123456789012345678901", ControlDir: root}
 	descriptor := filepath.Join(root, "launch.json")
-	if err = shimhost.WritePrivateJSON(descriptor, spec); err != nil {
+	if err := shimhost.WritePrivateJSON(descriptor, spec); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(root, "control.sock"), Net: "unix"})
@@ -230,5 +228,21 @@ func TestAttachHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	defer func() { _ = observer.Close() }()
 	if observer.Epoch != epoch {
 		t.Fatal("wrong pinned host journal changed epoch")
+	}
+}
+
+func TestSavedExitReturnsWithoutAttach(t *testing.T) {
+	descriptor, _ := terminalWire(t, false)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	code, err := Run(ctx, Options{DescriptorPath: descriptor}, openInput(t), io.Discard, io.Discard)
+	cancel()
+	if err != nil || code != 7 {
+		t.Fatalf("first exit: %d %v", code, err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	code, err = Run(ctx, Options{DescriptorPath: descriptor}, openInput(t), io.Discard, io.Discard)
+	if err != nil || code != 7 {
+		t.Fatalf("saved exit: %d %v", code, err)
 	}
 }

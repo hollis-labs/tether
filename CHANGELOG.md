@@ -8,7 +8,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
-- Shim host foundation: private, idempotent detached placement and explicitly enabled systemd-user placement; a Claude stdio bridge with durable line checkpoints and attach diagnostics; secret-free session placement storage. `catalog.defaults.shim_host.journal_bytes` defaults to 256 MiB and `systemd_user` defaults to false. The explicit `tether shim-bridge` command does not change existing session launches. Crash delivery windows and EOF/detach behavior are documented in `docs/shim-host.md`.
+- Shim host foundation: private, idempotent detached placement and explicitly enabled systemd-user placement; a Claude stdio bridge with durable line checkpoints and attach diagnostics; secret-free session placement storage. `catalog.defaults.shim_host.journal_bytes` defaults to 256 MiB and `systemd_user` defaults to false. The explicit `tether shim-bridge` command does not change existing session launches. Crash delivery windows and EOF/detach behavior are documented in `docs/shim-host.md`. Teardown requires Linux peer pidfds; non-Linux refuses with `unsupported`. Bridge infrastructure failures use exit code 93; a provider exit of 93 is indistinguishable, so the daemon must consult authenticated shim health.
 - Add non-terminal detached and orphaned session states, safe recovery and resume rules, and CLI/MCP/API/sysop vocabulary.
 - Add inert SQLite team storage: immutable definition and roster revisions, atomic roster mutations, fenced keyed launch leases with a durable journal, first-wins phase signals, and run containers owning session groups. Run channel names use `team.<run>`; runtime wiring and public verbs follow separately.
 

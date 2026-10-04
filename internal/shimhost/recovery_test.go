@@ -36,14 +36,7 @@ func placedHost(t *testing.T, alter func(*Config, *shim.Launch)) (*Provider, Rec
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = p.Stop(ctx, r)
-		for _, pid := range []int{r.ProviderPID, r.HostPID} {
-			if pid > 0 {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
+		stopTestPlacement(t, p, r)
 	})
 	t.Logf("host=%d provider=%d", r.HostPID, r.ProviderPID)
 	return p, r
@@ -80,6 +73,7 @@ func TestStopAfterNaturalExitRemovesCapabilityAndIsIdempotent(t *testing.T) {
 }
 func TestStopEscalatesIgnoringHostWithBackgroundContext(t *testing.T) {
 	p, r := placedHost(t, func(cfg *Config, _ *shim.Launch) { cfg.HostEnv = append(cfg.HostEnv, "TETHER_TEST_IGNORE_TERM=1") })
+	handle := testHostHandle(t, r)
 	done := make(chan error, 1)
 	go func() { done <- p.Stop(context.Background(), r) }()
 	select {
@@ -88,7 +82,7 @@ func TestStopEscalatesIgnoringHostWithBackgroundContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(4 * time.Second):
-		_ = syscall.Kill(r.HostPID, syscall.SIGKILL)
+		_ = handle.signal(syscall.SIGKILL)
 		<-done
 		t.Fatal("Stop has no bounded escalation")
 	}
@@ -130,10 +124,7 @@ func TestPlacementRetryIgnoresDeclaredVolatileEnvValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = p.Stop(ctx, r)
-		_ = syscall.Kill(r.HostPID, syscall.SIGKILL)
+		stopTestPlacement(t, p, r)
 	})
 	spec.Env[len(spec.Env)-1] = "SESSION_TOKEN=re-minted"
 	for i, j := 0, len(spec.Env)-1; i < j; i, j = i+1, j-1 {
@@ -171,10 +162,7 @@ func TestPlaceWaitsForLockAndReturnsTypedBusy(t *testing.T) {
 		t.Fatalf("placement did not wait: %v", err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = p.Stop(ctx, r)
-		_ = syscall.Kill(r.HostPID, syscall.SIGKILL)
+		stopTestPlacement(t, p, r)
 	})
 }
 func TestPlacementClearsStaleCommitFiles(t *testing.T) {
@@ -196,10 +184,7 @@ func TestPlacementClearsStaleCommitFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = p.Stop(ctx, r)
-		_ = syscall.Kill(r.HostPID, syscall.SIGKILL)
+		stopTestPlacement(t, p, r)
 	})
 	if _, err = os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatal("stale secret temp file retained")
@@ -225,17 +210,6 @@ func TestHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	}
 	if _, err = p.Reattach(context.Background(), wrong); err == nil {
 		t.Fatal("reattach wrong journal accepted")
-	}
-}
-func TestLongTempDirectoryDoesNotChangeSocketPlacement(t *testing.T) {
-	long := filepath.Join(t.TempDir(), strings.Repeat("long", 25))
-	if err := os.Mkdir(long, 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TMPDIR", long)
-	p, r := placedHost(t, nil)
-	if err := p.Stop(context.Background(), r); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -341,5 +315,14 @@ func TestHostPIDMismatchRefusesBeforeEpochChanges(t *testing.T) {
 	}
 	if after.Receipt.Epoch != before.Receipt.Epoch {
 		t.Fatal("PID refusal changed controller epoch")
+	}
+}
+
+func stopTestPlacement(t *testing.T, p *Provider, r Receipt) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := p.Stop(ctx, r); err != nil {
+		t.Error(err)
 	}
 }

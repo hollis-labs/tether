@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,7 +184,15 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	}
 	for _, entry := range spec.Env {
 		key, value, _ := strings.Cut(entry, "=")
-		field := envIdentity{Key: key, Volatile: volatile[key]}
+		secretName := strings.ToUpper(key)
+		isSecret := false
+		for _, marker := range []string{"TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL"} {
+			if strings.Contains(secretName, marker) {
+				isSecret = true
+				break
+			}
+		}
+		field := envIdentity{Key: key, Volatile: volatile[key] || isSecret}
 		if !field.Volatile {
 			field.Value = value
 		}
@@ -193,7 +202,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	raw, err := json.Marshal(struct {
 		Launch shim.Launch
 		Env    []envIdentity
-	}{fingerprintSpec, env}) //nolint:gosec // Capability cleared; caller-declared secret env values excluded.
+	}{fingerprintSpec, env}) //nolint:gosec // Capability cleared; declared and secret-looking env values excluded.
 	if err != nil {
 		return zero, err
 	}
@@ -454,6 +463,10 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		if r.Journal == "" {
 			r.Journal = saved.Journal
 		}
+		if r.HostPID == 0 {
+			r.HostPID = saved.HostPID
+			r.ShimPID = saved.ShimPID
+		}
 	}
 	spec, err := Descriptor(r)
 	if err != nil {
@@ -462,16 +475,26 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	if r.Backend == SystemdUser && (!p.cfg.AllowSystemd || r.UnitName != p.unit(spec)) {
 		return fail("identity_mismatch", "foreign or disabled unit")
 	}
-	c, err := Connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "controller", r.Journal, true, r.HostPID)
+	var process *processHandle
+	peerGone := false
+	c, err := connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "controller", r.Journal, true, []int{r.HostPID}, func(socket *net.UnixConn) error {
+		var e error
+		process, e = authenticatedProcess(&Client{socket: socket}, r.HostPID)
+		peerGone = errors.Is(e, syscall.ESRCH)
+		return e
+	})
+	if process != nil {
+		defer process.close()
+	}
 	if err != nil {
+		// ESRCH from the peer-pidfd source proves that the connected peer exited.
+		// Failed dialing alone never establishes absence.
+		if peerGone || p.knownGone(ctx, r) {
+			return p.retire(r, saved)
+		}
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	process, err := authenticatedProcess(c, r.HostPID)
-	if err != nil {
-		return err
-	}
-	defer process.close()
 	running, _, _, err := health(ctx, c, spec.Session)
 	if err != nil {
 		return err
@@ -525,27 +548,65 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		if serviceErr == nil {
 			_, serviceErr = p.cfg.Command(ctx, []string{"systemctl", "--user", "reset-failed", r.UnitName})
 		}
+		if serviceErr != nil && p.unitGone(ctx, r) {
+			serviceErr = nil
+		}
 	}
-	// Only a verified terminal host licenses deletion of its capability.
-	if saved.Attempted {
-		r = saved
-	}
-	r.Retired = true
 	r.Epoch = c.Epoch
 	r.Journal = c.Journal
 	r.HostPID = process.pid
 	r.ShimPID = process.pid
-	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
-		return err
-	}
-	p.mu.Lock()
-	delete(p.reaped, process.pid)
-	p.mu.Unlock()
-	if err = cleanupRetired(r); err != nil {
+	if err = p.retire(r, saved); err != nil {
 		return err
 	}
 	return serviceErr
 }
+
+func (p *Provider) unitGone(ctx context.Context, r Receipt) bool {
+	b, err := p.cfg.Command(ctx, []string{"systemctl", "--user", "show", r.UnitName, "--property=LoadState", "--value"})
+	return err == nil && strings.TrimSpace(string(b)) == "not-found"
+}
+func (p *Provider) knownGone(ctx context.Context, r Receipt) bool {
+	if r.Backend == SystemdUser {
+		return p.unitGone(ctx, r)
+	}
+	if r.HostPID <= 0 {
+		return false
+	}
+	p.mu.Lock()
+	reaped := p.reaped[r.HostPID]
+	p.mu.Unlock()
+	if reaped != nil {
+		select {
+		case <-reaped:
+			return true
+		default:
+		}
+	}
+	return errors.Is(syscall.Kill(r.HostPID, 0), syscall.ESRCH)
+}
+func (p *Provider) retire(r, saved Receipt) error {
+	if saved.Attempted {
+		if r.Epoch != "" {
+			saved.Epoch = r.Epoch
+		}
+		if r.Journal != "" {
+			saved.Journal = r.Journal
+		}
+		saved.HostPID = r.HostPID
+		saved.ShimPID = r.ShimPID
+		r = saved
+	}
+	r.Retired = true
+	if err := WritePrivateJSON(metadataPath(r), r); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	delete(p.reaped, r.HostPID)
+	p.mu.Unlock()
+	return cleanupRetired(r)
+}
+
 func samePlacement(a, b Receipt) bool {
 	return a.Session == b.Session && a.Instance == b.Instance && a.Generation == b.Generation && a.Backend == b.Backend && a.DescriptorPath == b.DescriptorPath && a.SocketPath == b.SocketPath && a.UnitName == b.UnitName && (a.Journal == "" || b.Journal == "" || a.Journal == b.Journal)
 }

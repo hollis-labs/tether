@@ -27,6 +27,7 @@ import (
 	pevents "github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 type fixture struct {
@@ -50,10 +51,7 @@ func await(t *testing.T, what string, fn func() bool) {
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 func startFixture(t *testing.T, journalCap int64) *fixture {
 	t.Helper()
-	root, e := os.MkdirTemp("/var/tmp", "sb-")
-	if e != nil {
-		t.Fatal(e)
-	}
+	root := testutil.ShortDir(t)
 	f := &fixture{root: root, config: filepath.Join(root, "config.json")}
 	t.Cleanup(func() {
 		if f.host != nil {
@@ -267,14 +265,11 @@ func TestClaudeTurnsInterruptCrashAttach(t *testing.T) {
 		t.Fatal("hosted child died with bridge")
 	}
 	// Inject an unconsumed turn while the controller is absent, then detach.
-	client, e := shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "controller", false)
-	if e != nil {
-		t.Fatal(e)
-	}
+	client := waitController(t, f)
 	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]string{"content": "offline"}})
 	key := "test-offline"
 	raw, _ := json.Marshal(shim.Inject{Key: key, Actor: f.cfg.Launch.Actor, Subject: f.cfg.Launch.Subject, Mode: "input", Delivery: "immediate", Generation: "1", Data: encode(append(b, '\n'))})
-	if e = client.SendFrame(shim.Frame{Major: 1, Type: "inject", RequestID: key, Session: f.cfg.Launch.Session, Epoch: client.Epoch, Body: raw}); e != nil {
+	if e := client.SendFrame(shim.Frame{Major: 1, Type: "inject", RequestID: key, Session: f.cfg.Launch.Session, Epoch: client.Epoch, Body: raw}); e != nil {
 		t.Fatal(e)
 	}
 	waitReceipt(t, client, key)
@@ -648,4 +643,30 @@ func TestAttachDiagnosticCountsReplayAndKeepsProviderAlive(t *testing.T) {
 	if !alive(f.child) {
 		t.Fatal("attach detach killed provider")
 	}
+}
+
+// A killed bridge may be reaped before the host observes its closed socket.
+func waitController(t *testing.T, f *fixture) *shim.Client {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c, err := shim.Connect(filepath.Join(f.root, "c", "control.sock"), f.cfg.Launch.Secret, f.cfg.Launch.Session, f.cfg.Launch.Instance, "1", "controller", false)
+		if err == nil {
+			return c
+		}
+		var fault *shim.Error
+		if !errors.As(err, &fault) || fault.Code != "controller_busy" || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+func TestControllerWaitsForRelease(t *testing.T) {
+	f := startFixture(t, 16<<20)
+	first := waitController(t, f)
+	done := make(chan struct{})
+	go func() { time.Sleep(50 * time.Millisecond); _ = first.Close(); close(done) }()
+	second := waitController(t, f)
+	_ = second.Close()
+	<-done
 }

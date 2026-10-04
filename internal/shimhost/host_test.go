@@ -20,6 +20,7 @@ import (
 	"github.com/hollis-labs/go-sandbox/sandbox"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 func TestHostProcess(t *testing.T) {
@@ -59,16 +60,13 @@ func TestHostProcess(t *testing.T) {
 }
 func hostSpec(t *testing.T) (Config, shim.Launch) {
 	t.Helper()
-	root, e := os.MkdirTemp("/var/tmp", "sh-")
-	if e != nil {
-		t.Fatal(e)
-	}
+	root := testutil.ShortDir(t)
 	t.Cleanup(func() {
 		if e := os.RemoveAll(root); e != nil {
 			t.Error(e)
 		}
 	})
-	if e = os.WriteFile(filepath.Join(root, "pin"), nil, 0600); e != nil {
+	if e := os.WriteFile(filepath.Join(root, "pin"), nil, 0600); e != nil {
 		t.Fatal(e)
 	}
 	exe, e := os.Executable()

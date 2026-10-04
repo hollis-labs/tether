@@ -13,6 +13,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// getPeerPIDFD is the kernel capability seam for pre-hello teardown checks.
+var getPeerPIDFD = func(fd int) (int, error) {
+	return unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_PEERPIDFD)
+}
+
 type processHandle struct {
 	fd  int
 	pid int
@@ -56,10 +61,13 @@ func authenticatedProcess(c *Client, expectedPID int) (*processHandle, error) {
 	fd := -1
 	var inner error
 	err = raw.Control(func(socketFD uintptr) {
-		fd, inner = unix.GetsockoptInt(int(socketFD), unix.SOL_SOCKET, unix.SO_PEERPIDFD)
+		fd, inner = getPeerPIDFD(int(socketFD))
 	})
 	if err != nil {
 		return nil, err
+	}
+	if errors.Is(inner, unix.ESRCH) {
+		return nil, unix.ESRCH
 	}
 	if inner != nil {
 		return nil, fail("unsupported", "kernel must support authenticated peer pidfds")

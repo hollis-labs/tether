@@ -18,6 +18,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/shimhost"
+	"github.com/hollis-labs/tether/internal/testutil"
 )
 
 func TestShimBridgeCLIChild(t *testing.T) {
@@ -40,10 +41,7 @@ func TestShimBridgeCommandExitAndExplicitDescriptor(t *testing.T) {
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("implicit descriptor accepted")
 	}
-	dir, err := os.MkdirTemp("/var/tmp", "sc-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := testutil.ShortDir(t)
 	defer func() { _ = os.RemoveAll(dir) }()
 	exe, err := os.Executable()
 	if err != nil {
@@ -135,10 +133,7 @@ func TestShimBridgeInfrastructureFailureHasDistinctExitCode(t *testing.T) {
 }
 
 func TestShimBridgeMainMapsInfrastructureFailure(t *testing.T) {
-	dir, err := os.MkdirTemp("/var/tmp", "sm-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := testutil.ShortDir(t)
 	defer func() { _ = os.RemoveAll(dir) }()
 	exe, err := os.Executable()
 	if err != nil {

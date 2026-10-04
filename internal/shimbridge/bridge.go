@@ -213,8 +213,8 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 	if err = drain(); err != nil {
 		return 0, err
 	}
-	if opts.Attach && state.Exit != nil {
-		if opts.OnAttach != nil {
+	if state.Exit != nil {
+		if opts.Attach && opts.OnAttach != nil {
 			if err = opts.OnAttach(AttachEvent{Type: "shim.attach", Journal: c.Journal, Epoch: c.Epoch, Delivery: "write-before-commit; crash may duplicate an uncommitted line or lose unread pipe bytes"}); err != nil {
 				return 0, err
 			}
