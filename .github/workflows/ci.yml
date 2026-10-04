@@ -69,7 +69,7 @@ jobs:
 
       - name: Run full quality gate
         # Every package except the store package, which test-race-store runs.
-        run: make check RACE_PKGS="$(go list ./... | grep -v -x "$STORE_PKG" | tr '\n' ' ')"
+        run: make check RACE_PKGS="$(go list ./... | grep -v -F -x "$STORE_PKG" | tr '\n' ' ')"
 
   test-race-store:
     name: test-race (store)

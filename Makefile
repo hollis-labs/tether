@@ -87,6 +87,7 @@ test:
 	fi
 
 test-race:
+	@test -n "$(strip $(RACE_PKGS))" || { echo "test-race: RACE_PKGS is empty; refusing to run no packages" >&2; exit 1; }
 	@if command -v gotestsum >/dev/null 2>&1; then \
 		gotestsum -- -race $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out $(RACE_PKGS); \
 	else \

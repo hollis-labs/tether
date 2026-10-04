@@ -288,9 +288,9 @@ daemon SSE surface directly instead of querying durable history.
   run before committing.
 - `make lint` — full golangci-lint. Config in `.golangci.yml`.
 - `make vuln` — govulncheck against stdlib + modules.
-- `make check` — the full gate. CI runs the same gate in two jobs: the store
-  package's race tests run in their own job (`RACE_PKGS` in the Makefile, see
-  `.github/workflows/ci.yml`) and the other job runs every other package.
+- `make check` — the full gate. CI runs `make check` in one job over every
+  package except the store package (`RACE_PKGS` in the Makefile), and a second
+  job runs the store package's race tests; see `.github/workflows/ci.yml`.
   Locally `make check` runs every package.
 - `make coverage` — prints the total coverage percentage from the last
   `make test` run.
