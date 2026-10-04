@@ -201,10 +201,12 @@ type CatalogPaths struct {
 	Boot      string `yaml:"boot"`
 }
 
-// ShimHostConfig is an inactive foundation until launch-host wiring is enabled.
+// ShimHostConfig applies only to opt-in shim-hosted provider launches.
 type ShimHostConfig struct {
-	JournalBytes int64 `yaml:"journal_bytes"`
-	SystemdUser  bool  `yaml:"systemd_user"`
+	// UnitPrefix changes only names of newly created transient units.
+	UnitPrefix   string `yaml:"unit_prefix"`
+	JournalBytes int64  `yaml:"journal_bytes"`
+	SystemdUser  bool   `yaml:"systemd_user"`
 }
 
 func (c ShimHostConfig) EffectiveJournalBytes() int64 {
@@ -232,6 +234,10 @@ type Defaults struct {
 	// internal/specresolve). Empty resolves to "catalog". The
 	// TETHER_LAUNCH_ENGINE env var overrides this. See app.LaunchEngine.
 	LaunchEngine string `yaml:"launch_engine"`
+
+	// LaunchHost selects direct execution (default) or opt-in shim hosting.
+	// TETHER_LAUNCH_HOST overrides this value for each launch.
+	LaunchHost string `yaml:"launch_host"`
 	// LaunchSpecsRoot is the LaunchSpec corpus directory the "spec" launch
 	// engine reads from. Empty resolves to <home>/.tether/launch-specs
 	// (specresolve.DefaultSpecsRoot). The TETHER_LAUNCH_SPECS_ROOT env var
