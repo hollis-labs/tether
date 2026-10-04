@@ -64,6 +64,8 @@ Changes on `main` since v0.6.0.
 
 - An inert team service centralizes formation, membership, messaging, cancellation and result reporting behind authenticated principal and host-policy ports. Caller-scoped durable receipts retain selected recipients and completed results across retries; mesh team operations enforce grants and spawn limits. No daemon routes or runtime wiring are enabled.
 
+- Add default-off HTTP, MCP and CLI team verb wrappers over the authenticated team service, with per-verb field and required-input validation, shared request/result contracts, caller-scoped keys and cause-free error codes. All nine MCP verbs require the new `team.write` scope. Disabled team routes and tools are absent, and CLI verbs are undiscoverable. Host activation remains separate.
+
 ### Changed
 
 - **MCP names are explicit and collision-safe** (CW-20260926-0009): catalog `tool_prefix` prepends exactly the declared value and preserves the upstream call name; final-name collisions (including gateway names) fail startup instead of creating arrival-order aliases. A colliding refresh/reconnect retains accepted schemas and reports degraded status. Catalog origin `tether` is reserved; naming checks do not block generic catalog/daemon commands. Gateway status reports portable-name, origin and client-qualified length lint without rewriting names. Default doctor checks declarations offline; `doctor --mcp-live` explicitly spawns upstreams for a bounded tools/list-only probe with credential/URL-redacted findings.

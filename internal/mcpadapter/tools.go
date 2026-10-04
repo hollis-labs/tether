@@ -9,6 +9,7 @@ func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.registerHealthTools(s)
 	a.registerDocsTools(s)
 	a.registerChannelTools(s)
+	a.registerTeamTools(s)
 	a.registerCatalogTools(s)
 	a.registerAgentOpsTools(s)
 	a.registerSkillTools(s)
