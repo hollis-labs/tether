@@ -47,6 +47,12 @@ func (c ConfinedCleanup) remove(ctx context.Context, operation string, a Artifac
 	if ctx.Err() != nil || c.Validate(ctx, receipt.Request) != nil || ctx.Err() != nil {
 		return refuse()
 	}
+	// Callbacks may durably change recovery obligations. Bind the final read to
+	// the audit that authorized this operation before any filesystem effect.
+	current, err := c.Store.Load(ctx, operation)
+	if err != nil || ctx.Err() != nil || ValidateReceipt(current) != nil || current.Version != receipt.Version || current.OperationID != receipt.OperationID || current.RequestDigest != receipt.RequestDigest || current.Revision != receipt.Revision || current.Snapshot != receipt.Snapshot || current.Phase != receipt.Phase || !current.RetiredAt.Equal(receipt.RetiredAt) || !slices.Equal(current.Inventory, receipt.Inventory) || !slices.Equal(current.Obligations, receipt.Obligations) || (retention && len(current.Obligations) != 0) {
+		return refuse()
+	}
 	// The trusted Observe seam includes current complete proof and authority under
 	// exclusive custody. It cannot manufacture success for Unsupported backends.
 	// No callback follows the filesystem observations below. The custody contract must
