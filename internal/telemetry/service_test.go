@@ -107,3 +107,18 @@ func TestServiceRejectsUnverifiedAttributionAndClassifiesTimeout(t *testing.T) {
 		t.Fatal(end)
 	}
 }
+
+func TestNativeTeamErrorClasses(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want events.ToolErrorClass
+	}{
+		{"unauthenticated", events.ToolErrorDenied}, {"denied", events.ToolErrorDenied}, {"unavailable", events.ToolErrorUpstreamDown},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			if got := NativeErrorClass(tc.code); got != tc.want {
+				t.Fatal(got, tc.want)
+			}
+		})
+	}
+}
