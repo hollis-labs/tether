@@ -21,6 +21,21 @@ var getPeerPIDFD = func(fd int) (int, error) {
 	return unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_PEERPIDFD)
 }
 
+// Supported probes peer pidfds without starting a host or taking a controller.
+func Supported() error {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fail("unsupported", "cannot probe socket peer pidfds")
+	}
+	defer func() { _ = unix.Close(fds[0]); _ = unix.Close(fds[1]) }()
+	fd, err := getPeerPIDFD(fds[0])
+	if err != nil {
+		return fail("unsupported", "kernel must support socket peer pidfds")
+	}
+	_ = unix.Close(fd)
+	return nil
+}
+
 type processHandle struct {
 	fd  int
 	pid int
