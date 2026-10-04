@@ -86,8 +86,12 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
-	launchMu sync.Mutex
-	launches map[string]*sessionLaunchGate
+	launchMu        sync.Mutex
+	shimMu          sync.Mutex
+	shimDraining    sync.Map
+	shimBindingWait sync.Map
+	shimHosting     *shimHosting
+	launches        map[string]*sessionLaunchGate
 
 	factories map[string]RuntimeFactory
 
@@ -299,7 +303,7 @@ func NewCatalogOnly(catalogRoot string) (*Service, error) {
 // the sinks and Service.StopSession so a stop is recorded as "killed".
 func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Manager, *stopRequests) {
 	stops := &stopRequests{}
-	evSink := &eventSinkAdapter{bus: bus, stops: stops}
+	evSink := &eventSinkAdapter{bus: bus, stops: stops, db: db}
 	mgr := agentsessions.NewManager(stateSinkAdapter{db: db, stops: stops}).
 		WithAttachmentSink(attachmentSinkAdapter{db: db}).
 		WithEventSink(evSink)
@@ -357,6 +361,9 @@ func (s *Service) ReconcileStaleState() {
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
 func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
+	if s.reconcileShim(row) {
+		return true
+	}
 	if row.State == string(session.StateDetached) {
 		return false
 	}

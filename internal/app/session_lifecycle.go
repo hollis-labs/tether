@@ -372,7 +372,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	}
 	launched := false
 	defer func() {
-		if !launched && token != "" {
+		if !launched && token != "" && !s.shimSessionRetained(sessionID) {
 			if err := identity.NewStore(s.Store.DB()).RevokeToken(context.Background(), token); err != nil {
 				log.Print("session credential revocation failed")
 			}
@@ -535,6 +535,11 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		},
 	}
 	s.turnOutputs.Store(sessionID, turnOutput)
+	req, err = s.prepareShimStart(ctx, plan, req)
+	if err != nil {
+		s.turnOutputs.Delete(sessionID)
+		return nil, err
+	}
 	start := func() error { return s.Manager.Start(context.Background(), req) }
 	// Track an automatic boot submission through the same provisional/accepted
 	// marker path as explicit turns, without holding a gate across Start.
@@ -665,6 +670,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
+	if handled, err := s.stopShimSession(id); handled {
+		return err
+	}
 	if _, ok := s.Manager.Get(id); !ok {
 		return agentsessions.ErrSessionNotRunning
 	}
@@ -746,8 +754,20 @@ func (s *Service) watchSessionBindings(sessionID string) {
 	if s.Registry == nil {
 		return
 	}
+	var settled chan struct{}
+	if s.shimSessionRetained(sessionID) {
+		settled = make(chan struct{})
+		s.shimBindingWait.Store(sessionID, settled)
+	}
 	go func() {
+		if settled != nil {
+			defer close(settled)
+		}
 		_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+		s.settleShimBridgeExit(sessionID)
+		if s.shimSessionRetained(sessionID) {
+			return
+		}
 		if _, err := s.Registry.RevokeSessionBindings(context.Background(), sessionID); err != nil {
 			log.Printf("app: revoke bindings of ended session %q failed (non-fatal): %v", sessionID, err)
 		}
@@ -809,11 +829,16 @@ func (s *Service) AttachedClients(id string) int {
 // delegating to agentsessions.Manager.Health. Returns (zero, false) when
 // the session is not currently registered.
 func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
+	shim := s.shimHealth(id)
 	snap, ok := s.Manager.Health(id)
 	if !ok {
+		if shim != nil {
+			return api.RuntimeHealthResult{SessionID: id, Shim: shim}, true
+		}
 		return api.RuntimeHealthResult{}, false
 	}
 	return api.RuntimeHealthResult{
+		Shim:         shim,
 		SessionID:    snap.SessionID,
 		ProviderID:   snap.RuntimeID,
 		ProviderKind: snap.RuntimeKind,

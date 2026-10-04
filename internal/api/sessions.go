@@ -448,6 +448,11 @@ func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id str
 
 func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {
 	if err := s.Service.StopSession(id); err != nil {
+		var coded interface{ ErrorCode() string }
+		if errors.As(err, &coded) {
+			writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())
+			return
+		}
 		if errors.Is(err, agentsessions.ErrSessionNotRunning) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not running")
 			return
@@ -560,6 +565,11 @@ func (s *Server) handleSessionCheckpointsList(w http.ResponseWriter, _ *http.Req
 // cannot be protected (launch.ErrProjectLayerUnprotectable) is 403 too but with its
 // own code, since the fix is that project's catalog entry and not the host.
 func writeLaunchRefused(w http.ResponseWriter, err error) bool {
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) {
+		writeError(w, http.StatusConflict, coded.ErrorCode(), err.Error())
+		return true
+	}
 	if errors.Is(err, launch.ErrLaunchProjectRootMissing) {
 		writeError(w, http.StatusConflict, CodeProjectRootMissing, err.Error())
 		return true

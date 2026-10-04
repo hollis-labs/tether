@@ -40,10 +40,21 @@ func (s *Service) DrainSessions(ctx context.Context) error {
 		}
 	}
 	for _, id := range live {
+		if s.detachShimSession(ctx, id) {
+			continue
+		}
 		s.stops.markWithReason(id, ShutdownStopReason)
 	}
 
 	err := s.Manager.Shutdown(ctx)
+	if err == nil {
+		for _, id := range live {
+			if e := s.waitShimBinding(ctx, id); e != nil {
+				err = e
+				break
+			}
+		}
+	}
 
 	var ended, stillRunning []string
 	for _, id := range live {
