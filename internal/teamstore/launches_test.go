@@ -2,6 +2,7 @@ package teamstore_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"sync/atomic"
@@ -282,4 +283,42 @@ func TestLeaseReleasedOnCallbackFailureAndPanic(t *testing.T) {
 	bounded, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	must(t, s.WithLease(bounded, "key", func(context.Context) error { return nil }))
+}
+
+func TestLaunchWriteHookStillChecksFinalLeaseFence(t *testing.T) {
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	db, s := open(t, t.TempDir()+"/db", teamstore.Options{LeaseDuration: time.Minute, Now: func() time.Time { return time.Unix(0, clock.Load()) }})
+	r := launch("hook-expiry")
+	hook := func(ctx context.Context, conn *sql.Conn, record teams.LaunchRecord) error {
+		_, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO team_host_launch_intents(intent_key,launch_key) VALUES(?,?)`, record.Intents[0].Key, record.Key)
+		clock.Add(int64(2 * time.Minute))
+		return err
+	}
+	s.SetLaunchWriteHook(hook)
+	err := s.WithLease(context.Background(), r.Key, func(ctx context.Context) error { return s.PutLaunch(ctx, r) })
+	if !errors.Is(err, teamstore.ErrLeaseLost) {
+		t.Fatal("hook bypassed commit fence", err)
+	}
+	if _, err = s.GetLaunch(context.Background(), r.Key); !errors.Is(err, teams.ErrNotFound) {
+		t.Fatal("expired hook retained launch", err)
+	}
+	var present bool
+	must(t, db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM team_host_launch_intents WHERE intent_key=?)`, r.Intents[0].Key).Scan(&present))
+	if present {
+		t.Fatal("expired hook retained lookup")
+	}
+	s.SetLaunchWriteHook(nil)
+	r = launch("retry-expiry")
+	put(t, s, r)
+	s.SetLaunchWriteHook(hook)
+	err = s.WithLease(context.Background(), r.Key, func(ctx context.Context) error { return s.PutLaunch(ctx, r) })
+	if !errors.Is(err, teamstore.ErrLeaseLost) {
+		t.Fatal("identical hook bypassed fence", err)
+	}
+	must(t, db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM team_host_launch_intents WHERE intent_key=?)`, r.Intents[0].Key).Scan(&present))
+	if present {
+		t.Fatal("expired identical retry committed lookup")
+	}
+
 }
