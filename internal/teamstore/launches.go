@@ -71,6 +71,26 @@ func validTransition(old, next teams.LaunchRecord) bool {
 	return before >= 1 && before <= 4 && after >= before && after <= before+1
 }
 
+// LaunchWriteHook writes related metadata using the supplied transaction
+// connection and the same normalized record persisted by PutLaunch. It must not
+// mutate the record, use the pool or call external ports. Errors roll back all
+// launch, journal and related metadata writes. Configure before launch writes.
+type LaunchWriteHook func(context.Context, *sql.Conn, teams.LaunchRecord) error
+
+func (s *Store) SetLaunchWriteHook(hook LaunchWriteHook) {
+	if hook == nil {
+		s.launchWriteHook.Store(nil)
+		return
+	}
+	s.launchWriteHook.Store(&hook)
+}
+func (s *Store) afterLaunchWrite(ctx context.Context, conn *sql.Conn, record teams.LaunchRecord, hook *LaunchWriteHook) error {
+	if hook == nil {
+		return nil
+	}
+	return (*hook)(ctx, conn, record)
+}
+
 // PutLaunch binds immutable intent and commits the record and journal together.
 // Identical retries do not append journal entries. Every write checks the lease
 // both before changing rows and before committing to fence expiry during a write.
@@ -94,6 +114,7 @@ func (s *Store) PutLaunch(ctx context.Context, record teams.LaunchRecord) error 
 		return err
 	}
 	record = normalized
+	hook := s.launchWriteHook.Load()
 	return s.immediate(ctx, func(conn *sql.Conn) error {
 		if err := s.checkLease(ctx, conn, token); err != nil {
 			return err
@@ -110,7 +131,10 @@ func (s *Store) PutLaunch(ctx context.Context, record teams.LaunchRecord) error 
 				return teams.ErrConflict
 			}
 			if reflect.DeepEqual(old, record) {
-				return nil
+				if err := s.afterLaunchWrite(ctx, conn, record, hook); err != nil {
+					return err
+				}
+				return s.checkLease(ctx, conn, token)
 			}
 			result, err := conn.ExecContext(ctx, `UPDATE team_launches SET payload=?,state=?,revision=revision+1 WHERE launch_key=? AND revision=?`, payload, record.State, record.Key, revision)
 			if err != nil {
@@ -135,6 +159,9 @@ func (s *Store) PutLaunch(ctx context.Context, record teams.LaunchRecord) error 
 		}
 		if _, err = conn.ExecContext(ctx, `INSERT INTO team_launch_journal(launch_key,revision,fence,payload) VALUES(?,?,?,?)`, record.Key, revision+1, token.fence, payload); err != nil {
 			return fmt.Errorf("append launch journal: %w", err)
+		}
+		if err := s.afterLaunchWrite(ctx, conn, record, hook); err != nil {
+			return err
 		}
 		return s.checkLease(ctx, conn, token)
 	})

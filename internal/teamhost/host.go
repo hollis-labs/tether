@@ -49,6 +49,7 @@ func New(db *sql.DB, storage *teamstore.Store, ports Ports, options Options) (*H
 	if now == nil {
 		now = time.Now
 	}
+	storage.SetLaunchWriteHook(writeLaunchIntents)
 	return &Host{db: db, store: storage, ports: ports, tiers: tiers, actors: actors, now: now}, nil
 }
 func (h *Host) Now() time.Time { return h.now() }
@@ -96,3 +97,14 @@ var (
 	_ teams.Clock             = (*Host)(nil)
 	_ teams.IDs               = (*Host)(nil)
 )
+
+// writeLaunchIntents receives the record already normalized by PutLaunch. The
+// lookup and launch record commit together without another encoding or decode.
+func writeLaunchIntents(ctx context.Context, conn *sql.Conn, record teams.LaunchRecord) error {
+	for _, intent := range record.Intents {
+		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO team_host_launch_intents(intent_key,launch_key) VALUES(?,?)`, intent.Key, record.Key); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -69,17 +69,11 @@ CREATE INDEX team_host_cleanup_pending ON team_host_intents(next_attempt_at,sequ
 CREATE INDEX team_host_intent_member ON team_host_intents(json_extract(request,'$.MemberID'));
 CREATE INDEX team_host_recorded_member ON team_host_intents(json_extract(member,'$.id'));
 CREATE TABLE team_host_recovery_cursors (kind TEXT PRIMARY KEY, position INTEGER NOT NULL);
--- Materialize launch-intent lookup without scanning all launch payloads.
+-- Backfill legacy launch-intent lookup; subsequent entries are written by the
+-- host in the same Go transaction as the launch record.
 CREATE TABLE team_host_launch_intents (
  intent_key TEXT PRIMARY KEY,
  launch_key TEXT NOT NULL REFERENCES team_launches(launch_key)
 );
 INSERT OR IGNORE INTO team_host_launch_intents SELECT json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key'),launch_key FROM team_launches,json_each(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.Intents') WHERE json_valid(payload) AND json_valid(value) AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key') IS NOT NULL;
-CREATE TRIGGER team_host_launch_insert AFTER INSERT ON team_launches BEGIN
- INSERT OR IGNORE INTO team_host_launch_intents SELECT json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key'),NEW.launch_key FROM json_each(CASE WHEN json_valid(NEW.payload) THEN NEW.payload ELSE '{}' END,'$.Intents') WHERE json_valid(NEW.payload) AND json_valid(value) AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key') IS NOT NULL;
-END;
-CREATE TRIGGER team_host_launch_update AFTER UPDATE OF payload ON team_launches BEGIN
- INSERT OR IGNORE INTO team_host_launch_intents SELECT json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key'),NEW.launch_key FROM json_each(CASE WHEN json_valid(NEW.payload) THEN NEW.payload ELSE '{}' END,'$.Intents') WHERE json_valid(NEW.payload) AND json_valid(value) AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END,'$.Key') IS NOT NULL;
-END;
-
 CREATE INDEX team_host_recipient_pending ON team_host_deliveries(json_extract(payload,'$.Recipient.actor'),json_extract(payload,'$.Recipient.session_id'),sequence) WHERE dispatched=0 AND dead=0;

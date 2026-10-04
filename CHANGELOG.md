@@ -10,7 +10,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 - Add non-terminal detached and orphaned session states, safe recovery and resume rules, and CLI/MCP/API/sysop vocabulary.
 
-- Add an inert team host over explicit session, enrollment, transport and channel-naming ports, with durable intent tombstones, exclusive identity bindings, retained delivery queues, delegation results, approvals and caller receipts. Team execution requires explicit strict authority and trust policy; daemon activation is separate.
+- Add an inert team host over explicit session, enrollment, transport and channel-naming ports, with durable intent tombstones, exclusive identity bindings, retained delivery queues, delegation results, approvals and caller receipts. Launch-intent lookup commits with the launch record through an optional storage callback. Team execution requires explicit strict authority and trust policy; daemon activation is separate.
 
 - Add inert SQLite team storage: immutable definition and roster revisions, atomic roster mutations, fenced keyed launch leases with a durable journal, first-wins phase signals, and run containers owning session groups. Run channel names use `team.<run>`; runtime wiring and public verbs follow separately.
 

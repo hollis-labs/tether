@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/hollis-labs/substrate/mesh/teams"
@@ -23,9 +24,10 @@ type Options struct {
 
 // Store borrows a migrated database handle; its owner manages Close.
 type Store struct {
-	db            *sql.DB
-	leaseDuration time.Duration
-	now           func() time.Time
+	db              *sql.DB
+	leaseDuration   time.Duration
+	now             func() time.Time
+	launchWriteHook atomic.Pointer[LaunchWriteHook]
 }
 
 // New attaches storage without migrating or writing, including read-only handles.

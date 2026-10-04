@@ -3,6 +3,12 @@
 This package adapts the tagged mesh team contracts to durable SQLite state. It
 is not registered with the daemon and starts no background work. Its database
 handle and `teamstore.Store` must share the same migrated database handle.
+Construction registers a launch-write callback on that store before launch use.
+`PutLaunch` calls it with the normalized record on the same connection and under
+its lease transaction, so lookup failure rolls back the launch and journal too.
+Identical retries can restore a missing lookup without adding journal entries.
+Plain teamstore writers work without the callback; migration backfill covers
+legacy launch records.
 
 The four ports are session lifecycle, enrollment/binding ownership, retained
 message delivery and channel naming. The later activation adapter must prove
