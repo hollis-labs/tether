@@ -297,7 +297,8 @@ func TestShimDrainNeverInspectsOrStopsProvider(t *testing.T) {
 		return shimhost.Inspection{}, context.DeadlineExceeded
 	}
 	f.svc.shimHosting.stop = func(context.Context, shimhost.Receipt) error { t.Error("drain stopped provider"); return nil }
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// Race instrumentation adds cost to the terminal shim-row checks.
+	ctx, cancel := context.WithTimeout(context.Background(), shimFixtureBudget)
 	defer cancel()
 	shimDrainWithDiagnostics(ctx, t, f)
 	statuses := shimStatusEvents(t, f)
@@ -621,7 +622,8 @@ func TestShimDetachedStopRevokesBindingImmediately(t *testing.T) {
 	f := shimFixture(t)
 	f.start(t)
 	ids, token := recoveryCredential(t, f.svc, f.req.ID)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// Race instrumentation adds cost to the terminal shim-row checks.
+	ctx, cancel := context.WithTimeout(context.Background(), shimFixtureBudget)
 	defer cancel()
 	shimDrainWithDiagnostics(ctx, t, f)
 	if _, err := currentWorkerBinding(f.svc); err != nil {
