@@ -49,6 +49,20 @@ func await(t *testing.T, what string, fn func() bool) {
 	t.Fatal("timeout: " + what)
 }
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+func fixtureChildPID(path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(string(b))
+	if err != nil {
+		return 0, fmt.Errorf("parse fixture child PID: %w", err)
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("fixture child PID must be positive: %d", pid)
+	}
+	return pid, nil
+}
 func startFixture(t *testing.T, journalCap int64) *fixture {
 	t.Helper()
 	root := testutil.ShortDir(t)
@@ -113,11 +127,14 @@ func startFixture(t *testing.T, journalCap int64) *fixture {
 	_ = log.Close()
 	f.host = cmd
 	await(t, "socket and child pid", func() bool {
-		b, e := os.ReadFile(filepath.Join(root, "home", "child.pid"))
+		pid, e := fixtureChildPID(filepath.Join(root, "home", "child.pid"))
 		if e != nil {
-			return false
+			if errors.Is(e, os.ErrNotExist) {
+				return false
+			}
+			t.Fatalf("child PID witness: %v", e)
 		}
-		f.child, _ = strconv.Atoi(string(b))
+		f.child = pid
 		_, e = os.Stat(filepath.Join(root, "c", "control.sock"))
 		return e == nil
 	})

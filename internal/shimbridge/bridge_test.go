@@ -101,7 +101,10 @@ func TestProviderProcess(t *testing.T) {
 	os.Exit(94)
 }
 func fakeClaude() {
-	_ = os.WriteFile(filepath.Join(os.Getenv("HOME"), "child.pid"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	if err := publishFixtureChildPID(filepath.Join(os.Getenv("HOME"), "child.pid"), os.Getpid()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(90)
+	}
 	emit := func(v any) { b, _ := json.Marshal(v); fmt.Fprintln(os.Stdout, string(b)) }
 	emit(map[string]any{"type": "system", "subtype": "init", "session_id": "fake-native"})
 	scan := bufio.NewScanner(os.Stdin)
@@ -150,4 +153,14 @@ func fakeClaude() {
 			emit(map[string]any{"type": "result", "subtype": "success", "session_id": "fake-native", "result": "done:" + text})
 		}
 	}
+}
+
+// Publish only a complete PID witness; readers must never see a partial integer.
+func publishFixtureChildPID(path string, pid int) error {
+	pending := path + ".pending"
+	defer func() { _ = os.Remove(pending) }()
+	if err := os.WriteFile(pending, []byte(strconv.Itoa(pid)), 0600); err != nil {
+		return err
+	}
+	return os.Rename(pending, path)
 }
