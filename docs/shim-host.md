@@ -83,8 +83,9 @@ acknowledged history without compaction.
 
 Bridge infrastructure failures use reserved exit code **93**. Provider status
 and signals otherwise propagate unchanged; a provider that itself exits 93 has
-the same bridge status. The daemon MUST consult authenticated
-shim health to decide whether the provider ended, even when the bridge exits;
+the same bridge status. The daemon MUST consult shim health through the checked
+same-uid connection to decide whether the provider ended, even when the bridge
+exits;
 neither its exit code nor agentkit's bridge PID establishes provider liveness.
 
 ## Teardown
@@ -94,12 +95,16 @@ host `Stop`: request the provider's bounded kill if it is still running, then
 terminate the checked peer through a pidfd, escalate from SIGTERM to
 SIGKILL after the configured grace and wait within a total timeout. An already
 exited provider is a successful kill outcome. Teardown refuses stale PID identity
-and requires Linux with peer-pidfd support; other platforms return
-`unsupported`, never signal a stored bare PID. Before sending takeover hello,
+and requires Linux with peer-pidfd support to signal a live host. Other platforms
+return `unsupported` for live teardown and never signal a stored bare PID. An
+owned child proven exited by its waiter can be retired without a pidfd. Before
+sending takeover hello,
 Stop checks the same-uid socket peer credentials, equality with the recorded
 `HostPID` and Linux process start time when available, and acquires that socket's
 pidfd. The secret-free private receipt persists the process start time as an
-identity witness. Unsupported kernels
+identity witness. If Stop adopts a previously missing start time from the
+checked pidfd, it commits that witness atomically with fsync before sending
+provider control or host signals. Unsupported kernels
 refuse before changing the epoch or journal. The pinned hello checks session,
 instance, generation and journal. The client does not verify that the server
 knows the secret: these checks do not provide mutual secret authentication or
@@ -110,14 +115,33 @@ secret-bearing launch descriptor is removed. Typed peer and hello refusals are
 decisive and never permit an absence fallback. A connection-level refusal or
 missing socket permits retirement only when the recorded process identity is
 shown gone: a recorded start time identifies an absent or replaced process, or
-the owned child's waiter proves it exited. Systemd-user also requires the named
+the owned child's waiter proves it exited (with the recorded start time
+rechecked on Linux). Systemd-user also requires the named
 unit to be absent. Peer-pidfd ESRCH requires that positive identity evidence too.
 An unreachable socket, a timeout, or bare ESRCH on a stale PID is unknown and
 retains the capability files; a host might have restarted under another PID.
-Repeated Stop is idempotent,
+Repeated Stop after verified retirement is idempotent,
 including after a host crash or a timeout after SIGKILL. A collected systemd unit
 is a successful stop outcome after its absence is verified. The journal and
 secret-free receipt remain as evidence. Retired placements are terminal: there
 is no retirement/re-place API, and a new placement requires a NEW session ID.
+For ordinary retirement, a same-key Place returns `outcome_unknown`; a changed
+key returns `idempotency_conflict`. An exec Start failure proves no child was
+created: placement is retired, its capability removed, and the initial and
+same-key Place return the terminal receipt with `placement_failed`. Stop of
+that receipt succeeds idempotently.
+
+A dead host whose PID or start time was never recorded stays retained with
+`outcome_unknown`; repeated Stop and matching Place cannot resolve it. This
+package has no operator recovery or explicit retirement operation for that
+wedge. A wrapper ShimCommand that forks its host and exits also fails closed:
+the child owning the socket differs from the recorded submitted process.
+
+Future daemon integration must load the canonical `placement.json` receipt for
+Stop: the database placement row does not contain the process start time.
+Inspect and Reattach preserve typed refusals and never merge Gone results.
+Systemd teardown retains a loaded unit after stop failure and retries on the
+next Stop; retirement requires verified unit absence.
+
 Placement and attach clear abandoned `.commit-*` files under the same lock used
 by record writers, so a live atomic commit is never deleted.

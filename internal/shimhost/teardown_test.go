@@ -63,7 +63,7 @@ func TestStopRetiresCrashedHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
-	reaped := p.reaped[r.HostPID]
+	reaped := p.reaped[identity(r)]
 	p.mu.Unlock()
 	select {
 	case <-reaped:
@@ -95,7 +95,7 @@ func TestStopRetiresAfterKillTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
-	reaped := p.reaped[r.HostPID]
+	reaped := p.reaped[identity(r)]
 	p.mu.Unlock()
 	select {
 	case <-reaped:
@@ -379,13 +379,19 @@ func TestLiveHostStalePIDRefusalRetainsCapability(t *testing.T) {
 	t.Cleanup(func() { _ = WritePrivateJSON(r.DescriptorPath, spec); _ = WritePrivateJSON(metadataPath(r), r) })
 	stale := r
 	stale.HostPID = exitedTestPID(t)
+	if err = WritePrivateJSON(metadataPath(r), stale); err != nil {
+		t.Fatal(err)
+	}
 	err = p.Stop(context.Background(), stale)
 	var fault *Failure
-	if !errors.As(err, &fault) || fault.Code != "identity_mismatch" {
+	if !errors.As(err, &fault) || fault.Code != "identity_mismatch" || fault.Message != "same-uid peer PID differs from recorded host" {
 		t.Errorf("identity refusal: %v", err)
 	}
 	if _, err = os.Stat(r.DescriptorPath); err != nil {
 		t.Errorf("live host capability removed: %v", err)
+	}
+	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
+		t.Fatal(err)
 	}
 	if inspection, e := p.Inspect(context.Background(), r); e != nil || inspection.Gone || !inspection.Running {
 		t.Errorf("live placement retired: %+v %v", inspection, e)

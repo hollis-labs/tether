@@ -34,8 +34,13 @@ func Connect(ctx context.Context, path, secret, session, instance, generation, r
 	return connect(ctx, path, secret, session, instance, generation, role, journal, takeover, expectedPID, nil)
 }
 
+// dialControl is the transport boundary; refusal and absence tests inject dial failures.
+var dialControl = func(ctx context.Context, path string) (net.Conn, error) {
+	return (&net.Dialer{}).DialContext(ctx, "unix", path)
+}
+
 func connect(ctx context.Context, path, secret, session, instance, generation, role, journal string, takeover bool, expectedPID []int, beforeHello func(*net.UnixConn) error) (*Client, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+	conn, err := dialControl(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +57,7 @@ func connect(ctx context.Context, path, secret, session, instance, generation, r
 		}
 		if pid <= 0 || expectedPID[0] > 0 && pid != expectedPID[0] {
 			_ = socket.Close()
-			return nil, fail("identity_mismatch", "authenticated peer differs from recorded host")
+			return nil, fail("identity_mismatch", "same-uid peer PID differs from recorded host")
 		}
 	}
 	if beforeHello != nil {

@@ -55,7 +55,7 @@ func authenticatedProcess(c *Client, expectedPID int) (*processHandle, error) {
 		return nil, err
 	}
 	if pid <= 0 || expectedPID > 0 && expectedPID != pid {
-		return nil, fail("identity_mismatch", "authenticated peer differs from recorded host")
+		return nil, fail("identity_mismatch", "same-uid peer PID differs from recorded host")
 	}
 	raw, err := c.socket.SyscallConn()
 	if err != nil {
@@ -73,7 +73,7 @@ func authenticatedProcess(c *Client, expectedPID int) (*processHandle, error) {
 		return nil, unix.ESRCH
 	}
 	if inner != nil {
-		return nil, fail("unsupported", "kernel must support authenticated peer pidfds")
+		return nil, fail("unsupported", "kernel must support socket peer pidfds")
 	}
 	if fd < 0 || fd > math.MaxInt32 {
 		if fd >= 0 {
@@ -149,6 +149,12 @@ func recordedIdentityGone(pid int, start uint64) bool {
 	if pid <= 0 || start == 0 {
 		return false
 	}
+	// An absent or unreadable proc filesystem is not process absence.
+	if _, err := processStartTime(os.Getpid()); err != nil {
+		return false
+	}
 	current, err := processStartTime(pid)
 	return errors.Is(err, os.ErrNotExist) || err == nil && current != start
 }
+
+func reapedIdentityGone(pid int, start uint64) bool { return recordedIdentityGone(pid, start) }

@@ -213,8 +213,8 @@ func TestHostJournalPinRefusesBeforeEpochChanges(t *testing.T) {
 	}
 }
 
-// A peer that removes its socket after authenticated hello cannot make a stored
-// PID into a signaling authority. The unrelated child must stay alive.
+// Same-uid peer credentials must refuse a different recorded PID before hello.
+// The unrelated owned child must stay alive.
 func TestStopRefusesStoredPIDWhenAuthenticatedPeerDiffers(t *testing.T) {
 	cfg, spec := hostSpec(t)
 	p, err := New(cfg)

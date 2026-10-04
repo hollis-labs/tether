@@ -58,28 +58,36 @@ type Config struct {
 type Provider struct {
 	cfg    Config
 	mu     sync.Mutex
-	reaped map[int]chan struct{}
+	reaped map[hostIdentity]chan struct{}
 }
+
+type hostIdentity struct {
+	PID       int
+	StartTime uint64
+}
+
+func identity(r Receipt) hostIdentity { return hostIdentity{r.HostPID, r.HostStartTime} }
 
 // Receipt contains paths and identity, never the capability or provider env.
 type Receipt struct {
-	OperationKey   string `json:"operation_key"`
-	Session        string `json:"session"`
-	Instance       string `json:"instance"`
-	Generation     uint64 `json:"generation,string"`
-	DescriptorPath string `json:"descriptor_path"`
-	SocketPath     string `json:"socket_path"`
-	Backend        string `json:"backend"`
-	UnitName       string `json:"unit_name,omitempty"`
-	Journal        string `json:"journal,omitempty"`
-	Epoch          string `json:"epoch,omitempty"`
-	HostPID        int    `json:"host_pid"`
-	HostStartTime  uint64 `json:"host_start_time,string,omitempty"`
-	ShimPID        int    `json:"shim_pid"`
-	ProviderPID    int    `json:"provider_pid"`
-	Fingerprint    string `json:"fingerprint"`
-	Attempted      bool   `json:"attempted"`
-	Retired        bool   `json:"retired,omitempty"`
+	OperationKey     string `json:"operation_key"`
+	Session          string `json:"session"`
+	Instance         string `json:"instance"`
+	Generation       uint64 `json:"generation,string"`
+	DescriptorPath   string `json:"descriptor_path"`
+	SocketPath       string `json:"socket_path"`
+	Backend          string `json:"backend"`
+	UnitName         string `json:"unit_name,omitempty"`
+	Journal          string `json:"journal,omitempty"`
+	Epoch            string `json:"epoch,omitempty"`
+	HostPID          int    `json:"host_pid"`
+	HostStartTime    uint64 `json:"host_start_time,string,omitempty"`
+	ShimPID          int    `json:"shim_pid"`
+	ProviderPID      int    `json:"provider_pid"`
+	Fingerprint      string `json:"fingerprint"`
+	Attempted        bool   `json:"attempted"`
+	Retired          bool   `json:"retired,omitempty"`
+	PlacementFailure string `json:"placement_failure,omitempty"`
 }
 type Inspection struct {
 	Receipt Receipt
@@ -128,7 +136,7 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.StopGrace < 0 || cfg.StopTimeout < 0 || cfg.LockWait < 0 {
 		return nil, fail("invalid_config", "host durations must be positive")
 	}
-	return &Provider{cfg: cfg, reaped: make(map[int]chan struct{})}, nil
+	return &Provider{cfg: cfg, reaped: make(map[hostIdentity]chan struct{})}, nil
 }
 func hash(s string) string                    { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:])[:16] }
 func (p *Provider) dir(session string) string { return filepath.Join(p.cfg.StateDir, hash(session)) }
@@ -218,13 +226,19 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		if old.OperationKey != key || old.Fingerprint != fingerprint || old.Backend != r.Backend {
 			return zero, fail("idempotency_conflict", "placement key/launch changed")
 		}
+		if old.Retired && old.PlacementFailure == "placement_failed" {
+			return old, fail("placement_failed", "shim executable failed to start")
+		}
+		if old.Retired {
+			return old, fail("outcome_unknown", "placement is retired; use a new session ID")
+		}
 		if old.Attempted {
 			inspection, e := p.inspect(ctx, old)
 			if e != nil {
 				return old, e
 			}
 			if inspection.Gone {
-				return old, fail("outcome_unknown", "previous submit has no live host; native recovery is required")
+				return old, fail("outcome_unknown", "previous submit has no live host; explicit retirement is unavailable")
 			}
 			if e = WritePrivateJSON(metadataPath(r), inspection.Receipt); e != nil {
 				return r, e
@@ -276,7 +290,12 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		e = cmd.Start()
 		_ = logFile.Close()
 		if e != nil {
-			return r, fail("outcome_unknown", "shim spawn did not become inspectable")
+			r.PlacementFailure = "placement_failed"
+			if err = p.retire(r, Receipt{}); err != nil {
+				return r, err
+			}
+			r.Retired = true
+			return r, fail("placement_failed", "shim executable failed to start")
 		}
 		r.HostPID = cmd.Process.Pid
 		// The owned child cannot reuse its PID before our waiter starts.
@@ -284,7 +303,7 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		r.ShimPID = r.HostPID
 		reaped := make(chan struct{})
 		p.mu.Lock()
-		p.reaped[r.HostPID] = reaped
+		p.reaped[identity(r)] = reaped
 		p.mu.Unlock()
 		go func() { _ = cmd.Wait(); close(reaped) }() // Reap a child owned by this process.
 	} else {
@@ -372,8 +391,8 @@ func health(ctx context.Context, c *Client, session string) (bool, int, shim.Exi
 	}
 }
 
-// Inspect uses authenticated shim health, never a bridge PID. Gone is asserted
-// only with a known dead host, or an absent uniquely named systemd unit.
+// Inspect checks shim health over a same-uid connection, never a bridge PID.
+// Gone requires connection failure and positive recorded-identity absence.
 func (p *Provider) inspect(ctx context.Context, r Receipt) (Inspection, error) {
 	var saved Receipt
 	if err := ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); err == nil && saved.Retired {
@@ -401,22 +420,18 @@ func (p *Provider) inspect(ctx context.Context, r Receipt) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
+	if r.Backend == SystemdUser && (!p.cfg.AllowSystemd || r.UnitName != p.unit(spec)) {
+		return Inspection{}, fail("identity_mismatch", "foreign or disabled unit")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c, err := Connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", r.Journal, false)
 	if err != nil {
-		gone := false
-		if r.Backend == Detached && r.HostPID > 0 {
-			gone = errors.Is(syscall.Kill(r.HostPID, 0), syscall.ESRCH)
+		var refusal *Failure
+		if errors.As(err, &refusal) {
+			return Inspection{}, err
 		}
-		if r.Backend == SystemdUser {
-			if !p.cfg.AllowSystemd || r.UnitName != p.unit(spec) {
-				return Inspection{}, fail("identity_mismatch", "foreign or disabled unit")
-			}
-			b, e := p.cfg.Command(ctx, []string{"systemctl", "--user", "show", r.UnitName, "--property=LoadState", "--value"})
-			gone = e == nil && strings.TrimSpace(string(b)) == "not-found"
-		}
-		if gone {
+		if connectionFailure(err) && p.knownGone(ctx, r) {
 			return Inspection{Receipt: r, Gone: true}, nil
 		}
 		return Inspection{}, fail("outcome_unknown", "shim cannot be inspected yet")
@@ -506,6 +521,9 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	if r.Backend == SystemdUser && (!p.cfg.AllowSystemd || r.UnitName != p.unit(spec)) {
 		return fail("identity_mismatch", "foreign or disabled unit")
 	}
+	if r.HostPID <= 0 {
+		return fail("outcome_unknown", "host PID was never recorded; explicit retirement is unavailable")
+	}
 	var process *processHandle
 	peerGone := false
 	c, err := connect(ctx, r.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "controller", r.Journal, true, []int{r.HostPID}, func(socket *net.UnixConn) error {
@@ -519,6 +537,21 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 			}
 			if r.HostStartTime != 0 && r.HostStartTime != start {
 				return fail("identity_mismatch", "connected host process identity differs")
+			}
+			if r.HostStartTime == 0 {
+				// Commit the pidfd-checked witness before hello, provider control,
+				// or host signals. Preserve the canonical placement intent.
+				witness := saved
+				if witness.Session == "" {
+					witness = r
+				}
+				witness.HostPID = r.HostPID
+				witness.ShimPID = r.HostPID
+				witness.HostStartTime = start
+				if identityErr = WritePrivateJSON(metadataPath(r), witness); identityErr != nil {
+					return identityErr
+				}
+				saved = witness
 			}
 			r.HostStartTime = start
 		}
@@ -534,9 +567,13 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		if errors.As(err, &refusal) {
 			return err
 		}
-		var connection *net.OpError
-		connectionFailed := errors.As(err, &connection) && connection.Op == "dial" && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT))
-		if (connectionFailed || peerGone) && p.knownGone(ctx, r) {
+		connectionFailed := connectionFailure(err)
+		if (connectionFailed || peerGone) && p.hostGone(r) {
+			if r.Backend == SystemdUser {
+				if e := p.stopUnit(ctx, r); e != nil {
+					return e
+				}
+			}
 			return p.retire(r, saved)
 		}
 		if connectionFailed || peerGone {
@@ -583,7 +620,7 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		}
 	}
 	p.mu.Lock()
-	reaped := p.reaped[process.pid]
+	reaped := p.reaped[identity(r)]
 	p.mu.Unlock()
 	if reaped != nil {
 		select {
@@ -592,14 +629,9 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 			return ctx.Err()
 		}
 	}
-	var serviceErr error
 	if r.Backend == SystemdUser {
-		_, serviceErr = p.cfg.Command(ctx, []string{"systemctl", "--user", "stop", r.UnitName})
-		if serviceErr == nil {
-			_, serviceErr = p.cfg.Command(ctx, []string{"systemctl", "--user", "reset-failed", r.UnitName})
-		}
-		if serviceErr != nil && p.unitGone(ctx, r) {
-			serviceErr = nil
+		if err = p.stopUnit(ctx, r); err != nil {
+			return err
 		}
 	}
 	r.Epoch = c.Epoch
@@ -609,27 +641,56 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	if err = p.retire(r, saved); err != nil {
 		return err
 	}
-	return serviceErr
+	return nil
 }
 
 func (p *Provider) unitGone(ctx context.Context, r Receipt) bool {
 	b, err := p.cfg.Command(ctx, []string{"systemctl", "--user", "show", r.UnitName, "--property=LoadState", "--value"})
 	return err == nil && strings.TrimSpace(string(b)) == "not-found"
 }
+
+// connectionFailure excludes timeouts, protocol/hello refusals and read errors.
+func connectionFailure(err error) bool {
+	var refusal *Failure
+	if errors.As(err, &refusal) {
+		return false
+	}
+	var connection *net.OpError
+	return errors.As(err, &connection) && connection.Op == "dial" && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT))
+}
+func (p *Provider) stopUnit(ctx context.Context, r Receipt) error {
+	if p.unitGone(ctx, r) {
+		return nil
+	}
+	_, err := p.cfg.Command(ctx, []string{"systemctl", "--user", "stop", r.UnitName})
+	if err == nil {
+		_, err = p.cfg.Command(ctx, []string{"systemctl", "--user", "reset-failed", r.UnitName})
+	}
+	if p.unitGone(ctx, r) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fail("outcome_unknown", "host unit remains loaded; retry teardown")
+}
 func (p *Provider) knownGone(ctx context.Context, r Receipt) bool {
 	if r.Backend == SystemdUser && !p.unitGone(ctx, r) {
 		return false
 	}
+	return p.hostGone(r)
+}
+func (p *Provider) hostGone(r Receipt) bool {
 	if r.HostPID <= 0 {
 		return false
 	}
 	p.mu.Lock()
-	reaped := p.reaped[r.HostPID]
+	reaped := p.reaped[identity(r)]
 	p.mu.Unlock()
 	if reaped != nil {
 		select {
 		case <-reaped:
-			return true
+			return reapedIdentityGone(r.HostPID, r.HostStartTime)
 		default:
 		}
 	}
@@ -650,12 +711,13 @@ func (p *Provider) retire(r, saved Receipt) error {
 		saved.ShimPID = r.ShimPID
 		r = saved
 	}
+	r.Attempted = true
 	r.Retired = true
 	if err := WritePrivateJSON(metadataPath(r), r); err != nil {
 		return err
 	}
 	p.mu.Lock()
-	delete(p.reaped, r.HostPID)
+	delete(p.reaped, identity(r))
 	p.mu.Unlock()
 	return cleanupRetired(r)
 }
@@ -667,7 +729,7 @@ func samePlacement(a, b Receipt) bool {
 // Inspect preserves the durable operation intent and merges only observed facts.
 func (p *Provider) Inspect(ctx context.Context, r Receipt) (Inspection, error) {
 	observed, err := p.inspect(ctx, r)
-	if err != nil {
+	if err != nil || observed.Gone {
 		return observed, err
 	}
 	lock, err := LockWait(ctx, filepath.Join(filepath.Dir(r.DescriptorPath), "placement.lock"), p.cfg.LockWait)

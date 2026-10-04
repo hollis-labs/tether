@@ -182,9 +182,9 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 	if err != nil {
 		var fault *shimhost.Failure
 		if errors.As(err, &fault) {
-			return 0, failure(fault.Code, "cannot authenticate pinned shim")
+			return 0, failure(fault.Code, "cannot verify pinned shim")
 		}
-		return 0, failure("host_unreachable", "cannot authenticate shim")
+		return 0, failure("host_unreachable", "cannot verify shim")
 	}
 	defer func() { _ = c.Close() }()
 	if expected != "" && c.Journal != expected {
