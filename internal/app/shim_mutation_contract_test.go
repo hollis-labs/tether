@@ -299,7 +299,7 @@ func TestShimDrainNeverInspectsOrStopsProvider(t *testing.T) {
 	f.svc.shimHosting.stop = func(context.Context, shimhost.Receipt) error { t.Error("drain stopped provider"); return nil }
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	shimDrainWithDiagnostics(t, f, ctx)
+	shimDrainWithDiagnostics(ctx, t, f)
 	statuses := shimStatusEvents(t, f)
 	if len(statuses) != 1 || statuses[0].Reason != ShutdownStopReason {
 		t.Fatalf("drain reason=%+v", statuses)
@@ -623,7 +623,7 @@ func TestShimDetachedStopRevokesBindingImmediately(t *testing.T) {
 	ids, token := recoveryCredential(t, f.svc, f.req.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	shimDrainWithDiagnostics(t, f, ctx)
+	shimDrainWithDiagnostics(ctx, t, f)
 	if _, err := currentWorkerBinding(f.svc); err != nil {
 		t.Fatal("detach revoked binding")
 	}
@@ -1014,7 +1014,7 @@ func TestShimBridgeStartFailureRetainsPlacementAndCredential(t *testing.T) {
 	}
 }
 
-func shimDrainWithDiagnostics(t *testing.T, f *shimAppFixture, ctx context.Context) {
+func shimDrainWithDiagnostics(ctx context.Context, t *testing.T, f *shimAppFixture) {
 	t.Helper()
 	if err := f.svc.DrainSessions(ctx); err != nil {
 		buf := make([]byte, 128<<10)
