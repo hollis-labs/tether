@@ -310,7 +310,9 @@ func (s *Service) outputPersistenceContextFrom(parent context.Context) (context.
 func (s *Service) finalizeSessionOutput(ctx context.Context, id string, output *sessionTurnOutput) {
 	go func() {
 		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), id)
-		output.flush()
+		if s.shouldFlushSessionOutput(context.WithoutCancel(ctx), id) {
+			output.flush()
+		}
 		s.turnOutputs.CompareAndDelete(id, output)
 	}()
 }

@@ -61,6 +61,23 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 		s.retainShim(row, &receipt, shimFailureCode(err))
 		return true
 	}
+	plan, planErr := s.Store.GetLaunchPlan(row.SessionID)
+	if planErr != nil {
+		s.retainShim(row, &receipt, "outcome_unknown")
+		return true
+	}
+	if plan.ProviderBrand == "codex" {
+		// Codex custody includes its private protocol inbox. A journaled exit
+		// or gone host is not permission to discard undelivered obligations.
+		if inspection.Gone {
+			s.retainShim(row, &receipt, "outcome_unknown")
+			return true
+		}
+		if err = s.reattachCodexShim(ctx, row, inspection.Receipt); err != nil {
+			s.retainShim(row, &receipt, shimFailureCode(err))
+		}
+		return true
+	}
 	if inspection.Gone {
 		// Retire the verified placement before orphaning, so provider secrets
 		// cannot outlive authority revocation. Stop's Gone branch signals none.
@@ -99,6 +116,13 @@ func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow
 	receipt, err = loadShimReceipt(shimRow)
 	if err != nil {
 		return err
+	}
+	planForRuntime, err := s.Store.GetLaunchPlan(shimRow.SessionID)
+	if err != nil {
+		return err
+	}
+	if planForRuntime.ProviderBrand == "codex" {
+		return s.reattachCodexShim(ctx, shimRow, receipt)
 	}
 	checkpoint, err := shimbridge.ReadCheckpoint(filepath.Join(filepath.Dir(receipt.DescriptorPath), "bridge.json"))
 	if err != nil {

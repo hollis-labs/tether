@@ -31,12 +31,39 @@ func (s *Service) settleShimBridgeExit(id string) {
 		s.retainShim(row, &receipt, shimFailureCode(err))
 		return
 	}
+	plan, planErr := s.Store.GetLaunchPlan(id)
+	if planErr != nil {
+		s.retainShim(row, &receipt, "outcome_unknown")
+		return
+	}
+	if plan.ProviderBrand == "codex" {
+		current, err := s.Store.GetSession(id)
+		if err != nil {
+			s.retainShim(row, &receipt, "outcome_unknown")
+			return
+		}
+		if session.State(current.State).Terminal() {
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result, err := host.inspect(ctx, receipt)
 	if err != nil {
 		s.retainShim(row, &receipt, shimFailureCode(err))
 		return
+	}
+	if plan.ProviderBrand == "codex" {
+		if result.Gone {
+			s.retainShim(row, &receipt, "outcome_unknown")
+			return
+		}
+		if result.Running || !s.codexTerminalSettled(ctx, id, receipt, result.Exit) {
+			s.retainShim(row, &receipt, "output_pending")
+			return
+		}
+		// Only the bound authenticated terminal and verified empty obligations
+		// may reach the existing once-only teardown/terminal settlement below.
 	}
 	if result.Gone {
 		if err := host.stopProvider(ctx, receipt); err != nil {

@@ -18,6 +18,13 @@ const tetherClientVersion = "v005-07"
 // work-root projection; the shared layer owns initialize/thread/start caching
 // and turn/start framing.
 func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
+	if hosted, tracked, err := s.hostedCodexSession(ctx, id); tracked {
+		if err != nil {
+			return err
+		}
+		opts := s.codexAppServerOptions(id)
+		return hosted.SendTurn(ctx, text, opts.CWD, opts.ClientName, opts.ClientVersion)
+	}
 	return s.codexThreads.SendTurn(ctx, id, managerJSONRPCSender{s: s, id: id}, text, s.codexAppServerOptions(id))
 }
 

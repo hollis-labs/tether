@@ -13,8 +13,22 @@ import (
 // SessionRoute reads the immutable resolved route from the session record.
 // A nil route means no routing, including sessions predating the feature.
 func (s *Store) SessionRoute(ctx context.Context, id string) (*launchprofile.Route, error) {
+	return sessionRouteRead(ctx, s.db, id)
+}
+
+// SessionRouteTx reads through the caller's transaction, without taking another
+// connection or supplying missing defaults.
+func SessionRouteTx(ctx context.Context, tx *sql.Tx, id string) (*launchprofile.Route, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("session route transaction required")
+	}
+	return sessionRouteRead(ctx, tx, id)
+}
+func sessionRouteRead(ctx context.Context, query interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id string) (*launchprofile.Route, error) {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT route_json FROM sessions WHERE id=?`, id).Scan(&raw)
+	err := query.QueryRowContext(ctx, `SELECT route_json FROM sessions WHERE id=?`, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	}
