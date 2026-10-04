@@ -141,7 +141,7 @@ func (h *Host) requestTeam(ctx context.Context, req teams.ProvisionRequest) erro
 		var payload []byte
 		err := h.db.QueryRowContext(ctx, `SELECT l.payload FROM team_host_launch_intents i JOIN team_launches l USING(launch_key) WHERE i.intent_key=?`, req.IdempotencyKey).Scan(&payload)
 		if err != nil {
-			return notFound(err)
+			return fmt.Errorf("missing launch lookup for intent %q: %w", req.IdempotencyKey, notFound(err))
 		}
 		var record teams.LaunchRecord
 		if err = decode(payload, &record); err != nil {

@@ -102,6 +102,9 @@ var (
 // lookup and launch record commit together without another encoding or decode.
 func writeLaunchIntents(ctx context.Context, conn *sql.Conn, record teams.LaunchRecord) error {
 	for _, intent := range record.Intents {
+		if intent.Key == "" {
+			continue
+		}
 		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO team_host_launch_intents(intent_key,launch_key) VALUES(?,?)`, intent.Key, record.Key); err != nil {
 			return err
 		}

@@ -88,7 +88,10 @@ func (s *Store) afterLaunchWrite(ctx context.Context, conn *sql.Conn, record tea
 	if hook == nil {
 		return nil
 	}
-	return (*hook)(ctx, conn, record)
+	if err := (*hook)(ctx, conn, record); err != nil {
+		return fmt.Errorf("launch lookup write: %w", err)
+	}
+	return nil
 }
 
 // PutLaunch binds immutable intent and commits the record and journal together.
