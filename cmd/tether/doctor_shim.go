@@ -11,7 +11,7 @@ import (
 )
 
 // These checks read configuration and persisted symptoms only: no control
-// connection, placement, takeover, signalling, or migration is performed.
+// connection, placement, takeover, signaling, or migration is performed.
 func checkShimHosting(cat *config.Catalog) []checkResult {
 	service := &app.Service{Catalog: cat}
 	host := service.LaunchHost()

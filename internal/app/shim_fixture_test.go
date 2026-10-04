@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -219,13 +218,4 @@ func (f *shimAppFixture) start(t *testing.T) shimhost.Receipt {
 		return err == nil && len(state.Init) > 0
 	})
 	return r
-}
-
-func shimReceiptText(t *testing.T, r shimhost.Receipt) string {
-	t.Helper()
-	b, err := os.ReadFile(r.DescriptorPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return strings.TrimSpace(string(b))
 }

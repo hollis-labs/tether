@@ -114,7 +114,7 @@ func New(cfg Config) (*Provider, error) {
 			return nil, fail("invalid_config", "unit prefix must end with a dash and be at most 64 bytes")
 		}
 		for _, r := range cfg.UnitPrefix {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 				return nil, fail("invalid_config", "unit prefix contains unsupported characters")
 			}
 		}
@@ -395,7 +395,8 @@ func validEnvironmentKey(key string) bool {
 		return false
 	}
 	for i, r := range key {
-		if !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && r >= '0' && r <= '9') {
+		valid := r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && r >= '0' && r <= '9'
+		if !valid {
 			return false
 		}
 	}

@@ -234,7 +234,7 @@ func shimProviderSpec(host *shimHosting, plan *launch.Plan, req agentsessions.St
 		return shim.Launch{}, nil, runner.ResourceLimits{}, &shimhost.Failure{Code: "sandbox_unavailable", Message: "provider policy requires daemon-owned resources or cannot deny the shim state"}
 	}
 	pin := filepath.Join(dir, "boot.pin")
-	f, err := os.OpenFile(pin, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := os.OpenFile(pin, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) //nolint:gosec // Private pin path is derived from the provider session directory.
 	if err == nil {
 		err = f.Close()
 	}

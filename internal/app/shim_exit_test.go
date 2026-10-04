@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,7 +54,7 @@ func TestShimPrechildPlacementFailuresUseDirectRequest(t *testing.T) {
 			if err != nil || got.Runtime != f.req.Runtime {
 				t.Fatalf("prechild fallback: %v", err)
 			}
-			if _, err := f.svc.Store.SessionShim(context.Background(), f.req.ID); err != store.ErrSessionShimNotFound {
+			if _, err := f.svc.Store.SessionShim(context.Background(), f.req.ID); !errors.Is(err, store.ErrSessionShimNotFound) {
 				t.Fatalf("unstarted row retained: %v", err)
 			}
 		})
