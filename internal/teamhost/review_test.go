@@ -447,7 +447,7 @@ func TestRepeatedRecoveryFailuresBackOffWithoutDiscarding(t *testing.T) {
 	}
 	f.before = nil
 	must(t, h.FlushMessages(ctx, 1))
-	letters, err := h.ListDeadLetters(ctx, 10)
+	letters, err := h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 0 {
 		t.Fatal("outage discarded messages")
@@ -572,7 +572,7 @@ func TestUnavailableHeadOfLineAndDeadDelegation(t *testing.T) {
 	if !reflect.DeepEqual(calls, []string{"first"}) {
 		t.Fatal("later message overtook detached head", calls)
 	}
-	letters, err := h.ListDeadLetters(ctx, 10)
+	letters, err := h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 0 {
 		t.Fatal("detached delivery discarded")
@@ -596,7 +596,7 @@ func TestUnavailableHeadOfLineAndDeadDelegation(t *testing.T) {
 	if err = h.FlushMessages(ctx, 10); err == nil {
 		t.Fatal("injected commit failure ignored")
 	}
-	letters, err = h.ListDeadLetters(ctx, 10)
+	letters, err = h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 0 {
 		t.Fatal("dead letter committed without terminal delegation")
@@ -620,7 +620,7 @@ func TestUnavailableHeadOfLineAndDeadDelegation(t *testing.T) {
 	if calls[len(calls)-1] != "second" {
 		t.Fatal("dead head blocked successor")
 	}
-	letters, err = h.ListDeadLetters(ctx, 10)
+	letters, err = h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 1 || letters[0].Key != "first" || letters[0].Error == "" {
 		t.Fatal("missing operator evidence", letters)
@@ -647,7 +647,7 @@ func TestListAndReviveDeadCleanupAcrossReopen(t *testing.T) {
 	}
 	must(t, db.Close())
 	_, _, h = open(t, path, f)
-	letters, err := h.ListDeadLetters(ctx, 10)
+	letters, err := h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 1 || letters[0].Kind != "intents" || letters[0].Key != req.IdempotencyKey || letters[0].Attempts != 1 {
 		t.Fatal("dead cleanup not listed", letters)
@@ -663,7 +663,7 @@ func TestListAndReviveDeadCleanupAcrossReopen(t *testing.T) {
 	if len(f.sessions) != 0 || len(f.bindings) != 0 || len(f.enrolled) != 0 {
 		t.Fatal("revival did not repair cleanup")
 	}
-	letters, err = h.ListDeadLetters(ctx, 10)
+	letters, err = h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 0 {
 		t.Fatal("repaired letter remained listed")
@@ -691,7 +691,7 @@ func TestReviveDeliveryRetainsItsPlan(t *testing.T) {
 	if err = h.FlushMessages(ctx, 1); !errors.Is(err, teamhost.ErrInvalidRequest) {
 		t.Fatal(err)
 	}
-	letters, err := h.ListDeadLetters(ctx, 10)
+	letters, err := h.ListDeadLetters(ctx, teamhost.DeadLetterCursor{}, 10)
 	must(t, err)
 	if len(letters) != 1 || letters[0].Kind != "deliveries" {
 		t.Fatal("dead delivery not listed")

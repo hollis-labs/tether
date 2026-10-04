@@ -229,20 +229,24 @@ func (h *Host) Provision(ctx context.Context, req teams.ProvisionRequest) (teams
 		return *state.member, nil
 	}
 	actor := req.Identity
-	if req.Slot.Resolution == teams.Fresh {
-		actor = mesh.URN("msg://agent/team/" + id("enrollment", req.IdempotencyKey))
-	}
-	for _, reserved := range req.ReservedIdentities {
-		if req.Slot.Resolution == teams.Fresh && actor == reserved {
-			return teams.Member{}, teams.ErrProvisionFailed
+	enrollment := Enrollment{}
+	if state.enrollment != nil {
+		enrollment = *state.enrollment
+	} else {
+		enrollment, err = h.ports.Enroller.Ensure(ctx, EnrollmentRequest{IntentKey: req.IdempotencyKey, Actor: actor, Provision: req})
+		if err != nil {
+			return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
 		}
 	}
-	enrollment, err := h.ports.Enroller.Ensure(ctx, EnrollmentRequest{IntentKey: req.IdempotencyKey, Actor: actor, Provision: req})
-	if err != nil {
-		return teams.Member{}, h.compensateIfEnded(ctx, req.IdempotencyKey, err)
-	}
-	if enrollment.Actor != actor || enrollment.AgentID == "" || enrollment.Kind != mesh.ActorAgent || enrollment.Ephemeral != (req.Slot.Resolution == teams.Fresh) {
+	fresh := req.Slot.Resolution == teams.Fresh
+	if (mesh.Actor{URN: enrollment.Actor, Kind: enrollment.Kind}).Validate() != nil || (!fresh && enrollment.Actor != actor) || enrollment.AgentID == "" || enrollment.Kind != mesh.ActorAgent || enrollment.Ephemeral != fresh {
 		return teams.Member{}, fmt.Errorf("%w: invalid enrollment", teams.ErrProvisionFailed)
+	}
+	actor = enrollment.Actor
+	for _, reserved := range req.ReservedIdentities {
+		if fresh && actor == reserved {
+			return teams.Member{}, teams.ErrProvisionFailed
+		}
 	}
 	payload, err := encode(enrollment)
 	if err != nil {

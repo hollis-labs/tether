@@ -40,6 +40,16 @@ type recoveryEntry struct{ key, mode string }
 func (h *Host) recoveryPage(ctx context.Context, kind string, limit int) ([]recoveryEntry, error) {
 	var entries []recoveryEntry
 	err := h.tx(ctx, func(conn *sql.Conn) error {
+		// A backwards wall-clock step cannot hide a receipt beyond one maximum
+		// backoff window. Persist the clamp, so repeated reads do not move it.
+		table := "team_host_deliveries"
+		if kind == "intents" {
+			table = "team_host_intents"
+		}
+		capAt := h.Now().Add(maxRecoveryBackoff).UnixNano()
+		if _, err := conn.ExecContext(ctx, `UPDATE `+table+` SET next_attempt_at=? WHERE next_attempt_at>?`, capAt, capAt); err != nil {
+			return err
+		}
 		var cursor int64
 		err := conn.QueryRowContext(ctx, `SELECT position FROM team_host_recovery_cursors WHERE kind=?`, kind).Scan(&cursor)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -114,11 +124,17 @@ type DeadLetter struct {
 	Attempts         int
 }
 
-func (h *Host) ListDeadLetters(ctx context.Context, limit int) ([]DeadLetter, error) {
+// DeadLetterCursor is the exclusive (Kind, Sequence) position of the last row.
+type DeadLetterCursor struct {
+	Kind     string
+	Sequence int64
+}
+
+func (h *Host) ListDeadLetters(ctx context.Context, after DeadLetterCursor, limit int) ([]DeadLetter, error) {
 	if limit < 1 {
 		return nil, errors.New("dead letters: positive limit required")
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT kind,recovery_key,last_error,sequence,attempts FROM (SELECT 'intents' AS kind,intent_key AS recovery_key,last_error,sequence,attempts FROM team_host_intents WHERE dead=1 AND cleaned=0 UNION ALL SELECT 'deliveries',delivery_key,last_error,sequence,attempts FROM team_host_deliveries WHERE dead=1 AND dispatched=0) ORDER BY kind,sequence LIMIT ?`, limit)
+	rows, err := h.db.QueryContext(ctx, `SELECT kind,recovery_key,last_error,sequence,attempts FROM (SELECT 'intents' AS kind,intent_key AS recovery_key,last_error,sequence,attempts FROM team_host_intents WHERE dead=1 AND cleaned=0 UNION ALL SELECT 'deliveries',delivery_key,last_error,sequence,attempts FROM team_host_deliveries WHERE dead=1 AND dispatched=0) WHERE kind>? OR (kind=? AND sequence>?) ORDER BY kind,sequence LIMIT ?`, after.Kind, after.Kind, after.Sequence, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +167,16 @@ func (h *Host) ReviveDeadLetter(ctx context.Context, kind, key string) error {
 		}
 		if completed {
 			return teams.ErrConflict
+		}
+		if kind == "deliveries" {
+			var state mesh.TaskState
+			err := conn.QueryRowContext(ctx, `SELECT state FROM team_host_delegations WHERE delivery_key=?`, key).Scan(&state)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err == nil && state.Terminal() {
+				return teams.ErrConflict
+			}
 		}
 		_, err := conn.ExecContext(ctx, `UPDATE `+table+` SET dead=0,next_attempt_at=0,attempts=0 WHERE `+column+`=?`, key)
 		return err

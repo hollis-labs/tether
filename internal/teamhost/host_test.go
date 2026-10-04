@@ -113,8 +113,12 @@ func (f *fakePorts) Ensure(_ context.Context, req teamhost.EnrollmentRequest) (t
 		f.mu.Unlock()
 		return teamhost.Enrollment{}, teams.ErrProvisionFailed
 	}
-	e := teamhost.Enrollment{Actor: req.Actor, AgentID: string(req.Actor), Kind: mesh.ActorAgent, Ephemeral: ephemeral, SpawnCapable: true}
-	f.enrolled[req.Actor] = true
+	actor := req.Actor
+	if ephemeral {
+		actor = mesh.URN("msg://agent/team/" + req.IntentKey)
+	}
+	e := teamhost.Enrollment{Actor: actor, AgentID: string(actor), Kind: mesh.ActorAgent, Ephemeral: ephemeral, SpawnCapable: true}
+	f.enrolled[actor] = true
 	f.enrollments[req.IntentKey] = e
 	f.ensureRequests[req.IntentKey] = req
 	f.mu.Unlock()
