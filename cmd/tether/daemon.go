@@ -235,7 +235,12 @@ var daemonRunCmd = &cobra.Command{
 				return err
 			}
 		}
-		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities)
+		teamOps, closeTeams, err := buildDaemonTeams(svc, cfg)
+		if err != nil {
+			return err
+		}
+		defer closeTeams()
+		mcpHandler, err := buildDaemonMCP(ctx, svc, cfg, identities, teamOps)
 		if err != nil {
 			_ = closeService()
 			return err
@@ -268,6 +273,7 @@ var daemonRunCmd = &cobra.Command{
 			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
 			Channels:                 svc.Channels,
 			Routing:                  svc,
+			Teams:                    teamOps,
 			DeliveryClaims:           svc.Store,
 			Attachments:              svc.Store,
 			ProxyEvents:              svc.Store,
@@ -1055,6 +1061,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
 	return daemon.Config{
+		TeamsEnabled:    cat.Global.Teams.Enabled,
 		IdentityMode:    mode,
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),

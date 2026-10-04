@@ -24,8 +24,12 @@ With teams disabled these tools are absent, including the gateway's native
 catalog. Every team verb requires the `team.write` token scope in addition to
 service authentication and grants. HTTP has no token-scope check; the daemon
 service enforces caller membership and grants on both paths. Each is a mutation with the existing tool annotations; cancellation,
-removal and dissolution are destructive. Registration follows host activation,
-which is separate from the wrapper implementation.
+removal and dissolution are destructive. The daemon registers them only under
+the explicit `teams.enabled` flag, default false. It shares the HTTP service and
+preserves accepted Unix connection proof through native dispatch; a verified
+operator credential over TCP does not gain local-operator authority. Formation
+is refused until host policy, trust and execution targets are provisioned after
+activation readiness (CW-20261004-0002); no recovery is scheduled.
 
 Arguments are `key` (required caller-scoped idempotency key) and `request` (the
 verb's JSON object); legacy `_traceparent` and `_tracestate` string arguments

@@ -175,7 +175,7 @@ func TestDaemonMCPEndpointOptInGuardsAuthority(t *testing.T) {
 		cat := &config.Catalog{}
 		svc := &app.Service{Catalog: cat}
 		cfg := daemon.Config{ListenAddr: addr, IdentityMode: identity.Enforce}
-		h, err := buildDaemonMCP(context.Background(), svc, cfg, nil)
+		h, err := buildDaemonMCP(context.Background(), svc, cfg, nil, nil)
 		if err != nil || h != nil {
 			t.Fatalf("disabled endpoint changes startup: %v %v", h, err)
 		}
@@ -184,7 +184,7 @@ func TestDaemonMCPEndpointOptInGuardsAuthority(t *testing.T) {
 			t.Fatal(got)
 		}
 		cat.Global.Daemon.MCPEndpoint.Enabled = true
-		if _, err := buildDaemonMCP(context.Background(), svc, cfg, nil); err == nil {
+		if _, err := buildDaemonMCP(context.Background(), svc, cfg, nil, nil); err == nil {
 			t.Fatal("enabled bad authority accepted")
 		}
 		if got := checkMCPEndpoint(cat); got.Status != statusFail {
