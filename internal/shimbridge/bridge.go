@@ -39,15 +39,16 @@ func (e *Failure) Error() string     { return e.Code + ": " + e.Message }
 func failure(code, msg string) error { return &Failure{Code: code, Message: msg} }
 
 type Checkpoint struct {
-	Cursor     string     `json:"cursor"`
-	Journal    string     `json:"journal"`
-	Counter    uint64     `json:"inject_counter,string"`
-	Partial    []byte     `json:"partial,omitempty"`
-	Init       []byte     `json:"init,omitempty"`
-	Session    string     `json:"session"`
-	Instance   string     `json:"instance"`
-	Generation uint64     `json:"generation,string"`
-	Exit       *shim.Exit `json:"exit,omitempty"`
+	ControllerEpoch string     `json:"controller_epoch,omitempty"`
+	Cursor          string     `json:"cursor"`
+	Journal         string     `json:"journal"`
+	Counter         uint64     `json:"inject_counter,string"`
+	Partial         []byte     `json:"partial,omitempty"`
+	Init            []byte     `json:"init,omitempty"`
+	Session         string     `json:"session"`
+	Instance        string     `json:"instance"`
+	Generation      uint64     `json:"generation,string"`
+	Exit            *shim.Exit `json:"exit,omitempty"`
 }
 
 // AttachEvent describes catch-up once per attach, even with zero replayed events.
@@ -191,7 +192,10 @@ func run(ctx context.Context, opts Options, input io.ReadCloser, out, errout io.
 		return 0, failure("journal_mismatch", "refusing another shim journal")
 	}
 	store := &stateStore{path: opts.StatePath, value: state}
-	if err = store.update(func(v *Checkpoint) { v.Journal = c.Journal }); err != nil {
+	if err = store.update(func(v *Checkpoint) {
+		v.Journal = c.Journal
+		v.ControllerEpoch = c.Epoch
+	}); err != nil {
 		return 0, err
 	}
 	if opts.Attach && len(state.Init) > 0 {

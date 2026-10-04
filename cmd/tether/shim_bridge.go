@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// This command never loads a catalog or database. The daemon (future wiring)
+// This command never loads a catalog or database. The daemon
 // places the host first and gives the bridge an explicit private descriptor.
 func shimBridgeCmd() *cobra.Command {
 	var opts shimbridge.Options

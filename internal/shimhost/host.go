@@ -37,14 +37,16 @@ type Failure struct {
 	Message string
 }
 
-func (e *Failure) Error() string  { return e.Code + ": " + e.Message }
-func fail(code, msg string) error { return &Failure{Code: code, Message: msg} }
+func (e *Failure) Error() string     { return e.Code + ": " + e.Message }
+func (e *Failure) ErrorCode() string { return e.Code }
+func fail(code, msg string) error    { return &Failure{Code: code, Message: msg} }
 
 type Config struct {
 	StateDir        string
 	ShimCommand     []string
 	HostEnv         []string
 	Backend         string
+	UnitPrefix      string
 	AllowSystemd    bool
 	JournalBytes    int64
 	VolatileEnvKeys []string
@@ -107,8 +109,24 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.Backend != Detached && cfg.Backend != SystemdUser {
 		return nil, fail("invalid_backend", "unsupported shim host backend")
 	}
+	if cfg.UnitPrefix != "" {
+		if len(cfg.UnitPrefix) > 64 || !strings.HasSuffix(cfg.UnitPrefix, "-") {
+			return nil, fail("invalid_config", "unit prefix must end with a dash and be at most 64 bytes")
+		}
+		for _, r := range cfg.UnitPrefix {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return nil, fail("invalid_config", "unit prefix contains unsupported characters")
+			}
+		}
+	}
 	if cfg.Backend == SystemdUser && !cfg.AllowSystemd {
 		return nil, fail("backend_disabled", "systemd-user requires explicit enablement")
+	}
+	for _, entry := range cfg.HostEnv {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !validEnvironmentKey(key) {
+			return nil, fail("invalid_config", "host environment contains an invalid key")
+		}
 	}
 	if len(cfg.ShimCommand) == 0 || !filepath.IsAbs(cfg.ShimCommand[0]) {
 		return nil, fail("invalid_command", "shim executable must be absolute")
@@ -125,6 +143,9 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.Command == nil {
 		cfg.Command = func(ctx context.Context, argv []string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // Host-owned systemd argv, no shell.
+			if argv[0] == "systemd-run" {
+				cmd.Env = append([]string{}, cfg.HostEnv...)
+			}
 			return cmd.Output()
 		}
 	}
@@ -144,8 +165,26 @@ func New(cfg Config) (*Provider, error) {
 }
 func hash(s string) string                    { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:])[:16] }
 func (p *Provider) dir(session string) string { return filepath.Join(p.cfg.StateDir, hash(session)) }
+
+// SessionDir is the directory that must be denied to the hosted provider.
+func (p *Provider) SessionDir(session string) string { return p.dir(session) }
 func (p *Provider) unit(spec shim.Launch) string {
-	return "tether-shim-" + hash(spec.Instance) + "-" + hash(spec.Session) + ".service"
+	prefix := p.cfg.UnitPrefix
+	if prefix == "" {
+		prefix = "tether-shim-"
+	}
+	return prefix + hash(spec.Instance) + "-" + hash(spec.Session) + ".service"
+}
+
+// PlacementIdentity describes the stable intent before submitting a host.
+// It contains no process witness and must never substitute for placement.json.
+func (p *Provider) PlacementIdentity(key string, spec shim.Launch) Receipt {
+	dir := p.dir(spec.Session)
+	r := Receipt{OperationKey: key, Session: spec.Session, Instance: spec.Instance, Generation: spec.Generation, DescriptorPath: filepath.Join(dir, "launch.json"), SocketPath: filepath.Join(dir, "c", "control.sock"), Backend: p.cfg.Backend}
+	if r.Backend == SystemdUser {
+		r.UnitName = p.unit(spec)
+	}
+	return r
 }
 func metadataPath(r Receipt) string {
 	return filepath.Join(filepath.Dir(r.DescriptorPath), "placement.json")
@@ -268,13 +307,25 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if len(raw) > shim.MaxFrame {
 		return r, fail("invalid_request", "launch descriptor exceeds frame limit")
 	}
+	var logFile *os.File
+	if r.Backend == Detached {
+		// Open every local spawn resource before recording a possible submit.
+		// Failure here positively means that no process exists.
+		logPath := filepath.Join(dir, "host.log")
+		fd, e := syscall.Open(logPath, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_APPEND|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
+		if e != nil {
+			return p.prechildFailure(r)
+		}
+		logFile = os.NewFile(uintptr(fd), logPath)
+		defer func() { _ = logFile.Close() }()
+	}
 	if err = WritePrivateJSON(r.DescriptorPath, spec); err != nil {
-		return r, err
+		return p.prechildFailure(r)
 	}
 	// Persist intent BEFORE either exec or a service-manager submission.
 	r.Attempted = true
 	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
-		return r, err
+		return p.prechildFailure(r)
 	}
 	argv := append(append([]string(nil), p.cfg.ShimCommand...), "--launch", r.DescriptorPath)
 	if r.Backend == Detached {
@@ -283,23 +334,12 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		cmd.Dir = dir
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		// No provider output goes to this log: the shim journals its own pipes.
-		logPath := filepath.Join(dir, "host.log")
-		fd, e := syscall.Open(logPath, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_APPEND|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
-		if e != nil {
-			return r, e
-		}
-		logFile := os.NewFile(uintptr(fd), logPath)
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
-		e = cmd.Start()
+		e := cmd.Start()
 		_ = logFile.Close()
 		if e != nil {
-			r.PlacementFailure = "placement_failed"
-			if err = p.retire(r, Receipt{}); err != nil {
-				return r, err
-			}
-			r.Retired = true
-			return r, fail("placement_failed", "shim executable failed to start")
+			return p.prechildFailure(r)
 		}
 		r.HostPID = cmd.Process.Pid
 		// The owned child cannot reuse its PID before our waiter starts.
@@ -311,7 +351,16 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		p.mu.Unlock()
 		go func() { _ = waitHostChild(cmd); close(reaped) }() // Reap a child owned by this process.
 	} else {
-		args := []string{"systemd-run", "--user", "--no-block", "--collect", "--service-type=exec", "--unit=" + r.UnitName, "--property=Restart=no", "--property=KillMode=control-group", "--"}
+		args := []string{"systemd-run", "--user", "--no-block", "--collect", "--service-type=exec", "--unit=" + r.UnitName, "--property=Restart=no", "--property=KillMode=control-group"}
+		for _, entry := range p.cfg.HostEnv {
+			key, _, ok := strings.Cut(entry, "=")
+			if !ok || !validEnvironmentKey(key) {
+				return r, fail("invalid_config", "host environment contains an invalid key")
+			}
+			// Copy from the submitter environment by name, keeping values out of argv.
+			args = append(args, "--setenv="+key)
+		}
+		args = append(args, "--")
 		args = append(args, argv...)
 		if _, err = p.cfg.Command(ctx, args); err != nil {
 			return r, fail("outcome_unknown", "unit submit may have happened; inspect before recovery")
@@ -340,6 +389,19 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		case <-tick.C:
 		}
 	}
+}
+
+func validEnvironmentKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		valid := r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && r >= '0' && r <= '9'
+		if !valid {
+			return false
+		}
+	}
+	return true
 }
 
 // Descriptor validates the exact identity and paths persisted by the host.
@@ -724,6 +786,16 @@ func (p *Provider) retire(r, saved Receipt) error {
 	delete(p.reaped, identity(r))
 	p.mu.Unlock()
 	return cleanupRetired(r)
+}
+
+func (p *Provider) prechildFailure(r Receipt) (Receipt, error) {
+	r.PlacementFailure = "placement_failed"
+	if err := p.retire(r, Receipt{}); err != nil {
+		return r, fail("outcome_unknown", "pre-child retirement could not be completed")
+	}
+	r.Attempted = true
+	r.Retired = true
+	return r, fail("placement_failed", "shim submission failed before a child started")
 }
 
 func samePlacement(a, b Receipt) bool {

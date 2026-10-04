@@ -10,6 +10,8 @@ import (
 
 type processHandle struct{ pid int }
 
+func Supported() error { return fail("unsupported", "shim hosting requires Linux peer pidfds") }
+
 func peerPID(_ *net.UnixConn) (int, error) {
 	return 0, fail("unsupported", "socket peer pidfds require Linux")
 }

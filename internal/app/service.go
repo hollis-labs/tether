@@ -86,8 +86,12 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
-	launchMu sync.Mutex
-	launches map[string]*sessionLaunchGate
+	launchMu        sync.Mutex
+	shimMu          sync.Mutex
+	shimDraining    sync.Map
+	shimBindingWait sync.Map
+	shimHosting     *shimHosting
+	launches        map[string]*sessionLaunchGate
 
 	factories map[string]RuntimeFactory
 
@@ -299,7 +303,7 @@ func NewCatalogOnly(catalogRoot string) (*Service, error) {
 // the sinks and Service.StopSession so a stop is recorded as "killed".
 func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Manager, *stopRequests) {
 	stops := &stopRequests{}
-	evSink := &eventSinkAdapter{bus: bus, stops: stops}
+	evSink := &eventSinkAdapter{bus: bus, stops: stops, db: db}
 	mgr := agentsessions.NewManager(stateSinkAdapter{db: db, stops: stops}).
 		WithAttachmentSink(attachmentSinkAdapter{db: db}).
 		WithEventSink(evSink)
@@ -328,7 +332,9 @@ func newSessionManager(db *store.Store, bus events.Publisher) (*agentsessions.Ma
 // kills its children (`tether daemon start`, launchd).
 func (s *Service) ReconcileStaleState() {
 	now := time.Now().UTC().Format(time.RFC3339)
-	swept, spared, err := s.Store.SweepStaleSessions(now, s.sessionProcessSurvived)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	swept, spared, err := s.Store.SweepStaleSessions(now, func(row store.StaleSession) bool { return s.sessionProcessSurvivedContext(ctx, row) })
 	if err != nil {
 		log.Printf("store: startup sweep failed: %v", err)
 	}
@@ -350,13 +356,16 @@ func (s *Service) ReconcileStaleState() {
 	}
 }
 
-// sessionProcessSurvived reports whether a stale session's own process is
+// sessionProcessSurvivedContext reports whether a stale session's own process is
 // still alive. The pid must be alive and still be the process the session
 // started: same start time as recorded at launch. A session launched before
 // start times were recorded falls back to a weaker test: the process started
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
-func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
+func (s *Service) sessionProcessSurvivedContext(ctx context.Context, row store.StaleSession) bool {
+	if s.reconcileShimContext(ctx, row) {
+		return true
+	}
 	if row.State == string(session.StateDetached) {
 		return false
 	}
@@ -401,7 +410,7 @@ func (s *Service) reportSweep(swept, spared []string) {
 		log.Printf("store: startup sweep failed %d session(s) whose process did not survive the restart (exit_code -1): %s", len(swept), strings.Join(swept, ", "))
 	}
 	if len(spared) > 0 {
-		log.Printf("store: startup sweep left %d session(s) in place whose process is still alive; this daemon cannot steer or stop them: %s", len(spared), strings.Join(spared, ", "))
+		log.Printf("store: startup sweep left %d session(s) in place retained or handled by process recovery: %s", len(spared), strings.Join(spared, ", "))
 	}
 	if s.Bus == nil {
 		return

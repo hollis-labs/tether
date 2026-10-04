@@ -129,6 +129,11 @@ func terminalState(state agentsessions.State, stopRequested bool) string {
 }
 
 func (a stateSinkAdapter) UpdateSessionState(id string, state agentsessions.State, pid int, exit *int) error {
+	if shimBridgeTerminal(a.db, id, state) {
+		// The bridge ending does not establish provider exit. Its watcher settles
+		// the canonical host outcome; Stop commits its own guarded outcome.
+		return nil
+	}
 	if err := a.db.UpdateSessionState(id, terminalState(state, a.stops.requested(id)), pid, exit); err != nil {
 		return err
 	}
@@ -179,6 +184,7 @@ func (a attachmentSinkAdapter) DetachClientAttachment(attachID string, detachedA
 // terminal transition after a stop request is "killed", matching what
 // stateSinkAdapter persists on the session row. Other states map 1:1.
 type eventSinkAdapter struct {
+	db    *store.Store
 	bus   events.Publisher
 	mgr   *agentsessions.Manager // set post-construction; nil-safe
 	stops *stopRequests
@@ -205,6 +211,9 @@ func (a *eventSinkAdapter) Emit(ctx context.Context, ev agentsessions.LifecycleE
 	}
 	from, to := mapLifecycleStates(ev, a.stops.requested(ev.SessionID))
 	reason := ev.Reason
+	if shimBridgeTerminal(a.db, ev.SessionID, ev.To) {
+		return
+	}
 	if to == string(session.StateKilled) {
 		if r := a.stops.reason(ev.SessionID); r != "" {
 			reason = r

@@ -19,6 +19,7 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/shimhost"
+	"golang.org/x/sys/unix"
 )
 
 type bridgeConfig struct {
@@ -42,6 +43,10 @@ func TestProviderProcess(t *testing.T) {
 	mode := os.Getenv("SHIM_TEST_PROCESS")
 	if mode == "" {
 		return
+	}
+	parent := os.Getppid()
+	if parent <= 1 || unix.Prctl(unix.PR_SET_PDEATHSIG, uintptr(syscall.SIGKILL), 0, 0, 0) != nil || os.Getppid() != parent {
+		os.Exit(96)
 	}
 	b, e := os.ReadFile(os.Getenv("SHIM_TEST_CONFIG"))
 	if e != nil {
@@ -101,7 +106,10 @@ func TestProviderProcess(t *testing.T) {
 	os.Exit(94)
 }
 func fakeClaude() {
-	_ = os.WriteFile(filepath.Join(os.Getenv("HOME"), "child.pid"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	if err := publishFixtureChildPID(filepath.Join(os.Getenv("HOME"), "child.pid"), os.Getpid()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(90)
+	}
 	emit := func(v any) { b, _ := json.Marshal(v); fmt.Fprintln(os.Stdout, string(b)) }
 	emit(map[string]any{"type": "system", "subtype": "init", "session_id": "fake-native"})
 	scan := bufio.NewScanner(os.Stdin)
@@ -150,4 +158,14 @@ func fakeClaude() {
 			emit(map[string]any{"type": "result", "subtype": "success", "session_id": "fake-native", "result": "done:" + text})
 		}
 	}
+}
+
+// Publish only a complete PID witness; readers must never see a partial integer.
+func publishFixtureChildPID(path string, pid int) error {
+	pending := path + ".pending"
+	defer func() { _ = os.Remove(pending) }()
+	if err := os.WriteFile(pending, []byte(strconv.Itoa(pid)), 0600); err != nil {
+		return err
+	}
+	return os.Rename(pending, path)
 }

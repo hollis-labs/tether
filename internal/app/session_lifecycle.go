@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
@@ -374,7 +375,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	}
 	launched := false
 	defer func() {
-		if !launched && token != "" {
+		if !launched && token != "" && !s.shimSessionRetained(sessionID) {
 			if err := identity.NewStore(s.Store.DB()).RevokeToken(context.Background(), token); err != nil {
 				log.Print("session credential revocation failed")
 			}
@@ -537,13 +538,26 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		},
 	}
 	s.turnOutputs.Store(sessionID, turnOutput)
+	req, err = s.prepareShimStart(ctx, plan, req)
+	if err != nil {
+		s.turnOutputs.Delete(sessionID)
+		return nil, err
+	}
+	launchCtx := ctx
+	if s.shimSessionRetained(sessionID) {
+		// After placement, client cancellation cannot abandon bridge startup or
+		// its automatic boot submission. Keep this bookkeeping bounded.
+		var cancel context.CancelFunc
+		launchCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+	}
 	start := func() error { return s.Manager.Start(context.Background(), req) }
 	// Track an automatic boot submission through the same provisional/accepted
 	// marker path as explicit turns, without holding a gate across Start.
 	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
-		err = s.trackTurnSubmissionContext(ctx, sessionID, start)
+		err = s.trackTurnSubmissionContext(launchCtx, sessionID, start)
 	} else {
 		err = start()
 	}
@@ -553,14 +567,10 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		if procLog != nil {
 			_ = procLog.Close()
 		}
-		return nil, err
+		return nil, s.retainShimStartFailure(sessionID, err)
 	}
 	launched = true
-	go func() {
-		_, _ = s.Manager.WaitSession(context.WithoutCancel(ctx), sessionID)
-		turnOutput.flush()
-		s.turnOutputs.Delete(sessionID)
-	}()
+	s.finalizeSessionOutput(ctx, sessionID, turnOutput)
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.
 	if ex := s.codexExemptionFor(plan, rt.Kind(), &startOpts); ex != nil {
@@ -669,6 +679,9 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
+	if handled, err := s.stopShimSession(id); handled {
+		return err
+	}
 	if _, ok := s.Manager.Get(id); !ok {
 		return agentsessions.ErrSessionNotRunning
 	}
@@ -750,8 +763,24 @@ func (s *Service) watchSessionBindings(sessionID string) {
 	if s.Registry == nil {
 		return
 	}
+	var settled chan struct{}
+	if s.shimSessionRetained(sessionID) {
+		settled = make(chan struct{})
+		s.shimBindingWait.Store(sessionID, settled)
+	}
 	go func() {
+		if settled != nil {
+			defer func() {
+				close(settled)
+				s.shimBindingWait.CompareAndDelete(sessionID, settled)
+				s.shimDraining.CompareAndDelete(sessionID, settled)
+			}()
+		}
 		_, _ = s.Manager.WaitSession(context.Background(), sessionID)
+		s.settleShimBridgeExit(sessionID)
+		if s.shimSessionRetained(sessionID) {
+			return
+		}
 		if _, err := s.Registry.RevokeSessionBindings(context.Background(), sessionID); err != nil {
 			log.Printf("app: revoke bindings of ended session %q failed (non-fatal): %v", sessionID, err)
 		}
@@ -813,11 +842,16 @@ func (s *Service) AttachedClients(id string) int {
 // delegating to agentsessions.Manager.Health. Returns (zero, false) when
 // the session is not currently registered.
 func (s *Service) RuntimeHealth(id string) (api.RuntimeHealthResult, bool) {
+	shim := s.shimHealth(id)
 	snap, ok := s.Manager.Health(id)
 	if !ok {
+		if shim != nil {
+			return api.RuntimeHealthResult{SessionID: id, Shim: shim}, true
+		}
 		return api.RuntimeHealthResult{}, false
 	}
 	return api.RuntimeHealthResult{
+		Shim:         shim,
 		SessionID:    snap.SessionID,
 		ProviderID:   snap.RuntimeID,
 		ProviderKind: snap.RuntimeKind,

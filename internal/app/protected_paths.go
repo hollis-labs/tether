@@ -185,8 +185,11 @@ func protectionUnavailable(dirs []string) error {
 // protect it from.
 func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, opts *agentsessions.StartOptions) error {
 	dirs, outer, err := s.protectionPlan(plan, kind, opts, true)
-	if err != nil || len(dirs) == 0 {
+	if err != nil {
 		return err
+	}
+	if len(dirs) == 0 {
+		return s.applyShimSandboxProtection(kind, opts)
 	}
 	writable := launchDirs(plan, opts)
 	for _, w := range writable {
@@ -198,13 +201,13 @@ func (s *Service) applyControlPlaneProtection(plan *launch.Plan, kind string, op
 		}
 	}
 	if !outer {
-		return nil
+		return s.applyShimSandboxProtection(kind, opts)
 	}
 	if err := protectionUnavailable(dirs); err != nil {
 		return err
 	}
 	opts.ProtectedPaths = dirs
-	return nil
+	return s.applyShimSandboxProtection(kind, opts)
 }
 
 // controlPlaneDirs returns the real paths of the directories to protect.

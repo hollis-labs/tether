@@ -91,11 +91,23 @@ type WakeOutcome struct {
 // Capabilities from the agentsessions.Runtime that spawned it, along
 // with provider identity.
 type RuntimeHealthResult struct {
+	Shim         *ShimHealthStatus `json:"shim,omitempty"`
 	SessionID    string
 	ProviderID   string
 	ProviderKind string
 	Caps         agentsessions.Capabilities
 	Health       agentsessions.HealthStatus
+}
+
+// ShimHealthStatus reports retained placement identity without exposing a
+// capability, provider environment, or making a control connection.
+type ShimHealthStatus struct {
+	State        string `json:"state"`
+	Reason       string `json:"reason,omitempty"`
+	PlacementKey string `json:"placement_key"`
+	Backend      string `json:"backend"`
+	Unit         string `json:"unit,omitempty"`
+	Socket       string `json:"socket"`
 }
 
 // LaunchResult is the api-facing subset of app.Launched. The full app

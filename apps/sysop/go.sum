@@ -95,6 +95,8 @@ github.com/hollis-labs/go-sandbox v0.6.0 h1:W//Xikb5ipFl/8aJIbCTqtmwSwsPKw+7Za/+
 github.com/hollis-labs/go-sandbox v0.6.0/go.mod h1:cZVYQKfEze0jFkt7iyvvUTAc7M+7tppRxpq/h8VYUYg=
 github.com/hollis-labs/go-webui v0.1.0 h1:j+seGHO3FBehZvUhiJWIS3/aLeEETlJ0G23qpx8gFRE=
 github.com/hollis-labs/go-webui v0.1.0/go.mod h1:AxZNBuBPpMv6SmS7xaQm2emmSikL8pa8mjNamCzaUz8=
+github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da h1:KFDmTESU7obtQm/VAjW+gj0CT2Br3E5nuQVCpVSr7Uo=
+github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da/go.mod h1:ZOeRRrM2anLCsuj32+cJq8QKXaJkWKdnxU4BFcOtr6w=
 github.com/hollis-labs/substrate/mesh v0.1.0 h1:CkUvYdoXSGVcSlXhVgc+0AYzyhXdd49c+AV47z0XvOs=
 github.com/hollis-labs/substrate/mesh v0.1.0/go.mod h1:akUYHGaDVmF2Gwyr784nk8HuNr0KBsl1x97ApvTxcAM=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

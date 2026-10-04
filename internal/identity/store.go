@@ -81,13 +81,17 @@ func mint(ctx context.Context, writer principalWriter, p Principal) (string, err
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	_, err = writer.ExecContext(ctx, `INSERT INTO principals
+	result, err := writer.ExecContext(ctx, `INSERT INTO principals
         (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json,
-         created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         created_by, created_at, expires_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE ? != 'session' OR EXISTS (SELECT 1 FROM sessions WHERE id=? AND state NOT IN ('completed','failed','killed','orphaned'))`,
 		p.ID, p.Kind, p.Display, HashToken(token), string(scopes), p.SessionID,
-		string(addresses), p.CreatedBy, p.CreatedAt.Format(time.RFC3339Nano), expires)
+		string(addresses), p.CreatedBy, p.CreatedAt.Format(time.RFC3339Nano), expires, p.Kind, p.SessionID)
 	if err != nil {
 		return "", fmt.Errorf("persist principal: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return "", fmt.Errorf("cannot mint a principal for an inactive session")
 	}
 	return token, nil
 }

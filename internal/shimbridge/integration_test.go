@@ -49,6 +49,20 @@ func await(t *testing.T, what string, fn func() bool) {
 	t.Fatal("timeout: " + what)
 }
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+func fixtureChildPID(path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(string(b))
+	if err != nil {
+		return 0, fmt.Errorf("parse fixture child PID: %w", err)
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("fixture child PID must be positive: %d", pid)
+	}
+	return pid, nil
+}
 func startFixture(t *testing.T, journalCap int64) *fixture {
 	t.Helper()
 	root := testutil.ShortDir(t)
@@ -113,11 +127,14 @@ func startFixture(t *testing.T, journalCap int64) *fixture {
 	_ = log.Close()
 	f.host = cmd
 	await(t, "socket and child pid", func() bool {
-		b, e := os.ReadFile(filepath.Join(root, "home", "child.pid"))
+		pid, e := fixtureChildPID(filepath.Join(root, "home", "child.pid"))
 		if e != nil {
-			return false
+			if errors.Is(e, os.ErrNotExist) {
+				return false
+			}
+			t.Fatalf("child PID witness: %v", e)
 		}
-		f.child, _ = strconv.Atoi(string(b))
+		f.child = pid
 		_, e = os.Stat(filepath.Join(root, "c", "control.sock"))
 		return e == nil
 	})
@@ -219,6 +236,11 @@ func send(t *testing.T, s agentsessions.Session, text string) {
 func stateAt(t *testing.T, f *fixture, fn func(bridgeState) bool) bridgeState {
 	t.Helper()
 	var state bridgeState
+	defer func() {
+		if t.Failed() {
+			t.Logf("last persisted bridge state: %+v", state)
+		}
+	}()
 	await(t, "persisted bridge state", func() bool { s, e := readState(f.cfg.StatePath); state = s; return e == nil && fn(s) })
 	return state
 }
@@ -257,8 +279,9 @@ func TestClaudeTurnsInterruptCrashAttach(t *testing.T) {
 	await(t, "interrupt terminal output", func() bool { return strings.Contains(c.text(), "interrupted") })
 	history := snapshot(t, f)
 	high := history[len(history)-1].Cursor
+	t.Logf("interrupt journal high=%q", high)
 	before := stateAt(t, f, func(v bridgeState) bool {
-		return v.Cursor == high && v.Counter >= 4 && len(v.Init) > 0 && len(v.Partial) == 0
+		return interruptCheckpointReady(v, high)
 	})
 	crashBridge(t, s)
 	if !alive(f.child) || !alive(f.host.Process.Pid) {
@@ -669,4 +692,63 @@ func TestControllerWaitsForRelease(t *testing.T) {
 	second := waitController(t, f)
 	_ = second.Close()
 	<-done
+}
+
+// A snapshot is a lower bound: later journal events may already be committed.
+func interruptCheckpointReady(v bridgeState, high string) bool {
+	journal, seq, ok := strings.Cut(v.Cursor, ":")
+	snapshotJournal, snapshotSeq, snapshotOK := strings.Cut(high, ":")
+	current, currentErr := strconv.ParseUint(seq, 10, 64)
+	minimum, minimumErr := strconv.ParseUint(snapshotSeq, 10, 64)
+	return ok && snapshotOK && journal != "" && journal == snapshotJournal &&
+		currentErr == nil && minimumErr == nil && current >= minimum &&
+		v.Counter >= 4 && len(v.Init) > 0 && len(v.Partial) == 0
+}
+
+func TestInterruptCheckpointCanAdvancePastSnapshot(t *testing.T) {
+	f := startFixture(t, 16<<20)
+	s, c := startSession(t, f, false, "")
+	await(t, "init callback", func() bool { return c.idCount() == 1 })
+	for _, text := range []string{"one", "two"} {
+		send(t, s, text)
+		await(t, "completed first turns", func() bool { return strings.Contains(c.text(), "done:"+text) })
+	}
+	history := snapshot(t, f)
+	high := history[len(history)-1].Cursor
+	for _, text := range []string{"three", "four"} {
+		send(t, s, text)
+		await(t, "completed later turns", func() bool { return strings.Contains(c.text(), "done:"+text) })
+	}
+	newer := snapshot(t, f)
+	latest := newer[len(newer)-1].Cursor
+	current := stateAt(t, f, func(v bridgeState) bool { return interruptCheckpointReady(v, latest) })
+	if latest == high {
+		t.Fatal("forced progress did not advance journal")
+	}
+	if !interruptCheckpointReady(current, high) {
+		t.Fatalf("committed newer checkpoint rejected: cursor=%q snapshot=%q", current.Cursor, high)
+	}
+}
+
+func TestInterruptCheckpointRejectsIncompleteOrForeignState(t *testing.T) {
+	ready := bridgeState{Cursor: "journal:10", Counter: 4, Init: []byte("init")}
+	for _, tc := range []struct {
+		name, cursor, high string
+		counter            uint64
+		init, partial      []byte
+	}{
+		{"behind", "journal:9", "journal:10", 4, ready.Init, nil},
+		{"foreign", "other:10", "journal:10", 4, ready.Init, nil},
+		{"malformed", "journal:bad", "journal:10", 4, ready.Init, nil},
+		{"missing-init", ready.Cursor, ready.Cursor, 4, nil, nil},
+		{"pending-input", ready.Cursor, ready.Cursor, 3, ready.Init, nil},
+		{"partial-output", ready.Cursor, ready.Cursor, 4, ready.Init, []byte("partial")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := bridgeState{Cursor: tc.cursor, Counter: tc.counter, Init: tc.init, Partial: tc.partial}
+			if interruptCheckpointReady(v, tc.high) {
+				t.Fatal("incomplete or foreign checkpoint accepted")
+			}
+		})
+	}
 }

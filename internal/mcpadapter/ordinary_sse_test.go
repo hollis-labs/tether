@@ -43,7 +43,12 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				var calls, initializes atomic.Int32
-				upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "alpha", Version: "test"}, nil)
+				// This fixture exercises legacy SSE initialization. Declare its
+				// protocol explicitly: an early SDK discovery response can otherwise
+				// advertise a modern version before SSE filtering is installed.
+				upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "alpha", Version: "test"}, &mcpsdk.ServerOptions{
+					SupportedProtocolVersions: []string{"2025-11-25"},
+				})
 				upstream.AddTool(&mcpsdk.Tool{Name: "alpha_probe", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 					calls.Add(1)
 					return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil
@@ -68,6 +73,8 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 					if r.Method == http.MethodPost {
 						body, err := io.ReadAll(r.Body)
 						if err != nil {
+							t.Errorf("read SSE fixture RPC: %v", err)
+							http.Error(w, "failed to read RPC", http.StatusBadRequest)
 							return
 						}
 						_ = r.Body.Close()
@@ -75,7 +82,11 @@ func TestOrdinarySSEProductionPoolSurvivesHandshakeReconnectAndShutdown(t *testi
 						var rpc struct {
 							Method string `json:"method"`
 						}
-						_ = json.Unmarshal(body, &rpc)
+						if err := json.Unmarshal(body, &rpc); err != nil || rpc.Method == "" {
+							t.Errorf("invalid SSE fixture RPC method: %q (decode error: %v)", rpc.Method, err)
+							http.Error(w, "invalid RPC", http.StatusBadRequest)
+							return
+						}
 						if rpc.Method == "initialize" {
 							initializes.Add(1)
 						}
@@ -182,7 +193,12 @@ func TestSSEProductionHandshakeCancellationAndFailureCloseGET(t *testing.T) {
 				ctx, cancel := context.WithCancel(watchdog)
 				defer cancel()
 				observed, getClosed, consumed := make(chan struct{}), make(chan struct{}), make(chan struct{})
-				upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "alpha", Version: "test"}, nil)
+				// This fixture exercises legacy SSE initialization. Declare its
+				// protocol explicitly: an early SDK discovery response can otherwise
+				// advertise a modern version before SSE filtering is installed.
+				upstream := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "alpha", Version: "test"}, &mcpsdk.ServerOptions{
+					SupportedProtocolVersions: []string{"2025-11-25"},
+				})
 				handler := mcpsdk.NewSSEHandler(func(*http.Request) *mcpsdk.Server { return upstream }, nil)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet {
@@ -211,12 +227,18 @@ func TestSSEProductionHandshakeCancellationAndFailureCloseGET(t *testing.T) {
 					}
 					body, err := io.ReadAll(r.Body)
 					if err != nil {
+						t.Errorf("read SSE fixture RPC: %v", err)
+						http.Error(w, "failed to read RPC", http.StatusBadRequest)
 						return
 					}
 					_ = r.Body.Close()
 					r.Body = io.NopCloser(bytes.NewReader(body))
 					var rpc struct{ Method string }
-					_ = json.Unmarshal(body, &rpc)
+					if err := json.Unmarshal(body, &rpc); err != nil || rpc.Method == "" {
+						t.Errorf("invalid SSE fixture RPC method: %q (decode error: %v)", rpc.Method, err)
+						http.Error(w, "invalid RPC", http.StatusBadRequest)
+						return
+					}
 					if rpc.Method == "initialize" {
 						close(observed)
 						if phase == "initialize-error" {
