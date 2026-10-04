@@ -28,6 +28,7 @@ import (
 // The outer lock keeps reduction, persistence and emission ordered across
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
+	providerResultID string
 	submissionGate   sync.Mutex
 	accepted         bool
 	submissions      int
@@ -181,7 +182,7 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result}
+	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID}
 	ctx, cancel := o.service.outputPersistenceContext()
 	defer cancel()
 	if err := job.persist(ctx, o.service); err != nil {
@@ -203,12 +204,13 @@ type turnOutputStore interface {
 // create a second durable body for the same output. The reader supplies one
 // overall deadline; retry workers additionally bound each operation.
 type turnOutputWrite struct {
-	storage     turnOutputStore
-	row         store.SessionRow
-	route       *launchprofile.Route
-	routeUnread bool
-	result      turnoutput.Output
-	messageID   string
+	providerResultID string
+	storage          turnOutputStore
+	row              store.SessionRow
+	route            *launchprofile.Route
+	routeUnread      bool
+	result           turnoutput.Output
+	messageID        string
 }
 
 func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
@@ -243,7 +245,8 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	}
 	result := w.result
 	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
-		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
+		ProviderResultID: w.providerResultID,
+		StopReason:       result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
 		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
