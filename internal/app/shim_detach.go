@@ -5,7 +5,10 @@ package app
 import (
 	"context"
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/session"
+	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/store"
 	"time"
 )
@@ -46,12 +49,7 @@ func (s *Service) settleShimBridgeExit(id string) {
 		s.retainShim(row, &receipt, shimFailureCode(err))
 		return
 	}
-	exit := result.Exit.Status
-	state := session.StateCompleted
-	if exit != 0 || result.Exit.Signal != 0 {
-		state = session.StateFailed
-	}
-	_ = s.Store.UpdateSessionState(id, string(state), 0, &exit)
+	s.completeShimExit(row, receipt, result.Exit)
 }
 
 func shimBridgeTerminal(db *store.Store, id string, state agentsessions.State) bool {
@@ -84,4 +82,28 @@ func (s *Service) detachShimSession(ctx context.Context, id string) bool {
 	// closing the hosted provider's stdin or retiring its placement.
 	_ = s.Manager.Stop(ctx, id)
 	return true
+}
+
+func (s *Service) completeShimExit(row store.SessionShimRow, receipt shimhost.Receipt, result shim.Exit) {
+	before, err := s.Store.GetSession(row.SessionID)
+	if err != nil {
+		s.retainShim(row, &receipt, "outcome_unknown")
+		return
+	}
+	exit := result.Status
+	state := session.StateCompleted
+	if exit != 0 || result.Signal != 0 {
+		state = session.StateFailed
+	}
+	if err := s.Store.UpdateSessionState(row.SessionID, string(state), 0, &exit); err != nil {
+		s.retainShim(row, &receipt, "outcome_unknown")
+		return
+	}
+	publishSessionEvent(s.Bus, row.SessionID, before.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: before.State, To: string(state), ExitCode: &exit, Reason: "provider_exit"})
+	if host, err := s.shimHost(); err == nil {
+		if cleanup, ok := host.cleanup.LoadAndDelete(row.SessionID); ok {
+			cleanup.(func())()
+		}
+	}
+	s.shimDiagnostic(row.SessionID, &receipt, string(state), "provider_exit")
 }

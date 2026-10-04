@@ -5,7 +5,9 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/hollis-labs/tether/internal/agent"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
@@ -63,12 +65,7 @@ func (s *Service) reconcileShim(stale store.StaleSession) bool {
 			s.retainShim(row, &receipt, shimFailureCode(err))
 			return true
 		}
-		exit := inspection.Exit.Status
-		state := session.StateCompleted
-		if exit != 0 || inspection.Exit.Signal != 0 {
-			state = session.StateFailed
-		}
-		_ = s.Store.UpdateSessionState(row.SessionID, string(state), 0, &exit)
+		s.completeShimExit(row, receipt, inspection.Exit)
 		return true
 	}
 	if err = s.reattachShim(ctx, row, inspection.Receipt); err != nil {
@@ -148,6 +145,23 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 	host, err := s.shimHost()
 	if err != nil {
 		return true, err
+	}
+	if !receipt.Retired {
+		sessionRow, err := s.Store.GetSession(id)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(sessionRow.LogicalAgentID) != "" {
+			policy, err := s.Store.GetLogicalAgentPolicy(sessionRow.LogicalAgentID)
+			if err != nil {
+				return true, err
+			}
+			if policy.CheckpointPolicy == agent.CheckpointPolicyOnStop {
+				if err := s.CreatePolicyCheckpoint(sessionRow, policy); err != nil {
+					return true, err
+				}
+			}
+		}
 	}
 	if err = host.stopProvider(context.Background(), receipt); err != nil {
 		s.shimDiagnostic(id, &receipt, "retained", shimFailureCode(err))
