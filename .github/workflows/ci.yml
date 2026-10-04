@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # The store package's race tests run in their own job (test-race-store) so the
+  # main job stays well under its limit; the main job runs every other package.
+  STORE_PKG: github.com/hollis-labs/tether/internal/store
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -21,7 +26,7 @@ jobs:
     name: fmt / vet / lint / test-race / vuln
     runs-on: ubuntu-latest
     # A go.sum change gives a cold build cache that can take about 10 minutes; PR caches are not shared with main, so the first push to main after a bump is cold too.
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       # hollis-labs/go-messaging and hollis-labs/go-providers are private.
       # GOPRIVATE skips the proxy and sum database for these modules.
@@ -60,4 +65,34 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Run full quality gate
-        run: make check
+        # Every package except the store package, which test-race-store runs.
+        run: make check RACE_PKGS="$(go list ./... | grep -v -x "$STORE_PKG" | tr '\n' ' ')"
+
+  test-race-store:
+    name: test-race (store)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOPRIVATE: "github.com/hollis-labs/*"
+      GONOSUMDB: "github.com/hollis-labs/*"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure private module access
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}:x-oauth-basic@github.com/hollis-labs/".insteadOf "https://github.com/hollis-labs/"
+
+      - name: Install gotestsum
+        # Same tool and version spec as `make tools-install`.
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run the store race tests
+        # Same flags as the main job's race run, for this one package.
+        run: make test-race RACE_PKGS="$STORE_PKG"
