@@ -17,3 +17,24 @@ func SocketDir(t testing.TB) string {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
+
+// ShortDir prefers the configured temporary root while leaving room for the
+// session hash and socket suffix. An overlong root falls back to the OS's short
+// temporary directory; every fixture registers removal before returning.
+func ShortDir(t testing.TB) string {
+	t.Helper()
+	base := os.TempDir()
+	if len(base) > 40 {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	return dir
+}

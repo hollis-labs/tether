@@ -8,6 +8,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Shim host foundation: private, idempotent detached placement and explicitly enabled systemd-user placement; a Claude stdio bridge with durable line checkpoints and attach diagnostics; secret-free session placement storage. `catalog.defaults.shim_host.journal_bytes` defaults to 256 MiB and `systemd_user` defaults to false. The explicit `tether shim-bridge` command does not change existing session launches. Crash delivery windows and EOF/detach behavior are documented in `docs/shim-host.md`. Signalling a live host requires Linux socket peer pidfds; non-Linux returns `unsupported` for live teardown, while an owned child proven exited by its waiter can be retired without a pidfd. Bridge infrastructure failures use exit code 93; a provider exit of 93 is indistinguishable, so the daemon must consult shim health through a checked same-uid connection.
 - Add non-terminal detached and orphaned session states, safe recovery and resume rules, and CLI/MCP/API/sysop vocabulary.
 
 - Add an inert team host over explicit session, enrollment, transport and channel-naming ports, with durable intent tombstones, exclusive identity bindings, retained delivery queues, delegation results, approvals and caller receipts. Launch-intent lookup commits with the launch record through an optional storage callback. Team execution requires explicit strict authority and trust policy; daemon activation is separate.
