@@ -356,15 +356,12 @@ func (s *Service) ReconcileStaleState() {
 	}
 }
 
-// sessionProcessSurvived reports whether a stale session's own process is
+// sessionProcessSurvivedContext reports whether a stale session's own process is
 // still alive. The pid must be alive and still be the process the session
 // started: same start time as recorded at launch. A session launched before
 // start times were recorded falls back to a weaker test: the process started
 // no earlier than the session was created and runs the session's launch
 // command. Anything that cannot be verified is not a survivor.
-func (s *Service) sessionProcessSurvived(row store.StaleSession) bool {
-	return s.sessionProcessSurvivedContext(context.Background(), row)
-}
 func (s *Service) sessionProcessSurvivedContext(ctx context.Context, row store.StaleSession) bool {
 	if s.reconcileShimContext(ctx, row) {
 		return true

@@ -20,11 +20,8 @@ import (
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-// reconcileShim spares every tracked shim from the legacy process-PID sweep.
+// reconcileShimContext spares every tracked shim from the legacy process-PID sweep.
 // A refusal or unknown outcome retains authority; positive absence revokes it.
-func (s *Service) reconcileShim(stale store.StaleSession) bool {
-	return s.reconcileShimContext(context.Background(), stale)
-}
 func (s *Service) reconcileShimContext(parent context.Context, stale store.StaleSession) bool {
 	row, err := s.Store.SessionShim(context.Background(), stale.ID)
 	if errors.Is(err, store.ErrSessionShimNotFound) {

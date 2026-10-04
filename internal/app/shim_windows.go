@@ -27,7 +27,6 @@ func (s *Service) prepareShimStart(_ context.Context, _ *launch.Plan, req agents
 	return req, nil
 }
 func (s *Service) stopShimSession(string) (bool, error)                 { return false, nil }
-func (s *Service) reconcileShim(store.StaleSession) bool                { return false }
 func (s *Service) shimSessionRetained(string) bool                      { return false }
 func (s *Service) detachShimSession(context.Context, string) bool       { return false }
 func shimBridgeTerminal(*store.Store, string, agentsessions.State) bool { return false }

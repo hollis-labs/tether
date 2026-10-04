@@ -4,6 +4,7 @@ package app
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,7 +44,7 @@ func fixtureProcessIdentity(pid int) (parent int, start uint64, state string, er
 func terminateOwnedShimFixture(t *testing.T, r shimhost.Receipt) {
 	t.Helper()
 	fd, err := unix.PidfdOpen(r.HostPID, 0)
-	if err == syscall.ESRCH {
+	if errors.Is(err, syscall.ESRCH) {
 		return
 	}
 	if err != nil {
@@ -56,7 +57,7 @@ func terminateOwnedShimFixture(t *testing.T, r shimhost.Receipt) {
 		t.Errorf("fixture cleanup identity refused: %v", err)
 		return
 	}
-	if err := unix.PidfdSendSignal(fd, syscall.SIGKILL, nil, 0); err != nil && err != syscall.ESRCH {
+	if err := unix.PidfdSendSignal(fd, syscall.SIGKILL, nil, 0); err != nil && !errors.Is(err, syscall.ESRCH) {
 		t.Errorf("fixture cleanup signal: %v", err)
 	}
 }

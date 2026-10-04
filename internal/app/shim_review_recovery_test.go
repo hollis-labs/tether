@@ -38,7 +38,7 @@ func TestShimTerminalStopPreservesOutcome(t *testing.T) {
 			if err := f.svc.Store.UpdateSessionState(f.req.ID, state, 0, &exit); err != nil {
 				t.Fatal(err)
 			}
-			f.svc.shimHosting.stop = func(context.Context, shimhost.Receipt) error { t.Error("terminal stop signalled host"); return nil }
+			f.svc.shimHosting.stop = func(context.Context, shimhost.Receipt) error { t.Error("terminal stop signaled host"); return nil }
 			err := f.svc.StopSession(f.req.ID)
 			if !errors.Is(err, agentsessions.ErrSessionNotRunning) {
 				t.Fatalf("terminal stop=%v", err)
@@ -65,7 +65,7 @@ func TestShimCancelledRequestStillRecordsPlacement(t *testing.T) {
 	}
 	req, err := f.svc.prepareShimStart(ctx, f.plan, f.req)
 	if err != nil || req.Runtime == f.req.Runtime {
-		t.Fatalf("cancelled request abandoned placement: %v", err)
+		t.Fatalf("canceled request abandoned placement: %v", err)
 	}
 	row, err := f.svc.Store.SessionShim(context.Background(), f.req.ID)
 	if err != nil || row.HostPID == 0 || row.ProviderPID == 0 {

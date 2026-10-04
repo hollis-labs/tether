@@ -718,9 +718,10 @@ func TestShimSettleSignalAndGoneOutcomes(t *testing.T) {
 			retired := 0
 			f.svc.shimHosting.inspect = func(context.Context, shimhost.Receipt) (shimhost.Inspection, error) {
 				result := shimhost.Inspection{Receipt: r, Gone: outcome == "gone"}
-				if outcome == "signal" {
+				switch outcome {
+				case "signal":
 					result.Exit.Signal = 9
-				} else if outcome == "exit" {
+				case "exit":
 					result.Exit.Status = 7
 				}
 				return result, nil
@@ -959,13 +960,13 @@ func TestShimCancelledBootLaunchStillStartsBridge(t *testing.T) {
 		return r, err
 	}
 	if _, err := f.svc.LaunchSessionWithContext(ctx, f.req.ID); err != nil {
-		t.Fatalf("cancelled client abandoned placed boot session: %v", err)
+		t.Fatalf("canceled client abandoned placed boot session: %v", err)
 	}
 	shimAwait(t, "boot turn from owned bridge", func() bool { return len(outputEvents(t, f.svc)) == 1 })
 	if err := f.svc.SendTurn(context.Background(), f.req.ID, "next"); err != nil {
 		t.Fatal(err)
 	}
-	shimAwait(t, "next turn after cancelled boot", func() bool { return len(outputEvents(t, f.svc)) == 2 })
+	shimAwait(t, "next turn after canceled boot", func() bool { return len(outputEvents(t, f.svc)) == 2 })
 }
 
 func TestShimBridgeStartFailureRetainsPlacementAndCredential(t *testing.T) {
