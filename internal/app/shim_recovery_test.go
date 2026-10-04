@@ -59,6 +59,12 @@ func TestShimReconcilerClassification(t *testing.T) {
 				}
 				return shimhost.Inspection{Gone: tc.gone}, nil
 			}
+			host.stop = func(context.Context, shimhost.Receipt) error {
+				if !tc.gone || tc.code != "" {
+					t.Fatal("retired a refused or uncertain placement")
+				}
+				return nil
+			}
 			f.svc.ReconcileStaleState()
 			row, _ := f.svc.Store.GetSession(f.req.ID)
 			if row.State != tc.want || calls != 1 {

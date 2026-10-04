@@ -29,3 +29,5 @@ func (s *Service) reconcileShim(store.StaleSession) bool                { return
 func (s *Service) shimSessionRetained(string) bool                      { return false }
 func (s *Service) detachShimSession(context.Context, string) bool       { return false }
 func shimBridgeTerminal(*store.Store, string, agentsessions.State) bool { return false }
+
+func (s *Service) applyShimSandboxProtection(string, *agentsessions.StartOptions) error { return nil }

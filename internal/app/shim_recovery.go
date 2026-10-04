@@ -52,6 +52,12 @@ func (s *Service) reconcileShim(stale store.StaleSession) bool {
 		return true
 	}
 	if inspection.Gone {
+		// Retire the verified placement before orphaning, so provider secrets
+		// cannot outlive authority revocation. Stop's Gone branch signals none.
+		if err = host.stopProvider(ctx, receipt); err != nil {
+			s.retainShim(row, &receipt, shimFailureCode(err))
+			return true
+		}
 		if err = s.MarkSessionOrphaned(row.SessionID, "shim_gone"); err != nil {
 			s.retainShim(row, &receipt, "outcome_unknown")
 			return true

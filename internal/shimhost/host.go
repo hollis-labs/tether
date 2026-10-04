@@ -307,13 +307,25 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 	if len(raw) > shim.MaxFrame {
 		return r, fail("invalid_request", "launch descriptor exceeds frame limit")
 	}
+	var logFile *os.File
+	if r.Backend == Detached {
+		// Open every local spawn resource before recording a possible submit.
+		// Failure here positively means that no process exists.
+		logPath := filepath.Join(dir, "host.log")
+		fd, e := syscall.Open(logPath, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_APPEND|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
+		if e != nil {
+			return p.prechildFailure(r)
+		}
+		logFile = os.NewFile(uintptr(fd), logPath)
+		defer func() { _ = logFile.Close() }()
+	}
 	if err = WritePrivateJSON(r.DescriptorPath, spec); err != nil {
-		return r, err
+		return p.prechildFailure(r)
 	}
 	// Persist intent BEFORE either exec or a service-manager submission.
 	r.Attempted = true
 	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
-		return r, err
+		return p.prechildFailure(r)
 	}
 	argv := append(append([]string(nil), p.cfg.ShimCommand...), "--launch", r.DescriptorPath)
 	if r.Backend == Detached {
@@ -322,23 +334,12 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		cmd.Dir = dir
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		// No provider output goes to this log: the shim journals its own pipes.
-		logPath := filepath.Join(dir, "host.log")
-		fd, e := syscall.Open(logPath, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_APPEND|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
-		if e != nil {
-			return r, e
-		}
-		logFile := os.NewFile(uintptr(fd), logPath)
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
-		e = cmd.Start()
+		e := cmd.Start()
 		_ = logFile.Close()
 		if e != nil {
-			r.PlacementFailure = "placement_failed"
-			if err = p.retire(r, Receipt{}); err != nil {
-				return r, err
-			}
-			r.Retired = true
-			return r, fail("placement_failed", "shim executable failed to start")
+			return p.prechildFailure(r)
 		}
 		r.HostPID = cmd.Process.Pid
 		// The owned child cannot reuse its PID before our waiter starts.
@@ -785,6 +786,16 @@ func (p *Provider) retire(r, saved Receipt) error {
 	delete(p.reaped, identity(r))
 	p.mu.Unlock()
 	return cleanupRetired(r)
+}
+
+func (p *Provider) prechildFailure(r Receipt) (Receipt, error) {
+	r.PlacementFailure = "placement_failed"
+	if err := p.retire(r, Receipt{}); err != nil {
+		return r, fail("outcome_unknown", "pre-child retirement could not be completed")
+	}
+	r.Attempted = true
+	r.Retired = true
+	return r, fail("placement_failed", "shim submission failed before a child started")
 }
 
 func samePlacement(a, b Receipt) bool {

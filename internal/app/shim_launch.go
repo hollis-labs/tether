@@ -109,6 +109,9 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	if plan.ProviderBrand != "claude" || !req.Runtime.Caps().StreamingStdio || req.Options.PreparedExecution != nil || req.Options.Launch == nil || req.Options.Launch.Convention.Mode != runtimes.ModeStreamingStdio || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
 		return fallback("unsupported_runtime")
 	}
+	if err := shimhost.Supported(); err != nil {
+		return fallback(shimFailureCode(err))
+	}
 	host, err := s.shimHost()
 	if err != nil {
 		return fallback(shimFailureCode(err))
@@ -209,30 +212,10 @@ func shimProviderSpec(host *shimHosting, plan *launch.Plan, req agentsessions.St
 	if err != nil {
 		return shim.Launch{}, nil, runner.ResourceLimits{}, err
 	}
-	profile := opts.Profile
-	if profile.ID == "" {
-		profile = sandbox.Profile{ID: "shim-provider", HostFilesystem: true, Net: true, Subprocess: true}
-	}
 	privateRoot := filepath.Dir(dir)
-	protected := append(append([]string{}, opts.ProtectedPaths...), filepath.Dir(privateRoot))
-	profile.FS.Protect = append(append([]string{}, profile.FS.Protect...), protected...)
-	profile.FS.Deny = append(append([]string{}, profile.FS.Deny...), privateRoot)
-	profile.DenyGUILaunch = profile.DenyGUILaunch || opts.DenyGUILaunch
-	profile.DenyUserServiceManager = true
-	request := sandbox.PolicyFromProfile(profile, opts.Workdir)
-	if profile.HostFilesystem {
-		request.FS.Write = append(request.FS.Write, sandbox.PathRef{Path: "/"})
-	}
-	policy, err := sandbox.ResolveAccessPolicy(request)
-	if opts.SandboxPolicy != nil {
-		policy = *opts.SandboxPolicy
-		policy.FS.Deny = append(append([]sandbox.ResolvedPath{}, policy.FS.Deny...), sandbox.ResolvedPath{Kind: sandbox.AccessDeny, Path: privateRoot})
-		policy, err = policy.WithProtected(protected...)
-		policy.DenyGUILaunch = policy.DenyGUILaunch || opts.DenyGUILaunch
-		policy.DenyUserServiceManager = true
-	}
-	if err != nil || policy.Mode == sandbox.ConfinementDisabled || len(policy.Network.LoopbackPorts) > 0 {
-		return shim.Launch{}, nil, runner.ResourceLimits{}, &shimhost.Failure{Code: "sandbox_unavailable", Message: "provider policy requires daemon-owned resources or cannot deny the shim state"}
+	policy, err := shimSandboxPolicy(opts, privateRoot)
+	if err != nil {
+		return shim.Launch{}, nil, runner.ResourceLimits{}, err
 	}
 	pin := filepath.Join(dir, "boot.pin")
 	f, err := os.OpenFile(pin, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) //nolint:gosec // Private pin path is derived from the provider session directory.

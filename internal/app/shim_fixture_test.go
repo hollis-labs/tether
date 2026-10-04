@@ -130,6 +130,8 @@ func shimFixture(t *testing.T) *shimAppFixture {
 	root := testutil.ShortDir(t)
 	t.Setenv("HOME", root)
 	t.Setenv("TMPDIR", root)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
 	svc := bindingHarness(t)
 	svc.Catalog = &config.Catalog{}
 	svc.turnFeeds = map[string]turnFeedRegistration{"claude": {}}

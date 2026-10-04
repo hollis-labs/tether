@@ -1,0 +1,141 @@
+//go:build linux
+
+package app
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/go-runner/runner"
+	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/tether/internal/shimhost"
+	"golang.org/x/sys/unix"
+)
+
+func TestShimOtherSandboxedLaunchDeniesPrivateRoot(t *testing.T) {
+	t.Setenv(EnvLaunchHost, "shim")
+	svc, _, _ := tetherLayout(t)
+	privateRoot := filepath.Join(filepath.Dir(svc.Catalog.Global.Catalog.Defaults.StateDB), "shims")
+	// Resolve the catalog's symlink before creating private state.
+	privateRoot = realPathOrClean(privateRoot)
+	descriptor := filepath.Join(privateRoot, "session", "launch.json")
+	if err := shimhost.WritePrivateJSON(descriptor, map[string]string{"secret": "fake-capability"}); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	opts := agentsessions.StartOptions{Workdir: work, WorkspaceDir: work}
+	if err := svc.applyControlPlaneProtection(cliPlan, "cli", &opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.SandboxPolicy == nil || opts.SandboxPolicy.AccessFor(descriptor) != sandbox.AccessDenied {
+		t.Fatal("another sandboxed launch can read private shim state")
+	}
+	cmd := exec.Command("/bin/sh", "-c", `if cat "$1" >/dev/null 2>&1; then exit 9; fi`, "probe", descriptor)
+	cmd.Dir = work
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work}
+	_, cleanup, err := sandbox.ApplyResolved(cmd, *opts.SandboxPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("other sandbox read the descriptor: %v", err)
+	}
+}
+
+func TestShimImplicitWorkspacePolicyIsCompleteBeforePlacement(t *testing.T) {
+	f := shimFixture(t)
+	work := t.TempDir()
+	f.req.Options.Workdir = work
+	f.req.Options.Profile = sandbox.Profile{ID: "legacy-workspace", Net: true, Subprocess: true}
+	prepare := f.svc.shimHosting.prepare
+	called := false
+	f.svc.shimHosting.prepare = func(spec shim.Launch, policy *sandbox.ResolvedAccessPolicy, limits runner.ResourceLimits) (shim.Launch, func(), error) {
+		called = true
+		if policy.AccessFor(work) != sandbox.AccessReadWrite {
+			t.Fatal("implicit workspace disappeared during policy translation")
+		}
+		return prepare(spec, policy, limits)
+	}
+	if _, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		_, err := shimSandboxPolicy(f.req.Options, filepath.Dir(f.svc.shimHosting.provider.SessionDir(f.req.ID)))
+		t.Fatalf("workspace translation fell back instead of preparing a complete policy: %v", err)
+	}
+}
+
+func TestShimMissingDenyPathRefusesBeforePlacementWithReason(t *testing.T) {
+	f := shimFixture(t)
+	f.req.Options.Workdir = t.TempDir()
+	f.req.Options.Profile = sandbox.Profile{ID: "workspace", Net: true, Subprocess: true, FS: sandbox.FSSpec{Deny: []string{filepath.Join(f.root, "absent-credentials")}}}
+	f.svc.shimHosting.place = func(context.Context, string, shim.Launch) (shimhost.Receipt, error) {
+		t.Fatal("underspecified policy reached placement")
+		return shimhost.Receipt{}, nil
+	}
+	req, err := f.svc.prepareShimStart(context.Background(), f.plan, f.req)
+	if err != nil || req.Runtime != f.req.Runtime {
+		t.Fatalf("policy refusal did not use direct path: %v", err)
+	}
+	found := false
+	for _, status := range shimStatusEvents(t, f) {
+		if status.State == "direct_fallback" && status.Reason == "policy_path_missing" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing deny path lost its distinct diagnostic")
+	}
+}
+
+func TestShimGoneRemovesSecretDescriptor(t *testing.T) {
+	f := shimFixture(t)
+	receipt := f.start(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := f.svc.DrainSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := unix.PidfdOpen(receipt.HostPID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(receipt.HostPID) + "/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(stat)[strings.LastIndex(string(stat), ")")+2:])
+	parent, err := strconv.Atoi(fields[1])
+	if err != nil || parent != os.Getpid() {
+		t.Fatalf("host is not test-owned: %v", err)
+	}
+	start, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil || start != receipt.HostStartTime {
+		t.Fatalf("host identity changed: %v", err)
+	}
+	if err := unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	shimAwait(t, "positive host absence", func() bool {
+		result, err := f.svc.shimHosting.provider.Inspect(context.Background(), receipt)
+		return err == nil && result.Gone
+	})
+	f.svc.ReconcileStaleState()
+	row, err := f.svc.Store.GetSession(f.req.ID)
+	if err != nil || row.State != "orphaned" {
+		t.Fatalf("positive absence: %+v %v", row, err)
+	}
+	if _, err := os.Stat(receipt.DescriptorPath); !os.IsNotExist(err) {
+		t.Fatalf("orphan retained provider secrets: %v", err)
+	}
+}
