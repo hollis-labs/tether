@@ -65,9 +65,10 @@ run: go-install
 # Test
 # ---------------------------------------------------------------------------
 
-# go test gives every package binary 10 minutes unless told otherwise; the slowest
-# package (internal/app) can need more under -race with cross-package coverage.
-TEST_TIMEOUT ?= 20m
+# go test gives every package binary 10 minutes unless told otherwise. CI sets
+# TEST_TIMEOUT=20m as a workaround: the slowest package (internal/app) can need
+# more under -race with cross-package coverage. Empty keeps go test's default.
+TEST_TIMEOUT ?=
 
 # Packages test-race runs. Locally the default is everything. CI passes the list
 # without the store package and runs that package in its own job (see ci.yml).
@@ -80,16 +81,16 @@ RACE_PKGS ?= ./...
 # twice.
 test:
 	@if command -v gotestsum >/dev/null 2>&1; then \
-		gotestsum -- -timeout $(TEST_TIMEOUT) -coverpkg=./... -coverprofile=coverage.out ./...; \
+		gotestsum -- $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out ./...; \
 	else \
-		go test -timeout $(TEST_TIMEOUT) -coverpkg=./... -coverprofile=coverage.out ./...; \
+		go test $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out ./...; \
 	fi
 
 test-race:
 	@if command -v gotestsum >/dev/null 2>&1; then \
-		gotestsum -- -race -timeout $(TEST_TIMEOUT) -coverpkg=./... -coverprofile=coverage.out $(RACE_PKGS); \
+		gotestsum -- -race $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out $(RACE_PKGS); \
 	else \
-		go test -race -timeout $(TEST_TIMEOUT) -coverpkg=./... -coverprofile=coverage.out $(RACE_PKGS); \
+		go test -race $(if $(TEST_TIMEOUT),-timeout $(TEST_TIMEOUT)) -coverpkg=./... -coverprofile=coverage.out $(RACE_PKGS); \
 	fi
 
 coverage: coverage.out

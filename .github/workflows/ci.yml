@@ -16,6 +16,9 @@ env:
   # The store package's race tests run in their own job (test-race-store) so the
   # main job stays well under its limit; the main job runs every other package.
   STORE_PKG: github.com/hollis-labs/tether/internal/store
+  # Workaround: internal/app can need more than go test's 10 minute per-package
+  # default under -race with coverage on the runner. The Makefile reads this.
+  TEST_TIMEOUT: 20m
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
