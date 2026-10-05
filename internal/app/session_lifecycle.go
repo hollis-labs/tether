@@ -563,7 +563,9 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	}
 	if err != nil {
 		s.turnOutputs.Delete(sessionID)
-		turnOutput.flush()
+		if s.shouldFlushSessionOutput(launchCtx, sessionID) {
+			turnOutput.flush()
+		}
 		if procLog != nil {
 			_ = procLog.Close()
 		}

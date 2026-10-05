@@ -58,7 +58,7 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	env.CreatedAt = time.Now().UTC()
 	env.Kind = messaging.MsgKindNotice
 	env.To = messaging.Address{Kind: messaging.KindService, Authority: "local", ID: "turn-output"}
-	saved, err := s.insertStagedTurnOutput(ctx, env)
+	saved, err := insertStagedTurnOutput(ctx, s.db, env)
 	if err != nil {
 		return messaging.Envelope{}, err
 	}
@@ -70,7 +70,7 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	alternate, _ := json.Marshal([5]string{env.From.ID, env.Metadata["turn_id"], env.Metadata["kind"], string(env.Payload), env.ContentType})
 	env.ID = uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("tether:turn-output:body:"), alternate...)).String()
 	log.Printf("ERROR session %q turn %q: reused output identity with different body; preserving message %q separately as %q", env.From.ID, env.Metadata["turn_id"], saved.ID, env.ID)
-	saved, err = s.insertStagedTurnOutput(ctx, env)
+	saved, err = insertStagedTurnOutput(ctx, s.db, env)
 	if err != nil {
 		return messaging.Envelope{}, err
 	}
@@ -80,12 +80,19 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	return saved, nil
 }
 
-func (s *Store) insertStagedTurnOutput(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
+// stagedOutputExecutor lets the existing insert/read use one caller transaction.
+// The legacy StageTurnOutput wrapper still uses its original DB semantics.
+type stagedOutputExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func insertStagedTurnOutput(ctx context.Context, executor stagedOutputExecutor, env messaging.Envelope) (messaging.Envelope, error) {
 	meta, err := json.Marshal(env.Metadata)
 	if err != nil {
 		return messaging.Envelope{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO messages
+	_, err = executor.ExecContext(ctx, `INSERT OR IGNORE INTO messages
  (id, kind, channel, from_urn, to_urn, thread_id, payload, content_type, metadata, created_at, routing_staged)
  VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, 1)`, env.ID, string(env.Kind), env.From.URN(), env.To.URN(),
 		nullIfEmpty(env.ThreadID), string(env.Payload), env.ContentType, string(meta), env.CreatedAt.Format(time.RFC3339Nano))
@@ -93,7 +100,7 @@ func (s *Store) insertStagedTurnOutput(ctx context.Context, env messaging.Envelo
 		return messaging.Envelope{}, fmt.Errorf("stage turn output: %w", err)
 	}
 	// Return the original body and timestamp if this was a repeated call.
-	row := s.db.QueryRowContext(ctx, `SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
+	row := executor.QueryRowContext(ctx, `SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
  payload, content_type, metadata, created_at, delivered_at, consumed_at FROM messages WHERE id=?`, env.ID)
 	return scanEnvelope(row.Scan)
 }

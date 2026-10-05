@@ -30,16 +30,18 @@ import (
 )
 
 type shimHosting struct {
-	place      func(context.Context, string, shim.Launch) (shimhost.Receipt, error)
-	stop       func(context.Context, shimhost.Receipt) error
-	provider   *shimhost.Provider
-	bridge     []string
-	instance   string
-	prepare    func(shim.Launch, *sandbox.ResolvedAccessPolicy, runner.ResourceLimits) (shim.Launch, func(), error)
-	capability func() error
-	inspect    func(context.Context, shimhost.Receipt) (shimhost.Inspection, error)
-	handshake  func(context.Context, shimhost.Receipt, string) error
-	cleanup    sync.Map
+	place         func(context.Context, string, shim.Launch) (shimhost.Receipt, error)
+	stop          func(context.Context, shimhost.Receipt) error
+	provider      *shimhost.Provider
+	bridge        []string
+	instance      string
+	prepare       func(shim.Launch, *sandbox.ResolvedAccessPolicy, runner.ResourceLimits) (shim.Launch, func(), error)
+	capability    func() error
+	inspect       func(context.Context, shimhost.Receipt) (shimhost.Inspection, error)
+	handshake     func(context.Context, shimhost.Receipt, string) error
+	cleanup       sync.Map
+	codexDelivery codexDeliveryLoader // optional trusted private store receipt loader
+	codex         sync.Map            // exact hosted sessions; direct JSON-RPC cache is separate
 }
 
 func (h *shimHosting) placeProvider(ctx context.Context, key string, spec shim.Launch) (shimhost.Receipt, error) {
@@ -106,7 +108,9 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		s.shimDiagnostic(req.ID, nil, "direct_fallback", code)
 		return req, nil
 	}
-	if plan.ProviderBrand != "claude" || !req.Runtime.Caps().StreamingStdio || req.Options.PreparedExecution != nil || req.Options.Launch == nil || req.Options.Launch.Convention.Mode != runtimes.ModeStreamingStdio || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
+	claude := plan.ProviderBrand == "claude" && req.Runtime.Caps().StreamingStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeStreamingStdio
+	codex := plan.ProviderBrand == "codex" && req.Runtime.Caps().JsonRpcStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeJSONRPCStdio && req.Options.SessionIDPreset == "" && !req.Options.AutoFireFirstTurn && len(req.Options.FirstTurnPayload) == 0
+	if (!claude && !codex) || req.Options.PreparedExecution != nil || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
 		return fallback("unsupported_runtime")
 	}
 	if err := shimhost.Supported(); err != nil {
@@ -143,7 +147,11 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		cleanup()
 		return req, &shimhost.Failure{Code: "outcome_unknown", Message: "placement intent state could not be recorded"}
 	}
-	if err = initializeShimCheckpoint(intent); err != nil {
+	checkpoint := initializeShimCheckpoint
+	if codex {
+		checkpoint = func(r shimhost.Receipt) error { return s.initializeCodexShimCheckpoint(ctx, r) }
+	}
+	if err = checkpoint(intent); err != nil {
 		cleanup()
 		if removeErr := s.Store.RemoveUnstartedSessionShim(ctx, req.ID, intent.OperationKey); removeErr != nil {
 			return req, removeErr
@@ -188,9 +196,25 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		s.shimDiagnostic(req.ID, &receipt, "detached", shimFailureCode(err))
 		return req, err
 	}
-	if e := initializeShimCheckpoint(receipt); e != nil {
+	postCheckpoint := checkpoint
+	if codex {
+		postCheckpoint = func(r shimhost.Receipt) error { return s.initializeCodexShimCheckpoint(postCtx, r) }
+	}
+	if e := postCheckpoint(receipt); e != nil {
 		_ = s.MarkSessionDetached(req.ID, "outcome_unknown")
 		return req, &shimhost.Failure{Code: "outcome_unknown", Message: "existing bridge checkpoint unavailable"}
+	}
+	if codex {
+		bridge, err := s.codexShimRuntime(ctx, req.ID, plan.ProviderID, receipt, true)
+		if err != nil {
+			return req, s.retainShimStartFailure(req.ID, err)
+		}
+		req.Runtime = bridge
+		// The real resolved argv/env/sandbox already belongs to the placement.
+		// Runtime.Start opens its protocol ledger, never an agentkit subprocess.
+		req.Options.AutoFireFirstTurn = false
+		req.Options.FirstTurnPayload = nil
+		return req, nil
 	}
 	bridge, err := s.shimBridgeRuntime(req.ID, plan.ProviderID, host.bridge, req.Runtime.Caps())
 	if err != nil {
