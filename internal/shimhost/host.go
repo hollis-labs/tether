@@ -576,6 +576,9 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
+	if err := p.refuseFencedTeardown(filepath.Dir(r.DescriptorPath)); err != nil {
+		return err
+	}
 	var saved Receipt
 	if e := ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); e == nil {
 		if !samePlacement(saved, r) {
@@ -782,6 +785,9 @@ func (p *Provider) hostGone(r Receipt) bool {
 	return recordedIdentityGone(r.HostPID, r.HostStartTime)
 }
 func (p *Provider) retire(r, saved Receipt) error {
+	if err := p.refuseFencedTeardown(filepath.Dir(r.DescriptorPath)); err != nil {
+		return err
+	}
 	if saved.Attempted {
 		if r.Epoch != "" {
 			saved.Epoch = r.Epoch

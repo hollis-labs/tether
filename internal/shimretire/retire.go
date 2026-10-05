@@ -38,11 +38,13 @@ type Receipt struct {
 	Phase                                         Phase
 	RetiredAt                                     time.Time
 	Obligations                                   []string
+	Inventory                                     []Artifact
 }
 
 func (r Receipt) Clone() Receipt {
 	r.Proof.Contradictions = append([]string(nil), r.Proof.Contradictions...)
 	r.Obligations = append([]string(nil), r.Obligations...)
+	r.Inventory = append([]Artifact(nil), r.Inventory...)
 	return r
 }
 
@@ -53,7 +55,8 @@ type Store interface {
 
 // Lease excludes submission, controller takeover and lifecycle changes until
 // Close. Methods must refresh named-file custody and honor their contexts.
-// Mutators must retain the submission fence and refuse stale placement evidence.
+// Mutators must retain the submission fence and recheck actual complete absence,
+// authority and custody after the final callback before any effect.
 type Lease interface {
 	Observe(context.Context) (Snapshot, Observation, error)
 	CommitRetired(context.Context, Snapshot) (Mutation, error)
@@ -84,9 +87,19 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 		return fail(RetainedUnknown, "receipt_unavailable", "receipt_pending")
 	}
 	if exists {
-		if !receiptBound(r, digest, saved) {
+		if !receiptBound(r, digest, saved) || ValidateReceipt(saved) != nil {
 			return fail(RefusedIdentity, "receipt_binding", "placement_unknown")
 		}
+		// Admit prior recovery facts only after binding the original receipt.
+		// Carry them even when authority or acquisition refuses before a lease.
+		prior := append([]string(nil), saved.Obligations...)
+		defer func() {
+			for _, obligation := range prior {
+				if !contains(out.Obligations, obligation) {
+					out.Obligations = append(out.Obligations, obligation)
+				}
+			}
+		}()
 		if saved.Phase == StateReconciled {
 			return Result{Outcome: AlreadyRetired, Code: "retirement_complete", Obligations: append([]string(nil), saved.Obligations...)}
 		}
@@ -137,8 +150,16 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 		if e != nil || ctx.Err() != nil {
 			return s, o, fail(RetainedUnknown, "observation_unavailable", "placement_unknown")
 		}
-		// Authority callbacks can change resources; the actual observation comes last.
-		return s, o, Verify(r, s, o, p.Now())
+		// Recheck authority after the observation callback. Concrete mutations must
+		// revalidate actual custody and proof under the complete exclusion lease.
+		if ctx.Err() != nil || p.Validate(ctx, r) != nil || ctx.Err() != nil {
+			return s, o, fail(RetainedUnknown, "authority_refused", "placement_unknown")
+		}
+		verified := Verify(r, s, o, p.Now())
+		if ctx.Err() != nil {
+			return s, o, fail(RetainedUnknown, "observation_unavailable", "placement_unknown")
+		}
+		return s, o, verified
 	}
 	s, o, verified := fresh()
 	if verified.Outcome != Eligible {
@@ -154,21 +175,21 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 			return fail(RefusedIdentity, "inventory_changed", "placement_unknown")
 		}
 	} else {
-		saved = Receipt{Version: Version, OperationID: r.OperationID, RequestDigest: digest, Request: r, Snapshot: s, Proof: o, Phase: IntentRecorded}
+		saved = Receipt{Version: Version, OperationID: r.OperationID, RequestDigest: digest, Request: r, Snapshot: s, Proof: o, Phase: IntentRecorded, Inventory: []Artifact{s.Descriptor}}
 	}
 	record := func() bool {
 		revision, e := p.Store.Record(ctx, saved.Clone(), saved.Revision)
-		if e != nil || revision == "" || ctx.Err() != nil {
+		if e != nil || revision == "" {
 			return false
 		}
 		saved.Revision = revision
-		return true
+		return ctx.Err() == nil
 	}
 	if !exists && !record() {
 		return fail(RetainedUnknown, "intent_failed", "receipt_pending")
 	}
 	if saved.Phase == IntentRecorded {
-		s, o, verified = fresh()
+		s, _, verified = fresh()
 		if verified.Outcome != Eligible {
 			return verified
 		}
@@ -231,8 +252,24 @@ func RetireAbsent(ctx context.Context, r Request, p Ports) (out Result) {
 }
 
 func receiptBound(r Request, digest string, s Receipt) bool {
-	if s.Version != Version || s.OperationID != r.OperationID || s.RequestDigest != digest || s.Request != r || !text(s.Revision) || s.Snapshot.Placement != r.Placement || len(s.Obligations) > 256 {
+	if s.Version != Version || s.OperationID != r.OperationID || s.RequestDigest != digest || s.Request != r || !text(s.Revision) || s.Snapshot.Placement != r.Placement || len(s.Obligations) > 256 || len(s.Inventory) > 256 {
 		return false
+	}
+	for i, a := range s.Inventory {
+		if !relative(a.RelativePath) || !text(a.RootID, a.OwnerID, a.CustodyRevision, a.InventoryRevision) || a.InventoryRevision != s.Snapshot.InventoryRevision || a.Identity.Kind != "regular" || a.Identity.Inode == 0 || !payloadCategory(a.Category) {
+			return false
+		}
+		if a.Category == Descriptor && a != s.Snapshot.Descriptor {
+			return false
+		}
+		if a.RootID == s.Snapshot.Descriptor.RootID && a.RelativePath == s.Snapshot.Descriptor.RelativePath && a != s.Snapshot.Descriptor {
+			return false
+		}
+		for _, b := range s.Inventory[:i] {
+			if a.RootID == b.RootID && a.RelativePath == b.RelativePath {
+				return false
+			}
+		}
 	}
 	for _, o := range s.Obligations {
 		switch o {
@@ -255,6 +292,35 @@ func contains(values []string, want string) bool {
 		if v == want {
 			return true
 		}
+	}
+	return false
+}
+
+// ValidateReceipt checks only nonsecret schema and operation bindings. It does
+// not replace fresh host absence/custody observations during an operation.
+func ValidateReceipt(s Receipt) error {
+	if !validRequest(s.Request) {
+		return errors.New("retirement request invalid")
+	}
+	raw, _ := json.Marshal(s.Request)
+	h := sha256.Sum256(raw)
+	check := s.Clone()
+	if check.Revision == "" {
+		check.Revision = "new"
+	}
+	if !receiptBound(s.Request, hex.EncodeToString(h[:]), check) {
+		return errors.New("retirement receipt invalid")
+	}
+	if Verify(s.Request, s.Snapshot, s.Proof, s.Proof.ObservedAt).Outcome != Eligible {
+		return errors.New("retirement proof binding invalid")
+	}
+	return nil
+}
+
+func payloadCategory(c Category) bool {
+	switch c {
+	case Descriptor, Staging, Journal, Bridge, HostLog, Sandbox:
+		return true
 	}
 	return false
 }

@@ -157,3 +157,61 @@ func TestCleanupPendingRetry(t *testing.T) {
 		t.Fatalf("cleanup retry: %+v %v", got, *events)
 	}
 }
+
+func TestRetirementRechecksAuthorityAfterObservation(t *testing.T) {
+	r, p, _, l, events := retireFixture()
+	revoked := false
+	p.Validate = func(context.Context, Request) error {
+		if revoked {
+			return errors.New("revoked")
+		}
+		return nil
+	}
+	l.observeHook = func(*fakeLease) { revoked = true }
+	out := RetireAbsent(context.Background(), r, p)
+	if len(*events) != 0 || len(out.Obligations) == 0 {
+		t.Fatalf("observation revocation ignored: %+v events:%v", out, *events)
+	}
+}
+
+func TestCancellationAfterIntentRetainsDurableObligation(t *testing.T) {
+	r, p, s, _, _ := retireFixture()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.recordHook = func(receipt Receipt) {
+		if receipt.Phase == IntentRecorded {
+			cancel()
+		}
+	}
+	out := RetireAbsent(ctx, r, p)
+	if len(out.Obligations) == 0 || !contains(s.receipt.Obligations, "receipt_pending") {
+		t.Fatalf("acknowledged canceled intent loses obligation: %+v receipt:%+v", out, s.receipt)
+	}
+}
+
+// A final authority callback may consume the observed proof's remaining budget.
+func TestRetirementFreshProofAfterFinalAuthority(t *testing.T) {
+	for _, kind := range []string{"expired", "valid"} {
+		t.Run(kind, func(t *testing.T) {
+			r, p, _, lease, events := retireFixture()
+			now := p.Now()
+			p.Now = func() time.Time { return now }
+			calls := 0
+			p.Validate = func(context.Context, Request) error {
+				calls++
+				if calls == 3 && kind == "expired" {
+					now = lease.proof.ValidUntil
+				}
+				return nil
+			}
+			got := RetireAbsent(context.Background(), r, p)
+			if kind == "expired" {
+				if got.Outcome != RetainedUnknown || len(*events) != 0 || lease.observations != 1 || calls != 3 {
+					t.Fatalf("expired proof admitted state machine: %+v events=%v observations=%d calls=%d", got, *events, lease.observations, calls)
+				}
+			} else if got.Outcome != Retired {
+				t.Fatalf("unchanged proof refused: %+v", got)
+			}
+		})
+	}
+}
