@@ -112,17 +112,17 @@ func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow
 	if err != nil {
 		return err
 	}
-	// Re-read before handing the controller to the bridge, after Inspect.
-	receipt, err = loadShimReceipt(shimRow)
-	if err != nil {
-		return err
-	}
 	planForRuntime, err := s.Store.GetLaunchPlan(shimRow.SessionID)
 	if err != nil {
 		return err
 	}
 	if planForRuntime.ProviderBrand == "codex" {
 		return s.reattachCodexShim(ctx, shimRow, receipt)
+	}
+	// Re-read before handing the controller to the bridge, after Inspect.
+	receipt, err = loadShimReceipt(shimRow)
+	if err != nil {
+		return err
 	}
 	checkpoint, err := shimbridge.ReadCheckpoint(filepath.Join(filepath.Dir(receipt.DescriptorPath), "bridge.json"))
 	if err != nil {

@@ -200,7 +200,7 @@ func TestServerCallbackClaimAndReplySurviveCrashBoundaries(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
 				if boundary == "reply_written" {
-					waitProtocol(t, ctx, s, func(state State) bool { return state.ServerRequests[0].Written })
+					waitProtocol(ctx, t, s, func(state State) bool { return state.ServerRequests[0].Written })
 					_ = s.Stop(ctx)
 				}
 				select {
@@ -235,7 +235,7 @@ func TestServerCallbackClaimAndReplySurviveCrashBoundaries(t *testing.T) {
 	}
 }
 
-func waitProtocol(t *testing.T, ctx context.Context, s *Session, predicate func(State) bool) State {
+func waitProtocol(ctx context.Context, t *testing.T, s *Session, predicate func(State) bool) State {
 	t.Helper()
 	for {
 		changed := s.changedSince()

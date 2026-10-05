@@ -302,3 +302,24 @@ func TestOpenRefusesNonPristineUnboundIntentWithoutCommit(t *testing.T) {
 		})
 	}
 }
+
+// wrappedMissingStore models a store adapter preserving the missing sentinel.
+type wrappedMissingStore struct{ memoryStore }
+
+func (m *wrappedMissingStore) Load(context.Context) (State, error) {
+	return State{}, fmt.Errorf("adapter: %w", ErrMissing)
+}
+func TestOpenWrappedMissingIsFreshOnly(t *testing.T) {
+	binding := Binding{Session: "s", Instance: "i", Generation: 1, Operation: "p", Journal: "j", Attempt: "a", Fingerprint: "f"}
+	for _, fresh := range []bool{false, true} {
+		m := &wrappedMissingStore{}
+		e, err := Open(context.Background(), m, binding, 1, fresh, Limits{InboxItems: 64, InboxBytes: 1 << 20})
+		if fresh {
+			if err != nil || e == nil || m.state.Revision != 1 {
+				t.Fatalf("fresh missing not initialized: %v", err)
+			}
+		} else if !errors.Is(err, ErrMissing) || e != nil || m.state.Revision != 0 {
+			t.Fatalf("existing missing manufactured ledger: %v", err)
+		}
+	}
+}

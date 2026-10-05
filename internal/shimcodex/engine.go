@@ -5,6 +5,7 @@ package shimcodex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"sync"
 )
@@ -24,7 +25,7 @@ func Open(ctx context.Context, store Store, binding Binding, epoch uint64, fresh
 		return nil, fail("invalid_config")
 	}
 	s, err := store.Load(ctx)
-	if err == ErrMissing && fresh {
+	if errors.Is(err, ErrMissing) && fresh {
 		s = State{Version: Version, Binding: binding, NextID: FirstID, Epoch: epoch, Revision: 1}
 		if err = store.Commit(ctx, 0, s); err != nil {
 			return nil, err
@@ -295,7 +296,7 @@ func (e *Engine) BytesWritten(ctx context.Context, epoch, id uint64) error {
 	})
 }
 
-// Claim precedes the authority hook. A crashed/uncertain callback is retained,
+// ClaimServerRequest precedes the authority hook. A crashed/uncertain callback is retained,
 // never invoked again just because the controller reconnects.
 func (e *Engine) ClaimServerRequest(ctx context.Context, source string) (ServerRequest, error) {
 	e.mu.Lock()

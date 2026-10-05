@@ -152,3 +152,22 @@ func TestProjectionNeverReplacesInvalidUnicodeText(t *testing.T) {
 		t.Fatal("valid surrogate pair refused", err)
 	}
 }
+
+func TestProjectionUnsupportedShapesRetainSourceWithoutEffects(t *testing.T) {
+	bodies := []string{
+		`{"method":"turn/started","params":{"threadId":"th","turn":{"id":"tu","status":"inProgress","extra":true}}}`,
+		`{"method":"item/started","params":{"threadId":"th","turnId":"tu","item":{"id":"i","type":"commandExecution"}}}`,
+		`{"method":"item/agentMessage/delta","params":{"threadId":"th","turnId":"tu","itemId":"i","delta":"text","extra":true}}`,
+		`{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"completed","extra":true}}}`,
+	}
+	for _, body := range bodies {
+		before := projectionFixture()
+		next, err := ProjectFrozenSource(before, projectedSource(1, body))
+		if err != nil || len(next.Sources) != 1 || next.Sources[0].Disposition != "retained_unsupported" || next.AcceptedSourceCursor != "j:1" {
+			t.Fatalf("unsupported source not retained: %+v %v", next, err)
+		}
+		if next.ActiveTurnID != "" || len(next.Turns) != 0 || next.Terminal != nil || next.DeliveredHighWater != "" || len(before.Sources) != 0 {
+			t.Fatal("unsupported source manufactured effects or mutated input")
+		}
+	}
+}

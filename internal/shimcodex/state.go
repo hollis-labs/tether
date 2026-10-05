@@ -115,7 +115,7 @@ type State struct {
 	ServerRequests  []ServerRequest `json:"server_requests,omitempty"`
 }
 
-// Store.Commit is one conditional durable transaction over the entire state.
+// Store commits one conditional durable transaction over the entire state.
 // Error (including an ambiguous commit) poisons the live Engine: reconnect
 // must reload the canonical store before any more input can be admitted.
 type Store interface {

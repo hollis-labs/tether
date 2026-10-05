@@ -164,6 +164,11 @@ func TestHostedCodexActualLaunchAndRecoveryKeepsOutputPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = s.Manager.WaitSession(ctx, "codex-app")
+	foreign := r
+	foreign.Fingerprint += "-foreign"
+	if err = s.reattachShim(ctx, shimRow, foreign); shimFailureCode(err) != "identity_mismatch" {
+		t.Fatalf("foreign observed receipt accepted before recovery: %v", err)
+	}
 	if err = s.reattachShim(ctx, shimRow, r); shimFailureCode(err) != "output_pending" {
 		t.Fatalf("reattach not explicitly pending: %v", err)
 	}

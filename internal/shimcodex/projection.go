@@ -124,8 +124,8 @@ func projectionUnicodeEscapes(raw []byte) bool {
 	return !inString
 }
 
-func strictProjectionJSON(raw []byte, max int, dst any) error {
-	if len(raw) == 0 || len(raw) > max || !utf8.Valid(raw) || !projectionUnicodeEscapes(raw) || !uniqueJSON(raw) {
+func strictProjectionJSON(raw []byte, limit int, dst any) error {
+	if len(raw) == 0 || len(raw) > limit || !utf8.Valid(raw) || !projectionUnicodeEscapes(raw) || !uniqueJSON(raw) {
 		return fail("projection_invalid")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -233,8 +233,8 @@ func projectedID(binding Binding, parts ...string) string {
 	}{binding, parts})
 	return "codex:" + digest(raw)
 }
-func uniqueStrings(values []string, max int) bool {
-	if len(values) > max {
+func uniqueStrings(values []string, limit int) bool {
+	if len(values) > limit {
 		return false
 	}
 	seen := map[string]bool{}
@@ -451,6 +451,11 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 	return next, nil
 }
 
+// supportedProjectionParams classifies closed supported shapes. Other shapes remain retained.
+func supportedProjectionParams(raw []byte, dst any) bool {
+	return strictProjectionJSON(raw, ProjectionFrameBytes, dst) == nil
+}
+
 func projectNotification(p *Projection, m Message, event Event, source *SourceDisposition) error {
 	// Unknown fields and unsupported item unions remain retained, never truncated.
 	switch m.Method {
@@ -462,7 +467,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 				Status string `json:"status"`
 			} `json:"turn"`
 		}
-		if strictProjectionJSON(m.Params, ProjectionFrameBytes, &params) != nil {
+		if !supportedProjectionParams(m.Params, &params) {
 			return nil
 		}
 		if params.ThreadID == "" || params.Turn.ID == "" || params.Turn.Status != "inProgress" {
@@ -493,7 +498,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 				Text string `json:"text"`
 			} `json:"item"`
 		}
-		if strictProjectionJSON(m.Params, ProjectionFrameBytes, &params) != nil || params.Item.Type != "agentMessage" || params.Item.ID == "" {
+		if !supportedProjectionParams(m.Params, &params) || params.Item.Type != "agentMessage" || params.Item.ID == "" {
 			return nil
 		}
 		t, err := activeProjectedTurn(p, params.ThreadID, params.TurnID)
@@ -532,7 +537,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 			ItemID   string `json:"itemId"`
 			Delta    string `json:"delta"`
 		}
-		if strictProjectionJSON(m.Params, ProjectionFrameBytes, &params) != nil {
+		if !supportedProjectionParams(m.Params, &params) {
 			return nil
 		}
 		t, err := activeProjectedTurn(p, params.ThreadID, params.TurnID)
@@ -562,7 +567,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 				Status string `json:"status"`
 			} `json:"turn"`
 		}
-		if strictProjectionJSON(m.Params, ProjectionFrameBytes, &params) != nil {
+		if !supportedProjectionParams(m.Params, &params) {
 			return nil
 		}
 		switch params.Turn.Status {

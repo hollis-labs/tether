@@ -39,9 +39,9 @@ func TestHostedCodexPureCandidateRetainsInboxAndCannotIssueDelivery(t *testing.T
 	if proof, err := s.Store.AcceptCodexDelivery(context.Background(), candidate); proof != nil || !errors.Is(err, store.ErrCodexDeliveryUnsupported) {
 		t.Fatal("candidate became production success")
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.codexDeliveryCandidate(cancelled, state, previous); err == nil {
-		t.Fatal("cancelled candidate succeeded")
+	if _, err := s.codexDeliveryCandidate(canceled, state, previous); err == nil {
+		t.Fatal("canceled candidate succeeded")
 	}
 }

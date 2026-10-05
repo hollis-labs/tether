@@ -277,7 +277,7 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 		if err = first.InterruptTurn(ctx); err != nil {
 			t.Fatal(err)
 		}
-		final := waitProtocol(t, ctx, first, func(state State) bool { return state.LastTerminal == "turn-1" && state.ActiveTurn == "" })
+		final := waitProtocol(ctx, t, first, func(state State) bool { return state.LastTerminal == "turn-1" && state.ActiveTurn == "" })
 		if final.Exit != nil {
 			t.Fatal("turn interrupt manufactured provider exit")
 		}
@@ -309,7 +309,7 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 		callCtx, stopCall := context.WithCancel(ctx)
 		outcome := make(chan error, 1)
 		go func() { outcome <- first.SendTurn(callCtx, "first", "", "fixture", "1") }()
-		before = waitProtocol(t, ctx, first, func(s State) bool { return s.ActiveTurn == "turn-1" })
+		before = waitProtocol(ctx, t, first, func(s State) bool { return s.ActiveTurn == "turn-1" })
 		stopCall()
 		select {
 		case err = <-outcome:
@@ -323,7 +323,7 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 		if err = first.SendTurn(ctx, "first", "", "fixture", "1"); err != nil {
 			t.Fatal(err)
 		}
-		before = waitProtocol(t, ctx, first, func(s State) bool { return s.LastTerminal == "turn-1" })
+		before = waitProtocol(ctx, t, first, func(s State) bool { return s.LastTerminal == "turn-1" })
 	}
 
 	if terminal {
@@ -357,12 +357,12 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 		if _, err = gate.Write([]byte{1}); err != nil {
 			t.Fatal(err)
 		}
-		waitProtocol(t, ctx, second, func(s State) bool { return s.LastTerminal == "turn-1" })
+		waitProtocol(ctx, t, second, func(s State) bool { return s.LastTerminal == "turn-1" })
 	}
 	if err = second.SendTurn(ctx, "second", "", "fixture", "1"); err != nil {
 		t.Fatal(err)
 	}
-	after := waitProtocol(t, ctx, second, func(s State) bool { return s.LastTerminal == "turn-2" })
+	after := waitProtocol(ctx, t, second, func(s State) bool { return s.LastTerminal == "turn-2" })
 	if after.Epoch <= before.Epoch || after.NextID <= before.NextID || after.ThreadID != before.ThreadID || after.Exit != nil {
 		t.Fatalf("identity/epoch changed incorrectly: before=%+v after=%+v", before, after)
 	}

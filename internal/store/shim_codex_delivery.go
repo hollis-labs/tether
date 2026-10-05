@@ -99,7 +99,7 @@ func stageCodexSourceTx(ctx context.Context, tx *sql.Tx, env messaging.Envelope)
 	}
 	var staged, payloadPresent int
 	if err := tx.QueryRowContext(ctx, `SELECT routing_staged,payload IS NOT NULL FROM messages WHERE id=?`, env.ID).Scan(&staged, &payloadPresent); err != nil || staged != 1 || payloadPresent != 1 {
-		return messaging.Envelope{}, fmt.Errorf("Codex stage collides with unstaged or purged message")
+		return messaging.Envelope{}, fmt.Errorf("codex stage collides with unstaged or purged message")
 	}
 	a, _ := json.Marshal(env.Metadata)
 	b, _ := json.Marshal(saved.Metadata)
