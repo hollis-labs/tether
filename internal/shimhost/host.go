@@ -76,24 +76,27 @@ func identity(r Receipt) hostIdentity { return hostIdentity{r.HostPID, r.HostSta
 
 // Receipt contains paths and identity, never the capability or provider env.
 type Receipt struct {
-	OperationKey     string `json:"operation_key"`
-	Session          string `json:"session"`
-	Instance         string `json:"instance"`
-	Generation       uint64 `json:"generation,string"`
-	DescriptorPath   string `json:"descriptor_path"`
-	SocketPath       string `json:"socket_path"`
-	Backend          string `json:"backend"`
-	UnitName         string `json:"unit_name,omitempty"`
-	Journal          string `json:"journal,omitempty"`
-	Epoch            string `json:"epoch,omitempty"`
-	HostPID          int    `json:"host_pid"`
-	HostStartTime    uint64 `json:"host_start_time,string,omitempty"`
-	ShimPID          int    `json:"shim_pid"`
-	ProviderPID      int    `json:"provider_pid"`
-	Fingerprint      string `json:"fingerprint"`
-	Attempted        bool   `json:"attempted"`
-	Retired          bool   `json:"retired,omitempty"`
-	PlacementFailure string `json:"placement_failure,omitempty"`
+	// SubmissionAttemptID is committed before exec/service-manager submission.
+	// It binds one possible submit, not an assertion of process absence.
+	SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
+	OperationKey        string `json:"operation_key"`
+	Session             string `json:"session"`
+	Instance            string `json:"instance"`
+	Generation          uint64 `json:"generation,string"`
+	DescriptorPath      string `json:"descriptor_path"`
+	SocketPath          string `json:"socket_path"`
+	Backend             string `json:"backend"`
+	UnitName            string `json:"unit_name,omitempty"`
+	Journal             string `json:"journal,omitempty"`
+	Epoch               string `json:"epoch,omitempty"`
+	HostPID             int    `json:"host_pid"`
+	HostStartTime       uint64 `json:"host_start_time,string,omitempty"`
+	ShimPID             int    `json:"shim_pid"`
+	ProviderPID         int    `json:"provider_pid"`
+	Fingerprint         string `json:"fingerprint"`
+	Attempted           bool   `json:"attempted"`
+	Retired             bool   `json:"retired,omitempty"`
+	PlacementFailure    string `json:"placement_failure,omitempty"`
 }
 type Inspection struct {
 	Receipt Receipt
@@ -210,6 +213,11 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		return zero, err
 	}
 	defer func() { _ = lock.Close() }()
+	// Retirement owns this persistent fence under the same placement lock. Even
+	// malformed or foreign fence entries refuse; deleting one is never recovery.
+	if err = p.refuseFencedSubmission(dir); err != nil {
+		return zero, err
+	}
 	if err = ClearCommitTemps(dir); err != nil {
 		return zero, err
 	}
@@ -323,6 +331,11 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		return p.prechildFailure(r)
 	}
 	// Persist intent BEFORE either exec or a service-manager submission.
+	var attempt [32]byte
+	if _, err = rand.Read(attempt[:]); err != nil {
+		return p.prechildFailure(r)
+	}
+	r.SubmissionAttemptID = hex.EncodeToString(attempt[:])
 	r.Attempted = true
 	if err = WritePrivateJSON(metadataPath(r), r); err != nil {
 		return p.prechildFailure(r)
@@ -336,6 +349,9 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		// No provider output goes to this log: the shim journals its own pipes.
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
+		if err = p.verifySubmissionIntent(dir, r); err != nil {
+			return r, err
+		}
 		e := cmd.Start()
 		_ = logFile.Close()
 		if e != nil {
@@ -362,6 +378,9 @@ func (p *Provider) Place(ctx context.Context, key string, spec shim.Launch) (Rec
 		}
 		args = append(args, "--")
 		args = append(args, argv...)
+		if err = p.verifySubmissionIntent(dir, r); err != nil {
+			return r, err
+		}
 		if _, err = p.cfg.Command(ctx, args); err != nil {
 			return r, fail("outcome_unknown", "unit submit may have happened; inspect before recovery")
 		}
@@ -557,6 +576,9 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
+	if err := p.refuseFencedTeardown(filepath.Dir(r.DescriptorPath)); err != nil {
+		return err
+	}
 	var saved Receipt
 	if e := ReadPrivateJSON(metadataPath(r), shim.MaxFrame, &saved); e == nil {
 		if !samePlacement(saved, r) {
@@ -763,6 +785,9 @@ func (p *Provider) hostGone(r Receipt) bool {
 	return recordedIdentityGone(r.HostPID, r.HostStartTime)
 }
 func (p *Provider) retire(r, saved Receipt) error {
+	if err := p.refuseFencedTeardown(filepath.Dir(r.DescriptorPath)); err != nil {
+		return err
+	}
 	if saved.Attempted {
 		if r.Epoch != "" {
 			saved.Epoch = r.Epoch
