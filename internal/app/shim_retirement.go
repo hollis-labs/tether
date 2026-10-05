@@ -54,3 +54,14 @@ func (s *Service) ReconcileShimRetirement(ctx context.Context, placement shimret
 	s.publishSessionStateChange(change)
 	return nil
 }
+
+// ShimCleanupAdmission cannot construct a compound lifecycle/controller/journal
+// and canonical policy authority capability from this service's launch gate or
+// callback release functions. No operator route or successful producer is wired.
+func (s *Service) ShimCleanupAdmission() (shimretire.CleanupAdmission, error) {
+	admission, err := store.NewShimCleanupAdmission(s.Store)
+	if err != nil {
+		return nil, err
+	}
+	return admission, nil
+}

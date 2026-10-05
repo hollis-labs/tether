@@ -52,208 +52,29 @@ func cleanupFixture(t *testing.T) (ConfinedCleanup, Artifact, *memoryStore, stri
 		return store.receipt.Snapshot, store.receipt.Proof, nil
 	}, Now: func() time.Time { return now }}, s.Descriptor, store, name
 }
-func TestConfinedDescriptorRequiresDurableRetirement(t *testing.T) {
-	for _, phase := range []Phase{IntentRecorded, RetirementCommitted} {
-		t.Run(string(phase), func(t *testing.T) {
-			c, a, store, name := cleanupFixture(t)
-			store.receipt.Phase = phase
-			if phase == IntentRecorded {
-				store.receipt.Snapshot.Retired = false
-				store.receipt.RetiredAt = time.Time{}
-			}
-			mutation, err := c.Descriptor(context.Background(), "retirement", a)
-			if phase == IntentRecorded {
-				if err == nil || mutation != NoChange {
-					t.Fatalf("intent permits cleanup: %s %v", mutation, err)
-				}
-				if _, err := os.Stat(name); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if err != nil || mutation != Changed {
-					t.Fatalf("cleanup: %s %v", mutation, err)
-				}
-				if _, err := os.Stat(name); !os.IsNotExist(err) {
-					t.Fatalf("descriptor retained: %v", err)
-				}
-				if m, e := c.Descriptor(context.Background(), "retirement", a); m != NoChange || e != nil {
-					t.Fatalf("retry: %s %v", m, e)
-				}
-			}
-		})
-	}
-}
-func TestConfinedDescriptorObservesAfterAuthority(t *testing.T) {
-	c, a, _, name := cleanupFixture(t)
-	changed := false
-	c.Validate = func(context.Context, Request) error {
-		if changed {
-			return nil
-		}
-		changed = true
-		if err := os.Rename(name, name+".old"); err != nil {
-			return err
-		}
-		return os.WriteFile(name, []byte("changed"), 0600)
-	}
-	m, err := c.Descriptor(context.Background(), "retirement", a)
-	if err == nil || m != NoChange {
-		t.Fatalf("replacement removed: %s %v", m, err)
-	}
-	b, err := os.ReadFile(name)
-	if err != nil || string(b) != "changed" {
-		t.Fatalf("replacement bytes: %q %v", b, err)
-	}
-}
 
-func TestConfinedDescriptorRetainsLateUnknownProof(t *testing.T) {
-	c, a, store, name := cleanupFixture(t)
-	c.Validate = func(context.Context, Request) error { store.receipt.Proof.Descendants = ExecutionUnknown; return nil }
-	m, err := c.Descriptor(context.Background(), "retirement", a)
-	if err == nil || m != NoChange {
-		t.Fatalf("late unknown cleanup: %s %v", m, err)
-	}
-	if _, err = os.Stat(name); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestConfinedDescriptorRefusesLostRootAndHardlink(t *testing.T) {
-	for _, kind := range []string{"renamed-root", "replaced-root", "hardlink", "symlink"} {
+// Physical cleanup controls now live with the real SQL/native kernel in store.
+// A neutral interface must never supply the effect capability.
+func TestConfinedCleanupRejectsForeignAdmission(t *testing.T) {
+	for _, kind := range []string{"nil", "foreign"} {
 		t.Run(kind, func(t *testing.T) {
 			c, a, _, name := cleanupFixture(t)
-			changed := false
-			c.Validate = func(context.Context, Request) error {
-				if changed {
-					return nil
-				}
-				changed = true
-				switch kind {
-				case "renamed-root", "replaced-root":
-					if err := os.Rename(filepath.Dir(name), filepath.Dir(name)+".moved"); err != nil {
-						return err
-					}
-					if kind == "replaced-root" {
-						return os.Mkdir(filepath.Dir(name), 0700)
-					}
-					return nil
-				case "hardlink":
-					return os.Link(name, name+".alias")
-				default:
-					if err := os.Rename(name, name+".old"); err != nil {
-						return err
-					}
-					return os.Symlink(name+".old", name)
-				}
-			}
-			if kind == "renamed-root" || kind == "replaced-root" {
-				t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(name) + ".moved") })
+			foreign := &foreignCleanupAdmission{}
+			if kind == "foreign" {
+				c.Admission = foreign
 			}
 			m, err := c.Descriptor(context.Background(), "retirement", a)
-			if err == nil || m != NoChange {
-				t.Fatalf("%s custody accepted: %s %v", kind, m, err)
-			}
-			retained := name
-			if kind == "renamed-root" || kind == "replaced-root" {
-				retained = filepath.Join(filepath.Dir(name)+".moved", filepath.Base(name))
-			}
-			b, err := os.ReadFile(retained)
-			if err != nil || string(b) != "private" {
-				t.Fatalf("%s bytes lost: %q %v", kind, b, err)
+			b, readErr := os.ReadFile(name)
+			if m != NoChange || !errors.Is(err, ErrCleanupUnsupported) || foreign.called || readErr != nil || string(b) != "private" {
+				t.Fatalf("foreign construction admitted: %s %v called=%t bytes=%q read=%v", m, err, foreign.called, b, readErr)
 			}
 		})
 	}
 }
 
-func TestConfinedRetentionRequiresDurableIntentAndFreshHold(t *testing.T) {
-	for _, kind := range []string{"valid", "no-intent", "late-hold", "late-intent", "age-floor"} {
-		t.Run(kind, func(t *testing.T) {
-			cleanup, descriptor, audit, _ := cleanupFixture(t)
-			f, err := cleanup.Root.OpenFile("host.log", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = f.Write([]byte("private")); err != nil {
-				t.Fatal(err)
-			}
-			info, err := f.Stat()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = f.Close(); err != nil {
-				t.Fatal(err)
-			}
-			artifact := descriptor
-			artifact.RelativePath = "host.log"
-			artifact.Category = HostLog
-			artifact.Identity = fileIdentity(info)
-			artifact.Size = 7
-			if _, err = cleanup.Descriptor(context.Background(), "retirement", descriptor); err != nil {
-				t.Fatal(err)
-			}
-			audit.receipt.Phase = StateReconciled
-			audit.receipt.Inventory = []Artifact{descriptor, artifact}
-			audit.receipt.RetiredAt = cleanup.Now().Add(-time.Hour)
-			request, _, _, _, _ := retentionFixture()
-			request.Policy.RootIDs = []string{artifact.RootID}
-			candidate := SweepCandidate{RetirementOperation: "retirement", Artifact: artifact, SortKey: "retired/session/host.log", Hold: NoRetentionHold, HoldRevision: "holds"}
-			cursors := &memoryCursors{cursor: SweepCursor{Version: RetentionVersion, ID: request.OperationID, Request: request, RequestDigest: retentionDigest(request), Revision: "cursor", InventoryRevision: "inventory", Phase: CursorIntent, Pending: &candidate}}
-			removal := RetentionRemoval{Cleanup: cleanup, Request: request, Cursors: cursors, Validate: func(context.Context, SweepRequest) error { return nil }, Observe: func(context.Context, SweepCandidate) (SweepCandidate, Snapshot, Observation, error) {
-				return candidate, audit.receipt.Snapshot, audit.receipt.Proof, nil
-			}}
-			switch kind {
-			case "no-intent":
-				cursors.cursor.Phase = CursorReady
-				cursors.cursor.Pending = nil
-			case "late-hold":
-				removal.Validate = func(context.Context, SweepRequest) error { candidate.Hold = RetentionHeld; return nil }
-			case "late-intent":
-				removal.Validate = func(context.Context, SweepRequest) error {
-					cursors.cursor.Pending.Artifact.Identity.Inode++
-					return nil
-				}
-			case "age-floor":
-				audit.receipt.RetiredAt = cleanup.Now()
-			}
-			original := candidate
-			copyCandidate := candidate
-			cursors.cursor.Pending = &copyCandidate
-			mutation, err := removal.Remove(context.Background(), original)
-			if kind == "valid" {
-				if err != nil || mutation != Changed {
-					t.Fatalf("retention: %s %v", mutation, err)
-				}
-			} else {
-				if err == nil || mutation != NoChange {
-					t.Fatalf("%s permits cleanup: %s %v", kind, mutation, err)
-				}
-				b, e := cleanup.Root.ReadFile("host.log")
-				if e != nil || string(b) != "private" {
-					t.Fatalf("%s private bytes lost: %q %v", kind, b, e)
-				}
-			}
-		})
-	}
-}
+type foreignCleanupAdmission struct{ called bool }
 
-func TestConfinedDescriptorRechecksAuthorityAfterObservation(t *testing.T) {
-	c, a, store, name := cleanupFixture(t)
-	revoked := false
-	c.Validate = func(context.Context, Request) error {
-		if revoked {
-			return errors.New("revoked")
-		}
-		return nil
-	}
-	c.Observe = func(context.Context) (Snapshot, Observation, error) {
-		revoked = true
-		return store.receipt.Snapshot, store.receipt.Proof, nil
-	}
-	mutation, err := c.Descriptor(context.Background(), "retirement", a)
-	if err == nil || mutation != NoChange {
-		t.Fatalf("observation revocation ignored: %s %v", mutation, err)
-	}
-	if _, err = os.Stat(name); err != nil {
-		t.Fatal(err)
-	}
+func (f *foreignCleanupAdmission) RemoveOwned(context.Context, CleanupAttempt) (Mutation, error) {
+	f.called = true
+	return Changed, nil
 }

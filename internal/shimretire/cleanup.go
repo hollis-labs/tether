@@ -3,18 +3,15 @@ package shimretire
 import (
 	"context"
 	"errors"
-	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 )
 
-// ConfinedCleanup operates under the caller's complete exclusive custody lease.
-// Root is an already-open canonical private root; its identity and ownership
-// were obtained by the trusted inventory adapter. No arbitrary paths or caller
-// absence assertion authorize deletion. Validate must recheck the held lease
-// and current authority. It runs before the final filesystem observation.
+// ConfinedCleanup freezes preflight evidence and vetoes; its callbacks cannot
+// authorize an unlink. The owned concrete Admission must establish actual
+// current native custody, SQL eligibility and original proof freshness together.
+// Root references and interface assertions are not custody capabilities.
 type ConfinedCleanup struct {
 	Root                             *os.Root
 	RootID, OwnerID, CustodyRevision string
@@ -23,12 +20,17 @@ type ConfinedCleanup struct {
 	Validate                         func(context.Context, Request) error
 	Observe                          func(context.Context) (Snapshot, Observation, error)
 	Now                              func() time.Time
+	Admission                        CleanupAdmission
 }
 
 func (c ConfinedCleanup) Descriptor(ctx context.Context, operation string, a Artifact) (Mutation, error) {
-	return c.remove(ctx, operation, a, false)
+	return c.remove(ctx, operation, a, nil)
 }
-func (c ConfinedCleanup) remove(ctx context.Context, operation string, a Artifact, retention bool) (Mutation, error) {
+func (c ConfinedCleanup) remove(ctx context.Context, operation string, a Artifact, cursor *SweepCursor) (Mutation, error) {
+	if !ownedAdmission(c.Admission) {
+		return NoChange, ErrCleanupUnsupported
+	}
+	retention := cursor != nil
 	refuse := func() (Mutation, error) { return NoChange, errors.New("descriptor cleanup custody unproved") }
 	if c.Root == nil || c.Store == nil || c.Validate == nil || c.Observe == nil || c.Now == nil || !relative(a.RelativePath) || (!retention && a.Category != Descriptor) || (retention && (!payloadCategory(a.Category) || a.Category == Descriptor)) || a.RootID != c.RootID || a.OwnerID != c.OwnerID || a.CustodyRevision != c.CustodyRevision {
 		return refuse()
@@ -58,50 +60,17 @@ func (c ConfinedCleanup) remove(ctx context.Context, operation string, a Artifac
 	if Verify(receipt.Request, snapshot, proof, c.Now()).Outcome != Eligible || ctx.Err() != nil {
 		return refuse()
 	}
-	// The trusted Observe seam includes current complete proof and authority under
-	// exclusive custody. It cannot manufacture success for Unsupported backends.
-	// No callback follows the filesystem observations below. The custody contract must
-	// exclude concurrent writers through unlink and directory durability.
-	root, err := c.Root.Lstat(".")
-	if err != nil || fileIdentity(root) != c.RootIdentity || !root.IsDir() || root.Mode().Perm() != 0700 {
-		return refuse()
+	mode := DescriptorCleanup
+	var frozenCursor *SweepCursor
+	if cursor != nil {
+		mode = RetentionCleanup
+		v := cursor.Clone()
+		frozenCursor = &v
 	}
-	namedRoot, e := os.Lstat(c.Root.Name())
-	canonical, e2 := filepath.EvalSymlinks(c.Root.Name())
-	if e != nil || e2 != nil || !filepath.IsAbs(c.Root.Name()) || canonical != c.Root.Name() || !os.SameFile(root, namedRoot) || !namedRoot.IsDir() {
-		return refuse()
-	}
-	if !confinedParents(c.Root, a.RelativePath) {
-		return refuse()
-	}
-	info, err := c.Root.Lstat(a.RelativePath)
-	if os.IsNotExist(err) {
-		return NoChange, nil
-	}
-	if a.Size > math.MaxInt64 {
-		return refuse()
-	}
-	expectedSize := int64(a.Size)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || fileIdentity(info) != a.Identity || info.Size() < 0 || info.Size() != expectedSize {
-		return refuse()
-	}
-	if ctx.Err() != nil {
-		return refuse()
-	}
-	if err = c.Root.Remove(a.RelativePath); err != nil {
-		return Uncertain, errors.New("descriptor cleanup outcome uncertain")
-	}
-	// Sync the containing directory; failure retains a pending cleanup obligation.
-	parent, err := c.Root.Open(parentPath(a.RelativePath))
-	if err != nil {
-		return Uncertain, errors.New("descriptor cleanup durability uncertain")
-	}
-	defer func() { _ = parent.Close() }()
-	if parent.Sync() != nil || ctx.Err() != nil {
-		return Uncertain, errors.New("descriptor cleanup durability uncertain")
-	}
-	return Changed, nil
+	proof.Contradictions = slices.Clone(proof.Contradictions)
+	return c.Admission.RemoveOwned(ctx, CleanupAttempt{Mode: mode, Receipt: receipt.Clone(), Snapshot: snapshot, Proof: proof, Artifact: a, Cursor: frozenCursor, Root: c.Root, RootIdentity: c.RootIdentity})
 }
+
 func phaseBeforeCleanup(p Phase) bool {
 	return p != RetirementCommitted && p != DescriptorCleanupComplete && p != StateReconciled
 }
@@ -119,6 +88,9 @@ type RetentionRemoval struct {
 }
 
 func (r RetentionRemoval) Remove(ctx context.Context, candidate SweepCandidate) (Mutation, error) {
+	if !ownedAdmission(r.Cleanup.Admission) {
+		return NoChange, ErrCleanupUnsupported
+	}
 	refuse := func() (Mutation, error) { return NoChange, errors.New("retention cleanup custody unproved") }
 	if ValidateSweepRequest(r.Request) != nil || r.Cursors == nil || r.Validate == nil || r.Observe == nil || r.Cleanup.Validate == nil || r.Cleanup.Store == nil || r.Cleanup.Now == nil {
 		return refuse()
@@ -153,5 +125,5 @@ func (r RetentionRemoval) Remove(ctx context.Context, candidate SweepCandidate) 
 		}
 		return snapshot, proof, nil
 	}
-	return cleanup.remove(ctx, candidate.RetirementOperation, candidate.Artifact, true)
+	return cleanup.remove(ctx, candidate.RetirementOperation, candidate.Artifact, &cursor)
 }
