@@ -37,6 +37,22 @@ func (a *Adapter) registerWorkstreamTools(s *gomcp.Server) {
 	}, Writes())
 
 	a.addTool(s, gomcp.Tool{
+		Name: "tether_workstream_update",
+		Description: "Partially update an existing workstream by id. Only the fields you pass " +
+			"change: omit a field to leave it alone, pass an empty string for name or " +
+			"workflow_id to clear it. status must be active or closed. id and created_at " +
+			"are immutable; updated_at is set. Returns the refreshed workstream. " +
+			"Requires the session.write scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.StringProp("id", "Workstream id.", true),
+			gomcp.StringProp("name", "New label; empty string clears it. Omit to leave unchanged.", false),
+			gomcp.StringProp("workflow_id", "New workflow correlation id (for example torque:PRJ-...); empty string clears it. Omit to leave unchanged.", false),
+			gomcp.StringProp("status", "New status: active or closed. Omit to leave unchanged.", false),
+		),
+		Handler: a.handleWorkstreamUpdate,
+	}, Writes())
+
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_workstream_get",
 		Description: "Fetch one workstream by id.",
 		InputSchema: gomcp.InputSchema(
@@ -240,6 +256,42 @@ func (a *Adapter) handleWorkstreamCreate(ctx context.Context, args map[string]an
 		return nil, err
 	}
 	out, err := a.client.CreateWorkstream(ctx, str(args, "name"), str(args, "workflow_id"))
+	if err != nil {
+		return nil, workstreamErr(err)
+	}
+	return toolJSON(map[string]any{"ok": true, "workstream": out}), nil
+}
+
+// optStr returns a pointer to the string arg when the key is present (even if
+// empty), nil when absent, so an explicit empty string can clear a field.
+func optStr(args map[string]any, key string) *string {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil
+	}
+	return &s
+}
+
+func (a *Adapter) handleWorkstreamUpdate(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope("session.write"); err != nil {
+		return nil, err
+	}
+	id := str(args, "id")
+	if id == "" {
+		return nil, toolError("invalid_request", "id is required")
+	}
+	if err := a.workstreamClientReady(); err != nil {
+		return nil, err
+	}
+	out, err := a.client.UpdateWorkstream(ctx, id, api.WorkstreamUpdateRequest{
+		Name:       optStr(args, "name"),
+		WorkflowID: optStr(args, "workflow_id"),
+		Status:     optStr(args, "status"),
+	})
 	if err != nil {
 		return nil, workstreamErr(err)
 	}

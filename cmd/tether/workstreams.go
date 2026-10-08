@@ -79,6 +79,43 @@ var workstreamGetCmd = &cobra.Command{
 	},
 }
 
+var workstreamUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a workstream's name, workflow id or status",
+	Long: `Partially update an existing workstream. Only flags you pass change;
+passing an empty value (--workflow-id "") clears name or workflow id. Status
+must be active or closed. id and created_at never change.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var patch api.WorkstreamUpdateRequest
+		if cmd.Flags().Changed("name") {
+			patch.Name = &workstreamName
+		}
+		if cmd.Flags().Changed("workflow-id") {
+			patch.WorkflowID = &workstreamWorkflowID
+		}
+		if cmd.Flags().Changed("status") {
+			patch.Status = &workstreamStatus
+		}
+		if patch.Name == nil && patch.WorkflowID == nil && patch.Status == nil {
+			return fmt.Errorf("nothing to update: pass at least one of --name, --workflow-id, --status")
+		}
+		c, err := registryClientFactory()
+		if err != nil {
+			return classifyErr(err)
+		}
+		out, err := c.UpdateWorkstream(cmdCtx(cmd), args[0], patch)
+		if err != nil {
+			return classifyErr(err)
+		}
+		if workstreamJSON {
+			return printJSON(out)
+		}
+		printWorkstream(out)
+		return nil
+	},
+}
+
 var workstreamListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List workstreams, newest first",
@@ -213,6 +250,11 @@ func init() {
 
 	workstreamGetCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
+	workstreamUpdateCmd.Flags().StringVar(&workstreamName, "name", "", "new label (empty clears)")
+	workstreamUpdateCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "new workflow correlation id (empty clears)")
+	workstreamUpdateCmd.Flags().StringVar(&workstreamStatus, "status", "", "new status: active or closed")
+	workstreamUpdateCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
+
 	workstreamListCmd.Flags().StringVar(&workstreamStatus, "status", "", "filter by status: active or closed")
 	workstreamListCmd.Flags().StringVar(&workstreamWorkflowID, "workflow-id", "", "filter by workflow correlation id")
 	workstreamListCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
@@ -228,5 +270,5 @@ func init() {
 	workstreamNamespaceCmd.Flags().StringVar(&workstreamMemoryType, "type", "", "optional legacy memory type")
 	workstreamNamespaceCmd.Flags().BoolVar(&workstreamJSON, "json", false, "print JSON")
 
-	workstreamsCmd.AddCommand(workstreamCreateCmd, workstreamGetCmd, workstreamListCmd, workstreamAssignCmd, workstreamEnsureCmd, workstreamNamespaceCmd)
+	workstreamsCmd.AddCommand(workstreamCreateCmd, workstreamGetCmd, workstreamUpdateCmd, workstreamListCmd, workstreamAssignCmd, workstreamEnsureCmd, workstreamNamespaceCmd)
 }

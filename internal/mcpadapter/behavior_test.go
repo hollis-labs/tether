@@ -94,6 +94,7 @@ var clientMethodWrites = map[string]bool{
 	"ResumeLogicalAgent":            true,
 	"ResumeLogicalAgentWithOptions": true,
 	"CreateWorkstream":              true,
+	"UpdateWorkstream":              true,
 	"AssignSessionWorkstream":       true,
 	"EnsureSessionWorkstream":       true,
 	"AttachSessionRef":              true,

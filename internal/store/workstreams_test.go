@@ -385,3 +385,58 @@ func TestWorkstream_CreateGetListAssign(t *testing.T) {
 		t.Errorf("assign to missing session = %v, want ErrSessionNotFound", err)
 	}
 }
+
+func strp(s string) *string { return &s }
+
+func TestUpdateWorkstream_PatchSemantics(t *testing.T) {
+	db := openWorkstreamStore(t)
+	ws, err := db.CreateWorkstream(WorkstreamRow{Name: "orig", WorkflowID: "wf-1"})
+	if err != nil {
+		t.Fatalf("CreateWorkstream: %v", err)
+	}
+	// Force a stale updated_at so "set to now" is observable within one second.
+	if _, err := db.db.Exec(`UPDATE workstreams SET updated_at='2000-01-01T00:00:00Z' WHERE id=?`, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Omitted fields stay; provided fields change.
+	got, err := db.UpdateWorkstream(ws.ID, WorkstreamPatch{WorkflowID: strp("torque:PRJ-1")})
+	if err != nil {
+		t.Fatalf("UpdateWorkstream: %v", err)
+	}
+	if got.Name != "orig" || got.WorkflowID != "torque:PRJ-1" || got.Status != "active" {
+		t.Errorf("patch = %+v, want only workflow_id changed", got)
+	}
+	if got.ID != ws.ID || got.CreatedAt != ws.CreatedAt {
+		t.Errorf("id/created_at changed: %+v vs %+v", got, ws)
+	}
+	if got.UpdatedAt == "2000-01-01T00:00:00Z" {
+		t.Error("updated_at was not refreshed")
+	}
+
+	// Explicit empty clears; status changes.
+	got, err = db.UpdateWorkstream(ws.ID, WorkstreamPatch{WorkflowID: strp(""), Status: strp("closed")})
+	if err != nil {
+		t.Fatalf("UpdateWorkstream clear: %v", err)
+	}
+	if got.WorkflowID != "" || got.Status != "closed" || got.Name != "orig" {
+		t.Errorf("clear = %+v", got)
+	}
+	reread, err := db.GetWorkstream(ws.ID)
+	if err != nil || reread.WorkflowID != "" || reread.Status != "closed" {
+		t.Errorf("persisted = %+v, %v", reread, err)
+	}
+}
+
+func TestUpdateWorkstream_NotFoundAndInvalidStatus(t *testing.T) {
+	db := openWorkstreamStore(t)
+	if _, err := db.UpdateWorkstream("ghost", WorkstreamPatch{Name: strp("x")}); !errors.Is(err, ErrWorkstreamNotFound) {
+		t.Errorf("unknown id = %v, want ErrWorkstreamNotFound", err)
+	}
+	ws, _ := db.CreateWorkstream(WorkstreamRow{Name: "n"})
+	for _, bad := range []string{"", "archived"} {
+		if _, err := db.UpdateWorkstream(ws.ID, WorkstreamPatch{Status: strp(bad)}); !errors.Is(err, ErrInvalidWorkstreamStatus) {
+			t.Errorf("status %q = %v, want ErrInvalidWorkstreamStatus", bad, err)
+		}
+	}
+}

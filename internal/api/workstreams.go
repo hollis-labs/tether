@@ -20,6 +20,7 @@ import (
 type WorkstreamStore interface {
 	CreateWorkstream(w store.WorkstreamRow) (store.WorkstreamRow, error)
 	GetWorkstream(id string) (*store.WorkstreamRow, error)
+	UpdateWorkstream(id string, patch store.WorkstreamPatch) (*store.WorkstreamRow, error)
 	ListWorkstreams(opts store.ListWorkstreamsOptions) ([]store.WorkstreamRow, error)
 	AssignSessionWorkstream(sessionID, workstreamID string) error
 	EnsureSessionWorkstream(sessionID string, seed store.WorkstreamRow) (store.WorkstreamRow, error)
@@ -45,6 +46,15 @@ type WorkstreamListResponse struct {
 type WorkstreamCreateRequest struct {
 	Name       string `json:"name,omitempty"`
 	WorkflowID string `json:"workflow_id,omitempty"`
+}
+
+// WorkstreamUpdateRequest is the JSON body for PATCH /workstreams/{id}.
+// A nil (absent) field is left unchanged; a present empty string clears name
+// or workflow_id. Status must be "active" or "closed" when present.
+type WorkstreamUpdateRequest struct {
+	Name       *string `json:"name,omitempty"`
+	WorkflowID *string `json:"workflow_id,omitempty"`
+	Status     *string `json:"status,omitempty"`
 }
 
 // WorkstreamAssignRequest is the JSON body for
@@ -194,6 +204,8 @@ func (s *Server) handleWorkstreamsItem(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case sub == "" && r.Method == http.MethodGet:
 		s.handleGetWorkstream(w, id)
+	case sub == "" && r.Method == http.MethodPatch:
+		s.handleUpdateWorkstream(w, r, id)
 	case sub == "sessions" && r.Method == http.MethodPost:
 		s.handleAssignWorkstream(w, r, id)
 	case sub == "refs" && r.Method == http.MethodGet:
@@ -213,6 +225,29 @@ func (s *Server) handleGetWorkstream(w http.ResponseWriter, id string) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, workstreamToDTO(*row))
+}
+
+func (s *Server) handleUpdateWorkstream(w http.ResponseWriter, r *http.Request, id string) {
+	var req WorkstreamUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	row, err := s.Workstreams.UpdateWorkstream(id, store.WorkstreamPatch{
+		Name: req.Name, WorkflowID: req.WorkflowID, Status: req.Status,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrWorkstreamNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+		case errors.Is(err, store.ErrInvalidWorkstreamStatus):
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, workstreamToDTO(*row))

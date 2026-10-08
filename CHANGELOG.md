@@ -8,6 +8,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add workstream update (CW-20261008-0001): `PATCH /workstreams/{id}`, `tether workstreams update <id> [--name] [--workflow-id] [--status] [--json]` and MCP tool `tether_workstream_update` (session.write). Partial patch of name, workflow_id and status (active/closed); an explicit empty name or workflow_id clears it, an omitted field is unchanged.
+
 - Add opt-in Claude streaming-stdio shim hosting through `catalog.defaults.launch_host` and `TETHER_LAUNCH_HOST`, with the existing direct path as default. The real provider receives sandbox and resource limits; unsupported pre-child cases fall back, while uncertain placement never creates a second child. User stop retires the host; daemon shutdown detaches it. Startup recovery uses the canonical placement receipt, retains unknown outcomes with doctor/health diagnostics, and revokes authority on positive orphaning. Result replay deduplicates by the provider's own UUID. Production restart survival requires a planned systemd-user activation; detached hosts remain in the daemon cgroup. See `docs/shim-host.md` for delivery windows and recovery limits.
 - Wire the team host, HTTP routes and native MCP tools behind `teams.enabled`, default false. Share one authenticated service and retain accepted Unix operator proof across native dispatch. Formation remains refused pending explicit activation policy; construction is inert and no team recovery is scheduled.
 
