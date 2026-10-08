@@ -491,14 +491,12 @@ secrets are not resolved into the agent's proxy, and `tether_tool_call` and
 `tether_tool_search` cannot reach them. This holds for the operator's proxy too;
 there is no hidden inventory behind a filtered flat listing.
 
-The default list is `torque` and `tesseract`. Grant others per project
-(`mcp.servers` in the project YAML) or per launch (`mcp_servers` in a boot
-profile). A list you set **replaces** the default, so keep `torque` and
-`tesseract` in it. A project that already lists upstreams keeps exactly that
-list when you upgrade; the default applies only where no list is set. Check that
-a list you wrote earlier still names `torque` and `tesseract` if its agents
-use them. `cerberus` can reach hosts and containers, so it is never in
-the default; an agent that needs it must be given it by name.
+The interim default list is `torque` only (CW-20261001-0228). Tesseract and
+other upstreams require an explicit project, launch or boot grant until the
+daemon-side credential fix lands. A list you set replaces the default; include
+`torque` if needed. Existing explicit project/launch lists keep their authored
+grants when you upgrade. `cerberus` controls hosts and containers and remains
+opt-in.
 
 An explicit `mcp.servers: []` (project or launch), `mcp_servers: []` (boot
 profile), or empty `TETHER_MCP_SERVERS` grants **no upstreams** to a confined

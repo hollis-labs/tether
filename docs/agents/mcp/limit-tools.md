@@ -40,7 +40,7 @@ mcp:
   servers: [example]
 ```
 
-That project grant replaces the default `torque,tesseract`; include those IDs
+That project grant replaces the interim default `torque`; include that ID
 if the agent needs them. Native tools are separate from upstream grants.
 A nonempty project list wins over a launch's `mcp.servers`. A boot profile's
 `mcp_servers` applies at session creation; resume re-resolves the project grant

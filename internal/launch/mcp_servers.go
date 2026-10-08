@@ -8,15 +8,11 @@ import "strings"
 // boot profile's mcp_servers.
 const MCPServersEnv = "TETHER_MCP_SERVERS"
 
-// DefaultMCPServers is the allow-list a launched agent's proxy gets when
-// nothing sets one (CW-20261001-0227, approved by lead): the task tracker and
-// the memory store. Every other upstream -- cerberus (infrastructure control),
-// nanite (database access), hadron, loom, sigil, fragments-engine -- is opt-in,
-// per launch, project or boot profile, and cerberus is never on by default.
-//
-// An explicit list REPLACES this default; it does not add to it. A launch that
-// lists [loom] gets loom and neither of these.
-var DefaultMCPServers = []string{"torque", "tesseract"}
+// DefaultMCPServers grants the task tracker only (CW-20261001-0228,
+// Chrispian's interim policy). Tesseract and every other upstream are opt-in
+// per launch, project or boot profile until the daemon-side credential fix lands.
+// An explicit list replaces this default.
+var DefaultMCPServers = []string{"torque"}
 
 // EffectiveMCPServers is the allow-list a launched agent's proxy runs with:
 // the plan's own list (including empty), or DefaultMCPServers when unset.
