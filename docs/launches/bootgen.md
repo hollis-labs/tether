@@ -59,7 +59,8 @@ For Codex and Opencode, use `tether boot <profile>` or `tether launch --launch
 id: tether.codex.app-server
 display_name: "Tether - Codex App Server"
 launch: tether-codex-app-server
-mcp_servers: []
+mcp_servers: [torque]
+mcp_tools: [torque_task_get, torque_task_list]
 identity:
   profile_id: tether-codex-app-server
   role: backend
@@ -71,7 +72,9 @@ slots:
 ```
 
 The important field is `launch`: it points to the launch profile that selects
-the provider runtime.
+the provider runtime. `mcp_tools` optionally restricts final MCP wire names;
+omission inherits and `[]` grants no targets. See the
+[tool grant and flat-mode contract](../agents/mcp/limit-tools.md#boot-tool-grants-and-flat-mode).
 
 ## Preflight
 
