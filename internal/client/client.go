@@ -1461,6 +1461,34 @@ func (c *Client) CreateWorkstream(ctx context.Context, name, workflowID string) 
 	return out, err
 }
 
+// UpdateWorkstream patches a workstream via PATCH /workstreams/{id}. Nil
+// fields are left unchanged; a non-nil empty string clears name or workflow_id.
+func (c *Client) UpdateWorkstream(ctx context.Context, id string, patch api.WorkstreamUpdateRequest) (api.WorkstreamDTO, error) {
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return api.WorkstreamDTO{}, fmt.Errorf("marshal workstream update: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		c.baseURL+"/workstreams/"+url.PathEscape(id), bytes.NewReader(b))
+	if err != nil {
+		return api.WorkstreamDTO{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return api.WorkstreamDTO{}, wrapIfUnreachable(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.WorkstreamDTO{}, readError(resp)
+	}
+	var out api.WorkstreamDTO
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return api.WorkstreamDTO{}, fmt.Errorf("decode workstream update response: %w", err)
+	}
+	return out, nil
+}
+
 // GetWorkstream fetches one workstream via GET /workstreams/{id}.
 func (c *Client) GetWorkstream(ctx context.Context, id string) (api.WorkstreamDTO, error) {
 	var out api.WorkstreamDTO

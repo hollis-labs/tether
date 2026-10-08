@@ -81,6 +81,62 @@ func (s *Store) GetWorkstream(id string) (*WorkstreamRow, error) {
 	return &w, nil
 }
 
+// ErrInvalidWorkstreamStatus is returned by UpdateWorkstream for a status
+// outside the set the workstreams table accepts (migration 0023 CHECK).
+var ErrInvalidWorkstreamStatus = errors.New("invalid workstream status: want active or closed")
+
+// WorkstreamPatch is a partial update. A nil field is left unchanged; a
+// non-nil field is written, so a pointer to "" clears name or workflow_id
+// (stored as NULL) while omitting it leaves the value alone. Status cannot be
+// cleared: it is validated and must be "active" or "closed".
+type WorkstreamPatch struct {
+	Name       *string
+	WorkflowID *string
+	Status     *string
+}
+
+// UpdateWorkstream applies patch to the workstream id and returns the
+// refreshed row. id and created_at are immutable; updated_at is set to now.
+// Returns ErrWorkstreamNotFound for an unknown id and ErrInvalidWorkstreamStatus
+// for a status outside active/closed. An empty patch only touches updated_at.
+func (s *Store) UpdateWorkstream(id string, patch WorkstreamPatch) (*WorkstreamRow, error) {
+	if patch.Status != nil && *patch.Status != "active" && *patch.Status != "closed" {
+		return nil, ErrInvalidWorkstreamStatus
+	}
+	// One static statement: each CASE leaves its column alone unless the
+	// matching flag is set, so no SQL is assembled from fragments.
+	var setName, setWorkflow, setStatus int
+	var nameVal, workflowVal, statusVal any
+	if patch.Name != nil {
+		setName, nameVal = 1, nullIfEmpty(*patch.Name)
+	}
+	if patch.WorkflowID != nil {
+		setWorkflow, workflowVal = 1, nullIfEmpty(*patch.WorkflowID)
+	}
+	if patch.Status != nil {
+		setStatus, statusVal = 1, *patch.Status
+	}
+	res, err := s.db.Exec(`UPDATE workstreams SET
+		name = CASE WHEN ? = 1 THEN ? ELSE name END,
+		workflow_id = CASE WHEN ? = 1 THEN ? ELSE workflow_id END,
+		status = CASE WHEN ? = 1 THEN ? ELSE status END,
+		updated_at = ?
+		WHERE id = ?`,
+		setName, nameVal, setWorkflow, workflowVal, setStatus, statusVal,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return nil, fmt.Errorf("update workstream %q: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("update workstream %q: %w", id, err)
+	}
+	if n == 0 {
+		return nil, ErrWorkstreamNotFound
+	}
+	return s.GetWorkstream(id)
+}
+
 // ListWorkstreamsOptions filters ListWorkstreams. Zero value lists everything,
 // newest first.
 type ListWorkstreamsOptions struct {

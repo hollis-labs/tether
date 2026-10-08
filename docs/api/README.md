@@ -2404,6 +2404,7 @@ empty digest does and does not mean, is in
 | `GET` | `/workstreams` | List, newest first. `?status=`, `?workflow_id=`. |
 | `GET` | `/workstreams?ref=<kind>:<ref_id>` | **Reverse lookup**: which workstreams touched this object. Returns every match. Not combinable with `status`/`workflow_id`. |
 | `GET` | `/workstreams/{id}` | One workstream. |
+| `PATCH` | `/workstreams/{id}` | Partial update of `name`, `workflow_id`, `status` (`active`/`closed`). Absent field = unchanged; `""` clears name/workflow_id. 404 for unknown id, 400 for a bad status. Returns the refreshed workstream. |
 | `POST` | `/workstreams/{id}/sessions` | Assign a session (`{"session_id": "..."}`). |
 | `GET` | `/workstreams/{id}/refs` | Flat ref roll-up across the container's sessions. |
 | `GET` | `/workstreams/{id}/digest` | Assembled digest, rolled up across the lineage. |
