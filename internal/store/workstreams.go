@@ -15,7 +15,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,22 +103,27 @@ func (s *Store) UpdateWorkstream(id string, patch WorkstreamPatch) (*WorkstreamR
 	if patch.Status != nil && *patch.Status != "active" && *patch.Status != "closed" {
 		return nil, ErrInvalidWorkstreamStatus
 	}
-	sets := []string{"updated_at = ?"}
-	args := []any{time.Now().UTC().Format(time.RFC3339)}
+	// One static statement: each CASE leaves its column alone unless the
+	// matching flag is set, so no SQL is assembled from fragments.
+	var setName, setWorkflow, setStatus int
+	var nameVal, workflowVal, statusVal any
 	if patch.Name != nil {
-		sets = append(sets, "name = ?")
-		args = append(args, nullIfEmpty(*patch.Name))
+		setName, nameVal = 1, nullIfEmpty(*patch.Name)
 	}
 	if patch.WorkflowID != nil {
-		sets = append(sets, "workflow_id = ?")
-		args = append(args, nullIfEmpty(*patch.WorkflowID))
+		setWorkflow, workflowVal = 1, nullIfEmpty(*patch.WorkflowID)
 	}
 	if patch.Status != nil {
-		sets = append(sets, "status = ?")
-		args = append(args, *patch.Status)
+		setStatus, statusVal = 1, *patch.Status
 	}
-	args = append(args, id)
-	res, err := s.db.Exec(`UPDATE workstreams SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+	res, err := s.db.Exec(`UPDATE workstreams SET
+		name = CASE WHEN ? = 1 THEN ? ELSE name END,
+		workflow_id = CASE WHEN ? = 1 THEN ? ELSE workflow_id END,
+		status = CASE WHEN ? = 1 THEN ? ELSE status END,
+		updated_at = ?
+		WHERE id = ?`,
+		setName, nameVal, setWorkflow, workflowVal, setStatus, statusVal,
+		time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return nil, fmt.Errorf("update workstream %q: %w", id, err)
 	}
