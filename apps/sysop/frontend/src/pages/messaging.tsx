@@ -445,7 +445,7 @@ export function MessagingPage() {
   const [agents, setAgents] = useState<MessageAgentInfo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<MessageInfo | null>(null)
   const [selectedBrokerID, setSelectedBrokerID] = useState<string | null>(null)
   const [selectedBrokerTrace, setSelectedBrokerTrace] = useState<BrokerEnvelopeInfo[]>([])
   const [selectedBrokerTraceError, setSelectedBrokerTraceError] = useState<string | null>(null)
@@ -541,6 +541,10 @@ export function MessagingPage() {
     }
   }, [api, scope, readFilter, archiveFilter, offset])
 
+  const currentLoad = useRef(load)
+  currentLoad.current = load
+  const refreshCurrent = useCallback(() => currentLoad.current(), [])
+
   useEffect(() => load(), [load])
   useEffect(
     () => () => {
@@ -561,7 +565,6 @@ export function MessagingPage() {
   )
   const totalGroupPosts = messageTotals?.groups.total ?? groupPostCount
 
-  const selected = selectedId ? (all.find((m) => m.id === selectedId) ?? null) : null
   const selectedBroker = selectedBrokerID
     ? (brokerList.find((env) => env.id === selectedBrokerID) ?? null)
     : null
@@ -672,7 +675,7 @@ export function MessagingPage() {
   ]
 
   function closeDialog() {
-    setSelectedId(null)
+    setSelected(null)
     setSelectedBrokerID(null)
     setReplyText('')
     setDialogError(null)
@@ -680,21 +683,23 @@ export function MessagingPage() {
 
   // Show action failures; only a confirmed write changes the displayed state.
   function openMessage(id: string) {
-    setSelectedId(id)
+    const m = all.find((x) => x.id === id)
+    if (!m) return
+    setSelected(m)
     setReplyText('')
     setDialogError(null)
-    const m = all.find((x) => x.id === id)
     if (m && !m.read_at && !m.canceled_at) {
       api
         .markRead(m.id, m.to)
         .then(() => {
+          const readAt = new Date().toISOString()
+          setSelected((current) => (current?.id === id ? { ...current, read_at: readAt } : current))
           setMessages(
             (current) =>
-              current?.map((item) =>
-                item.id === id ? { ...item, read_at: new Date().toISOString() } : item,
-              ) ?? null,
+              current?.map((item) => (item.id === id ? { ...item, read_at: readAt } : item)) ??
+              null,
           )
-          load()
+          refreshCurrent()
         })
         .catch((err: unknown) => setDialogError(err instanceof Error ? err.message : String(err)))
     }
@@ -714,7 +719,7 @@ export function MessagingPage() {
         thread_id: selected.thread_id || selected.id,
       })
       closeDialog()
-      load()
+      refreshCurrent()
     } catch (err: unknown) {
       setDialogError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -729,7 +734,7 @@ export function MessagingPage() {
     try {
       await api.archiveMessage(selected.id, selected.to)
       closeDialog()
-      load()
+      refreshCurrent()
     } catch (err: unknown) {
       setDialogError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -749,7 +754,7 @@ export function MessagingPage() {
         body: groupReplyText.trim(),
       })
       setGroupReplyText('')
-      load()
+      refreshCurrent()
     } catch (err: unknown) {
       setGroupError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -775,7 +780,7 @@ export function MessagingPage() {
         body: newMessageBody.trim(),
       })
       closeNewMessage()
-      load()
+      refreshCurrent()
     } catch (err: unknown) {
       setComposeError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -803,7 +808,7 @@ export function MessagingPage() {
       setSelectedGroupUrn(group.urn)
       setScope('groups')
       closeNewGroup()
-      load()
+      refreshCurrent()
     } catch (err: unknown) {
       setComposeError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -859,7 +864,12 @@ export function MessagingPage() {
                     Add Group
                   </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refreshCurrent()}
+                  disabled={loading}
+                >
                   <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
                   Refresh
                 </Button>
@@ -1137,7 +1147,7 @@ export function MessagingPage() {
                       urn: aliasURN,
                       alias: aliasText,
                     })
-                    load()
+                    refreshCurrent()
                   } catch (err) {
                     setAliasError(err instanceof Error ? err.message : String(err))
                   }
