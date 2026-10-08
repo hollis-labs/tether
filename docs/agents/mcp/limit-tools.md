@@ -60,7 +60,8 @@ Omitting `mcp_tools` inherits the existing tool surface; `mcp_tools: []` grants
 no target tools. Entries use the gateway profile glob syntax and match final
 wire names, after any catalog `tool_prefix`. They do not include a client prefix
 such as `mcp__tether__`. Both managed `tether boot` and legacy `boot-exec` carry
-this grant. Managed sessions seal it into their MCP policy at creation; a later
+this grant. Managed sessions capture it in the launch plan at creation and seal their MCP
+policy at launch; a later
 profile selection can narrow that policy but cannot broaden it.
 
 The environment form is `TETHER_MCP_TOOLS`, a JSON array, for example
@@ -98,12 +99,13 @@ upstream whose final tool names are `torque_task_get` and `torque_task_list`:
 ```
 
 The MCP wire surface is those two targets plus `tether_gateway_status`, subject
-to upstream availability. If Nanite qualifies names using the configured
-server key, the client names are `mcp__tether__torque_task_get`,
-`mcp__tether__torque_task_list` and `mcp__tether__tether_gateway_status`. Nanite's
-`agent_tools` grant must use the names its registry actually exposes; Tether's
-allowlist continues to use the unqualified wire names. A Nanite grant can
-further restrict the tools but cannot restore a Tether-excluded target.
+to upstream availability. Nanite grants normally use the bare names
+`torque_task_get`, `torque_task_list` and `tether_gateway_status`. Its discovery
+index can qualify a colliding name as `tether-mux_TOOL`; its author must select
+actual discovered registry names through `SyncKnownTools` rather than assuming
+a client prefix. Tether's allowlist continues to use unqualified wire names.
+A Nanite grant can further restrict the tools but cannot restore a
+Tether-excluded target.
 
 The Nanite author owns the tracked projection at
 `docs/examples/tether-mcp.json`. Its current `internal/mcpconfig` path is
