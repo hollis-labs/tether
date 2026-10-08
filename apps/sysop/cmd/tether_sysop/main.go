@@ -623,6 +623,7 @@ func main() {
 	router.HandleFunc("/api/messages/groups", server.handleMessageGroups)
 	router.HandleFunc("/api/messages/groups/create", server.handleMessageGroupCreate)
 	router.HandleFunc("/api/messages/agents", server.handleMessageAgents)
+	router.HandleFunc("/api/messages/aliases", server.handleMessageAliases)
 	router.HandleFunc("/api/broker/envelopes", server.handleBrokerEnvelopes)
 	router.HandleFunc("/api/activity/events", server.handleActivityEvents)
 	router.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
@@ -1891,6 +1892,9 @@ func sessionTotals(db *store.Store) (sessionStats, error) {
 type messagesResponse struct {
 	Messages []messageDTO  `json:"messages"`
 	Totals   messageTotals `json:"totals"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
 	Error    string        `json:"error,omitempty"`
 }
 
@@ -2218,8 +2222,13 @@ FROM broker_envelopes`
 	writeJSON(w, http.StatusOK, brokerEnvelopesResponse{Envelopes: out})
 }
 
-func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
-	resp, err := s.loadMessages()
+func (s *appServer) handleMessagesList(w http.ResponseWriter, r *http.Request) {
+	q, err := messageQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "message": err.Error()})
+		return
+	}
+	resp, err := s.loadMessagesPage(q)
 	if errors.Is(err, errStateDBUnset) {
 		writeJSON(w, http.StatusOK, messagesResponse{Messages: []messageDTO{}})
 		return
@@ -2234,19 +2243,58 @@ func (s *appServer) handleMessagesList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func messageQuery(r *http.Request) (store.MessageQuery, error) {
+	v := r.URL.Query()
+	q := store.MessageQuery{Scope: v.Get("scope"), Read: v.Get("read"), Archive: v.Get("archive"), Recipient: v.Get("to"), Limit: 100}
+	for _, field := range []struct {
+		name   string
+		target *int
+	}{{"limit", &q.Limit}, {"offset", &q.Offset}} {
+		if raw, set := v[field.name]; set {
+			n, err := strconv.Atoi(raw[0])
+			if err != nil || n < 0 || (field.name == "limit" && (n == 0 || n > 1000)) {
+				return q, fmt.Errorf("invalid %s", field.name)
+			}
+			*field.target = n
+		}
+	}
+	if q.Scope != "" && q.Scope != "all" && q.Scope != "user" && q.Scope != "agent" {
+		return q, errors.New("invalid scope")
+	}
+	if q.Read != "" && q.Read != "all" && q.Read != "read" && q.Read != "unread" {
+		return q, errors.New("invalid read filter")
+	}
+	if q.Archive != "" && q.Archive != "all" && q.Archive != "active" && q.Archive != "archived" {
+		return q, errors.New("invalid archive filter")
+	}
+	return q, nil
+}
+
 func (s *appServer) loadMessages() (messagesResponse, error) {
+	return s.loadMessagesPage(store.MessageQuery{Limit: 500})
+}
+
+func (s *appServer) loadMessagesPage(q store.MessageQuery) (messagesResponse, error) {
 	var resp messagesResponse
 	err := s.withStateReader(func(db *store.Store) error {
 		totals, err := countMessages(db)
 		if err != nil {
 			return err
 		}
-		rows, err := db.ListMessages(500)
+		if q.Recipient != "" {
+			recipient, err := db.ResolveMessageAddress(q.Recipient)
+			if err != nil {
+				return err
+			}
+			q.Recipient = recipient.URN()
+		}
+
+		page, err := db.ListMessagesPage(q)
 		if err != nil {
 			return err
 		}
-		out := make([]messageDTO, 0, len(rows))
-		for _, m := range rows {
+		out := make([]messageDTO, 0, len(page.Messages))
+		for _, m := range page.Messages {
 			out = append(out, messageDTO{
 				ID:          m.ID,
 				Kind:        m.Kind,
@@ -2268,7 +2316,7 @@ func (s *appServer) loadMessages() (messagesResponse, error) {
 				ArchivedAt:  m.ArchivedAt,
 			})
 		}
-		resp = messagesResponse{Messages: out, Totals: totals}
+		resp = messagesResponse{Messages: out, Totals: totals, Total: page.Total, Limit: page.Limit, Offset: page.Offset}
 		return nil
 	})
 	return resp, err
@@ -2425,16 +2473,6 @@ func (s *appServer) handleMessageReply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, messagesResponse{Error: "invalid body: " + err.Error()})
 		return
 	}
-	from, err := messaging.ParseURN(req.From)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, messagesResponse{Error: "invalid from urn: " + req.From})
-		return
-	}
-	to, err := messaging.ParseURN(req.To)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, messagesResponse{Error: "invalid to urn: " + req.To})
-		return
-	}
 	kind := messaging.Kind(req.Kind)
 	if kind == "" {
 		kind = messaging.MsgKindResponse
@@ -2450,6 +2488,17 @@ func (s *appServer) handleMessageReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer db.Close()
+
+	from, err := db.ResolveMessageAddress(req.From)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "message": err.Error()})
+		return
+	}
+	to, err := db.ResolveMessageAddress(req.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "message": err.Error()})
+		return
+	}
 
 	env := messaging.Envelope{
 		Kind:        kind,

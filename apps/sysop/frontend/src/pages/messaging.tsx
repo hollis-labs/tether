@@ -18,12 +18,14 @@ import {
 import { DataTable, type ColumnDef } from '@hollis-labs/sysop-ui/data'
 import { ListPageLayout, TabStrip, type TabStripItem } from '@hollis-labs/sysop-ui/layout'
 import { useApi } from '../api/context'
+import { recipientOptions } from './messaging-model'
 import type {
   BrokerEnvelopeInfo,
   BrokerEnvelopeQuery,
   GroupInfo,
   GroupMessageInfo,
   MessageAgentInfo,
+  MessageAlias,
   MessageInfo,
   MessageTotals,
 } from '../api/client'
@@ -104,7 +106,12 @@ const columns: ColumnDef<MessageInfo>[] = [
       const headline = messageHeadline(m)
       const unread = messageStatus(m) === 'unread'
       return headline ? (
-        <span className={cn('block truncate text-[12px]', unread ? 'font-medium text-text' : 'text-text-soft')}>
+        <span
+          className={cn(
+            'block truncate text-[12px]',
+            unread ? 'font-medium text-text' : 'text-text-soft',
+          )}
+        >
           {headline}
         </span>
       ) : (
@@ -123,7 +130,9 @@ const columns: ColumnDef<MessageInfo>[] = [
     key: 'created',
     header: 'Received',
     align: 'right',
-    cell: (m) => <span className="text-[11px] text-text-soft">{formatRelativeTime(m.created_at)}</span>,
+    cell: (m) => (
+      <span className="text-[11px] text-text-soft">{formatRelativeTime(m.created_at)}</span>
+    ),
     sortValue: (m) => m.created_at,
   },
 ]
@@ -143,7 +152,12 @@ function brokerTraceKey(env: BrokerEnvelopeInfo): string {
 
 function brokerTraceQuery(env: BrokerEnvelopeInfo): BrokerEnvelopeQuery | null {
   if (env.workflow_id && env.correlation_id) {
-    return { workflow_id: env.workflow_id, correlation_id: env.correlation_id, order: 'asc', limit: 200 }
+    return {
+      workflow_id: env.workflow_id,
+      correlation_id: env.correlation_id,
+      order: 'asc',
+      limit: 200,
+    }
   }
   if (env.correlation_id) {
     return { correlation_id: env.correlation_id, order: 'asc', limit: 200 }
@@ -198,7 +212,9 @@ const brokerColumns: ColumnDef<BrokerEnvelopeInfo>[] = [
     key: 'priority',
     header: 'Priority',
     align: 'right',
-    cell: (env) => <span className="font-mono text-[11px] tabular-nums text-text">{env.priority}</span>,
+    cell: (env) => (
+      <span className="font-mono text-[11px] tabular-nums text-text">{env.priority}</span>
+    ),
     sortValue: (env) => env.priority,
   },
   {
@@ -211,7 +227,9 @@ const brokerColumns: ColumnDef<BrokerEnvelopeInfo>[] = [
     key: 'created',
     header: 'Created',
     align: 'right',
-    cell: (env) => <span className="text-[11px] text-text-soft">{formatRelativeTime(env.created_at)}</span>,
+    cell: (env) => (
+      <span className="text-[11px] text-text-soft">{formatRelativeTime(env.created_at)}</span>
+    ),
     sortValue: (env) => env.created_at,
   },
 ]
@@ -259,7 +277,9 @@ function GroupsBoard({
 
   const members = selectedGroup?.members ?? []
   const archived = selectedGroup?.status === 'archived'
-  const canSend = Boolean(selectedGroup && selectedFrom && replyText.trim() && !archived && members.length > 0)
+  const canSend = Boolean(
+    selectedGroup && selectedFrom && replyText.trim() && !archived && members.length > 0,
+  )
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 bg-bg md:grid-cols-[minmax(14rem,18rem)_1fr]">
@@ -287,7 +307,9 @@ function GroupsBoard({
                   </span>
                 </span>
                 <span className="mt-1 block truncate text-[11px] text-text-subtle">
-                  {latest ? groupMessageHeadline(latest) || shortUrn(latest.from_urn) : 'No posts yet'}
+                  {latest
+                    ? groupMessageHeadline(latest) || shortUrn(latest.from_urn)
+                    : 'No posts yet'}
                 </span>
               </button>
             )
@@ -379,7 +401,9 @@ function GroupsBoard({
                 <Textarea
                   value={replyText}
                   onChange={(e) => onReplyText(e.target.value)}
-                  placeholder={archived ? 'Archived groups are read-only.' : 'Write a group reply...'}
+                  placeholder={
+                    archived ? 'Archived groups are read-only.' : 'Write a group reply...'
+                  }
                   disabled={archived || members.length === 0}
                   className="h-22 min-h-0 flex-1 resize-none border-0 bg-input/30 focus-visible:border-transparent focus-visible:ring-0"
                 />
@@ -405,6 +429,15 @@ function GroupsBoard({
 export function MessagingPage() {
   const api = useApi()
   const [scope, setScope] = useState<ScopeKey>('user')
+  const [readFilter, setReadFilter] = useState('all')
+  const [archiveFilter, setArchiveFilter] = useState('active')
+  const [offset, setOffset] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [aliases, setAliases] = useState<MessageAlias[]>([])
+  const [aliasURN, setAliasURN] = useState('')
+  const [aliasText, setAliasText] = useState('')
+  const [aliasError, setAliasError] = useState<string | null>(null)
+  const requestVersion = useRef(0)
   const [messages, setMessages] = useState<MessageInfo[] | null>(null)
   const [messageTotals, setMessageTotals] = useState<MessageTotals | null>(null)
   const [groups, setGroups] = useState<GroupInfo[] | null>(null)
@@ -441,9 +474,23 @@ export function MessagingPage() {
   const load = useCallback(() => {
     let cancelled = false
     setLoading(true)
-    Promise.allSettled([api.getMessages(), api.getGroups(), api.getMessageAgents(), api.getBrokerEnvelopes()])
-      .then(([messageResult, groupResult, agentResult, brokerResult]) => {
-        if (cancelled) return
+    const version = ++requestVersion.current
+    Promise.allSettled([
+      api.getMessages({
+        scope: scope === 'user' ? 'user' : 'agent',
+        read: readFilter,
+        archive: archiveFilter,
+        limit: '100',
+        offset: String(offset),
+      }),
+      api.getGroups(),
+      api.getMessageAgents(),
+      api.getBrokerEnvelopes(),
+      api.getMessageAliases(),
+    ])
+      .then(([messageResult, groupResult, agentResult, brokerResult, aliasResult]) => {
+        if (cancelled || version !== requestVersion.current) return
+        if (aliasResult.status === 'fulfilled') setAliases(aliasResult.value.aliases ?? [])
         if (messageResult.status === 'rejected') {
           setError(
             messageResult.reason instanceof Error
@@ -455,6 +502,7 @@ export function MessagingPage() {
         }
         setMessages(messageResult.value.messages ?? [])
         setMessageTotals(messageResult.value.totals ?? null)
+        setTotal(messageResult.value.total ?? 0)
         setError(messageResult.value.error ?? null)
         if (groupResult.status === 'fulfilled') {
           setGroups(groupResult.value.groups ?? [])
@@ -482,17 +530,24 @@ export function MessagingPage() {
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled && version === requestVersion.current)
+          setError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && version === requestVersion.current) setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [api])
+  }, [api, scope, readFilter, archiveFilter, offset])
 
   useEffect(() => load(), [load])
+  useEffect(
+    () => () => {
+      requestVersion.current++
+    },
+    [],
+  )
 
   const all = messages ?? []
   const groupList = groups ?? []
@@ -506,13 +561,18 @@ export function MessagingPage() {
   )
   const totalGroupPosts = messageTotals?.groups.total ?? groupPostCount
 
-  const selected = selectedId ? all.find((m) => m.id === selectedId) ?? null : null
-  const selectedBroker = selectedBrokerID ? brokerList.find((env) => env.id === selectedBrokerID) ?? null : null
+  const selected = selectedId ? (all.find((m) => m.id === selectedId) ?? null) : null
+  const selectedBroker = selectedBrokerID
+    ? (brokerList.find((env) => env.id === selectedBrokerID) ?? null)
+    : null
   const selectedGroup =
-    (selectedGroupUrn ? groupList.find((g) => g.urn === selectedGroupUrn) : null) ?? groupList[0] ?? null
+    (selectedGroupUrn ? groupList.find((g) => g.urn === selectedGroupUrn) : null) ??
+    groupList[0] ??
+    null
   const details = useMemo(() => (selected ? extraFields(selected.payload) : []), [selected])
 
-  const scopeTotals = scope === 'user' ? messageTotals?.user : scope === 'agent' ? messageTotals?.agent : null
+  const scopeTotals =
+    scope === 'user' ? messageTotals?.user : scope === 'agent' ? messageTotals?.agent : null
   const unread = scopeTotals?.unread ?? scoped.filter((m) => messageStatus(m) === 'unread').length
   const archived = scopeTotals?.archived ?? scoped.filter((m) => m.archived_at).length
   const groupMembers = selectedGroup?.members ?? []
@@ -585,10 +645,30 @@ export function MessagingPage() {
   }, [brokerList])
 
   const tabs: TabStripItem<ScopeKey>[] = [
-    { key: 'user', label: 'User', icon: <User className="h-3.5 w-3.5" />, count: userCount },
-    { key: 'agent', label: 'Agents', icon: <Bot className="h-3.5 w-3.5" />, count: agentCount },
-    { key: 'groups', label: 'Groups', icon: <Users className="h-3.5 w-3.5" />, count: groupList.length },
-    { key: 'broker', label: 'Broker', icon: <MessageSquarePlus className="h-3.5 w-3.5" />, count: brokerList.length },
+    {
+      key: 'user',
+      label: 'User',
+      icon: <User className="h-3.5 w-3.5" />,
+      count: userCount,
+    },
+    {
+      key: 'agent',
+      label: 'Agents',
+      icon: <Bot className="h-3.5 w-3.5" />,
+      count: agentCount,
+    },
+    {
+      key: 'groups',
+      label: 'Groups',
+      icon: <Users className="h-3.5 w-3.5" />,
+      count: groupList.length,
+    },
+    {
+      key: 'broker',
+      label: 'Broker',
+      icon: <MessageSquarePlus className="h-3.5 w-3.5" />,
+      count: brokerList.length,
+    },
   ]
 
   function closeDialog() {
@@ -598,7 +678,7 @@ export function MessagingPage() {
     setDialogError(null)
   }
 
-  // Opening a message marks it read (fire-and-forget; reload reflects it).
+  // Show action failures; only a confirmed write changes the displayed state.
   function openMessage(id: string) {
     setSelectedId(id)
     setReplyText('')
@@ -607,8 +687,16 @@ export function MessagingPage() {
     if (m && !m.read_at && !m.canceled_at) {
       api
         .markRead(m.id, m.to)
-        .then(() => load())
-        .catch(() => {})
+        .then(() => {
+          setMessages(
+            (current) =>
+              current?.map((item) =>
+                item.id === id ? { ...item, read_at: new Date().toISOString() } : item,
+              ) ?? null,
+          )
+          load()
+        })
+        .catch((err: unknown) => setDialogError(err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -740,7 +828,11 @@ export function MessagingPage() {
           <TabStrip
             tabs={tabs}
             value={scope}
-            onChange={setScope}
+            onChange={(next) => {
+              setScope(next)
+              setOffset(0)
+              setMessages(null)
+            }}
             actions={
               <div className="flex items-center gap-2">
                 <Button
@@ -807,27 +899,90 @@ export function MessagingPage() {
                         accentColor: 'var(--color-status-doing)',
                       },
                     ]
-                : [
-                    {
-                      label: scope === 'user' ? 'User Messages' : 'Agent Messages',
-                      value: scopeTotals?.total ?? scoped.length,
-                    },
-                    { label: 'Unread', value: unread, accentColor: 'var(--color-status-inbox)' },
-                    { label: 'Archived', value: archived, accentColor: 'var(--color-status-archived)' },
-                  ]
+                  : [
+                      {
+                        label: scope === 'user' ? 'User Messages' : 'Agent Messages',
+                        value: scopeTotals?.total ?? scoped.length,
+                      },
+                      {
+                        label: 'Unread',
+                        value: unread,
+                        accentColor: 'var(--color-status-inbox)',
+                      },
+                      {
+                        label: 'Archived',
+                        value: archived,
+                        accentColor: 'var(--color-status-archived)',
+                      },
+                    ]
             }
           />
         }
         filters={
-          <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
-            {scope === 'groups'
-              ? 'Group message boards with inline replies.'
-              : scope === 'broker'
-                ? 'Broker envelopes from the state DB. Open one to inspect its chronological workflow/correlation trace and request-reply state.'
-              : scope === 'user'
-                ? 'Messages addressed to users. Opening a message marks it read; Archive soft-deletes it.'
-                : 'Messages addressed to agents. Opening a message marks it read; Archive soft-deletes it.'}
-          </p>
+          <div>
+            {(scope === 'user' || scope === 'agent') && (
+              <div className="flex flex-wrap items-center gap-3 px-4 py-2 text-xs">
+                <label>
+                  Read state{' '}
+                  <select
+                    aria-label="Read state"
+                    value={readFilter}
+                    onChange={(e) => {
+                      setReadFilter(e.target.value)
+                      setOffset(0)
+                    }}
+                  >
+                    <option value="all">All</option>
+                    <option value="unread">Unread</option>
+                    <option value="read">Read</option>
+                  </select>
+                </label>
+                <label>
+                  Archive{' '}
+                  <select
+                    aria-label="Archive state"
+                    value={archiveFilter}
+                    onChange={(e) => {
+                      setArchiveFilter(e.target.value)
+                      setOffset(0)
+                    }}
+                  >
+                    <option value="active">Active</option>
+                    <option value="archived">Archived</option>
+                    <option value="all">All</option>
+                  </select>
+                </label>
+                <Button
+                  size="sm"
+                  disabled={offset === 0 || loading}
+                  onClick={() => setOffset(Math.max(0, offset - 100))}
+                >
+                  Previous
+                </Button>
+                <span>
+                  {total
+                    ? `${offset + 1}–${Math.min(offset + 100, total)} of ${total}`
+                    : '0 messages'}
+                </span>
+                <Button
+                  size="sm"
+                  disabled={offset + 100 >= total || loading}
+                  onClick={() => setOffset(offset + 100)}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+            <p className="shrink-0 border-b border-border-strong bg-bg px-4 py-1.5 text-[11px] text-text-subtle">
+              {scope === 'groups'
+                ? 'Group message boards with inline replies.'
+                : scope === 'broker'
+                  ? 'Broker envelopes from the state DB. Open one to inspect its chronological workflow/correlation trace and request-reply state.'
+                  : scope === 'user'
+                    ? 'Messages addressed to users. Opening a message marks it read; Archive soft-deletes it.'
+                    : 'Messages addressed to agents. Opening a message marks it read; Archive soft-deletes it.'}
+            </p>
+          </div>
         }
       >
         {scope === 'groups' ? (
@@ -904,7 +1059,9 @@ export function MessagingPage() {
               variant="default"
               size="sm"
               onClick={sendNewMessage}
-              disabled={sending || !newMessageFrom.trim() || !newMessageTo.trim() || !newMessageBody.trim()}
+              disabled={
+                sending || !newMessageFrom.trim() || !newMessageTo.trim() || !newMessageBody.trim()
+              }
             >
               <Send className={cn('h-3.5 w-3.5', sending && 'animate-pulse')} />
               {sending ? 'Sending...' : 'Send'}
@@ -914,39 +1071,104 @@ export function MessagingPage() {
       >
         <div className="h-full overflow-y-auto px-4 py-3">
           <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-[11px] text-text-subtle">
+                <span>From</span>
+                <input
+                  value={newMessageFrom}
+                  onChange={(e) => setNewMessageFrom(e.target.value)}
+                  className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
+                />
+              </label>
+              <label className="space-y-1 text-[11px] text-text-subtle">
+                <span>To</span>
+                <select
+                  aria-label="Recipient"
+                  value={
+                    agents.some((a) => a.urn === newMessageTo) ||
+                    aliases.some((a) => a.urn === newMessageTo)
+                      ? newMessageTo
+                      : ''
+                  }
+                  onChange={(e) => setNewMessageTo(e.target.value)}
+                  className="h-9 w-full rounded-md border border-border bg-panel px-3 text-[12px] text-text"
+                >
+                  <option value="">Custom address or alias</option>
+                  {recipientOptions(agents, aliases).map((a) => (
+                    <option key={a.urn} value={a.urn}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  aria-label="Recipient address or alias"
+                  value={newMessageTo}
+                  onChange={(e) => setNewMessageTo(e.target.value)}
+                  className="h-9 w-full rounded-md border border-border bg-panel px-3 text-[12px] text-text"
+                />
+              </label>
+            </div>
+            <details className="text-xs">
+              <summary>Manage readable aliases</summary>
+              <label>
+                Stable address{' '}
+                <input
+                  aria-label="Alias stable address"
+                  value={aliasURN}
+                  onChange={(e) => setAliasURN(e.target.value)}
+                  className="m-2 border border-border bg-panel p-2"
+                />
+              </label>
+              <label>
+                Alias{' '}
+                <input
+                  aria-label="Readable alias"
+                  value={aliasText}
+                  onChange={(e) => setAliasText(e.target.value)}
+                  className="m-2 border border-border bg-panel p-2"
+                />
+              </label>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  setAliasError(null)
+                  try {
+                    await api.saveMessageAlias({
+                      urn: aliasURN,
+                      alias: aliasText,
+                    })
+                    load()
+                  } catch (err) {
+                    setAliasError(err instanceof Error ? err.message : String(err))
+                  }
+                }}
+                disabled={!aliasURN || !aliasText}
+              >
+                Save alias
+              </Button>
+              {aliasError && <p role="alert">{aliasError}</p>}
+              {aliases.map((a) => (
+                <button
+                  key={a.urn}
+                  className="block p-1"
+                  onClick={() => {
+                    setAliasURN(a.urn)
+                    setAliasText(a.alias)
+                  }}
+                >
+                  {a.alias} ({a.urn})
+                </button>
+              ))}
+            </details>
             <label className="space-y-1 text-[11px] text-text-subtle">
-              <span>From</span>
-              <input
-                value={newMessageFrom}
-                onChange={(e) => setNewMessageFrom(e.target.value)}
-                className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
+              <span>Message</span>
+              <Textarea
+                value={newMessageBody}
+                onChange={(e) => setNewMessageBody(e.target.value)}
+                rows={10}
+                className="min-h-[18rem] w-full"
               />
             </label>
-            <label className="space-y-1 text-[11px] text-text-subtle">
-              <span>To</span>
-              <input
-                list="message-agent-options"
-                value={newMessageTo}
-                onChange={(e) => setNewMessageTo(e.target.value)}
-                className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
-              />
-            </label>
-          </div>
-          <datalist id="message-agent-options">
-            {agents.map((a) => (
-              <option key={a.urn} value={a.urn} label={agentLabel(a)} />
-            ))}
-          </datalist>
-          <label className="space-y-1 text-[11px] text-text-subtle">
-            <span>Message</span>
-            <Textarea
-              value={newMessageBody}
-              onChange={(e) => setNewMessageBody(e.target.value)}
-              rows={10}
-              className="min-h-[18rem] w-full"
-            />
-          </label>
           </div>
         </div>
       </DetailDialog>
@@ -972,37 +1194,37 @@ export function MessagingPage() {
       >
         <div className="h-full overflow-y-auto px-4 py-3">
           <div className="space-y-4">
-          <label className="space-y-1 text-[11px] text-text-subtle">
-            <span>Name</span>
-            <input
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              className="h-9 w-full rounded-md border border-border bg-panel px-3 text-[12px] text-text outline-none focus:border-border-strong"
-            />
-          </label>
-          <label className="space-y-1 text-[11px] text-text-subtle">
-            <span>Owner</span>
-            <input
-              list="group-owner-options"
-              value={newGroupCreator}
-              onChange={(e) => setNewGroupCreator(e.target.value)}
-              className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
-            />
-          </label>
-          <datalist id="group-owner-options">
-            {agents.map((a) => (
-              <option key={a.urn} value={a.urn} label={agentLabel(a)} />
-            ))}
-          </datalist>
-          <label className="space-y-1 text-[11px] text-text-subtle">
-            <span>Description</span>
-            <Textarea
-              value={newGroupDescription}
-              onChange={(e) => setNewGroupDescription(e.target.value)}
-              rows={10}
-              className="min-h-[16rem] w-full"
-            />
-          </label>
+            <label className="space-y-1 text-[11px] text-text-subtle">
+              <span>Name</span>
+              <input
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="h-9 w-full rounded-md border border-border bg-panel px-3 text-[12px] text-text outline-none focus:border-border-strong"
+              />
+            </label>
+            <label className="space-y-1 text-[11px] text-text-subtle">
+              <span>Owner</span>
+              <input
+                list="group-owner-options"
+                value={newGroupCreator}
+                onChange={(e) => setNewGroupCreator(e.target.value)}
+                className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
+              />
+            </label>
+            <datalist id="group-owner-options">
+              {agents.map((a) => (
+                <option key={a.urn} value={a.urn} label={agentLabel(a)} />
+              ))}
+            </datalist>
+            <label className="space-y-1 text-[11px] text-text-subtle">
+              <span>Description</span>
+              <Textarea
+                value={newGroupDescription}
+                onChange={(e) => setNewGroupDescription(e.target.value)}
+                rows={10}
+                className="min-h-[16rem] w-full"
+              />
+            </label>
           </div>
         </div>
       </DetailDialog>
@@ -1015,7 +1237,9 @@ export function MessagingPage() {
         meta={
           selectedBroker ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-subtle">
-              <span className="uppercase tracking-[.12em]">{selectedBroker.message_type || 'message'}</span>
+              <span className="uppercase tracking-[.12em]">
+                {selectedBroker.message_type || 'message'}
+              </span>
               <span>{formatRelativeTime(selectedBroker.created_at)}</span>
               <CopyableId id={selectedBroker.id} label={selectedBroker.id.slice(0, 12)} />
             </div>
@@ -1023,13 +1247,17 @@ export function MessagingPage() {
         }
         footer={
           selectedBroker ? (
-              <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] text-text-subtle">
                 Broker inspection is read-only in Sysop today.
               </div>
               <div className="flex items-center gap-2">
-                {selectedBroker.payload && <CopyButton text={selectedBroker.payload} label="Copy payload" />}
-                {selectedBroker.audit_json && <CopyButton text={selectedBroker.audit_json} label="Copy audit" />}
+                {selectedBroker.payload && (
+                  <CopyButton text={selectedBroker.payload} label="Copy payload" />
+                )}
+                {selectedBroker.audit_json && (
+                  <CopyButton text={selectedBroker.audit_json} label="Copy audit" />
+                )}
               </div>
             </div>
           ) : null
@@ -1039,14 +1267,52 @@ export function MessagingPage() {
           <div className="flex h-full min-h-0 flex-col">
             <DetailSection title="Envelope">
               <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-                <div className="contents"><dt className="truncate text-text-subtle">Sender</dt><dd className="break-words text-text-soft">{selectedBroker.sender || '—'}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Recipient</dt><dd className="break-words text-text-soft">{selectedBroker.recipient || '—'}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Workflow</dt><dd className="break-words text-text-soft">{selectedBroker.workflow_id || '—'}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Correlation</dt><dd className="break-words text-text-soft">{selectedBroker.correlation_id || '—'}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Trace State</dt><dd className="break-words text-text-soft">{brokerConversationState(selectedBroker, selectedBrokerTrace)}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Priority</dt><dd className="break-words text-text-soft">{selectedBroker.priority}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Delivered</dt><dd className="break-words text-text-soft">{selectedBroker.delivered_at ? formatRelativeTime(selectedBroker.delivered_at) : '—'}</dd></div>
-                <div className="contents"><dt className="truncate text-text-subtle">Consumed</dt><dd className="break-words text-text-soft">{selectedBroker.consumed_at ? formatRelativeTime(selectedBroker.consumed_at) : '—'}</dd></div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Sender</dt>
+                  <dd className="break-words text-text-soft">{selectedBroker.sender || '—'}</dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Recipient</dt>
+                  <dd className="break-words text-text-soft">{selectedBroker.recipient || '—'}</dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Workflow</dt>
+                  <dd className="break-words text-text-soft">
+                    {selectedBroker.workflow_id || '—'}
+                  </dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Correlation</dt>
+                  <dd className="break-words text-text-soft">
+                    {selectedBroker.correlation_id || '—'}
+                  </dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Trace State</dt>
+                  <dd className="break-words text-text-soft">
+                    {brokerConversationState(selectedBroker, selectedBrokerTrace)}
+                  </dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Priority</dt>
+                  <dd className="break-words text-text-soft">{selectedBroker.priority}</dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Delivered</dt>
+                  <dd className="break-words text-text-soft">
+                    {selectedBroker.delivered_at
+                      ? formatRelativeTime(selectedBroker.delivered_at)
+                      : '—'}
+                  </dd>
+                </div>
+                <div className="contents">
+                  <dt className="truncate text-text-subtle">Consumed</dt>
+                  <dd className="break-words text-text-soft">
+                    {selectedBroker.consumed_at
+                      ? formatRelativeTime(selectedBroker.consumed_at)
+                      : '—'}
+                  </dd>
+                </div>
               </dl>
             </DetailSection>
             <DetailSection title="Trace">
@@ -1055,7 +1321,10 @@ export function MessagingPage() {
               ) : selectedBrokerTrace.length > 0 ? (
                 <div className="space-y-2">
                   {selectedBrokerTrace.map((env) => (
-                    <div key={env.id} className="rounded border border-border bg-panel/30 px-3 py-2">
+                    <div
+                      key={env.id}
+                      className="rounded border border-border bg-panel/30 px-3 py-2"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <StatusBadge status={brokerStatus(env)} />
@@ -1081,19 +1350,25 @@ export function MessagingPage() {
                   )}
                 </div>
               ) : (
-                <p className="text-[12px] text-text-subtle">No related workflow/correlation trace.</p>
+                <p className="text-[12px] text-text-subtle">
+                  No related workflow/correlation trace.
+                </p>
               )}
             </DetailSection>
             <DetailSection title="Payload">
               {selectedBroker.payload ? (
-                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">{selectedBroker.payload}</pre>
+                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">
+                  {selectedBroker.payload}
+                </pre>
               ) : (
                 <p className="text-[12px] text-text-subtle">No payload stored.</p>
               )}
             </DetailSection>
             <DetailSection title="Audit">
               {selectedBroker.audit_json ? (
-                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">{selectedBroker.audit_json}</pre>
+                <pre className="overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel/30 px-3 py-2 font-mono text-[11px] text-text-soft">
+                  {selectedBroker.audit_json}
+                </pre>
               ) : (
                 <p className="text-[12px] text-text-subtle">No audit JSON stored.</p>
               )}

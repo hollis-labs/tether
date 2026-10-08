@@ -163,7 +163,20 @@ export interface MessageInfo {
   archived_at?: string
 }
 
+export interface MessageQuery {
+ scope?: string
+ read?: string
+ archive?: string
+ to?: string
+ limit?: string
+ offset?: string
+}
+export interface MessageAlias { urn: string; alias: string }
+
 export interface MessagesInfo {
+ total: number
+ limit: number
+ offset: number
   messages: MessageInfo[]
   totals: MessageTotals
   error?: string
@@ -1046,7 +1059,9 @@ export const apiClient = {
     http.post<LogicalAgentPolicyInfo>('/api/logical-agents/policy', body as unknown as JsonObject),
   getSessionDetail: (id: string) =>
     http.get<SessionDetailInfo>('/api/sessions/detail', { query: { id } }),
-  getMessages: () => http.get<MessagesInfo>('/api/messages'),
+  getMessages: (query?: MessageQuery) => http.get<MessagesInfo>('/api/messages', { query: { ...(query ?? {}) } }),
+  getMessageAliases: () => http.get<{ aliases: MessageAlias[] }>('/api/messages/aliases'),
+  saveMessageAlias: (body: MessageAlias) => http.post<MessageAlias>('/api/messages/aliases', { ...body }),
   sendReply: (body: ReplyRequest) =>
     http.post<MessageInfo>('/api/messages', body as unknown as JsonObject),
   getGroups: () => http.get<GroupsInfo>('/api/messages/groups'),
