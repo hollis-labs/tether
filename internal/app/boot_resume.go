@@ -10,15 +10,16 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 )
 
-// BootResumeSessions runs once after the listener is serving: daemon-owned MCP
-// planting needs that listener. Startup reconciliation has already reattached
-// surviving shims and identified disappeared children. Idle agents remain cold;
-// unread mail, a recorded open assignment or active durable/pool membership is
-// positive work evidence. No mailbox is consumed by this selection.
+// BootResumeOptions explicitly protects selected direct canonical sources from
+// ordinary boot recovery. Other agents retain their existing recovery behavior.
 type BootResumeOptions struct {
 	NativeOnlySourceIDs []string
 }
 
+// BootResumeSessions runs once after the listener is serving. Startup
+// reconciliation has already reattached surviving shims. Ordinary agents need
+// positive durable work evidence; selected native-only sources never receive an
+// automatic recovery turn. Selection consumes no mailbox.
 func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeOptions) {
 	// Resolve every explicit source before any startup recovery. A missing or
 	// enrolled source cannot fall through into ordinary selection.
