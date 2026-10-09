@@ -70,6 +70,9 @@ func (s *Service) codexShimRuntime(ctx context.Context, id, runtime string, r sh
 		return nil, err
 	}
 	return &shimcodex.Runtime{Config: shimcodex.Config{ID: runtime, Receipt: r, Store: p, Fresh: fresh, Limits: shimcodex.Limits{InboxItems: 1024, InboxBytes: codexProtocolBudget}, DeliveryChecker: codexDeliveryCheck{service: s}, Deliver: s.deliverCodexInbox,
+		RecoverInbox: func(ctx context.Context, frozen shimcodex.State) ([]shimcodex.Event, error) {
+			return p.RecoverInboxWire(ctx, frozen, r)
+		},
 		Validate: func(ctx context.Context) error {
 			row, err := s.Store.SessionShim(ctx, id)
 			if err != nil {

@@ -7,6 +7,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -1127,10 +1128,34 @@ func TestReplyBecomesTheNextTurnOfARealRuntimeSession(t *testing.T) {
 
 			deadline := time.Now().Add(30 * time.Second)
 			var delivered store.RoutingReply
+			firstOutput, deliveredAt := -1, -1
 			for time.Now().Before(deadline) {
 				delivered, _ = svc.Store.RoutingReply(ctx, receipt.ReplyID)
 				if delivered.State.Terminal() && len(outputEvents(t, svc)) >= tc.outputs {
-					break
+					// Settlement writes the row before publishing its event. Wait
+					// for that event too before checking the actual event order.
+					evs, err := svc.Store.EventsSince(0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					firstOutput, deliveredAt = -1, -1
+					for i, ev := range evs {
+						switch {
+						case ev.Kind == events.KindSessionTurnOutput && firstOutput < 0:
+							firstOutput = i
+						case ev.Kind == events.KindRoutingReplyDelivered:
+							var reply events.RoutingReplyEvent
+							if err := json.Unmarshal([]byte(ev.PayloadJSON), &reply); err != nil {
+								t.Fatal(err)
+							}
+							if reply.ReplyID == receipt.ReplyID {
+								deliveredAt = i
+							}
+						}
+					}
+					if deliveredAt >= 0 {
+						break
+					}
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
@@ -1142,19 +1167,6 @@ func TestReplyBecomesTheNextTurnOfARealRuntimeSession(t *testing.T) {
 				t.Fatalf("expected %d distinct turn outputs: %+v", tc.outputs, outputs)
 			}
 			// Order: the first turn's output precedes the reply's delivery event.
-			evs, err := svc.Store.EventsSince(0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			firstOutput, deliveredAt := -1, -1
-			for i, ev := range evs {
-				switch {
-				case ev.Kind == events.KindSessionTurnOutput && firstOutput < 0:
-					firstOutput = i
-				case ev.Kind == events.KindRoutingReplyDelivered:
-					deliveredAt = i
-				}
-			}
 			if firstOutput < 0 || deliveredAt < firstOutput {
 				t.Fatalf("the reply was delivered (%d) before the turn in flight finished (%d)", deliveredAt, firstOutput)
 			}

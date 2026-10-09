@@ -1,3 +1,5 @@
+//go:build !windows
+
 package app
 
 import (
@@ -53,8 +55,9 @@ func retainedRecoveryRig(t *testing.T) (*codexRig, string, string) {
 	return r, id, actor.URN
 }
 
-func TestTeamRecoveryResetsSameCanonicalSessionAndRetainsBinding(t *testing.T) {
-	r, id, actor := retainedRecoveryRig(t)
+func TestTeamRecoveryReplacesLostExecutionAndRetainsBinding(t *testing.T) {
+	r, input, actor := replacementStoreRig(t)
+	id := input.Source.ID
 	ctx := context.Background()
 	if revoked := r.svc.revokeEndedSessionBindings(ctx); revoked != 0 {
 		t.Fatalf("startup revoked valid retained ownership: %d", revoked)
@@ -70,17 +73,22 @@ func TestTeamRecoveryResetsSameCanonicalSessionAndRetainsBinding(t *testing.T) {
 	if err = r.svc.RecoverTeamSession(ctx, "retained", id); err != nil {
 		t.Fatal(err)
 	}
+	lineage, err := r.svc.Store.SessionReplacement(ctx, id)
+	if err != nil || lineage.ReplacementID == id {
+		t.Fatal("lost execution did not allocate durable replacement", err)
+	}
+	replacementID := lineage.ReplacementID
 	r.wait(2)
-	r.idle(id)
-	row, err = r.svc.Store.GetSession(id)
+	r.idle(replacementID)
+	row, err = r.svc.Store.GetSession(replacementID)
 	if err != nil || row.State != "running" {
-		t.Fatalf("same-ID recovery=%+v %v", row, err)
+		t.Fatalf("replacement recovery=%+v %v", row, err)
 	}
 	after, err := r.svc.Registry.CurrentBinding(ctx, actor)
-	if err != nil || before.ID != after.ID || before.Generation != after.Generation || after.SessionID != id {
+	if err != nil || before.ID != after.ID || before.Generation != after.Generation || after.SessionID != replacementID {
 		t.Fatalf("identity replacement=%+v %v", after, err)
 	}
-	plan, err := r.svc.Store.GetLaunchPlan(id)
+	plan, err := r.svc.Store.GetLaunchPlan(replacementID)
 	if err != nil || plan.RecoveryActorURI != actor || plan.ResumeSourceSessionID != id {
 		t.Fatalf("context identity=%+v %v", plan, err)
 	}

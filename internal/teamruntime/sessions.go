@@ -2,6 +2,8 @@ package teamruntime
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -49,6 +51,17 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	saved, err := s.reserve(ctx, "session", in.IntentKey, in)
 	if err != nil {
 		return "", err
+	}
+	if saved.state == "done" {
+		var id string
+		if err := json.Unmarshal(saved.payload, &id); err != nil {
+			return "", err
+		}
+		if _, err := s.sessions.SessionReplacementDestination(ctx, id); err == nil {
+			return id, s.recoverLocked(ctx, in.IntentKey, id)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
 	}
 	launchID, err := s.enrollment.LaunchTarget(ctx, in.IntentKey, in.Actor)
 	if err != nil {

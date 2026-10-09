@@ -40,6 +40,18 @@ func (s *Store) ClearNativeResume(ctx context.Context, sourceID, sessionID, prov
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Replacement lineage freezes the original conversation record. A failed
+	// native attempt tombstones only the new execution's copied resume input.
+	var replacement string
+	err = tx.QueryRowContext(ctx, `SELECT replacement_session_id FROM session_replacements WHERE source_session_id=?`, sourceID).Scan(&replacement)
+	if err == nil {
+		if replacement != sessionID {
+			return ErrSessionReplacementUnavailable
+		}
+		sourceID = sessionID
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO session_provider_mappings(session_id,owner,provider,native_session_id,created_at,updated_at)
 		VALUES (?,'tether',?,NULL,?,?) ON CONFLICT(session_id,owner,provider) DO UPDATE SET native_session_id=NULL,updated_at=excluded.updated_at
 		WHERE session_provider_mappings.native_session_id=?`, sourceID, providerID, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), nativeID)

@@ -75,9 +75,37 @@ type RPCError struct {
 }
 
 type Event struct {
-	Identity string          `json:"identity"`
-	Cursor   string          `json:"cursor"`
-	Raw      json.RawMessage `json:"raw"`
+	Identity string `json:"identity"`
+	Cursor   string `json:"cursor"`
+	// Native bytes define physical stdout spans and source hashes. A JSON value
+	// would be compacted and HTML-escaped by every state clone/commit. Store the
+	// bytes as base64, just like Partial, without interpreting their contents.
+	Raw []byte `json:"raw"`
+	// Older checkpoints embedded Raw as JSON. Only the preserved host journal
+	// can witness the original spelling; retain this fact across epoch commits.
+	LegacyRawJSON bool `json:"legacy_raw_json,omitempty"`
+}
+
+func (e *Event) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Identity string          `json:"identity"`
+		Cursor   string          `json:"cursor"`
+		Raw      json.RawMessage `json:"raw"`
+		Legacy   bool            `json:"legacy_raw_json,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	var body []byte
+	legacy := wire.Legacy
+	if len(wire.Raw) != 0 && wire.Raw[0] == '{' {
+		body = append([]byte(nil), wire.Raw...)
+		legacy = true
+	} else if err := json.Unmarshal(wire.Raw, &body); err != nil {
+		return err
+	}
+	*e = Event{Identity: wire.Identity, Cursor: wire.Cursor, Raw: body, LegacyRawJSON: legacy}
+	return nil
 }
 
 type ServerRequest struct {

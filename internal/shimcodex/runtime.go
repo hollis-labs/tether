@@ -29,6 +29,7 @@ type Config struct {
 	OnDetach        func(error)
 	DeliveryChecker DeliveryChecker
 	Deliver         DeliveryHandler
+	RecoverInbox    InboxWireReader
 }
 type Runtime struct{ Config Config }
 
@@ -88,6 +89,9 @@ func (r *Runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 	}
 	engine, err := Open(ctx, r.Config.Store, Binding{Session: spec.Session, Instance: spec.Instance, Generation: spec.Generation, Operation: receipt.OperationKey, Journal: c.Journal, Attempt: receipt.SubmissionAttemptID, Fingerprint: receipt.Fingerprint}, epoch, r.Config.Fresh, r.Config.Limits)
 	if err != nil {
+		return nil, err
+	}
+	if err := engine.RestoreInboxWire(ctx, r.Config.RecoverInbox); err != nil {
 		return nil, err
 	}
 	t := &hostTransport{client: c, spec: spec, validate: r.Config.Validate, pending: make(map[string]chan shim.Frame), lock: lock, disconnect: disconnect}
