@@ -9,7 +9,7 @@ package mcpadapter
 import (
 	"context"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 )
 
 // ScopeDeliveryWrite gates the redrive tool. Deliberately a SEPARATE

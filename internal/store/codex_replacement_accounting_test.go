@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
-	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/substrate/mesh"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"

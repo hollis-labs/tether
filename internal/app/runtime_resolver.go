@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentruntime/runtimebind"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-agent-wrapper/adapters"
-	wlaunch "github.com/hollis-labs/go-agent-wrapper/launch"
-	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	wlaunch "github.com/hollis-labs/substrate/harness/adapters/launch"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/runtimebind"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"

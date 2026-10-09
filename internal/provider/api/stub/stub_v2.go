@@ -5,8 +5,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	llmtypes "github.com/hollis-labs/go-llm-types"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 
 	"github.com/hollis-labs/tether/internal/launch"
 )

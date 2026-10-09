@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"

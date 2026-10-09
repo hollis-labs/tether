@@ -36,10 +36,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/hollis-labs/go-mcp/budget"
-	"github.com/hollis-labs/go-mcp/sanitize"
-	gomcp "github.com/hollis-labs/go-mcp/server"
-	hotel "github.com/hollis-labs/go-otel"
+	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget"
+	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/sanitize"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
+	hotel "github.com/hollis-labs/libs/util/otel"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/callcontext"
@@ -221,7 +221,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
 		ctx = a.withClaimedSessionID(ctx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !telemetry.IsObserved(ctx) {
+		if sc := trace.SpanContextFromContext(extractTraceContext(ctx, gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !telemetry.IsObserved(ctx) {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
 		ctx, span := hotel.ToolCallSpan(ctx, name)

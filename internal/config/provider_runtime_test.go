@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 )
 
 // Catalog runtime-kind tokens stay Tether's own; RuntimeMode is where they

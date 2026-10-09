@@ -5,7 +5,7 @@ package app
 import (
 	"context"
 	"errors"
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"path/filepath"
 	"time"
