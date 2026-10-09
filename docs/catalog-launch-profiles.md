@@ -48,7 +48,7 @@ agent: frontend
 provider: claude-pty
 workspace:
   mode: worktree
-  write_home: ~/.tether/workspaces/tether-launcher
+  write_home: ~/tether/workspaces/tether-launcher
   worktree_name: "tether/{{.ProjectID}}/{{.AgentID}}/{{.SessionID}}"
 prompt:
   include_project_boot: true
