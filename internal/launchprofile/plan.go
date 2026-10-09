@@ -21,6 +21,11 @@ type Plan struct {
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.
 	ResumeProviderSessionID string `json:"resume_provider_session_id,omitempty"`
+	// NativeResumeOnly forbids cold fallback and automatic recovery turns.
+	NativeResumeOnly bool `json:"native_resume_only,omitempty"`
+	// NativeResumeWorkRoot records an explicit coordination-only choice of the
+	// accepted source native home, without changing the historical repo path.
+	NativeResumeWorkRoot string `json:"native_resume_workroot,omitempty"`
 	// ResumeSourceSessionID identifies the canonical source of native state and
 	// interrupted-work evidence. It is not a provider ID or an authority grant.
 	// NativeStateRoot records the actual prepared boot directory. It carries

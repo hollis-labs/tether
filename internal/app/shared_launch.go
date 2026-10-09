@@ -75,6 +75,10 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
+	if plan.NativeResumeOnly {
+		// The explicit source-bound workroot wins over a spec resolver default.
+		lp.Workspace.Workdir = plan.EffectiveWorkRoot()
+	}
 	if plant.DaemonOwned {
 		values := make([]string, 0, len(lp.Provider.Env))
 		for key, value := range lp.Provider.Env {

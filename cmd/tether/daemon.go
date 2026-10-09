@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"io/fs"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -54,10 +56,16 @@ var daemonCmd = &cobra.Command{
 	Short: "Long-lived tetherd process commands",
 }
 
+var bootNativeOnlySourceIDs []string
+var bootNativeOnlyWorkRoots []string
+
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the tetherd daemon in the background",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := nativeOnlyBootOptions(); err != nil {
+			return err
+		}
 		cfg, err := loadDaemonConfig(catalogPath)
 		if err != nil {
 			return err
@@ -70,7 +78,14 @@ var daemonStartCmd = &cobra.Command{
 		}
 
 		// Re-exec ourselves in daemon-run mode. os.Args[0] is our own binary.
-		child := exec.Command(os.Args[0], "daemon", "run", "--catalog", catalogPath) //nolint:gosec // G204: re-exec of own binary
+		childArgs := []string{"daemon", "run", "--catalog", catalogPath}
+		for _, id := range bootNativeOnlySourceIDs {
+			childArgs = append(childArgs, "--boot-resume-native-only-source", id)
+		}
+		for _, value := range bootNativeOnlyWorkRoots {
+			childArgs = append(childArgs, "--boot-resume-native-only-workroot", value)
+		}
+		child := exec.Command(os.Args[0], childArgs...) //nolint:gosec // G204: re-exec of own binary
 
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		logFile, err := openDaemonLog(filepath.Join(stateRoot, "logs", "tetherd.log"))
@@ -123,6 +138,11 @@ var daemonRunCmd = &cobra.Command{
 	Short:  "Run the daemon in the foreground (invoked by `daemon start`; avoid calling directly)",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		bootOptions, err := nativeOnlyBootOptions()
+		if err != nil {
+			return err
+		}
+
 		// Pre-flight liveness check BEFORE app.New: app.New unconditionally
 		// runs seedLogicalAgents (a DB write) and, on a catalog-absent
 		// first run, auto-seeds catalog files; the code below additionally
@@ -261,7 +281,7 @@ var daemonRunCmd = &cobra.Command{
 			Config:                   cfg,
 			Manager:                  svc.Manager,
 			Startup: func(startupCtx context.Context) {
-				svc.BootResumeSessions(startupCtx)
+				svc.BootResumeSessions(startupCtx, bootOptions)
 				if startupCtx.Err() == nil {
 					svc.StartSessionReaper(startupCtx)
 				}
@@ -1123,6 +1143,8 @@ func expandListenAddr(addr string) string {
 }
 
 func init() {
+	daemonCmd.PersistentFlags().StringSliceVar(&bootNativeOnlySourceIDs, "boot-resume-native-only-source", nil, "Preserve only the recorded native context of these canonical source sessions during boot recovery")
+	daemonCmd.PersistentFlags().StringSliceVar(&bootNativeOnlyWorkRoots, "boot-resume-native-only-workroot", nil, "Explicit coordination workroot for a selected native source (source UUID=recorded native home)")
 	daemonCmd.AddCommand(daemonStartCmd, daemonRunCmd, daemonStopCmd, daemonStatusCmd)
 }
 
@@ -1139,4 +1161,27 @@ func bootstrapOperator(ctx context.Context, ids *identity.Store, path string, mo
 		return true, nil
 	}
 	return false, nil
+}
+
+// nativeOnlyBootOptions validates explicit selection before daemon initialization.
+func nativeOnlyBootOptions() (app.BootResumeOptions, error) {
+	result := app.BootResumeOptions{NativeOnlySourceIDs: append([]string(nil), bootNativeOnlySourceIDs...), NativeOnlyWorkRoots: map[string]string{}}
+	selected := map[string]bool{}
+	for _, id := range result.NativeOnlySourceIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return result, fmt.Errorf("invalid native-only source UUID")
+		}
+		selected[id] = true
+	}
+	for _, value := range bootNativeOnlyWorkRoots {
+		id, path, ok := strings.Cut(value, "=")
+		if !ok || !selected[id] || path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return result, fmt.Errorf("native-only workroot requires selected source UUID and canonical absolute path")
+		}
+		if _, duplicate := result.NativeOnlyWorkRoots[id]; duplicate {
+			return result, fmt.Errorf("duplicate native-only workroot selection")
+		}
+		result.NativeOnlyWorkRoots[id] = path
+	}
+	return result, nil
 }

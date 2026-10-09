@@ -18,6 +18,20 @@ const tetherClientVersion = "v005-07"
 // work-root projection; the shared layer owns initialize/thread/start caching
 // and turn/start framing.
 func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
+	if s.Store != nil {
+		plan, err := s.Store.GetLaunchPlan(id)
+		if err != nil {
+			return err
+		}
+		if plan.NativeResumeOnly {
+			mapping, err := s.Store.GetSessionProviderMapping(id, "tether", plan.ProviderID)
+			if err != nil || !mapping.NativeSessionID.Valid || mapping.NativeSessionID.String != plan.ResumeProviderSessionID {
+				return nativeOnlyError("bound native thread unavailable")
+			}
+			_, err = (managerJSONRPCSender{s: s, id: id}).Call(ctx, "turn/start", turn.CodexTurnStartParams(mapping.NativeSessionID.String, text))
+			return err
+		}
+	}
 	if hosted, tracked, err := s.hostedCodexSession(ctx, id); tracked {
 		if err != nil {
 			return err

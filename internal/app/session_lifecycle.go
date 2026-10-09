@@ -246,6 +246,19 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
 
+	if plan.NativeResumeOnly {
+		source, readErr := s.Store.GetSession(plan.ResumeSourceSessionID)
+		if readErr != nil {
+			return nil, nativeOnlyError("source unavailable")
+		}
+		if err := s.validateNativeOnlySource(ctx, source, plan); err != nil {
+			return nil, err
+		}
+		if err := s.nativeOnlyLaunchAuthority(ctx, plan); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := rejectLegacyMCPPlan(plan); err != nil {
 		return nil, err
 	}
@@ -364,7 +377,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		policy.ExtractRefs = extractRefs
 		policy = policy.Seal()
-		err = s.Store.SaveSessionMCPPolicy(ctx, policy)
+		if plan.NativeResumeOnly {
+			policy, err = s.nativeOnlyPolicy(ctx, plan, policy)
+		}
+		if err == nil {
+			err = s.Store.SaveSessionMCPPolicy(ctx, policy)
+		}
 	}
 	if err != nil {
 		exit := 1
@@ -373,7 +391,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
-		if errors.Is(err, store.ErrSessionReplacementUnavailable) || s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
+		if plan.NativeResumeOnly || errors.Is(err, store.ErrSessionReplacementUnavailable) || s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
 			return nil, err
 		}
 		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")
@@ -510,6 +528,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
+	if plan.NativeResumeOnly {
+		// Planting owns the fresh inactive artifacts; native-only execution uses
+		// the separately validated, persisted source context instead of boot CWD.
+		startOpts.Workdir = plan.EffectiveWorkRoot()
+		startOpts.Env = mergeEnv(startOpts.Env, map[string]string{"CODEX_HOME": plan.NativeStateRoot})
+	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)

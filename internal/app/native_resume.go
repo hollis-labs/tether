@@ -40,6 +40,9 @@ func (e *recoveryUnconfirmedError) Error() string {
 func (e *recoveryUnconfirmedError) Unwrap() error { return e.err }
 
 func (r *recoveryRuntime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
+	if r.plan.NativeResumeOnly {
+		return r.startNativeOnly(ctx, opts)
+	}
 	// Recovery submits one control turn itself. Suppress the adapter's automatic
 	// kickoff rather than submit the boot context twice. Planted policy remains.
 	opts.AutoFireFirstTurn = false

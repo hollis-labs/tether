@@ -286,8 +286,8 @@ func (s *Server) handleListCheckpoints(w http.ResponseWriter, _ *http.Request, a
 // Starts a new session using the agent's most recent checkpoint as boot context.
 // The agent's stored launch_id (set on its most recent LaunchSession call) is
 // reused — no launch override is supported in v0.0.4. The body is optional;
-// its only field is idempotency_key (CW-20260930-0229), which makes the resume
-// replay the session a lost response created instead of starting another.
+// idempotency_key replays a lost response. native_only binds preservation to
+// source_session_id and forbids a fresh thread or automatic recovery turn.
 func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request, agentID string) {
 	var req ResumeRequest
 	if r.Body != nil {
@@ -298,6 +298,10 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 	}
 	if msg := validateIdempotencyKey(req.IdempotencyKey); msg != "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return
+	}
+	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && (req.SourceSessionID != "" || req.ResumeWorkRoot != "") {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "native_only requires exact source_session_id")
 		return
 	}
 	var res LaunchResult
