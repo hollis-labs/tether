@@ -205,5 +205,10 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	if onSessionID != nil {
 		onSessionID(actual)
 	}
+	publishSessionEvent(r.service.Bus, r.id, r.plan.LogicalAgentID, "session.native_resumed", struct {
+		SourceSessionID      string `json:"source_session_id"`
+		NativeSessionID      string `json:"native_session_id"`
+		CoordinationWorkroot bool   `json:"coordination_workroot"`
+	}{r.plan.ResumeSourceSessionID, actual, r.plan.NativeResumeWorkRoot != ""})
 	return sess, nil
 }
