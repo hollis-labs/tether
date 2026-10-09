@@ -167,6 +167,7 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 	if err = s.Manager.Start(ctx, req); err != nil {
 		t.Fatal(err)
 	}
+	s.watchSessionBindings("codex-app")
 	if err = s.sendTurnJSONRPC(ctx, "codex-app", "fixture"); err != nil {
 		t.Fatal(err)
 	}
@@ -207,14 +208,19 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 		t.Fatal(err)
 	}
 	_, _ = s.Manager.WaitSession(ctx, "codex-app")
+	if err = s.waitShimBinding(ctx, "codex-app"); err != nil {
+		t.Fatal(err)
+	}
 	foreign := r
 	foreign.Fingerprint += "-foreign"
 	if err = s.reattachShim(ctx, shimRow, foreign); shimFailureCode(err) != "identity_mismatch" {
 		t.Fatalf("foreign observed receipt accepted before recovery: %v", err)
 	}
-	if !s.reconcileShimContext(ctx, store.StaleSession{ID: "codex-app"}) {
-		t.Fatal("boot recovery did not retain hosted custody")
+	detached, err := s.Store.GetSessionContext(ctx, "codex-app")
+	if err != nil || detached.State != "detached" {
+		t.Fatal("controller loss did not retain a detached session", err)
 	}
+	s.ReconcileStaleState()
 	if _, live := s.Manager.Get("codex-app"); !live {
 		t.Fatal("boot recovery did not reattach the exact surviving host")
 	}
