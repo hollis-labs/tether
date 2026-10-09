@@ -35,7 +35,9 @@ func (s *Store) InsertEventContext(ctx context.Context, scope events.Scope, sess
 	if scope == "" {
 		return 0, time.Time{}, fmt.Errorf("event scope required")
 	}
-	if kind==EnvironmentRequestKind {return s.insertEnvironmentRequest(ctx,scope,sessionID,payloadJSON)}
+	if kind == EnvironmentRequestKind {
+		return s.insertEnvironmentRequest(ctx, scope, sessionID, payloadJSON)
+	}
 	at := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO events (scope, session_id, at, kind, payload_json) VALUES (?, ?, ?, ?, ?)`,
