@@ -115,7 +115,13 @@ func (s *Service) recoveryContext(ctx context.Context, plan *launch.Plan, ck *ch
 			pack.openAssignment = true
 		}
 	}
-	pack.Handoffs = s.readRecoveryInput(ctx, plan.ResumeSourceSessionID, "tesseract", "tesseract_recall", map[string]any{"namespaces": "project/tether", "tags": "handoff", "query": plan.LogicalAgentID, "limit": 2, "budget_tokens": 1500, "payload_mode": "full"}, &pack)
+	project := plan.ProjectID
+	if project == "" {
+		project = "tether"
+	}
+	// Session-transition handoffs are workspace items. The general handoff
+	// tag mostly describes unrelated memory/knowledge, not those packets.
+	pack.Handoffs = s.readRecoveryInput(ctx, plan.ResumeSourceSessionID, "tesseract", "tesseract_recall", map[string]any{"namespaces": "project/" + project + "/workspace/handoff", "domains": `["workspace"]`, "ranking": "chronological", "query": plan.LogicalAgentID, "limit": 2, "budget_tokens": 1500, "payload_mode": "full"}, &pack)
 	pack.Git = recoveryGit(ctx, plan.EffectiveWorkRoot(), &pack)
 	return pack
 }
