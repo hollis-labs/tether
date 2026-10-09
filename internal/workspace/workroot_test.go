@@ -110,7 +110,7 @@ func TestMaterializeWorkRootNamedBranch(t *testing.T) {
 	}
 }
 
-func TestMaterializeWorkRootPathLikeNameStaysDetached(t *testing.T) {
+func TestMaterializeWorkRootSlashBranchName(t *testing.T) {
 	repo := initGitRepo(t)
 	root := t.TempDir()
 
@@ -118,8 +118,12 @@ func TestMaterializeWorkRootPathLikeNameStaysDetached(t *testing.T) {
 	if err := MaterializeWorkRoot(root, "session-pathlike", plan); err != nil {
 		t.Fatalf("MaterializeWorkRoot: %v", err)
 	}
-	if out := gitOutput(t, repo, "branch", "--list", "feature/launchpad"); out != "" {
-		t.Fatalf("path-like worktree_name created a branch: %q", out)
+	if got := strings.TrimSpace(gitOutput(t, plan.WorkRoot, "symbolic-ref", "--short", "HEAD")); got != plan.WorktreeName {
+		t.Fatalf("worktree branch = %q, want %q", got, plan.WorktreeName)
+	}
+	writeFile(t, filepath.Join(plan.WorkRoot, "agent.txt"), "agent edit\n")
+	if _, err := os.Stat(filepath.Join(repo, "agent.txt")); !os.IsNotExist(err) {
+		t.Fatalf("agent edit leaked into source repo, stat err=%v", err)
 	}
 }
 

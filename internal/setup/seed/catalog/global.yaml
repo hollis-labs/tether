@@ -10,10 +10,10 @@ catalog:
     boot: boot
   defaults:
     state_db: ~/.tether/state/tether.db
-    workspace_root: ~/.tether/workspaces
-    temp_root: ~/.tether/tmp
-# The daemon socket + pidfile live under the same state root as everything
-# above, so an overridden state dir stays fully self-contained. Change
+    # Agent work and boot directories must be outside protected ~/.tether.
+    workspace_root: ~/tether/workspaces
+    temp_root: ~/tether/tmp
+# The daemon socket + pidfile live under the control-plane state root. Change
 # listen_addr to e.g. tcp:127.0.0.1:7180 for debugging.
 daemon:
   mcp_upstream_ownership: legacy_proxy # opt in to daemon after enabling its MCP endpoint

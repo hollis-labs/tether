@@ -223,7 +223,29 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 	}
 	s.stops.mark(id)
 	defer s.stops.clear(id)
-	if err = host.stopProvider(context.Background(), receipt); err != nil {
+	plan, err := s.Store.GetLaunchPlan(id)
+	if err != nil {
+		return true, err
+	}
+	durations, err := plan.Lifecycle.Durations()
+	if err != nil {
+		return true, err
+	}
+	if host.stop != nil {
+		err = host.stopProvider(context.Background(), receipt)
+	} else {
+		err = host.provider.StopWithPolicy(context.Background(), receipt, shimhost.StopPolicy{
+			RequestGrace: durations.RequestGrace, TerminateGrace: durations.TerminateGrace, KillGrace: durations.KillGrace,
+			BeforeStage: func(ctx context.Context, stage string) error {
+				reason := s.stops.reason(id)
+				if reason == "" {
+					reason = "user_stop"
+				}
+				return s.reaperEvent(ctx, sessionRow, reason, stage, "", nil)
+			},
+		})
+	}
+	if err != nil {
 		s.shimDiagnostic(id, &receipt, "retained", shimFailureCode(err))
 		return true, err
 	}
@@ -237,7 +259,7 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 		return true, err
 	}
 	if changed {
-		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: "user_stop"})
+		publishSessionEvent(s.Bus, id, change.LogicalAgentID, events.KindSessionStateChanged, sessionStateChangedPayload{From: change.From, To: change.To, ExitCode: new(int), Reason: s.stops.reason(id)})
 	}
 	if err = s.waitShimBinding(context.Background(), id); err != nil {
 		return true, err
