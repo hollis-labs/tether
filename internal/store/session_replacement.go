@@ -177,6 +177,7 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	normalized.ResumeProviderSessionID = old.ResumeProviderSessionID
 	normalized.RecoveryActorURI = old.RecoveryActorURI
 	normalized.RecoveryPrompt = old.RecoveryPrompt
+	normalized.RecoveryCursors = old.RecoveryCursors
 	normalized.NativeStateRoot = old.NativeStateRoot
 	a, err := json.Marshal(old)
 	if err != nil {
