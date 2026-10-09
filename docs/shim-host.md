@@ -96,9 +96,9 @@ equal text on different turns remains distinct output.
 
 The [AGY restart acceptance matrix](agy-shim-acceptance.md) describes the affected
 systemd restart, queued input and public delivery checks. Source fixtures cover
-bridge detachment and reconstruction; the real isolated daemon-restart campaign
-remains pending. Raw journal output or input acknowledgment alone does not prove
-public delivery or consumption.
+bridge detachment and reconstruction. A systemd restart result additionally
+requires the operator observations in that matrix. Raw journal output or input
+acknowledgment alone does not prove public delivery or consumption.
 
 Claude uses the stdio bridge described below. Hosted Codex uses a separate
 durable protocol ledger, bound to the original session, instance, generation,
