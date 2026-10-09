@@ -37,7 +37,7 @@ func prepareCodexLaunch(t *testing.T, providerID, brand, runtimeKind string) *ag
 		Command:        brand,
 		BootPrompt:     "boot",
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether"})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}

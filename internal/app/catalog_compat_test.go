@@ -77,7 +77,7 @@ func TestPrepareSharedLaunch_OpencodeCatalogRunArg(t *testing.T) {
 		Args:           []string{"run"},
 		BootPrompt:     "boot",
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether"})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch with args [run]: %v", err)
 	}

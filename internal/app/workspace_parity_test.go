@@ -70,7 +70,7 @@ func TestWorkspaceParity_GeneratedBootLocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{})
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan)})
 			if err != nil {
 				t.Fatal(err)
 			}

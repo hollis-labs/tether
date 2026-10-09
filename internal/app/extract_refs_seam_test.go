@@ -65,7 +65,7 @@ func TestLaunchConfigSeam_PlantedMCPJSON(t *testing.T) {
 				t.Fatalf("mcpPlan.Attribution = %q, want %q", mcpPlan.Attribution, tc.wantAttr)
 			}
 
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, wsRoot, plantContextInput{
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, wsRoot, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan),
 				TetherCommand: tetherCommandPath(),
 				TetherArgs:    mcpPlan.Args,
 			})

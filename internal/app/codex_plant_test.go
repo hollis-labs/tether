@@ -44,7 +44,7 @@ func TestPlantedCodexConfig_CarriesThePosture(t *testing.T) {
 				RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared",
 				Command: "codex", PermissionMode: tc.mode, BootPrompt: testBootPrompt,
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan),
 				TetherCommand: "tether", TetherArgs: []string{"mcp"},
 			})
 			if err != nil {

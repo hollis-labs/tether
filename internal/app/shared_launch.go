@@ -13,6 +13,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchartifacts"
 )
 
 func (s *Service) compileSharedLaunch(ctx context.Context, plan *launch.Plan) error {
@@ -81,10 +82,11 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 		return nil, err
 	}
 	storeSharedLaunchState(plan, compiled)
-	prepared, err := launcher.Prepare(ctx, compiled)
+	prepared, custody, err := launchartifacts.Prepare(ctx, compiled, plant.ArtifactAdmission)
 	if err != nil {
 		return nil, err
 	}
+	defer custody.Close()
 	// Use the neutral named-server contract: the provider library's self-MCP
 	// helper fixes a legacy server key, while this gateway is named tether.
 	if plant.TetherCommand != "" {
@@ -93,7 +95,7 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 			Args: append([]string(nil), plant.TetherArgs...), Env: copyMap(plant.TetherEnv),
 		})
 	}
-	if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver)); err != nil {
+	if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver), providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
 		return nil, err
 	}
 	// Interim until CW-20260930-0106: see linkCodexHostAuth.
@@ -102,10 +104,11 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 }
 
 type plantContextInput struct {
-	DaemonOwned   bool
-	TetherCommand string
-	TetherArgs    []string
-	TetherEnv     map[string]string
+	ArtifactAdmission launchartifacts.Admission
+	DaemonOwned       bool
+	TetherCommand     string
+	TetherArgs        []string
+	TetherEnv         map[string]string
 }
 
 // agentLaunchPlanFor produces the agentlaunch.LaunchPlan that feeds
