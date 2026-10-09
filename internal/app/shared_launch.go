@@ -52,6 +52,15 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if workspaceDir == "" {
 		return nil, fmt.Errorf("workspace dir required")
 	}
+	var codexHome *launchartifacts.CodexHome
+	if plan.ProviderBrand == "codex" {
+		var err error
+		codexHome, err = captureCodexHome()
+		if err != nil {
+			return nil, err
+		}
+		defer codexHome.Close()
+	}
 	bootRoot := filepath.Join(workspaceDir, "boot")
 	if err := os.MkdirAll(bootRoot, 0o750); err != nil {
 		return nil, fmt.Errorf("create boot root: %w", err)
@@ -95,11 +104,15 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 			Args: append([]string(nil), plant.TetherArgs...), Env: copyMap(plant.TetherEnv),
 		})
 	}
-	if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver), providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
-		return nil, err
+	if codexHome != nil {
+		if err := custody.PlantCodex(ctx, prepared, codexHome, providerplant.WithResolver(plantResolver)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := providerplant.Plant(ctx, prepared, providerplant.WithResolver(plantResolver), providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
+			return nil, err
+		}
 	}
-	// Interim until CW-20260930-0106: see linkCodexHostAuth.
-	linkCodexHostAuth(plan.ProviderBrand, prepared)
 	return prepared, nil
 }
 
