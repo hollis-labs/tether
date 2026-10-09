@@ -529,6 +529,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
 	if plan.NativeResumeOnly {
+		// Planting owns the fresh inactive artifacts; native-only execution uses
+		// the separately validated, persisted source context instead of boot CWD.
+		startOpts.Workdir = plan.EffectiveWorkRoot()
 		startOpts.Env = mergeEnv(startOpts.Env, map[string]string{"CODEX_HOME": plan.NativeStateRoot})
 	}
 	startOpts.Profile = profile
