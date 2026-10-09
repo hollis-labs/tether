@@ -41,6 +41,10 @@ func readCodexCandidateTx(ctx context.Context, tx *sql.Tx, observed shimcodex.St
 	if tx == nil || observed.Binding.Session == "" || observed.Revision == 0 {
 		return result, ErrSessionShimConflict
 	}
+	var replaced bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=?)`, observed.Binding.Session).Scan(&replaced); err != nil || replaced {
+		return result, ErrSessionShimConflict
+	}
 	placement, err := scanShim(tx.QueryRowContext(ctx, `SELECT `+shimColumns+` FROM session_shims WHERE session_id=?`, observed.Binding.Session))
 	if err != nil {
 		return result, err
@@ -173,7 +177,7 @@ func (p *CodexProtocolStore) CommitDelivery(ctx context.Context, previous, next 
 	if !bytes.Equal(a, b) || len(b) > p.maxBytes {
 		return ErrSessionShimConflict
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE codex_shim_protocol SET revision=?,state_json=? WHERE session_id=? AND shim_key=? AND revision=?`, strconv.FormatUint(next.Revision, 10), string(b), p.session, p.key, strconv.FormatUint(previous.Revision, 10))
+	result, err := tx.ExecContext(ctx, `UPDATE codex_shim_protocol SET revision=?,state_json=? WHERE session_id=? AND shim_key=? AND revision=? AND NOT EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=?)`, strconv.FormatUint(next.Revision, 10), string(b), p.session, p.key, strconv.FormatUint(previous.Revision, 10), p.session)
 	if err != nil {
 		return err
 	}

@@ -28,6 +28,9 @@ func (s *Store) CodexProtocolStore(ctx context.Context, session, key string, max
 	if maxBytes <= 0 || session == "" || key == "" {
 		return nil, ErrSessionShimConflict
 	}
+	if err := s.currentCodexExecution(ctx, session); err != nil {
+		return nil, err
+	}
 	row, err := s.SessionShim(ctx, session)
 	if err != nil {
 		return nil, err
@@ -58,6 +61,9 @@ func (p *CodexProtocolStore) validateBinding(ctx context.Context, state shimcode
 
 func (p *CodexProtocolStore) Load(ctx context.Context) (shimcodex.State, error) {
 	var state shimcodex.State
+	if err := p.store.currentCodexExecution(ctx, p.session); err != nil {
+		return state, err
+	}
 	var protocol, revision, raw string
 	// Bound the stored value before fetching the payload into the process.
 	err := p.store.db.QueryRowContext(ctx, `SELECT protocol,revision,state_json FROM codex_shim_protocol
@@ -119,11 +125,13 @@ func (p *CodexProtocolStore) Commit(ctx context.Context, previous uint64, state 
 	if previous == 0 {
 		result, err = p.store.db.ExecContext(ctx, `INSERT INTO codex_shim_protocol(session_id,shim_key,protocol,revision,state_json)
  SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM session_shims WHERE session_id=? AND shim_key=? AND runtime_generation=?)
- ON CONFLICT(session_id) DO NOTHING`, p.session, p.key, state.Version, strconv.FormatUint(state.Revision, 10), string(raw), p.session, p.key, strconv.FormatUint(state.Binding.Generation, 10))
+ AND NOT EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=?)
+ ON CONFLICT(session_id) DO NOTHING`, p.session, p.key, state.Version, strconv.FormatUint(state.Revision, 10), string(raw), p.session, p.key, strconv.FormatUint(state.Binding.Generation, 10), p.session)
 	} else {
 		result, err = p.store.db.ExecContext(ctx, `UPDATE codex_shim_protocol SET revision=?,state_json=?
  WHERE session_id=? AND shim_key=? AND protocol=? AND revision=?
- AND EXISTS(SELECT 1 FROM session_shims WHERE session_id=? AND shim_key=? AND runtime_generation=?)`, strconv.FormatUint(state.Revision, 10), string(raw), p.session, p.key, state.Version, strconv.FormatUint(previous, 10), p.session, p.key, strconv.FormatUint(state.Binding.Generation, 10))
+ AND EXISTS(SELECT 1 FROM session_shims WHERE session_id=? AND shim_key=? AND runtime_generation=?)
+ AND NOT EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=?)`, strconv.FormatUint(state.Revision, 10), string(raw), p.session, p.key, state.Version, strconv.FormatUint(previous, 10), p.session, p.key, strconv.FormatUint(state.Binding.Generation, 10), p.session)
 	}
 	if err != nil {
 		return err
@@ -133,6 +141,20 @@ func (p *CodexProtocolStore) Commit(ctx context.Context, previous uint64, state 
 		return err
 	}
 	if n != 1 {
+		return ErrSessionShimConflict
+	}
+	return nil
+}
+
+// Normal protocol handles cannot turn frozen old custody into a live runtime.
+// The historical accounting issuer reads the raw ledger through its own
+// bounded validator and does not use this operational loader.
+func (s *Store) currentCodexExecution(ctx context.Context, session string) error {
+	var replaced bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=?)`, session).Scan(&replaced); err != nil {
+		return err
+	}
+	if replaced {
 		return ErrSessionShimConflict
 	}
 	return nil
