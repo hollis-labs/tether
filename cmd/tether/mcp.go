@@ -82,6 +82,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpToken, "token", "", "legacy adapter presence marker; daemon credentials use --token-file or TETHER_TOKEN")
 	mcpCmd.Flags().StringVar(&mcpScopes, "scopes", "", "comma-separated scopes: session.write,message.write,ai.invoke,catalog.write (env: TETHER_MCP_SCOPES)")
 	mcpCmd.Flags().StringVar(&mcpDiscoveryMode, "discovery-mode", "", "MCP discovery mode: flat (default) or search (env: TETHER_MCP_DISCOVERY_MODE)")
+	mcpCmd.Flags().Bool("no-discover", false, "expose allowed tools directly (same as --discovery-mode flat)")
 	mcpCmd.Flags().StringArrayVar(&mcpProfiles, "profile", nil, "gateway profile ID (env: TETHER_MCP_PROFILE)")
 	mcpCmd.Flags().BoolVar(&mcpProxy, "proxy", false, "enable MCP proxy mode: load upstream servers from catalog/mcp-servers/ and merge their tools")
 	mcpCmd.Flags().StringVar(&mcpServers, "servers", "", "comma-separated upstream server IDs permitted in every discovery mode (env: TETHER_MCP_SERVERS); omitted = all enabled upstreams")
@@ -168,6 +169,10 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	floors, err := resolveMCPToolFloors()
+	if err != nil {
+		return err
+	}
 	if mcpProxy {
 		// Wire observability — LoggingMiddleware + in-memory ToolCallEventStore
 		// (consumed by anyone subscribing to the event bus) + durable proxy_events
@@ -176,6 +181,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		opts := inProcessProxyOptions(svc, eventStore, serverFilter, curatedOnly, mcpConfine)
 		opts.ModeInputs = modeInputs
 		opts.Profile = profile
+		opts.AuthorityProfiles = floors
 
 		// Forward tool_call_end events to the running tetherd daemon's event bus so
 		// any consumer (HTTP /events SSE, MCP tools, downstream subscribers) can
@@ -215,7 +221,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 		return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 	}
-	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, Bus: svc.Bus}, false)
+	return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, AuthorityProfiles: floors, Bus: svc.Bus}, false)
 }
 
 // configureMCPAdapter applies the flags every `tether mcp` mode shares.
@@ -287,12 +293,17 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 	if err != nil {
 		return err
 	}
+	floors, err := resolveMCPToolFloors()
+	if err != nil {
+		return err
+	}
 	if !mcpProxy {
-		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, Publisher: mcpadapter.NewDaemonToolCallPublisher(cmd.Context(), dc)}, false)
+		return adapter.RunWithGatewayOpts(cmd.Context(), expandCatalogPath(), mcpadapter.ProxyOptions{ModeInputs: modeInputs, Profile: profile, AuthorityProfiles: floors, Publisher: mcpadapter.NewDaemonToolCallPublisher(cmd.Context(), dc)}, false)
 	}
 	opts := daemonOnlyProxyOptions(cmd.Context(), dc, serverFilter, curatedOnly, mcpConfine)
 	opts.ModeInputs = modeInputs
 	opts.Profile = profile
+	opts.AuthorityProfiles = floors
 	return runProxy(cmd.Context(), adapter, expandCatalogPath(), opts)
 }
 
@@ -436,9 +447,7 @@ func resolveMCPModeInputs(cmd *cobra.Command, svc *app.Service, dc *client.Clien
 		return mcpgateway.ModeInputs{}, err
 	}
 	in := mcpgateway.ModeInputs{Gateway: svc.Catalog.Global.MCP.DiscoveryMode, Profile: profile.Profile}
-	if cmd.Flags().Changed("discovery-mode") {
-		in.Explicit = []mcpgateway.Selector{{Value: mcpDiscoveryMode, Source: "argument"}}
-	}
+	in.Explicit = explicitMCPModes(cmd)
 	if value, present := os.LookupEnv("TETHER_MCP_DISCOVERY_MODE"); present {
 		in.Environment = &value
 	}
@@ -474,4 +483,27 @@ func resolveMCPProfile(cmd *cobra.Command, svc *app.Service) (mcpgateway.Profile
 		in.Environment = &value
 	}
 	return mcpgateway.ResolveProfile(svc.Catalog.Global.MCP, in)
+}
+
+func explicitMCPModes(cmd *cobra.Command) []mcpgateway.Selector {
+	var selectors []mcpgateway.Selector
+	if cmd.Flags().Changed("discovery-mode") {
+		selectors = append(selectors, mcpgateway.Selector{Value: mcpDiscoveryMode, Source: "argument"})
+	}
+	if value, _ := cmd.Flags().GetBool("no-discover"); value {
+		selectors = append(selectors, mcpgateway.Selector{Value: "flat", Source: "no-discover"})
+	}
+	return selectors
+}
+
+func resolveMCPToolFloors() ([]mcpgateway.ProfileSelection, error) {
+	value, set := os.LookupEnv(mcpgateway.ToolsEnv)
+	if !set {
+		return nil, nil
+	}
+	profile, err := mcpgateway.ParseToolAllowlist(value)
+	if err != nil {
+		return nil, err
+	}
+	return []mcpgateway.ProfileSelection{{Source: "boot tools", Profile: profile}}, nil
 }

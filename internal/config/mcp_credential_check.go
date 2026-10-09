@@ -25,6 +25,10 @@ func CheckMCPServerCredentialFiles(catalogDir string) ([]MCPFileCheck, error) {
 		if !entry.IsEnabled() {
 			continue
 		}
+		if entry.TokenFile != "" {
+			_, _, checkErr := entry.StdioCredentialArgs()
+			checks = append(checks, MCPFileCheck{ServerID: entry.ID, Field: "token_file", Err: checkErr})
+		}
 		refs := map[string]string{"token": entry.Token, "url": entry.URL}
 		for i, value := range entry.Args {
 			refs[fmt.Sprintf("args[%d]", i)] = value

@@ -1,7 +1,7 @@
 package app
 
 // CW-20261001-0227: a launched agent's planted proxy is confined to the
-// upstreams it was granted -- torque and tesseract unless a launch, project or
+// upstreams it was granted -- torque only unless a launch, project or
 // boot profile names its own list.
 
 import (
@@ -75,8 +75,8 @@ func TestTetherEnvMap_DefaultAndExplicit(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"no env: the default", nil, "torque,tesseract"},
-		{"no list: the default", map[string]string{"X": "y"}, "torque,tesseract"},
+		{"no env: the default", nil, "torque"},
+		{"no list: the default", map[string]string{"X": "y"}, "torque"},
 		{"empty list grants none", map[string]string{"TETHER_MCP_SERVERS": ""}, ""},
 		{"explicit list replaces the default", map[string]string{"TETHER_MCP_SERVERS": "loom"}, "loom"},
 		{"an explicit list can include more", map[string]string{"TETHER_MCP_SERVERS": "torque,tesseract,nanite"}, "torque,tesseract,nanite"},
@@ -98,7 +98,7 @@ func TestPlantedClaudeMCPJSON_CarriesConfineAndAllowList(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"default", nil, "torque,tesseract"},
+		{"default", nil, "torque"},
 		{"empty", map[string]string{"TETHER_MCP_SERVERS": ""}, ""},
 		{"explicit", map[string]string{"TETHER_MCP_SERVERS": "torque,loom"}, "torque,loom"},
 	} {
@@ -142,7 +142,7 @@ func TestPlantedCodexConfig_CarriesConfineAndAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := string(data)
-	for _, want := range []string{`"--confine"`, `"TETHER_MCP_SERVERS" = "torque,tesseract"`} {
+	for _, want := range []string{`"--confine"`, `"TETHER_MCP_SERVERS" = "torque"`} {
 		if !strings.Contains(cfg, want) {
 			t.Fatalf("planted config.toml lacks %s:\n%s", want, cfg)
 		}

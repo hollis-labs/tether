@@ -53,6 +53,13 @@ func TestRunWithProxyOptsHelper(t *testing.T) {
 		}
 		opts.Profile = mcpgateway.ProfileSelection{ID: "fixture", Source: "test", Profile: &profile}
 	}
+	if raw, set := os.LookupEnv(mcpgateway.ToolsEnv); set {
+		profile, err := mcpgateway.ParseToolAllowlist(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts.AuthorityProfiles = []mcpgateway.ProfileSelection{{Source: "boot tools", Profile: profile}}
+	}
 	adapter := newTestAdapter(t)
 	adapter.svc.Catalog = &config.Catalog{}
 	if os.Getenv("TETHER_PROXY_HELPER_PROTECTED") == "1" {

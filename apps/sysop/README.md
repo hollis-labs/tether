@@ -84,3 +84,34 @@ for the `PageHeader` / `DataTable` / `SummaryCards` composition pattern.
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+## Messaging inboxes
+
+The User view includes every explicit user-address variant without guessing that
+separate URNs are the same identity. Read state and archive filters apply before
+100-row pagination; refresh preserves the selected view. Opening a message
+persists its read state and retains the detail/reply view until it is closed.
+Action failures remain visible in that view.
+
+The compose recipient selector shows readable labels while retaining canonical
+URN values. Manage readable aliases in the compose dialog: an alias is unique
+(case-insensitive), can be renamed, and resolves to its stable URN for send and
+recipient filtering. Existing message envelopes are never rewritten. API
+`GET /api/messages` accepts `scope`, `read=all|read|unread`,
+`archive=all|active|archived`, `to` (URN or explicit alias), `limit`, and `offset`.
+Responses include the matching `total`, `limit`, and `offset`.
+
+Focused frontend checks from `frontend/`:
+
+```sh
+npm run typecheck
+npm run build
+node --test tests/messaging.test.mjs # Node 24 for direct TypeScript imports
+```
+
+`tests/messaging-browser.playwright.js` is a browser interaction fixture. Start
+an isolated Vite server on port15177 and pass the file contents as the `code`
+argument to Playwright's `browser_run_code_unsafe`. It intercepts every API
+request, tests read-detail retention and delayed action completion across
+scope/filter/page changes, and checks recipient labels. It never contacts a
+state DB or live Sysop instance.

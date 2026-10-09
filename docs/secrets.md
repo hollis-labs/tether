@@ -31,7 +31,7 @@ and is read only at spawn time, never for a catalog listing.
 
     # ~/.tether/catalog/mcp-servers/tesseract.yaml
     env:
-      TESSERACT_TOKEN: "file://~/.tether/secrets/tesseract.token"
+      TESSERACT_MCP_TOKEN: "file://~/.tether/secrets/tesseract.token"
 
 Create the file first, then switch the YAML to the reference, because a file
 that cannot be read fails the whole load rather than starting an upstream with a
@@ -86,13 +86,12 @@ What this does and does not do:
 
 - It keeps the secret out of the catalog YAML (and so out of backups, diffs and
   anything that reads the catalog).
-- **Put it in `env:`, not `args:`, to keep it off the command line.** A
-  `file://` reference in `args:` is replaced by the value, so the upstream's
-  `/proc/<pid>/cmdline` still shows it, exactly as a literal would. That helps
-  only for an upstream that reads its credential from the environment. An
-  upstream whose only input is a flag (today `tesseract mcp --token` and
-  `hadrond mcp --token`) keeps the value on its command line until that
-  upstream accepts the environment or a file.
+- Put a value reference in `env:` to keep it off argv, or use the explicit
+  `token_file` stdio contract below. A `file://` reference in `args:` is still
+  replaced by its contents; it does not become a `--token-file` path.
+  Current Tesseract and Hadrond authored source accepts `--token-file` and
+  `TESSERACT_MCP_TOKEN` / `HADRON_MCP_TOKEN`. Installed adoption must be checked
+  separately before changing a live catalog entry.
 - It does not hide the value from other processes running as your user. An
   environment is readable from `/proc/<pid>/environ` by any process with the
   same uid, and so is the file itself. Closing that needs the upstreams to run
@@ -103,6 +102,35 @@ What this does and does not do:
   write to is accepted (a 0770 parent passes), and so is a race in which an
   ancestor directory is swapped for a symlink between the checks and the open;
   winning that race needs write access to an ancestor directory.
+
+## Pass a credential path to a stdio upstream
+
+For an upstream that accepts `--token-file PATH`, use this source-only catalog
+shape (the file must already contain a credential and have mode 0600):
+
+```yaml
+id: tesseract
+transport: stdio
+command: tesseract
+args: [mcp]
+token_file: /absolute/private/tesseract.token
+```
+
+At every spawn, including reconnects, Tether checks the same owner, regular-file,
+permission, size and symlink rules above. It passes `--token-file` and the path
+in argv; the file contents are used only for validation and stderr redaction.
+Catalog listing retains the authored path and does not read the file. Absolute
+paths pin the location; `~/` follows Tether's home. Variables and credential
+reference schemes are not expanded in `token_file`.
+
+`token_file` requires stdio and cannot be combined with `token`, `--token`,
+`--token=...`, or authored `--token-file` arguments. A credential found in
+other arguments or the command/file path fails before spawn. Legacy entries
+remain compatible and require a separately authorized catalog change to adopt
+this contract. `tether doctor` includes enabled `token_file` entries in its
+credential checks. This keeps credentials off argv, not beyond same-user file
+access. Catalog edits and subsequent rotation remain separately coordinated
+steps; this source change performs neither.
 
 ## Populating a keychain entry
 

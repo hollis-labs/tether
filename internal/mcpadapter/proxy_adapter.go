@@ -190,7 +190,7 @@ type ProxyOptions struct {
 	// tier is a typed hook; selecting/filtering profiles belongs to CW-0008.
 	ModeInputs        mcpgateway.ModeInputs
 	Profile           mcpgateway.ProfileSelection
-	AuthorityProfiles []mcpgateway.ProfileSelection // daemon-only immutable launch floors
+	AuthorityProfiles []mcpgateway.ProfileSelection // immutable launch/tool authority floors
 	// ServerFilter is a strict upstream restriction in both discovery modes.
 	// Nil selects enabled catalog entries; an explicitly empty slice selects none.
 	ServerFilter []string
@@ -281,6 +281,14 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 			return err
 		}
 		opts.ModeInputs.Profile = opts.Profile.Profile
+	}
+	for _, floor := range opts.AuthorityProfiles {
+		if floor.Profile == nil {
+			return mcpgateway.ErrInvalidSessionMCPPolicy
+		}
+		if err := floor.Profile.Validate(); err != nil {
+			return err
+		}
 	}
 	selection, err := mcpgateway.ResolveMode(opts.ModeInputs)
 	if err != nil {
@@ -431,7 +439,7 @@ func (a *Adapter) RunWithGatewayOpts(ctx context.Context, catalogDir string, opt
 		return err
 	}
 	gateway := a.gatewayService(registry, router, selection, tags)
-	gateway.Policy = &mcpgateway.Policy{Selection: opts.Profile, ServerOrder: originOrder, RestrictedOrigins: restrictedOrigins}
+	gateway.Policy = &mcpgateway.Policy{Selection: opts.Profile, Floors: opts.AuthorityProfiles, ServerOrder: originOrder, RestrictedOrigins: restrictedOrigins}
 	known := gateway.Snapshot()
 	if err := gateway.Policy.ValidateNames(known); err != nil {
 		return err

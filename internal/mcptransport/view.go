@@ -11,6 +11,10 @@ import (
 // selected profile with this explicit credential grant in both modes.
 func ViewOptions(caller Caller, cfg mcpgateway.Config, profiles, modes []mcpgateway.Selector) (mcpadapter.ProxyOptions, error) {
 	floors := []mcpgateway.ProfileSelection{}
+	if caller.Policy.ToolProfile != nil {
+		floor := mcpgateway.CloneProfile(*caller.Policy.ToolProfile)
+		floors = append(floors, mcpgateway.ProfileSelection{Source: "boot tools", Profile: &floor})
+	}
 	if caller.Policy.Profile != nil {
 		if caller.Policy.LaunchProfile == nil {
 			return mcpadapter.ProxyOptions{}, mcpgateway.ErrInvalidSessionMCPPolicy

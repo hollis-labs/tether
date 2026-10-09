@@ -46,6 +46,9 @@ type MCPServerEntry struct {
 	Env                   map[string]string `yaml:"env"`       // env vars; values support ${VAR} and secret refs
 	URL                   string            `yaml:"url"`       // sse, http: endpoint URL
 	Token                 string            `yaml:"token"`     // bearer token, ${VAR} ref, or secret ref
+	// TokenFile is a private stdio credential path. At spawn Tether validates
+	// it and passes --token-file PATH, never its contents, to the upstream.
+	TokenFile string `yaml:"token_file"`
 	// ProxyServiceTokenFile is an explicit daemon-only upstream service
 	// credential path. It is never resolved from worker environment variables.
 	ProxyServiceTokenFile string   `yaml:"proxy_service_token_file"`
@@ -244,6 +247,9 @@ func resolveSecretRef(ctx context.Context, field, s string) (string, error) {
 // cause. The operator ordering that follows from this is "populate the keychain
 // entry, then switch the catalog to the reference" — never the reverse.
 func resolveEntrySecrets(ctx context.Context, entry *MCPServerEntry) error {
+	if err := entry.validateTokenFile(); err != nil {
+		return err
+	}
 	resolve := func(field, s string) (string, error) {
 		// Resolve only references the operator wrote in the YAML.
 		if entry.fileRefs[field] && isFileRef(s) {

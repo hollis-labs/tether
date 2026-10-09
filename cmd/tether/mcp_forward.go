@@ -8,6 +8,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpforward"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
@@ -38,8 +39,17 @@ func runMCPForwardDaemon(cmd *cobra.Command) error {
 		opts.Profile = &profile
 	}
 	mode, present := os.LookupEnv("TETHER_MCP_DISCOVERY_MODE")
-	if cmd.Flags().Changed("discovery-mode") {
-		mode, present = mcpDiscoveryMode, true
+	selectors := explicitMCPModes(cmd)
+	var inherited *string
+	if present {
+		inherited = &mode
+	}
+	selection, err := mcpgateway.ResolveMode(mcpgateway.ModeInputs{Explicit: selectors, Environment: inherited})
+	if err != nil {
+		return err
+	}
+	if len(selectors) > 0 {
+		mode, present = string(selection.Mode), true
 	}
 	if present {
 		opts.DiscoveryMode = &mode
