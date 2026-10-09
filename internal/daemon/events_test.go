@@ -14,14 +14,22 @@ import (
 )
 
 type recorderPublisher struct {
-	mu  sync.Mutex
-	evs []events.Event
+	mu      sync.Mutex
+	evs     []events.Event
+	started chan struct{}
 }
 
 func (r *recorderPublisher) Publish(_ context.Context, e events.Event) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evs = append(r.evs, e)
+	if r.started != nil && e.Kind == events.KindDaemonStarted {
+		select {
+		case <-r.started:
+		default:
+			close(r.started)
+		}
+	}
 	return nil
 }
 
@@ -55,7 +63,7 @@ func TestServer_Run_EmitsDaemonLifecycleEvents(t *testing.T) {
 		ShutdownTimeout: 2 * time.Second,
 	}
 
-	pub := &recorderPublisher{}
+	pub := &recorderPublisher{started: make(chan struct{})}
 	srv := &Server{
 		Config:    cfg,
 		Publisher: pub,
@@ -63,22 +71,33 @@ func TestServer_Run_EmitsDaemonLifecycleEvents(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
-	go func() { runDone <- srv.Run(ctx) }()
-
-	// Wait for socket to appear as a proxy for "daemon is up".
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(dir, "s.sock")); err == nil {
-			break
+	runExited := make(chan struct{})
+	go func() {
+		defer close(runExited)
+		runDone <- srv.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runExited:
+		case <-time.After(3 * time.Second):
+			t.Error("Run did not return during test cleanup")
 		}
-		time.Sleep(10 * time.Millisecond)
+	})
+
+	// Listener creates the socket before PID setup and event publication.
+	// Wait for the event under test, not that earlier filesystem effect.
+	select {
+	case <-pub.started:
+	case err := <-runDone:
+		t.Fatalf("Run returned before daemon.started: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon.started was not published before the deadline")
 	}
 
 	started := pub.findKind(events.KindDaemonStarted)
 	if started == nil {
-		cancel()
 		t.Fatal("no daemon.started event published")
-		return
 	}
 	if started.Scope != events.ScopeDaemon {
 		t.Errorf("started.Scope = %q, want daemon", started.Scope)
