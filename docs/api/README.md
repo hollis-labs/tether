@@ -1068,7 +1068,7 @@ attempt publishes `provider.session_lost` with `fresh_conversation: true` before
 starting; that event does not certify successful launch or turn completion.
 
 A fresh resume returns 409 `conflict` if the agent has never launched, has any
-live session, or requires recovery of retained team/shim custody instead of a
+live session, or requires recovery of retained team custody instead of a
 new canonical session. It returns 404 `not_found` when neither a previous session
 nor a checkpoint exists. Retained direct team recovery uses its existing session,
 actor, enrollment and binding through the team host; this endpoint does not
