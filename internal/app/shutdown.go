@@ -33,6 +33,7 @@ const ShutdownStopReason = "daemon-shutdown"
 // It publishes one daemon.shutdown_sessions_ended event naming both sets and
 // returns the drain's error.
 func (s *Service) DrainSessions(ctx context.Context) error {
+	s.StopSessionReaper()
 	var live []string
 	for _, info := range s.Manager.List() {
 		if info.State == agentsessions.StateLaunching || info.State == agentsessions.StateRunning {

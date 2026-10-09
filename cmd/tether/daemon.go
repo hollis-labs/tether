@@ -180,6 +180,7 @@ var daemonRunCmd = &cobra.Command{
 		// aborts cleanly instead of running to completion before shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
+		svc.StartSessionReaper(ctx)
 
 		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
 		// Catalog files retain their launch configuration role (repo root, workspace mode,

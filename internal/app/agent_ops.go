@@ -97,9 +97,10 @@ type CreateSessionInput struct {
 // LaunchOverride mirrors the JSON shape accepted in CreateSessionInput.Override.
 // Defined as a named type so the JSON contract is auditable in one place.
 type LaunchOverride struct {
-	Route        *launchprofile.Route `json:"route,omitempty"`
-	SystemPrompt string               `json:"system_prompt,omitempty"`
-	Env          map[string]string    `json:"env,omitempty"`
+	Lifecycle    *launchprofile.LifecyclePolicy `json:"lifecycle,omitempty"`
+	Route        *launchprofile.Route           `json:"route,omitempty"`
+	SystemPrompt string                         `json:"system_prompt,omitempty"`
+	Env          map[string]string              `json:"env,omitempty"`
 }
 
 // applyAgentOps mutates the resolved launch plan in place with the v005-08
@@ -138,6 +139,9 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 	if effectiveAgent.Route != s.Catalog.Agents[plan.LogicalAgentID].Route {
 		plan.Route = effectiveAgent.Route
 	}
+	if in.AgentFile != "" || in.AgentInline != "" {
+		plan.Lifecycle = launchprofile.MergeLifecycle(plan.Lifecycle, effectiveAgent.Lifecycle)
+	}
 	composedPrompt := s.composeBootPrompt(plan, effectiveAgent)
 
 	composedPrompt, err = applyOverride(plan, composedPrompt, in.Override)
@@ -153,6 +157,9 @@ func (s *Service) applyAgentOps(plan *launch.Plan, in CreateSessionInput) error 
 		return err
 	}
 
+	if _, err := plan.Lifecycle.Durations(); err != nil {
+		return err
+	}
 	applyProviderOverrides(plan, effectiveAgent.ProviderOverrides)
 	applyMCPAllowlist(plan, bootProfile)
 	if err := s.validatePlanMCPGrants(plan, bootProfile, in.BootProfileFile); err != nil {
@@ -232,6 +239,9 @@ func (s *Service) resolveEffectiveAgent(plan *launch.Plan, in CreateSessionInput
 		return config.Agent{}, fmt.Errorf("agent %q referenced by launch %q not found in catalog", plan.LogicalAgentID, plan.LaunchID)
 	}
 	effectiveAgent := baseAgent
+	// The catalog profile policy is already resolved beneath the launch policy.
+	// Collect only explicit agent-file/inline lifecycle fields at this layer.
+	effectiveAgent.Lifecycle = nil
 
 	if in.AgentFile != "" {
 		data, err := os.ReadFile(in.AgentFile) //nolint:gosec // G304: operator-provided path
@@ -355,6 +365,7 @@ func applyOverride(plan *launch.Plan, composedPrompt, overrideJSON string) (stri
 	if err := json.Unmarshal([]byte(overrideJSON), &ov); err != nil {
 		return "", fmt.Errorf("override: parse: %w", err)
 	}
+	plan.Lifecycle = launchprofile.MergeLifecycle(plan.Lifecycle, ov.Lifecycle)
 	if ov.Route != nil {
 		plan.Route = ov.Route
 	}
@@ -510,6 +521,7 @@ func (s *Service) loadEffectiveSkills(ids []string) ([]skills.Skill, error) {
 // rather than concatenate — concatenation surprises far more often than it
 // helps.
 func mergeAgent(dst *config.Agent, src config.Agent) {
+	dst.Lifecycle = launchprofile.MergeLifecycle(dst.Lifecycle, src.Lifecycle)
 	if src.Route != nil {
 		dst.Route = src.Route
 	}
