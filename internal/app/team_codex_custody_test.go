@@ -7,9 +7,13 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/shimcodex"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/store"
@@ -78,6 +82,64 @@ func TestTeamCodexCustodyRefusesDirectReplacement(t *testing.T) {
 				if !reflect.DeepEqual(after[key], expected) {
 					t.Errorf("refused recovery changed %s", key)
 				}
+			}
+		})
+	}
+}
+
+type custodyResumeRuntime struct {
+	agentsessions.Runtime
+	starts *atomic.Int32
+}
+
+func (r custodyResumeRuntime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
+	r.starts.Add(1)
+	return r.Runtime.Start(ctx, opts)
+}
+
+func TestLogicalResumeRefusesTrackedCodexCustody(t *testing.T) {
+	for _, state := range []string{"failed", "orphaned"} {
+		t.Run(state, func(t *testing.T) {
+			r := newCodexRig(t)
+			id := r.start()
+			if err := r.turn(id, "initial work"); err != nil {
+				t.Fatal(err)
+			}
+			r.wait(1)
+			r.idle(id)
+			if err := r.svc.StopSession(id); err != nil {
+				t.Fatal(err)
+			}
+			r.ended(id)
+			if _, err := r.svc.Store.DB().Exec(`UPDATE sessions SET state=?,exit_code=-1 WHERE id=?`, state, id); err != nil {
+				t.Fatal(err)
+			}
+			_, protocol := seedTeamCodexCustody(t, r, id)
+			ctx := context.Background()
+			custody, _ := r.svc.Store.SessionShim(ctx, id)
+			mapping, _ := r.svc.Store.GetSessionProviderMapping(id, "tether", "codex-cli")
+			obligations, err := protocol.Load(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var starts atomic.Int32
+			factory := r.svc.factories["codex-cli"]
+			r.svc.factories["codex-cli"] = func(plan *launch.Plan) (agentsessions.Runtime, error) {
+				runtime, err := factory(plan)
+				return custodyResumeRuntime{Runtime: runtime, starts: &starts}, err
+			}
+			if _, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{}); !errors.Is(err, session.ErrRecoveryConflict) {
+				t.Fatalf("logical resume bypassed custody: %v", err)
+			}
+			latest, _ := r.svc.Store.LatestSessionForAgent(ctx, "agent")
+			if latest == nil || latest.ID != id || r.count() != 1 || starts.Load() != 0 {
+				t.Fatal("refused resume allocated a replacement canonical session or provider")
+			}
+			afterCustody, _ := r.svc.Store.SessionShim(ctx, id)
+			afterMapping, _ := r.svc.Store.GetSessionProviderMapping(id, "tether", "codex-cli")
+			afterObligations, err := protocol.Load(ctx)
+			if err != nil || custody != afterCustody || mapping != afterMapping || !reflect.DeepEqual(obligations, afterObligations) {
+				t.Fatal("refused logical resume changed custody, native mapping or private obligations", err)
 			}
 		})
 	}
