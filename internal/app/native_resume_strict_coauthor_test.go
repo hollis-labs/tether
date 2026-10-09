@@ -223,7 +223,7 @@ func TestNativeResumeStrictCoauthorBootProtectsSourceBeforeManualResume(t *testi
 }
 
 func TestNativeResumeStrictCoauthorRefusalsPreserveContext(t *testing.T) {
-	for _, kind := range []string{"empty_preset", "mismatched_preset", "missing_context", "missing_mapping", "missing_auth_link", "foreign_auth_link", "retained_custody", "unsupported_provider", "native_lost", "fast_death", "unknown_reply", "partial_reply", "mismatched_reply"} {
+	for _, kind := range []string{"empty_preset", "mismatched_preset", "missing_context", "missing_workroot", "missing_mapping", "missing_auth_link", "foreign_auth_link", "retained_custody", "unsupported_provider", "native_lost", "fast_death", "unknown_reply", "partial_reply", "mismatched_reply"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
 			var presets []string
@@ -259,6 +259,12 @@ func TestNativeResumeStrictCoauthorRefusalsPreserveContext(t *testing.T) {
 				opts.SessionIDPreset = "foreign-thread"
 			case "missing_context":
 				r.plan.NativeStateRoot = ""
+			case "missing_workroot":
+				r.plan.WorkRoot = filepath.Join(t.TempDir(), "unavailable-recorded-workroot")
+				opts.Workdir = r.plan.WorkRoot
+				if _, err := r.service.Store.DB().ExecContext(ctx, `UPDATE launch_plans SET plan_json=json_set(plan_json,'$.work_root',?) WHERE session_id='source'`, r.plan.WorkRoot); err != nil {
+					t.Fatal(err)
+				}
 			case "missing_mapping":
 				if err := r.service.Store.ClearNativeResume(ctx, "source", "resumed", r.plan.ProviderID, "thread-old"); err != nil {
 					t.Fatal(err)
@@ -368,6 +374,129 @@ func TestNativeResumeStrictCoauthorRefusalsPreserveContext(t *testing.T) {
 				if err != nil || !reflect.DeepEqual(row, *custodyBefore) {
 					t.Fatal("strict refusal cleared or changed retained shim custody", err)
 				}
+			}
+		})
+	}
+}
+
+func TestNativeResumeStrictCoauthorApprovedCoordinationRootPreservesSource(t *testing.T) {
+	for _, mode := range []string{"default", "approved", "foreign"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			r := recoveryRuntimeRig(t, nil)
+			opts := prepareStrictNativeCoauthorContext(t, r)
+			recordedRoot := filepath.Join(t.TempDir(), "unavailable-historical-workroot")
+			if _, err := r.service.Store.DB().ExecContext(ctx, `UPDATE launch_plans SET plan_json=json_set(plan_json,'$.work_root',?) WHERE session_id='source'`, recordedRoot); err != nil {
+				t.Fatal(err)
+			}
+			r.plan.WorkRoot = recordedRoot
+			opts.Workdir = recordedRoot
+			switch mode {
+			case "approved":
+				r.plan.NativeResumeWorkRoot = r.plan.NativeStateRoot
+				r.plan.WorkRoot = r.plan.NativeStateRoot
+				opts.Workdir = r.plan.NativeStateRoot
+			case "foreign":
+				r.plan.NativeResumeWorkRoot = t.TempDir()
+				r.plan.WorkRoot = r.plan.NativeResumeWorkRoot
+				opts.Workdir = r.plan.NativeResumeWorkRoot
+			}
+			retained := &strictNativeCoauthorSession{recoveryFakeSession: &recoveryFakeSession{done: make(chan struct{})}}
+			t.Cleanup(func() { _ = retained.Stop(ctx) })
+			starts := 0
+			r.Runtime = strictNativeCoauthorRuntime{
+				recoveryFakeRuntime: recoveryFakeRuntime{start: func(actual agentsessions.StartOptions) (agentsessions.Session, error) {
+					starts++
+					if actual.Workdir != r.plan.NativeStateRoot || actual.SessionIDPreset != "thread-old" {
+						t.Fatal("approved coordination root changed native identity or runtime placement")
+					}
+					return retained, nil
+				}},
+				caps: agentsessions.Capabilities{ProviderSessionID: true, JsonRpcStdio: true},
+			}
+			sourceBefore, err := r.service.Store.GetLaunchPlan("source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mappingBefore, err := r.service.Store.GetSessionProviderMapping("source", "tether", r.plan.ProviderID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nativePath := filepath.Join(r.plan.NativeStateRoot, "sessions", "thread-old.jsonl")
+			nativeBefore, err := os.ReadFile(nativePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, err := r.Start(ctx, opts)
+			if mode == "approved" {
+				if err != nil || sess != retained || starts != 1 {
+					t.Fatal("exact explicit coordination root did not preserve native recovery", err)
+				}
+				retained.mu.Lock()
+				methods := append([]string(nil), retained.methods...)
+				ids := append([]string(nil), retained.resumeIDs...)
+				retained.mu.Unlock()
+				if !reflect.DeepEqual(methods, []string{"initialize", "thread/resume"}) || !reflect.DeepEqual(ids, []string{"thread-old"}) || retained.inputs.Load() != 0 {
+					t.Fatal("coordination-only recovery started a conversation or automatic turn")
+				}
+			} else if sess != nil || !errors.Is(err, ErrNativeOnlyUnavailable) || starts != 0 {
+				t.Fatal("missing or foreign coordination approval admitted native execution")
+			}
+			sourceAfter, err := r.service.Store.GetLaunchPlan("source")
+			if err != nil || !reflect.DeepEqual(sourceAfter, sourceBefore) {
+				t.Fatal("coordination override rewrote historical source roots", err)
+			}
+			mappingAfter, err := r.service.Store.GetSessionProviderMapping("source", "tether", r.plan.ProviderID)
+			if err != nil || !reflect.DeepEqual(mappingAfter, mappingBefore) {
+				t.Fatal("coordination override cleared or changed retained native mapping", err)
+			}
+			nativeAfter, err := os.ReadFile(nativePath)
+			if err != nil || string(nativeAfter) != string(nativeBefore) {
+				t.Fatal("coordination override changed retained native state", err)
+			}
+			if _, err := os.Lstat(recordedRoot); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("coordination override recreated the unavailable historical workroot")
+			}
+		})
+	}
+}
+
+func TestNativeResumeStrictCoauthorBootWorkRootRequiresSelectedSource(t *testing.T) {
+	for _, mode := range []string{"unselected", "foreign_key"} {
+		t.Run(mode, func(t *testing.T) {
+			prepareStrictNativeCoauthorCredentialHome(t)
+			r := newCodexRig(t)
+			sourceID := r.start()
+			if err := r.svc.StopSession(sourceID); err != nil {
+				t.Fatal(err)
+			}
+			r.ended(sourceID)
+			ctx := context.Background()
+			from, err := messaging.ParseURN("msg://agent/local/sender")
+			if err != nil {
+				t.Fatal(err)
+			}
+			to, err := messaging.ParseURN(registry.LogicalAgentBindingTarget("agent"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent, err := r.svc.Store.MessagingStore().Send(ctx, messaging.Envelope{From: from, To: to, Kind: messaging.MsgKindNotice, Payload: json.RawMessage(`{"body":"synthetic pending coordination"}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := BootResumeOptions{NativeOnlyWorkRoots: map[string]string{sourceID: t.TempDir()}}
+			if mode == "foreign_key" {
+				options.NativeOnlySourceIDs = []string{sourceID}
+				options.NativeOnlyWorkRoots = map[string]string{"another-source": t.TempDir()}
+			}
+			r.svc.BootResumeSessions(ctx, options)
+			latest, err := r.svc.Store.LatestSessionForAgent(ctx, "agent")
+			if err != nil || latest == nil || latest.ID != sourceID || r.count() != 0 {
+				t.Fatal("unbound workroot fell through to ordinary cold boot recovery", err)
+			}
+			page, err := r.svc.Store.MessagingStore().List(ctx, to, store.ListFilter{UnreadOnly: true, Limit: 20})
+			if err != nil || len(page.Messages) != 1 || page.Messages[0].ID != sent.ID {
+				t.Fatal("unbound workroot selection consumed pending mail", err)
 			}
 		})
 	}
