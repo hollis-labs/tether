@@ -23,6 +23,7 @@ import (
 	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -33,6 +34,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -238,6 +240,11 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		var environmentStream *environmentstream.Server
+		if cfg.Modules.Enabled(environment.StreamAPI) {
+			environmentID, _, _ := environmentDescriptor.Identity()
+			environmentStream = environmentstream.New(environmentID, svc.Store, svc.Bus)
+		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,
 			Usage:     svc.Store,
@@ -281,6 +288,7 @@ var daemonRunCmd = &cobra.Command{
 		}
 		server := &daemon.Server{
 			Environment:              environmentDescriptor,
+			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
@@ -840,6 +848,10 @@ func (a *serviceAdapter) ResizeSession(id string, rows, cols uint16) error {
 
 func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writer, sinceSeq int64) error {
 	return a.svc.AttachSession(ctx, id, w, sinceSeq)
+}
+
+func (a *serviceAdapter) AttachSessionWithSnapshot(ctx context.Context, id string, w io.Writer, sinceSeq int64, onSnapshot func(agentsessions.AttachSnapshot) error) error {
+	return a.svc.AttachSessionWithSnapshot(ctx, id, w, sinceSeq, onSnapshot)
 }
 
 func (a *serviceAdapter) AttachedClients(id string) int {

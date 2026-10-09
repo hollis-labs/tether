@@ -18,6 +18,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -43,6 +44,7 @@ type Config struct {
 type Server struct {
 	// Environment is the cached public descriptor composed from selected
 	// state identity. It is separate from authenticated session/API handlers.
+	EnvironmentStream        *environmentstream.Server
 	Environment              *environment.DescriptorHandler
 	Docs                     api.DocsService
 	Identity                 *identity.Store
@@ -475,8 +477,9 @@ func (s *Server) Handler() http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
+	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
+			EnvironmentStream:   s.EnvironmentStream,
 			Docs:                s.Docs,
 			Service:             s.Service,
 			AI:                  s.AI,
@@ -727,7 +730,9 @@ func (s *Server) apiMounts() []apiMount {
 	return []apiMount{
 		{"/teams/", s.Config.TeamsEnabled && api.HasTeamOps(s.Teams)},
 		{"/sessions", hasService},
-		{"/sessions/", hasService},
+		{"/sessions/", hasService || s.EnvironmentStream != nil},
+		{"/environment/snapshot", s.EnvironmentStream != nil},
+		{"/environment/events", s.EnvironmentStream != nil},
 
 		// Both forms, and the bare one is NOT redundant: api registers
 		// /logical-agents and /logical-agents/ as two different handlers
