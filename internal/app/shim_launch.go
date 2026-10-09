@@ -34,6 +34,7 @@ type shimHosting struct {
 	stop          func(context.Context, shimhost.Receipt) error
 	provider      *shimhost.Provider
 	bridge        []string
+	agyWorker     []string
 	instance      string
 	prepare       func(shim.Launch, *sandbox.ResolvedAccessPolicy, runner.ResourceLimits) (shim.Launch, func(), error)
 	capability    func() error
@@ -115,7 +116,8 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 	}
 	claude := plan.ProviderBrand == "claude" && req.Runtime.Caps().StreamingStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeStreamingStdio
 	codex := plan.ProviderBrand == "codex" && req.Runtime.Caps().JsonRpcStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeJSONRPCStdio && req.Options.SessionIDPreset == "" && !req.Options.AutoFireFirstTurn && len(req.Options.FirstTurnPayload) == 0
-	if (!claude && !codex) || req.Options.PreparedExecution != nil || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
+	agy := plan.ProviderBrand == "antigravity" && req.Runtime.Caps().ProviderSessionID && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeSubprocessPerTurn
+	if (!claude && !codex && !agy) || req.Options.PreparedExecution != nil || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
 		return fallback("unsupported_runtime")
 	}
 	if err := shimhost.Supported(); err != nil {
@@ -221,11 +223,18 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		req.Options.FirstTurnPayload = nil
 		return req, nil
 	}
-	bridge, err := s.shimBridgeRuntime(req.ID, plan.ProviderID, host.bridge, req.Runtime.Caps())
+	bridge, err := s.shimHostedBridgeRuntime(req.ID, plan.ProviderID, plan.ProviderBrand, host.bridge, req.Runtime.Caps())
 	if err != nil {
 		return req, s.retainShimStartFailure(req.ID, err)
 	}
 	req.Runtime = bridge
+	if agy {
+		req.Options, err = agyBridgeOptions(req.Options, host.bridge, receipt, false)
+		if err != nil {
+			return req, s.retainShimStartFailure(req.ID, err)
+		}
+		return req, nil
+	}
 	req.Options = shimBridgeOptions(req.Options, host.bridge, receipt, false)
 	return req, nil
 }
@@ -263,6 +272,15 @@ func shimProviderSpec(host *shimHosting, plan *launch.Plan, req agentsessions.St
 	}
 	boot := sha256.Sum256([]byte(req.ID + "\x00" + opts.BootContent + "\x00" + opts.BootPrompt))
 	spec := shim.Launch{Session: req.ID, Instance: host.instance, Generation: 1, Actor: mesh.Actor{URN: mesh.URN(registry.LogicalAgentBindingTarget(plan.LogicalAgentID)), Kind: mesh.ActorAgent}, Subject: mesh.URN("urn:session:" + req.ID), Argv: append([]string{binary}, args...), Env: append([]string{}, opts.Env...), Cwd: opts.Workdir, PinPath: pin, PinKey: req.ID, BootGeneration: hex.EncodeToString(boot[:]), Reservation: req.ID + ":1", Heartbeat: time.Second}
+	if plan.ProviderBrand == "antigravity" {
+		// The existing per-turn runtime resolves each input with an empty
+		// dynamic system prompt. Keep that contract; the planted AGY context
+		// and explicit boot/input payload are already owned by preparation.
+		spec.Argv, err = agyWorkerArgv(binary, opts, "", host.agyWorker)
+		if err != nil {
+			return shim.Launch{}, nil, runner.ResourceLimits{}, err
+		}
+	}
 	var limits runner.ResourceLimits
 	if opts.ResourceLimits != nil {
 		limits = runner.ResourceLimits(*opts.ResourceLimits)

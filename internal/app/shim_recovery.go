@@ -175,7 +175,7 @@ func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow
 	if err != nil {
 		return err
 	}
-	rt, err := s.shimBridgeRuntime(row.ID, plan.ProviderID, host.bridge, agentsessions.Capabilities{StreamingStdio: true, ProviderSessionID: true, BinaryRequired: true})
+	rt, err := s.shimHostedBridgeRuntime(row.ID, plan.ProviderID, plan.ProviderBrand, host.bridge, agentsessions.Capabilities{StreamingStdio: true, ProviderSessionID: true, BinaryRequired: true})
 	if err != nil {
 		return err
 	}
