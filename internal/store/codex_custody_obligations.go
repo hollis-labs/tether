@@ -98,6 +98,7 @@ func (s *Store) EvaluateCodexCustodyObligations(ctx context.Context, observed sh
 		result.Pending = result.Pending || !request.Written
 	}
 	if p := state.Delivery; p != nil {
+		result.Partial = result.Partial || len(p.PartialBytes) != 0
 		result.Pending = result.Pending || len(p.OutstandingInputIDs) != 0 || len(p.OutstandingServerRequestSources) != 0
 		result.Active = result.Active || p.ActiveTurnID != ""
 		for _, turn := range p.Turns {

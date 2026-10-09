@@ -203,7 +203,7 @@ func TestCodexCustodyObligationsPublicReceiptDoesNotSettleOpenTurn(t *testing.T)
 }
 
 func TestCodexCustodyObligationsEndedAndUnsupportedReceiptRemainUnavailable(t *testing.T) {
-	for _, kind := range []string{"ended", "unsupported_source", "outstanding_input", "unfinished_item"} {
+	for _, kind := range []string{"ended", "unsupported_source", "outstanding_input", "unfinished_item", "projection_partial"} {
 		t.Run(kind, func(t *testing.T) {
 			db, state := codexObligationDeliveredFixture(t)
 			switch kind {
@@ -220,10 +220,15 @@ func TestCodexCustodyObligationsEndedAndUnsupportedReceiptRemainUnavailable(t *t
 			case "unfinished_item":
 				state.Delivery.Turns[0].Items[0].CompletedSourceID = ""
 				writeCodexObligationFixture(t, db, state)
+			case "projection_partial":
+				state.Delivery.PartialBytes = []byte("x")
+				state.Delivery.PartialStart = state.Delivery.StdoutOffset - 1
+				writeCodexObligationFixture(t, db, state)
 			}
 			got, err := db.EvaluateCodexCustodyObligations(context.Background(), state)
 			pending := kind == "outstanding_input" || kind == "unfinished_item"
-			if err != nil || !got.SnapshotVerified || got.Refusal == "" || !pending && (!got.Unknown || got.DeliveryVerified) || pending && !got.Pending {
+			partial := kind == "projection_partial"
+			if err != nil || !got.SnapshotVerified || got.Refusal == "" || !pending && !partial && (!got.Unknown || got.DeliveryVerified) || pending && !got.Pending || partial && !got.Partial {
 				t.Fatalf("unsupported obligations omitted: %+v %v", got, err)
 			}
 		})
