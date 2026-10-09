@@ -22,6 +22,9 @@ var ErrSessionReplacementUnavailable = errors.New("session replacement unavailab
 // library schema or replace its claim/receipt state machine.
 func installReplacementDeliveryFences(ctx context.Context, db *sql.DB) error {
 	for _, statement := range []string{
+		`CREATE TRIGGER IF NOT EXISTS replaced_shim_delete BEFORE DELETE ON session_shims
+ WHEN EXISTS(SELECT 1 FROM session_replacements WHERE source_session_id=OLD.session_id)
+ BEGIN SELECT RAISE(ABORT,'replaced custody history is retained'); END`,
 		`CREATE TRIGGER IF NOT EXISTS replaced_delivery_claim BEFORE INSERT ON messaging_attempts
  WHEN EXISTS(SELECT 1 FROM session_replacements WHERE NEW.holder=source_session_id OR NEW.holder='msg://session/local/'||source_session_id)
  BEGIN SELECT RAISE(ABORT,'replaced execution cannot claim delivery'); END`,
@@ -66,6 +69,17 @@ type TeamReplacementInput struct {
 type ReplacementTx interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+type replacementCustodyEvidence struct {
+	revision, digest, custody, reference string
+}
+
+// Implementations are private to this package. A caller-supplied diagnostic or
+// serialized evidence reference cannot authorize retained protocol replacement.
+type replacementCustodyProof interface {
+	validate(context.Context, ReplacementTx, TeamReplacementInput) (replacementCustodyEvidence, error)
 }
 
 func (s *Store) SessionReplacement(ctx context.Context, source string) (SessionReplacement, error) {
@@ -131,6 +145,10 @@ func (s *Store) ReplacementCredentialFloor(ctx context.Context, destination stri
 // together. Historical snapshots, deliveries, addresses and accepted effects
 // stay at their old identities. Launch is strictly after this commit.
 func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, in TeamReplacementInput) (SessionReplacement, error) {
+	return s.prepareTeamReplacementTx(ctx, q, in, nil)
+}
+
+func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, in TeamReplacementInput, proof replacementCustodyProof) (SessionReplacement, error) {
 	if q == nil || in.Source.ID == "" || in.DestinationID == "" || in.DestinationID == in.Source.ID || in.Workspace == "" || in.IntentKey == "" || in.Plan == nil {
 		return SessionReplacement{}, ErrSessionReplacementUnavailable
 	}
@@ -163,6 +181,11 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	err = q.QueryRowContext(ctx, `SELECT s.state,s.exit_code,COALESCE(s.logical_agent_id,''),l.plan_json FROM sessions s JOIN launch_plans l ON l.session_id=s.id WHERE s.id=?`, id).
 		Scan(&state, &exit, &agentID, &originalPlan)
 	eligibleEnd := state == "orphaned" || state == "failed" && exit.Valid && exit.Int64 == -1
+	if proof != nil {
+		// Explicit completion/stop remains terminal. Only proven lost custody
+		// can admit the previously active/detached execution states below.
+		eligibleEnd = eligibleEnd || state == "running" || state == "launching" || state == "detached"
+	}
 	if err != nil || originalPlan != in.SourcePlanJSON || state != in.Source.State || agentID != in.Source.LogicalAgentID || !eligibleEnd {
 		return SessionReplacement{}, ErrSessionReplacementUnavailable
 	}
@@ -189,8 +212,15 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	}
 	var custody bool
 	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM session_shims WHERE session_id=?) OR EXISTS(SELECT 1 FROM codex_shim_protocol WHERE session_id=?)`, id, id).Scan(&custody)
-	if err != nil || custody {
+	if err != nil || custody != (proof != nil) {
 		return SessionReplacement{}, ErrSessionReplacementUnavailable
+	}
+	var evidence replacementCustodyEvidence
+	if proof != nil {
+		evidence, err = proof.validate(ctx, q, in)
+		if err != nil {
+			return SessionReplacement{}, err
+		}
 	}
 	f, err := teamShimRecoveryFence(ctx, q, SessionShimRow{SessionID: id})
 	if err != nil || f.IntentKey != in.IntentKey || f.ActorURI != in.Plan.RecoveryActorURI {
@@ -215,7 +245,7 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM team_gone_shim_recoveries WHERE session_id=? AND binding_id=? AND actor_uri=? AND binding_generation=? AND intent_key=? AND state='recovery_pending')`, id, f.BindingID, f.ActorURI, f.BindingGeneration, f.IntentKey).Scan(&archived); err != nil {
 		return result, err
 	}
-	if !archived && (in.CheckedPID <= 0 || !recordedPID.Valid || recordedPID.Int64 != in.CheckedPID || in.Source.PID != recordedPID) {
+	if proof == nil && !archived && (in.CheckedPID <= 0 || !recordedPID.Valid || recordedPID.Int64 != in.CheckedPID || in.Source.PID != recordedPID) {
 		return result, ErrSessionReplacementUnavailable
 	}
 	// A second active authority association or membership needs a complete
@@ -338,7 +368,14 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	if _, err = q.ExecContext(ctx, `UPDATE principals SET revoked_at=COALESCE(revoked_at,?) WHERE kind='session' AND session_id=?`, now, id); err != nil {
 		return result, err
 	}
-	if _, err = q.ExecContext(ctx, `INSERT INTO session_replacements(source_session_id,replacement_session_id,actor_uri,intent_key,binding_id,binding_generation,source_plan_digest,credential_scopes_json,credential_expires_at,credential_mode,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, in.DestinationID, f.ActorURI, in.IntentKey, f.BindingID, f.BindingGeneration, digestString, scopesJSON, expires, in.CredentialMode, now); err != nil {
+	if proof != nil {
+		// Record loss before installing the immutable execution tombstone. Old
+		// protocol/custody bytes remain untouched and readable by accounting.
+		if err = replacementUpdate(ctx, q, `UPDATE sessions SET state='orphaned',exit_code=-1,updated_at=? WHERE id=? AND state=?`, now, id, in.Source.State); err != nil {
+			return result, err
+		}
+	}
+	if _, err = q.ExecContext(ctx, `INSERT INTO session_replacements(source_session_id,replacement_session_id,actor_uri,intent_key,binding_id,binding_generation,source_plan_digest,credential_scopes_json,credential_expires_at,credential_mode,source_protocol_revision,source_protocol_digest,custody_json,obligation_proof_ref,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, in.DestinationID, f.ActorURI, in.IntentKey, f.BindingID, f.BindingGeneration, digestString, scopesJSON, expires, in.CredentialMode, replacementEvidenceValue(evidence.revision), replacementEvidenceValue(evidence.digest), replacementEvidenceValue(evidence.custody), replacementEvidenceValue(evidence.reference), now); err != nil {
 		return result, err
 	}
 	lineage, _ := json.Marshal(struct {
@@ -350,6 +387,13 @@ func (s *Store) PrepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 		return result, err
 	}
 	return result, ctx.Err()
+}
+
+func replacementEvidenceValue(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func replacementUpdate(ctx context.Context, q ReplacementTx, query string, args ...any) error {
