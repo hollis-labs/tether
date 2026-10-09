@@ -272,6 +272,7 @@ func TestCodexReplacementAccountingRejectsTamperedEvidenceAndForeignProof(t *tes
 	}
 	defer func() { _ = other.Close() }()
 	accountingCode(t, other.ValidateCodexReplacementAccountingTx(ctx, other.db, proof, f.receipt), "proof_mismatch")
+	accountingCode(t, f.store.ValidateCodexReplacementAccountingTx(ctx, other.db, proof, f.receipt), "proof_store_mismatch")
 	accountingCode(t, f.store.ValidateCodexReplacementAccountingTx(ctx, f.store.db, &CodexReplacementAccounting{}, f.receipt), "proof_mismatch")
 	tx, err := f.store.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -46,6 +46,7 @@ type CodexAccountingRef struct {
 	Revision                                  uint64
 	StateSHA256, CustodySHA256, JournalSHA256 string
 	JournalHighWater, PublicAcceptanceSHA256  string
+	MessagingSHA256                           string
 }
 
 // CodexReplacementAccounting is issued only after independent historical
@@ -112,6 +113,9 @@ func (s *Store) ValidateCodexReplacementAccountingTx(ctx context.Context, q Code
 	if s == nil || q == nil || proof == nil || proof.issuer != s || proof.receipt != canonical {
 		return accountingRefuse("proof_mismatch")
 	}
+	if err := s.accountingStoreConnection(ctx, q); err != nil {
+		return err
+	}
 	ref, snapshot, err := s.accountCodexHistory(ctx, q, proof.state, canonical, nil)
 	if err != nil {
 		return err
@@ -120,6 +124,31 @@ func (s *Store) ValidateCodexReplacementAccountingTx(ctx context.Context, q Code
 		return accountingRefuse("proof_changed")
 	}
 	return nil
+}
+
+// The supplied executor must be a transaction on the issuing state database,
+// not an identically populated copy. This does not borrow another connection.
+func (s *Store) accountingStoreConnection(ctx context.Context, q CodexAccountingSQL) error {
+	rows, err := q.QueryContext(ctx, `PRAGMA database_list`)
+	if err != nil {
+		return accountingRefuse("proof_store_mismatch")
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var sequence int
+		var name, path string
+		if rows.Scan(&sequence, &name, &path) != nil {
+			return accountingRefuse("proof_store_mismatch")
+		}
+		if name == "main" {
+			want, e := filepath.Abs(s.stateDBPath)
+			if e != nil || path == "" || filepath.Clean(path) != filepath.Clean(want) {
+				return accountingRefuse("proof_store_mismatch")
+			}
+			return nil
+		}
+	}
+	return accountingRefuse("proof_store_mismatch")
 }
 
 type accountingFrozenState struct{ state shimcodex.State }
@@ -171,7 +200,7 @@ func (s *Store) accountCodexHistory(ctx context.Context, q CodexAccountingSQL, s
 	if err != nil || placement.Runtime != "codex" || placement.ShimKey != state.Binding.Operation || placement.RuntimeGeneration != state.Binding.Generation || placement.JournalID != state.Binding.Journal || placement.DescriptorPath != receipt.DescriptorPath || placement.SocketPath != receipt.SocketPath || placement.HostBackend != receipt.Backend || placement.UnitName != receipt.UnitName || placement.HostPID != receipt.HostPID || placement.ShimPID != receipt.ShimPID || placement.ProviderPID != receipt.ProviderPID {
 		return ref, "", accountingRefuse("custody_mismatch")
 	}
-	if receipt.Session != state.Binding.Session || receipt.Instance != state.Binding.Instance || receipt.OperationKey != state.Binding.Operation || receipt.Generation != state.Binding.Generation || receipt.Journal != state.Binding.Journal || receipt.SubmissionAttemptID != state.Binding.Attempt || receipt.Fingerprint != state.Binding.Fingerprint || !receipt.Attempted || receipt.PlacementFailure != "" || filepath.Base(receipt.DescriptorPath) != "launch.json" {
+	if receipt.Session != state.Binding.Session || receipt.Instance != state.Binding.Instance || receipt.OperationKey != state.Binding.Operation || receipt.Generation != state.Binding.Generation || receipt.Journal != state.Binding.Journal || receipt.SubmissionAttemptID != state.Binding.Attempt || receipt.Fingerprint != state.Binding.Fingerprint || receipt.HostPID <= 0 || receipt.ProviderPID <= 0 || receipt.HostStartTime == 0 || !receipt.Attempted || receipt.PlacementFailure != "" || filepath.Base(receipt.DescriptorPath) != "launch.json" {
 		return ref, "", accountingRefuse("custody_mismatch")
 	}
 	var protocol, revision, raw string
@@ -202,6 +231,10 @@ func (s *Store) accountCodexHistory(ctx context.Context, q CodexAccountingSQL, s
 	if err != nil {
 		return ref, "", err
 	}
+	messaging, err := accountingMessagingSnapshot(ctx, q, state.Binding.Session)
+	if err != nil {
+		return ref, "", err
+	}
 	history, err := accountingReadJournal(ctx, filepath.Join(filepath.Dir(receipt.DescriptorPath), "j"), state.Binding)
 	if err != nil {
 		return ref, "", err
@@ -215,7 +248,7 @@ func (s *Store) accountCodexHistory(ctx context.Context, q CodexAccountingSQL, s
 	if err = s.accountingProjectHistory(ctx, q, verify, state, history.events); err != nil {
 		return ref, "", err
 	}
-	ref = CodexAccountingRef{SessionID: placement.SessionID, ShimKey: placement.ShimKey, Revision: state.Revision, StateSHA256: accountingDigest([]byte(raw)), CustodySHA256: accountingDigest(canonical), JournalSHA256: history.digest, JournalHighWater: history.high, PublicAcceptanceSHA256: public}
+	ref = CodexAccountingRef{SessionID: placement.SessionID, ShimKey: placement.ShimKey, Revision: state.Revision, StateSHA256: accountingDigest([]byte(raw)), CustodySHA256: accountingDigest(canonical), JournalSHA256: history.digest, JournalHighWater: history.high, PublicAcceptanceSHA256: public, MessagingSHA256: messaging}
 	snapshot, _ := json.Marshal(struct {
 		Placement SessionShimRow
 		State     string
@@ -747,4 +780,89 @@ func accountingJSONEqual(a, b []byte) bool {
 	}
 	var first, second bytes.Buffer
 	return json.Compact(&first, a) == nil && json.Compact(&second, b) == nil && bytes.Equal(first.Bytes(), second.Bytes())
+}
+
+const accountingDeliveryPredicate = `d.recipient_urn=? OR CASE WHEN json_valid(d.binding_json) THEN json_extract(d.binding_json,'$.session_id') END=? OR EXISTS(SELECT 1 FROM messaging_attempts prior WHERE prior.delivery_id=d.id AND (prior.holder=? OR CASE WHEN json_valid(prior.binding_json) THEN json_extract(prior.binding_json,'$.session_id') END=?))`
+
+// Frozen old-session recipients/claim holders cannot be inherited by a new
+// session. Terminal facts require the real consumed receipt; host acceptance,
+// turn submission, lease expiry and an empty protocol inbox are insufficient.
+// Actor targets with no old-session association remain Native's independent
+// binding/claim fence, which must run in the same replacement transaction.
+func accountingMessagingSnapshot(ctx context.Context, q CodexAccountingSQL, session string) (string, error) {
+	var schema int
+	if q.QueryRowContext(ctx, `SELECT version FROM messaging_delivery_schema WHERE component='delivery'`).Scan(&schema) != nil || schema != 1 {
+		return "", accountingRefuse("messaging_unsupported")
+	}
+	args := []any{"msg://session/local/" + session, session, session, session}
+	var pending int
+	if q.QueryRowContext(ctx, `SELECT count(*) FROM messaging_deliveries d WHERE (`+accountingDeliveryPredicate+`) AND (d.status!='delivered' OR d.active_attempt_id!='' OR d.active_lease_token!='' OR d.lease_holder!='' OR NOT EXISTS(SELECT 1 FROM messaging_receipts r WHERE r.delivery_id=d.id AND r.stage='consumed' AND EXISTS(SELECT 1 FROM messaging_attempts a WHERE a.id=r.attempt_id AND a.delivery_id=d.id AND a.stage='consumed' AND a.consumed_at IS NOT NULL)))`, args...).Scan(&pending) != nil {
+		return "", accountingRefuse("messaging_unsupported")
+	}
+	if pending != 0 {
+		return "", accountingRefuse("ack_pending")
+	}
+	if q.QueryRowContext(ctx, `SELECT count(*) FROM messages m WHERE m.to_urn=? AND (m.consumed_at IS NULL OR m.delivery_id IS NULL OR NOT EXISTS(SELECT 1 FROM messaging_deliveries d WHERE d.id=m.delivery_id AND d.status='delivered'))`, args[0]).Scan(&pending) != nil {
+		return "", accountingRefuse("messaging_unsupported")
+	}
+	if pending != 0 {
+		return "", accountingRefuse("mail_pending")
+	}
+	if q.QueryRowContext(ctx, `SELECT count(*) FROM routing_replies WHERE (target_session_id=? OR delivered_to_session_id=?) AND state NOT IN ('delivered','undeliverable')`, session, session).Scan(&pending) != nil {
+		return "", accountingRefuse("messaging_unsupported")
+	}
+	if pending != 0 {
+		return "", accountingRefuse("reply_pending")
+	}
+	h := sha256.New()
+	queries := []struct {
+		sql  string
+		args []any
+	}{
+		{`SELECT d.id,d.message_id,d.recipient_urn,d.binding_json,d.status,CAST(d.attempt_count AS TEXT),d.active_attempt_id,d.active_lease_token,d.lease_holder,coalesce(d.lease_expires_at,''),d.updated_at FROM messaging_deliveries d WHERE ` + accountingDeliveryPredicate + ` ORDER BY d.id LIMIT 1025`, args},
+		{`SELECT a.id,a.delivery_id,a.holder,a.binding_json,CAST(a.binding_generation AS TEXT),a.stage,coalesce(a.consumed_at,''),coalesce(a.failed_at,'') FROM messaging_attempts a JOIN messaging_deliveries d ON d.id=a.delivery_id WHERE ` + accountingDeliveryPredicate + ` ORDER BY a.id LIMIT 1025`, args},
+		{`SELECT CAST(r.id AS TEXT),r.delivery_id,r.attempt_id,r.stage,r.at FROM messaging_receipts r JOIN messaging_deliveries d ON d.id=r.delivery_id WHERE ` + accountingDeliveryPredicate + ` ORDER BY r.id LIMIT 1025`, args},
+		{`SELECT m.id,coalesce(m.delivery_id,''),coalesce(m.consumed_at,''),coalesce(m.pending_receipt_attempt_id,''),coalesce(m.pending_receipt_lease_token,'') FROM messages m WHERE m.to_urn=? ORDER BY m.id LIMIT 1025`, []any{args[0]}},
+		{`SELECT reply_id,target_session_id,delivered_to_session_id,state,reason,CAST(attempts AS TEXT),updated_at,coalesce(settled_at,'') FROM routing_replies WHERE target_session_id=? OR delivered_to_session_id=? ORDER BY reply_id LIMIT 1025`, []any{session, session}},
+	}
+	for _, query := range queries {
+		rows, err := q.QueryContext(ctx, query.sql, query.args...)
+		if err != nil {
+			return "", accountingRefuse("messaging_unsupported")
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			_ = rows.Close()
+			return "", accountingRefuse("messaging_unsupported")
+		}
+		count := 0
+		for rows.Next() {
+			count++
+			if count > 1024 {
+				_ = rows.Close()
+				return "", accountingRefuse("history_budget")
+			}
+			values := make([]string, len(columns))
+			dest := make([]any, len(columns))
+			for i := range values {
+				dest[i] = &values[i]
+			}
+			if rows.Scan(dest...) != nil {
+				_ = rows.Close()
+				return "", accountingRefuse("messaging_unsupported")
+			}
+			raw, _ := json.Marshal(values)
+			if len(raw) > 64<<10 {
+				_ = rows.Close()
+				return "", accountingRefuse("history_budget")
+			}
+			accountingHashPart(h, raw)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return "", accountingRefuse("messaging_unsupported")
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
