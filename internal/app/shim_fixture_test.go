@@ -229,22 +229,26 @@ func shimFixture(t *testing.T) *shimAppFixture {
 	f := &shimAppFixture{svc: svc, plan: plan, root: root, req: agentsessions.StartRequest{ID: "shim-session", Runtime: rt, Options: opts}}
 	t.Cleanup(func() {
 		svc.shimDraining.Store(f.req.ID, true)
-		if row, err := svc.Store.SessionShim(context.Background(), f.req.ID); err == nil {
-			if receipt, err := loadShimReceipt(row); err == nil && receipt.HostPID > 0 {
-				if err = p.Stop(context.Background(), receipt); err != nil {
-					t.Errorf("owned host cleanup: %v", err)
-					terminateOwnedShimFixture(t, receipt)
-				}
-			}
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if _, live := svc.Manager.Get(f.req.ID); live {
 			_ = svc.Manager.Stop(ctx, f.req.ID)
 			_, _ = svc.Manager.WaitSession(ctx, f.req.ID)
 		}
 		if err := svc.waitShimBinding(ctx, f.req.ID); err != nil {
 			t.Errorf("binding watcher cleanup: %v", err)
+		}
+		cancel()
+		// Host teardown takes the controller role. Close and reap our bridge
+		// first, rather than racing its active hello with the teardown hello.
+		if row, err := svc.Store.SessionShim(context.Background(), f.req.ID); err == nil {
+			if receipt, err := loadShimReceipt(row); err == nil && receipt.HostPID > 0 {
+				hostCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stop()
+				if err = p.Stop(hostCtx, receipt); err != nil {
+					t.Errorf("owned host cleanup: %v", err)
+					terminateOwnedShimFixture(t, receipt)
+				}
+			}
 		}
 	})
 	return f
