@@ -7,4 +7,4 @@ boot_fragments:
   - boot/tether.md
 workspace:
   default_mode: hybrid
-  session_root: ~/.tether/workspaces/tether
+  session_root: ~/tether/workspaces/tether

@@ -87,6 +87,8 @@ type Service struct {
 	Settings *settings.Service
 
 	launchMu        sync.Mutex
+	reaperMu        sync.Mutex
+	reaper          *sessionReaper
 	shimMu          sync.Mutex
 	shimDraining    sync.Map
 	shimBindingWait sync.Map
@@ -487,6 +489,7 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 // to call multiple times only via the underlying components' contracts;
 // callers should treat Close as one-shot.
 func (s *Service) Close() error {
+	s.StopSessionReaper()
 	if s.Manager != nil {
 		if err := s.Manager.Shutdown(context.Background()); err != nil {
 			return err

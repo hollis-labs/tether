@@ -18,6 +18,7 @@ import (
 // are launch INPUTS, not baked into profile identity. This eliminates the
 // Project × Provider × WorkspaceMode combinatorial explosion.
 type CompositionInput struct {
+	Lifecycle *LifecyclePolicy `json:"lifecycle,omitempty"`
 	// Target is the profile ID to resolve through the cascade. Required.
 	Target string `json:"target"`
 
@@ -129,6 +130,7 @@ func (c *ResolvedComposition) ToPlan(launchID string) *Plan {
 
 	return &Plan{
 		LaunchID:         launchID,
+		Lifecycle:        MergeLifecycle(nil, c.Profile.Lifecycle),
 		ProjectID:        projectID,
 		LogicalAgentID:   c.Profile.ID,
 		ProviderID:       c.Provider,
@@ -178,6 +180,10 @@ func (r *Resolver) Resolve(ctx context.Context, in CompositionInput) (*ResolvedC
 
 	// 2. Fold root-to-leaf (ancestor-first)
 	resolved := r.foldChain(chain)
+	resolved.Lifecycle = MergeLifecycle(resolved.Lifecycle, in.Lifecycle)
+	if _, err := resolved.Lifecycle.Durations(); err != nil {
+		return nil, err
+	}
 
 	// 3. Resolve Scope / LaunchContext
 	var launchCtx *LaunchContext
@@ -324,6 +330,7 @@ func (r *Resolver) foldChain(chain []*LaunchProfile) *LaunchProfile {
 	}
 
 	for _, p := range chain {
+		resolved.Lifecycle = MergeLifecycle(resolved.Lifecycle, p.Lifecycle)
 		if p.Route != nil {
 			resolved.Route = p.Route
 		}
