@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/plugin-mcp v0.1.1
 	github.com/hollis-labs/libs/util v0.2.0
-	github.com/hollis-labs/substrate/harness v0.3.0
+	github.com/hollis-labs/substrate/harness v0.5.0
 	github.com/hollis-labs/substrate/llm-core v0.1.0
 	github.com/hollis-labs/substrate/mesh v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0

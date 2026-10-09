@@ -128,6 +128,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 			return
 		}
 	}
+	o.recordEnvironmentRequest(ev)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if ev.Kind == runtimeevents.KindSessionLost {

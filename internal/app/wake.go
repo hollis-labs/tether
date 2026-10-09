@@ -56,6 +56,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -67,6 +68,7 @@ import (
 	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -230,6 +232,16 @@ func (s *Service) ResolveActorSession(ctx context.Context, logicalAgentID string
 // AttemptWake drives one Claim/Ack/Nack wake attempt for messageID/to
 // against the already-resolved sessionID. See the file doc comment.
 func (s *Service) AttemptWake(ctx context.Context, messageID string, to messaging.Address, sessionID, wakeText string) api.WakeOutcome {
+	if env, err := s.Store.MessagingStore().Get(ctx, messageID); err == nil && env.Metadata[wakeintent.MetadataKey] != "" {
+		intent, intentErr := wakeintent.Read(env)
+		if intentErr != nil {
+			return api.WakeOutcome{Reason: "invalid-wake-intent", Detail: intentErr.Error()}
+		}
+		if intent.NoWake {
+			return api.WakeOutcome{Reason: "no-wake"}
+		}
+		return attemptRecipientWake(ctx, s.Store, s.Registry, s.runtimeSeam(), messageID, to, sessionID, wakeText)
+	}
 	return attemptWake(ctx, s.Store, s.Registry, s.runtimeSeam(), messageID, to, sessionID, wakeText)
 }
 
@@ -626,6 +638,28 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			break
 		}
 		processed++
+		msg, err := st.MessagingStore().Get(ctx, string(rd.MessageID))
+		if err != nil {
+			parkRow(rd.ID)
+			continue
+		}
+		intent, intentErr := wakeintent.Read(msg)
+		if intentErr != nil || intent.NoWake {
+			parkRow(rd.ID)
+			continue
+		}
+		prior, found, priorErr := st.RecipientWakeOutcome(ctx, msg.ID)
+		if priorErr != nil {
+			parkRow(rd.ID)
+			continue
+		}
+		if found {
+			var outcome api.WakeOutcome
+			if prior == "" || json.Unmarshal([]byte(prior), &outcome) != nil || outcome.Delivered {
+				parkRow(rd.ID)
+				continue
+			}
+		}
 		sessionID, resolveErr := resolveWakeTarget(ctx, st, reg, rt, rd.Recipient)
 		if resolveErr != nil {
 			log.Printf("app: wake sweep: resolve session for %s failed: %v", rd.Recipient.URN(), resolveErr)
@@ -640,13 +674,20 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 			continue
 		}
 		park.release(rd.ID)
-		msg, err := st.MessagingStore().Get(ctx, string(rd.MessageID))
-		if err != nil {
-			log.Printf("app: wake sweep: get message %s failed: %v", rd.MessageID, err)
-			parkRow(rd.ID)
-			continue
+		text := intent.WakeText
+		if text == "" {
+			text = sweepWakeText(msg)
 		}
-		outcome := attemptWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, sweepWakeText(msg))
+		var outcome api.WakeOutcome
+		if !found && st.HasMessageDeliveryObserver() {
+			outcome = attemptRecipientWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, text)
+		} else {
+			outcome = attemptWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, text)
+		}
+		if found {
+			raw, _ := json.Marshal(outcome)
+			_ = st.CompleteRecipientWake(ctx, msg.ID, string(raw))
+		}
 		if outcome.Attempted {
 			attempted++
 		}

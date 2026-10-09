@@ -278,6 +278,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Settings:    setSvc,
 		factories:   factories,
 	}
+	service.installRecipientWake()
 	service.Channels = channels.New(db, nil)
 	service.installTurnFeeds()
 	if validateMCPGrants {
