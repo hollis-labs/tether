@@ -351,6 +351,10 @@ func ValidateProjection(p Projection) error {
 				if err := validateProjectedCommand(t, item, seen); err != nil {
 					return err
 				}
+			case "empty_reasoning":
+				if err := validateEmptyReasoning(item, seen); err != nil {
+					return err
+				}
 			default:
 				return fail("projection_invalid")
 			}
@@ -565,6 +569,9 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 		if json.Unmarshal(m.Params, &union) == nil && union.Item.Type == "commandExecution" {
 			return projectCommandItem(p, m, event, source)
 		}
+		if union.Item.Type == "reasoning" {
+			return projectEmptyReasoning(p, m, event, source)
+		}
 		var params projectionItemParams
 		if !supportedProjectionParams(m.Params, &params) || params.Item.ID == "" {
 			return nil
@@ -608,6 +615,8 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 			item.CompletedSourceID = event.Identity
 		}
 		source.Disposition = "projected"
+	case "item/commandExecution/terminalInteraction":
+		return projectTerminalInteraction(p, m, event, source)
 	case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 		var params struct {
 			ThreadID string `json:"threadId"`

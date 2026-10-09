@@ -87,6 +87,7 @@ func TestHostedCodexCommandProvider(t *testing.T) {
 			}
 		}
 		emit("item/started", command("inProgress"))
+		emit("item/started", map[string]any{"threadId": "command-native", "turnId": "command-turn", "startedAtMs": 1, "item": map[string]any{"id": "reason", "type": "reasoning", "content": []any{}, "summary": []any{}}})
 		deadline := time.Now().Add(20 * time.Second)
 		for {
 			if _, err := os.Stat("command-release"); err == nil {
@@ -97,6 +98,8 @@ func TestHostedCodexCommandProvider(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		emit("item/completed", map[string]any{"threadId": "command-native", "turnId": "command-turn", "completedAtMs": 2, "item": map[string]any{"id": "reason", "type": "reasoning", "content": []any{}, "summary": []any{}}})
+		emit("item/commandExecution/terminalInteraction", map[string]string{"threadId": "command-native", "turnId": "command-turn", "itemId": "command", "processId": "fixture-process", "stdin": "private synthetic input\n"})
 		emit("item/commandExecution/outputDelta", map[string]string{"threadId": "command-native", "turnId": "command-turn", "itemId": "command", "delta": "private synthetic tool output\n"})
 		emit("item/completed", command("completed"))
 		for _, line := range []string{
