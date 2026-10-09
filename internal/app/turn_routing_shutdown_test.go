@@ -3,15 +3,15 @@ package app
 import (
 	"context"
 	"encoding/json"
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"

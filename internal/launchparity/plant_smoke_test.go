@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
-	"github.com/hollis-labs/agentkit/agentlaunch/parity"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/matrix"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/parity"
+	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
+	"github.com/hollis-labs/tether/internal/launchartifacts"
+	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 
 	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"
@@ -98,13 +101,33 @@ func TestPlantSmoke_PermissionContract(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile(%s): %v", tc.launchID, err)
 			}
-			prepared, err := launcher.Prepare(ctx, compiled)
+			prepared, custody, err := launchartifacts.Prepare(ctx, compiled, testfixture.Admission(t, func() any { return plan }))
 			if err != nil {
 				t.Fatalf("Prepare(%s): %v", tc.launchID, err)
 			}
+			defer custody.Close()
 			// No WithAdapter — exercises providerplant.DefaultResolver,
 			// the same planting path the daemon session-launch uses.
-			if err := providerplant.Plant(ctx, prepared); err != nil {
+			descriptor, err := matrix.Lookup(plan.Provider, plan.Runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(descriptor.ProviderID) == "codex" {
+				// A literal owned stand-in exercises DEC-036 without discovering
+				// or linking any credential from this process's environment.
+				source := t.TempDir()
+				if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte(`{"fixture":true}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				home, err := launchartifacts.CaptureCodexHome(source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer home.Close()
+				if err := custody.PlantCodex(ctx, prepared, home); err != nil {
+					t.Fatalf("Plant(%s): %v", tc.launchID, err)
+				}
+			} else if err := providerplant.Plant(ctx, prepared, providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
 				t.Fatalf("Plant(%s): %v", tc.launchID, err)
 			}
 

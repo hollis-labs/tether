@@ -31,10 +31,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-runner/runner"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/runner"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"

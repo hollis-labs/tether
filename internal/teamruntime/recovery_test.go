@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
 	"github.com/hollis-labs/substrate/mesh"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/identity"

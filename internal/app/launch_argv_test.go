@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -168,7 +168,7 @@ func TestLaunchTemplate_ComposesArgvOnce(t *testing.T) {
 				PermissionMode: tc.mode,
 				BootPrompt:     testBootPrompt,
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan),
 				TetherCommand: "tether",
 				TetherArgs:    []string{"mcp"},
 			})
@@ -248,7 +248,7 @@ func TestOpencodePlantedAgentIsNamespaced(t *testing.T) {
 	if got := launch.OpencodeAgentName(plan); got != "tether-general" {
 		t.Fatalf("OpencodeAgentName = %q, want tether-general", got)
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether"})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}

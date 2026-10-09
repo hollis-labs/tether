@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	gop "github.com/hollis-labs/go-providers/provider"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -120,7 +120,7 @@ func TestClaudeStrictMCP_EveryTurnOfTheLaunchTemplate(t *testing.T) {
 				RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared", Command: "claude",
 				BootPrompt: testBootPrompt,
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether", TetherArgs: []string{"mcp"}})
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether", TetherArgs: []string{"mcp"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +155,7 @@ func TestClaudeStrictMCP_KillSwitchLeavesTheArgvAlone(t *testing.T) {
 		ProviderID: "claude-code", ProviderBrand: "claude", RuntimeKind: config.RuntimeKindStreamingStdio,
 		RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared", Command: "claude", BootPrompt: testBootPrompt,
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether", TetherArgs: []string{"mcp"}})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether", TetherArgs: []string{"mcp"}})
 	if err != nil {
 		t.Fatal(err)
 	}

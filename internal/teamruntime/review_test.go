@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	messageDelivery "github.com/hollis-labs/go-messaging/delivery"
 	"github.com/hollis-labs/substrate/mesh"
+	messageDelivery "github.com/hollis-labs/substrate/mesh/messaging/delivery"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/registry"

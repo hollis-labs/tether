@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	hotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/config"
@@ -39,7 +39,7 @@ func (a *Adapter) rawProxyHandler(spanName string, fn func(ctx context.Context, 
 		meta := map[string]any(req.Params.Meta)
 
 		handlerCtx = a.withSessionID(handlerCtx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(meta, args)); sc.IsValid() && !telemetry.IsObserved(handlerCtx) {
+		if sc := trace.SpanContextFromContext(extractTraceContext(handlerCtx, meta, args)); sc.IsValid() && !telemetry.IsObserved(handlerCtx) {
 			handlerCtx = trace.ContextWithRemoteSpanContext(handlerCtx, sc)
 		}
 		handlerCtx, span := hotel.ToolCallSpan(handlerCtx, spanName)

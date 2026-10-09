@@ -44,7 +44,7 @@ func plantFor(t *testing.T, brand, providerID, runtimeKind string, env map[strin
 		RepoRoot: repo, WriteHome: ws, WorkspaceMode: "shared", Command: brand,
 		BootPrompt: testBootPrompt, Env: env,
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan),
 		TetherCommand: "tether",
 		TetherArgs:    TetherMCPPlant("/catalog", "sess-1", false).Args,
 		TetherEnv:     tetherEnvMap(plan.Env),

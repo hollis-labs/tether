@@ -2,16 +2,19 @@ package bootexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
-	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/google/uuid"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
+	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
 
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/launchartifacts"
 	tetherprovider "github.com/hollis-labs/tether/internal/provider"
 )
 
@@ -46,7 +49,7 @@ type Prepared struct {
 
 // PrepareClaudeTUI materializes the Claude boot-dir layout and returns a
 // command line that runs the real Claude TUI in the caller's terminal.
-func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
+func PrepareClaudeTUI(plan *launch.Plan, opts Options) (result *Prepared, err error) {
 	if plan == nil {
 		return nil, fmt.Errorf("launch plan required")
 	}
@@ -82,11 +85,35 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
 	}
-	prepared, err := launcher.Prepare(context.Background(), compiled)
+	// This accepted direct-exec operation owns its resolved plan and the fresh
+	// allocator call. It has no daemon session row or fabricated principal.
+	version, err := launchartifacts.Digest(plan)
+	if err != nil {
+		return nil, err
+	}
+	admission := launchartifacts.Admission{OperationID: uuid.NewString(), DecisionID: "tether.boot-exec:" + version,
+		Version: version, Owner: fmt.Sprintf("tether-boot-exec-uid:%d", os.Geteuid()), ControlParent: root, LocalFilesystem: true,
+		Validate: func(ctx context.Context) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			current, err := launchartifacts.Digest(plan)
+			if err != nil || current != version {
+				return fmt.Errorf("boot-exec artifact admission: accepted plan changed")
+			}
+			return nil
+		}}
+	prepared, custody, err := launchartifacts.Prepare(context.Background(), compiled, admission)
 	if err != nil {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
 	}
+	defer func() {
+		err = errors.Join(err, custody.Close())
+		if err != nil {
+			result = nil
+		}
+	}()
 	prepared.PlantContext.SelfMCPCommand = opts.TetherCommand
 	prepared.PlantContext.SelfMCPArgs = append([]string(nil), opts.TetherArgs...)
 	prepared.PlantContext.SelfMCPEnv = tetherEnvMap(opts.TetherEnv)
@@ -96,8 +123,7 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 	// The plan's permission posture (Provider.Permission) needs no threading
 	// onto this explicit adapter: providerplant maps it into the launch's
 	// argv whichever adapter plants (CW-20261001-0156).
-	if err := providerplant.Plant(context.Background(), prepared, providerplant.WithAdapter(adapter)); err != nil {
-		_ = os.RemoveAll(workspaceDir)
+	if err := providerplant.Plant(context.Background(), prepared, providerplant.WithAdapter(adapter), providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
 		return nil, err
 	}
 

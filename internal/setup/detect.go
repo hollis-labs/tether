@@ -3,7 +3,7 @@ package setup
 import (
 	"os"
 
-	"github.com/hollis-labs/go-providers/registry"
+	"github.com/hollis-labs/substrate/harness/adapters/registry"
 )
 
 // DetectResult holds the outcome of one provider detection attempt.
