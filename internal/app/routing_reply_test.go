@@ -1004,7 +1004,12 @@ func TestOneReplyPerBoundaryEvenWhenTheRuntimeShowsNoBusySignalYet(t *testing.T)
 		}
 		ids = append(ids, r.ReplyID)
 	}
+	h.waitQuiet()
 	h.setBusy("s1", false)
+	// The completion notification can overlap the drain's idle observation.
+	// Both refer to this boundary, before the first reply is submitted.
+	var once sync.Once
+	h.onBusyCheck = func(string) { once.Do(func() { h.d.notify("s1") }) }
 	h.d.notify("s1")
 	h.waitState(ids[0], store.RoutingReplyDelivered)
 	settleQuiet()
