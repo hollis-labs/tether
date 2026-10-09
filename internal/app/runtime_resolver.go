@@ -128,7 +128,8 @@ func runtimeFactoryForProvider(p config.Provider) (RuntimeFactory, error) {
 		return newCodexJSONRPCStdioRuntime(p.ID), nil
 	case binding.Provider == "codex" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return newGoproviderRuntime(p.ID, gop.NewCodexAdapter(), agentsessions.Capabilities{
-			BinaryRequired: true,
+			BinaryRequired:    true,
+			ProviderSessionID: true,
 		}), nil
 	case binding.Provider == "opencode" && binding.Runtime == runtimes.ModeSubprocessPerTurn:
 		return opencode.New, nil
@@ -174,9 +175,10 @@ func newClaudePTYRuntime(providerID string) RuntimeFactory {
 func newCodexJSONRPCStdioRuntime(providerID string) RuntimeFactory {
 	return func(plan *launch.Plan) (agentsessions.Runtime, error) {
 		return claudestream.NewWithAdapter(plan, gop.NewCodexAdapterAppServer(), providerID, agentsessions.Capabilities{
-			JsonRpcStdio:     true,
-			CheckpointResume: false,
-			BinaryRequired:   true,
+			JsonRpcStdio:      true,
+			ProviderSessionID: true,
+			CheckpointResume:  false,
+			BinaryRequired:    true,
 		})
 	}
 }

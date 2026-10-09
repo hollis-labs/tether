@@ -35,3 +35,7 @@ func (s State) Terminal() bool {
 
 // ErrDetached is returned when resume would duplicate a still-live child.
 var ErrDetached = errors.New("session is detached and still alive; wait for the shim reconciler to reattach it before resuming")
+
+// ErrRecoveryConflict refuses a resume that would duplicate live custody or
+// replace a retained team identity. The caller must use that custody's owner.
+var ErrRecoveryConflict = errors.New("session recovery conflicts with retained custody")
