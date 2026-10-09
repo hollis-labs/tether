@@ -58,6 +58,9 @@ func (s *Service) codexDeliveryCandidate(ctx context.Context, observed shimcodex
 }
 
 func (s *Service) deliverCodexInbox(ctx context.Context, observed shimcodex.State) (shimcodex.Projection, error) {
+	if err := s.currentShimExecution(ctx, observed.Binding.Session); err != nil {
+		return shimcodex.Projection{}, err
+	}
 	row, err := s.Store.SessionShim(ctx, observed.Binding.Session)
 	if err != nil {
 		return shimcodex.Projection{}, err

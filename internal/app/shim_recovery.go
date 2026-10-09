@@ -30,6 +30,9 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 	if err != nil {
 		return true
 	}
+	if s.currentShimExecution(parent, stale.ID) != nil {
+		return true
+	}
 	if _, live := s.Manager.Get(stale.ID); live {
 		return true
 	}
@@ -70,6 +73,14 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 		// Codex custody includes its private protocol inbox. A journaled exit
 		// or gone host is not permission to discard undelivered obligations.
 		if inspection.Gone {
+			if plan.TeamMember {
+				if err := s.retireGoneCodexTeam(ctx, row, receipt, host); err != nil {
+					s.retainShim(row, &receipt, "outcome_unknown")
+				} else {
+					s.shimDiagnostic(row.SessionID, &receipt, "recovery_pending", "gone_codex_accounted")
+				}
+				return true
+			}
 			s.retainShim(row, &receipt, "outcome_unknown")
 			return true
 		}
@@ -114,6 +125,9 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 }
 
 func (s *Service) reattachShim(ctx context.Context, shimRow store.SessionShimRow, receipt shimhost.Receipt) error {
+	if err := s.currentShimExecution(ctx, shimRow.SessionID); err != nil {
+		return err
+	}
 	host, err := s.shimHost()
 	if err != nil {
 		return err
@@ -192,6 +206,9 @@ func (s *Service) stopShimSession(id string) (bool, error) {
 		return false, nil
 	}
 	if err != nil {
+		return true, err
+	}
+	if err := s.currentShimExecution(context.Background(), id); err != nil {
 		return true, err
 	}
 	sessionRow, err := s.Store.GetSession(id)

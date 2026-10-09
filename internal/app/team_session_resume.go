@@ -45,18 +45,18 @@ func (s *Service) RecoverTeamSession(ctx context.Context, key, id string) error 
 	if health, known := s.Manager.Health(id); known && health.Health.Alive {
 		return nil
 	}
+	tracked, custodyErr := s.Store.SessionShim(ctx, id)
+	if custodyErr == nil {
+		return s.recoverRetainedCodexTeam(ctx, key, row, tracked)
+	}
+	if !errors.Is(custodyErr, store.ErrSessionShimNotFound) {
+		return custodyErr
+	}
 	if row.State == string(session.StateDetached) {
 		return session.ErrDetached
 	}
 	if !unexpectedRecoveryEnd(row) {
 		return teamhost.ErrSessionUnavailable
-	}
-	// A tracked shim retains process/protocol custody. Reattachment owns that
-	// path; an unavailable controller is not permission for a direct child.
-	if _, err := s.Store.SessionShim(ctx, id); err == nil {
-		return teamhost.ErrSessionUnavailable
-	} else if !errors.Is(err, store.ErrSessionShimNotFound) {
-		return err
 	}
 	plan, err := s.Store.GetLaunchPlan(id)
 	if err != nil {

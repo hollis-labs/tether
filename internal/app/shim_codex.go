@@ -182,9 +182,15 @@ func (s *Service) shouldFlushSessionOutput(ctx context.Context, id string) bool 
 // Reattachment consumes the existing discriminator and protocol ledger. Missing
 // or uncertain identity never falls back to a fresh direct Codex initializer.
 func (s *Service) reattachCodexShim(ctx context.Context, tracked store.SessionShimRow, observed shimhost.Receipt) error {
+	if err := s.currentShimExecution(ctx, tracked.SessionID); err != nil {
+		return err
+	}
 	receipt, err := loadShimReceipt(tracked)
 	if err != nil {
 		return err
+	}
+	if receipt.Retired {
+		return store.ErrSessionShimConflict
 	}
 	observed.Epoch = receipt.Epoch // Observer-reported controller epoch is not placement identity.
 	if receipt != observed {
@@ -291,6 +297,9 @@ func (c codexDeliveryCheck) CheckDelivery(ctx context.Context, state shimcodex.S
 	return c.service.loadCodexDelivery(ctx, state, high, false)
 }
 func (s *Service) loadCodexDelivery(ctx context.Context, state shimcodex.State, high string, terminal bool) error {
+	if err := s.currentShimExecution(ctx, state.Binding.Session); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
