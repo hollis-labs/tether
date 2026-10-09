@@ -1209,29 +1209,34 @@ remain hidden and cannot be published.
 
 Without a selected route kind, no durable message is created. The event instead
 carries `text`, an excerpt of at most 4096 bytes on a UTF-8 boundary, and
-`text_truncated: true` when shortened. Non-context route/body persistence errors
-log and fall back to that excerpt without a `message_id`. Non-context session
-metadata errors log and continue with an empty `workstream_id`.
+`text_truncated: true` when shortened. Selected route/body persistence errors
+retain the full output in its private journal for retry; an unreadable route
+leaves output pending rather than inventing an unrouted default. Non-context
+session metadata errors log and continue with an empty `workstream_id`.
 
-The synchronous persistence attempt has a five-second overall budget. Context
-errors on reads/staging, and any event-publication error, retry off the reader
-with operation deadlines and backoff from 100 milliseconds to five seconds.
-Retries retain a staged message ID; staging itself is idempotent for the
-session/turn/kind tuple when the body matches. Empty turn IDs use fresh message
-IDs; reused IDs with different bodies are logged and stored separately, with
-stable IDs on retries of each body. Events can be delayed and arrive out of turn order within
-one session (turn 2 before a retried turn 1). Use the session and turn IDs to
-identify outputs; event order is successful persistence order, not model-turn
-order. Channel publication can reorder independently.
+New producer events carry `output_id`, a stable identity derived from the
+session, turn, kind, native source identity and original body. Staging uses that
+identity; replay checks durable publication before acknowledging the journal.
+`fresh_conversation: true` reports provider conversation loss and is omitted
+when false. Both annotations are retained in staged message metadata. Consumers
+should use output identity and attribution rather than deduplicating by text.
 
-The retry pool holds at most 64 outputs / 16 MiB for up to one minute. Shutdown
-cancels in-flight work, makes one final bounded attempt per pending output and
-joins workers before storage closes. An event is not guaranteed for every
-completed turn: a full pool, prolonged failure or failed final attempt can lose
-it. Before staging, a crash can also lose the output body. After staging, the
-durable router scan can publish the body even when the event is lost. These
-limits and empty-terminal attribution are detailed in
-[the runtime contract](../runtime-turn-output.md#persistence-and-submission-boundaries).
+Before database work, the daemon commits a private retry record under
+`<state.db>.turn-output-retries`, following the selected state database. Database
+attempts use an overall five-second synchronous budget and operation-bounded
+retry workers with backoff. Startup and periodic replay recover committed
+records after worker expiry, pool saturation and restart. Known unrouted output
+retains only the bounded excerpt; selected or unresolved-route output keeps its
+full body. A failed journal write can still prevent durable recovery.
+
+Replay reads stop at 128 MiB per serialized record and the normal 30-day routing
+eligibility window. Oversized and expired records remain on disk for explicit
+operator handling. Events can be delayed and arrive out of turn order within one
+session; channel publication can reorder independently. These persistence rules
+do not promise public exactly-once delivery, successful native inbox drain or a
+terminal consumption acknowledgment. See
+[the runtime contract](../runtime-turn-output.md#persistence-and-submission-boundaries)
+for retry, shutdown and empty-terminal attribution limits.
 
 This is the canonical event for turn output. Consumers such as Tangent's bridge
 should migrate from `session.turn_waiting_input` to `session.turn_output`; no

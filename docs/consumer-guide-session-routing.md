@@ -253,8 +253,8 @@ router, and are not fields on `session.turn_output`.
 A selected kind on a routed session carries `message_id` after durable staging.
 Other outputs carry a UTF-8-bounded excerpt of at most 4 KiB in `text`, with
 `text_truncated: true` only when shortened (false is omitted), and no durable
-message. Non-context staging errors also fall back to the excerpt; deadline or
-cancellation errors defer persistence for a bounded retry. The event does not
+message. Selected staging failures retain the full journal body for retry; an
+unresolved route also keeps full output pending until the actual route is read. The event does not
 mean channel attachment has completed: `GET /messages/{message_id}` returns 404
 while staged. Consume channel history/SSE for committed publication; attachment
 exposes the same id and body. An excerpt is not an independently stored full body.
@@ -271,16 +271,21 @@ Persistence retries can publish later turns before earlier ones. Recovery scans
 attach in staging-time order (message id breaks timestamp ties), but live events,
 authorization denials and retry backoff can change publication order. Use
 session/turn metadata to identify outputs; neither stream promises model-turn
-order across retries. Stage ids are deterministic per session, turn and kind;
-a different body for the same key gets its own body-derived id. Empty turn ids
-use fresh message ids.
+order across retries. New producer events include `output_id`, binding the
+session, turn, kind, native source identity and original body. Staging and event
+replay use this stable identity; consumers should not deduplicate by text alone.
+`fresh_conversation: true` reports loss of provider conversation continuity and
+is omitted when false; staged message metadata retains the same annotation.
 
-Before staging, retries are volatile: at most 64 outputs / 16 MiB for one minute,
-with a final bounded shutdown attempt. A crash, prolonged outage or full pool
-can lose output. After staging, durable scans can recover attachment even if the
-output event failed. A repeated identical Error suppressed by the reducer can
-produce neither a failure `session.turn_output` event nor a routed failure
-message. See [runtime turn output](runtime-turn-output.md) for these limits.
+Before database work, output is committed to a private retry journal beside the
+selected state database. Startup and periodic replay recover committed records
+after a crash, worker expiry or a full pool. Known unrouted output still retains
+only its bounded excerpt. Replay reads are bounded to 128 MiB per record and the
+30-day routing window; oversized and expired records remain for operator
+handling. A failed journal write can still prevent durable recovery. A repeated
+identical Error suppressed by the reducer can produce neither a failure event
+nor a routed failure message. These boundaries do not promise public exactly-once
+delivery. See [runtime turn output](runtime-turn-output.md) for the full contract.
 
 Attachment records `session.turn_routed` transactionally with publication. This
 audit is available via

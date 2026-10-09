@@ -122,28 +122,48 @@ and storage closes.
 
 ## Persistence and submission boundaries
 
-The synchronous persistence attempt has one five-second overall budget, so it
-cannot hold the turn-state lock for four successive operation budgets. Retry
-workers give each metadata read, route reread, body stage and event publication
-its own five-second budget within a one-minute retry age. Context cancellation
-or deadline errors on reads/staging, and any event-publication error, defer output
-off the reader. Other metadata-read errors log and continue with an empty
-workstream; other route/staging errors log and fall back to the excerpt without a
-message ID. A corrupt stored route is reread at subsequent output, without
-inventing route defaults.
+Before a database attempt, the daemon atomically commits a private output retry
+record beside the selected state database at `<state.db>.turn-output-retries`.
+The directory is 0700 and records are 0600. Records contain output and routing
+attribution, never the launch plan or its credentials. Selected routed output and
+output whose route is unresolved retain the full body; known unrouted output
+keeps only the existing UTF-8-bounded 4 KiB excerpt.
 
-Retries back off from 100 milliseconds to five seconds. The volatile pool is
-capped at 64 outputs / 16 MiB of text. Shutdown cancels in-flight attempts, gives
-each pending output one final attempt with a five-second overall budget, then
-joins workers before closing storage. Before staging, a crash, a failed final
-shutdown attempt, a full retry pool or prolonged outage can still lose output,
-with an explicit error log. Once staged, the router's durable scan can attach the
-body even if its output event fails. Staging uses a deterministic ID from session,
-turn and kind and preserves the original envelope on same-body retries. Empty
-turn IDs use fresh message IDs. If a producer reuses a nonempty turn ID with a
-different body, staging logs the conflict and stores the new body under a separate
-body-derived ID, which remains stable on its retries. An already-staged message
-ID is also retained across event retries.
+Database persistence uses one five-second overall budget for the synchronous
+attempt. Retry workers bound each database operation within a one-minute worker
+age. Route read errors and selected-body staging errors keep the journal pending;
+they do not invent a route or downgrade selected full text to an excerpt.
+Non-context session metadata errors still log and continue with an empty
+workstream. Event-publication errors also leave the record pending.
+
+Workers back off from 100 milliseconds to five seconds. The pool admits up to 64
+outputs, normally within 16 MiB of text; one larger output may run alone. Startup
+and periodic scans replay pending records, so worker expiry, a full pool and
+daemon restart do not discard a committed journal. Shutdown cancels workers,
+tries pending output once more with a bounded database attempt, and joins before
+closing storage. A failed journal commit can still leave output without a durable
+copy; successful journal persistence is the recovery boundary.
+
+`output_id` binds the session, turn, kind, native source identity and original
+body. Stage IDs use that identity, and replay checks durable event history before
+republishing across the event/journal-acknowledgment crash window. Legacy staging
+without `output_id` retains its session/turn/kind and alternate-body rules; empty
+legacy turn IDs receive fresh message IDs. These local persistence rules do not
+promise public exactly-once delivery or per-session ordering.
+
+Replay reads are limited to 128 MiB per serialized record and the existing
+30-day routing eligibility window. Oversized and expired records remain on disk
+for explicit operator handling; they are not silently removed or replayed with
+unbounded allocation. Include this journal directory when preserving selected
+state and pending output.
+
+`fresh_conversation: true` marks output after loss of the provider conversation;
+it is omitted from events when false and retained in staged message metadata.
+This continuity annotation does not certify turn acceptance or consumption. A private
+empty `logs/session.log` may be created for hosted runtimes that ignore their log
+option; file existence and a pending tail are not completion evidence. Hosted
+public output acceptance also does not certify a native protocol inbox drain;
+that requires the hosted delivery checkpoint.
 
 `session.turn_output` events follow successful event persistence order. A delayed
 turn 1 can publish after turn 2 from the same session; this path provides no
