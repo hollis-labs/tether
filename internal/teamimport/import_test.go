@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -81,7 +82,7 @@ func TestImportedInputsResolveOriginalIdentityAndCompleteRoleAssets(t *testing.T
 	if err := bootgen.Generate(context.Background(), profile, root, &prompt); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prompt.String(), "Cairn task charter") || !strings.Contains(prompt.String(), "RUN CONTEXT: runtime-managed") || !strings.Contains(prompt.String(), m.Roles[0].Prompt) {
+	if !strings.Contains(prompt.String(), "Cairn task charter") || !strings.HasPrefix(prompt.String(), "RUN CONTEXT: runtime-managed") || !strings.Contains(prompt.String(), m.Roles[0].Prompt) {
 		t.Fatal("Cairn role or explicit runtime prompt missing")
 	}
 	provider := catalog.Providers["team-task-docs-1"]
@@ -96,6 +97,56 @@ func TestImportedInputsResolveOriginalIdentityAndCompleteRoleAssets(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(root, "state", "tether.db")); !os.IsNotExist(err) {
 		t.Fatal("offline conversion opened a daemon store")
+	}
+}
+
+func TestImportedTeamHelperUsesOwnedCatalogAndInheritedAuth(t *testing.T) {
+	m, root := fixture(t)
+	// Only this fake CLI executes: no daemon, provider or credential helper.
+	m.TetherCommand = filepath.Join(filepath.Dir(root), "fake tether's cli")
+	if err := os.WriteFile(m.TetherCommand, []byte("#!/bin/sh\n[ \"$TETHER_TOKEN\" = owned-fixture-auth ] || exit 7\nprintf '%s\\n' \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := teamimport.Write(m, root); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := (&app.Service{CatalogRoot: root, Catalog: c}).BuildLaunchPlan(app.CreateSessionInput{LaunchID: m.Roles[0].Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := plan.Env["TEAM_TETHER"]
+	if wrapper != filepath.Join(root, "bin", "team-tether") {
+		t.Fatal("team helper escaped the owned catalog")
+	}
+	args := []string{"messages", "list", "literal ' $(not-a-command)"}
+	cmd := exec.CommandContext(context.Background(), wrapper, args...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "TETHER_TOKEN=owned-fixture-auth"}
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join(append([]string{"--catalog", root}, args...), "\n") + "\n"
+	if string(output) != want {
+		t.Fatal("wrapper changed argument boundaries or omitted the owned catalog")
+	}
+	for _, override := range [][]string{{"--catalog", "/shared/catalog", "messages", "list"}, {"messages", "list", "--catalog=/shared/catalog"}} {
+		cmd := exec.CommandContext(context.Background(), wrapper, override...)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "TETHER_TOKEN=owned-fixture-auth"}
+		if output, err := cmd.Output(); err == nil || len(output) != 0 {
+			t.Fatal("helper permitted a shared-catalog override or executed the fake CLI")
+		}
+	}
+	info, err := os.Stat(wrapper)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatal("owned helper must be private and executable")
+	}
+	providerArgs := strings.Join(c.Providers["team-"+m.Roles[0].Name].Args, " ")
+	if !strings.Contains(providerArgs, wrapper) {
+		t.Fatal("provider shell policy did not receive the same helper")
 	}
 }
 
@@ -192,6 +243,9 @@ func TestTwoRolesInSameProjectKeepIndependentGrants(t *testing.T) {
 
 func TestRefusesSymlinkAssetAndExistingOrSharedOutput(t *testing.T) {
 	m, root := fixture(t)
+	if err := teamimport.Write(m, root+" split"); err == nil {
+		t.Fatal("team helper would split the output command path")
+	}
 	link := filepath.Join(m.Roles[0].BootDir, ".agents", "skills", "read-first", "outside")
 	if err := os.Symlink(filepath.Join(m.Roles[0].BootDir, "auth.json"), link); err != nil {
 		t.Fatal(err)

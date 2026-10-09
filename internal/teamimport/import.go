@@ -112,7 +112,11 @@ func Write(m Manifest, output string) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(path, files[name], 0o600); err != nil {
+		mode := fs.FileMode(0o600)
+		if name == filepath.Join("bin", "team-tether") {
+			mode = 0o700
+		}
+		if err := os.WriteFile(path, files[name], mode); err != nil {
 			return err
 		}
 	}
@@ -132,6 +136,11 @@ func safeDestination(output string, m Manifest) (string, error) {
 		return "", errors.New("output parent must already exist")
 	}
 	root = filepath.Join(parent, filepath.Base(root))
+	// The existing team helper expands TEAM_TETHER as one command word.
+	// Refuse destinations it would split rather than accidentally fall back.
+	if strings.ContainsAny(root, " \t\r\n*?[]") {
+		return "", errors.New("output path must not contain whitespace or glob characters: the team helper requires one executable command word")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -164,7 +173,10 @@ func build(m Manifest, root string) (map[string][]byte, error) {
 			return nil, err
 		}
 	}
-	files := map[string][]byte{}
+	// Keep the original binary selection, but route every team-helper call to
+	// this owned store. Authentication remains inherited from the runtime.
+	helper := "#!/bin/sh\nfor arg do\n  case \"$arg\" in\n    --catalog|--catalog=*) printf '%s\\n' 'team-tether: catalog override refused' >&2; exit 64;;\n  esac\ndone\nexec " + shellQuote(m.TetherCommand) + " --catalog " + shellQuote(root) + " \"$@\"\n"
+	files := map[string][]byte{filepath.Join("bin", "team-tether"): []byte(helper)}
 	put := func(name string, value any) error {
 		b, err := yaml.Marshal(value)
 		if err != nil {
@@ -229,7 +241,7 @@ func build(m Manifest, root string) (map[string][]byte, error) {
 			return nil, err
 		}
 		body := string(roleFiles["AGENTS.md"].data)
-		env := map[string]string{"TEAM_NAME": r.Name, "TEAM_ROLE": r.Role, "TEAM_PROJECT": r.Project, "TEAM_RUNTIME": r.Runtime, "TEAM_URN": r.URN, "TEAM_HOME": m.TeamHome, "TEAM_SESSION": m.TeamSession, "TEAM_TETHER": m.TetherCommand, "PATH": m.Path, "TMPDIR": filepath.Join(root, "tmp", r.Name), "GOTMPDIR": filepath.Join(root, "tmp", r.Name)}
+		env := map[string]string{"TEAM_NAME": r.Name, "TEAM_ROLE": r.Role, "TEAM_PROJECT": r.Project, "TEAM_RUNTIME": r.Runtime, "TEAM_URN": r.URN, "TEAM_HOME": m.TeamHome, "TEAM_SESSION": m.TeamSession, "TEAM_TETHER": filepath.Join(root, "bin", "team-tether"), "PATH": m.Path, "TMPDIR": filepath.Join(root, "tmp", r.Name), "GOTMPDIR": filepath.Join(root, "tmp", r.Name)}
 		tools, err := json.Marshal(r.MCPTools)
 		if err != nil {
 			return nil, err
@@ -254,7 +266,7 @@ func build(m Manifest, root string) (map[string][]byte, error) {
 		profile := bootgen.Profile{ID: r.Name, DisplayName: r.Name, Launch: r.Name, MCPServers: r.MCPServers, MCPTools: r.MCPTools, Template: filepath.Join(root, "assets", r.Name, "boot.tmpl"), Identity: bootgen.Identity{Role: r.Role, Project: r.Project, WorkRoot: r.Scope, ProfileID: r.Name, ProfileVersion: 1}, Slots: map[string]bootgen.SlotSource{"agent": {Type: "static", Path: filepath.Join(root, "assets", r.Name, "AGENTS.md")}, "context": {Type: "static", Path: filepath.Join(root, "assets", r.Name, "prompt.md")}}}
 		files[filepath.Join("assets", r.Name, "AGENTS.md")] = []byte(body)
 		files[filepath.Join("assets", r.Name, "prompt.md")] = []byte("RUN CONTEXT: runtime-managed\n\n" + r.Prompt)
-		files[filepath.Join("assets", r.Name, "boot.tmpl")] = []byte("{{ slot \"agent\" }}\n\n{{ slot \"context\" }}\n")
+		files[filepath.Join("assets", r.Name, "boot.tmpl")] = []byte("{{ slot \"context\" }}\n\n{{ slot \"agent\" }}\n")
 		for name, value := range map[string]any{filepath.Join("providers", providerID+".yaml"): provider, filepath.Join("agents", agentID+".yaml"): agent, filepath.Join("launches", r.Name+".yaml"): launch} {
 			if err := put(name, value); err != nil {
 				return nil, err
@@ -297,6 +309,10 @@ func build(m Manifest, root string) (map[string][]byte, error) {
 	}
 	files["baseline.json"] = manifest
 	return files, nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 func directory(path string) error {

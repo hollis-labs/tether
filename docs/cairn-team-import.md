@@ -53,6 +53,9 @@ auth, hooks and `launch.sh` are never copied or executed.
 This schema example intentionally contains unresolved selections. Replace them
 with the reviewed existing role baseline; it is not a live grant or model default.
 All paths must resolve before import. The destination's parent must already exist.
+The destination path must have no whitespace or glob characters, because the current `team` helper
+expands `TEAM_TETHER` as one executable command word. `tether_command` names one
+reviewed binary or wrapper executable, not a shell command with arguments.
 
 ```json
 {
@@ -111,7 +114,14 @@ pin model, effort, shell environment and the same three declared roots. The tool
 filter is present on the launch as well as the boot profile, so leaving out the
 profile cannot turn an explicit empty tool grant into inheritance.
 
-Catalog files are 0600 and directories 0700. Per-role disk temp and write-home
+`TEAM_TETHER` points to the generated private `bin/team-tether` wrapper. It runs
+the original reviewed `tether_command` with `--catalog` fixed to this destination,
+refuses catalog overrides, preserves argument boundaries and inherits runtime authentication. It adds no
+operator credential or shared-catalog fallback. The original binary selection
+remains in the saved baseline; the owned catalog path is an explicit environment
+projection. The generated prompt begins with `RUN CONTEXT: runtime-managed`.
+
+Catalog files are 0600; the helper executable and directories are 0700. Per-role disk temp and write-home
 directories, state DB path and control socket/PID paths stay beneath the owned
 destination. Existing destinations and destinations under shared team/boot,
 `~/.tether` or provider-home trees are refused. The catalog uses identity enforcement,
