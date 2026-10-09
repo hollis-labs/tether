@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -45,12 +43,7 @@ func (w *turnOutputWrite) journal(s *Service) error {
 	}
 	// Native source identity and body stay stable across route/attribution or
 	// continuity changes during replay. Those annotations cannot mint output.
-	identity, err := json.Marshal([5]string{w.row.ID, w.result.TurnID, string(w.result.Kind), w.providerResultID, w.result.Text})
-	if err != nil {
-		return err
-	}
-	digest := sha256.Sum256(identity)
-	id := hex.EncodeToString(digest[:])
+	id := store.TurnOutputID(w.row.ID, w.result.TurnID, string(w.result.Kind), w.providerResultID, w.result.Text)
 	w.journalID = id
 	if err := s.Store.WriteTurnOutputRetry(id, data); err != nil {
 		return err

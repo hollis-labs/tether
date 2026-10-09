@@ -35,11 +35,17 @@ func TestHostedOutputAcceptanceReplaysAndVerifiesInsideReceiptTransaction(t *tes
 				t.Fatal(err)
 			}
 			defer tx.Rollback()
-			if err := svc.Store.VerifyTurnOutputAcceptance(context.Background(), tx, "s1", outputID, messageID, result.TurnID); err != nil {
+			if err := svc.Store.VerifyTurnOutputContent(context.Background(), tx, "s1", outputID, messageID, result.TurnID, "native-source", result.Text, string(result.Kind)); err != nil {
 				t.Fatal(err)
 			}
-			if err := svc.Store.VerifyTurnOutputAcceptance(context.Background(), tx, "s1", outputID, messageID, "wrong-turn"); err == nil {
+			if err := svc.Store.VerifyTurnOutputContent(context.Background(), tx, "s1", outputID, messageID, "wrong-turn", "native-source", result.Text, string(result.Kind)); err == nil {
 				t.Fatal("receipt accepted wrong native turn")
+			}
+			if err := svc.Store.VerifyTurnOutputContent(context.Background(), tx, "s1", outputID, messageID, result.TurnID, "wrong-source", result.Text, string(result.Kind)); err == nil {
+				t.Fatal("receipt accepted wrong native source")
+			}
+			if err := svc.Store.VerifyTurnOutputContent(context.Background(), tx, "s1", outputID, messageID, result.TurnID, "native-source", "different output", string(result.Kind)); err == nil {
+				t.Fatal("receipt accepted wrong native body")
 			}
 		})
 	}
@@ -60,7 +66,7 @@ func TestHostedOutputStageFailureCannotCertifyDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if err := svc.Store.VerifyTurnOutputAcceptance(context.Background(), tx, "s1", outputID, messageID, result.TurnID); err == nil {
+	if err := svc.Store.VerifyTurnOutputContent(context.Background(), tx, "s1", outputID, messageID, result.TurnID, "native-source", result.Text, string(result.Kind)); err == nil {
 		t.Fatal("receipt certified absent output")
 	}
 }

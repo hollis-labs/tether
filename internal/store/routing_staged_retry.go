@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,4 +241,46 @@ func (s *Store) VerifyTurnOutputAcceptance(ctx context.Context, tx *sql.Tx, sess
 		return errors.New("turn output accepted attribution mismatch")
 	}
 	return nil
+}
+
+// VerifyTurnOutputContent additionally binds a native completion source, kind,
+// and original body. It preserves the acceptance-only API for receipt owners
+// that already enforce these expected-content checks in their own transaction.
+func (s *Store) VerifyTurnOutputContent(ctx context.Context, tx *sql.Tx, sessionID, outputID, messageID, turnID, providerResultID, expectedText, expectedKind string) error {
+	if err := s.VerifyTurnOutputAcceptance(ctx, tx, sessionID, outputID, messageID, turnID); err != nil {
+		return err
+	}
+	output, found, err := publishedTurnOutput(ctx, tx, sessionID, outputID)
+	if err != nil {
+		return err
+	}
+	if !found || output.ProviderResultID != providerResultID || string(output.Kind) != expectedKind || outputID != TurnOutputID(sessionID, turnID, expectedKind, providerResultID, expectedText) {
+		return errors.New("turn output accepted native content identity mismatch")
+	}
+	if messageID == "" {
+		excerpt, truncated := events.TurnOutputExcerpt(expectedText)
+		if output.Text != excerpt || output.TextTruncated != truncated {
+			return errors.New("turn output accepted excerpt mismatch")
+		}
+		return nil
+	}
+	var payload, contentType string
+	if err := tx.QueryRowContext(ctx, `SELECT payload,content_type FROM messages WHERE id=?`, messageID).Scan(&payload, &contentType); err != nil {
+		return err
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if contentType != "application/json" || json.Unmarshal([]byte(payload), &body) != nil || body.Text != expectedText {
+		return errors.New("turn output accepted body mismatch")
+	}
+	return nil
+}
+
+// TurnOutputID binds one native turn/source/kind and full body independently of
+// mutable route, attribution and continuity annotations during producer replay.
+func TurnOutputID(sessionID, turnID, kind, providerResultID, text string) string {
+	identity, _ := json.Marshal([5]string{sessionID, turnID, kind, providerResultID, text})
+	digest := sha256.Sum256(identity)
+	return hex.EncodeToString(digest[:])
 }

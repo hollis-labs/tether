@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
@@ -344,17 +343,7 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	return s.Store.CompleteTurnOutputRetry(w.journalID)
 }
 
-func turnOutputExcerpt(text string) (string, bool) {
-	const maxBytes = 4 * 1024
-	if len(text) <= maxBytes {
-		return text, false
-	}
-	end := maxBytes
-	for end > 0 && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end], true
-}
+func turnOutputExcerpt(text string) (string, bool) { return events.TurnOutputExcerpt(text) }
 
 func (s *Service) outputPersistenceContext() (context.Context, context.CancelFunc) {
 	return s.outputPersistenceContextFrom(context.Background())
