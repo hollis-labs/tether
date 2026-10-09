@@ -124,6 +124,14 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		if parent != nil && session.State(parent.State) == session.StateDetached {
 			return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, parent.ID)
 		}
+		// Terminal state alone does not retire a shim's process or protocol
+		// custody. Its owning reattachment/retirement path must settle that
+		// receipt before logical resume may allocate another session.
+		if _, custodyErr := s.Store.SessionShim(ctx, sourceID); custodyErr == nil {
+			return api.LaunchResult{}, fmt.Errorf("%w: resume source retains tracked shim custody (session=%s)", session.ErrRecoveryConflict, sourceID)
+		} else if !errors.Is(custodyErr, store.ErrSessionShimNotFound) {
+			return api.LaunchResult{}, fmt.Errorf("read resume source custody: %w", custodyErr)
+		}
 	}
 
 	// Preserve the original opt-in before resolving the current catalog route.
