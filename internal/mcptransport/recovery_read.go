@@ -42,7 +42,7 @@ func (h *Handler) ReadRecoveryTool(ctx context.Context, origin, tool string, arg
 	h.calls.Add(1)
 	h.mu.Unlock()
 	defer h.calls.Done()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	stop := context.AfterFunc(h.ctx, cancel)
 	defer func() { stop(); cancel() }()
 	cat, err := h.cfg.Resolver.Catalog(ctx)

@@ -76,6 +76,11 @@ func TestRecoveryReadExistingPoolAndAuthority(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("unauthorized call reached upstream")
 	}
+	canceled, stop := context.WithCancel(verified)
+	stop()
+	if _, err = h.ReadRecoveryTool(canceled, "torque", "torque_task_get", nil); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled read dispatched", err)
+	}
 	// A launch floor still restricts a currently permissive catalog profile.
 	profile := "restricted"
 	cat.Global.MCP.Profiles = map[string]mcpgateway.Profile{profile: {}}
