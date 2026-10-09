@@ -300,7 +300,7 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
-	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && req.SourceSessionID != "" {
+	if req.NativeOnly && req.SourceSessionID == "" || !req.NativeOnly && (req.SourceSessionID != "" || req.ResumeWorkRoot != "") {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "native_only requires exact source_session_id")
 		return
 	}

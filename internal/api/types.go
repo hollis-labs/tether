@@ -178,6 +178,7 @@ type ResumeOptions struct {
 	IdempotencyKey  string
 	NativeOnly      bool
 	SourceSessionID string
+	ResumeWorkRoot  string
 }
 
 // ResumeRequest is the optional body of POST /logical-agents/{id}/resume.
@@ -185,6 +186,7 @@ type ResumeRequest struct {
 	IdempotencyKey  string `json:"idempotency_key,omitempty"`
 	NativeOnly      bool   `json:"native_only,omitempty"`
 	SourceSessionID string `json:"source_session_id,omitempty"`
+	ResumeWorkRoot  string `json:"resume_workroot,omitempty"`
 }
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined

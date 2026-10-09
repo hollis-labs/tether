@@ -65,8 +65,15 @@ func (s *Service) validateNativeOnlySource(ctx context.Context, source *store.Se
 		return nativeOnlyError("source provider changed")
 	}
 	prior, err := s.Store.GetLaunchPlan(source.ID)
-	if err != nil || prior.ProviderBrand != plan.ProviderBrand || prior.ProviderID != plan.ProviderID || prior.TeamMember || prior.NativeStateRoot != plan.NativeStateRoot || prior.EffectiveWorkRoot() != plan.EffectiveWorkRoot() {
+	if err != nil || prior.ProviderBrand != plan.ProviderBrand || prior.ProviderID != plan.ProviderID || prior.TeamMember || prior.NativeStateRoot != plan.NativeStateRoot {
 		return nativeOnlyError("recorded source context changed")
+	}
+	if plan.NativeResumeWorkRoot != "" {
+		if plan.NativeResumeWorkRoot != prior.NativeStateRoot || plan.EffectiveWorkRoot() != plan.NativeResumeWorkRoot {
+			return nativeOnlyError("explicit coordination workroot differs from recorded native home")
+		}
+	} else if prior.EffectiveWorkRoot() != plan.EffectiveWorkRoot() {
+		return nativeOnlyError("recorded workroot changed")
 	}
 	mapping, err := s.Store.GetSessionProviderMapping(source.ID, "tether", plan.ProviderID)
 	if err != nil || !mapping.NativeSessionID.Valid || mapping.NativeSessionID.String == "" || mapping.NativeSessionID.String != plan.ResumeProviderSessionID {
@@ -82,7 +89,7 @@ func (s *Service) validateNativeOnlySource(ctx context.Context, source *store.Se
 	if err != nil {
 		return nativeOnlyError("approved credential source unavailable")
 	}
-	defer home.Close()
+	defer func() { _ = home.Close() }()
 	if err := home.ValidateNativeLink(plan.NativeStateRoot); err != nil {
 		return nativeOnlyError("native credential mapping unavailable")
 	}
@@ -119,7 +126,7 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	if err != nil {
 		return nil, nativeOnlyError("approved credential source unavailable")
 	}
-	defer credentialHome.Close()
+	defer func() { _ = credentialHome.Close() }()
 	if err := credentialHome.ValidateNativeLink(r.plan.NativeStateRoot); err != nil {
 		return nil, nativeOnlyError("native credential mapping unavailable")
 	}

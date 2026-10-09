@@ -39,7 +39,7 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	case <-ctx.Done():
 		return api.LaunchResult{}, ctx.Err()
 	}
-	if opts.NativeOnly && opts.SourceSessionID == "" || !opts.NativeOnly && opts.SourceSessionID != "" {
+	if opts.NativeOnly && opts.SourceSessionID == "" || !opts.NativeOnly && (opts.SourceSessionID != "" || opts.ResumeWorkRoot != "") {
 		return api.LaunchResult{}, nativeOnlyError("exact source and native-only mode required")
 	}
 	if opts.IdempotencyKey == "" {
@@ -53,9 +53,9 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	digest := resumeRequestDigest(logicalAgentID)
 	if opts.NativeOnly {
 		digest = requestDigest(struct {
-			Agent, Source string
-			NativeOnly    bool
-		}{logicalAgentID, opts.SourceSessionID, true})
+			Agent, Source, WorkRoot string
+			NativeOnly              bool
+		}{logicalAgentID, opts.SourceSessionID, opts.ResumeWorkRoot, true})
 	}
 	replayed, err := s.replayIfKeyed(opts.IdempotencyKey, store.IdempotencyOpResume, digest)
 	if err != nil {
@@ -202,7 +202,13 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		}
 	}
 	if opts.NativeOnly {
+		if opts.ResumeWorkRoot != "" {
+			plan.NativeResumeWorkRoot, plan.WorkRoot = opts.ResumeWorkRoot, opts.ResumeWorkRoot
+		}
 		if err := s.validateNativeOnlySource(ctx, parent, plan); err != nil {
+			return api.LaunchResult{}, err
+		}
+		if err := s.nativeOnlyLaunchAuthority(ctx, plan); err != nil {
 			return api.LaunchResult{}, err
 		}
 		plan.BootPrompt, plan.RecoveryPrompt, plan.RecoveryCursors = "", "", nil

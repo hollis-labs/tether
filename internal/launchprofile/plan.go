@@ -22,6 +22,7 @@ type Plan struct {
 	// launches never become implicit provider-native resumes.
 	ResumeProviderSessionID string `json:"resume_provider_session_id,omitempty"`
 	// NativeResumeOnly is an explicit fail-closed recovery decision. It never
+	NativeResumeWorkRoot string `json:"native_resume_workroot,omitempty"`
 	// permits cold fallback or automatic submission of a recovery turn.
 	NativeResumeOnly bool `json:"native_resume_only,omitempty"`
 	// ResumeSourceSessionID identifies the canonical source of native state and

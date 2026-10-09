@@ -254,6 +254,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		if err := s.validateNativeOnlySource(ctx, source, plan); err != nil {
 			return nil, err
 		}
+		if err := s.nativeOnlyLaunchAuthority(ctx, plan); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := rejectLegacyMCPPlan(plan); err != nil {
@@ -374,7 +377,12 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		}
 		policy.ExtractRefs = extractRefs
 		policy = policy.Seal()
-		err = s.Store.SaveSessionMCPPolicy(ctx, policy)
+		if plan.NativeResumeOnly {
+			policy, err = s.nativeOnlyPolicy(ctx, plan, policy)
+		}
+		if err == nil {
+			err = s.Store.SaveSessionMCPPolicy(ctx, policy)
+		}
 	}
 	if err != nil {
 		exit := 1

@@ -14,6 +14,7 @@ import (
 // ordinary boot recovery. Other agents retain their existing recovery behavior.
 type BootResumeOptions struct {
 	NativeOnlySourceIDs []string
+	NativeOnlyWorkRoots map[string]string
 }
 
 // BootResumeSessions runs once after the listener is serving. Startup
@@ -24,6 +25,18 @@ func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeO
 	// Resolve every explicit source before any startup recovery. A missing or
 	// enrolled source cannot fall through into ordinary selection.
 	for _, option := range options {
+		for id := range option.NativeOnlyWorkRoots {
+			selected := false
+			for _, sourceID := range option.NativeOnlySourceIDs {
+				if sourceID == id {
+					selected = true
+				}
+			}
+			if !selected {
+				log.Print("boot recovery: workroot requires selected native-only source")
+				return
+			}
+		}
 		for _, id := range option.NativeOnlySourceIDs {
 			source, err := s.Store.GetSession(id)
 			if err != nil || source.LogicalAgentID == "" {
@@ -80,7 +93,7 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 				s.bootResumeOutcome(agentID, parent.ID, "failed", "native_only_source_changed")
 				return
 			}
-			result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{NativeOnly: true, SourceSessionID: id})
+			result, err := s.ResumeLogicalAgentWithContext(ctx, agentID, api.ResumeOptions{NativeOnly: true, SourceSessionID: id, ResumeWorkRoot: option.NativeOnlyWorkRoots[id]})
 			if err != nil {
 				s.bootResumeOutcome(agentID, id, "failed", "native_only_resume_refused")
 				return

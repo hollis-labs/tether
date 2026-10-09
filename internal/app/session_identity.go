@@ -53,6 +53,25 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 			p.Scopes = []string{}
 		}
 	}
+	plan, err := s.Store.GetLaunchPlan(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if plan.NativeResumeOnly {
+		ceiling, err := s.nativeOnlyCredentialCeiling(ctx, plan)
+		if err != nil {
+			return "", err
+		}
+		if !slices.Contains(ceiling.scopes, "*") {
+			p.Scopes = slices.DeleteFunc(p.Scopes, func(scope string) bool { return !slices.Contains(ceiling.scopes, scope) })
+		}
+		if ceiling.expires != nil && ceiling.expires.Before(*p.ExpiresAt) {
+			p.ExpiresAt = ceiling.expires
+		}
+		if p.Scopes == nil {
+			p.Scopes = []string{}
+		}
+	}
 	token, err := identity.NewStore(s.Store.DB()).MintSessionForLaunch(ctx, p)
 	if err != nil {
 		if replacement {
