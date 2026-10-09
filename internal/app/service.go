@@ -93,7 +93,7 @@ type Service struct {
 	resumeGrace time.Duration // zero selects the bounded native fast-death window
 	// RecoveryReadTool is a trusted daemon read port over its existing MCP
 	// runtime and grants. Nil/unavailable inputs are explicit pack omissions.
-	RecoveryReadTool func(context.Context, string, string, map[string]any) (json.RawMessage, error)
+	RecoveryReadTool func(context.Context, string, string, string, map[string]any) (json.RawMessage, error)
 	BootTeamRecovery func(context.Context) error
 	shimMu           sync.Mutex
 	shimDraining     sync.Map

@@ -29,8 +29,9 @@ func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, id
 		ListenAddr: cfg.ListenAddr, IdentityMode: cfg.IdentityMode, Verifier: verifier, Service: svc,
 		NativeClient: func(token string) *client.Client { return client.New(cfg.ListenAddr, client.WithToken(token)) },
 		Resolver: mcptransport.CallerResolver{
-			Catalog: cache.Load,
-			Session: svc.Store.SessionMCPPolicy,
+			Catalog:         cache.Load,
+			Session:         svc.Store.SessionMCPPolicy,
+			RecoverySession: svc.Store.RecoverySessionMCPPolicy,
 		},
 		NewRuntime: func(ctx context.Context, cat *config.Catalog) (*mcpadapter.SharedUpstreams, error) {
 			entries, err := config.LoadMCPServersContext(ctx, svc.CatalogRoot)

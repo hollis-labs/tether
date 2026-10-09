@@ -180,7 +180,6 @@ var daemonRunCmd = &cobra.Command{
 		// aborts cleanly instead of running to completion before shutdown.
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		svc.StartSessionReaper(ctx)
 
 		// Passive catalog and Cerberus bootstrap importers are retired per CW-20260914-0043.
 		// Catalog files retain their launch configuration role (repo root, workspace mode,
@@ -246,6 +245,9 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
+		if mcpHandler != nil {
+			svc.RecoveryReadTool = mcpHandler.ReadRecoveryTool
+		}
 		// Reply-to-sender: recover replies a previous process left mid-delivery
 		// and start draining. A failure leaves RoutingReplyWired false and the
 		// reply routes answer 501 rather than taking the daemon down.
@@ -258,37 +260,42 @@ var daemonRunCmd = &cobra.Command{
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,
-			Startup:                  svc.BootResumeSessions,
-			Service:                  &serviceAdapter{svc: svc},
-			AI:                       aiSvc,
-			AIAudit:                  svc.Store,
-			AIUsage:                  svc.Store,
-			Checkpoints:              svc.Store,
-			Broker:                   &brokerAdapter{write: svc.Broker, read: svc.Store},
-			Bus:                      svc.Bus,
-			EventsStore:              svc.Store,
-			Catalog:                  &catalogLoader{root: svc.CatalogRoot},
-			GroupStore:               svc.Store,
-			Workstreams:              svc.Store,
-			SessionRefs:              svc.Store,
-			Digests:                  svc.Store,
-			MessageStore:             newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
-			Channels:                 svc.Channels,
-			Routing:                  svc,
-			Teams:                    teamOps,
-			DeliveryClaims:           svc.Store,
-			Attachments:              svc.Store,
-			ProxyEvents:              svc.Store,
-			Registry:                 svc.Registry,
-			Settings:                 svc.Settings,
-			RegistryCatalogRoot:      svc.CatalogRoot,
-			Groups:                   svc.Registry,
-			Publisher:                svc.Bus,
-			WakeSweeper:              svc,
-			RoutingReplies:           svc,
-			ReplySweeper:             svc,
-			SessionDrainer:           svc,
-			EventRetention:           svc,
+			Startup: func(startupCtx context.Context) {
+				svc.BootResumeSessions(startupCtx)
+				if startupCtx.Err() == nil {
+					svc.StartSessionReaper(startupCtx)
+				}
+			},
+			Service:             &serviceAdapter{svc: svc},
+			AI:                  aiSvc,
+			AIAudit:             svc.Store,
+			AIUsage:             svc.Store,
+			Checkpoints:         svc.Store,
+			Broker:              &brokerAdapter{write: svc.Broker, read: svc.Store},
+			Bus:                 svc.Bus,
+			EventsStore:         svc.Store,
+			Catalog:             &catalogLoader{root: svc.CatalogRoot},
+			GroupStore:          svc.Store,
+			Workstreams:         svc.Store,
+			SessionRefs:         svc.Store,
+			Digests:             svc.Store,
+			MessageStore:        newFederatedMessageStore(svc.Store.MessagingStore(), svc.Federation),
+			Channels:            svc.Channels,
+			Routing:             svc,
+			Teams:               teamOps,
+			DeliveryClaims:      svc.Store,
+			Attachments:         svc.Store,
+			ProxyEvents:         svc.Store,
+			Registry:            svc.Registry,
+			Settings:            svc.Settings,
+			RegistryCatalogRoot: svc.CatalogRoot,
+			Groups:              svc.Registry,
+			Publisher:           svc.Bus,
+			WakeSweeper:         svc,
+			RoutingReplies:      svc,
+			ReplySweeper:        svc,
+			SessionDrainer:      svc,
+			EventRetention:      svc,
 			Hardening: func() *daemon.HealthHardening {
 				st := svc.ClaudeStrictMCPStatus()
 				countCtx, cancelCounts := context.WithTimeout(ctx, 200*time.Millisecond)

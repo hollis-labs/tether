@@ -27,6 +27,9 @@ var errSessionUnavailable = errors.New("session policy temporarily unavailable")
 type CallerResolver struct {
 	Catalog func(context.Context) (*config.Catalog, error)
 	Session func(context.Context, string) (mcpgateway.SessionPolicy, error)
+	// RecoverySession additionally checks retained authority without presenting
+	// a credential or manufacturing a verified transport principal.
+	RecoverySession func(context.Context, string) (mcpgateway.SessionPolicy, error)
 }
 
 func (r CallerResolver) Resolve(ctx context.Context) (Caller, error) {

@@ -89,7 +89,7 @@ func (s *Service) recoveryContext(ctx context.Context, plan *launch.Plan, ck *ch
 			plan.RecoveryCursors[name] = messages[len(messages)-1].Seq
 		}
 	}
-	pack.Tasks = s.readRecoveryInput(ctx, "torque", "torque_task_list", map[string]any{"agent_profile": plan.LogicalAgentID, "statuses": `["todo","queued","doing","review","blocked","paused"]`, "format": "typed", "limit": "10"}, &pack)
+	pack.Tasks = s.readRecoveryInput(ctx, plan.ResumeSourceSessionID, "torque", "torque_task_list", map[string]any{"agent_profile": plan.LogicalAgentID, "statuses": `["todo","queued","doing","review","blocked","paused"]`, "format": "typed", "limit": "10"}, &pack)
 	var list struct {
 		Items []struct {
 			ID     string `json:"id"`
@@ -107,7 +107,7 @@ func (s *Service) recoveryContext(ctx context.Context, plan *launch.Plan, ck *ch
 		taskID = list.Items[0].ID
 	}
 	if taskID != "" {
-		pack.Task = s.readRecoveryInput(ctx, "torque", "torque_task_get", map[string]any{"id": taskID, "format": "typed", "comments_limit": "5"}, &pack)
+		pack.Task = s.readRecoveryInput(ctx, plan.ResumeSourceSessionID, "torque", "torque_task_get", map[string]any{"id": taskID, "format": "typed", "comments_limit": "5"}, &pack)
 		var task struct {
 			Status string `json:"status"`
 		}
@@ -115,7 +115,7 @@ func (s *Service) recoveryContext(ctx context.Context, plan *launch.Plan, ck *ch
 			pack.openAssignment = true
 		}
 	}
-	pack.Handoffs = s.readRecoveryInput(ctx, "tesseract", "tesseract_recall", map[string]any{"namespaces": "project/tether", "tags": "handoff", "query": plan.LogicalAgentID, "limit": 2, "budget_tokens": 1500, "payload_mode": "full"}, &pack)
+	pack.Handoffs = s.readRecoveryInput(ctx, plan.ResumeSourceSessionID, "tesseract", "tesseract_recall", map[string]any{"namespaces": "project/tether", "tags": "handoff", "query": plan.LogicalAgentID, "limit": 2, "budget_tokens": 1500, "payload_mode": "full"}, &pack)
 	pack.Git = recoveryGit(ctx, plan.EffectiveWorkRoot(), &pack)
 	return pack
 }
@@ -135,14 +135,14 @@ func closedRecoveryTask(status string) bool {
 	return false
 }
 
-func (s *Service) readRecoveryInput(ctx context.Context, origin, tool string, args map[string]any, pack *recoveryPack) json.RawMessage {
+func (s *Service) readRecoveryInput(ctx context.Context, sourceSessionID, origin, tool string, args map[string]any, pack *recoveryPack) json.RawMessage {
 	if s.RecoveryReadTool == nil {
 		pack.Omissions = append(pack.Omissions, origin+": read port unavailable")
 		return nil
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	raw, err := s.RecoveryReadTool(readCtx, origin, tool, args)
+	raw, err := s.RecoveryReadTool(readCtx, sourceSessionID, origin, tool, args)
 	if err != nil || len(raw) == 0 || len(raw) > 24*1024 || !json.Valid(raw) {
 		pack.Omissions = append(pack.Omissions, tool+": read unavailable/refused/oversized")
 		return nil

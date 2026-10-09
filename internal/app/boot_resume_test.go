@@ -65,7 +65,7 @@ func TestBootResumeIdleAgentStaysCold(t *testing.T) {
 
 func TestRecoveryReadRefusalDoesNotBecomeAssignment(t *testing.T) {
 	r := newCodexRig(t)
-	r.svc.RecoveryReadTool = func(_ context.Context, _, tool string, _ map[string]any) (json.RawMessage, error) {
+	r.svc.RecoveryReadTool = func(_ context.Context, _, _, tool string, _ map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`{"ok":false,"data":{"items":[{"id":"denied","status":"doing"}]}}`), nil
 	}
 	pack := r.svc.recoveryContext(context.Background(), &launch.Plan{LogicalAgentID: "agent", WorkRoot: r.repo}, nil)
