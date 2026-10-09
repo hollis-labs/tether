@@ -8,6 +8,14 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Retain supported empty Codex reasoning lifecycles and associated native command
+  terminal observations as private delivery obligations. Reasoning requires both
+  explicit empty `content` and `summary` arrays; unfinished, nonempty or unknown
+  shapes refuse. Terminal observations must match an existing unfinished command's
+  thread, turn, item and process. Preserve original private parameters without
+  dispatching stdin or adding reply text; public content/route receipts still
+  determine delivery. (CW-20261008-0126)
+
 ## [0.7.0] - 2026-10-09
 
 - Add strict direct-Codex resume with `native_only`, exact `source_session_id`
