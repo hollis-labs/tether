@@ -1,7 +1,9 @@
 # Opt-in shim hosting
 
-The daemon can host Claude streaming-stdio providers through a persistent shim.
-Direct execution remains the default. The explicit
+The daemon can host Claude streaming-stdio providers and retain the Codex
+app-server JSON-RPC protocol through a persistent shim. Direct execution remains
+the default. Codex public output delivery has additional requirements described
+below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
 existing private checkpoint; it never places another provider.
@@ -67,7 +69,23 @@ journal pin is included in the client's hello, so an identity or journal mismatc
 is refused before takeover changes the controller epoch. Inspect merges observed
 facts while preserving the operation key, fingerprint and attempted-submit flag.
 
-## Delivery and recovery
+## Provider protocols
+
+Claude uses the stdio bridge described below. Hosted Codex uses a separate
+durable protocol ledger, bound to the original session, instance, generation,
+placement operation, submission attempt and journal. Its protocol checkpoint is
+initialized before placement; reattachment must use that ledger and the exact
+observed host. A missing or mismatched checkpoint remains an unknown outcome,
+and never falls back to creating a fresh direct Codex thread. Uncertain input
+effects are retained rather than submitted again.
+
+The Codex protocol foundation alone does not certify public output delivery.
+The daemon also requires a verified delivery record before treating replay or
+terminal output as settled. In the current foundation, the private output
+projection returns `unsupported`; protocol retention and controller attachment
+must not be interpreted as durable public completion.
+
+## Claude delivery and recovery
 
 The shim-specific `session.shim_status` event with state `running` and reason
 `reattached` is a readiness signal: the bridge's controller hello has completed
@@ -218,11 +236,17 @@ by record writers, so a live atomic commit is never deleted.
 
 Retirement removes the secret-bearing descriptor. The secret-free placement
 receipt, bridge checkpoint, host log and journal remain as recovery evidence;
-the journal defaults to a 256 MiB cap per session. No retention sweep exists yet.
+the journal defaults to a 256 MiB cap per session. No automatic retention sweep
+or operator cleanup command is wired. Internal retirement and bounded retention
+seams require complete controller exclusion, submission drain and descendant
+containment proof; the production proof capability currently returns
+`unsupported`. A submission fence or an absent unit alone does not authorize
+removing retained artifacts.
 Sandbox temporary directories are remembered only by the current daemon and can
 remain after detach followed by a daemon restart; reattachment cannot recover
-that cleanup handle. Explicit retirement and retained-artifact cleanup are
-required follow-ups before production activation.
+that cleanup handle. Explicit retirement of an unknown placement and cleanup of
+its retained artifacts remain unavailable; retained evidence can accumulate
+across daemon restarts.
 
 The session API credential expires after seven days. It is copied into the
 immutable provider environment: neither reattachment nor a matching placement
