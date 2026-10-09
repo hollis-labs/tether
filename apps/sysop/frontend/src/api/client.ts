@@ -171,6 +171,12 @@ export interface MessageQuery {
  limit?: string
  offset?: string
 }
+export interface UserMessageProfile {
+  urn: string
+  aliases: MessageAlias[]
+  messaging: { from_default?: string }
+}
+
 export interface MessageAlias { urn: string; alias: string }
 
 export interface MessagesInfo {
@@ -1060,6 +1066,9 @@ export const apiClient = {
   getSessionDetail: (id: string) =>
     http.get<SessionDetailInfo>('/api/sessions/detail', { query: { id } }),
   getMessages: (query?: MessageQuery) => http.get<MessagesInfo>('/api/messages', { query: { ...(query ?? {}) } }),
+  getMessageProfile: () => http.get<UserMessageProfile>('/api/messages/profile'),
+  saveMessageFromDefault: (value: string) =>
+    http.post<UserMessageProfile>('/api/messages/profile', { from_default: value }),
   getMessageAliases: () => http.get<{ aliases: MessageAlias[] }>('/api/messages/aliases'),
   saveMessageAlias: (body: MessageAlias) => http.post<MessageAlias>('/api/messages/aliases', { ...body }),
   sendReply: (body: ReplyRequest) =>

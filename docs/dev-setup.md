@@ -4,8 +4,8 @@ Guide to getting a working development environment for Tether.
 
 ## Prerequisites
 
-- **Go** — version matching [`go.mod`](../go.mod). The `toolchain`
-  directive auto-downloads the minor patch if your local Go is older
+- **Go** — version matching [`go.mod`](../go.mod). Its `go` directive
+  causes Go to auto-download the required version if your local Go is older
   (needs `GOTOOLCHAIN=auto`, which is the default).
 - **Make** — BSD or GNU, either works.
 - **Git** — for repo operations.

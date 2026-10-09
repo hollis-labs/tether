@@ -29,7 +29,7 @@ func inboxFixture(t *testing.T) (*appServer, *store.Store) {
 	if err := os.WriteFile(filepath.Join(root, "global.yaml"), []byte("catalog:\n  defaults:\n    state_db: "+dbPath+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s := &appServer{catalogRoot: root}
+	s := &appServer{catalogRoot: root, userProfilePath: filepath.Join(root, "user-profile.json")}
 	t.Cleanup(s.closeStateReader)
 	return s, db
 }

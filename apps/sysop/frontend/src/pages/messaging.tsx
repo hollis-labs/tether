@@ -75,8 +75,6 @@ function agentLabel(agent: MessageAgentInfo): string {
   return agent.display_name ? `${agent.display_name} (${shortUrn(agent.urn)})` : shortUrn(agent.urn)
 }
 
-const DEFAULT_SENDER = 'msg://user/agent-mux/operator'
-
 const columns: ColumnDef<MessageInfo>[] = [
   {
     key: 'from',
@@ -431,6 +429,7 @@ export function MessagingPage() {
   const [scope, setScope] = useState<ScopeKey>('user')
   const [readFilter, setReadFilter] = useState('all')
   const [archiveFilter, setArchiveFilter] = useState('active')
+  const [recipientFilter, setRecipientFilter] = useState('')
   const [offset, setOffset] = useState(0)
   const [total, setTotal] = useState(0)
   const [aliases, setAliases] = useState<MessageAlias[]>([])
@@ -455,7 +454,10 @@ export function MessagingPage() {
   const [groupReplyText, setGroupReplyText] = useState('')
   const [groupFrom, setGroupFrom] = useState('')
   const [newMessageOpen, setNewMessageOpen] = useState(false)
-  const [newMessageFrom, setNewMessageFrom] = useState(DEFAULT_SENDER)
+  const [newMessageFrom, setNewMessageFrom] = useState('')
+  const senderDefault = useRef<{ urn: string; value: string } | null>(null)
+  const [savingDefault, setSavingDefault] = useState(false)
+  const [defaultSaved, setDefaultSaved] = useState(false)
   const [newMessageTo, setNewMessageTo] = useState('')
   const [newMessageBody, setNewMessageBody] = useState('')
   const [newGroupOpen, setNewGroupOpen] = useState(false)
@@ -478,6 +480,7 @@ export function MessagingPage() {
     Promise.allSettled([
       api.getMessages({
         scope: scope === 'user' ? 'user' : 'agent',
+        to: recipientFilter.trim() || undefined,
         read: readFilter,
         archive: archiveFilter,
         limit: '100',
@@ -487,48 +490,76 @@ export function MessagingPage() {
       api.getMessageAgents(),
       api.getBrokerEnvelopes(),
       api.getMessageAliases(),
+      api.getMessageProfile(),
     ])
-      .then(([messageResult, groupResult, agentResult, brokerResult, aliasResult]) => {
-        if (cancelled || version !== requestVersion.current) return
-        if (aliasResult.status === 'fulfilled') setAliases(aliasResult.value.aliases ?? [])
-        if (messageResult.status === 'rejected') {
-          setError(
-            messageResult.reason instanceof Error
-              ? messageResult.reason.message
-              : String(messageResult.reason),
+      .then(
+        ([messageResult, groupResult, agentResult, brokerResult, aliasResult, profileResult]) => {
+          if (cancelled || version !== requestVersion.current) return
+          if (profileResult.status === 'rejected') {
+            setError(
+              profileResult.reason instanceof Error
+                ? profileResult.reason.message
+                : String(profileResult.reason),
+            )
+            return
+          }
+          const profile = profileResult.value
+          const nextDefault = profile.messaging.from_default || profile.urn
+          const previous = senderDefault.current
+          setNewMessageFrom((current) =>
+            !previous || current === previous.value || previous.urn !== profile.urn
+              ? nextDefault
+              : current,
           )
-          setGroups([])
-          return
-        }
-        setMessages(messageResult.value.messages ?? [])
-        setMessageTotals(messageResult.value.totals ?? null)
-        setTotal(messageResult.value.total ?? 0)
-        setError(messageResult.value.error ?? null)
-        if (groupResult.status === 'fulfilled') {
-          setGroups(groupResult.value.groups ?? [])
-          setGroupError(groupResult.value.error ?? null)
-        } else {
-          setGroups([])
-          setGroupError(
-            groupResult.reason instanceof Error
-              ? groupResult.reason.message
-              : String(groupResult.reason),
-          )
-        }
-        if (agentResult.status === 'fulfilled') {
-          const nextAgents = agentResult.value.agents ?? []
-          setAgents(nextAgents)
-          setNewMessageTo((current) => current || nextAgents[0]?.urn || '')
-          setNewGroupCreator((current) => current || nextAgents[0]?.urn || '')
-        } else {
-          setAgents([])
-        }
-        if (brokerResult.status === 'fulfilled') {
-          setBrokerEnvelopes(brokerResult.value.envelopes ?? [])
-        } else {
-          setBrokerEnvelopes([])
-        }
-      })
+          senderDefault.current = { urn: profile.urn, value: nextDefault }
+          if (aliasResult.status === 'rejected') {
+            setError(
+              aliasResult.reason instanceof Error
+                ? aliasResult.reason.message
+                : String(aliasResult.reason),
+            )
+            return
+          }
+          setAliases(aliasResult.value.aliases ?? [])
+          if (messageResult.status === 'rejected') {
+            setError(
+              messageResult.reason instanceof Error
+                ? messageResult.reason.message
+                : String(messageResult.reason),
+            )
+            setGroups([])
+            return
+          }
+          setMessages(messageResult.value.messages ?? [])
+          setMessageTotals(messageResult.value.totals ?? null)
+          setTotal(messageResult.value.total ?? 0)
+          setError(messageResult.value.error ?? null)
+          if (groupResult.status === 'fulfilled') {
+            setGroups(groupResult.value.groups ?? [])
+            setGroupError(groupResult.value.error ?? null)
+          } else {
+            setGroups([])
+            setGroupError(
+              groupResult.reason instanceof Error
+                ? groupResult.reason.message
+                : String(groupResult.reason),
+            )
+          }
+          if (agentResult.status === 'fulfilled') {
+            const nextAgents = agentResult.value.agents ?? []
+            setAgents(nextAgents)
+            setNewMessageTo((current) => current || nextAgents[0]?.urn || '')
+            setNewGroupCreator((current) => current || nextAgents[0]?.urn || '')
+          } else {
+            setAgents([])
+          }
+          if (brokerResult.status === 'fulfilled') {
+            setBrokerEnvelopes(brokerResult.value.envelopes ?? [])
+          } else {
+            setBrokerEnvelopes([])
+          }
+        },
+      )
       .catch((err: unknown) => {
         if (!cancelled && version === requestVersion.current)
           setError(err instanceof Error ? err.message : String(err))
@@ -539,7 +570,7 @@ export function MessagingPage() {
     return () => {
       cancelled = true
     }
-  }, [api, scope, readFilter, archiveFilter, offset])
+  }, [api, scope, readFilter, archiveFilter, offset, recipientFilter])
 
   const currentLoad = useRef(load)
   currentLoad.current = load
@@ -763,9 +794,29 @@ export function MessagingPage() {
   }
 
   function closeNewMessage() {
+    setDefaultSaved(false)
     setNewMessageOpen(false)
     setNewMessageBody('')
     setComposeError(null)
+  }
+
+  async function saveSenderDefault() {
+    setSavingDefault(true)
+    setComposeError(null)
+    setDefaultSaved(false)
+    try {
+      const profile = await api.saveMessageFromDefault(newMessageFrom.trim())
+      const value = profile.messaging.from_default || profile.urn
+      senderDefault.current = { urn: profile.urn, value }
+      setNewMessageFrom(value)
+      setDefaultSaved(true)
+      // Invalidate profile reads started before this save completed.
+      refreshCurrent()
+    } catch (err: unknown) {
+      setComposeError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingDefault(false)
+    }
   }
 
   async function sendNewMessage() {
@@ -962,6 +1013,19 @@ export function MessagingPage() {
                     <option value="all">All</option>
                   </select>
                 </label>
+                <label>
+                  Recipient filter{' '}
+                  <input
+                    aria-label="Recipient filter"
+                    placeholder="All addresses"
+                    value={recipientFilter}
+                    onChange={(e) => {
+                      setRecipientFilter(e.target.value)
+                      setOffset(0)
+                    }}
+                    className="border border-border bg-panel px-2 py-1"
+                  />
+                </label>
                 <Button
                   size="sm"
                   disabled={offset === 0 || loading}
@@ -1085,8 +1149,12 @@ export function MessagingPage() {
               <label className="space-y-1 text-[11px] text-text-subtle">
                 <span>From</span>
                 <input
+                  aria-label="From"
                   value={newMessageFrom}
-                  onChange={(e) => setNewMessageFrom(e.target.value)}
+                  onChange={(e) => {
+                    setNewMessageFrom(e.target.value)
+                    setDefaultSaved(false)
+                  }}
                   className="h-9 w-full rounded-md border border-border bg-panel px-3 font-mono text-[12px] text-text outline-none focus:border-border-strong"
                 />
               </label>
@@ -1117,6 +1185,13 @@ export function MessagingPage() {
                   className="h-9 w-full rounded-md border border-border bg-panel px-3 text-[12px] text-text"
                 />
               </label>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <Button size="sm" onClick={saveSenderDefault} disabled={savingDefault}>
+                {savingDefault ? 'Saving...' : 'Save From default'}
+              </Button>
+              {defaultSaved && <span role="status">From default saved</span>}
+              <span>Clear From and save to use the local user address.</span>
             </div>
             <details className="text-xs">
               <summary>Manage readable aliases</summary>

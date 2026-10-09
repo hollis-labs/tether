@@ -147,6 +147,47 @@ tether messages consume <message-id> --as msg://agent/agent-mux/torque-superviso
 tether messages archive <message-id> --as msg://agent/agent-mux/torque-supervisor
 ```
 
+## Sysop local user and From default
+
+Sysop's user inbox aggregates all user addresses before pagination. Read and
+archive filters persist through refresh; the optional Recipient filter accepts
+a canonical address or a configured readable alias. Opening an unread message
+keeps its detail and reply controls available after it leaves the unread page.
+
+The temporary local user record is `user-profile.json` in Tether's XDG data
+directory (`$XDG_DATA_HOME/tether`, normally `~/.local/share/tether`). For example:
+
+```json
+{
+  "urn": "msg://user/local/chris",
+  "aliases": [
+    {"urn": "msg://user/local/chris", "alias": "chris"},
+    {"urn": "msg://user/agent-mux/chris", "alias": "chris-mux"}
+  ],
+  "messaging": {"from_default": "msg://user/agent-mux/chris"}
+}
+```
+
+With no file, the local user is `msg://user/agent-mux/operator` and no preference
+is saved. With no saved default, compose uses the configured local user URN.
+Use **Save From default** in New Message to persist a canonical address or
+resolved alias; clear From and save to remove the preference. An invalid saved
+value surfaces an error instead of selecting another sender. Fix the local
+record to recover from an invalid saved value.
+
+Sysop exposes `GET /api/messages/profile` and
+`POST /api/messages/profile` with only `{"from_default":"<address-or-alias>"}`
+(empty string clears it). The server fixes the identity and preference key;
+clients cannot choose either. Saves atomically replace an owner-only record.
+This record supplies local preferences, not login or authentication. The real
+user model is tracked separately by CW-20261008-0137.
+
+Aliases in the local profile are case-insensitive, one readable alias per user
+address. Sysop combines them with the existing message-alias directory and
+refuses ambiguous names. Manage readable aliases updates directory entries;
+edit the local record for aliases it owns. Address and alias changes never
+rewrite stored envelopes: sending resolves to canonical URNs.
+
 ## Subscriptions
 
 `GET /messages/subscribe?to=<urn>` streams newly-created messages for a

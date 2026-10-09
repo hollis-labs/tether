@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,10 +57,12 @@ const (
 )
 
 type appServer struct {
-	reader      stateReader
-	catalogRoot string
-	addr        string
-	startedAt   time.Time
+	userProfilePath string
+	userProfileMu   sync.Mutex
+	reader          stateReader
+	catalogRoot     string
+	addr            string
+	startedAt       time.Time
 }
 
 type healthResponse struct {
@@ -624,6 +627,7 @@ func main() {
 	router.HandleFunc("/api/messages/groups/create", server.handleMessageGroupCreate)
 	router.HandleFunc("/api/messages/agents", server.handleMessageAgents)
 	router.HandleFunc("/api/messages/aliases", server.handleMessageAliases)
+	router.HandleFunc("/api/messages/profile", server.handleMessageProfile)
 	router.HandleFunc("/api/broker/envelopes", server.handleBrokerEnvelopes)
 	router.HandleFunc("/api/activity/events", server.handleActivityEvents)
 	router.HandleFunc("/api/activity/tool-calls", server.handleActivityToolCalls)
@@ -2282,7 +2286,11 @@ func (s *appServer) loadMessagesPage(q store.MessageQuery) (messagesResponse, er
 			return err
 		}
 		if q.Recipient != "" {
-			recipient, err := db.ResolveMessageAddress(q.Recipient)
+			profile, err := s.loadUserProfile()
+			if err != nil {
+				return err
+			}
+			recipient, err := resolveProfileAddress(profile, db, q.Recipient)
 			if err != nil {
 				return err
 			}
@@ -2489,12 +2497,17 @@ func (s *appServer) handleMessageReply(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
-	from, err := db.ResolveMessageAddress(req.From)
+	profile, err := s.loadUserProfile()
+	if err != nil {
+		writeProfileError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	from, err := resolveProfileAddress(profile, db, req.From)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "message": err.Error()})
 		return
 	}
-	to, err := db.ResolveMessageAddress(req.To)
+	to, err := resolveProfileAddress(profile, db, req.To)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "message": err.Error()})
 		return

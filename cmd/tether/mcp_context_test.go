@@ -46,14 +46,15 @@ func TestProxyEventForwarderCarriesSessionCredential(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	bus := &subscribedForwardBus{Bus: events.NewBus(events.BusOptions{Persister: db}), ready: make(chan struct{})}
+	// Bound forwarding, not SQLite schema setup under race/coverage.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

@@ -1,6 +1,6 @@
 // Run with browser_run_code_unsafe(code=contents of this file) against the owned
 // Vite fixture on 15177. Every API request is intercepted; no state DB is used.
-;async (page) => {
+async (page) => {
   const base = 'http://127.0.0.1:15177'
   await page.unroute(`${base}/api/**`)
   let read = false
@@ -8,6 +8,11 @@
   let releaseRead
   let readStarted
   const queries = []
+  let profile = { urn: 'msg://user/local/chris', aliases: [], messaging: {} }
+  let profileError = false
+  let delayNextProfile = false
+  let profileStarted
+  let releaseProfile
   const totals = {
     total: 102,
     user: { total: 1, unread: 1, archived: 0 },
@@ -18,7 +23,33 @@
     const request = route.request()
     const url = new URL(request.url())
     let body = {}
-    if (url.pathname === '/api/messages/read') {
+    if (url.pathname === '/api/messages/profile') {
+      if (profileError) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'invalid saved messaging.from_default in user profile' }),
+        })
+        return
+      }
+      if (request.method() === 'POST') {
+        const submitted = request.postDataJSON()
+        if (Object.keys(submitted).join(',') !== 'from_default')
+          throw new Error('client chose preference key or identity')
+        const value =
+          submitted.from_default === '@chris-mux'
+            ? 'msg://user/agent-mux/chris'
+            : submitted.from_default
+        profile = { ...profile, messaging: value ? { from_default: value } : {} }
+      }
+      body = profile
+      if (request.method() === 'GET' && delayNextProfile) {
+        delayNextProfile = false
+        body = structuredClone(profile)
+        profileStarted?.()
+        await new Promise(resolve => { releaseProfile = resolve })
+      }
+    } else if (url.pathname === '/api/messages/read') {
       readStarted?.()
       if (delayed)
         await new Promise((resolve) => {
@@ -76,6 +107,9 @@
   const readRefresh = page.waitForResponse((r) => read && r.url().includes('/api/messages?'))
   await page.getByRole('button', { name: 'Open message from local/test', exact: true }).click()
   await readRefresh
+  await page
+    .getByRole('button', { name: 'Open message from local/test', exact: true })
+    .waitFor({ state: 'hidden' })
   const dialog = page.getByRole('dialog')
   await dialog.waitFor()
   if (!(await dialog.getByText('Fixture body', { exact: true }).isVisible()))
@@ -123,7 +157,57 @@
   await recipient.selectOption('msg://agent/local/stable')
   if ((await recipient.locator('option:checked').innerText()) !== 'Backend label')
     throw new Error('recipient control displays the URN instead of its label')
+  const compose = page.getByRole('dialog')
+  const from = compose.getByLabel('From', { exact: true })
+  if ((await from.inputValue()) !== profile.urn)
+    throw new Error('configured local user default ignored')
+  await from.fill('@chris-mux')
+  await compose.getByRole('button', { name: 'Save From default', exact: true }).click()
+  await compose.getByText('From default saved', { exact: true }).waitFor()
+  if ((await from.inputValue()) !== 'msg://user/agent-mux/chris')
+    throw new Error('saved alias did not become canonical')
+  await page.reload()
+  await page.getByRole('button', { name: 'New Message', exact: true }).click()
+  await page.getByRole('dialog').getByLabel('From', { exact: true }).waitFor()
+  // Wait for the profile-backed value, rather than relying on response timing.
+  await page.waitForFunction(
+    () =>
+      document.querySelector('input[aria-label="From"]')?.value === 'msg://user/agent-mux/chris',
+  )
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+  const filteredResponse = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/messages?') &&
+      new URL(r.url()).searchParams.get('to') === '@chris-mux',
+  )
+  await page.getByLabel('Recipient filter', { exact: true }).fill('@chris-mux')
+  await filteredResponse
+  delayNextProfile = true
+  const staleStarted = new Promise(resolve => { profileStarted = resolve })
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await staleStarted
+  await page.getByRole('button', { name: 'New Message', exact: true }).click()
+  await page.getByRole('dialog').getByLabel('From', { exact: true }).fill('msg://user/local/chris')
+  await page.getByRole('dialog').getByRole('button', { name: 'Save From default', exact: true }).click()
+  await page.getByRole('dialog').getByText('From default saved', { exact: true }).waitFor()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Refresh' && !button.disabled))
+  const staleResponse = page.waitForResponse(r => r.url().endsWith('/api/messages/profile') && r.request().method() === 'GET')
+  releaseProfile()
+  await staleResponse
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  if (await page.getByRole('dialog').getByLabel('From', { exact: true }).inputValue() !== 'msg://user/local/chris')
+    throw new Error('older profile read restored the previous saved default')
+  profileError = true
+  await page.reload()
+  await page
+    .getByText('invalid saved messaging.from_default in user profile', { exact: true })
+    .waitFor()
   return {
+    localUserDefault: true,
+    delayedProfileReadCannotUndoSave: true,
+    canonicalSavedDefaultSurvivesReload: true,
+    invalidSavedDefaultSurfaced: true,
+    optionalRecipientFilter: true,
     unreadDetailRetained: true,
     replyAvailable: true,
     delayedReadUsesLatestScopeFilterAndPage: true,
