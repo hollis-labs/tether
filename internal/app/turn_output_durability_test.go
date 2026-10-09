@@ -283,6 +283,23 @@ func TestTurnOutputRecoveryLossPreservesObservedTurnAndMarksNext(t *testing.T) {
 	}
 }
 
+func TestTurnOutputRecoveryLossSurvivesRejectedColdRetry(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	if err := svc.trackTurnSubmission("s1", func() error {
+		svc.MarkTurnOutputSessionLost("s1")
+		return provider.ErrProviderNotAuthenticated
+	}); !errors.Is(err, provider.ErrProviderNotAuthenticated) {
+		t.Fatal(err)
+	}
+	output.observeProvider(gopevents.Done{Text: "fresh accepted result"})
+	output.observeProvider(gopevents.Done{Text: "continued result"})
+	got := outputEvents(t, svc)
+	if len(got) != 2 || !got[0].FreshConversation || got[1].FreshConversation {
+		t.Fatal("rejected cold retry consumed continuity marker")
+	}
+}
+
 func TestTurnOutputTrackerCreatesPendingLogWithoutInventingOutput(t *testing.T) {
 	svc, _ := outputHarness(t, nil)
 	workspace := t.TempDir()

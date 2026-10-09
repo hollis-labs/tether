@@ -159,6 +159,13 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 }
 
 func (o *sessionTurnOutput) settleTurn() {
+	if o.turnID != "" && o.freshConversationTurn == o.turnID {
+		if _, completed := o.completed[o.turnID]; !completed {
+			// A refused/canceled provisional submission did not establish a
+			// new conversation. Carry the loss marker to its next attempt.
+			o.freshConversationPending = true
+		}
+	}
 	if o.turnDone != nil {
 		close(o.turnDone)
 		// A turn ended, however it ended: the session is at an idle boundary.
