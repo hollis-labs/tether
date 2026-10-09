@@ -372,49 +372,61 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 	if err := ValidateProjection(previous); err != nil {
 		return Projection{}, err
 	}
-	if len(event.Raw) == 0 || len(event.Raw) > ProjectionFrameBytes || !utf8.Valid(event.Raw) || !projectionUnicodeEscapes(event.Raw) || !uniqueJSON(event.Raw) || event.Identity == "" {
-		return Projection{}, fail("projection_invalid")
-	}
-	hash := digest(event.Raw)
-	for _, old := range previous.Sources {
-		if old.SourceEventID == event.Identity {
-			if old.PayloadSHA256 != hash || old.Cursor != event.Cursor {
-				return Projection{}, fail("source_conflict")
-			}
-			raw, _ := json.Marshal(previous)
-			return DecodeProjection(raw)
-		}
-	}
-	if len(previous.Sources) >= ProjectionSources {
-		return Projection{}, fail("pressure_retained")
-	}
-	oldNumber := uint64(0)
-	if previous.AcceptedSourceCursor != "" {
-		oldNumber, _ = cursorNumber(previous.JournalIdentity, previous.AcceptedSourceCursor)
-	}
-	nextNumber, err := cursorNumber(previous.JournalIdentity, event.Cursor)
-	if err != nil || oldNumber == math.MaxUint64 || (nextNumber != oldNumber+1 && nextNumber != oldNumber) {
-		return Projection{}, fail("source_gap")
-	}
 	raw, _ := json.Marshal(previous)
 	next, err := DecodeProjection(raw)
 	if err != nil {
 		return Projection{}, err
 	}
-	if strings.HasPrefix(event.Identity, previous.JournalIdentity+":stdout:") {
-		span := strings.Split(strings.TrimPrefix(event.Identity, previous.JournalIdentity+":stdout:"), ":")
+	if _, err := projectFrozenSourceInto(&next, event); err != nil {
+		return Projection{}, err
+	}
+	if err := ValidateProjection(next); err != nil {
+		return Projection{}, err
+	}
+	return next, nil
+}
+
+// projectFrozenSourceInto extends a private, validated candidate. Batch callers
+// validate the finished candidate once instead of decoding the entire growing
+// history for each record. Errors never authorize persistence or inbox removal.
+func projectFrozenSourceInto(next *Projection, event Event) (int, error) {
+	if len(event.Raw) == 0 || len(event.Raw) > ProjectionFrameBytes || !utf8.Valid(event.Raw) || !projectionUnicodeEscapes(event.Raw) || !uniqueJSON(event.Raw) || event.Identity == "" {
+		return -1, fail("projection_invalid")
+	}
+	hash := digest(event.Raw)
+	for index, old := range next.Sources {
+		if old.SourceEventID == event.Identity {
+			if old.PayloadSHA256 != hash || old.Cursor != event.Cursor {
+				return -1, fail("source_conflict")
+			}
+			return index, nil
+		}
+	}
+	if len(next.Sources) >= ProjectionSources {
+		return -1, fail("pressure_retained")
+	}
+	oldNumber := uint64(0)
+	if next.AcceptedSourceCursor != "" {
+		oldNumber, _ = cursorNumber(next.JournalIdentity, next.AcceptedSourceCursor)
+	}
+	nextNumber, err := cursorNumber(next.JournalIdentity, event.Cursor)
+	if err != nil || oldNumber == math.MaxUint64 || (nextNumber != oldNumber+1 && nextNumber != oldNumber) {
+		return -1, fail("source_gap")
+	}
+	if strings.HasPrefix(event.Identity, next.JournalIdentity+":stdout:") {
+		span := strings.Split(strings.TrimPrefix(event.Identity, next.JournalIdentity+":stdout:"), ":")
 		if len(span) != 2 {
-			return Projection{}, fail("source_gap")
+			return -1, fail("source_gap")
 		}
 		start, e1 := strconv.ParseUint(span[0], 10, 64)
 		end, e2 := strconv.ParseUint(span[1], 10, 64)
-		if e1 != nil || e2 != nil || strconv.FormatUint(start, 10) != span[0] || strconv.FormatUint(end, 10) != span[1] || start != previous.StdoutOffset || end <= start || end-start != uint64(len(event.Raw))+1 {
-			return Projection{}, fail("source_gap")
+		if e1 != nil || e2 != nil || strconv.FormatUint(start, 10) != span[0] || strconv.FormatUint(end, 10) != span[1] || start != next.StdoutOffset || end <= start || end-start != uint64(len(event.Raw))+1 {
+			return -1, fail("source_gap")
 		}
 		next.StdoutOffset = end
 		next.PartialStart = end
 	} else if nextNumber == oldNumber {
-		return Projection{}, fail("source_gap")
+		return -1, fail("source_gap")
 	}
 	source := SourceDisposition{SourceEventID: event.Identity, Cursor: event.Cursor, PayloadSHA256: hash, Kind: "notification", Disposition: "retained_unsupported"}
 	// Raw metadata and provider exit are closed envelopes produced by the durable
@@ -426,22 +438,22 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 	if strictProjectionJSON(event.Raw, ProjectionFrameBytes, &envelope) == nil && envelope.Kind != "" {
 		switch envelope.Kind {
 		case "shim.pin_adopted", "shim.launch_intent", "shim.started", "shim.attached", "shim.detached", "shim.inject_retry", "shim.inject_intent", "shim.inject_outcome", "shim.refused", "shim.control_intent", "shim.control_outcome", "codex.stdout_fragment":
-			if event.Identity != previous.JournalIdentity+":"+event.Cursor+":"+envelope.Kind {
-				return Projection{}, fail("source_conflict")
+			if event.Identity != next.JournalIdentity+":"+event.Cursor+":"+envelope.Kind {
+				return -1, fail("source_conflict")
 			}
 			source.Kind = "metadata"
 			source.Disposition = "metadata_only"
 		case "exit":
 			source.Kind = "provider_exit" // authentication remains unavailable here
 		}
-	} else if event.Identity == previous.JournalIdentity+":exit:"+event.Cursor {
+	} else if event.Identity == next.JournalIdentity+":exit:"+event.Cursor {
 		source.Kind = "provider_exit" // Never authenticate from a pure candidate.
-	} else if event.Identity == previous.JournalIdentity+":"+event.Cursor+":stderr" {
+	} else if event.Identity == next.JournalIdentity+":"+event.Cursor+":stderr" {
 		// Stderr is a retained output obligation, not a protocol response.
 	} else {
 		m, err := Decode(event.Raw)
 		if err != nil {
-			return Projection{}, err
+			return -1, err
 		}
 		if m.Method == "" {
 			source.Kind = "response"
@@ -449,17 +461,14 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 		} else if len(m.ID) != 0 {
 			source.Kind = "server_request"
 		} else {
-			if err := projectNotification(&next, m, event, &source); err != nil {
-				return Projection{}, err
+			if err := projectNotification(next, m, event, &source); err != nil {
+				return -1, err
 			}
 		}
 	}
 	next.Sources = append(next.Sources, source)
 	next.AcceptedSourceCursor = event.Cursor
-	if err := ValidateProjection(next); err != nil {
-		return Projection{}, err
-	}
-	return next, nil
+	return len(next.Sources) - 1, nil
 }
 
 // supportedProjectionParams classifies closed supported shapes. Other shapes remain retained.

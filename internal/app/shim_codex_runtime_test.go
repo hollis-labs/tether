@@ -101,8 +101,12 @@ func TestHostedCodexActualLaunchAndRecovery(t *testing.T) { runHostedCodexDelive
 func TestHostedCodexActualCompletedTurnDeliveryAndRecovery(t *testing.T) {
 	runHostedCodexDeliveryFixture(t, true)
 }
+func TestHostedCodexActualRetainedTurnDeliveryAndRecovery(t *testing.T) {
+	runHostedCodexDeliveryFixture(t, true, true)
+}
 
-func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
+func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool) {
+	retain := len(retained) != 0 && retained[0]
 	t.Setenv(EnvLaunchHost, "shim")
 	root, err := os.MkdirTemp("/var/tmp", "th2-ca-")
 	if err != nil {
@@ -161,8 +165,14 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 	if req.Runtime == original {
 		t.Fatal("actual launch fell back to direct runtime")
 	}
-	if _, ok := req.Runtime.(*shimcodex.Runtime); !ok {
+	runtime, ok := req.Runtime.(*shimcodex.Runtime)
+	if !ok {
 		t.Fatal("actual launch bypassed hosted protocol")
+	}
+	if retain {
+		// Reproduce the original durable private-completion boundary: the host
+		// and provider run normally, but public delivery is connected at boot.
+		runtime.Config.Deliver = nil
 	}
 	if err = s.Manager.Start(ctx, req); err != nil {
 		t.Fatal(err)
@@ -186,7 +196,7 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 	before, err := port.Load(ctx)
 	if complete {
 		deadline := time.Now().Add(5 * time.Second)
-		for len(outputEvents(t, s)) == 0 || len(before.Inbox) != 0 || before.LastTerminal != "app-turn" {
+		for before.LastTerminal != "app-turn" || !retain && (len(outputEvents(t, s)) == 0 || len(before.Inbox) != 0) {
 			if time.Now().After(deadline) {
 				t.Fatal("actual provider completion did not earn public durable delivery")
 			}
@@ -197,7 +207,11 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 			}
 		}
 		got := outputEvents(t, s)
-		if len(got) != 1 || got[0].MessageID == "" || got[0].ProviderResultID == "" {
+		if retain {
+			if len(got) != 0 || len(before.Inbox) == 0 || before.Delivery != nil {
+				t.Fatal("private completion fabricated delivery")
+			}
+		} else if len(got) != 1 || got[0].MessageID == "" || got[0].ProviderResultID == "" {
 			t.Fatal("actual provider output was not staged")
 		}
 	}
@@ -233,6 +247,12 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool) {
 	}
 	if complete && len(outputEvents(t, s)) != 1 {
 		t.Fatal("controller recovery repeated public output")
+	}
+	if retain {
+		got := outputEvents(t, s)
+		if got[0].MessageID == "" || got[0].ProviderResultID == "" {
+			t.Fatal("boot recovery failed to stage retained provider output")
+		}
 	}
 	inspection, err := p.Inspect(ctx, r)
 	if err != nil || !inspection.Running || inspection.Receipt.ProviderPID != r.ProviderPID {

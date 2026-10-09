@@ -53,13 +53,15 @@ func BuildDeliveryProjection(state State) (Projection, error) {
 		p.StdoutOffset = p.PartialStart
 		p.PartialBytes = nil
 	}
-	var err error
+	if err := ValidateProjection(p); err != nil {
+		return p, err
+	}
 	for _, event := range state.Inbox {
-		p, err = ProjectFrozenSource(p, event)
+		index, err := projectFrozenSourceInto(&p, event)
 		if err != nil {
 			return p, err
 		}
-		source := &p.Sources[len(p.Sources)-1]
+		source := &p.Sources[index]
 		if source.Kind == "server_request" {
 			for _, request := range state.ServerRequests {
 				if request.Source == event.Identity && request.Written {
