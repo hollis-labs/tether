@@ -103,7 +103,7 @@ func (s *Service) recoverRetainedCodexTeam(ctx context.Context, key string, row 
 		return err
 	}
 	plan.ResumeProviderSessionID = mapping.NativeSessionID.String
-	checkpoint, err := s.Store.GetLatestCheckpointForAgent(plan.LogicalAgentID)
+	checkpoint, err := s.retainedRecoveryCheckpoint(ctx, row.ID, plan.LogicalAgentID, actor)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
