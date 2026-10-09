@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "tether messages claude-hook --as msg://agent/example/worker --timeout 2s",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "tether messages claude-hook --as msg://agent/example/worker --timeout 2s",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "tether messages claude-hook --as msg://agent/example/worker --timeout 2s",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
