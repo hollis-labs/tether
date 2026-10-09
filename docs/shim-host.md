@@ -1,7 +1,7 @@
 # Opt-in shim hosting
 
-The daemon can host Claude streaming-stdio providers and retain the Codex
-app-server JSON-RPC protocol through a persistent shim. Direct execution remains
+The daemon can host Claude streaming-stdio and Codex app-server JSON-RPC
+providers through a persistent shim. Direct execution remains
 the default. Codex public output delivery has additional requirements described
 below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
@@ -84,11 +84,43 @@ observed host. A missing or mismatched checkpoint remains an unknown outcome,
 and never falls back to creating a fresh direct Codex thread. Uncertain input
 effects are retained rather than submitted again.
 
-The Codex protocol foundation alone does not certify public output delivery.
-The daemon also requires a verified delivery record before treating replay or
-terminal output as settled. In the current foundation, the private output
-projection returns `unsupported`; protocol retention and controller attachment
-must not be interpreted as durable public completion.
+## Codex delivery and recovery
+
+Completed supported Codex output is projected from the retained native inbox
+into `session.turn_output` and the selected message route. Final-answer items
+supply final text when present; otherwise supported agent-message items supply
+it. The producer commits its private retry journal before database publication.
+A stable `output_id` binds the native completion source and body, so retry after
+publication does not invent another public output.
+
+The delivery transaction then reinterprets the frozen native inbox, verifies the
+actual public event, content identity and selected-route staging, and atomically
+saves the projection with the inbox drain. Producer acceptance alone cannot
+issue that delivery proof. A concurrent protocol change keeps the inbox pending
+for retry; an ambiguous receipt commit refuses further input until recovery can
+resolve it. Public channel attachment and terminal consumption remain separate
+boundaries.
+
+Reattachment uses the exact original host and durable protocol ledger. Before
+admitting replay records, a reconnect settles its existing frozen inbox under a
+five-second delivery context so a batch at capacity can make room. Failure or
+unsupported obligations refuse that controller while retaining the private
+inbox; they do not acknowledge or discard unsupported output. Projection builds
+one private batch and validates it before the checked delivery transaction.
+
+Readiness requires replay through the observed journal high water with verified
+delivery; a bridge process starting is not enough. A failed readiness check
+closes the unsettled controller while retaining the provider and custody. It
+never repeats initialization, starts a replacement thread or resubmits an
+uncertain turn.
+
+Unsupported output unions, stderr records, unanswered server callbacks and
+uncertain input remain retained and may prevent readiness. An authenticated provider exit while
+a native turn is still open remains unsupported rather than certifying a
+completed turn. Protocol retention, controller attachment and provider exit
+alone are not public completion evidence. The source path for a surviving hosted
+Codex provider does not authorize replacement of gone custody with a fresh
+provider.
 
 ## Claude delivery and recovery
 

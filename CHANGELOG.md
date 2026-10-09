@@ -10,6 +10,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Connect supported hosted Codex output to the durable producer and verify public
+  content and selected-route staging before atomically draining the native inbox.
+  Reattach the exact surviving host using its retained protocol and replay high
+  water; settle an existing frozen batch before admitting replay at capacity.
+  Unsupported output/input obligations remain pending, and this delivery proof
+  does not authorize Gone custody retirement or replacement. See
+  `docs/shim-host.md`. (CW-20261008-0126)
 - Recheck hosted actor wake bindings before claiming and sending. Pull-only
   bindings and changed or revoked claimed generations refuse in-flight delivery;
   never-bound and lapsed hosted bindings retain compatibility lookup. The final
