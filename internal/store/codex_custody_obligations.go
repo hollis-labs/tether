@@ -102,6 +102,9 @@ func (s *Store) EvaluateCodexCustodyObligations(ctx context.Context, observed sh
 		result.Active = result.Active || p.ActiveTurnID != ""
 		for _, turn := range p.Turns {
 			result.Active = result.Active || turn.Phase == "open"
+			for _, item := range turn.Items {
+				result.Pending = result.Pending || item.CompletedSourceID == ""
+			}
 		}
 		for _, source := range p.Sources {
 			result.Unknown = result.Unknown || source.Disposition == "retained_unsupported"

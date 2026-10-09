@@ -203,7 +203,7 @@ func TestCodexCustodyObligationsPublicReceiptDoesNotSettleOpenTurn(t *testing.T)
 }
 
 func TestCodexCustodyObligationsEndedAndUnsupportedReceiptRemainUnavailable(t *testing.T) {
-	for _, kind := range []string{"ended", "unsupported_source", "outstanding_input"} {
+	for _, kind := range []string{"ended", "unsupported_source", "outstanding_input", "unfinished_item"} {
 		t.Run(kind, func(t *testing.T) {
 			db, state := codexObligationDeliveredFixture(t)
 			switch kind {
@@ -217,9 +217,13 @@ func TestCodexCustodyObligationsEndedAndUnsupportedReceiptRemainUnavailable(t *t
 			case "outstanding_input":
 				state.Delivery.OutstandingInputIDs = []string{"4294967296"}
 				writeCodexObligationFixture(t, db, state)
+			case "unfinished_item":
+				state.Delivery.Turns[0].Items[0].CompletedSourceID = ""
+				writeCodexObligationFixture(t, db, state)
 			}
 			got, err := db.EvaluateCodexCustodyObligations(context.Background(), state)
-			if err != nil || !got.SnapshotVerified || got.Refusal == "" || kind != "outstanding_input" && (!got.Unknown || got.DeliveryVerified) || kind == "outstanding_input" && !got.Pending {
+			pending := kind == "outstanding_input" || kind == "unfinished_item"
+			if err != nil || !got.SnapshotVerified || got.Refusal == "" || !pending && (!got.Unknown || got.DeliveryVerified) || pending && !got.Pending {
 				t.Fatalf("unsupported obligations omitted: %+v %v", got, err)
 			}
 		})
