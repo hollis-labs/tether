@@ -64,7 +64,7 @@ func (s *Store) EvaluateCodexCustodyObligations(ctx context.Context, observed sh
 	result.Refusal = CodexCustodySnapshotConflict
 	frozen, err := json.Marshal(observed)
 	if err != nil || !bytes.Equal(frozen, before.raw) {
-		return result, nil
+		return result, ctx.Err()
 	}
 	state := before.protocol
 	row := before.placement
