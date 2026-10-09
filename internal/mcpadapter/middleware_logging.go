@@ -81,7 +81,7 @@ func (m *LoggingMiddleware) Handle(ctx context.Context, call ToolCall, next Tool
 	if server == "" {
 		server = "tether"
 	}
-	if sc := trace.SpanContextFromContext(extractTraceContext(call.Meta, call.Args)); sc.IsValid() {
+	if sc := trace.SpanContextFromContext(extractTraceContext(ctx, call.Meta, call.Args)); sc.IsValid() {
 		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 	}
 	service := telemetry.Service{Publisher: m.bus, Secrets: m.secrets}

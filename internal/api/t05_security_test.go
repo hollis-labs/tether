@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // TestMessageSend_SenderIdentityIsSelfAssertedByDesign documents, as an

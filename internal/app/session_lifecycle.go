@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentlaunch/sessionshim"
-	"github.com/hollis-labs/agentkit/agentruntime/sessionkit"
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/sessionkit"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/sessionshim"
+	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -438,11 +438,20 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		if token == "" {
 			mcpEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 		}
-		prepared, err := s.prepareSharedLaunch(ctx, plan, ws.Root, plantContextInput{
-			DaemonOwned:   ownership == config.MCPUpstreamsDaemon,
-			TetherCommand: mcpCommand,
-			TetherArgs:    mcpArgs,
-			TetherEnv:     mcpEnv,
+		artifactCtx, closeArtifactOperation := context.WithCancel(ctx)
+		defer closeArtifactOperation()
+		artifactAdmission, err := s.launchArtifactAdmission(artifactCtx, sessionID, row, plan)
+		if err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, err
+		}
+		prepared, err := s.prepareSharedLaunch(artifactCtx, plan, ws.Root, plantContextInput{
+			ArtifactAdmission: artifactAdmission,
+			DaemonOwned:       ownership == config.MCPUpstreamsDaemon,
+			TetherCommand:     mcpCommand,
+			TetherArgs:        mcpArgs,
+			TetherEnv:         mcpEnv,
 		})
 		if err != nil {
 			exit := 1

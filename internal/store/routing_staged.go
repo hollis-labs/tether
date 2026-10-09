@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // RoutingStageRetention is the normal 30-day retention window for an output
