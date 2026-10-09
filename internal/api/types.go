@@ -175,12 +175,16 @@ type LaunchRequest struct {
 // ResumeOptions carries the optional arguments of a resume.
 type ResumeOptions struct {
 	// IdempotencyKey makes the resume idempotent (CW-20260930-0229).
-	IdempotencyKey string
+	IdempotencyKey  string
+	NativeOnly      bool
+	SourceSessionID string
 }
 
 // ResumeRequest is the optional body of POST /logical-agents/{id}/resume.
 type ResumeRequest struct {
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	IdempotencyKey  string `json:"idempotency_key,omitempty"`
+	NativeOnly      bool   `json:"native_only,omitempty"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
 }
 
 // CreateSessionInput mirrors app.CreateSessionInput in shape but is defined

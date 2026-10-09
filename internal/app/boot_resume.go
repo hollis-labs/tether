@@ -15,7 +15,11 @@ import (
 // surviving shims and identified disappeared children. Idle agents remain cold;
 // unread mail, a recorded open assignment or active durable/pool membership is
 // positive work evidence. No mailbox is consumed by this selection.
-func (s *Service) BootResumeSessions(ctx context.Context) {
+type BootResumeOptions struct {
+	NativeOnlySourceIDs []string
+}
+
+func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeOptions) {
 	if s.BootTeamRecovery != nil {
 		if err := s.BootTeamRecovery(ctx); err != nil {
 			log.Printf("boot recovery: retained members: %v", err)
@@ -36,7 +40,7 @@ func (s *Service) BootResumeSessions(ctx context.Context) {
 	}
 }
 
-func (s *Service) bootResumeAgent(ctx context.Context, agentID string) {
+func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options ...BootResumeOptions) {
 	live, err := s.Store.AgentHasLiveSession(ctx, agentID)
 	if err != nil || live {
 		return
