@@ -29,6 +29,7 @@ import (
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
 	providerResultID string
+	lastActivity     time.Time
 	submissionGate   sync.Mutex
 	accepted         bool
 	submissions      int
@@ -75,6 +76,11 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	switch ev.(type) {
+	case gopevents.Delta, gopevents.ToolUse, gopevents.ToolResult, gopevents.Thinking,
+		gopevents.SubagentSpawn, gopevents.PermissionDenied, gopevents.Done, gopevents.Error:
+		o.noteTurnActivity()
+	}
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
@@ -115,6 +121,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		runtimeevents.KindAgentToolResult, runtimeevents.KindAgentSubagentSpawn, runtimeevents.KindAgentPermissionRequested,
 		runtimeevents.KindAgentPermissionResolved, runtimeevents.KindAgentPermissionDenied,
 		runtimeevents.KindTurnCompleted, runtimeevents.KindTurnFailed:
+		o.noteTurnActivity()
 		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
