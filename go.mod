@@ -7,22 +7,10 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.45.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
-	github.com/hollis-labs/agent-contracts-leaf v0.3.0
-	github.com/hollis-labs/agentkit v0.26.1
-	github.com/hollis-labs/go-agent-wrapper v0.28.0
-	github.com/hollis-labs/go-apppaths v0.1.0
-	github.com/hollis-labs/go-llm-types v0.5.1
-	github.com/hollis-labs/go-localdaemon v0.1.0
-	github.com/hollis-labs/go-mcp v0.14.1
-	github.com/hollis-labs/go-messaging v0.5.2
-	github.com/hollis-labs/go-modelsdev v0.2.0
-	github.com/hollis-labs/go-otel v0.6.1
-	github.com/hollis-labs/go-permission v0.1.0
-	github.com/hollis-labs/go-providers v0.46.0
-	github.com/hollis-labs/go-runner v0.8.2
-	github.com/hollis-labs/go-runtime-events v0.2.2
-	github.com/hollis-labs/go-sandbox v0.6.0
-	github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da
+	github.com/hollis-labs/libs/plugin-mcp v0.1.1
+	github.com/hollis-labs/libs/util v0.2.0
+	github.com/hollis-labs/substrate/harness v0.3.0
+	github.com/hollis-labs/substrate/llm-core v0.1.0
 	github.com/hollis-labs/substrate/mesh v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
@@ -35,7 +23,7 @@ require (
 	golang.org/x/term v0.46.0
 	google.golang.org/genai v1.58.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.49.1
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -85,13 +73,11 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
-	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
-	github.com/hollis-labs/go-llm-contracts v0.4.0 // indirect
-	github.com/hollis-labs/go-materialize v0.1.0 // indirect
-	github.com/hollis-labs/go-safefs v0.1.0 // indirect
+	github.com/hollis-labs/substrate/agent v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
@@ -107,7 +93,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	modernc.org/libc v1.72.0 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )

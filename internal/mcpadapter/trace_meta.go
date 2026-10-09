@@ -17,8 +17,9 @@ package mcpadapter
 import (
 	"context"
 
-	otelprop "github.com/hollis-labs/go-otel/propagation"
+	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // traceMetaKeys are the keys go-otel's propagation helpers read and write.
@@ -40,14 +41,11 @@ var traceMetaKeys = []string{"_traceparent", "_tracestate"}
 // consumer in the portfolio injects. A cosmetic redundancy is the cheaper
 // price. This is a choice, not an oversight.
 //
-// InjectMCP no-ops on an invalid span context, so a call made with no active
+// Injection no-ops on an invalid span context, so a call made with no active
 // span leaves params.Meta untouched rather than set to an empty map.
 func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
 	fields := map[string]any(params.Meta)
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	injected := otelprop.InjectMCP(ctx, fields)
+	injected := otelprop.InjectMCPMeta(ctx, fields)
 	if len(injected) == 0 {
 		return
 	}
@@ -68,11 +66,15 @@ func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) 
 //
 // Reading arguments is safe in a way WRITING them was not: reading an
 // upstream's own key cannot make a call fail schema validation.
-func extractTraceContext(meta, args map[string]any) context.Context {
+func extractTraceContext(ctx context.Context, meta, args map[string]any) context.Context {
+	// Only the carrier establishes the extracted parent. Preserve request
+	// values and cancellation without treating an existing local span as a
+	// remotely supplied parent when the carrier is empty or invalid.
+	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	if hasTraceKeys(meta) {
-		return otelprop.ExtractMCP(meta)
+		return otelprop.ExtractMCPMeta(ctx, meta)
 	}
-	return otelprop.ExtractMCP(args)
+	return otelprop.ExtractMCPMeta(ctx, args)
 }
 
 // hasTraceKeys reports whether m carries trace context, so an empty _meta

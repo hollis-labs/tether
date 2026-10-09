@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // BuildRouter composes a federation Config, the daemon's local messaging

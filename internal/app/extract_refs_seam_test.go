@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/api/stub"
@@ -65,7 +65,7 @@ func TestLaunchConfigSeam_PlantedMCPJSON(t *testing.T) {
 				t.Fatalf("mcpPlan.Attribution = %q, want %q", mcpPlan.Attribution, tc.wantAttr)
 			}
 
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, wsRoot, plantContextInput{
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, wsRoot, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan),
 				TetherCommand: tetherCommandPath(),
 				TetherArgs:    mcpPlan.Args,
 			})

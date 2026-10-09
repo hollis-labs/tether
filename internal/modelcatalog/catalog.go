@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 )
 
 // Catalog is Tether's thin wrapper around go-modelsdev. It is the single

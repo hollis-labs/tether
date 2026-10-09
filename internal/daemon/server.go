@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	otelprop "github.com/hollis-labs/go-otel/propagation"
+	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"

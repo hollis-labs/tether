@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -70,7 +70,7 @@ func TestWorkspaceParity_GeneratedBootLocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{})
+			prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan)})
 			if err != nil {
 				t.Fatal(err)
 			}

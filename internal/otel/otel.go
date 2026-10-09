@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	hotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/libs/util/otel"
 )
 
 const (

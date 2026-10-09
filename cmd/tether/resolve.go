@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/app"

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 	"github.com/hollis-labs/tether/internal/store"

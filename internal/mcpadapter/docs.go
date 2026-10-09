@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"

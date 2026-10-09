@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	messageDelivery "github.com/hollis-labs/go-messaging/delivery"
+	messageDelivery "github.com/hollis-labs/substrate/mesh/messaging/delivery"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/teamhost"
 	"github.com/hollis-labs/tether/internal/teamstore"

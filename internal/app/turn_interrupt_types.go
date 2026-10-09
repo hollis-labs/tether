@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 )
 
 // TurnInterruptResult identifies the submission that ended and its bound

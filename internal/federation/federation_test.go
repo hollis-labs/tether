@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/memstore"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/memstore"
 )
 
 func TestBuildRouterDisabledReturnsNil(t *testing.T) {
