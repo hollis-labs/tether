@@ -79,6 +79,12 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 		return true
 	}
 	if inspection.Gone {
+		if plan.TeamMember {
+			if err = s.recoverGoneTeamShim(ctx, row, receipt, host, recordedPIDAbsent); err != nil {
+				s.shimDiagnostic(row.SessionID, &receipt, "unavailable", "gone_team_recovery_refused")
+			}
+			return true
+		}
 		// Retire the verified placement before orphaning, so provider secrets
 		// cannot outlive authority revocation. Stop's Gone branch signals none.
 		if err = host.stopProvider(ctx, receipt); err != nil {
