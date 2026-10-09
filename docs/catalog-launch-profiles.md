@@ -86,6 +86,9 @@ Workspace modes:
 Unset `workspace.mode` resolves to the project `workspace.default_mode`; if both
 are unset, the default is `worktree`.
 
+See [workspace parity with the tmux team kit](workspace-parity.md) for the
+working-directory, environment, boot-profile, MCP and file-scope comparison.
+
 ### Workspace roots and worktree lifecycle
 
 Three roots are easy to confuse — they are distinct:
@@ -96,7 +99,8 @@ Three roots are easy to confuse — they are distinct:
 | `work_root` | The editable/exec root the provider runs against. In `shared`/`hybrid` mode it aliases `repo_root`; in `worktree`/`isolated` mode it is a freshly materialized git worktree at `<base>/repo`. | In worktree mode only — see retention below. |
 | `workspace_dir` | The per-session bookkeeping directory (`logs/`, `prompts/`, `state/plan.json`, …) under the workspace root. Distinct from `work_root`. | Removed by `tether workspaces prune`. |
 
-`worktree_name` is a per-launch field. If set to a plain git ref (no spaces, no
+`worktree_name` is a per-launch field. If set to a plain git ref (including
+slash-separated names such as `task/CW-20261008-0127`, with no spaces or
 Go-template `{{ }}` markers) it becomes the branch name for the materialized
 worktree (`git worktree add -b <name>`). A template-style value such as
 `tether/{{.ProjectID}}/{{.SessionID}}` is currently **reserved** — Tether has no
