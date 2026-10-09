@@ -2,18 +2,6 @@ package app
 
 import "github.com/hollis-labs/tether/internal/apikeyhelper"
 
-// providerRecordsSessionID reports whether the provider emits a
-// provider-side session id worth persisting for crash-recovery flows.
-// Normal launches do not consume the stored id; `--resume` is reserved for
-// an explicit recovery path.
-func providerRecordsSessionID(providerID string) bool {
-	switch providerID {
-	case "claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode", "antigravity":
-		return true
-	}
-	return false
-}
-
 // ResolveAPIKeyHelperPath returns an absolute path to the tether-apikey-helper
 // binary. Resolution order: $TETHER_APIKEY_HELPER env override, then a sibling
 // next to the tether binary, then $PATH lookup. Returns empty when not found.

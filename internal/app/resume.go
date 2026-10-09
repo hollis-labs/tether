@@ -27,11 +27,18 @@ import (
 // is reused.
 //
 // Returns a conflict error if the agent has never launched (no launch_id).
-// Returns a not-found-shaped error if no checkpoint exists.
+// A checkpoint is optional when a previous canonical session exists.
 func (s *Service) ResumeLogicalAgent(logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
 	return s.ResumeLogicalAgentWithContext(context.Background(), logicalAgentID, opts)
 }
 func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {
+	gate, _ := s.resumeLocks.LoadOrStore(logicalAgentID, make(chan struct{}, 1))
+	select {
+	case gate.(chan struct{}) <- struct{}{}:
+		defer func() { <-gate.(chan struct{}) }()
+	case <-ctx.Done():
+		return api.LaunchResult{}, ctx.Err()
+	}
 	if opts.IdempotencyKey == "" {
 		return s.resumeLogicalAgent(ctx, logicalAgentID, nil)
 	}
@@ -83,12 +90,34 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 
 	ck, err := s.Store.GetLatestCheckpointForAgent(logicalAgentID)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
 	}
+	parent, err := s.Store.LatestSessionForAgent(ctx, logicalAgentID)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("get resume source: %w", err)
+	}
+	if parent == nil && ck == nil {
+		return api.LaunchResult{}, fmt.Errorf("%w: agent %q has no previous session or checkpoint", store.ErrSessionNotFound, logicalAgentID)
+	}
+	live, err := s.Store.AgentHasLiveSession(ctx, logicalAgentID)
+	if err != nil {
+		return api.LaunchResult{}, err
+	}
+	if live {
+		return api.LaunchResult{}, fmt.Errorf("%w: agent %q already has a live session", session.ErrRecoveryConflict, logicalAgentID)
+	}
+	// Older checkpoints remain recovery context, but never override the native
+	// conversation or workspace of a newer canonical session.
+	sourceID := ""
+	if parent != nil {
+		sourceID = parent.ID
+	} else if ck != nil {
+		sourceID = ck.SourceSessionID
+	}
 
-	if ck.SourceSessionID != "" {
-		parent, err := s.Store.GetSession(ck.SourceSessionID)
+	if sourceID != "" {
+		parent, err = s.Store.GetSession(sourceID)
 		if err != nil && !errors.Is(err, store.ErrSessionNotFound) {
 			return api.LaunchResult{}, fmt.Errorf("get resume source session: %w", err)
 		}
@@ -99,9 +128,9 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 
 	// Preserve the original opt-in before resolving the current catalog route.
 	input := launch.Input{LaunchID: la.LaunchID, CatalogRoot: s.CatalogRoot}
-	if ck.SourceSessionID != "" {
+	if sourceID != "" {
 		input.RouteOverrideSet = true
-		input.RouteOverride, err = s.Store.SessionRoute(ctx, ck.SourceSessionID)
+		input.RouteOverride, err = s.Store.SessionRoute(ctx, sourceID)
 		if err != nil {
 			return api.LaunchResult{}, fmt.Errorf("read resumed session route: %w", err)
 		}
@@ -116,9 +145,38 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	}
 
 	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
-	if hint := resumeHintForCheckpoint(ck, plan); hint.CanResumeNatively() {
-		plan.ResumeProviderSessionID = hint.ProviderSessionID
+	plan.ResumeSourceSessionID = sourceID
+	if parent != nil {
+		if parent.LogicalAgentID != logicalAgentID {
+			return api.LaunchResult{}, fmt.Errorf("%w: resume source belongs to another logical agent", session.ErrRecoveryConflict)
+		}
+		prior, err := s.Store.GetLaunchPlan(sourceID)
+		if err != nil {
+			return api.LaunchResult{}, fmt.Errorf("read resume workspace: %w", err)
+		}
+		if prior.TeamMember {
+			return api.LaunchResult{}, fmt.Errorf("%w: enrolled team sessions require recovery of their retained session identity", session.ErrRecoveryConflict)
+		}
+		plan.WorkRoot = prior.EffectiveWorkRoot()
+		if parent.ProviderID == plan.ProviderID && prior.ProviderBrand == plan.ProviderBrand {
+			plan.NativeStateRoot = prior.NativeStateRoot
+			mapping, mapErr := s.Store.GetSessionProviderMapping(sourceID, "tether", plan.ProviderID)
+			if mapErr == nil {
+				plan.ResumeProviderSessionID = mapping.NativeSessionID.String
+			} else if !errors.Is(mapErr, store.ErrProviderMappingNotFound) {
+				return api.LaunchResult{}, fmt.Errorf("read native resume mapping: %w", mapErr)
+			} else if prior.ResumeSourceSessionID != "" && prior.ResumeProviderSessionID != "" {
+				// Failed admission (for example unavailable credentials) did not
+				// bind a new native ID. Its uncleared requested hint remains intent;
+				// a mapping tombstone above always overrides it after native loss.
+				plan.ResumeProviderSessionID = prior.ResumeProviderSessionID
+			} else if ck != nil && ck.SourceSessionID == sourceID {
+				plan.ResumeProviderSessionID = resumeHintForCheckpoint(ck, plan).ProviderSessionID
+			}
+		}
 	}
+	pack := s.recoveryContext(ctx, plan, ck)
+	plan.BootPrompt = pack.prompt(plan.BootPrompt)
 
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
@@ -160,7 +218,7 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		// lineage visible on the new session row itself, without changing
 		// the existing checkpoint-driven --resume decision above.
 		Intent:          "resume",
-		ParentSessionID: resumeParentSessionID(ck),
+		ParentSessionID: sql.NullString{String: sourceID, Valid: sourceID != ""},
 	}
 	if key != nil {
 		// Audit only: the parent the resolver chose, outside the digest.
@@ -226,6 +284,9 @@ func resumeHintForCheckpoint(ck *checkpoint.Checkpoint, plan *launch.Plan) runti
 // buildResumePrompt prepends a checkpoint context block to the boot prompt.
 // Fields that are empty are omitted to keep the context clean.
 func buildResumePrompt(ck *checkpoint.Checkpoint, bootPrompt string) string {
+	if ck == nil {
+		return "## Recovery\nThe previous process ended without a checkpoint. Inspect durable work before continuing; do not replay an interrupted turn.\n\n" + bootPrompt
+	}
 	var b strings.Builder
 	b.WriteString("## Resumed from checkpoint ")
 	b.WriteString(ck.ID)

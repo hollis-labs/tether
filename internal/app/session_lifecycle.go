@@ -221,6 +221,12 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		return nil, err
 	}
 	defer unlock()
+	return s.launchSessionWithContext(ctx, sessionID)
+}
+
+// launchSessionWithContext requires the caller to hold the canonical launch
+// gate, including retained same-ID team recovery.
+func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string) (*Launched, error) {
 	row, err := s.Store.GetSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -262,7 +268,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 
 	ws := workspace.Open(row.Workspace, sessionID)
 
-	if err := rt.Prepare(context.Background()); err != nil {
+	if err := rt.Prepare(ctx); err != nil {
 		exit := 1
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
@@ -305,7 +311,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	// launches must not feed the stored ID back as SessionIDPreset; that
 	// would turn every boot into an implicit `--resume`.
 	var onSessionID func(string)
-	if providerRecordsSessionID(plan.ProviderID) {
+	if rt.Caps().ProviderSessionID {
 		logicalAgentID := plan.LogicalAgentID
 		storeRef := s.Store
 		providerID := plan.ProviderID
@@ -432,7 +438,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		if token == "" {
 			mcpEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 		}
-		prepared, err := s.prepareSharedLaunch(context.Background(), plan, ws.Root, plantContextInput{
+		prepared, err := s.prepareSharedLaunch(ctx, plan, ws.Root, plantContextInput{
 			DaemonOwned:   ownership == config.MCPUpstreamsDaemon,
 			TetherCommand: mcpCommand,
 			TetherArgs:    mcpArgs,
@@ -452,6 +458,16 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
 		}
 
+		if err := s.prepareRecoveryNativeState(ctx, plan, prepared.PlantedBootDir); err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, fmt.Errorf("prepare native recovery state: %w", err)
+		}
+		if err := s.Store.SetNativeStateRoot(ctx, sessionID, plan.NativeStateRoot); err != nil {
+			exit := 1
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
+			return nil, fmt.Errorf("record native state root: %w", err)
+		}
 		onBootDirPlanted := makeBootDirPlantedCallback(s.Bus, sessionID, plan.LogicalAgentID)
 		onBootDirPlanted(prepared.PlantedBootDir)
 		sessionLaunch, err := sessionshim.ToSessionLaunch(prepared)
@@ -537,6 +553,9 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 			"provider_id":      plan.ProviderID,
 		},
 	}
+	if plan.ResumeSourceSessionID != "" && (plan.ProviderBrand == "claude" || plan.ProviderBrand == "codex" || plan.ProviderBrand == "antigravity") {
+		req.Runtime = &recoveryRuntime{Runtime: rt, service: s, plan: plan, id: sessionID, request: ctx}
+	}
 	s.turnOutputs.Store(sessionID, turnOutput)
 	req, err = s.prepareShimStart(ctx, plan, req)
 	if err != nil {
@@ -554,7 +573,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 	start := func() error { return s.Manager.Start(context.Background(), req) }
 	// Track an automatic boot submission through the same provisional/accepted
 	// marker path as explicit turns, without holding a gate across Start.
-	if (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
+	if plan.ResumeSourceSessionID != "" || (startOpts.AutoFireFirstTurn && len(startOpts.FirstTurnPayload) > 0) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode == "stdin" && !rt.Caps().JsonRpcStdio) ||
 		(startOpts.BootPrompt != "" && startOpts.BootMode != "none" && rt.Kind() == acp.Kind) {
 		err = s.trackTurnSubmissionContext(launchCtx, sessionID, start)
@@ -568,6 +587,13 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 		}
 		if procLog != nil {
 			_ = procLog.Close()
+		}
+		var unconfirmed *recoveryUnconfirmedError
+		if errors.As(err, &unconfirmed) {
+			// The runtime failed admission, but its child has not been proven
+			// gone. Preserve a duplicate-prevention fence after Manager's failed
+			// transition rather than let another recovery spawn alongside it.
+			_ = s.Store.UpdateSessionState(sessionID, string(session.StateDetached), unconfirmed.pid, nil)
 		}
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}

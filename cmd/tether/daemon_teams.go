@@ -76,5 +76,6 @@ func buildDaemonTeams(svc *app.Service, cfg daemon.Config) (*teamsvc.Service, fu
 		return nil, noop, err
 	}
 	complete = true
+	svc.BootTeamRecovery = host.RecoverSessions
 	return ops, closeContent, nil
 }

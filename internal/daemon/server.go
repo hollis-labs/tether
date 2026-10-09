@@ -46,6 +46,9 @@ type Server struct {
 	identityAudit            *identity.AuditQueue
 	Config                   Config
 	Manager                  *agentsessions.Manager
+	// Startup must return on cancellation. It runs after serving starts and
+	// joins before session drain/store close, so recovery cannot race shutdown.
+	Startup func(context.Context)
 	// SandboxProtect, when set, fills /health's sandbox_protect field. It
 	// runs on each /health request, so it must be cheap or cache.
 	SandboxProtect func() *SandboxProtectHealth
@@ -363,6 +366,14 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		serveErr <- nil
 	}()
+	startupCtx, stopStartup := context.WithCancel(ctx)
+	startupDone := make(chan struct{})
+	go func() {
+		defer close(startupDone)
+		if s.Startup != nil {
+			s.Startup(startupCtx)
+		}
+	}()
 
 	if s.WakeSweeper != nil {
 		go s.runWakeSweepLoop(ctx)
@@ -384,6 +395,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.publishDaemon(events.KindDaemonShutdownStarted, "")
+	stopStartup()
+	<-startupDone
 	// Stop admission/streams, bounded drain, then close the pool before store.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout)
 	defer cancel()

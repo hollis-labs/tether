@@ -324,7 +324,7 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 			strings.Contains(msg, "no checkpoint"),
 			strings.Contains(msg, "no rows"):
 			writeError(w, http.StatusNotFound, CodeNotFound, "no checkpoint found for agent "+agentID)
-		case errors.Is(err, session.ErrDetached), strings.Contains(msg, "never launched"):
+		case errors.Is(err, session.ErrDetached), errors.Is(err, session.ErrRecoveryConflict), strings.Contains(msg, "never launched"):
 			writeError(w, http.StatusConflict, CodeConflict, msg)
 		default:
 			writeError(w, http.StatusInternalServerError, CodeInternalError, msg)

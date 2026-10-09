@@ -17,10 +17,23 @@ type Plan struct {
 	ProviderID    string `json:"provider_id"`
 	ProviderBrand string `json:"provider_brand,omitempty"`
 	RuntimeKind   string `json:"runtime_kind,omitempty"`
-	// ResumeProviderSessionID is set only by checkpoint resume. LaunchSession
+	// ResumeProviderSessionID is set only by explicit or boot recovery. LaunchSession
 	// feeds it into agentsessions.StartOptions.SessionIDPreset so normal
 	// launches never become implicit provider-native resumes.
 	ResumeProviderSessionID string `json:"resume_provider_session_id,omitempty"`
+	// ResumeSourceSessionID identifies the canonical source of native state and
+	// interrupted-work evidence. It is not a provider ID or an authority grant.
+	// NativeStateRoot records the actual prepared boot directory. It carries
+	// no credentials or permission grant and is never inferred from a scan.
+	NativeStateRoot       string `json:"native_state_root,omitempty"`
+	ResumeSourceSessionID string `json:"resume_source_session_id,omitempty"`
+	// RecoveryCursors describe channel context actually included in the control
+	// turn. They advance only after accepted submission; no inbox is acknowledged.
+	RecoveryCursors map[string]int64 `json:"recovery_cursors,omitempty"`
+	RecoveryPrompt  string           `json:"recovery_prompt,omitempty"`
+	// RecoveryActorURI is context addressing for a retained enrolled member,
+	// never an enrollment or permission grant.
+	RecoveryActorURI string `json:"recovery_actor_uri,omitempty"`
 	// PermissionMode is the resolved Claude Code permission posture for the
 	// launched agent ("bypass" or "default"), computed by the launch
 	// resolver from the agent's permissions.permission_mode falling back to
