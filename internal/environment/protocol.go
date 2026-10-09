@@ -3,6 +3,7 @@ package environment
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -27,12 +28,13 @@ func ProtocolGate(require bool, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		headers, query := r.Header.Values(ProtocolHeader), r.URL.Query()["protocol"]
-		if len(headers) == 0 && len(query) == 0 && !require {
+		parsedQuery, queryErr := url.ParseQuery(r.URL.RawQuery)
+		headers, query := r.Header.Values(ProtocolHeader), parsedQuery["protocol"]
+		if len(headers) == 0 && len(query) == 0 && !require && queryErr == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-		valid := len(headers) <= 1 && len(query) <= 1 && len(headers)+len(query) > 0
+		valid := queryErr == nil && len(headers) <= 1 && len(query) <= 1 && len(headers)+len(query) > 0
 		for _, values := range [][]string{headers, query} {
 			for _, value := range values {
 				n, err := strconv.Atoi(value)

@@ -148,11 +148,19 @@ func readIdentityFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return nil, errors.New("environment identity must be a private regular file")
 	}
+	// #nosec G304 -- path is a fixed identity filename under the selected state directory.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("environment identity changed while opening")
+	}
 	raw, err := io.ReadAll(io.LimitReader(f, 513))
 	if err != nil {
 		return nil, err
@@ -164,6 +172,7 @@ func readIdentityFile(path string) ([]byte, error) {
 }
 
 func syncDirectory(dir string) error {
+	// #nosec G304 -- fsync the selected state directory used for atomic identity publication.
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

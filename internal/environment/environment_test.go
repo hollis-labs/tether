@@ -143,6 +143,7 @@ func TestProtocolGate(t *testing.T) {
 		{"conflict", "/sessions?protocol=2", "1", false, 409},
 		{"wrong", "/sessions", "2", false, 409},
 		{"duplicate", "/sessions?protocol=1&protocol=1", "", false, 409},
+		{"malformed-query", "/sessions?protocol=1;protocol=2", "", false, 409},
 		{"health", "/health", "2", true, 204},
 		{"descriptor", DescriptorPath, "2", true, 204},
 	} {

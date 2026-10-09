@@ -11,7 +11,7 @@ import (
 
 const DescriptorPath = "/.well-known/tether/environment"
 
-// Wire shapes decode additively: unknown JSON fields, capability groups and
+// Descriptor decodes additively: unknown JSON fields, capability groups and
 // string variants are preserved/ignored by ordinary encoding/json decoding.
 // Missing capability groups mean unsupported, never a guessed default.
 type Descriptor struct {
