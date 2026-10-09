@@ -74,7 +74,7 @@ the same machine.
   precomputed per-project/agent/provider launch files to a live directory
   service that consumers register capabilities with (agent sources, skill
   sources, MCP servers, execution templates) and a parameterized launch
-  engine (`go-agent-launch`) that resolves them at call time. Ships alongside
+  engine (`substrate/harness/agentlaunch`) that resolves them at call time. Ships alongside
   the current catalog system so existing launches keep working during the
   migration.
 - **Boot Assembly Spec.** Replacing static `launches/` and `boot-profiles/`

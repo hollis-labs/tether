@@ -10,6 +10,15 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Adopt the published substrate and libs modules in Tether and Sysop. Bind
+  managed launch artifacts to the accepted canonical session, plan and held
+  launch custody before planting; use one durable operation receipt store.
+  Codex requires an explicit absolute canonical `CODEX_HOME` with an existing
+  regular, non-symlink `auth.json`, captured before boot-directory redirection.
+  Link only that credential source under separate read and refresh-write
+  authority; missing input refuses without a HOME fallback or placeholder.
+  Operators must supply that explicit daemon startup input. (CW-20261009-0006)
+
 - Preserve supported hosted Codex command-execution starts, deltas and completion
   envelopes across controller reconnect as checked private turn obligations.
   Tool bytes stay out of public final replies; unknown unions and unresolved

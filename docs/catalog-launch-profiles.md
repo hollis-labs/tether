@@ -23,8 +23,9 @@ current subprocess runtime serializes additional input: a correction sent while
 busy runs as the next turn of the same conversation. Active-turn interruption
 is tracked by CW-20261002-0078. See the
 [live acceptance record](launches/unattended-smoke-20261002.md) for evidence and
-limits. Codex requires the daemon's explicit `CODEX_HOME` to name an existing
-provider home with a regular `auth.json`. Tether captures that directory before
+limits. Codex requires the daemon's explicit `CODEX_HOME` to name an absolute,
+canonical, non-symlink provider home with an existing regular, non-symlink
+`auth.json`. Tether captures that directory before
 preparation redirects `CODEX_HOME` to a fresh private boot directory. DEC-036
 authorizes only a link from that boot directory's `auth.json` to the captured
 source, with separate source-read and refresh source-write authority. Missing
@@ -144,10 +145,10 @@ root and can copy native history from the recorded planted home. Preserve that
 worktree and provider state when you intend to resume its conversation; pruning
 them can make native continuity unavailable.
 
-Tether compiles launch profiles through `go-agent-launch` and stores shared
+Tether compiles launch profiles through `substrate/harness/agentlaunch` and stores shared
 provenance (`plan_hash`, compiler version, provider/runtime/workspace, and
 bootdir layout intent) in the persisted launch plan. Managed sessions and
-`boot-exec` both use `go-agent-launch/providerplant` to render provider boot
+`boot-exec` both use `substrate/harness/agentlaunch/planting` to render provider boot
 files, native files, and overlays before handing the prepared launch to the
 runtime. Tether still owns catalog compatibility, sandbox profiles, attach/
 detach, and provider session ID persistence.
@@ -171,7 +172,7 @@ injection:
       source: boot/claude-overlay.md
 ```
 
-`native_files` are passed to `go-agent-launch` as provider-aware native files.
+`native_files` are passed to `substrate/harness/agentlaunch` as provider-aware native files.
 For ordinary files, omit `kind` or set `kind: raw` and provide `rel_path`.
 `kind: skill` requires `id`; the shared launch layer maps it to the provider's
 native skill location where that provider supports one.
