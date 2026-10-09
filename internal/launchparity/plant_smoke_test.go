@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
-	"github.com/hollis-labs/agentkit/agentlaunch/parity"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/parity"
+	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
 
 	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"
