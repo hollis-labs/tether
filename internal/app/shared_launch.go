@@ -137,7 +137,9 @@ func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, wor
 // engineLaunchPlan is agentLaunchPlanFor's engine toggle: the plan as the
 // selected launch engine produces it, before Tether's hardening is applied.
 func (s *Service) engineLaunchPlan(ctx context.Context, plan *launch.Plan, workspaceDir string) (agentlaunch.LaunchPlan, error) {
-	if s.launchEngine() != EngineSpec {
+	// Retained team recovery consumes its immutable launch receipt, rather than
+	// resolving a changed catalog definition into existing enrollment authority.
+	if (plan.TeamMember && plan.ResumeSourceSessionID != "") || s.launchEngine() != EngineSpec {
 		return s.agentLaunchPlan(plan, workspaceDir), nil
 	}
 	resolver, err := s.specResolverFor()

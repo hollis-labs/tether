@@ -86,14 +86,20 @@ type Service struct {
 	// (CW-20260914-0042) for onboarding and deployment configuration.
 	Settings *settings.Service
 
-	launchMu        sync.Mutex
-	reaperMu        sync.Mutex
-	reaper          *sessionReaper
-	shimMu          sync.Mutex
-	shimDraining    sync.Map
-	shimBindingWait sync.Map
-	shimHosting     *shimHosting
-	launches        map[string]*sessionLaunchGate
+	launchMu    sync.Mutex
+	reaperMu    sync.Mutex
+	reaper      *sessionReaper
+	resumeLocks sync.Map      // logical agent ID -> context-aware resume gate
+	resumeGrace time.Duration // zero selects the bounded native fast-death window
+	// RecoveryReadTool is a trusted daemon read port over its existing MCP
+	// runtime and grants. Nil/unavailable inputs are explicit pack omissions.
+	RecoveryReadTool func(context.Context, string, string, map[string]any) (json.RawMessage, error)
+	BootTeamRecovery func(context.Context) error
+	shimMu           sync.Mutex
+	shimDraining     sync.Map
+	shimBindingWait  sync.Map
+	shimHosting      *shimHosting
+	launches         map[string]*sessionLaunchGate
 
 	factories map[string]RuntimeFactory
 
@@ -473,6 +479,9 @@ func (s *Service) revokeEndedSessionBindings(ctx context.Context) int {
 		switch session.State(row.State) {
 		case session.StateCompleted, session.StateFailed, session.StateKilled, session.StateOrphaned:
 		default:
+			continue
+		}
+		if s.retainedTeamRecoveryEligible(ctx, row) {
 			continue
 		}
 		n, err := s.Registry.RevokeSessionBindings(ctx, id)

@@ -258,6 +258,7 @@ var daemonRunCmd = &cobra.Command{
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,
+			Startup:                  svc.BootResumeSessions,
 			Service:                  &serviceAdapter{svc: svc},
 			AI:                       aiSvc,
 			AIAudit:                  svc.Store,

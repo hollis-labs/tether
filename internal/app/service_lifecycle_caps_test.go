@@ -124,17 +124,6 @@ func TestRuntimeFactoryForProvider_UnsupportedCombination(t *testing.T) {
 	}
 }
 
-func TestProviderRecordsSessionID(t *testing.T) {
-	for _, providerID := range []string{"claude-code", "claude-stream", "claude-goprovider", "claude-pty", "opencode"} {
-		if !providerRecordsSessionID(providerID) {
-			t.Fatalf("%s should record provider session IDs", providerID)
-		}
-	}
-	if providerRecordsSessionID("api-stub") {
-		t.Fatal("api-stub should not record provider session IDs")
-	}
-}
-
 func TestDeferPTYStdinBootPrompt(t *testing.T) {
 	opts := agentsessions.StartOptions{
 		BootPrompt: "large generated boot prompt\n",
