@@ -1086,8 +1086,9 @@ into the new one. Codex `sessions/` and Claude `projects/` are supported; auth a
 configuration files are not copied. A mapping tombstone prevents reuse of a lost
 native ID. Changed providers do not inherit that ID.
 
-Recovery submits one control turn with bounded task, mail, channel and workspace
-context. It does not replay an interrupted turn or consume/acknowledge mail.
+Ordinary recovery submits one control turn with bounded task, mail, channel and
+workspace context. It does not replay an interrupted turn or consume/acknowledge
+mail.
 Optional Torque/Tesseract reads use the existing MCP runtime and the source
 session's sealed grants; refused or unavailable reads are recorded as omissions.
 An initial typed native-session loss or fast process death permits one cold
@@ -1143,8 +1144,75 @@ loads/commits, delivery, reattachment, stop and detach cannot operate the old
 placement or fall through to direct process control. A lookup error also refuses.
 This path does not turn a surviving or uncertain host into a replacement.
 
-The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
-retry: the same key returns the session the first resume created
+#### Strict native-only resume
+
+Use `native_only` when a fresh conversation or automatic recovery input would
+lose the context you intend to preserve. The request must name the agent's exact
+latest canonical source session:
+
+```json
+{
+  "native_only": true,
+  "source_session_id": "<canonical-source-uuid>",
+  "idempotency_key": "<stable-retry-key>"
+}
+```
+
+This mode supports direct Codex sessions with the existing-thread JSON-RPC
+runtime. Team members, live or detached sources, retained shim custody, changed
+source/provider mappings and unavailable native state refuse. A source ID without
+`native_only: true`, or a native-only request without its source ID, returns 400
+`invalid_request`. Native preservation conflicts return 409 `conflict`; refusal
+never authorizes an ordinary cold attempt.
+
+Preflight validates the recorded work root, native home, nonempty `sessions/`
+directory, native mapping and existing auth link before allocating a session or
+workspace. Those directories must exist at canonical absolute paths without
+symlinks. The native home's `auth.json` must already link to the daemon's explicit
+captured `CODEX_HOME` credential source. Tether validates that link without
+copying credentials or replanting the old native home.
+
+An optional `resume_workroot` can select **only the source's exact recorded
+native home** as an explicit coordination directory. It cannot select an
+arbitrary replacement directory. Without it, the recorded work root must still
+exist. This exception allows conversation coordination when the old repository
+path is unavailable; the selected directory is not a repository, and repository
+implementation remains blocked until its work root is resolved. The recorded
+source plan and native mapping stay unchanged.
+
+In observe/enforce identity modes, an independent current caller with
+`session.write` or `*` must authorize launch. Historical source metadata supplies
+a scope/expiry ceiling, not a usable launch credential: an old execution token is
+not reactivated, missing or expired ceilings refuse, and the new credential also
+obeys current restrictions. The ceiling uses the latest issuance for the original
+`msg://session/local/<source-session-id>` principal and that exact source session;
+a foreign principal row cannot widen it or replace a missing original ceiling. The current sealed MCP policy must match the source
+policy after binding it to the new session. Anonymous startup cannot bypass this
+requirement, including in observe mode.
+
+Admission creates a **new canonical session UUID** with the source as its parent,
+then binds the exact recorded native thread through `initialize` and
+`thread/resume`. The returned thread ID, process health, directory identities and
+auth link must remain valid. It does not start a thread, send a kickoff/recovery
+turn, replay input or fall back cold. Failed or uncertain admission refuses;
+unconfirmed teardown retains its uncertainty. A later explicit turn uses the
+already bound thread.
+
+`session.native_resumed` is emitted on the new session with
+`{source_session_id, native_session_id, coordination_workroot}`; the last field
+is a boolean recording the explicit coordination-directory choice. This proves
+admission and exact thread binding, not semantic memory, turn completion or MCP
+tool availability. The preserved native home can retain old MCP configuration
+and tokens; they are not rewritten or granted new authority by this mode.
+
+The same idempotency key binds the mode, source and work-root choice and returns
+the created destination on retry. A fresh response is HTTP 201; a replay is HTTP
+200 with `replayed: true`, using the normal launch response below.
+
+#### Resume response and startup recovery
+
+For ordinary resume, the body is optional. `{"idempotency_key": "..."}` makes
+the resume safe to retry: the same key returns the session the first resume created
 (`"replayed": true`, HTTP 200) rather than starting a second agent. See
 [Idempotency keys](#idempotency-keys).
 
@@ -1168,6 +1236,24 @@ provides work evidence; idle agents stay cold. Each ordinary attempt has a
 20-second context. Retained team members are handled first by their configured
 team host and are excluded from ordinary fresh-session recovery. Recovery
 channel cursors record accepted context delivery, not terminal consumption.
+
+To protect a particular source during automatic startup recovery, select it
+before starting the daemon (replace `SOURCE_UUID` with its canonical UUID):
+
+```sh
+tether daemon start \
+  --boot-resume-native-only-source SOURCE_UUID
+```
+
+For the explicit coordination-only exception, also supply
+`--boot-resume-native-only-workroot SOURCE_UUID=RECORDED_NATIVE_HOME`. Replace
+`RECORDED_NATIVE_HOME` with the exact accepted source path.
+The source selector is repeatable. Work-root selections require a selected
+source UUID and a canonical absolute path; duplicate choices refuse. Selected
+sources use strict native-only admission, never ordinary cold recovery or an
+automatic control turn. Missing, unbound or changed selected sources refuse;
+unavailable independent startup authority preserves the source for a later
+authenticated request. Unselected agents retain ordinary work-driven recovery.
 
 ### `GET /logical-agents/{id}/policy`
 
@@ -1744,6 +1830,7 @@ Current (v0.0.2):
 | session  | `session.turn_interrupt_requested` | CancelTurnAndWait before a runtime cancel attempt | `{actor, session_id, turn_id, result:"requested"}`; no reply body |
 | session  | `session.turn_interrupt_completed` | CancelTurnAndWait on every outcome, including invalid actor/missing session | `{actor, session_id, turn_id?, output_turn_id?, output_kind?, stop_reason?, result, error?}`; result is `completed`, a typed refusal reason (`unsupported`, `no_turn_in_progress`, `turn_not_yet_started`, `turn_superseded`, `session_ended`, `interrupt_timeout`), or `error` |
 | session  | `provider.session_lost`       | provider conversation continuity was lost | Provider-reported continuation: `{requested, actual, reason}`. Initial native recovery cold attempt: `{requested, reason, fresh_conversation: true}`, emitted before starting and not proof of completion. |
+| session  | `session.native_resumed` | verified strict native-only admission, emitted on the new session | `{source_session_id, native_session_id, coordination_workroot}`; the final field is boolean. Exact thread binding, not memory, tool availability or turn completion. |
 | session  | `session.replaced_by`         | committed retained-team execution lineage, emitted on the old session | `{replaced_by, replaces, actor}` — new session ID, old session ID and unchanged actor; commit precedes launch, so this is not readiness or turn completion |
 | session  | `session.boot_recovery`       | ordinary logical-agent startup recovery outcome | `{outcome, reason?}` — `resumed` reports admission; `failed` reports a refused/unavailable attempt, not turn completion |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |

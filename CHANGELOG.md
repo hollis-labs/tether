@@ -10,6 +10,15 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Add strict direct-Codex resume with `native_only`, exact `source_session_id`
+  and an optional source-native-home `resume_workroot` for coordination only.
+  Create a new canonical session bound to the existing native thread, without
+  kickoff, input replay, thread creation or cold fallback. Require current launch
+  authority, original credential ceilings and matching sealed MCP policy; preserve
+  old native configuration without promising tool availability. Startup selectors
+  protect selected sources from ordinary recovery. `session.native_resumed`
+  records thread admission, not turn completion. (CW-20261003-0005)
+
 - Replace eligible proven-lost enrolled Codex execution only after matching
   retirement, positive absence of both recorded processes and opaque historical
   accounting revalidated in the remapping transaction. Preserve frozen old

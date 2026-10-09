@@ -145,6 +145,16 @@ root and can copy native history from the recorded planted home. Preserve that
 worktree and provider state when you intend to resume its conversation; pruning
 them can make native continuity unavailable.
 
+For strict direct-Codex context preservation, the resume API accepts
+`native_only: true` with the exact canonical `source_session_id`. Missing
+recorded roots or thread identity refuse without cold fallback. An explicit
+`resume_workroot` may select only the recorded native home for coordination;
+that directory is not a replacement repository. Preserve the original native
+home and its existing credential link. Exact thread binding does not establish
+that old MCP configuration or tokens still work; this mode does not rewrite them.
+See [strict native-only resume](api/README.md#strict-native-only-resume) for current
+caller authority, source ceilings and startup selectors.
+
 Tether compiles launch profiles through `substrate/harness/agentlaunch` and stores shared
 provenance (`plan_hash`, compiler version, provider/runtime/workspace, and
 bootdir layout intent) in the persisted launch plan. Managed sessions and
