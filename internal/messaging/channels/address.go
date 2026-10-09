@@ -6,7 +6,7 @@ import (
 	"errors"
 	"regexp"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 var ErrInvalid = errors.New("invalid channel request")

@@ -23,8 +23,14 @@ current subprocess runtime serializes additional input: a correction sent while
 busy runs as the next turn of the same conversation. Active-turn interruption
 is tracked by CW-20261002-0078. See the
 [live acceptance record](launches/unattended-smoke-20261002.md) for evidence and
-limits. Each provider must already be signed in under the daemon's credential
-HOME; an isolated test HOME needs access to that login separately.
+limits. Codex requires the daemon's explicit `CODEX_HOME` to name an existing
+provider home with a regular `auth.json`. Tether captures that directory before
+preparation redirects `CODEX_HOME` to a fresh private boot directory. DEC-036
+authorizes only a link from that boot directory's `auth.json` to the captured
+source, with separate source-read and refresh source-write authority. Missing
+or nonregular sources refuse; there is no `HOME/.codex` fallback, credential
+copy, or empty login placeholder. Other providers must already be signed in
+under the daemon's credential HOME. Test launches use owned stand-in sources.
 
 ## File Layout
 

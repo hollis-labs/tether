@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hollis-labs/go-messaging/delivery"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 )
 
 func TestConsumer_Torque_TaskAssignmentRequestResponseLifecycleIsTraceable(t *testing.T) {

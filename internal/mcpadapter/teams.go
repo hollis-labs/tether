@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/teamsvc"
 )

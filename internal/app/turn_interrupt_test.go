@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
-	"github.com/hollis-labs/go-runtime-events/runtimeevents"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
 	"github.com/hollis-labs/tether/internal/events"
 )
 

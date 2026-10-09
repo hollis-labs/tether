@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
-	"github.com/hollis-labs/go-runtime-events/runtimeevents"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
 )
 
 func TestTurnOutputStateSnapshotsCompleteBeforeCallbackReturns(t *testing.T) {

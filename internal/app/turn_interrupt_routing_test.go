@@ -1,7 +1,7 @@
 package app
 
 import (
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"

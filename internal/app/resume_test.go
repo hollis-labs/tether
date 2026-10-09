@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentruntime/checkpoint"
+	"github.com/hollis-labs/substrate/harness/adapters/checkpoint"
 
 	tethercheckpoint "github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/launch"

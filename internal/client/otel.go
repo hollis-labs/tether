@@ -3,7 +3,7 @@ package client
 import (
 	"net/http"
 
-	otelprop "github.com/hollis-labs/go-otel/propagation"
+	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 )
 
 type tracingRoundTripper struct {

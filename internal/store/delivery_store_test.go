@@ -35,9 +35,9 @@ import (
 	"testing"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/delivery"
-	"github.com/hollis-labs/go-messaging/deliverytest"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/substrate/mesh/messaging/deliverytest"
 
 	"github.com/hollis-labs/tether/internal/store"
 )

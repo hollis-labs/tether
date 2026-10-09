@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentruntime/turn"
-	"github.com/hollis-labs/agentkit/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 )
 
 // SendInput writes data to the named session's input channel. Thin wrapper

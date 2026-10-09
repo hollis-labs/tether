@@ -2,13 +2,15 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/workspace"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
@@ -37,7 +39,7 @@ func prepareCodexLaunch(t *testing.T, providerID, brand, runtimeKind string) *ag
 		Command:        brand,
 		BootPrompt:     "boot",
 	}
-	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{TetherCommand: "tether"})
+	prepared, err := svc.prepareSharedLaunch(context.Background(), plan, ws, plantContextInput{ArtifactAdmission: testArtifactAdmission(t, plan), TetherCommand: "tether"})
 	if err != nil {
 		t.Fatalf("prepareSharedLaunch: %v", err)
 	}
@@ -102,19 +104,35 @@ func TestPrepareSharedLaunch_CodexLinksHostAuth(t *testing.T) {
 	}
 }
 
-func TestPrepareSharedLaunch_CodexNotLoggedInKeepsPlaceholder(t *testing.T) {
-	hostCodexHome(t, false)
-	planted := plantedCodexAuth(t, prepareCodexLaunch(t, "codex-cli", "codex", config.RuntimeKindSubprocess))
-
-	info, err := os.Lstat(planted)
-	if err != nil {
-		t.Fatalf("lstat planted auth.json: %v", err)
-	}
-	if !info.Mode().IsRegular() || info.Size() != 0 {
-		t.Fatalf("planted auth.json = %v, %d bytes; want the empty placeholder", info.Mode(), info.Size())
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("placeholder mode = %o, want 600", perm)
+func TestCaptureCodexHome_RequiresExplicitExistingSource(t *testing.T) {
+	for _, missing := range []string{"unset", "absent", "directory", "symlink"} {
+		t.Run(missing, func(t *testing.T) {
+			home := hostCodexHome(t, false)
+			auth := filepath.Join(home, "auth.json")
+			switch missing {
+			case "unset":
+				t.Setenv("CODEX_HOME", "")
+			case "directory":
+				if err := os.Mkdir(auth, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				source := filepath.Join(t.TempDir(), "auth.json")
+				if err := os.WriteFile(source, []byte(fixtureAuth), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(source, auth); err != nil {
+					t.Fatal(err)
+				}
+			}
+			captured, err := captureCodexHome()
+			if captured != nil {
+				_ = captured.Close()
+			}
+			if err == nil {
+				t.Fatal("uncaptured/nonregular source accepted")
+			}
+		})
 	}
 }
 
@@ -135,17 +153,15 @@ func TestPrepareSharedLaunch_ClaudeLinksNoCodexAuth(t *testing.T) {
 	}
 }
 
-func TestSymlinkAuthJSON_NoHostLeavesPlanted(t *testing.T) {
+func TestPrepareSharedLaunch_CodexMissingSourceRefusesBeforePrepare(t *testing.T) {
+	hostCodexHome(t, false)
 	dir := t.TempDir()
-	planted := filepath.Join(dir, "auth.json")
-	if err := os.WriteFile(planted, nil, 0o600); err != nil {
-		t.Fatal(err)
+	prepared, err := (&Service{}).prepareSharedLaunch(context.Background(), &launch.Plan{ProviderBrand: "codex"}, dir, plantContextInput{})
+	var refused *workspace.Refusal
+	if prepared != nil || !errors.As(err, &refused) || refused.Code != "codex_existing_auth_source_required" {
+		t.Fatalf("missing explicit source: %v", err)
 	}
-	linked, err := symlinkAuthJSON(planted, filepath.Join(dir, "missing", "auth.json"))
-	if err != nil || linked {
-		t.Fatalf("symlinkAuthJSON = %v, %v; want false, nil", linked, err)
-	}
-	if info, err := os.Lstat(planted); err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("planted file changed: %v %v", info, err)
+	if _, err := os.Stat(filepath.Join(dir, "boot")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing source allocated a boot directory: %v", err)
 	}
 }
