@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -28,30 +31,43 @@ import (
 // The outer lock keeps reduction, persistence and emission ordered across
 // callback/termination races; the raw feeds are synchronous and lossless.
 type sessionTurnOutput struct {
-	providerResultID string
-	submissionGate   sync.Mutex
-	accepted         bool
-	submissions      int
-	activity         uint64
-	unboundTerminal  *emptyTurnTerminal
-	unboundAmbiguous bool
-	routeUnread      bool
-	completed        map[string]string
-	completedDetails map[string]TurnCompletion
-	completedOrder   []string
-	mu               sync.Mutex
-	runtimeID        string
-	reducer          *turnoutput.Reducer
-	service          *Service
-	row              store.SessionRow
-	route            *launchprofile.Route
-	turnID           string
-	reducerTurnID    string
-	turnDone         chan struct{}
-	finishedTurns    []string
+	providerResultID         string
+	freshConversationPending bool
+	freshConversationTurn    string
+	lastActivity             time.Time
+	submissionGate           sync.Mutex
+	accepted                 bool
+	submissions              int
+	activity                 uint64
+	unboundTerminal          *emptyTurnTerminal
+	unboundAmbiguous         bool
+	routeUnread              bool
+	completed                map[string]string
+	completedDetails         map[string]TurnCompletion
+	completedOrder           []string
+	mu                       sync.Mutex
+	runtimeID                string
+	reducer                  *turnoutput.Reducer
+	service                  *Service
+	row                      store.SessionRow
+	route                    *launchprofile.Route
+	turnID                   string
+	reducerTurnID            string
+	turnDone                 chan struct{}
+	finishedTurns            []string
 }
 
 func (s *Service) newSessionTurnOutput(row store.SessionRow, plan *launch.Plan) *sessionTurnOutput {
+	// Some hosted protocol runtimes do not consume StartOptions.LogPath. Tail
+	// should still read a private empty log while real output is pending.
+	if row.Workspace != "" {
+		path := filepath.Join(row.Workspace, "logs", "session.log")
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err != nil { //nolint:gosec // Workspace is the daemon-owned persisted session directory.
+			log.Printf("ERROR session %q: initialize output log: %v", row.ID, err)
+		} else if err := f.Close(); err != nil {
+			log.Printf("ERROR session %q: close initialized output log: %v", row.ID, err)
+		}
+	}
 	ctx, cancel := s.outputPersistenceContext()
 	defer cancel()
 	route, err := s.Store.SessionRoute(ctx, row.ID)
@@ -75,6 +91,14 @@ func (o *sessionTurnOutput) observeProvider(ev gopevents.Event) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	switch ev.(type) {
+	case gopevents.Delta, gopevents.ToolUse, gopevents.ToolResult, gopevents.Thinking,
+		gopevents.SubagentSpawn, gopevents.PermissionDenied, gopevents.Done, gopevents.Error:
+		o.noteTurnActivity()
+	}
+	if _, lost := ev.(gopevents.SessionLost); lost {
+		o.markSessionLost()
+	}
 	if result, ok := o.reducer.ObserveProvider(ev); ok {
 		o.publish(result)
 		o.completeTurn(result, false)
@@ -107,6 +131,9 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if ev.Kind == runtimeevents.KindSessionLost {
+		o.markSessionLost()
+	}
 	if ev.TurnID != "" && slices.Contains(o.finishedTurns, ev.TurnID) {
 		return
 	}
@@ -115,6 +142,7 @@ func (o *sessionTurnOutput) observeRuntime(ev runtimeevents.Event) {
 		runtimeevents.KindAgentToolResult, runtimeevents.KindAgentSubagentSpawn, runtimeevents.KindAgentPermissionRequested,
 		runtimeevents.KindAgentPermissionResolved, runtimeevents.KindAgentPermissionDenied,
 		runtimeevents.KindTurnCompleted, runtimeevents.KindTurnFailed:
+		o.noteTurnActivity()
 		if ev.TurnID != "" && (o.reducerTurnID == "" || ev.Kind == runtimeevents.KindTurnStarted || ev.TurnID == o.reducerTurnID) {
 			o.bindTurn(ev.TurnID)
 		}
@@ -182,16 +210,33 @@ func (o *sessionTurnOutput) publish(result turnoutput.Output) {
 	if o.service.Bus == nil {
 		return
 	}
-	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID}
+	job := &turnOutputWrite{storage: o.service.turnOutputStore, row: o.row, route: o.route, routeUnread: o.routeUnread, result: result, providerResultID: o.providerResultID, freshConversation: o.freshConversationTurn != "" && o.freshConversationTurn == o.turnID}
+	// Claim under the retry lock while committing the journal, so a replay
+	// sweep cannot race the synchronous publication of this same output.
+	r := &o.service.outputRetries
+	r.mu.Lock()
+	journalErr := job.journal(o.service)
+	if r.active == nil {
+		r.active = make(map[string]bool)
+	}
+	r.active[job.journalID] = true
+	r.mu.Unlock()
 	ctx, cancel := o.service.outputPersistenceContext()
 	defer cancel()
-	if err := job.persist(ctx, o.service); err != nil {
+	persistErr := journalErr
+	if persistErr == nil {
+		persistErr = job.persist(ctx, o.service)
+	}
+	if err := persistErr; err != nil {
 		log.Printf("ERROR session %q turn %q: output persistence deferred: %v", o.row.ID, result.TurnID, err)
 		o.route, o.routeUnread = job.route, job.routeUnread
 		o.service.retryTurnOutput(job)
 		return
 	}
 	o.route, o.routeUnread = job.route, job.routeUnread
+	r.mu.Lock()
+	delete(r.active, job.journalID)
+	r.mu.Unlock()
 }
 
 type turnOutputStore interface {
@@ -204,22 +249,39 @@ type turnOutputStore interface {
 // create a second durable body for the same output. The reader supplies one
 // overall deadline; retry workers additionally bound each operation.
 type turnOutputWrite struct {
-	providerResultID string
-	storage          turnOutputStore
-	row              store.SessionRow
-	route            *launchprofile.Route
-	routeUnread      bool
-	result           turnoutput.Output
-	messageID        string
+	journalID         string
+	journaled         bool
+	textTruncated     bool
+	freshConversation bool
+	providerResultID  string
+	storage           turnOutputStore
+	row               store.SessionRow
+	route             *launchprofile.Route
+	routeUnread       bool
+	result            turnoutput.Output
+	messageID         string
 }
 
 func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
+	if err := w.journal(s); err != nil {
+		return err
+	}
+	ctx, cancel := s.outputPersistenceContextFrom(parent)
+	published, found, err := s.Store.PublishedTurnOutput(ctx, w.row.ID, w.journalID)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if found {
+		w.messageID = published.MessageID
+		return s.Store.CompleteTurnOutputRetry(w.journalID)
+	}
 	storage := w.storage
 	if storage == nil {
 		storage = s.Store
 	}
 	workstream := ""
-	ctx, cancel := s.outputPersistenceContextFrom(parent)
+	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	current, err := storage.GetSessionContext(ctx, w.row.ID)
 	cancel()
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -245,8 +307,8 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 	}
 	result := w.result
 	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
-		ProviderResultID: w.providerResultID,
-		StopReason:       result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
+		ProviderResultID: w.providerResultID, OutputID: w.journalID, FreshConversation: w.freshConversation,
+		StopReason: result.StopReason, Confidence: result.Confidence, Runtime: result.Runtime,
 		LogicalAgentID: w.row.LogicalAgentID, ProjectID: w.row.ProjectID, WorkstreamID: workstream, MessageID: w.messageID}
 	if payload.MessageID == "" && w.route != nil && slices.Contains(w.route.Kinds, string(result.Kind)) {
 		text, _ := json.Marshal(struct {
@@ -258,27 +320,28 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 			ThreadID: w.row.ID, Payload: text, ContentType: "application/json",
 			Metadata: map[string]string{"session_id": w.row.ID, "turn_id": result.TurnID, "kind": string(result.Kind),
 				"stop_reason": result.StopReason, "confidence": string(result.Confidence), "runtime": result.Runtime,
-				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream},
+				"logical_agent_id": w.row.LogicalAgentID, "project_id": w.row.ProjectID, "workstream_id": workstream,
+				"output_id": w.journalID, "fresh_conversation": fmt.Sprint(w.freshConversation), "provider_result_id": w.providerResultID},
 		})
 		cancel()
 		if stageErr != nil {
-			if errors.Is(stageErr, context.DeadlineExceeded) || errors.Is(stageErr, context.Canceled) {
-				return stageErr
-			}
-			log.Printf("ERROR session %q turn %q: full-text output persistence failed: %v", w.row.ID, result.TurnID, stageErr)
-		} else {
-			w.messageID = env.ID
-			payload.MessageID = env.ID
+			return stageErr
 		}
+		w.messageID = env.ID
+		payload.MessageID = env.ID
 	}
 	if payload.MessageID == "" {
 		payload.Text, payload.TextTruncated = turnOutputExcerpt(result.Text)
+		payload.TextTruncated = payload.TextTruncated || w.textTruncated
 	}
 	data, _ := json.Marshal(payload)
 	ctx, cancel = s.outputPersistenceContextFrom(parent)
 	defer cancel()
-	return s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
-		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)})
+	if err := s.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: w.row.ID,
+		LogicalAgentID: w.row.LogicalAgentID, Kind: events.KindSessionTurnOutput, PayloadJSON: string(data)}); err != nil {
+		return err
+	}
+	return s.Store.CompleteTurnOutputRetry(w.journalID)
 }
 
 func turnOutputExcerpt(text string) (string, bool) {

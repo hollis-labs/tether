@@ -109,6 +109,10 @@ func (o *sessionTurnOutput) ensureTurn() {
 		return
 	}
 	o.turnID = runtimeevents.NewTurnID()
+	if o.freshConversationPending {
+		o.freshConversationTurn = o.turnID
+		o.freshConversationPending = false
+	}
 	o.turnDone = make(chan struct{})
 }
 
@@ -199,7 +203,7 @@ func runtimeTookNoTurn(err error) bool {
 // doing something with a turn: it opened or bound one, finished one, or reported
 // a terminal (even one dropped as ambiguous). trackTurnSubmissionContext compares
 // the count at entry and at exit.
-func (o *sessionTurnOutput) noteTurnActivity() { o.activity++ }
+func (o *sessionTurnOutput) noteTurnActivity() { o.activity++; o.lastActivity = time.Now() }
 
 // tookTurn reports, with mu held, whether the turn feed shows the runtime took a
 // turn since activity was read at a submission's entry: the submission's marker
@@ -258,6 +262,9 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		err = submit()
 	}
 	output.mu.Lock()
+	if errors.Is(err, provider.ErrProviderSessionLost) {
+		output.freshConversationPending = true
+	}
 	ran := err != nil && output.tookTurn(marker, activity) && !runtimeTookNoTurn(err)
 	if output.turnDone == done {
 		output.submissions--
@@ -313,4 +320,38 @@ func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReas
 	completion := o.completedDetails[id]
 	completion.Synthetic = true
 	o.completedDetails[id] = completion
+}
+
+// MarkTurnOutputSessionLost connects recovery to the existing output tracker.
+// Recovery owns native continuity; this marker only labels the next output turn.
+func (s *Service) MarkTurnOutputSessionLost(id string) {
+	if value, ok := s.turnOutputs.Load(id); ok {
+		output := value.(*sessionTurnOutput)
+		output.mu.Lock()
+		output.freshConversationPending = true
+		output.mu.Unlock()
+	}
+}
+
+// Typed session-loss signals describe a fresh conversation already started by
+// the provider. Mark that turn, or the next if no turn has opened yet. mu is held.
+func (o *sessionTurnOutput) markSessionLost() {
+	if o.turnID != "" {
+		o.freshConversationTurn = o.turnID
+	} else {
+		o.freshConversationPending = true
+	}
+}
+
+// SessionLastActivity reports observed turn-feed activity, excluding
+// process/session telemetry and synthetic binding heartbeats.
+func (s *Service) SessionLastActivity(id string) time.Time {
+	value, ok := s.turnOutputs.Load(id)
+	if !ok {
+		return time.Time{}
+	}
+	output := value.(*sessionTurnOutput)
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return output.lastActivity
 }
