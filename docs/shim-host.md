@@ -1,8 +1,8 @@
 # Opt-in shim hosting
 
-The daemon can host Claude streaming-stdio and Codex app-server JSON-RPC
-providers through a persistent shim. Direct execution remains
-the default. Codex public output delivery has additional requirements described
+The daemon can host Claude streaming-stdio, Codex app-server JSON-RPC and eligible
+Antigravity subprocess-per-turn providers through a persistent shim. Direct
+execution remains the default. Codex public output delivery has additional requirements described
 below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
@@ -71,10 +71,34 @@ facts while preserving the operation key, fingerprint and attempted-submit flag.
 
 ## Provider protocols
 
-Antigravity direct providers remain tied to the daemon. This hosting path does
-not preserve them across daemon death; Antigravity shim/ACP hosting is a separate
-follow-up. Its restart-survival limit does not imply a failure in Claude or
-Codex recovery.
+Eligible Antigravity launches use a persistent `tether shim-agy` worker under
+the canonical shim host. The launch must provide a native-session capability and
+a resolved subprocess-per-turn template; the existing placement and confinement
+requirements still apply. Direct Antigravity providers remain tied to the daemon.
+Systemd-user hosting places the worker and its turn children outside the daemon
+unit's cgroup. A `direct_fallback` diagnostic is not a hosting or survival result.
+
+The worker invokes the resolved AGY turn template sequentially, retaining the
+native conversation observed on its first turn. Each turn gets a separate UUID
+in the canonical journal. The receipt's provider PID identifies the persistent
+worker; AGY turn children are transient descendants that inherit its resolved
+environment, sandbox, limits, working directory and process group. This uses
+the supported per-turn CLI protocol. It does not require ACP or AGY's persistent
+stdin mode.
+
+An accepted subsequent input waits for the next turn; active interruption
+remains unsupported. A terminal result is emitted only after the turn child
+exits and its native identity and result have been validated. Missing or changed
+native conversation, authentication failure, nonzero exit and incomplete output
+fail explicitly. Reattachment selects the AGY parser under the original custody
+and journal fences. Only an exactly published result UUID suppresses replay;
+equal text on different turns remains distinct output.
+
+The [AGY restart acceptance matrix](agy-shim-acceptance.md) describes the affected
+systemd restart, queued input and public delivery checks. Source fixtures cover
+bridge detachment and reconstruction; the real isolated daemon-restart campaign
+remains pending. Raw journal output or input acknowledgment alone does not prove
+public delivery or consumption.
 
 Claude uses the stdio bridge described below. Hosted Codex uses a separate
 durable protocol ledger, bound to the original session, instance, generation,

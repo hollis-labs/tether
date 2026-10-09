@@ -8,6 +8,16 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Host eligible Antigravity subprocess-per-turn launches with a persistent
+  worker under the canonical shim. Turn children inherit the resolved launch
+  settings and hosted process group; the native conversation persists across
+  sequential turns, each with a distinct journal result UUID. Reattachment uses
+  the AGY parser and suppresses only an exactly published result. Lost identity,
+  auth failure, nonzero exit or incomplete output fails explicitly. Active
+  interruption remains unsupported; accepted steering queues for the next turn.
+  Real systemd restart acceptance remains separate from the source fixtures.
+  (CW-20261009-0015)
+
 - Retain supported empty Codex reasoning lifecycles and associated native command
   terminal observations as private delivery obligations. Reasoning requires both
   explicit empty `content` and `summary` arrays; unfinished, nonempty or unknown
