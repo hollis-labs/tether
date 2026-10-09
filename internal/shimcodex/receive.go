@@ -310,6 +310,8 @@ func (e *Engine) AcceptOutput(ctx context.Context, epoch uint64, cursor, stream 
 			}{stream, data})
 			s.Inbox = append(s.Inbox, Event{Identity: s.Binding.Journal + ":" + cursor + ":stderr", Cursor: cursor, Raw: raw})
 		} else {
+			inboxStart := len(s.Inbox)
+			chunkStart := s.StreamOffset
 			if uint64(len(data)) > ^uint64(0)-s.StreamOffset {
 				return fail("counter_exhausted")
 			}
@@ -338,6 +340,21 @@ func (e *Engine) AcceptOutput(ctx context.Context, epoch uint64, cursor, stream 
 			}
 			if len(s.Partial) > MaxLineBytes {
 				return fail("line_too_long")
+			}
+			if len(s.Inbox) == inboxStart {
+				// The physical frame advances the journal even when no NDJSON
+				// message is complete. Preserve its coverage without presenting
+				// private carry as a complete protocol message.
+				payload, _ := json.Marshal(struct {
+					Start  uint64 `json:"start,string"`
+					End    uint64 `json:"end,string"`
+					SHA256 string `json:"sha256"`
+				}{chunkStart, s.StreamOffset, digest(data)})
+				raw, _ := json.Marshal(struct {
+					Kind    string          `json:"kind"`
+					Payload json.RawMessage `json:"payload"`
+				}{"codex.stdout_fragment", payload})
+				s.Inbox = append(s.Inbox, Event{Identity: s.Binding.Journal + ":" + cursor + ":codex.stdout_fragment", Cursor: cursor, Raw: raw})
 			}
 		}
 		bytesUsed := len(s.Partial)

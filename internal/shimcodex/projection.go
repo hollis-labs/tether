@@ -27,6 +27,8 @@ type Projection struct {
 	ProtocolRevision                uint64              `json:"protocol_revision,string"`
 	JournalIdentity                 string              `json:"journal_identity"`
 	AcceptedSourceCursor            string              `json:"accepted_source_cursor"`
+	BaseSourceCursor                string              `json:"base_source_cursor,omitempty"`
+	BaseReceiptSHA256               string              `json:"base_receipt_sha256,omitempty"`
 	ReplayHighWater                 string              `json:"replay_highwater"`
 	DeliveredHighWater              string              `json:"delivered_highwater"`
 	StdoutOffset                    uint64              `json:"stdout_offset,string"`
@@ -57,6 +59,7 @@ type ProjectedTurn struct {
 type ProjectedItem struct {
 	NativeItemID      string   `json:"native_item_id"`
 	Kind              string   `json:"kind"`
+	Phase             string   `json:"phase,omitempty"`
 	TextBytes         string   `json:"text_bytes"`
 	DeltaSourceIDs    []string `json:"delta_source_ids"`
 	CompletedSourceID string   `json:"completed_source_id"`
@@ -262,6 +265,14 @@ func ValidateProjection(p Projection) error {
 		return fail("pressure_retained")
 	}
 	position := uint64(0)
+	if p.BaseSourceCursor != "" {
+		position, err = cursorNumber(p.JournalIdentity, p.BaseSourceCursor)
+		if err != nil || !validDigest(p.BaseReceiptSHA256) {
+			return fail("projection_invalid")
+		}
+	} else if p.BaseReceiptSHA256 != "" {
+		return fail("projection_invalid")
+	}
 	seen := map[string]SourceDisposition{}
 	for _, s := range p.Sources {
 		n, err := cursorNumber(p.JournalIdentity, s.Cursor)
@@ -286,7 +297,7 @@ func ValidateProjection(p Projection) error {
 	}
 	if p.AcceptedSourceCursor != "" {
 		n, err := cursorNumber(p.JournalIdentity, p.AcceptedSourceCursor)
-		if err != nil || n != position || len(p.Sources) == 0 {
+		if err != nil || n != position || len(p.Sources) == 0 && p.AcceptedSourceCursor != p.BaseSourceCursor {
 			return fail("projection_invalid")
 		}
 	} else if len(p.Sources) != 0 {
@@ -414,7 +425,7 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 	}
 	if strictProjectionJSON(event.Raw, ProjectionFrameBytes, &envelope) == nil && envelope.Kind != "" {
 		switch envelope.Kind {
-		case "shim.pin_adopted", "shim.launch_intent", "shim.started", "shim.attached", "shim.detached", "shim.inject_retry", "shim.inject_intent", "shim.inject_outcome", "shim.refused", "shim.control_intent", "shim.control_outcome":
+		case "shim.pin_adopted", "shim.launch_intent", "shim.started", "shim.attached", "shim.detached", "shim.inject_retry", "shim.inject_intent", "shim.inject_outcome", "shim.refused", "shim.control_intent", "shim.control_outcome", "codex.stdout_fragment":
 			if event.Identity != previous.JournalIdentity+":"+event.Cursor+":"+envelope.Kind {
 				return Projection{}, fail("source_conflict")
 			}
@@ -456,17 +467,48 @@ func supportedProjectionParams(raw []byte, dst any) bool {
 	return strictProjectionJSON(raw, ProjectionFrameBytes, dst) == nil
 }
 
+// Observed app-server additions are explicit here. Unsupported union members
+// and future fields continue to retain the original inbox record.
+type projectionTurnParams struct {
+	ThreadID string `json:"threadId"`
+	Turn     struct {
+		ID          string          `json:"id"`
+		Status      string          `json:"status"`
+		Items       json.RawMessage `json:"items,omitempty"`
+		ItemsView   json.RawMessage `json:"itemsView,omitempty"`
+		Error       json.RawMessage `json:"error,omitempty"`
+		StartedAt   json.RawMessage `json:"startedAt,omitempty"`
+		CompletedAt json.RawMessage `json:"completedAt,omitempty"`
+		DurationMs  json.RawMessage `json:"durationMs,omitempty"`
+	} `json:"turn"`
+}
+type projectionItemParams struct {
+	ThreadID      string          `json:"threadId"`
+	TurnID        string          `json:"turnId"`
+	StartedAtMs   json.RawMessage `json:"startedAtMs,omitempty"`
+	CompletedAtMs json.RawMessage `json:"completedAtMs,omitempty"`
+	Item          struct {
+		ID             string          `json:"id"`
+		Type           string          `json:"type"`
+		Text           string          `json:"text,omitempty"`
+		Phase          string          `json:"phase,omitempty"`
+		Delivery       json.RawMessage `json:"delivery,omitempty"`
+		MemoryCitation json.RawMessage `json:"memoryCitation,omitempty"`
+		Questions      json.RawMessage `json:"questions,omitempty"`
+		ClientID       json.RawMessage `json:"clientId,omitempty"`
+		Content        json.RawMessage `json:"content,omitempty"`
+	} `json:"item"`
+}
+
 func projectNotification(p *Projection, m Message, event Event, source *SourceDisposition) error {
 	// Unknown fields and unsupported item unions remain retained, never truncated.
 	switch m.Method {
+	case "remoteControl/status/changed", "account/updated", "thread/started", "mcpServer/startupStatus/updated", "thread/status/changed", "thread/tokenUsage/updated", "account/rateLimits/updated":
+		// Status/usage/account notifications are protocol telemetry, never output
+		// or grant callbacks. Their bounded original bytes retain a source digest.
+		source.Disposition = "protocol_only"
 	case "turn/started":
-		var params struct {
-			ThreadID string `json:"threadId"`
-			Turn     struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"turn"`
-		}
+		var params projectionTurnParams
 		if !supportedProjectionParams(m.Params, &params) {
 			return nil
 		}
@@ -489,21 +531,23 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 		p.Turns = append(p.Turns, ProjectedTurn{NativeThreadID: params.ThreadID, NativeTurnID: params.Turn.ID, StableOutputTurnID: projectedID(p.Binding, "turn", params.ThreadID, params.Turn.ID), Phase: "open"})
 		source.Disposition = "projected"
 	case "item/started", "item/completed":
-		var params struct {
-			ThreadID string `json:"threadId"`
-			TurnID   string `json:"turnId"`
-			Item     struct {
-				ID   string `json:"id"`
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"item"`
+		var params projectionItemParams
+		if !supportedProjectionParams(m.Params, &params) || params.Item.ID == "" {
+			return nil
 		}
-		if !supportedProjectionParams(m.Params, &params) || params.Item.Type != "agentMessage" || params.Item.ID == "" {
+		if params.Item.Type != "agentMessage" && params.Item.Type != "userMessage" {
 			return nil
 		}
 		t, err := activeProjectedTurn(p, params.ThreadID, params.TurnID)
 		if err != nil {
 			return err
+		}
+		if params.Item.Type == "userMessage" {
+			source.Disposition = "protocol_only"
+			return nil
+		}
+		if params.Item.Type != "agentMessage" {
+			return nil
 		}
 		index := -1
 		for i := range t.Items {
@@ -518,13 +562,13 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 			if len(t.Items) >= MaxOperations {
 				return fail("pressure_retained")
 			}
-			t.Items = append(t.Items, ProjectedItem{NativeItemID: params.Item.ID, Kind: "agent_message", TextBytes: params.Item.Text})
+			t.Items = append(t.Items, ProjectedItem{NativeItemID: params.Item.ID, Kind: "agent_message", Phase: params.Item.Phase, TextBytes: params.Item.Text})
 		} else {
 			if index < 0 {
 				return fail("item_mismatch")
 			}
 			item := &t.Items[index]
-			if item.CompletedSourceID != "" || item.TextBytes != params.Item.Text {
+			if item.CompletedSourceID != "" || item.TextBytes != params.Item.Text || item.Phase != params.Item.Phase {
 				return fail("item_mismatch")
 			}
 			item.CompletedSourceID = event.Identity
@@ -560,13 +604,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 		item.DeltaSourceIDs = append(item.DeltaSourceIDs, event.Identity)
 		source.Disposition = "projected"
 	case "turn/completed":
-		var params struct {
-			ThreadID string `json:"threadId"`
-			Turn     struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"turn"`
-		}
+		var params projectionTurnParams
 		if !supportedProjectionParams(m.Params, &params) {
 			return nil
 		}

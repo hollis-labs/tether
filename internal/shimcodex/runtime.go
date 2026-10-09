@@ -28,6 +28,7 @@ type Config struct {
 	OnSession       func(*Session)
 	OnDetach        func(error)
 	DeliveryChecker DeliveryChecker
+	Deliver         DeliveryHandler
 }
 type Runtime struct{ Config Config }
 
@@ -96,6 +97,7 @@ func (r *Runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 	}
 	s.onSessionID = opts.OnSessionID
 	s.deliveryChecker = r.Config.DeliveryChecker
+	s.deliver = r.Config.Deliver
 	if err = t.Replay(ctx, engine.Snapshot().Cursor); err != nil {
 		return nil, err
 	}
@@ -103,6 +105,10 @@ func (r *Runtime) Start(ctx context.Context, opts agentsessions.StartOptions) (a
 	s.workers.Add(2)
 	go func() { defer s.workers.Done(); t.read(s, r.Config.OnDetach) }()
 	go func() { defer s.workers.Done(); s.serverRequests(opts.JsonRpcRequestHook) }()
+	if s.deliver != nil {
+		s.workers.Add(1)
+		go func() { defer s.workers.Done(); s.deliverOutputs() }()
+	}
 	if r.Config.OnSession != nil {
 		r.Config.OnSession(s)
 	}
@@ -283,6 +289,9 @@ func (t *hostTransport) read(s *Session, onDetach func(error)) {
 					terminalErr = err
 					return
 				}
+				// Finish cancels controller workers. Settle the authenticated exit
+				// obligation before that cancellation; failure retains the inbox.
+				_ = s.deliverOnce(work)
 				if err := t.Ack(work, s.engine.Snapshot().Cursor); err != nil {
 					stop()
 					terminalErr = err

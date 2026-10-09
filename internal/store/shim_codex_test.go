@@ -76,8 +76,8 @@ func TestCodexProtocolCASBindsCanonicalGenerationAndAtomicInbox(t *testing.T) {
 }
 
 // This models a private opaque verifier token, NOT a B2 issuer/transaction.
-// Production LoadVerifiedCodexDelivery remains Unsupported; there is no public
-// constructor and no successful receipt producer in this source slice.
+// An unbacked store cannot issue delivery proof. Production issuance requires
+// the canonical protocol record and checked durable output references.
 func TestVerifiedCodexDeliveryConsumerBindsOpaqueIssuerAndObservation(t *testing.T) {
 	db := &Store{}
 	state := shimcodex.State{Version: shimcodex.Version, Binding: shimcodex.Binding{Session: "s", Instance: "i", Operation: "p", Attempt: "a", Fingerprint: "f", Generation: 1, Journal: "j"}, Revision: 5, Epoch: 2, NextID: shimcodex.FirstID, Cursor: "j:5", ReplayHighWater: "j:3", ExitCursor: "j:4", Exit: &shim.Exit{Status: 7}}
