@@ -36,7 +36,7 @@ func (s *Service) nativeOnlyCredentialCeiling(ctx context.Context, plan *launch.
 	}
 	var raw string
 	var expires sql.NullString
-	err := s.Store.DB().QueryRowContext(ctx, `SELECT scopes_json,expires_at FROM principals WHERE kind='session' AND session_id=? ORDER BY id DESC LIMIT 1`, plan.ResumeSourceSessionID).Scan(&raw, &expires)
+	err := s.Store.DB().QueryRowContext(ctx, `SELECT scopes_json,expires_at FROM principals WHERE principal_id=? AND kind='session' AND session_id=? ORDER BY id DESC LIMIT 1`, "msg://session/local/"+plan.ResumeSourceSessionID, plan.ResumeSourceSessionID).Scan(&raw, &expires)
 	if err != nil || json.Unmarshal([]byte(raw), &floor.scopes) != nil || floor.scopes == nil {
 		return floor, nativeOnlyError("original credential ceiling unavailable")
 	}

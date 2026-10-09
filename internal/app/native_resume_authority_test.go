@@ -13,7 +13,7 @@ import (
 )
 
 func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
-	for _, kind := range []string{"bounded", "auto_revoked_source", "missing_current", "expired_source", "revoked_current", "missing_source", "narrower_current"} {
+	for _, kind := range []string{"bounded", "auto_revoked_source", "missing_current", "expired_source", "revoked_current", "missing_source", "narrower_current", "foreign_source_principal", "foreign_source_only"} {
 		t.Run(kind, func(t *testing.T) {
 			r := recoveryRuntimeRig(t, nil)
 			r.plan.NativeResumeOnly = true
@@ -28,6 +28,18 @@ func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
 			}
 			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 			switch kind {
+			case "foreign_source_principal", "foreign_source_only":
+				if err := ids.RevokeToken(ctx, token); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := ids.Mint(ctx, identity.Principal{ID: "zz-foreign-session-principal", Kind: "session", SessionID: "source", Scopes: []string{"*"}}); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "foreign_source_only" {
+					if _, err := r.service.Store.DB().Exec(`DELETE FROM principals WHERE principal_id='msg://session/local/source'`); err != nil {
+						t.Fatal(err)
+					}
+				}
 			case "auto_revoked_source":
 				if err := ids.RevokeToken(ctx, token); err != nil {
 					t.Fatal(err)
@@ -50,7 +62,7 @@ func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
 				ctx = identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, RevokedAt: &now})
 			}
 			minted, err := r.service.mintSessionCredential(ctx, "resumed")
-			positive := kind == "bounded" || kind == "auto_revoked_source" || kind == "narrower_current"
+			positive := kind == "bounded" || kind == "auto_revoked_source" || kind == "narrower_current" || kind == "foreign_source_principal"
 			if !positive {
 				if minted != "" || !errors.Is(err, ErrNativeOnlyUnavailable) {
 					t.Fatalf("unsafe mint accepted: %v", err)
