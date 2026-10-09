@@ -241,6 +241,13 @@ type teamProfileRuntime struct {
 	profiles *[]sandbox.Profile
 }
 
+// The fixture reports real provider IDs, so it advertises that capability.
+func (r teamProfileRuntime) Caps() agentsessions.Capabilities {
+	caps := r.Runtime.Caps()
+	caps.ProviderSessionID = true
+	return caps
+}
+
 func (r teamProfileRuntime) Start(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
 	*r.profiles = append(*r.profiles, opts.Profile)
 	if opts.OnSessionID != nil {

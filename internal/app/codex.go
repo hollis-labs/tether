@@ -25,7 +25,17 @@ func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 		opts := s.codexAppServerOptions(id)
 		return hosted.SendTurn(ctx, text, opts.CWD, opts.ClientName, opts.ClientVersion)
 	}
-	return s.codexThreads.SendTurn(ctx, id, managerJSONRPCSender{s: s, id: id}, text, s.codexAppServerOptions(id))
+	err := s.codexThreads.SendTurn(ctx, id, managerJSONRPCSender{s: s, id: id}, text, s.codexAppServerOptions(id))
+	// A thread binding can succeed before turn/start fails. Persist what the
+	// provider actually bound, without inventing continuity from the request.
+	if nativeID, bound := s.codexThreads.ThreadID(id); bound && s.Store != nil {
+		if row, readErr := s.Store.GetSession(id); readErr == nil && row.ProviderID != "" {
+			if mapErr := s.Store.UpsertSessionProviderMapping(id, "tether", row.ProviderID, nativeID); mapErr != nil {
+				return mapErr
+			}
+		}
+	}
+	return err
 }
 
 func (s *Service) codexThreadStartParams(sessionID string) map[string]any {
@@ -50,6 +60,11 @@ func (s *Service) codexAppServerOptions(sessionID string) turn.CodexAppServerOpt
 	}
 	if cwd, ok := s.codexThreadStartParams(sessionID)["cwd"].(string); ok {
 		opts.CWD = cwd
+	}
+	if s != nil && s.Store != nil {
+		if plan, err := s.Store.GetLaunchPlan(sessionID); err == nil && plan != nil {
+			opts.ResumeThreadID = plan.ResumeProviderSessionID
+		}
 	}
 	return opts
 }

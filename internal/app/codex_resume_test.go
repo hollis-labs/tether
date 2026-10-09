@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-providers/provider"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/checkpoint"
@@ -21,8 +20,6 @@ import (
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )
-
-var providerSessionLost = provider.ErrProviderSessionLost
 
 // A stand-in `codex exec` that behaves the way the real one does where it matters
 // here (CW-20261001-0210). Every call records its argv and CODEX_HOME. A thread
@@ -58,10 +55,6 @@ echo "{\"type\":\"thread.started\",\"thread_id\":\"$tid\"}"
 echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 : > "$dir/done.$n"
 `
-
-// codexNoRolloutText is the stderr line real codex-cli 0.159.3 prints when asked
-// to resume a thread its CODEX_HOME lacks (empty stdout, exit 1).
-const codexNoRolloutText = "no rollout found for thread id"
 
 // resumeBus records the events the service publishes.
 type resumeBus struct {
@@ -143,6 +136,11 @@ func newCodexRig(t *testing.T) *codexRig {
 		Manager:     agentsessions.NewManager(stateSinkAdapter{db: db}),
 		factories:   map[string]RuntimeFactory{"codex-cli": factory},
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = svc.Manager.Shutdown(ctx)
+	})
 	return &codexRig{t: t, svc: svc, bus: bus, dir: dir, repo: repo}
 }
 
@@ -178,7 +176,11 @@ func (r *codexRig) wait(n int) call {
 		r.t.Fatal(err)
 	}
 	h, _ := os.ReadFile(filepath.Join(r.dir, fmt.Sprintf("home.%d", n)))
-	return call{argv: strings.Split(strings.TrimSpace(string(b)), "\n"), home: string(h)}
+	args := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	if boundary := slices.Index(args, "--"); boundary >= 0 && boundary+1 < len(args) {
+		args = append(args[:boundary+1], strings.Join(args[boundary+1:], "\n"))
+	}
+	return call{argv: args, home: string(h)}
 }
 
 func (r *codexRig) count() int {
@@ -300,130 +302,115 @@ func TestCodexExec_SecondTurnResumesTheThreadWithinOneSession(t *testing.T) {
 	promptLast(t, c2.argv, "second turn")
 }
 
-// A logical-agent resume is a NEW session with a NEW boot dir, so a new
-// CODEX_HOME. With a checkpoint that records no provider thread id (which is every
-// checkpoint Tether itself writes today) it starts a fresh codex thread: its first
-// turn has no `resume`. Within that new session, turn 2 resumes the new session's
-// own thread. This pins what happens today across boots (CW-20261001-0210).
-func TestCodexExec_LogicalAgentResumeStartsAFreshThreadAcrossBoots(t *testing.T) {
+// Across canonical sessions, recovery preserves the provider conversation while
+// fresh planting still supplies current config/auth/loopback in a distinct home.
+func TestCodexExec_LogicalAgentResumeContinuesNativeThreadAcrossBoots(t *testing.T) {
 	r := newCodexRig(t)
 	a := r.start()
 	if err := r.turn(a, "first turn"); err != nil {
-		t.Fatalf("turn 1: %v", err)
+		t.Fatal(err)
 	}
 	c1 := r.wait(1)
-	threadA := threadOf(t, c1.home)
+	thread := threadOf(t, c1.home)
 	if err := r.svc.StopSession(a); err != nil {
-		t.Fatalf("StopSession: %v", err)
+		t.Fatal(err)
 	}
-	r.checkpoint("ck1", a, "")
-
+	r.ended(a)
+	// Native mapping is sufficient; no checkpoint is required.
 	res, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{})
-	if err != nil {
-		t.Fatalf("ResumeLogicalAgent: %v", err)
-	}
-	if res.SessionID == a {
-		t.Fatal("a resume must be a new session")
-	}
-	if err := r.turn(res.SessionID, "after resume"); err != nil {
-		t.Fatalf("first turn after the resume: %v", err)
-	}
-	c2 := r.wait(2)
-	if c2.home == c1.home {
-		t.Fatalf("the resumed session reused the old CODEX_HOME %s", c1.home)
-	}
-	if c2.resumeID() != "" {
-		t.Fatalf("the resumed session's first turn resumes %q; nothing carries a thread id across boots: %q", c2.resumeID(), c2.argv)
-	}
-	promptLast(t, c2.argv, "after resume")
-	threadB := threadOf(t, c2.home)
-	if threadB == threadA {
-		t.Fatal("the resumed session continued the old thread")
-	}
-
-	if err := r.turn(res.SessionID, "and again"); err != nil {
-		t.Fatalf("second turn after the resume: %v", err)
-	}
-	c3 := r.wait(3)
-	if got := c3.resumeID(); got != threadB || c3.home != c2.home {
-		t.Fatalf("within the resumed session turn 2 should resume ITS thread %q in %s, got %q in %s: %q", threadB, c2.home, got, c3.home, c3.argv)
-	}
-}
-
-// The one way a thread id can reach a new boot: a checkpoint whose provider hints
-// carry it. Nothing in Tether writes those hints today, but if something starts
-// to, a resume into a CODEX_HOME that lacks the thread must not become a hard
-// failure. Real codex-cli 0.159.3 exits 1 with empty stdout and "Error:
-// thread/resume: thread/resume failed: no rollout found for thread id <id> (code
-// -32600)". The lib classifies that as a lost session: the turn fails ONCE with a
-// typed ErrProviderSessionLost (which the API answers as 409 provider_session_lost,
-// not a 502 turn_failed), the session log says so, the id is dropped, and the next
-// turn starts a fresh thread. The resume itself, the launch, succeeds.
-func TestCodexExec_ResumeWithAThreadFromAnotherBootIsASessionLossNotAHardFailure(t *testing.T) {
-	r := newCodexRig(t)
-	a := r.start()
-	if err := r.turn(a, "first turn"); err != nil {
-		t.Fatalf("turn 1: %v", err)
-	}
-	c1 := r.wait(1)
-	threadA := threadOf(t, c1.home)
-	if err := r.svc.StopSession(a); err != nil {
-		t.Fatalf("StopSession: %v", err)
-	}
-	r.checkpoint("ck1", a, fmt.Sprintf(`{"provider_session_id":%q}`, threadA))
-
-	res, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{})
-	if err != nil {
-		t.Fatalf("the resume itself must not fail: %v", err)
-	}
-
-	// Turn 1 of the new boot asks codex to resume a thread its CODEX_HOME lacks.
-	lossErr := r.turn(res.SessionID, "after resume (1)")
-	c2 := r.wait(2)
-	if c2.home == c1.home {
-		t.Fatal("the resumed session reused the old CODEX_HOME, so this tests nothing")
-	}
-	if got := c2.resumeID(); got != threadA {
-		t.Fatalf("the checkpoint's thread %q was not fed to the new boot's first turn (got %q): %q", threadA, got, c2.argv)
-	}
-	if lossErr == nil {
-		t.Fatal("resuming a thread the CODEX_HOME lacks should fail that turn once")
-	}
-	if !errors.Is(lossErr, providerSessionLost) {
-		t.Fatalf("the failure must be a typed provider session loss (the API's 409 provider_session_lost), got: %v", lossErr)
-	}
-	if !strings.Contains(lossErr.Error(), codexNoRolloutText) {
-		t.Fatalf("the error should carry codex's own reason (%q): %v", codexNoRolloutText, lossErr)
-	}
-	// The session log records the loss, so an operator reading it can see why.
-	row, err := r.svc.Store.GetSession(res.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	logText, err := os.ReadFile(filepath.Join(row.Workspace, "logs", "session.log"))
-	if err != nil {
-		t.Fatalf("session log: %v", err)
+	if res.SessionID == a {
+		t.Fatal("ordinary resume reused canonical session")
 	}
-	if !strings.Contains(string(logText), "[session_lost] requested="+threadA) {
-		t.Fatalf("the session log does not record the loss:\n%s", logText)
+	c2 := r.wait(2)
+	if c2.home == c1.home || c2.resumeID() != thread {
+		t.Fatalf("native recovery argv=%v home=%s", c2.argv, c2.home)
 	}
-
-	// The id was dropped: the next turn starts a fresh thread and succeeds.
-	if err := r.turn(res.SessionID, "after resume (2)"); err != nil {
-		t.Fatalf("the turn after a session loss must succeed on a fresh thread: %v", err)
+	if !strings.Contains(c2.argv[len(c2.argv)-1], "Recovery pack v0") {
+		t.Fatalf("missing recovery context: %q", c2.argv)
+	}
+	r.idle(res.SessionID)
+	if err = r.turn(res.SessionID, "after recovery"); err != nil {
+		t.Fatal(err)
 	}
 	c3 := r.wait(3)
-	if c3.resumeID() != "" {
-		t.Fatalf("the turn after a loss still resumes %q: %q", c3.resumeID(), c3.argv)
+	if c3.resumeID() != thread || c3.home != c2.home {
+		t.Fatalf("followup lost native identity: %+v", c3)
 	}
-	promptLast(t, c3.argv, "after resume (2)")
-	if threadB := threadOf(t, c3.home); threadB == threadA {
-		t.Fatal("the fresh thread has the lost thread's id")
+	promptLast(t, c3.argv, "after recovery")
+}
+
+func TestCodexExec_MissingNativeStateColdBootsOnceWithRecoveryPack(t *testing.T) {
+	r := newCodexRig(t)
+	a := r.start()
+	if err := r.turn(a, "first turn"); err != nil {
+		t.Fatal(err)
 	}
-	// Not asserted, on purpose: whether a provider.session_lost event is published
-	// here. agentkit calls OnProviderSessionLost only when a turn ran on in a NEW
-	// session (Antigravity's case), so for this failed turn the lib emits its own
-	// typed event and the session-log marker, and Tether publishes nothing on the
-	// bus. That is a decision for the lead; see the PR.
-	t.Logf("bus events (informational): %v", r.bus.kinds())
+	c1 := r.wait(1)
+	thread := threadOf(t, c1.home)
+	if err := r.svc.StopSession(a); err != nil {
+		t.Fatal(err)
+	}
+	r.ended(a)
+	if err := os.Remove(filepath.Join(c1.home, "sessions", thread)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.svc.ResumeLogicalAgent("agent", api.ResumeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := r.wait(2)
+	cold := r.wait(3)
+	if failed.resumeID() != thread || cold.resumeID() != "" || cold.home != failed.home {
+		t.Fatalf("native/cold attempts: %+v %+v", failed, cold)
+	}
+	if !strings.Contains(cold.argv[len(cold.argv)-1], "Recovery pack v0") {
+		t.Fatalf("cold boot omitted recovery pack: %q", cold.argv)
+	}
+	if !slices.Contains(r.bus.kinds(), events.KindProviderSessionLost) {
+		t.Fatal("missing native-loss continuity event")
+	}
+	source, err := r.svc.Store.GetSessionProviderMapping(a, "tether", "codex-cli")
+	if err != nil || source.NativeSessionID.Valid {
+		t.Fatalf("stale source mapping: %+v %v", source, err)
+	}
+	plan, err := r.svc.Store.GetLaunchPlan(res.SessionID)
+	if err != nil || plan.ResumeProviderSessionID != "" {
+		t.Fatalf("stale persisted hint: %+v %v", plan, err)
+	}
+	r.idle(res.SessionID)
+	if err = r.turn(res.SessionID, "continue fresh conversation"); err != nil {
+		t.Fatal(err)
+	}
+	next := r.wait(4)
+	if next.resumeID() == "" || next.resumeID() == thread {
+		t.Fatalf("followup=%+v", next)
+	}
+}
+
+func (r *codexRig) idle(id string) {
+	r.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if h, ok := r.svc.Manager.Health(id); ok && h.Health.Alive && h.Health.State == agentsessions.LiveStateIdle {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.t.Fatal("recovery control turn did not become idle")
+}
+
+func (r *codexRig) ended(id string) {
+	r.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		row, err := r.svc.Store.GetSession(id)
+		if err == nil && (row.State == "killed" || row.State == "failed" || row.State == "completed") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.t.Fatal("stopped runtime did not record terminal state")
 }

@@ -108,6 +108,11 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		s.shimDiagnostic(req.ID, nil, "direct_fallback", code)
 		return req, nil
 	}
+	if plan.ResumeSourceSessionID != "" {
+		// A vanished child needs native recovery, not a survival claim. Keep
+		// the bounded attempt/teardown retry inside the direct runtime Start.
+		return fallback("native_recovery_direct")
+	}
 	claude := plan.ProviderBrand == "claude" && req.Runtime.Caps().StreamingStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeStreamingStdio
 	codex := plan.ProviderBrand == "codex" && req.Runtime.Caps().JsonRpcStdio && req.Options.Launch != nil && req.Options.Launch.Convention.Mode == runtimes.ModeJSONRPCStdio && req.Options.SessionIDPreset == "" && !req.Options.AutoFireFirstTurn && len(req.Options.FirstTurnPayload) == 0
 	if (!claude && !codex) || req.Options.PreparedExecution != nil || len(req.Options.ExtraFiles) != 0 || req.Options.Supervisor != nil {
