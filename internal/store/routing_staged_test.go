@@ -271,3 +271,31 @@ func TestStageTurnOutputContentTypeConflictPreservesBothRepresentations(t *testi
 		t.Fatal("original representation overwritten", err)
 	}
 }
+
+func TestStageTurnOutputKeepsNativeSourceAttributionDistinct(t *testing.T) {
+	db := openRetentionDB(t)
+	ctx := context.Background()
+	var previous messaging.Envelope
+	for _, source := range []string{"completion-one", "completion-two"} {
+		outputID := store.TurnOutputID("s1", "t1", "approval", source, "same question")
+		input := messaging.Envelope{From: messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s1"},
+			Payload: []byte(`{"text":"same question"}`), ContentType: "application/json",
+			Metadata: map[string]string{"turn_id": "t1", "kind": "approval", "output_id": outputID, "provider_result_id": source}}
+		first, err := db.StageTurnOutput(ctx, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.ID == previous.ID || first.Metadata["provider_result_id"] != source || first.Metadata["output_id"] != outputID {
+			t.Fatal("native source attribution collapsed")
+		}
+		retry, err := db.StageTurnOutput(ctx, input)
+		if err != nil || retry.ID != first.ID || !retry.CreatedAt.Equal(first.CreatedAt) {
+			t.Fatal("native source retry duplicated", err)
+		}
+		input.Payload = []byte(`{"text":"conflicting question"}`)
+		if _, err := db.StageTurnOutput(ctx, input); err == nil {
+			t.Fatal("accepted a conflicting body under one output identity")
+		}
+		previous = first
+	}
+}

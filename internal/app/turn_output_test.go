@@ -125,8 +125,19 @@ func TestTurnOutputPersistenceFailureNeverEmitsMessageID(t *testing.T) {
 	output.observeProvider(gopevents.Delta{Text: "answer", Phase: "final"})
 	output.observeProvider(gopevents.Done{})
 	evs := outputEvents(t, svc)
-	if len(evs) != 1 || evs[0].MessageID != "" || evs[0].Text != "answer" {
-		t.Fatalf("false message id: %+v", evs)
+	if len(evs) != 0 {
+		t.Fatal("failed selected stage was downgraded to an excerpt")
+	}
+	ids, err := svc.Store.PendingTurnOutputRetries("", 128)
+	if err != nil || len(ids) != 1 {
+		t.Fatal("failed selected stage lost durable retry", err)
+	}
+	if _, err := svc.Store.DB().Exec(`DROP TRIGGER fail_stage`); err != nil {
+		t.Fatal(err)
+	}
+	got := waitOutputEvents(t, svc, 1)
+	if got[0].MessageID == "" {
+		t.Fatal("retry did not recover full selected body")
 	}
 }
 

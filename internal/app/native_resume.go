@@ -83,7 +83,25 @@ func (r *recoveryRuntime) Start(ctx context.Context, opts agentsessions.StartOpt
 			}
 			return nil, r.request.Err()
 		case <-timer.C:
-			return sess, nil
+			if sess.Health().Alive {
+				return sess, nil
+			}
+			// The wait observer can be scheduled after the grace timer on a
+			// loaded host. Dead health is not a healthy recovered session: wait
+			// for authoritative completion before admitting any cold child.
+			confirmed, cancel := context.WithTimeout(r.request, 2*time.Second)
+			select {
+			case err = <-done:
+				cancel()
+				if errors.Is(err, provider.ErrProviderNotAuthenticated) {
+					return nil, err
+				}
+				return r.cold(ctx, opts, nativeID)
+			case <-confirmed.Done():
+				err = confirmed.Err()
+				cancel()
+				return nil, &recoveryUnconfirmedError{err: err, pid: sess.Health().PID}
+			}
 		case err = <-done:
 			if errors.Is(err, provider.ErrProviderNotAuthenticated) {
 				return nil, err
@@ -140,6 +158,7 @@ func (r *recoveryRuntime) cold(ctx context.Context, opts agentsessions.StartOpti
 	r.service.codexThreads.Forget(r.id)
 	r.plan.ResumeProviderSessionID = ""
 	opts.SessionIDPreset = ""
+	r.service.MarkTurnOutputSessionLost(r.id)
 	publishSessionEvent(r.service.Bus, r.id, r.plan.LogicalAgentID, events.KindProviderSessionLost, struct {
 		Requested         string `json:"requested"`
 		Reason            string `json:"reason"`

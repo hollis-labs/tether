@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/hollis-labs/tether/internal/events"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,17 +106,36 @@ func TestCorruptRouteIsRetriedWithoutInventingDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := svc.newSessionTurnOutput(*row, &launch.Plan{ProviderBrand: "codex"})
-	output.observeProvider(gopevents.Done{Text: "unroutable"})
-	first := outputEvents(t, svc)[0]
-	if first.MessageID != "" || first.Text != "unroutable" {
-		t.Fatalf("invented route: %+v", first)
+	text := strings.Repeat("unroutable", 600)
+	output.observeProvider(gopevents.Done{Text: text})
+	if len(outputEvents(t, svc)) != 0 {
+		t.Fatal("corrupt route invented an unrouted publication")
+	}
+	ids, err := svc.Store.PendingTurnOutputRetries("", 128)
+	if err != nil || len(ids) != 1 {
+		t.Fatal("corrupt route lost its pending output", err)
+	}
+	journal, err := readOutputRetry(svc, ids[0])
+	if err != nil || journal.result.Text != text || !journal.routeUnread {
+		t.Fatal("corrupt route did not retain the full body", err)
 	}
 	if _, err := svc.Store.DB().Exec(`UPDATE sessions SET route_json='{"channel":"ops","kinds":["final"]}' WHERE id='s1'`); err != nil {
 		t.Fatal(err)
 	}
+	first := waitOutputEvents(t, svc, 1)[0]
+	if first.MessageID == "" {
+		t.Fatal("corrected route did not recover selected output")
+	}
+	env, err := svc.Store.StagedTurnOutput(context.Background(), first.MessageID)
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err != nil || json.Unmarshal(env.Payload, &body) != nil || body.Text != text {
+		t.Fatal("corrected route lost its retained full body", err)
+	}
 	output.observeProvider(gopevents.Done{Text: "recovered"})
-	if got := outputEvents(t, svc); len(got) != 2 || got[1].MessageID == "" {
-		t.Fatalf("route not retried: %+v", got)
+	if got := waitOutputEvents(t, svc, 2); len(got) != 2 || got[1].MessageID == "" {
+		t.Fatal("route not retried for later output")
 	}
 }
 
