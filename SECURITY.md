@@ -102,7 +102,7 @@ catalog through MCP tools:
 - the `nanite` (`dev_bash`, `dev_write`) and `cerberus` host shells, if a
   project grants them.
 
-The default MCP allow-list (`torque`, `tesseract`) is therefore not safe for a
+The interim default MCP allow-list (`torque` only) is therefore not safe for a
 Codex agent either. **The structural fix is MCP upstreams that run daemon-side,
 outside the agent's reach (CW-20261001-0230).** Until then `GET /health`
 (`sandbox_protect.codex`), `tether doctor` (`sandbox-protect-codex`) and the
@@ -232,8 +232,9 @@ Two defaults narrow which MCP servers a launched agent is handed
 inherit servers from your `~/.claude.json`, project `.mcp.json` files or the
 claude.ai connectors (a launched agent has no connectors at all); `TETHER_CLAUDE_STRICT_MCP=0` in tetherd's environment turns
 this off, and tetherd then warns at startup and `tether doctor` warns. An agent's
-`tether` proxy is confined to an allow-list of upstreams, by default `torque` and
-`tesseract`. `cerberus` is never in the default. These stop an agent from being
+`tether` proxy is confined to an allow-list of upstreams, by default `torque`
+only (CW-20261001-0228). Tesseract requires an explicit grant; `cerberus` is
+never in the default. These stop an agent from being
 handed a server by accident. They do not stop one that goes looking: an agent
 can create a child session through the API with a wider list, or run an
 upstream's binary itself, until CW-20260930-0253 and CW-20260930-0237 land.
