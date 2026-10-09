@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/checkpoint"
 	"github.com/hollis-labs/tether/internal/launch"
