@@ -85,3 +85,39 @@ var (
 	_ SessionEnrollment = (*LegacyEnroller)(nil)
 	_ SessionActors     = (*LegacyEnroller)(nil)
 )
+
+func (e *LegacyEnroller) ValidateRecovery(ctx context.Context, key string, actor mesh.URN, id string) error {
+	r, err := e.read(ctx, "enrollment", key)
+	if err != nil {
+		return err
+	}
+	if r.ended != "" || r.bindingEnded || r.state != "done" {
+		return teams.ErrDenied
+	}
+	var saved enrollmentReceipt
+	if err = json.Unmarshal(r.payload, &saved); err != nil {
+		return err
+	}
+	if saved.Enrollment.Actor != actor || saved.Enrollment.AgentID != string(actor) {
+		return teams.ErrConflict
+	}
+	profile, err := e.registry.Lookup(ctx, string(actor))
+	if err != nil {
+		return err
+	}
+	var pin mesh.DefinitionRef
+	if err = json.Unmarshal([]byte(profile.Props["team_definition"]), &pin); err != nil {
+		return err
+	}
+	if profile.Status != registry.StatusActive || profile.Kind != registry.KindAgent || pin != saved.Pin {
+		return teams.ErrDenied
+	}
+	binding, err := e.registry.CurrentBinding(ctx, string(actor))
+	if err != nil {
+		return err
+	}
+	if binding.SessionID != id || binding.AttemptID != r.bindingSecret || binding.HostID != "team" || binding.Visibility != registry.VisibilityTetherHosted {
+		return teams.ErrUnavailable
+	}
+	return nil
+}

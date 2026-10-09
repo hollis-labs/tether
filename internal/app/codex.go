@@ -29,7 +29,7 @@ func (s *Service) sendTurnJSONRPC(ctx context.Context, id, text string) error {
 	// A thread binding can succeed before turn/start fails. Persist what the
 	// provider actually bound, without inventing continuity from the request.
 	if nativeID, bound := s.codexThreads.ThreadID(id); bound && s.Store != nil {
-		if row, readErr := s.Store.GetSession(id); readErr == nil {
+		if row, readErr := s.Store.GetSession(id); readErr == nil && row.ProviderID != "" {
 			if mapErr := s.Store.UpsertSessionProviderMapping(id, "tether", row.ProviderID, nativeID); mapErr != nil {
 				return mapErr
 			}
