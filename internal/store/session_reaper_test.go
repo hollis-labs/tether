@@ -142,3 +142,32 @@ func TestReaperActivitySnapshotSurvivesReopen(t *testing.T) {
 		t.Fatalf("restart activity=%+v want=%s", rows, observed)
 	}
 }
+
+func TestReaperOrphanDoesNotClobberConcurrentLaunch(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.CreateSession(SessionRow{ID: "launching", State: "launching"}, &launch.Plan{}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := db.GetSession("launching")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSessionState("launching", "running", 42, nil); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := db.RecordReaperOrphan(context.Background(), "launching", "process_missing", *snapshot)
+	if err != nil || changed {
+		t.Fatalf("clobbered concurrent launch: changed=%v err=%v", changed, err)
+	}
+	row, err := db.GetSession("launching")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.State != "running" || row.PID.Int64 != 42 {
+		t.Fatalf("live launch=%+v", row)
+	}
+}

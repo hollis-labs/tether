@@ -163,7 +163,7 @@ func (s *Service) SweepSessionReaper(ctx context.Context, now time.Time) error {
 					continue
 				}
 			}
-			changed, err := s.Store.RecordReaperOrphan(ctx, row.ID, "process_missing")
+			changed, err := s.Store.RecordReaperOrphan(ctx, row.ID, "process_missing", row.SessionRow)
 			if err != nil {
 				failures = append(failures, err)
 			} else if changed {

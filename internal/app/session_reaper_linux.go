@@ -21,6 +21,12 @@ import (
 // a bare persisted PID, which could belong to another process after reuse.
 func (s *Service) stopVerifiedSessionProcess(ctx context.Context, row *store.SessionRow, pid int, reason string, d launchprofile.LifecycleDurations) error {
 	fd, err := unix.PidfdOpen(pid, 0)
+	if errors.Is(err, syscall.ENOSYS) || errors.Is(err, syscall.EINVAL) {
+		if err := s.reaperEvent(ctx, row, reason, "runtime_fallback", "", nil); err != nil {
+			return err
+		}
+		return s.finishLifecycleRuntimeStop(ctx, row.ID, d)
+	}
 	if err != nil {
 		return fmt.Errorf("pin session process: %w", err)
 	}

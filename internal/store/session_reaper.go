@@ -66,7 +66,7 @@ func (s *Store) ReaperSessions(ctx context.Context) ([]ReaperSession, error) {
 
 // RecordReaperOrphan commits authority revocation and a visible outcome together.
 // A late natural completion wins: active-state predicates never overwrite it.
-func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string) (bool, error) {
+func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string, observed ...SessionRow) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -74,7 +74,14 @@ func (s *Store) RecordReaperOrphan(ctx context.Context, id, reason string) (bool
 	defer func() { _ = tx.Rollback() }()
 	at := time.Now().UTC()
 	stamp := at.Format(time.RFC3339Nano)
-	res, err := tx.ExecContext(ctx, `UPDATE sessions SET state='orphaned',pid=NULL,pid_started_at=NULL,updated_at=? WHERE id=? AND state IN ('launching','running','detached')`, stamp, id)
+	query := `UPDATE sessions SET state='orphaned',pid=NULL,pid_started_at=NULL,updated_at=? WHERE id=? AND state IN ('launching','running','detached')`
+	args := []any{stamp, id}
+	if len(observed) > 0 {
+		row := observed[0]
+		query += ` AND state=? AND updated_at=? AND COALESCE(pid,0)=?`
+		args = append(args, row.State, row.UpdatedAt, row.PID.Int64)
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return false, err
 	}
