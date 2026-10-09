@@ -27,7 +27,7 @@ const WorktreeMode = "worktree"
 //     JSON) created by workspace.Create; distinct from work_root.
 //
 // WorktreeName handling: if plan.WorktreeName is a non-empty literal git ref
-// (no Go-template markers and no path separators) it is used as the branch
+// (no Go-template markers or whitespace) it is used as the branch
 // name for `git worktree add -b <name>`. A template-style value such as
 // "tether/{{.ProjectID}}/{{.SessionID}}" is treated as reserved/not-yet-wired
 // — Tether has no template renderer for it today — and the worktree is created
@@ -105,8 +105,9 @@ func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 
 // worktreeBranchName returns the git branch name to use for a worktree, or ""
 // when the worktree should be created detached. An unrendered Go template or a
-// value containing a path separator is treated as reserved (detached) — see
-// MaterializeWorkRoot's doc comment.
+// value containing whitespace or a backslash is treated as reserved
+// (detached). Forward slashes are valid git branch separators, including
+// the task/<id> branches used by team agents.
 func worktreeBranchName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -118,7 +119,7 @@ func worktreeBranchName(name string) string {
 	if strings.ContainsAny(name, " \t") {
 		return ""
 	}
-	if strings.ContainsAny(name, `/\`) {
+	if strings.Contains(name, `\`) {
 		return ""
 	}
 	return name

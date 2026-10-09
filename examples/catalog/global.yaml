@@ -7,9 +7,9 @@ catalog:
     launches: launches
     boot: boot
   defaults:
-    workspace_root: ~/.tether/workspaces
+    workspace_root: ~/tether/workspaces
     state_db: ~/.tether/state/tether.db
-    temp_root: ~/.tether/tmp
+    temp_root: ~/tether/tmp
 # daemon controls the tetherd long-lived process (see ADR 0002). Omitting the
 # block takes the documented defaults: unix socket + pid file under
 # ~/.tether/run/, 10-second shutdown timeout. Uncomment + override to
