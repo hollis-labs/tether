@@ -15,10 +15,18 @@ import (
 )
 
 func TestCodexInboxWireCanonicalJournalRecoveryAndRefusal(t *testing.T) {
-	for _, kind := range []string{"valid", "stale", "source_splice", "cursor_splice", "journal_gap", "journal_crc", "retired", "terminal"} {
+	for _, kind := range []string{"valid", "epoch_refresh", "runtime_mismatch", "brand_mismatch", "missing_plan", "missing_provider", "host_pid_splice", "stale", "source_splice", "cursor_splice", "journal_gap", "journal_crc", "retired", "terminal"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
 			f := newAccountingFixture(t, false)
+			// Exercise the actual launch contract: the placement runtime stores
+			// ProviderID, while the plan separately records ProviderBrand.
+			if _, err := f.store.db.Exec(`UPDATE launch_plans SET plan_json=json_set(plan_json,'$.provider_id','codex-app-server') WHERE session_id='s'`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.db.Exec(`UPDATE session_shims SET runtime='codex-app-server' WHERE session_id='s'`); err != nil {
+				t.Fatal(err)
+			}
 			f.receipt.Retired = false
 			f.saveReceipt(t)
 			if _, err := f.store.db.Exec(`UPDATE sessions SET state='running' WHERE id='s'`); err != nil {
@@ -76,6 +84,22 @@ func TestCodexInboxWireCanonicalJournalRecoveryAndRefusal(t *testing.T) {
 			}
 			_ = f.journal.Close()
 			switch kind {
+			case "epoch_refresh":
+				current := f.receipt
+				f.receipt.Epoch = "12"
+				f.saveReceipt(t)
+				f.receipt = current
+			case "runtime_mismatch", "brand_mismatch", "missing_plan", "missing_provider", "host_pid_splice":
+				query := map[string]string{
+					"runtime_mismatch": `UPDATE session_shims SET runtime='other-provider' WHERE session_id='s'`,
+					"brand_mismatch":   `UPDATE launch_plans SET plan_json=json_set(plan_json,'$.provider_brand','claude') WHERE session_id='s'`,
+					"missing_plan":     `DELETE FROM launch_plans WHERE session_id='s'`,
+					"missing_provider": `UPDATE launch_plans SET plan_json=json_remove(plan_json,'$.provider_id') WHERE session_id='s'`,
+					"host_pid_splice":  `UPDATE session_shims SET host_pid=999 WHERE session_id='s'`,
+				}[kind]
+				if _, err := f.store.db.Exec(query); err != nil {
+					t.Fatal(err)
+				}
 			case "stale":
 				state.Revision++
 			case "source_splice":
@@ -109,9 +133,12 @@ func TestCodexInboxWireCanonicalJournalRecoveryAndRefusal(t *testing.T) {
 				t.Fatal(err)
 			}
 			witness, err := port.RecoverInboxWire(ctx, state, f.receipt)
-			if kind != "valid" {
+			if kind != "valid" && kind != "epoch_refresh" {
 				if err == nil || witness != nil {
 					t.Fatal("ambiguous legacy history accepted")
+				}
+				if (kind == "runtime_mismatch" || kind == "brand_mismatch" || kind == "missing_plan" || kind == "missing_provider" || kind == "host_pid_splice") && !shimcodex.HasCode(err, "legacy_custody_mismatch") {
+					t.Fatal("changed provider association or process custody lost its explicit refusal", err)
 				}
 			} else {
 				if err != nil {

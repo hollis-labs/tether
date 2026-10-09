@@ -141,8 +141,8 @@ func TestHostedCodexRetainedCommandCompletesThroughBootRecovery(t *testing.T) {
 	s.shimHosting = &shimHosting{provider: host, instance: "urn:instance:codex-command", capability: shimhost.Supported, inspect: host.Inspect, prepare: func(spec shim.Launch, _ *sandbox.ResolvedAccessPolicy, limits runner.ResourceLimits) (shim.Launch, func(), error) {
 		return shimhost.PrepareProvider(spec, nil, limits)
 	}}
-	plan := &launch.Plan{ProviderID: "codex", ProviderBrand: "codex", RuntimeKind: "jsonrpc-stdio", Command: exe, RepoRoot: root, WorkRoot: root, BootMode: "none", Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}
-	if err = s.Store.CreateSession(store.SessionRow{ID: "codex-command", ProviderID: "codex", Workspace: root, State: "created"}, plan); err != nil {
+	plan := &launch.Plan{ProviderID: "codex-app-server", ProviderBrand: "codex", RuntimeKind: "jsonrpc-stdio", Command: exe, RepoRoot: root, WorkRoot: root, BootMode: "none", Route: &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}}}
+	if err = s.Store.CreateSession(store.SessionRow{ID: "codex-command", ProviderID: "codex-app-server", Workspace: root, State: "created"}, plan); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), shimFixtureBudget)
@@ -168,7 +168,7 @@ func TestHostedCodexRetainedCommandCompletesThroughBootRecovery(t *testing.T) {
 		}
 	})
 	opts := agentsessions.StartOptions{Workdir: root, WorkspaceDir: root, Env: []string{"TETHER_CODEX_COMMAND_FIXTURE=yes", "HOME=" + root, "TMPDIR=" + root}, Launch: &agentlaunch.TurnTemplate{Convention: gop.LaunchConvention{Executable: exe, Mode: runtimes.ModeJSONRPCStdio, Argv: []gop.ArgTemplate{{Kind: gop.ArgLiteral, Value: "-test.run=^TestHostedCodexCommandProvider$"}}}}}
-	req, err := s.prepareShimStart(ctx, plan, agentsessions.StartRequest{ID: "codex-command", Runtime: &shimcodex.Runtime{Config: shimcodex.Config{ID: "codex"}}, Options: opts})
+	req, err := s.prepareShimStart(ctx, plan, agentsessions.StartRequest{ID: "codex-command", Runtime: &shimcodex.Runtime{Config: shimcodex.Config{ID: "codex-app-server"}}, Options: opts})
 	if err != nil {
 		t.Fatal(err)
 	}
