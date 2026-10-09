@@ -174,6 +174,46 @@ func TestTurnOutputJournalPreservesUnroutedExcerptPolicy(t *testing.T) {
 	}
 }
 
+type unavailableOutputRouteStore struct{ *store.Store }
+
+func (*unavailableOutputRouteStore) SessionRoute(context.Context, string) (*launchprofile.Route, error) {
+	return nil, errors.New("fixture route temporarily unavailable")
+}
+
+func TestTurnOutputUnknownRouteFailureRetainsFullBodyForReplay(t *testing.T) {
+	svc, _ := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
+	row, err := svc.Store.GetSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &turnOutputWrite{row: *row, routeUnread: true, storage: &unavailableOutputRouteStore{svc.Store},
+		result: turnoutput.Output{TurnID: "unknown-route", Kind: turnoutput.KindFinal, Text: strings.Repeat("answer", 2000)}}
+	if err := job.persist(context.Background(), svc); err == nil {
+		t.Fatal("unavailable route accepted as unrouted output")
+	}
+	if len(outputEvents(t, svc)) != 0 {
+		t.Fatal("unavailable route published an excerpt")
+	}
+	replay, err := readOutputRetry(svc, job.journalID)
+	if err != nil || replay.result.Text != job.result.Text || !replay.routeUnread {
+		t.Fatal("unknown route lost its full journal body", err)
+	}
+	if err := replay.persist(context.Background(), svc); err != nil {
+		t.Fatal(err)
+	}
+	got := outputEvents(t, svc)
+	if len(got) != 1 || got[0].MessageID == "" {
+		t.Fatal("route recovery did not accept selected output")
+	}
+	staged, err := svc.Store.StagedTurnOutput(context.Background(), got[0].MessageID)
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err != nil || json.Unmarshal(staged.Payload, &body) != nil || body.Text != job.result.Text {
+		t.Fatal("route recovery lost full body", err)
+	}
+}
+
 func TestTurnOutputFreshConversationAfterLostSubmission(t *testing.T) {
 	svc, output := outputHarness(t, &launchprofile.Route{Channel: "ops", Kinds: []string{"final"}})
 	svc.turnOutputs.Store("s1", output)

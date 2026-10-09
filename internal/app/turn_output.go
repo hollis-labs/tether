@@ -295,14 +295,12 @@ func (w *turnOutputWrite) persist(parent context.Context, s *Service) error {
 		ctx, cancel = s.outputPersistenceContextFrom(parent)
 		route, routeErr := storage.SessionRoute(ctx, w.row.ID)
 		cancel()
-		if errors.Is(routeErr, context.DeadlineExceeded) || errors.Is(routeErr, context.Canceled) {
+		if routeErr != nil {
+			// An unavailable route is not an unrouted session. Keep its full
+			// journal body until policy can be resolved, including DB errors.
 			return routeErr
 		}
-		if routeErr != nil {
-			log.Printf("ERROR session %q: reread output route; full-text routing unavailable: %v", w.row.ID, routeErr)
-		} else {
-			w.route, w.routeUnread = route, false
-		}
+		w.route, w.routeUnread = route, false
 	}
 	result := w.result
 	payload := events.TurnOutputEvent{SessionID: w.row.ID, TurnID: result.TurnID, Kind: result.Kind,
