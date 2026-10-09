@@ -47,7 +47,10 @@ func (s *Service) RecoverTeamSession(ctx context.Context, key, id string) error 
 	}
 	tracked, custodyErr := s.Store.SessionShim(ctx, id)
 	if custodyErr == nil {
-		return s.recoverRetainedCodexTeam(ctx, key, row, tracked)
+		if err := s.recoverRetainedCodexTeam(ctx, key, row, tracked); err != nil {
+			return errors.Join(teamhost.ErrSessionUnavailable, err)
+		}
+		return nil
 	}
 	if !errors.Is(custodyErr, store.ErrSessionShimNotFound) {
 		return custodyErr

@@ -30,7 +30,17 @@ func (s *Service) reconcileShimContext(parent context.Context, stale store.Stale
 	if err != nil {
 		return true
 	}
-	if s.currentShimExecution(parent, stale.ID) != nil {
+	lookupContext := parent
+	lookupCancel := func() {}
+	if parent.Err() != nil {
+		// Even an exhausted startup budget must distinguish frozen history
+		// before recording the existing bounded refusal. This reads only local
+		// lineage and cannot inspect, launch, grant or signal a runtime.
+		lookupContext, lookupCancel = context.WithTimeout(context.WithoutCancel(parent), time.Second)
+	}
+	lookupErr := s.currentShimExecution(lookupContext, stale.ID)
+	lookupCancel()
+	if lookupErr != nil {
 		return true
 	}
 	if _, live := s.Manager.Get(stale.ID); live {
