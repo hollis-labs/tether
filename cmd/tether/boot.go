@@ -14,10 +14,12 @@ import (
 	"github.com/hollis-labs/agentkit/agentlaunch"
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/bootexec"
 	"github.com/hollis-labs/tether/internal/bootgen"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/workspace"
 )
 
@@ -93,7 +95,7 @@ Run 'tether list-boot-profiles' to see which profiles support booting.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profileID := args[0]
 
-		p, err := loadBootProfile(profileID)
+		p, profilePath, err := loadBootProfileFile(profileID)
 		if err != nil {
 			return err
 		}
@@ -115,7 +117,7 @@ Run 'tether list-boot-profiles' to see which profiles support booting.`,
 		inner := daemonClient(cfg.ListenAddr)
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "creating session with launch %q...\n", p.Launch)
-		created, err := inner.CreateSessionWithBootPrompt(context.Background(), p.Launch, bootPrompt)
+		created, err := inner.CreateSessionWithInput(cmd.Context(), api.LaunchRequest{Launch: p.Launch, BootPrompt: bootPrompt, BootProfileFile: profilePath})
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
@@ -288,6 +290,9 @@ func tetherEnvFromPlan(env map[string]string) []string {
 	out := []string{"TETHER_TOKEN=", "TETHER_MCP_TOKEN=tether-worker"}
 	if env["TETHER_MCP_SERVERS"] != "" {
 		out = append(out, "TETHER_MCP_SERVERS="+env["TETHER_MCP_SERVERS"])
+	}
+	if value, set := env[mcpgateway.ToolsEnv]; set {
+		out = append(out, mcpgateway.ToolsEnv+"="+value)
 	}
 	return out
 }

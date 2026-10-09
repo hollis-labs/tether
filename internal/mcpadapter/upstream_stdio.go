@@ -82,11 +82,15 @@ func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string,
 	if entry.Command == "" {
 		return nil, nil, fmt.Errorf("stdio transport requires command")
 	}
+	args, fileSecret, err := entry.StdioCredentialArgs()
+	if err != nil {
+		return nil, nil, err
+	}
 	// #nosec G204 -- Executing the user's configured MCP command is the stdio transport contract; no shell is involved.
-	cmd := exec.Command(entry.Command, entry.Args...)
+	cmd := exec.Command(entry.Command, args...)
 	if len(lifetime) > 0 {
 		// #nosec G204 -- Explicit live doctor probe executes the operator-authored MCP command, bounded by its context; no shell is added.
-		cmd = exec.CommandContext(lifetime[0], entry.Command, entry.Args...)
+		cmd = exec.CommandContext(lifetime[0], entry.Command, args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
 			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -108,6 +112,9 @@ func spawnStdioUpstreamConfined(entry config.MCPServerEntry, protected []string,
 		u.cmd.Env = append(u.cmd.Env, entry)
 	}
 	u.stderr.Secrets = stderrRedactionValues(entry)
+	if fileSecret != "" {
+		u.stderr.Secrets = append(u.stderr.Secrets, fileSecret)
+	}
 	for k, v := range entry.Env {
 		u.cmd.Env = append(u.cmd.Env, k+"="+v)
 	}

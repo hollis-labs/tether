@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/launchprofile"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/skills"
 )
 
@@ -451,13 +452,19 @@ func markCallerEnv(plan *launch.Plan, key string) {
 // Precedence: boot profile (this call) > catalog (launch/project). No-op when
 // the boot profile omits its list; an explicit [] grants none.
 func applyMCPAllowlist(plan *launch.Plan, bootProfile bootgen.Profile) {
-	if bootProfile.MCPServers == nil {
+	if bootProfile.MCPServers == nil && bootProfile.MCPTools == nil {
 		return
 	}
 	if plan.Env == nil {
 		plan.Env = map[string]string{}
 	}
-	plan.Env["TETHER_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
+	if bootProfile.MCPServers != nil {
+		plan.Env["TETHER_MCP_SERVERS"] = strings.Join(bootProfile.MCPServers, ",")
+	}
+	if bootProfile.MCPTools != nil {
+		raw, _ := json.Marshal(bootProfile.MCPTools)
+		plan.Env[mcpgateway.ToolsEnv] = string(raw)
+	}
 }
 
 // applyPermissionMode reconciles the resolved permission mode against the

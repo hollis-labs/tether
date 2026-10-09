@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 )
 
 // MessageRow is a non-destructive, all-recipients read of one row of the
@@ -36,23 +37,88 @@ type MessageRow struct {
 	Body    string
 }
 
-// ListMessages returns the most recent messages across all recipients,
-// newest first, up to limit (defaulted to 200, capped at 1000). It is a
-// pure read and never marks messages delivered.
+// MessageQuery selects a non-destructive operator inbox page.
+type MessageQuery struct {
+	Scope     string
+	Recipient string
+	Read      string // all, read, unread
+	Archive   string // all, active, archived
+	Limit     int
+	Offset    int
+}
+
+type MessagePage struct {
+	Messages []MessageRow
+	Total    int
+	Limit    int
+	Offset   int
+}
+
 func (s *Store) ListMessages(limit int) ([]MessageRow, error) {
-	if limit <= 0 {
-		limit = 200
+	page, err := s.ListMessagesPage(MessageQuery{Limit: limit})
+	return page.Messages, err
+}
+
+// ListMessagesPage applies mailbox filters before a bounded page. Count and
+// rows share a read snapshot; listing never changes message lifecycle state.
+func (s *Store) ListMessagesPage(q MessageQuery) (MessagePage, error) {
+	where := "routing_staged=0"
+	args := []any{}
+	switch q.Scope {
+	case "", "all":
+	case "user", "agent":
+		where += " AND to_urn LIKE ?"
+		args = append(args, "msg://"+q.Scope+"/%")
+	default:
+		return MessagePage{}, fmt.Errorf("invalid message scope %q", q.Scope)
 	}
-	if limit > 1000 {
-		limit = 1000
+	if q.Recipient != "" {
+		where += " AND to_urn=?"
+		args = append(args, q.Recipient)
 	}
-	rows, err := s.db.Query(
-		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
-		        payload, content_type, created_at, delivered_at, consumed_at,
-		        canceled_at, read_at, archived_at
-		 FROM messages WHERE routing_staged=0 ORDER BY created_at DESC LIMIT ?`, limit)
+	switch q.Read {
+	case "", "all":
+	case "read":
+		where += " AND read_at IS NOT NULL"
+	case "unread":
+		where += " AND read_at IS NULL AND canceled_at IS NULL"
+	default:
+		return MessagePage{}, fmt.Errorf("invalid read filter %q", q.Read)
+	}
+	switch q.Archive {
+	case "", "all":
+	case "active":
+		where += " AND archived_at IS NULL"
+	case "archived":
+		where += " AND archived_at IS NOT NULL"
+	default:
+		return MessagePage{}, fmt.Errorf("invalid archive filter %q", q.Archive)
+	}
+	if q.Limit <= 0 {
+		q.Limit = 200
+	}
+	if q.Limit > 1000 {
+		q.Limit = 1000
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	page := MessagePage{Limit: q.Limit, Offset: q.Offset}
+	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, err
+		return page, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.QueryRow("SELECT COUNT(*) FROM messages WHERE "+where, args...).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	rows, err := tx.Query(
+		`SELECT id, kind, channel, from_urn, to_urn, thread_id, in_reply_to,
+          payload, content_type, created_at, delivered_at, consumed_at,
+          canceled_at, read_at, archived_at
+   FROM messages WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, append(args, q.Limit, q.Offset)...)
+	if err != nil {
+		return page, err
 	}
 	defer rows.Close()
 
@@ -66,7 +132,7 @@ func (s *Store) ListMessages(limit int) ([]MessageRow, error) {
 			&threadID, &inReplyTo, &payload, &contentType, &m.CreatedAt,
 			&deliveredAt, &consumedAt, &canceledAt, &readAt, &archivedAt,
 		); err != nil {
-			return nil, err
+			return page, err
 		}
 		m.Channel = channel.String
 		m.ThreadID = threadID.String
@@ -81,5 +147,6 @@ func (s *Store) ListMessages(limit int) ([]MessageRow, error) {
 		m.Subject, m.Body = projectPayload(json.RawMessage(m.Payload))
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	page.Messages = out
+	return page, rows.Err()
 }

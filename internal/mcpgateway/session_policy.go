@@ -21,6 +21,7 @@ type SessionPolicy struct {
 	Servers           []string `json:"servers"`
 	Profile           *string  `json:"profile,omitempty"`
 	LaunchProfile     *Profile `json:"launch_profile,omitempty"`
+	ToolProfile       *Profile `json:"tool_profile,omitempty"`
 	DiscoveryMode     *string  `json:"discovery_mode,omitempty"`
 	Digest            string   `json:"digest"`
 }
@@ -34,6 +35,10 @@ func (p SessionPolicy) hash() string {
 
 func (p SessionPolicy) Seal() SessionPolicy {
 	p.Servers = append([]string{}, p.Servers...)
+	if p.ToolProfile != nil {
+		value := CloneProfile(*p.ToolProfile)
+		p.ToolProfile = &value
+	}
 	if p.LaunchProfile != nil {
 		value := CloneProfile(*p.LaunchProfile)
 		p.LaunchProfile = &value
@@ -48,6 +53,11 @@ func (p SessionPolicy) Validate() error {
 	}
 	if p.DiscoveryMode != nil {
 		if err := ValidateMode(*p.DiscoveryMode); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidSessionMCPPolicy, err)
+		}
+	}
+	if p.ToolProfile != nil {
+		if err := p.ToolProfile.Validate(); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidSessionMCPPolicy, err)
 		}
 	}

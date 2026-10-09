@@ -14,6 +14,37 @@ import (
 	"testing"
 )
 
+func TestBootToolFloorFiltersProtocolAndCalls(t *testing.T) {
+	for _, mode := range []string{"flat", "search"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv(mcpgateway.ToolsEnv, `["alpha_probe"]`)
+			// A broader selected profile must not widen the boot grant.
+			t.Setenv("TETHER_PROXY_HELPER_PROFILE_JSON", `{}`)
+			catalog, fixtures := proxyCatalog(t, "alpha", "beta")
+			cs := connectProxyMode(t, catalog, mode, false, "alpha", "beta")
+			names := listToolNames(t, cs)
+			if mode == "flat" && (!slices.Contains(names, "alpha_probe") || slices.Contains(names, "beta_probe") || slices.Contains(names, "tether_health")) {
+				t.Fatalf("boot-filtered surface=%v", names)
+			}
+			if _, isErr := tetherCallIfSearch(t, cs, mode, "alpha_probe"); isErr {
+				t.Fatal("boot grant denied permitted call")
+			}
+			for _, name := range []string{"beta_probe", "tether_health"} {
+				if _, isErr := tetherCallIfSearch(t, cs, mode, name); !isErr {
+					t.Fatal("excluded call dispatched", name)
+				}
+			}
+			events, err := os.ReadFile(filepath.Join(fixtures, "beta.events"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(events), "call ") {
+				t.Fatal("denied call reached upstream")
+			}
+		})
+	}
+}
+
 func TestProfileOriginBoundaryFlatAndSearch(t *testing.T) {
 	for _, mode := range []string{"flat", "search"} {
 		for _, tc := range []struct {

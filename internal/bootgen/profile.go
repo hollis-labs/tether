@@ -34,6 +34,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/skills"
 	"gopkg.in/yaml.v3"
 )
@@ -70,6 +71,9 @@ type Profile struct {
 	// The list lives on the boot profile, not the agent, so a single agent
 	// can have multiple profiles with different tool surfaces.
 	MCPServers []string `yaml:"mcp_servers,omitempty"`
+	// MCPTools filters final gateway tool names. Omitted inherits; [] permits
+	// no targets. Patterns use the same allowlist syntax as gateway profiles.
+	MCPTools []string `yaml:"mcp_tools,omitempty"`
 }
 
 // Identity holds agent identity metadata per the Agent Identity Model:
@@ -129,6 +133,9 @@ func LoadProfile(path string) (Profile, error) {
 	}
 	if p.ID == "" {
 		return Profile{}, fmt.Errorf("boot profile %s: missing id field", path)
+	}
+	if err := (mcpgateway.Profile{Tools: mcpgateway.ToolRules{Allow: p.MCPTools}}).Validate(); err != nil {
+		return Profile{}, fmt.Errorf("boot profile %s: %w", path, err)
 	}
 	return p, nil
 }

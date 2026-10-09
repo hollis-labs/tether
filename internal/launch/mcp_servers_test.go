@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// CW-20261001-0227: a launched agent's proxy gets torque and tesseract unless
+// CW-20261001-0228: a launched agent's proxy gets torque only unless
 // a launch, project or boot profile names its own list.
 func TestEffectiveMCPServers(t *testing.T) {
-	def := []string{"torque", "tesseract"}
+	def := []string{"torque"}
 	for _, tc := range []struct {
 		name string
 		env  map[string]string
@@ -30,9 +30,9 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}
 }
 
-func TestDefaultMCPServers_IsExactlyTorqueAndTesseract(t *testing.T) {
-	if !slices.Equal(DefaultMCPServers, []string{"torque", "tesseract"}) {
-		t.Fatalf("DefaultMCPServers = %q; the approved default is torque and tesseract (CW-20261001-0227)", DefaultMCPServers)
+func TestDefaultMCPServers_IsExactlyTorque(t *testing.T) {
+	if !slices.Equal(DefaultMCPServers, []string{"torque"}) {
+		t.Fatalf("DefaultMCPServers = %q; the approved default is torque only (CW-20261001-0228)", DefaultMCPServers)
 	}
 	// cerberus controls infrastructure and is never on by default.
 	if slices.Contains(DefaultMCPServers, "cerberus") {
@@ -46,10 +46,10 @@ func TestEffectiveMCPServers_DefaultIsACopy(t *testing.T) {
 	got := EffectiveMCPServers(nil)
 	got[0] = "cerberus"
 	_ = append(got, "nanite")
-	if !slices.Equal(DefaultMCPServers, []string{"torque", "tesseract"}) {
+	if !slices.Equal(DefaultMCPServers, []string{"torque"}) {
 		t.Fatalf("mutating a returned default changed DefaultMCPServers: %q", DefaultMCPServers)
 	}
-	if again := EffectiveMCPServers(nil); !slices.Equal(again, []string{"torque", "tesseract"}) {
+	if again := EffectiveMCPServers(nil); !slices.Equal(again, []string{"torque"}) {
 		t.Fatalf("a later call returned %q", again)
 	}
 }
