@@ -41,14 +41,11 @@ var traceMetaKeys = []string{"_traceparent", "_tracestate"}
 // consumer in the portfolio injects. A cosmetic redundancy is the cheaper
 // price. This is a choice, not an oversight.
 //
-// InjectMCP no-ops on an invalid span context, so a call made with no active
+// Injection no-ops on an invalid span context, so a call made with no active
 // span leaves params.Meta untouched rather than set to an empty map.
 func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) {
 	fields := map[string]any(params.Meta)
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	injected := otelprop.InjectMCP(ctx, fields)
+	injected := otelprop.InjectMCPMeta(ctx, fields)
 	if len(injected) == 0 {
 		return
 	}
@@ -75,9 +72,9 @@ func extractTraceContext(ctx context.Context, meta, args map[string]any) context
 	// remotely supplied parent when the carrier is empty or invalid.
 	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	if hasTraceKeys(meta) {
-		return otelprop.ExtractMCP(ctx, meta)
+		return otelprop.ExtractMCPMeta(ctx, meta)
 	}
-	return otelprop.ExtractMCP(ctx, args)
+	return otelprop.ExtractMCPMeta(ctx, args)
 }
 
 // hasTraceKeys reports whether m carries trace context, so an empty _meta
