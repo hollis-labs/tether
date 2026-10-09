@@ -12,7 +12,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 - Generated workspace and temp roots live outside protected Tether state, and
   worktree branches retain literal slash-containing names. Existing catalogs
-  are not automatically migrated; explicit `launch.write_home` overrides remain
+  are not automatically migrated; explicit `workspace.write_home` overrides remain
   available. See `docs/workspace-parity.md`. (CW-20261008-0127)
 - Enforce resolved session lifecycle policies with explicit idle, duration and
   lease limits, durable stop intent/escalation/outcomes, and verified orphan
