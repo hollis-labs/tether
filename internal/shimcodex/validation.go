@@ -7,6 +7,9 @@ import "encoding/json"
 // Validate loaded records before cloning: malformed JSON values must not turn
 // an uncertain committed ledger into an empty fresh session through clone.
 func validateState(s State, limits Limits) error {
+	if s.Delivery != nil && (s.Delivery.Binding != s.Binding || s.Delivery.ProtocolRevision > s.Revision || ValidateProjection(*s.Delivery) != nil) {
+		return fail("checkpoint_invalid")
+	}
 	if s.Version != Version || !s.Binding.valid() || s.Revision == 0 || s.Epoch == 0 || s.NextID < FirstID || s.NextID > MaxID+1 || len(s.Operations) > MaxOperations || len(s.ServerRequests) > MaxOperations || len(s.Partial) > MaxLineBytes || len(s.Inbox) > limits.InboxItems {
 		return fail("checkpoint_invalid")
 	}

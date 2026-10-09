@@ -42,6 +42,10 @@ type Session struct {
 	onSessionID     func(string)
 	workers         sync.WaitGroup
 	deliveryChecker DeliveryChecker
+	deliver         DeliveryHandler
+	deliveryMu      sync.Mutex
+	deliveryCallMu  sync.Mutex
+	deliveryError   error
 }
 
 func NewSession(engine *Engine, transport Transport, providerPID int) (*Session, error) {
@@ -323,7 +327,7 @@ func (s *Session) Readiness() error {
 	if len(state.Inbox) != 0 || len(state.Partial) != 0 {
 		return fail("output_pending")
 	}
-	// No successful B2 delivery issuer is installed in this source slice.
+	// Private pipe acceptance alone cannot prove public delivery.
 	if s.deliveryChecker == nil {
 		return fail("output_pending")
 	}
@@ -350,7 +354,7 @@ func (s *Session) WaitReadiness(ctx context.Context) error {
 	for {
 		changed := s.changedSince()
 		err := s.Readiness()
-		if !HasCode(err, "replay_pending") {
+		if !HasCode(err, "replay_pending") && (!HasCode(err, "output_pending") || !s.deliveryInProgress()) {
 			return err
 		}
 		select {
@@ -358,9 +362,78 @@ func (s *Session) WaitReadiness(ctx context.Context) error {
 		case <-s.done:
 			return fail("detached")
 		case <-ctx.Done():
-			return fail("replay_pending")
+			return err
 		}
 	}
+}
+
+func (s *Session) deliveryInProgress() bool {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	return s.deliver != nil && s.deliveryError == nil
+}
+
+func (s *Session) deliverOutputs() {
+	for {
+		changed := s.changedSince()
+		before := s.engine.Snapshot()
+		work, cancel := bounded(s.ctx)
+		err := s.deliverOnce(work)
+		cancel()
+		after := s.engine.Snapshot()
+		if HasCode(err, "checkpoint_unknown") || HasCode(err, "counter_exhausted") {
+			s.Finish(0, err)
+			return
+		}
+		s.deliveryMu.Lock()
+		if HasCode(err, "delivery_changed") {
+			s.deliveryError = nil
+		} else {
+			s.deliveryError = err
+		}
+		s.deliveryMu.Unlock()
+		if HasCode(err, "delivery_changed") {
+			continue
+		}
+		// Wake readiness observers after a successful drain or explicit failure.
+		if len(before.Inbox) != 0 {
+			s.signal()
+			changed = s.changedSince()
+			if s.engine.Snapshot().Revision != after.Revision {
+				continue
+			}
+		}
+		var retry <-chan time.Time
+		var timer *time.Timer
+		if err != nil && !HasCode(err, "output_unsupported") {
+			timer = time.NewTimer(time.Second)
+			retry = timer.C
+		}
+		select {
+		case <-s.ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return
+		case <-changed:
+		case <-retry:
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+}
+
+func (s *Session) deliverOnce(ctx context.Context) error {
+	s.deliveryCallMu.Lock()
+	defer s.deliveryCallMu.Unlock()
+	if s.deliver == nil {
+		return nil
+	}
+	if err := s.transport.Validate(ctx); err != nil {
+		return err
+	}
+	return s.engine.DeliverInbox(ctx, s.deliver)
 }
 
 // The hook is the existing narrow Tether handler, not a general background
