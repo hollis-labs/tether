@@ -3,6 +3,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -91,6 +92,22 @@ func (p *CodexProtocolStore) Commit(ctx context.Context, previous uint64, state 
 	if err := p.validateBinding(ctx, state); err != nil {
 		return err
 	}
+	// Normal protocol transitions cannot mint or replace delivery proof.
+	if previous == 0 {
+		if state.Delivery != nil {
+			return ErrSessionShimConflict
+		}
+	} else {
+		current, err := p.Load(ctx)
+		if err != nil || current.Revision != previous {
+			return ErrSessionShimConflict
+		}
+		a, _ := json.Marshal(current.Delivery)
+		b, _ := json.Marshal(state.Delivery)
+		if !bytes.Equal(a, b) {
+			return ErrSessionShimConflict
+		}
+	}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		return err
@@ -126,7 +143,7 @@ var _ shimcodex.Store = (*CodexProtocolStore)(nil)
 // VerifiedCodexDelivery has no exported fields or public constructor. Only a
 // separately assigned trusted store issuer may populate it after its atomic
 // projection/outbox/receipt transaction and complete commit fence exist.
-// This source slice implements NO successful issuer or receipt schema.
+// The checked projection is committed with inbox removal by CommitDelivery.
 type VerifiedCodexDelivery struct {
 	issuer            *Store
 	receiptID         string
@@ -139,10 +156,6 @@ type VerifiedCodexDelivery struct {
 }
 
 var ErrCodexDeliveryUnsupported = errors.New("trusted Codex delivery receipt unavailable")
-
-func (*Store) LoadVerifiedCodexDelivery(context.Context, shimcodex.State, string) (*VerifiedCodexDelivery, error) {
-	return nil, ErrCodexDeliveryUnsupported
-}
 
 func (r *VerifiedCodexDelivery) Validate(issuer *Store, state shimcodex.State, highwater string, terminal bool) error {
 	if r == nil || issuer == nil || r.issuer != issuer || r.receiptID == "" || state.ReplayHighWater == "" || highwater != state.ReplayHighWater || r.replayHighWater != highwater || r.acceptedCursor != state.Cursor || r.deliveredCursor != state.Cursor || len(state.Inbox) != 0 || len(state.Partial) != 0 {

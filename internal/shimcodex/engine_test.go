@@ -158,13 +158,13 @@ func TestDurableChunkSplitAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := e.Snapshot()
-	if len(s.Inbox) != 1 || len(s.Partial) != 0 || s.Cursor != "j:2" {
+	if len(s.Inbox) != 2 || !strings.HasSuffix(s.Inbox[0].Identity, ":codex.stdout_fragment") || !strings.Contains(s.Inbox[1].Identity, ":stdout:0:") || len(s.Partial) != 0 || s.Cursor != "j:2" {
 		t.Fatalf("lost carry/inbox: %+v", s)
 	}
 	if ok, err := e.AcceptOutput(context.Background(), 2, "j:2", "stdout", []byte("lo\"}}\n")); ok || err != nil {
 		t.Fatalf("replay %v %v", ok, err)
 	}
-	if got := e.Snapshot(); len(got.Inbox) != 1 || got.Inbox[0].Identity != s.Inbox[0].Identity {
+	if got := e.Snapshot(); len(got.Inbox) != 2 || got.Inbox[0].Identity != s.Inbox[0].Identity || got.Inbox[1].Identity != s.Inbox[1].Identity {
 		t.Fatal("duplicate inbox identity")
 	}
 }

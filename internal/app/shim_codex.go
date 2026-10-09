@@ -69,7 +69,7 @@ func (s *Service) codexShimRuntime(ctx context.Context, id, runtime string, r sh
 	if err != nil {
 		return nil, err
 	}
-	return &shimcodex.Runtime{Config: shimcodex.Config{ID: runtime, Receipt: r, Store: p, Fresh: fresh, Limits: shimcodex.Limits{InboxItems: 1024, InboxBytes: codexProtocolBudget}, DeliveryChecker: codexDeliveryCheck{service: s},
+	return &shimcodex.Runtime{Config: shimcodex.Config{ID: runtime, Receipt: r, Store: p, Fresh: fresh, Limits: shimcodex.Limits{InboxItems: 1024, InboxBytes: codexProtocolBudget}, DeliveryChecker: codexDeliveryCheck{service: s}, Deliver: s.deliverCodexInbox,
 		Validate: func(ctx context.Context) error {
 			row, err := s.Store.SessionShim(ctx, id)
 			if err != nil {
@@ -295,8 +295,12 @@ func (s *Service) loadCodexDelivery(ctx context.Context, state shimcodex.State, 
 		return err
 	}
 	host, err := s.shimHost()
-	if err != nil || host.codexDelivery == nil {
+	if err != nil {
 		return store.ErrCodexDeliveryUnsupported
+	}
+	loader := host.codexDelivery
+	if loader == nil {
+		loader = s.Store
 	}
 	row, err := s.Store.SessionShim(ctx, state.Binding.Session)
 	if err != nil {
@@ -315,7 +319,7 @@ func (s *Service) loadCodexDelivery(ctx context.Context, state shimcodex.State, 
 		return store.ErrCodexDeliveryUnsupported
 	}
 	frozenCustody := canonical
-	proof, err := host.codexDelivery.LoadVerifiedCodexDelivery(ctx, state, high)
+	proof, err := loader.LoadVerifiedCodexDelivery(ctx, state, high)
 	if err != nil {
 		return err
 	}
