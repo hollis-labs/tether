@@ -10,6 +10,11 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Enforce resolved session lifecycle policies with explicit idle, duration and
+  lease limits, durable stop intent/escalation/outcomes, and verified orphan
+  reconciliation. Unset limits impose no implicit wall-clock ceiling; genuine
+  turn activity refreshes idle accounting, while heartbeats do not.
+  (CW-20261008-0122)
 - Boot profiles support final-name `mcp_tools` allowlists. Managed sessions
   capture grants at creation and seal MCP policy at launch; `--no-discover`
   selects flat schema exposure while preserving call restrictions.
