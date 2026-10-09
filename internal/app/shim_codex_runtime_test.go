@@ -115,6 +115,11 @@ func runHostedCodexDeliveryFixture(t *testing.T, complete bool, retained ...bool
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	t.Setenv("HOME", root)
 	t.Setenv("TMPDIR", root)
+	// This fixture supplies its workspace directly. Prepare the log parent
+	// before output logging is connected on launch and reattachment.
+	if err = os.MkdirAll(filepath.Join(root, "logs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	s := bindingHarness(t)
 	s.Catalog = &config.Catalog{}
 	exe, err := os.Executable()

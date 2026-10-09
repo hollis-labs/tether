@@ -129,7 +129,12 @@ func (p *CodexProtocolStore) inboxWireSnapshot(ctx context.Context, frozen shimc
 		return nil, inboxWireRefuse("legacy_snapshot_changed")
 	}
 	row := observed.Placement
-	if row.Runtime != "codex" || row.HostPID != receipt.HostPID || row.ShimPID != receipt.ShimPID || row.ProviderPID != receipt.ProviderPID || row.HostBackend != receipt.Backend || row.UnitName != receipt.UnitName || row.SocketPath != receipt.SocketPath || row.DescriptorPath != receipt.DescriptorPath {
+	// SessionShim.Runtime is the recorded provider ID (for example
+	// codex-app-server), not its brand. Require the exact original association
+	// and Codex brand from the persisted plan, without consulting the catalog.
+	var providerID, providerBrand string
+	err = p.store.db.QueryRowContext(ctx, `SELECT json_extract(plan_json,'$.provider_id'),json_extract(plan_json,'$.provider_brand') FROM launch_plans WHERE session_id=? AND length(CAST(plan_json AS BLOB))<=?`, row.SessionID, shimcodex.ProjectionBudget).Scan(&providerID, &providerBrand)
+	if err != nil || providerID == "" || providerBrand != "codex" || row.Runtime != providerID || row.HostPID != receipt.HostPID || row.ShimPID != receipt.ShimPID || row.ProviderPID != receipt.ProviderPID || row.HostBackend != receipt.Backend || row.UnitName != receipt.UnitName || row.SocketPath != receipt.SocketPath || row.DescriptorPath != receipt.DescriptorPath {
 		return nil, inboxWireRefuse("legacy_custody_mismatch")
 	}
 	raw, err := accountingReadFile(filepath.Join(filepath.Dir(receipt.DescriptorPath), "placement.json"), 64<<10)
@@ -143,7 +148,9 @@ func (p *CodexProtocolStore) inboxWireSnapshot(ctx context.Context, frozen shimc
 		return nil, inboxWireRefuse("legacy_custody_mismatch")
 	}
 	return json.Marshal(struct {
-		Snapshot CodexCandidateSnapshot
-		Receipt  shimhost.Receipt
-	}{observed, canonical})
+		Snapshot      CodexCandidateSnapshot
+		Receipt       shimhost.Receipt
+		ProviderID    string
+		ProviderBrand string
+	}{observed, canonical, providerID, providerBrand})
 }

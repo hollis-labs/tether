@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/launchprofile"
@@ -25,6 +26,33 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			owned := []string{parent.SessionID}
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				tick := time.NewTicker(10 * time.Millisecond)
+				defer tick.Stop()
+				for _, id := range owned {
+					if _, managed := rig.svc.Manager.Get(id); managed {
+						_ = rig.svc.Manager.Stop(ctx, id)
+						_, _ = rig.svc.Manager.WaitSession(ctx, id)
+					}
+					// Manager exit precedes the output finalizer's flush. Its
+					// removal marks quiescence before the rig closes its DB and
+					// removes directories that the producer may still be writing.
+					for {
+						if _, pending := rig.svc.turnOutputs.Load(id); !pending {
+							break
+						}
+						select {
+						case <-tick.C:
+						case <-ctx.Done():
+							t.Error("fixture output finalization did not finish before teardown")
+							return
+						}
+					}
+				}
+			})
 			if _, err := rig.svc.LaunchSession(parent.SessionID); err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +69,7 @@ func TestResumePreservesPersistedRouteOverrideAndAbsentOptIn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = rig.svc.Manager.Stop(context.Background(), resumed.SessionID) })
+			owned = append(owned, resumed.SessionID)
 			route, err := rig.svc.Store.SessionRoute(context.Background(), resumed.SessionID)
 			if err != nil {
 				t.Fatal(err)
