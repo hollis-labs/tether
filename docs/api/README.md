@@ -1128,8 +1128,20 @@ Unsettled delivery leases refuse replacement. Frozen old rows and transaction
 fences prevent old runtime, native mapping, publication and acknowledgment
 effects from regaining authority. Native conversation mapping may initialize the
 new resume input while the old mapping remains historical; private Codex protocol
-state is not copied. Tracked Codex custody remains refused in this path and needs
-its separate accounting/replacement implementation.
+state is not copied. Tracked Codex replacement additionally requires a matching
+retired canonical receipt, positive absence of both recorded process IDs, and
+complete historical accounting issued by the same store. That opaque proof is
+revalidated inside the reference-remapping transaction; serialized diagnostic
+references, an empty inbox or a provider exit are not authority. Unknown or
+pending effects, changed evidence and unavailable authority refuse replacement.
+
+For eligible lost Codex execution, the old raw protocol ledger and custody remain
+frozen as history. The replacement starts with a new protocol placement and no
+copied inbox, RPC counters, delivery checkpoint or thread state. Historical
+accounting can still read the old evidence, but normal old-session protocol
+loads/commits, delivery, reattachment, stop and detach cannot operate the old
+placement or fall through to direct process control. A lookup error also refuses.
+This path does not turn a surviving or uncertain host into a replacement.
 
 The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
 retry: the same key returns the session the first resume created

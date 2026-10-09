@@ -141,6 +141,24 @@ alone are not public completion evidence. The source path for a surviving hosted
 Codex provider does not authorize replacement of gone custody with a fresh
 provider.
 
+A separate retained-team path can replace proven-lost Codex execution after a
+matching retired canonical receipt, positive absence of both recorded host and
+provider PIDs, and complete store-issued historical accounting. Startup checks
+accounting before retiring positively absent custody; retirement itself does not
+move enrollment or launch a child. The retained receipt owner revalidates the
+opaque accounting proof in the transaction that commits the new session,
+lineage and current-reference remapping under the original actor and binding.
+Credential and sealed MCP ceilings remain in force. Unknown or pending effects,
+changed evidence, revoked authority and missing process identity refuse.
+
+The old raw protocol ledger, custody and accepted history remain frozen. The new
+placement starts with a pristine protocol ledger; the old inbox, RPC counters,
+delivery checkpoint and thread state are not copied. Normal protocol and delivery
+operations, reattachment, stop and detach on the historical execution refuse;
+lookup errors never fall through to process control. Historical accounting remains
+available. This replacement does not resubmit an uncertain turn or establish
+public completion of the old execution.
+
 ## Claude delivery and recovery
 
 The shim-specific `session.shim_status` event with state `running` and reason
@@ -266,10 +284,10 @@ next Stop; retirement requires verified unit absence.
 Startup recovery reattaches a running host with the recorded journal and bridge
 checkpoint. Ordinary positive host absence becomes `orphaned`, revoking session
 principals and binding generations in one transaction. Eligible retained-team
-recovery instead archives confirmed-retired non-Codex custody with current
-fences, preserving enrollment and binding authority; subsequent replacement
-commits a new execution before launch. Unresolved Gone Codex obligations remain
-retained. A timeout, typed refusal, missing
+recovery instead preserves enrollment and binding authority: confirmed-retired
+non-Codex custody is archived with current fences; Codex custody needs the
+historical accounting path above and keeps its old ledger/custody. Subsequent
+team replacement commits a new execution before launch. A timeout, typed refusal, missing
 receipt or unknown outcome stays `detached`. Reconciliation runs once at daemon
 startup; it does not retry automatically during the daemon's lifetime. Inspection
 is bounded to ten seconds per placement and a shared thirty-second inspection/

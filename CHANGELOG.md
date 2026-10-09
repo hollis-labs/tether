@@ -10,6 +10,14 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Replace eligible proven-lost enrolled Codex execution only after matching
+  retirement, positive absence of both recorded processes and opaque historical
+  accounting revalidated in the remapping transaction. Preserve frozen old
+  ledger/custody and original authority; start the new placement with pristine
+  protocol state. Historical stop, detach, reattach, delivery and normal protocol
+  operations refuse. Unknown or pending effects remain retained.
+  (CW-20261003-0018)
+
 - Preserve exact hosted Codex inbox message bytes across checkpoint persistence.
   Restore legacy embedded-JSON bytes only from the original canonical journal
   under current custody, span and checkpoint fences, before retained delivery.
@@ -30,7 +38,8 @@ This file was backfilled from the git history and is a good-faith summary, not a
   and current references atomically before launch; preserve credential/MCP
   ceilings and historical targets, fence old effects and retry the committed
   pending destination. `session.replaced_by` records lineage, not readiness.
-  Unsettled leases and tracked Codex custody refuse. (CW-20261003-0018)
+  Unsettled leases refuse; tracked Codex custody requires the separate accounted
+  replacement path above. (CW-20261003-0018)
 
 - Preserve supported hosted Codex command-execution starts, deltas and completion
   envelopes across controller reconnect as checked private turn obligations.
