@@ -1,9 +1,9 @@
 # Opt-in shim hosting
 
-The daemon can host Claude streaming-stdio and Codex app-server JSON-RPC
-providers through a persistent shim. Direct execution remains
-the default. Codex public output delivery has additional requirements described
-below. The explicit
+The daemon can host Claude streaming-stdio, Codex app-server JSON-RPC and eligible
+Antigravity subprocess-per-turn providers through a persistent shim. Direct
+execution remains the default. Codex public output delivery has additional
+requirements described below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
 existing private checkpoint; it never places another provider.
@@ -71,10 +71,34 @@ facts while preserving the operation key, fingerprint and attempted-submit flag.
 
 ## Provider protocols
 
-Antigravity direct providers remain tied to the daemon. This hosting path does
-not preserve them across daemon death; Antigravity shim/ACP hosting is a separate
-follow-up. Its restart-survival limit does not imply a failure in Claude or
-Codex recovery.
+Eligible Antigravity launches use a persistent `tether shim-agy` worker under
+the canonical shim host. The launch must provide a native-session capability and
+a resolved subprocess-per-turn template; the existing placement and confinement
+requirements still apply. Direct Antigravity providers remain tied to the daemon.
+Systemd-user hosting places the worker and its turn children outside the daemon
+unit's cgroup. A `direct_fallback` diagnostic is not a hosting or survival result.
+
+The worker invokes the resolved AGY turn template sequentially, retaining the
+native conversation observed on its first turn. Each turn gets a separate UUID
+in the canonical journal. The receipt's provider PID identifies the persistent
+worker; AGY turn children are transient descendants that inherit its resolved
+environment, sandbox, limits, working directory and process group. This uses
+the supported per-turn CLI protocol. It does not require ACP or AGY's persistent
+stdin mode.
+
+An accepted subsequent input waits for the next turn; active interruption
+remains unsupported. A terminal result is emitted only after the turn child
+exits and its native identity and result have been validated. Missing or changed
+native conversation, authentication failure, nonzero exit and incomplete output
+fail explicitly. Reattachment selects the AGY parser under the original custody
+and journal fences. Only an exactly published result UUID suppresses replay;
+equal text on different turns remains distinct output.
+
+The [AGY restart acceptance matrix](agy-shim-acceptance.md) describes the affected
+systemd restart, queued input and public delivery checks. Source fixtures cover
+bridge detachment and reconstruction. A systemd restart result additionally
+requires the operator observations in that matrix. Raw journal output or input
+acknowledgment alone does not prove public delivery or consumption.
 
 Claude uses the stdio bridge described below. Hosted Codex uses a separate
 durable protocol ledger, bound to the original session, instance, generation,
@@ -101,6 +125,19 @@ agent reply still earns the public delivery receipt. Changed command identity,
 foreign turn/item references and unsupported lifecycle shapes refuse rather
 than discarding the private trace.
 
+Reasoning items are supported only when both `content` and `summary` are
+explicit empty arrays. Their start and completion remain private turn obligations;
+an unfinished lifecycle prevents completion. Nonempty, missing, null or unknown
+reasoning shapes and foreign thread/turn references remain refused. These items
+supply no final-answer text.
+
+Native `item/commandExecution/terminalInteraction` observations are retained only
+when they match the exact thread, turn, item and process of an existing unfinished
+command. The original parameters survive in the private projection; observing
+stdin does not dispatch stdin or grant an input capability. Missing, foreign,
+unknown or late interactions refuse. These observations add no reply text, ACK
+or public delivery receipt.
+
 The delivery transaction then reinterprets the frozen native inbox, verifies the
 actual public event, content identity and selected-route staging, and atomically
 saves the projection with the inbox drain. Producer acceptance alone cannot
@@ -113,7 +150,8 @@ Native inbox message bytes are stored without JSON compaction or HTML escaping.
 Older checkpoints that embedded messages as JSON retain an explicit legacy
 marker. Before retained delivery, a trusted recovery reader can restore their
 original spelling only from the canonical journal, checking exact stdout spans,
-cursors, partial bytes, current receipt and unchanged checkpoint. The ordinary
+cursors, partial bytes, current receipt, unchanged checkpoint, and the original
+recorded provider ID with its Codex brand. The ordinary
 conditional protocol commit preserves current execution and old-write fences.
 Missing or changed evidence refuses; restoration does not drain the inbox,
 advance replay, settle operations or issue a delivery/replacement proof.
@@ -150,6 +188,12 @@ opaque accounting proof in the transaction that commits the new session,
 lineage and current-reference remapping under the original actor and binding.
 Credential and sealed MCP ceilings remain in force. Unknown or pending effects,
 changed evidence, revoked authority and missing process identity refuse.
+
+Historical replacement accounting still requires the stored runtime/provider
+identity to be literal `codex`. Supporting a configured ID such as
+`codex-app-server` during living-session wire recovery does not make it eligible
+for that accounting path. The private-observation support above does not widen
+replacement authority.
 
 The old raw protocol ledger, custody and accepted history remain frozen. The new
 placement starts with a pristine protocol ledger; the old inbox, RPC counters,

@@ -68,6 +68,14 @@ process-to-process coupling.
 peer Tether daemon on another host, for agents that aren't all running on
 the same machine.
 
+**External Claude sessions.** Opt-in `tether messages claude-hook` emits unread
+mail counts and message-check reminders using the existing authenticated daemon
+client. It leaves delivery and read state unchanged. See the
+[external-session guide](docs/external-session-wake.md) for lifecycle hooks,
+bounded one-shot idle notification and a recurring native `/loop` recipe.
+Configuration and schedules are installed explicitly, and require a Claude
+version that supports the chosen interface.
+
 ## Roadmap
 
 - **Platform reshape to a directory-registry substrate.** Moving from
@@ -320,6 +328,9 @@ printf '%s\n' "$ANTHROPIC_API_KEY" | tether-apikey-helper set keychain://anthrop
 | [`docs/messaging-adoption.md`](docs/messaging-adoption.md) | How an app, agent or hand-run MCP session joins messaging |
 | [`docs/messaging-integration.md`](docs/messaging-integration.md) | Implementer's guide: identity ownership, binding lifecycle, error handling |
 | [`docs/messaging-federation.md`](docs/messaging-federation.md) | Cross-host peer routing and trust |
+| [`docs/external-session-wake.md`](docs/external-session-wake.md) | Opt-in Claude mailbox count/reminder hooks and provider capability limits |
+| [`docs/shim-host.md`](docs/shim-host.md) | Hosted provider placement, recovery and public delivery boundaries |
+| [`docs/agy-shim-acceptance.md`](docs/agy-shim-acceptance.md) | Operator-owned AGY restart acceptance matrix |
 | [`docs/workstreams.md`](docs/workstreams.md) | Workstreams, session refs, and the recovery digest |
 | [`docs/mcp.md`](docs/mcp.md) | MCP adapter setup, auth, tool reference |
 | [`docs/api/README.md`](docs/api/README.md) | HTTP/UDS daemon API reference |
