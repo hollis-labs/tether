@@ -75,7 +75,18 @@ func (s *Service) validateNativeOnlySource(ctx context.Context, source *store.Se
 	if _, err := s.Store.SessionShim(ctx, source.ID); !errors.Is(err, store.ErrSessionShimNotFound) {
 		return nativeOnlyError("direct source custody unavailable")
 	}
-	return nativeOnlyContext(plan)
+	if err := nativeOnlyContext(plan); err != nil {
+		return err
+	}
+	home, err := captureCodexHome()
+	if err != nil {
+		return nativeOnlyError("approved credential source unavailable")
+	}
+	defer home.Close()
+	if err := home.ValidateNativeLink(plan.NativeStateRoot); err != nil {
+		return nativeOnlyError("native credential mapping unavailable")
+	}
+	return nil
 }
 
 func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsessions.StartOptions) (agentsessions.Session, error) {
@@ -103,6 +114,22 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	}
 	if opts.Workdir != r.plan.EffectiveWorkRoot() || home != r.plan.NativeStateRoot || opts.PreparedExecution != nil {
 		return nil, nativeOnlyError("runtime context differs from recorded context")
+	}
+	credentialHome, err := captureCodexHome()
+	if err != nil {
+		return nil, nativeOnlyError("approved credential source unavailable")
+	}
+	defer credentialHome.Close()
+	if err := credentialHome.ValidateNativeLink(r.plan.NativeStateRoot); err != nil {
+		return nil, nativeOnlyError("native credential mapping unavailable")
+	}
+	roots := []string{r.plan.NativeStateRoot, r.plan.EffectiveWorkRoot(), filepath.Join(r.plan.NativeStateRoot, "sessions")}
+	identities := make([]os.FileInfo, len(roots))
+	for i, path := range roots {
+		identities[i], err = os.Lstat(path)
+		if err != nil {
+			return nil, nativeOnlyError("recorded context unavailable")
+		}
 	}
 	opts.AutoFireFirstTurn, opts.FirstTurnPayload = false, nil
 	opts.BootPrompt, opts.BootContent, opts.BootMode = "", "", "none"
@@ -152,6 +179,18 @@ func (r *recoveryRuntime) startNativeOnly(ctx context.Context, opts agentsession
 	}
 	if !sess.Health().Alive {
 		return refuse("native process health unconfirmed")
+	}
+	for i, path := range roots {
+		current, err := os.Lstat(path)
+		if err != nil || !os.SameFile(identities[i], current) {
+			return refuse("recorded context identity changed")
+		}
+	}
+	if err := credentialHome.ValidateNativeLink(r.plan.NativeStateRoot); err != nil {
+		return refuse("native credential mapping changed")
+	}
+	if err := r.service.validateNativeOnlySource(r.request, source, r.plan); err != nil {
+		return refuse("source context changed before admission")
 	}
 	if err := r.service.Store.UpsertSessionProviderMapping(r.id, "tether", r.plan.ProviderID, actual); err != nil {
 		return refuse("native mapping persistence refused")
