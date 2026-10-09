@@ -10,8 +10,10 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
-- Fence hosted actor wake submission against pull-only or revoked bindings and
-  same-session generation changes. Consumer channel reads remain nondestructive.
+- Recheck hosted actor wake bindings before claiming and sending. Pull-only
+  bindings and changed or revoked claimed generations refuse in-flight delivery;
+  never-bound and lapsed hosted bindings retain compatibility lookup. The final
+  check and turn submission are not atomic. Consumer reads remain nondestructive.
   See `docs/consumers-hosted-wake.md`. (CW-20261008-0126)
 - Generated workspace and temp roots live outside protected Tether state, and
   worktree branches retain literal slash-containing names. Existing catalogs

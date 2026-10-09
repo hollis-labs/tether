@@ -13,7 +13,7 @@ install, and `go install`.
 ## Prerequisites
 
 - macOS or Linux
-- For source builds: the Go version in [`go.mod`](../go.mod) and `make`
+- For source builds: the Go version declared in the source checkout’s `go.mod` and `make`
 - For Sysop source builds: Node.js 22+ and npm
 - For AI provider keychain storage: a local keychain backend supported by
   `go-keyring`, or macOS Keychain
