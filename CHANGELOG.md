@@ -10,6 +10,14 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Preserve retained non-Codex team identity after proven Gone custody: matching
+  retirement, both original PIDs absent and current binding/intent fences permit
+  an atomic secret-free archive and same-session recovery-pending transition.
+  Ordinary logical-agent resume refuses active tracked shim custody before
+  allocating a replacement; read errors also refuse and archived metadata alone
+  does not veto. Unresolved Gone Codex obligations remain retained.
+  (CW-20261003-0018)
+
 - Resume ordinary logical agents from their latest canonical native mapping and
   work root without requiring a checkpoint. Copy only Codex/Claude session state,
   submit one recovery control turn, and allow one confirmed cold attempt after

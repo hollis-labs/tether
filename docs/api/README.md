@@ -924,15 +924,29 @@ both sets.
 A spared direct-launch session is still `running`, but the new daemon holds no
 runtime handle for it, so it cannot be steered or stopped through Tether.
 
-`detached` means a shim-hosted child is alive while the daemon is disconnected.
-It preserves the child PID, credentials, bindings and workspace. This is distinct
+`detached` means the hosted controller is disconnected or recovery cannot settle
+the provider's outcome. It retains custody, credentials, bindings and workspace;
+the state alone does not prove provider liveness. This is distinct
 from client detach (`client_attachments.detached_at`, CLI Ctrl-]), which does not
-change the session state. `orphaned` means the shim and child are gone: credentials
-and all binding generations are revoked, and the stale PID is cleared. Neither
-state is terminal; no exit code or `ended_at` is invented. Workspace cleanup
-preserves both states. Resume from an orphaned checkpoint creates a new session;
-resume from a detached checkpoint returns HTTP 409 `conflict`, because its child
-is still alive and the shim reconciler must reattach it.
+change the session state. Ordinary `orphaned` reconciliation clears the stale
+PID and revokes credentials and binding generations. Neither state is terminal;
+no exit code or `ended_at` is invented. Workspace cleanup preserves both states.
+Ordinary resume from an orphaned source without active tracked custody creates a
+new canonical session. A detached source returns HTTP 409 `conflict`; the custody
+owner must reconcile it before a fresh resume can be considered.
+
+One retained team recovery path preserves existing enrollment and binding:
+confirmed-Gone non-Codex shim custody can be retired only after the original
+placement is matched, both recorded host and provider PIDs are positively absent,
+and retirement is confirmed. Unknown or reused PIDs, revoked bindings, explicit
+stops and changed custody refuse this transition. A transaction rechecks exact
+custody, active roster/pin/intent and highest binding generation, archives
+secret-free custody metadata, removes only the old active custody and records
+`orphaned` recovery-pending state with reason `team_shim_recovery_pending`.
+Subsequent admission uses the same canonical session and existing enrollment;
+it does not mint replacement authority or revive a revoked binding. The archive
+retains no launch environment or protocol payload and is not an operator cleanup
+API. Gone Codex custody with unresolved protocol obligations remains refused.
 
 The opt-in shim integration owns custody transitions. When shim hosting is
 disabled at restart, tracked custody stays detached with reason
@@ -1080,9 +1094,12 @@ attempt publishes `provider.session_lost` with `fresh_conversation: true` before
 starting; that event does not certify successful launch or turn completion.
 
 A fresh resume returns 409 `conflict` if the agent has never launched, has any
-live session, or requires recovery of retained team custody instead of a
-new canonical session. It returns 404 `not_found` when neither a previous session
-nor a checkpoint exists. Retained direct team recovery uses its existing session,
+live session, requires recovery of retained team custody, or the selected source
+retains an active tracked shim row. The custody check precedes allocation even
+for a failed or orphaned ordinary source; a custody read error also refuses
+resume. Archived custody alone is not an active-row veto. It returns 404
+`not_found` when neither a previous session nor a checkpoint exists. Retained
+direct team recovery uses its existing session,
 actor, enrollment and binding through the team host; this endpoint does not
 replace those identities.
 
