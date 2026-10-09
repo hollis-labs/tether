@@ -320,7 +320,13 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 			t.Fatal(ctx.Err())
 		}
 	} else {
-		if err = first.SendTurn(ctx, "first", "", "fixture", "1"); err != nil {
+		// This provider answers and immediately exits. Its authenticated exit
+		// closes the controller, which may end the local inject/call observer
+		// before it sees a bytes receipt or wakes for the durable RPC response.
+		// That observer's refusal is not evidence that private output was lost.
+		// Require the exact persisted response and exit/carry below; never turn
+		// this test allowance into production success from host acceptance.
+		if err = first.SendTurn(ctx, "first", "", "fixture", "1"); err != nil && (!terminal || !HasCode(err, "outcome_unknown")) {
 			t.Fatal(err)
 		}
 		before = waitProtocol(ctx, t, first, func(s State) bool { return s.LastTerminal == "turn-1" })
@@ -334,7 +340,18 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 		}
 		code, err := first.Wait()
 		state := first.engine.Snapshot()
-		if code != 7 || !HasCode(err, "protocol_truncated") || state.Exit == nil || state.Exit.Status != 7 || string(state.Partial) != "{" || len(state.Inbox) == 0 {
+		answeredTurn := false
+		for _, op := range state.Operations {
+			if op.Method == "turn/start" && op.Phase == Answered && !op.EffectUnknown && op.RPCError == nil {
+				var result struct {
+					Turn struct {
+						ID string `json:"id"`
+					} `json:"turn"`
+				}
+				answeredTurn = json.Unmarshal(op.Result, &result) == nil && result.Turn.ID == "turn-1"
+			}
+		}
+		if !answeredTurn || code != 7 || !HasCode(err, "protocol_truncated") || state.Exit == nil || state.Exit.Status != 7 || string(state.Partial) != "{" || len(state.Inbox) == 0 {
 			t.Fatalf("exit/carry erased or fabricated: code=%d err=%v state=%+v", code, err, state)
 		}
 		return
