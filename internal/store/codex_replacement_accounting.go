@@ -819,8 +819,8 @@ func accountingMessagingSnapshot(ctx context.Context, q CodexAccountingSQL, sess
 		sql  string
 		args []any
 	}{
-		{`SELECT d.id,d.message_id,d.recipient_urn,d.binding_json,d.status,CAST(d.attempt_count AS TEXT),d.active_attempt_id,d.active_lease_token,d.lease_holder,coalesce(d.lease_expires_at,''),d.updated_at FROM messaging_deliveries d WHERE ` + accountingDeliveryPredicate + ` ORDER BY d.id LIMIT 1025`, args},
-		{`SELECT a.id,a.delivery_id,a.holder,a.binding_json,CAST(a.binding_generation AS TEXT),a.stage,coalesce(a.consumed_at,''),coalesce(a.failed_at,'') FROM messaging_attempts a JOIN messaging_deliveries d ON d.id=a.delivery_id WHERE ` + accountingDeliveryPredicate + ` ORDER BY a.id LIMIT 1025`, args},
+		{`SELECT d.id,d.message_id,(SELECT digest FROM messaging_messages WHERE id=d.message_id),d.recipient_urn,d.binding_json,d.status,CAST(d.attempt_count AS TEXT),d.active_attempt_id,d.active_lease_token,d.lease_holder,coalesce(d.lease_expires_at,''),d.updated_at FROM messaging_deliveries d WHERE ` + accountingDeliveryPredicate + ` ORDER BY d.id LIMIT 1025`, args},
+		{`SELECT a.id,a.delivery_id,a.lease_token,a.holder,a.binding_json,CAST(a.binding_generation AS TEXT),a.acquired_at,a.expires_at,a.stage,coalesce(a.consumed_at,''),coalesce(a.failed_at,'') FROM messaging_attempts a JOIN messaging_deliveries d ON d.id=a.delivery_id WHERE ` + accountingDeliveryPredicate + ` ORDER BY a.id LIMIT 1025`, args},
 		{`SELECT CAST(r.id AS TEXT),r.delivery_id,r.attempt_id,r.stage,r.at FROM messaging_receipts r JOIN messaging_deliveries d ON d.id=r.delivery_id WHERE ` + accountingDeliveryPredicate + ` ORDER BY r.id LIMIT 1025`, args},
 		{`SELECT m.id,coalesce(m.delivery_id,''),coalesce(m.consumed_at,''),coalesce(m.pending_receipt_attempt_id,''),coalesce(m.pending_receipt_lease_token,'') FROM messages m WHERE m.to_urn=? ORDER BY m.id LIMIT 1025`, []any{args[0]}},
 		{`SELECT reply_id,target_session_id,delivered_to_session_id,state,reason,CAST(attempts AS TEXT),updated_at,coalesce(settled_at,'') FROM routing_replies WHERE target_session_id=? OR delivered_to_session_id=? ORDER BY reply_id LIMIT 1025`, []any{session, session}},
