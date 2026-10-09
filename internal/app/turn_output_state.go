@@ -323,12 +323,17 @@ func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReas
 }
 
 // MarkTurnOutputSessionLost connects recovery to the existing output tracker.
-// Recovery owns native continuity; this marker only labels the next output turn.
+// Recovery owns native continuity. A cold retry can share the unaccepted
+// submission marker; already-observed interrupted output retains its identity.
 func (s *Service) MarkTurnOutputSessionLost(id string) {
 	if value, ok := s.turnOutputs.Load(id); ok {
 		output := value.(*sessionTurnOutput)
 		output.mu.Lock()
-		output.freshConversationPending = true
+		if output.turnID != "" && !output.accepted && output.reducerTurnID == "" {
+			output.freshConversationTurn = output.turnID
+		} else {
+			output.freshConversationPending = true
+		}
 		output.mu.Unlock()
 	}
 }

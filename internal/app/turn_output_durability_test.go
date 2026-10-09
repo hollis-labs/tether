@@ -253,6 +253,36 @@ func TestTurnOutputTypedSessionLossMarksFreshConversation(t *testing.T) {
 	}
 }
 
+func TestTurnOutputRecoveryLossMarksColdRetryProvisionalTurn(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	if err := svc.trackTurnSubmission("s1", func() error {
+		svc.MarkTurnOutputSessionLost("s1")
+		output.observeProvider(gopevents.Done{Text: "cold retry result"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	output.observeProvider(gopevents.Done{Text: "continued result"})
+	got := outputEvents(t, svc)
+	if len(got) != 2 || !got[0].FreshConversation || got[1].FreshConversation {
+		t.Fatal("cold retry sharing provisional marker lost freshness")
+	}
+}
+
+func TestTurnOutputRecoveryLossPreservesObservedTurnAndMarksNext(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	output.observeProvider(gopevents.Delta{Text: "interrupted result"})
+	svc.MarkTurnOutputSessionLost("s1")
+	output.flush()
+	output.observeProvider(gopevents.Done{Text: "cold retry result"})
+	got := outputEvents(t, svc)
+	if len(got) != 2 || got[0].FreshConversation || !got[1].FreshConversation {
+		t.Fatal("loss changed observed turn or failed to mark next")
+	}
+}
+
 func TestTurnOutputTrackerCreatesPendingLogWithoutInventingOutput(t *testing.T) {
 	svc, _ := outputHarness(t, nil)
 	workspace := t.TempDir()
