@@ -68,6 +68,10 @@ func BuildDeliveryProjection(state State) (Projection, error) {
 			}
 		}
 		if source.Kind == "provider_exit" && state.Exit != nil && event.Identity == state.Binding.Journal+":exit:"+state.ExitCursor {
+			if p.ActiveTurnID != "" {
+				// Authentic process exit cannot settle an unfinished output turn.
+				return p, fail("output_unsupported")
+			}
 			var exit shim.Exit
 			if json.Unmarshal(event.Raw, &exit) != nil || exit.Status != state.Exit.Status || exit.Signal != state.Exit.Signal || exit.Cause != state.Exit.Cause {
 				return p, fail("source_conflict")

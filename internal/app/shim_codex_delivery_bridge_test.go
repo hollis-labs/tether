@@ -88,6 +88,31 @@ func TestHostedCodexDeliveryFragmentedCarrySurvivesReopen(t *testing.T) {
 	}
 }
 
+func TestHostedCodexDeliveryExitDoesNotSettleAnOpenTurn(t *testing.T) {
+	s, _, e := codexCompletedInboxFixture(t)
+	ctx := context.Background()
+	if err := e.DeliverInbox(ctx, s.deliverCodexInbox); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.AcceptOutput(ctx, 1, "j:2", "stdout", []byte("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread\",\"turn\":{\"id\":\"unfinished\",\"status\":\"inProgress\"}}}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AcceptExit(ctx, "j:3", shim.Exit{Status: 7}); err != nil {
+		t.Fatal(err)
+	}
+	before := e.Snapshot()
+	if err := e.DeliverInbox(ctx, s.deliverCodexInbox); !shimcodex.HasCode(err, "output_unsupported") {
+		t.Fatal("exit certified an unfinished output turn", err)
+	}
+	after := e.Snapshot()
+	if after.Revision != before.Revision || len(after.Inbox) != len(before.Inbox) || len(outputEvents(t, s)) != 1 {
+		t.Fatal("unfinished output was drained or published")
+	}
+	if _, err := s.Store.LoadVerifiedCodexDelivery(ctx, after, "j:1"); err == nil {
+		t.Fatal("unfinished exit earned delivery proof")
+	}
+}
+
 func TestHostedCodexDeliveryStagesBeforeAtomicDrainAndReplaysCrash(t *testing.T) {
 	s, p, e := codexCompletedInboxFixture(t)
 	ctx := context.Background()
