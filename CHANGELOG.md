@@ -10,6 +10,15 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Preserve supported hosted Codex command-execution starts, deltas and completion
+  envelopes across controller reconnect as checked private turn obligations.
+  Tool bytes stay out of public final replies; unknown unions and unresolved
+  input/callback obligations remain refused. (CW-20261008-0126)
+- Consume the current idle reply boundary before turn submission, preventing
+  duplicate injection while the runtime has not yet shown a busy signal.
+  A later notification, including synchronous completion, can admit the next
+  reply. (CW-20261008-0126)
+
 - Preserve retained non-Codex team identity after proven Gone custody: matching
   retirement, both original PIDs absent and current binding/intent fences permit
   an atomic secret-free archive and same-session recovery-pending transition.

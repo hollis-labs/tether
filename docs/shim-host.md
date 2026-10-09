@@ -93,6 +93,14 @@ it. The producer commits its private retry journal before database publication.
 A stable `output_id` binds the native completion source and body, so retry after
 publication does not invent another public output.
 
+Supported `commandExecution` starts, output deltas and completions are retained
+as private, identity-checked turn obligations. Their original start/completion
+item envelopes and output bytes survive checkpoint reopening. They do not become
+agent final-answer text or certify a turn completion; a supported completed
+agent reply still earns the public delivery receipt. Changed command identity,
+foreign turn/item references and unsupported lifecycle shapes refuse rather
+than discarding the private trace.
+
 The delivery transaction then reinterprets the frozen native inbox, verifies the
 actual public event, content identity and selected-route staging, and atomically
 saves the projection with the inbox drain. Producer acceptance alone cannot
