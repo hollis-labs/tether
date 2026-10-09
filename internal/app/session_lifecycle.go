@@ -246,6 +246,16 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, fmt.Errorf("load launch plan: %w", err)
 	}
 
+	if plan.NativeResumeOnly {
+		source, readErr := s.Store.GetSession(plan.ResumeSourceSessionID)
+		if readErr != nil {
+			return nil, nativeOnlyError("source unavailable")
+		}
+		if err := s.validateNativeOnlySource(ctx, source, plan); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := rejectLegacyMCPPlan(plan); err != nil {
 		return nil, err
 	}
@@ -510,6 +520,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		sessionEnv["TETHER_MCP_TOKEN"] = "tether-worker"
 	}
 	startOpts.Env = mergeEnv(startOpts.Env, sessionEnv)
+	if plan.NativeResumeOnly {
+		startOpts.Env = mergeEnv(startOpts.Env, map[string]string{"CODEX_HOME": plan.NativeStateRoot})
+	}
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)

@@ -55,7 +55,11 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	}
 	var codexHome *launchartifacts.CodexHome
 	if plan.ProviderBrand == "codex" {
-		codexHome, err = captureCodexHome()
+		if plan.NativeResumeOnly {
+			codexHome, err = launchartifacts.CaptureCodexHome(plan.NativeStateRoot)
+		} else {
+			codexHome, err = captureCodexHome()
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -74,6 +78,14 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	lp, err := s.agentLaunchPlanFor(ctx, plan, workspaceDir)
 	if err != nil {
 		return nil, err
+	}
+	if plan.NativeResumeOnly {
+		// Capture preceded compilation; native state remains in the accepted source
+		// home, while fresh policy artifacts retain their normal admission.
+		if lp.Provider.Env == nil {
+			lp.Provider.Env = map[string]string{}
+		}
+		lp.Provider.Env["CODEX_HOME"] = plan.NativeStateRoot
 	}
 	if plant.DaemonOwned {
 		values := make([]string, 0, len(lp.Provider.Env))

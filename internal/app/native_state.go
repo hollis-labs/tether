@@ -13,6 +13,9 @@ import (
 // Native state belongs to a canonical session, not to the ambient operator
 // home. Fresh planting still owns config, auth and the loopback endpoint.
 func (s *Service) prepareRecoveryNativeState(ctx context.Context, plan *launch.Plan, target string) error {
+	if plan.NativeResumeOnly {
+		return nativeOnlyContext(plan)
+	}
 	if plan.ResumeSourceSessionID != "" && plan.ResumeProviderSessionID != "" && plan.ProviderBrand == "codex" {
 		source, err := s.Store.GetLaunchPlan(plan.ResumeSourceSessionID)
 		if err != nil {

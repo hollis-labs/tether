@@ -54,6 +54,8 @@ var daemonCmd = &cobra.Command{
 	Short: "Long-lived tetherd process commands",
 }
 
+var bootNativeOnlySourceIDs []string
+
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the tetherd daemon in the background",
@@ -70,7 +72,11 @@ var daemonStartCmd = &cobra.Command{
 		}
 
 		// Re-exec ourselves in daemon-run mode. os.Args[0] is our own binary.
-		child := exec.Command(os.Args[0], "daemon", "run", "--catalog", catalogPath) //nolint:gosec // G204: re-exec of own binary
+		childArgs := []string{"daemon", "run", "--catalog", catalogPath}
+		for _, id := range bootNativeOnlySourceIDs {
+			childArgs = append(childArgs, "--boot-resume-native-only-source", id)
+		}
+		child := exec.Command(os.Args[0], childArgs...) //nolint:gosec // G204: re-exec of own binary
 
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		logFile, err := openDaemonLog(filepath.Join(stateRoot, "logs", "tetherd.log"))
@@ -261,7 +267,7 @@ var daemonRunCmd = &cobra.Command{
 			Config:                   cfg,
 			Manager:                  svc.Manager,
 			Startup: func(startupCtx context.Context) {
-				svc.BootResumeSessions(startupCtx)
+				svc.BootResumeSessions(startupCtx, app.BootResumeOptions{NativeOnlySourceIDs: append([]string(nil), bootNativeOnlySourceIDs...)})
 				if startupCtx.Err() == nil {
 					svc.StartSessionReaper(startupCtx)
 				}
@@ -1123,6 +1129,7 @@ func expandListenAddr(addr string) string {
 }
 
 func init() {
+	daemonCmd.PersistentFlags().StringSliceVar(&bootNativeOnlySourceIDs, "boot-resume-native-only-source", nil, "Preserve only the recorded native context of these canonical source sessions during boot recovery")
 	daemonCmd.AddCommand(daemonStartCmd, daemonRunCmd, daemonStopCmd, daemonStatusCmd)
 }
 

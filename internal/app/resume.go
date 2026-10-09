@@ -39,8 +39,11 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	case <-ctx.Done():
 		return api.LaunchResult{}, ctx.Err()
 	}
+	if opts.NativeOnly && opts.SourceSessionID == "" || !opts.NativeOnly && opts.SourceSessionID != "" {
+		return api.LaunchResult{}, nativeOnlyError("exact source and native-only mode required")
+	}
 	if opts.IdempotencyKey == "" {
-		return s.resumeLogicalAgent(ctx, logicalAgentID, nil)
+		return s.resumeLogicalAgent(ctx, logicalAgentID, nil, opts)
 	}
 	// Idempotent resume (CW-20260930-0229). The digest is the request as
 	// sent, so a retry after the resumed session has checkpointed replays
@@ -48,6 +51,12 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	unlock := s.lockIdempotencyKey(opts.IdempotencyKey)
 	defer unlock()
 	digest := resumeRequestDigest(logicalAgentID)
+	if opts.NativeOnly {
+		digest = requestDigest(struct {
+			Agent, Source string
+			NativeOnly    bool
+		}{logicalAgentID, opts.SourceSessionID, true})
+	}
 	replayed, err := s.replayIfKeyed(opts.IdempotencyKey, store.IdempotencyOpResume, digest)
 	if err != nil {
 		return api.LaunchResult{}, err
@@ -57,7 +66,7 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	}
 	return s.resumeLogicalAgent(ctx, logicalAgentID, &store.SessionIdempotency{
 		Key: opts.IdempotencyKey, Operation: store.IdempotencyOpResume, RequestDigest: digest,
-	})
+	}, opts)
 }
 
 func launchResultOf(l *Launched) api.LaunchResult {
@@ -72,7 +81,7 @@ func launchResultOf(l *Launched) api.LaunchResult {
 	}
 }
 
-func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string, key *store.SessionIdempotency) (api.LaunchResult, error) {
+func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string, key *store.SessionIdempotency, opts api.ResumeOptions) (api.LaunchResult, error) {
 	la, err := s.Store.GetLogicalAgent(logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get logical agent: %w", err)
@@ -89,13 +98,19 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("%w (session=%s)", session.ErrDetached, detachedID)
 	}
 
-	ck, err := s.Store.GetLatestCheckpointForAgent(logicalAgentID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
+	var ck *checkpoint.Checkpoint
+	if !opts.NativeOnly {
+		ck, err = s.Store.GetLatestCheckpointForAgent(logicalAgentID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return api.LaunchResult{}, fmt.Errorf("get latest checkpoint: %w", err)
+		}
 	}
 	parent, err := s.Store.LatestSessionForAgent(ctx, logicalAgentID)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("get resume source: %w", err)
+	}
+	if opts.NativeOnly && (parent == nil || parent.ID != opts.SourceSessionID) {
+		return api.LaunchResult{}, nativeOnlyError("canonical source changed or missing")
 	}
 	if parent == nil && ck == nil {
 		return api.LaunchResult{}, fmt.Errorf("%w: agent %q has no previous session or checkpoint", store.ErrSessionNotFound, logicalAgentID)
@@ -152,7 +167,10 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 		return api.LaunchResult{}, fmt.Errorf("resolve launch plan: %w", err)
 	}
 
-	plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
+	plan.NativeResumeOnly = opts.NativeOnly
+	if !opts.NativeOnly {
+		plan.BootPrompt = buildResumePrompt(ck, plan.BootPrompt)
+	}
 	plan.ResumeSourceSessionID = sourceID
 	if parent != nil {
 		if parent.LogicalAgentID != logicalAgentID {
@@ -183,8 +201,30 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 			}
 		}
 	}
-	pack := s.recoveryContext(ctx, plan, ck)
-	plan.BootPrompt = pack.prompt(plan.BootPrompt)
+	if opts.NativeOnly {
+		if err := s.validateNativeOnlySource(ctx, parent, plan); err != nil {
+			return api.LaunchResult{}, err
+		}
+		plan.BootPrompt, plan.RecoveryPrompt, plan.RecoveryCursors = "", "", nil
+	} else {
+		pack := s.recoveryContext(ctx, plan, ck)
+		plan.BootPrompt = pack.prompt(plan.BootPrompt)
+	}
+
+	factory, ok := s.factories[plan.ProviderID]
+	if !ok {
+		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
+	}
+	probe, err := factory(plan)
+	if err != nil {
+		return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
+	}
+	if opts.NativeOnly && !probe.Caps().JsonRpcStdio {
+		return api.LaunchResult{}, nativeOnlyError("provider has no existing-thread RPC path")
+	}
+	if err := s.refuseUnprotectable(plan, probe.Kind()); err != nil {
+		return api.LaunchResult{}, err
+	}
 
 	sessID := uuid.NewString()
 	wsRoot := plan.WriteHome
@@ -196,18 +236,6 @@ func (s *Service) resumeLogicalAgent(ctx context.Context, logicalAgentID string,
 	ws, err := workspace.Create(wsRoot, sessID, plan)
 	if err != nil {
 		return api.LaunchResult{}, fmt.Errorf("create workspace: %w", err)
-	}
-
-	factory, ok := s.factories[plan.ProviderID]
-	if !ok {
-		return api.LaunchResult{}, fmt.Errorf("no runtime for provider %q", plan.ProviderID)
-	}
-	probe, err := factory(plan)
-	if err != nil {
-		return api.LaunchResult{}, fmt.Errorf("build runtime: %w", err)
-	}
-	if err := s.refuseUnprotectable(plan, probe.Kind()); err != nil {
-		return api.LaunchResult{}, err
 	}
 
 	row := store.SessionRow{
