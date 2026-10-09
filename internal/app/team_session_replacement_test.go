@@ -149,6 +149,22 @@ func TestTeamReplacementAtomicallyRemapsOriginalAuthorityAndFreezesOldExecution(
 	}
 }
 
+func TestTeamReplacementPreservesPendingRecoveryChannelContextWithoutAdvancingIt(t *testing.T) {
+	r, input, actor := replacementStoreRig(t)
+	input.Plan.RecoveryCursors = map[string]int64{"recorded-team-channel": 7}
+	if _, err := prepareReplacement(t, r, input); err != nil {
+		t.Fatal("recovery-only channel context refused", err)
+	}
+	plan, err := r.svc.Store.GetLaunchPlan(input.DestinationID)
+	if err != nil || plan.RecoveryCursors["recorded-team-channel"] != 7 {
+		t.Fatal("replacement lost included channel context", err)
+	}
+	sequence, err := r.svc.Store.RecoveryChannelCursor(context.Background(), actor, "recorded-team-channel")
+	if err != nil || sequence != 0 {
+		t.Fatal("preparation acknowledged unsubmitted recovery context", err)
+	}
+}
+
 func TestTeamReplacementRefusesChangedStoppedOrUnaccountedSource(t *testing.T) {
 	for _, query := range []string{
 		`UPDATE runtime_bindings SET revoked_at='revoked' WHERE host_id='team'`,
