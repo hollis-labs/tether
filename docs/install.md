@@ -97,11 +97,14 @@ Override either:
 make install BINDIR="$HOME/bin"
 ```
 
-Uninstall:
+Uninstall the two core binaries installed by `make install`:
 
 ```sh
 make uninstall PREFIX="$HOME/.local"
 ```
+
+Sysop is installed separately into `GOBIN`; the root uninstall target does not
+remove `tether_sysop`.
 
 ### Go-native dev install
 
