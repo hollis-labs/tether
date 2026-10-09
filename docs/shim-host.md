@@ -71,6 +71,11 @@ facts while preserving the operation key, fingerprint and attempted-submit flag.
 
 ## Provider protocols
 
+Antigravity direct providers remain tied to the daemon. This hosting path does
+not preserve them across daemon death; Antigravity shim/ACP hosting is a separate
+follow-up. Its restart-survival limit does not imply a failure in Claude or
+Codex recovery.
+
 Claude uses the stdio bridge described below. Hosted Codex uses a separate
 durable protocol ledger, bound to the original session, instance, generation,
 placement operation, submission attempt and journal. Its protocol checkpoint is
