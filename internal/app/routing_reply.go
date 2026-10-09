@@ -395,6 +395,13 @@ func (d *replyDispatcher) deliver(sessionID string, r store.RoutingReply) {
 		d.requeue(r, store.RoutingReplyRequeue{Reason: ReplyReasonSubmitFailed, Detail: err.Error(), NotBefore: time.Now().Add(replySubmitBackoff)})
 		return
 	}
+	// Idle notifications received while evaluating or claiming this reply
+	// belong to the boundary this submission consumes. Only a notification
+	// after this handoff may license another turn, including a synchronous
+	// completion from sendTurn itself.
+	d.mu.Lock()
+	d.drainFor(sessionID).again = false
+	d.mu.Unlock()
 	err = d.rt.sendTurn(d.ctx, sessionID, body)
 	// The order matters. A rejection (turn in flight, session gone) means the
 	// runtime did not take the reply, whatever else the error carries: a rejected
