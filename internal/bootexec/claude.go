@@ -2,6 +2,7 @@ package bootexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -48,7 +49,7 @@ type Prepared struct {
 
 // PrepareClaudeTUI materializes the Claude boot-dir layout and returns a
 // command line that runs the real Claude TUI in the caller's terminal.
-func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
+func PrepareClaudeTUI(plan *launch.Plan, opts Options) (result *Prepared, err error) {
 	if plan == nil {
 		return nil, fmt.Errorf("launch plan required")
 	}
@@ -107,7 +108,12 @@ func PrepareClaudeTUI(plan *launch.Plan, opts Options) (*Prepared, error) {
 		_ = os.RemoveAll(workspaceDir)
 		return nil, err
 	}
-	defer custody.Close()
+	defer func() {
+		err = errors.Join(err, custody.Close())
+		if err != nil {
+			result = nil
+		}
+	}()
 	prepared.PlantContext.SelfMCPCommand = opts.TetherCommand
 	prepared.PlantContext.SelfMCPArgs = append([]string(nil), opts.TetherArgs...)
 	prepared.PlantContext.SelfMCPEnv = tetherEnvMap(opts.TetherEnv)
