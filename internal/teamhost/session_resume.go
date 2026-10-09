@@ -8,9 +8,10 @@ import (
 	"github.com/hollis-labs/substrate/mesh/teams"
 )
 
-// RetainedSessionRecoverer restarts runtime custody of the original session.
-// It cannot replace enrollment or the delivery target. The ordinary Sessions
-// interface remains sufficient for hosts that have no recovery implementation.
+// RetainedSessionRecoverer recovers custody under the original enrollment.
+// Lost execution may atomically remap current membership to a new session;
+// historical delivery targets remain unchanged. The ordinary Sessions interface
+// remains sufficient for hosts that have no recovery implementation.
 type RetainedSessionRecoverer interface {
 	Recover(context.Context, string, string) error
 }

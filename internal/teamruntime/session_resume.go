@@ -20,10 +20,15 @@ type retainedEnrollment interface {
 
 // Recover serializes with Launch/Stop using the original receipt. Stop records
 // its tombstone before taking this lock, so app's transactional fence also
-// catches a stop racing recovery. Neither path substitutes a session/actor.
+// catches a stop racing recovery. Replacement changes only the execution ID;
+// the original actor/enrollment and receipt key remain authoritative.
 func (s *Sessions) Recover(ctx context.Context, key, id string) error {
 	unlock := s.lock("session", key)
 	defer unlock()
+	return s.recoverLocked(ctx, key, id)
+}
+
+func (s *Sessions) recoverLocked(ctx context.Context, key, id string) error {
 	receipt, err := s.read(ctx, "session", key)
 	if err != nil {
 		return err
@@ -64,8 +69,12 @@ func (s *Sessions) Recover(ctx context.Context, key, id string) error {
 	if current.ended != "" {
 		return errors.Join(teams.ErrDenied, s.cleanup(context.WithoutCancel(ctx), key))
 	}
-	if checkErr := enrollment.ValidateRecovery(ctx, key, request.Actor, id); checkErr != nil {
-		return errors.Join(err, checkErr, s.service.StopTeamSession(context.WithoutCancel(ctx), id))
+	var currentID string
+	if readErr := json.Unmarshal(current.payload, &currentID); readErr != nil || currentID == "" {
+		return errors.Join(err, teams.ErrConflict, readErr)
+	}
+	if checkErr := enrollment.ValidateRecovery(ctx, key, request.Actor, currentID); checkErr != nil {
+		return errors.Join(err, checkErr, s.service.StopTeamSession(context.WithoutCancel(ctx), currentID))
 	}
 	return err
 }

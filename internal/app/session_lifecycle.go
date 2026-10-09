@@ -225,7 +225,7 @@ func (s *Service) LaunchSessionWithContext(ctx context.Context, sessionID string
 }
 
 // launchSessionWithContext requires the caller to hold the canonical launch
-// gate, including retained same-ID team recovery.
+// gate, including a committed retained team replacement.
 func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string) (*Launched, error) {
 	row, err := s.Store.GetSession(sessionID)
 	if err != nil {
@@ -373,7 +373,7 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	}
 	token, err := s.mintSessionCredential(ctx, sessionID)
 	if err != nil {
-		if s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
+		if errors.Is(err, store.ErrSessionReplacementUnavailable) || s.Catalog != nil && s.Catalog.Global.Identity.EffectiveMode() == string(identity.Enforce) {
 			return nil, err
 		}
 		log.Print("WARNING: session credential unavailable; observe launch continuing anonymously")
