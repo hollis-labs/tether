@@ -84,7 +84,7 @@ func (s *Service) RecoverTeamSession(ctx context.Context, key, id string) error 
 		return err
 	}
 	plan.ResumeProviderSessionID = mapping.NativeSessionID.String
-	ck, err := s.Store.GetLatestCheckpointForAgent(plan.LogicalAgentID)
+	ck, err := s.retainedRecoveryCheckpoint(ctx, id, plan.LogicalAgentID, actor)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
