@@ -404,6 +404,9 @@ func ProjectFrozenSource(previous Projection, event Event) (Projection, error) {
 // validate the finished candidate once instead of decoding the entire growing
 // history for each record. Errors never authorize persistence or inbox removal.
 func projectFrozenSourceInto(next *Projection, event Event) (int, error) {
+	if event.LegacyRawJSON && strings.HasPrefix(event.Identity, next.JournalIdentity+":stdout:") {
+		return -1, fail("legacy_bytes_pending")
+	}
 	if len(event.Raw) == 0 || len(event.Raw) > ProjectionFrameBytes || !utf8.Valid(event.Raw) || !projectionUnicodeEscapes(event.Raw) || !uniqueJSON(event.Raw) || event.Identity == "" {
 		return -1, fail("projection_invalid")
 	}
