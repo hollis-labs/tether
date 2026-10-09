@@ -5,8 +5,13 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/go-messaging/delivery"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/shimcodex"
@@ -121,5 +126,109 @@ func TestCodexReplacementAccountingFixtureRetainsUnknownTerminalWork(t *testing.
 	}
 	if after := f.snapshot(t); after != before {
 		t.Fatal("refusal changed retained unknown work or original public references")
+	}
+}
+
+func TestCodexReplacementAccountingRequiresConsumedOldHolderReceipt(t *testing.T) {
+	f := newAccountingFixture(t, true)
+	if err := f.journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	history := &codexReplacementAccountingFixture{
+		db: f.store, state: f.state, outputID: f.state.Delivery.Turns[0].OutputAcceptanceID,
+	}
+	before := history.snapshot(t)
+	journalPath := filepath.Join(f.root, "j", "00000001.seg")
+	journalBefore, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The actor recipient has no session binding. Only the real historical
+	// attempt holder associates this delivery obligation with the old session.
+	actor := messaging.Address{Kind: messaging.KindAgent, Authority: "local", ID: "retained-actor"}
+	deliveries := f.store.DeliveryStore()
+	enqueued, err := deliveries.Enqueue(ctx, delivery.EnqueueRequest{
+		From:       messaging.Address{Kind: messaging.KindService, Authority: "local", ID: "fixture"},
+		Recipients: []delivery.RecipientTarget{{Address: actor}},
+		Kind:       messaging.MsgKindNotice, Payload: []byte("synthetic retained obligation"),
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := deliveries.Claim(ctx, delivery.ClaimRequest{
+		DeliveryID: enqueued.Deliveries[0].ID,
+		Holder:     f.state.Binding.Session, LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := delivery.LeaseRef{
+		DeliveryID: claim.Attempt.DeliveryID, AttemptID: claim.Attempt.ID,
+		LeaseToken: claim.Attempt.LeaseToken, BindingGeneration: claim.Attempt.BindingGeneration,
+	}
+	for _, stage := range []delivery.ReceiptStage{delivery.StageHostAccepted, delivery.StageTurnSubmitted} {
+		accepted, _, err := deliveries.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: stage})
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt)
+		if proof != nil {
+			t.Fatal("unconsumed old-holder obligation earned historical accounting")
+		}
+		accountingCode(t, err, "ack_pending")
+		current, err := deliveries.GetDelivery(ctx, accepted.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current != accepted {
+			t.Fatal("accounting refusal altered the outstanding delivery lease")
+		}
+	}
+	consumed, attempt, err := deliveries.Ack(ctx, delivery.AckRequest{Lease: lease, Stage: delivery.StageConsumed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed.Status != delivery.DeliveryDelivered || consumed.ActiveAttemptID != "" || attempt.Stage != delivery.StageConsumed {
+		t.Fatal("fixture did not settle through real delivery consumption")
+	}
+	proof, err := f.store.AccountCodexReplacement(ctx, f.state, f.receipt)
+	if err != nil || proof == nil {
+		t.Fatal("real consumed receipt did not earn historical accounting", err)
+	}
+	if proof.Reference().MessagingSHA256 == "" {
+		t.Fatal("accounting omitted its messaging evidence reference")
+	}
+	tx, err := f.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = f.store.ValidateCodexReplacementAccountingTx(ctx, tx, proof, f.receipt); err != nil {
+		t.Fatal(err)
+	}
+	// A genuine consumed receipt is removed only within this synthetic write
+	// transaction. The issuer must recheck it through that same transaction.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM messaging_receipts WHERE delivery_id=? AND attempt_id=? AND stage=?`, lease.DeliveryID, lease.AttemptID, delivery.StageConsumed); err != nil {
+		t.Fatal(err)
+	}
+	accountingCode(t, f.store.ValidateCodexReplacementAccountingTx(ctx, tx, proof, f.receipt), "ack_pending")
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.ValidateCodexReplacementAccountingTx(ctx, f.store.db, proof, f.receipt); err != nil {
+		t.Fatal("rollback did not preserve genuine consumption evidence", err)
+	}
+	if after := history.snapshot(t); after != before {
+		t.Fatal("historical accounting changed old custody, private ledger, or public acceptance")
+	}
+	journalAfter, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(journalAfter) != string(journalBefore) {
+		t.Fatal("historical accounting drained or changed the retained journal")
 	}
 }
