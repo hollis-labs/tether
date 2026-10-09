@@ -842,7 +842,7 @@ func (c *Client) ResumeLogicalAgent(ctx context.Context, agentID string) (api.La
 // created (Replayed=true) rather than starting another (CW-20260930-0229).
 func (c *Client) ResumeLogicalAgentWithOptions(ctx context.Context, agentID string, opts api.ResumeOptions) (api.LaunchResponse, error) {
 	var body io.Reader
-	if opts.IdempotencyKey != "" {
+	if opts.IdempotencyKey != "" || opts.NativeOnly || opts.SourceSessionID != "" || opts.ResumeWorkRoot != "" {
 		b, _ := json.Marshal(api.ResumeRequest(opts))
 		body = bytes.NewReader(b)
 	}
