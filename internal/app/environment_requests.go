@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,10 +34,7 @@ func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event) {
 	if json.Unmarshal(ev.Payload, &data) != nil {
 		return
 	}
-	id := ""
-	if len(data.RequestID) > 0 && string(data.RequestID) != "null" {
-		id = "request:" + string(data.RequestID)
-	}
+	id := scalarRequestID(data.RequestID)
 	open := ev.Kind == runtimeevents.KindAgentPermissionRequested
 	if id == "" {
 		if open && ev.ID != "" {
@@ -65,6 +63,27 @@ func (o *sessionTurnOutput) recordEnvironmentRequest(ev runtimeevents.Event) {
 	if err = o.service.Bus.Publish(ctx, events.Event{Scope: events.ScopeSession, SessionID: o.row.ID, Kind: store.EnvironmentRequestKind, PayloadJSON: string(raw)}); err != nil {
 		log.Printf("environment request status for session %s unavailable: %v", o.row.ID, err)
 	}
+}
+
+// JSON-RPC identities are scalars. Never turn an arbitrary object/array or
+// request params into supposedly nonsecret request identity metadata.
+func scalarRequestID(raw json.RawMessage) string {
+	if len(raw) == 0 || len(raw) > 512 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if text == "" {
+			return ""
+		}
+		canonical, _ := json.Marshal(text)
+		return "request:" + string(canonical)
+	}
+	number := strings.TrimSpace(string(raw))
+	if _, err := strconv.ParseInt(number, 10, 64); err == nil {
+		return "request:" + number
+	}
+	return ""
 }
 
 // A real terminal turn event closes only requests from that exact turn. A

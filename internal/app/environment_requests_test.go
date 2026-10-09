@@ -49,7 +49,37 @@ func TestEnvironmentRequestPolicyAndMetadata(t *testing.T) {
 						t.Fatal("request contents leaked into event")
 					}
 				}
+				// Disconnecting the control plane is not a terminal turn.
+				if err := svc.Store.UpdateSessionState("s1", "orphaned", 0, nil); err != nil {
+					t.Fatal(err)
+				}
+				orphan, err := svc.Store.EnvironmentSnapshot(context.Background(), "s1")
+				if err != nil || !orphan.Requests[0].Open {
+					t.Fatal("orphaning cleared request", err)
+				}
+				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "other", Sequence: 2})
+				other, err := svc.Store.EnvironmentSnapshot(context.Background(), "s1")
+				if err != nil || !other.Requests[0].Open {
+					t.Fatal("other terminal turn cleared request", err)
+				}
+				output.observeRuntime(runtimeevents.Event{Kind: runtimeevents.KindTurnCompleted, TurnID: "t", Sequence: 3})
+				ended, err := svc.Store.EnvironmentSnapshot(context.Background(), "s1")
+				if err != nil || ended.Requests[0].Open {
+					t.Fatal("exact terminal turn did not close request", err)
+				}
 			}
 		})
+	}
+}
+
+func TestEnvironmentRequestIdentityRejectsObjects(t *testing.T) {
+	if got := scalarRequestID(json.RawMessage(`{"params":"must-not-be-an-identity"}`)); got != "" {
+		t.Fatal("object became identity", got)
+	}
+	if got := scalarRequestID(json.RawMessage(`"request-id"`)); got != `request:"request-id"` {
+		t.Fatal(got)
+	}
+	if got := scalarRequestID(json.RawMessage(`17`)); got != "request:17" {
+		t.Fatal(got)
 	}
 }
