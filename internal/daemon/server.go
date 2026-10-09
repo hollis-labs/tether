@@ -520,7 +520,19 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 	}
-	protected := identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, environment.ProtocolGate(false, s.Config.Modules.ModuleGate(router)))
+	versioned := environment.ProtocolGate(true, router)
+	local := environment.ProtocolGate(false, router)
+	protocolHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		sessionStream := len(parts) == 3 && parts[0] == "sessions" && parts[1] != "" && (parts[2] == "snapshot" || parts[2] == "stream")
+		if s.EnvironmentStream != nil && (path == "/environment/snapshot" || path == "/environment/events" || sessionStream) {
+			versioned.ServeHTTP(w, r)
+			return
+		}
+		local.ServeHTTP(w, r)
+	})
+	protected := identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
 	return otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
 			s.Environment.ServeHTTP(w, r)

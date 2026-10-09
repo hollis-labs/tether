@@ -236,7 +236,7 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
-		environmentDescriptor, err := buildEnvironmentDescriptor(svc.Catalog, svc.Store)
+		environmentDescriptor, err := buildEnvironmentDescriptor(svc.Catalog, svc.Store, composedEnvironmentCapabilities(cfg.Modules, svc.Bus, svc.Manager != nil))
 		if err != nil {
 			return err
 		}

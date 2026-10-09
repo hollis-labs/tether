@@ -6,10 +6,11 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
-func buildEnvironmentDescriptor(cat *config.Catalog, db *store.Store) (*environment.DescriptorHandler, error) {
+func buildEnvironmentDescriptor(cat *config.Catalog, db *store.Store, capabilities map[string]map[string]any) (*environment.DescriptorHandler, error) {
 	if err := cat.Global.Environment.Validate(); err != nil {
 		return nil, err
 	}
@@ -30,7 +31,21 @@ func buildEnvironmentDescriptor(cat *config.Catalog, db *store.Store) (*environm
 	if err := environment.BindAuthority(stateDir, id, cat.Global.Environment.Authority); err != nil {
 		return nil, err
 	}
-	// Empty capabilities honestly advertise no versioned remote groups yet.
-	// Later compositions add groups only when the matching API is installed.
-	return environment.NewDescriptor(environment.Descriptor{EnvironmentID: id, Label: cat.Global.Environment.Label, ServerVersion: version, UpdateCapability: "foreground"})
+	// Capabilities describe only the installed and selected startup wiring.
+	return environment.NewDescriptor(environment.Descriptor{EnvironmentID: id, Label: cat.Global.Environment.Label, ServerVersion: version, UpdateCapability: "foreground", Capabilities: capabilities})
+}
+
+func composedEnvironmentCapabilities(profile *environment.Profile, bus events.Bus, runtimeManager bool) map[string]map[string]any {
+	caps := map[string]map[string]any{}
+	if profile.Enabled(environment.StreamAPI) {
+		group := map[string]any{"version": 1, "environment_snapshot": true, "session_snapshot": true}
+		if _, live := bus.(events.LiveSubscriber); live {
+			group["environment_events"], group["session_events"] = true, true
+		}
+		caps["streams"] = group
+	}
+	if profile.Enabled(environment.SessionCore) && runtimeManager {
+		caps["raw_attach"] = map[string]any{"version": 1, "resume": true}
+	}
+	return caps
 }

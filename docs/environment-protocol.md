@@ -39,15 +39,22 @@ contains only identity, label, platform, version and capability metadata:
   "platform": {"os": "linux", "arch": "amd64"},
   "serverVersion": "dev",
   "protocol": 1,
-  "capabilities": {},
+  "capabilities": {
+    "streams": {"version": 1, "environment_snapshot": true, "session_snapshot": true, "environment_events": true, "session_events": true},
+    "raw_attach": {"version": 1, "resume": true}
+  },
   "updateCapability": "foreground"
 }
 ```
 
-An absent capability group means unsupported. This foundation advertises no
-versioned remote groups; later API compositions must add only groups they
-actually implement. It exposes no catalog paths, provider configuration or
-credentials. `updateCapability: foreground` describes the current daemon
+An absent capability group means unsupported. With the stream API selected,
+`streams` reports version 1 and the installed `environment_snapshot` and
+`session_snapshot` flags. `environment_events` and `session_events` are included
+only with a live event bus. With session core selected and an actual runtime
+manager, `raw_attach` reports version 1 and `resume: true` for the published
+byte-window metadata. These groups grant no remote access; there is no device
+authentication or service-update group. The descriptor exposes no catalog
+paths, provider configuration or credentials. `updateCapability: foreground` describes the current daemon
 composition: managed service updates are a later lifecycle slice. `/health`
 also reports `environmentId`, `serverVersion` and `protocol` and remains public.
 

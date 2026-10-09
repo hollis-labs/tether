@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/environmentstream"
+	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 func TestPublicEnvironmentDescriptorOnEnforcedDaemon(t *testing.T) {
@@ -63,5 +67,45 @@ func TestLocalProtocolMismatchIsTypedAndLegacyMissingAllowed(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 409 {
 		t.Fatal("mismatched client reached API")
+	}
+}
+
+func TestDaemonVersionedStreamsRequireProtocolAndKeepLegacyHealth(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bus := events.NewBus(events.BusOptions{Persister: db})
+	stream := environmentstream.New("fixture-environment", db, bus)
+	h := (&Server{Config: Config{IdentityMode: identity.Observe}, EnvironmentStream: stream}).Handler()
+	for _, path := range []string{"/environment/snapshot", "/environment/events?after_seq=0", "/sessions/missing/snapshot", "/sessions/missing/stream?after_seq=0"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != 409 {
+			t.Fatalf("%s bypassed required protocol: %d", path, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/environment/snapshot?protocol=1", nil)
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("stream-only daemon mount failed: %d", w.Code)
+	}
+	var snapshot struct {
+		EnvironmentID string `json:"environment_id"`
+	}
+	if json.Unmarshal(w.Body.Bytes(), &snapshot) != nil || snapshot.EnvironmentID != "fixture-environment" {
+		t.Fatal("stream used different environment identity")
+	}
+	legacy := httptest.NewRecorder()
+	h.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if legacy.Code != 200 {
+		t.Fatal("bootstrap health requires version")
+	}
+	unmounted := httptest.NewRecorder()
+	h.ServeHTTP(unmounted, httptest.NewRequest(http.MethodGet, "/sessions/missing/unmounted/snapshot", nil))
+	if unmounted.Code != 404 {
+		t.Fatal("protocol gate widened to unmounted path")
 	}
 }

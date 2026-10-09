@@ -2,7 +2,7 @@
 
 The `tetherd` daemon exposes an HTTP API for session lifecycle, attach streaming,
 checkpoints, broker envelopes, and event observation. The local listener uses the configured `identity.mode` (`observe` by default);
-`enforce` verifies caller credentials and scopes. Non-local binds require
+`enforce` verifies caller credentials; individual handlers apply their admission rules. Non-local binds require
 `enforce`. The public health and environment descriptor routes support bootstrap
 without caller credentials. See [environment protocol and profiles](../environment-protocol.md)
 for the additive protocol contract and role/module selection.
