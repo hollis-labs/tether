@@ -45,9 +45,17 @@ func goneTeamShimRig(t *testing.T) (*codexRig, store.SessionShimRow, shimhost.Re
 // Custody/process absence is an inert synthetic host proof around the real
 // direct Codex fixture. This exercises the shared state/admission boundary;
 // the production Codex Gone branch still refuses unresolved private inboxes.
-func TestGoneTeamShimRetirementPreservesSameIDAuthority(t *testing.T) {
+func TestGoneTeamShimRetirementPreservesAuthorityForReplacement(t *testing.T) {
 	r, row, receipt, host, actor := goneTeamShimRig(t)
 	ctx := context.Background()
+	// The original session port owns its immutable provisioning nonce and
+	// cleanup key; replacement moves this existing receipt without reprovisioning.
+	if _, err := r.svc.Store.DB().Exec(`UPDATE team_port_intents SET nonce='gone-retained-nonce' WHERE port_kind='session' AND intent_key='retained'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Store.DB().Exec(`INSERT INTO session_idempotency(key,operation,request_digest,session_id) VALUES('team-port:gone-retained-nonce','create','original-request',?)`, row.SessionID); err != nil {
+		t.Fatal(err)
+	}
 	before, err := r.svc.Registry.CurrentBinding(ctx, actor)
 	if err != nil {
 		t.Fatal(err)
@@ -77,15 +85,24 @@ func TestGoneTeamShimRetirementPreservesSameIDAuthority(t *testing.T) {
 	if n := r.svc.revokeEndedSessionBindings(ctx); n != 0 {
 		t.Fatal("startup revoked eligible pending binding", n)
 	}
-	// The existing same-ID native path now sees no active old shim row.
+	// Confirmed retirement removes active custody. The replacement transition
+	// preserves its archive while moving the original authority to a new execution.
 	if err = r.svc.RecoverTeamSession(ctx, "retained", row.SessionID); err != nil {
 		t.Fatal(err)
 	}
+	lineage, err := r.svc.Store.SessionReplacement(ctx, row.SessionID)
+	if err != nil || lineage.ReplacementID == row.SessionID {
+		t.Fatal("lost execution did not commit a replacement", err)
+	}
 	r.wait(2)
-	r.idle(row.SessionID)
+	r.idle(lineage.ReplacementID)
 	final, err := r.svc.Registry.CurrentBinding(ctx, actor)
-	if err != nil || final.ID != before.ID || final.Generation != before.Generation || final.SessionID != row.SessionID {
+	if err != nil || final.ID != before.ID || final.Generation != before.Generation || final.SessionID != lineage.ReplacementID {
 		t.Fatal("native admission minted authority", err)
+	}
+	old, err := r.svc.Store.GetSession(row.SessionID)
+	if err != nil || *old != *session {
+		t.Fatal("replacement rewrote historical session state", err)
 	}
 }
 
