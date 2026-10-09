@@ -55,6 +55,7 @@ func (s *Service) startTurnRouter() error {
 		return err
 	}
 	s.turnRouter = router
+	s.startOutputRetryReplay()
 	return nil
 }
 

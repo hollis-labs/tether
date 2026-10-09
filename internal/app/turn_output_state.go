@@ -109,6 +109,10 @@ func (o *sessionTurnOutput) ensureTurn() {
 		return
 	}
 	o.turnID = runtimeevents.NewTurnID()
+	if o.freshConversationPending {
+		o.freshConversationTurn = o.turnID
+		o.freshConversationPending = false
+	}
 	o.turnDone = make(chan struct{})
 }
 
@@ -155,6 +159,13 @@ func (o *sessionTurnOutput) completeTurn(output turnoutput.Output, sessionEnded 
 }
 
 func (o *sessionTurnOutput) settleTurn() {
+	if o.turnID != "" && o.freshConversationTurn == o.turnID {
+		if _, completed := o.completed[o.turnID]; !completed {
+			// A refused/canceled provisional submission did not establish a
+			// new conversation. Carry the loss marker to its next attempt.
+			o.freshConversationPending = true
+		}
+	}
 	if o.turnDone != nil {
 		close(o.turnDone)
 		// A turn ended, however it ended: the session is at an idle boundary.
@@ -258,6 +269,9 @@ func (s *Service) trackTurnSubmissionContext(ctx context.Context, id string, sub
 		err = submit()
 	}
 	output.mu.Lock()
+	if errors.Is(err, provider.ErrProviderSessionLost) {
+		output.freshConversationPending = true
+	}
 	ran := err != nil && output.tookTurn(marker, activity) && !runtimeTookNoTurn(err)
 	if output.turnDone == done {
 		output.submissions--
@@ -313,6 +327,32 @@ func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReas
 	completion := o.completedDetails[id]
 	completion.Synthetic = true
 	o.completedDetails[id] = completion
+}
+
+// MarkTurnOutputSessionLost connects recovery to the existing output tracker.
+// Recovery owns native continuity. A cold retry can share the unaccepted
+// submission marker; already-observed interrupted output retains its identity.
+func (s *Service) MarkTurnOutputSessionLost(id string) {
+	if value, ok := s.turnOutputs.Load(id); ok {
+		output := value.(*sessionTurnOutput)
+		output.mu.Lock()
+		if output.turnID != "" && !output.accepted && output.reducerTurnID == "" {
+			output.freshConversationTurn = output.turnID
+		} else {
+			output.freshConversationPending = true
+		}
+		output.mu.Unlock()
+	}
+}
+
+// Typed session-loss signals describe a fresh conversation already started by
+// the provider. Mark that turn, or the next if no turn has opened yet. mu is held.
+func (o *sessionTurnOutput) markSessionLost() {
+	if o.turnID != "" {
+		o.freshConversationTurn = o.turnID
+	} else {
+		o.freshConversationPending = true
+	}
 }
 
 // SessionLastActivity reports observed turn-feed activity, excluding
