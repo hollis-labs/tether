@@ -19,6 +19,7 @@ import (
 
 	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // traceMetaKeys are the keys go-otel's propagation helpers read and write.
@@ -68,11 +69,15 @@ func injectTraceContextMeta(ctx context.Context, params *mcpsdk.CallToolParams) 
 //
 // Reading arguments is safe in a way WRITING them was not: reading an
 // upstream's own key cannot make a call fail schema validation.
-func extractTraceContext(meta, args map[string]any) context.Context {
+func extractTraceContext(ctx context.Context, meta, args map[string]any) context.Context {
+	// Only the carrier establishes the extracted parent. Preserve request
+	// values and cancellation without treating an existing local span as a
+	// remotely supplied parent when the carrier is empty or invalid.
+	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	if hasTraceKeys(meta) {
-		return otelprop.ExtractMCP(meta)
+		return otelprop.ExtractMCP(ctx, meta)
 	}
-	return otelprop.ExtractMCP(args)
+	return otelprop.ExtractMCP(ctx, args)
 }
 
 // hasTraceKeys reports whether m carries trace context, so an empty _meta
