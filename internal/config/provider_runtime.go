@@ -3,7 +3,7 @@ package config
 import (
 	"strings"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 )
 
 // Tether's catalog runtime-kind tokens. They are Tether's own on-disk and

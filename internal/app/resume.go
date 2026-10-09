@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	runtimecheckpoint "github.com/hollis-labs/agentkit/agentruntime/checkpoint"
+	runtimecheckpoint "github.com/hollis-labs/substrate/harness/adapters/checkpoint"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/checkpoint"

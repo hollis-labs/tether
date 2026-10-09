@@ -1,6 +1,6 @@
 package mcpadapter
 
-import gomcp "github.com/hollis-labs/go-mcp/server"
+import gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 
 // registerTools wires every MCP tool onto s. Tools are grouped by domain;
 // each group is registered in its own file.

@@ -69,8 +69,8 @@ import (
 	"fmt"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/delivery"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 )
 
 // LegacyImportPolicy controls how ambiguous (delivered-but-unconsumed) rows

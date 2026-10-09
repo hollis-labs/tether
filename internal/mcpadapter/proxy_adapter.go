@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	hotel "github.com/hollis-labs/go-otel"
+	hotel "github.com/hollis-labs/libs/util/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hollis-labs/tether/internal/config"

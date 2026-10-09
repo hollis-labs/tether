@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	localdaemon "github.com/hollis-labs/go-localdaemon"
+	localdaemon "github.com/hollis-labs/libs/util/localdaemon"
 )
 
 // processInspector is what the daemon-start sweep asks the OS about a pid

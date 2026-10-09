@@ -3,7 +3,7 @@ package launch
 import (
 	"testing"
 
-	permission "github.com/hollis-labs/go-permission"
+	permission "github.com/hollis-labs/substrate/harness/interception/permission"
 
 	"github.com/hollis-labs/tether/internal/config"
 )

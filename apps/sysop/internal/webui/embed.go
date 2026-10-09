@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 
-	gowebui "github.com/hollis-labs/go-webui"
+	gowebui "github.com/hollis-labs/libs/ui-go/webui"
 )
 
 // BasePath is the URL prefix the Sysop UI is mounted at. Keep it in sync

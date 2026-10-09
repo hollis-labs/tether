@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/launchprofile"

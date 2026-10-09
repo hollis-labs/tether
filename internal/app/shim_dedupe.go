@@ -5,9 +5,9 @@ package app
 import (
 	"encoding/json"
 
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	gop "github.com/hollis-labs/go-providers/provider"
-	pevents "github.com/hollis-labs/go-providers/provider/events"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	pevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 )
 
 // A result's own UUID is carried into the durable published output. Replay

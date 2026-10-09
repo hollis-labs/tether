@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/go-messaging/delivery"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 
 	// Pure-Go SQLite driver registered by side-effect; used via database/sql.
 	_ "modernc.org/sqlite"

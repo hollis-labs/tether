@@ -61,8 +61,8 @@ import (
 	"net/http"
 	"time"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/delivery"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 )
 
 // errNoDeliveryTracking is resolveDeliveryID's sentinel for "id matches

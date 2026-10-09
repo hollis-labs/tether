@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/messagingtest"
+	"github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/messagingtest"
 
 	"github.com/hollis-labs/tether/internal/store"
 )

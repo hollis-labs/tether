@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
-	"github.com/hollis-labs/go-providers/providertest"
-	"github.com/hollis-labs/go-runtime-events/runtimeevents"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/providertest"
+	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 )
 
 func TestTwoAcceptedEmptyNativeTurnsClearMarkers(t *testing.T) {

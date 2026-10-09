@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/agentkit/agentsessions/compliance"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions/compliance"
 
 	"github.com/hollis-labs/tether/internal/launch"
 )

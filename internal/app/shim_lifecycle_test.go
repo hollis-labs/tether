@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-runner/runner"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/substrate/harness/runner"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/shimhost"

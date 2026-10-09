@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	messaging "github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/events"

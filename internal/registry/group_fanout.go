@@ -44,8 +44,8 @@ import (
 	"fmt"
 	"log"
 
-	messaging "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-messaging/delivery"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 )
 
 // GroupFanoutDeliveryStore is the narrow seam group_fanout.go depends on --

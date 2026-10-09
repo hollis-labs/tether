@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gop "github.com/hollis-labs/go-providers/provider"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
 
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/session"

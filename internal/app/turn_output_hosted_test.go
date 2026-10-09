@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 

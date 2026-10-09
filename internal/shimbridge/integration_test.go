@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/agent-contracts-leaf/runtimes"
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/go-providers/provider"
-	pevents "github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	pevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/harness/shim"
+	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/tether/internal/testutil"
 )

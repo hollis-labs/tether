@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hollis-labs/go-mcp/budget"
-	gomcp "github.com/hollis-labs/go-mcp/server"
+	"github.com/hollis-labs/libs/plugin-mcp/go-mcp/budget"
+	gomcp "github.com/hollis-labs/libs/plugin-mcp/go-mcp/server"
 
 	"github.com/hollis-labs/tether/internal/agentops"
 	"github.com/hollis-labs/tether/internal/config"

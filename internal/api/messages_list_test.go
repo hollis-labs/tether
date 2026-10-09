@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/hollis-labs/go-messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 func listTestAddr(id string) messaging.Address {

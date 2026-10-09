@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"unicode/utf8"
 )
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sort"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 )

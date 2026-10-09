@@ -3,12 +3,12 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"github.com/hollis-labs/go-runtime-events/runtimeevents"
+	"github.com/hollis-labs/substrate/harness/adapters/runtimeevents"
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
 )

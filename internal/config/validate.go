@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentruntime/bootdir"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 )
 
 // ErrUnknownSandboxProfile means an agent names a sandbox profile the
@@ -367,5 +367,5 @@ func isSafeInjectedRelPath(rel string) bool {
 	if strings.HasPrefix(rel, "~") {
 		return false
 	}
-	return bootdir.ValidateRelPath(rel) == nil
+	return agentlaunch.ValidateBootDirRelPath(rel) == nil
 }

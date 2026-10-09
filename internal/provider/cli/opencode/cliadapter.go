@@ -1,8 +1,8 @@
 package opencode
 
 import (
-	"github.com/hollis-labs/agentkit/agentsessions"
-	gop "github.com/hollis-labs/go-providers/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
 
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/provider/cli/claudestream"

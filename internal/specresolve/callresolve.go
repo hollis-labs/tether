@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 )
 
 // ErrCallTransportUnsupported is returned by the http CallResolver when a

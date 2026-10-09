@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/go-messaging/delivery"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 
 	"github.com/hollis-labs/tether/internal/store"
 )

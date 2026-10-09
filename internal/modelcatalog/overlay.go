@@ -3,7 +3,7 @@ package modelcatalog
 import (
 	"sort"
 
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 )
 
 // Overlay augments a base catalog with configured synthetic models for cases

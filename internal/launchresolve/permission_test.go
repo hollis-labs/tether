@@ -3,7 +3,7 @@ package launchresolve
 import (
 	"testing"
 
-	permission "github.com/hollis-labs/go-permission"
+	permission "github.com/hollis-labs/substrate/harness/interception/permission"
 )
 
 // TestResolveRuntimeBinding_Permission verifies the spec engine threads the

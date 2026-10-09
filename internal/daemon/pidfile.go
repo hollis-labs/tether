@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	localdaemon "github.com/hollis-labs/go-localdaemon"
+	localdaemon "github.com/hollis-labs/libs/util/localdaemon"
 )
 
 // ErrAlreadyRunning is returned when a PID file exists and points at a

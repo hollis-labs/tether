@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"strings"
 
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 )

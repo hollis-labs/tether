@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/spf13/cobra"
 
 	"github.com/hollis-labs/tether/internal/a2aadapter"

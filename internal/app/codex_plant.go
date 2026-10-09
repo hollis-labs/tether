@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
-	"github.com/hollis-labs/go-providers/provider"
-	"github.com/hollis-labs/go-providers/registry"
+	"github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/adapters/registry"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
 )
 
 // A codex launch carries its posture in both the template argv and its

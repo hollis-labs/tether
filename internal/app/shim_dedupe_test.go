@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	gop "github.com/hollis-labs/go-providers/provider"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
 	"github.com/hollis-labs/tether/internal/events"
 )
 

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
+	"github.com/hollis-labs/substrate/harness/adapters/turnoutput"
 )
 
 // persistHostedTurnOutput is the producer half of hosted delivery. The caller

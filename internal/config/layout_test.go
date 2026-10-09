@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hollis-labs/go-apppaths/paths"
+	"github.com/hollis-labs/libs/util/apppaths"
 )
 
 // hermeticPaths pins HOME and all four $XDG_*_HOME roots into per-test temp

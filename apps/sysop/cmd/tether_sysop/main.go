@@ -25,8 +25,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hollis-labs/go-messaging"
-	"github.com/hollis-labs/go-modelsdev/modelsdev"
+	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/tether/apps/sysop/internal/webui"
 	"github.com/hollis-labs/tether/internal/agent"
 	tetherapi "github.com/hollis-labs/tether/internal/api"

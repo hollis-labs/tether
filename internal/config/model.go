@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hollis-labs/go-apppaths/paths"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/libs/util/apppaths"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/launchprofile"

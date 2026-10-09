@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentsessions"
-	"github.com/hollis-labs/agentkit/agentsessions/compliance"
-	llmtypes "github.com/hollis-labs/go-llm-types"
-	gop "github.com/hollis-labs/go-providers/provider"
-	gopevents "github.com/hollis-labs/go-providers/provider/events"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions/compliance"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	gopevents "github.com/hollis-labs/substrate/harness/adapters/provider/events"
+	llmtypes "github.com/hollis-labs/substrate/llm-core/llmtypes"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"
