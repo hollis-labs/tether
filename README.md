@@ -8,11 +8,9 @@ Clients reach it over
 a Unix-domain socket through the `tether` CLI, the HTTP API, the MCP stdio
 adapter, the ACP surface, or `go-tether-client`.
 
-> **Pre-release.** Tether is under active internal development and already
-> runs as the daily session/messaging substrate for the Hollis Labs agent
-> fleet — it is not experimental idle code. It has no public release, no
-> tagged binaries, and no outside consumers yet, and interfaces still change
-> without notice. Built in the open, documented as it stands today.
+> **Pre-1.0.** Tether is under active development. Tagged releases package
+> the runtime and Sysop for macOS and Linux; interfaces can change between
+> releases. See the changelog and install guide for the shipped contracts.
 
 ## What it is today
 
@@ -31,7 +29,7 @@ adapter, the ACP surface, or `go-tether-client`.
 - **AI gateway.** A typed, multi-provider chat/embeddings surface
   (Anthropic, Gemini, OpenAI, OpenAI-compatible) with routing rules, request
   budgets, and durable usage accounting — reachable over HTTP, CLI, or MCP.
-- **Sysop GUI.** `tether_sysop`, bundled in every build, gives a local
+- **Sysop GUI.** `tether_sysop`, bundled in release archives, gives a local
   operations view over sessions, MCP, AI routing, activity, and the registry.
 
 ## Where it sits in the stack
@@ -76,7 +74,7 @@ the same machine.
   precomputed per-project/agent/provider launch files to a live directory
   service that consumers register capabilities with (agent sources, skill
   sources, MCP servers, execution templates) and a parameterized launch
-  engine (`go-agent-launch`) that resolves them at call time. Ships alongside
+  engine (`substrate/harness/agentlaunch`) that resolves them at call time. Ships alongside
   the current catalog system so existing launches keep working during the
   migration.
 - **Boot Assembly Spec.** Replacing static `launches/` and `boot-profiles/`
@@ -102,10 +100,11 @@ See [TRADEMARK.md](TRADEMARK.md) for details.
 
 ## Install
 
-Tether ships as two binaries:
+Release archives ship three binaries:
 
 - `tether` — the main CLI and daemon launcher
 - `tether-apikey-helper` — optional helper for local keychain-backed AI secrets
+- `tether_sysop` — the operations GUI with its frontend embedded
 
 Install paths:
 
@@ -119,7 +118,7 @@ brew install hollis-labs/tap/tether
 
 ### Option 2: Release tarball
 
-Once tagged releases are published:
+Download the archive for your platform from a tagged release:
 
 ```sh
 curl -L -o tether.tar.gz \
@@ -128,6 +127,7 @@ tar -xzf tether.tar.gz
 install -d "$HOME/.local/bin"
 install -m 0755 tether "$HOME/.local/bin/"
 install -m 0755 tether-apikey-helper "$HOME/.local/bin/"
+install -m 0755 tether_sysop "$HOME/.local/bin/"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -136,14 +136,15 @@ export PATH="$HOME/.local/bin:$PATH"
 ```sh
 git clone git@github.com:hollis-labs/tether.git
 cd tether
-make build
-export PATH="$PWD/bin:$PATH"
+make release-build
+export PATH="$PWD/bin:$PWD/apps/sysop:$PATH"
 ```
 
 Or install into a prefix:
 
 ```sh
 make install PREFIX="$HOME/.local"
+GOBIN="$HOME/.local/bin" make sysop-install
 ```
 
 ### Option 4: `go install`
@@ -161,11 +162,13 @@ prerequisites, keychain configuration, and path details.
 
 ```bash
 make build          # produces bin/tether and bin/tether-apikey-helper
+make sysop-build    # builds the frontend and apps/sysop/tether_sysop
 make check          # fmt + vet + lint + test-race + vuln
 ```
 
-Requires Go 1.26+. See [`docs/dev-setup.md`](docs/dev-setup.md) for the
-full development setup including catalog configuration.
+Requires the Go version in `go.mod`; Sysop source builds also need Node.js 22+
+and npm. See [`docs/dev-setup.md`](docs/dev-setup.md) for the full development
+setup including catalog configuration.
 
 ## Quick start
 

@@ -150,7 +150,7 @@ tether messages archive <message-id> --as msg://agent/agent-mux/torque-superviso
 ## Sysop local user and From default
 
 Sysop's user inbox aggregates all user addresses before pagination. Read and
-archive filters persist through refresh; the optional Recipient filter accepts
+archive filters stay selected when using Refresh; the optional Recipient filter accepts
 a canonical address or a configured readable alias. Opening an unread message
 keeps its detail and reply controls available after it leaves the unread page.
 

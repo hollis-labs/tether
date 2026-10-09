@@ -1,7 +1,9 @@
 # Opt-in shim hosting
 
-The daemon can host Claude streaming-stdio providers through a persistent shim.
-Direct execution remains the default. The explicit
+The daemon can host Claude streaming-stdio and Codex app-server JSON-RPC
+providers through a persistent shim. Direct execution remains
+the default. Codex public output delivery has additional requirements described
+below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
 existing private checkpoint; it never places another provider.
@@ -67,7 +69,97 @@ journal pin is included in the client's hello, so an identity or journal mismatc
 is refused before takeover changes the controller epoch. Inspect merges observed
 facts while preserving the operation key, fingerprint and attempted-submit flag.
 
-## Delivery and recovery
+## Provider protocols
+
+Antigravity direct providers remain tied to the daemon. This hosting path does
+not preserve them across daemon death; Antigravity shim/ACP hosting is a separate
+follow-up. Its restart-survival limit does not imply a failure in Claude or
+Codex recovery.
+
+Claude uses the stdio bridge described below. Hosted Codex uses a separate
+durable protocol ledger, bound to the original session, instance, generation,
+placement operation, submission attempt and journal. Its protocol checkpoint is
+initialized before placement; reattachment must use that ledger and the exact
+observed host. A missing or mismatched checkpoint remains an unknown outcome,
+and never falls back to creating a fresh direct Codex thread. Uncertain input
+effects are retained rather than submitted again.
+
+## Codex delivery and recovery
+
+Completed supported Codex output is projected from the retained native inbox
+into `session.turn_output` and the selected message route. Final-answer items
+supply final text when present; otherwise supported agent-message items supply
+it. The producer commits its private retry journal before database publication.
+A stable `output_id` binds the native completion source and body, so retry after
+publication does not invent another public output.
+
+Supported `commandExecution` starts, output deltas and completions are retained
+as private, identity-checked turn obligations. Their original start/completion
+item envelopes and output bytes survive checkpoint reopening. They do not become
+agent final-answer text or certify a turn completion; a supported completed
+agent reply still earns the public delivery receipt. Changed command identity,
+foreign turn/item references and unsupported lifecycle shapes refuse rather
+than discarding the private trace.
+
+The delivery transaction then reinterprets the frozen native inbox, verifies the
+actual public event, content identity and selected-route staging, and atomically
+saves the projection with the inbox drain. Producer acceptance alone cannot
+issue that delivery proof. A concurrent protocol change keeps the inbox pending
+for retry; an ambiguous receipt commit refuses further input until recovery can
+resolve it. Public channel attachment and terminal consumption remain separate
+boundaries.
+
+Native inbox message bytes are stored without JSON compaction or HTML escaping.
+Older checkpoints that embedded messages as JSON retain an explicit legacy
+marker. Before retained delivery, a trusted recovery reader can restore their
+original spelling only from the canonical journal, checking exact stdout spans,
+cursors, partial bytes, current receipt and unchanged checkpoint. The ordinary
+conditional protocol commit preserves current execution and old-write fences.
+Missing or changed evidence refuses; restoration does not drain the inbox,
+advance replay, settle operations or issue a delivery/replacement proof.
+An older binary may refuse the new byte encoding while retaining obligations;
+rollback must not be treated as a way to force their delivery.
+
+Reattachment uses the exact original host and durable protocol ledger. Before
+admitting replay records, a reconnect settles its existing frozen inbox under a
+five-second delivery context so a batch at capacity can make room. Failure or
+unsupported obligations refuse that controller while retaining the private
+inbox; they do not acknowledge or discard unsupported output. Projection builds
+one private batch and validates it before the checked delivery transaction.
+
+Readiness requires replay through the observed journal high water with verified
+delivery; a bridge process starting is not enough. A failed readiness check
+closes the unsettled controller while retaining the provider and custody. It
+never repeats initialization, starts a replacement thread or resubmits an
+uncertain turn.
+
+Unsupported output unions, stderr records, unanswered server callbacks and
+uncertain input remain retained and may prevent readiness. An authenticated provider exit while
+a native turn is still open remains unsupported rather than certifying a
+completed turn. Protocol retention, controller attachment and provider exit
+alone are not public completion evidence. The source path for a surviving hosted
+Codex provider does not authorize replacement of gone custody with a fresh
+provider.
+
+A separate retained-team path can replace proven-lost Codex execution after a
+matching retired canonical receipt, positive absence of both recorded host and
+provider PIDs, and complete store-issued historical accounting. Startup checks
+accounting before retiring positively absent custody; retirement itself does not
+move enrollment or launch a child. The retained receipt owner revalidates the
+opaque accounting proof in the transaction that commits the new session,
+lineage and current-reference remapping under the original actor and binding.
+Credential and sealed MCP ceilings remain in force. Unknown or pending effects,
+changed evidence, revoked authority and missing process identity refuse.
+
+The old raw protocol ledger, custody and accepted history remain frozen. The new
+placement starts with a pristine protocol ledger; the old inbox, RPC counters,
+delivery checkpoint and thread state are not copied. Normal protocol and delivery
+operations, reattachment, stop and detach on the historical execution refuse;
+lookup errors never fall through to process control. Historical accounting remains
+available. This replacement does not resubmit an uncertain turn or establish
+public completion of the old execution.
+
+## Claude delivery and recovery
 
 The shim-specific `session.shim_status` event with state `running` and reason
 `reattached` is a readiness signal: the bridge's controller hello has completed
@@ -190,8 +282,12 @@ Systemd teardown retains a loaded unit after stop failure and retries on the
 next Stop; retirement requires verified unit absence.
 
 Startup recovery reattaches a running host with the recorded journal and bridge
-checkpoint. Positive host absence becomes `orphaned`, revoking session principals
-and binding generations in one transaction. A timeout, typed refusal, missing
+checkpoint. Ordinary positive host absence becomes `orphaned`, revoking session
+principals and binding generations in one transaction. Eligible retained-team
+recovery instead preserves enrollment and binding authority: confirmed-retired
+non-Codex custody is archived with current fences; Codex custody needs the
+historical accounting path above and keeps its old ledger/custody. Subsequent
+team replacement commits a new execution before launch. A timeout, typed refusal, missing
 receipt or unknown outcome stays `detached`. Reconciliation runs once at daemon
 startup; it does not retry automatically during the daemon's lifetime. Inspection
 is bounded to ten seconds per placement and a shared thirty-second inspection/
@@ -218,11 +314,17 @@ by record writers, so a live atomic commit is never deleted.
 
 Retirement removes the secret-bearing descriptor. The secret-free placement
 receipt, bridge checkpoint, host log and journal remain as recovery evidence;
-the journal defaults to a 256 MiB cap per session. No retention sweep exists yet.
+the journal defaults to a 256 MiB cap per session. No automatic retention sweep
+or operator cleanup command is wired. Internal retirement and bounded retention
+seams require complete controller exclusion, submission drain and descendant
+containment proof; the production proof capability currently returns
+`unsupported`. A submission fence or an absent unit alone does not authorize
+removing retained artifacts.
 Sandbox temporary directories are remembered only by the current daemon and can
 remain after detach followed by a daemon restart; reattachment cannot recover
-that cleanup handle. Explicit retirement and retained-artifact cleanup are
-required follow-ups before production activation.
+that cleanup handle. Explicit retirement of an unknown placement and cleanup of
+its retained artifacts remain unavailable; retained evidence can accumulate
+across daemon restarts.
 
 The session API credential expires after seven days. It is copied into the
 immutable provider environment: neither reattachment nor a matching placement

@@ -13,7 +13,8 @@ install, and `go install`.
 ## Prerequisites
 
 - macOS or Linux
-- For source builds: Go `1.26+` and `make`
+- For source builds: the Go version declared in the source checkout’s `go.mod` and `make`
+- For Sysop source builds: Node.js 22+ and npm
 - For AI provider keychain storage: a local keychain backend supported by
   `go-keyring`, or macOS Keychain
 
@@ -63,8 +64,9 @@ install -m 0755 tether_sysop "$HOME/.local/bin/"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Releases include per-archive `.tar.gz.sha256` files and a combined
-`checksums.txt`.
+Releases publish `checksums.txt` with a SHA-256 digest for every archive.
+The local packaging script also produces per-archive `.sha256` files; the
+release workflow uploads the combined checksum file.
 
 ## Option 3: Source Installs
 
@@ -73,8 +75,8 @@ Releases include per-archive `.tar.gz.sha256` files and a combined
 ```sh
 git clone git@github.com:hollis-labs/tether.git
 cd tether
-make build
-export PATH="$PWD/bin:$PATH"
+make release-build
+export PATH="$PWD/bin:$PWD/apps/sysop:$PATH"
 ```
 
 ### Install into a prefix
@@ -83,6 +85,7 @@ export PATH="$PWD/bin:$PATH"
 git clone git@github.com:hollis-labs/tether.git
 cd tether
 make install PREFIX="$HOME/.local"
+GOBIN="$HOME/.local/bin" make sysop-install
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -94,26 +97,32 @@ Override either:
 make install BINDIR="$HOME/bin"
 ```
 
-Uninstall:
+Uninstall the two core binaries installed by `make install`:
 
 ```sh
 make uninstall PREFIX="$HOME/.local"
 ```
+
+Sysop is installed separately into `GOBIN`; the root uninstall target does not
+remove `tether_sysop`.
 
 ### Go-native dev install
 
 If you want the historical "install to `GOBIN`" flow for local development:
 
 ```sh
-make go-install
+make release-install
 ```
 
-## Option 4: `go install`
+## Option 4: `go install` (core binaries)
 
 ```sh
 go install github.com/hollis-labs/tether/cmd/tether@latest
 go install github.com/hollis-labs/tether/cmd/tether-apikey-helper@latest
 ```
+
+For Sysop, use a release archive or build its embedded frontend with the source
+install commands above. A bare Go install cannot generate those frontend assets.
 
 ## First-Time Setup
 
@@ -126,7 +135,7 @@ tether init
 `tether init` is idempotent. It:
 
 1. Creates `~/.tether/{catalog,state,run,logs}` directories.
-2. Seeds a starter catalog (global config + 4 CLI providers + example MCP server).
+2. Seeds a starter catalog (global config, CLI provider entries, and example MCP servers).
 3. Auto-detects installed agent binaries (`claude`, `codex`, `opencode`, `agy`) and
    offers to record each path — every step is skippable ("set later in
    Settings → Providers").

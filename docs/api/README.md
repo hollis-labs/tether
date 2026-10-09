@@ -67,8 +67,9 @@ The daemon constructs the team host and mounts these routes only when
 `teams.enabled` in `global.yaml` is explicitly true; the default is false.
 The same service supplies native MCP team tools. A disabled or missing service
 has no team routes (404) or MCP tools; with the key off the CLI namespace is absent.
-The daemon service enforces authentication and authority. Construction does no
-enrollment, launch, publication or recovery work, and recovery is not scheduled.
+The daemon service enforces authentication and authority. Construction alone does no
+enrollment, launch, publication or recovery work. The daemon schedules a separate
+post-listener recovery pass for eligible retained members of a configured host.
 
 Production formation remains unavailable: host formation policy refuses it,
 and actor/pin trust and exact-pin legacy launch targets are empty. They must be
@@ -796,9 +797,12 @@ Response: 204 on success; 409 `conflict` when the session has no writable
 input channel (e.g. api-stub runtimes); 409 `provider_session_lost` when the
 provider no longer has the session's resume id. The same applies to
 `POST /sessions/{id}/turn`. On `provider_session_lost` the runtime has already
-dropped the id and a `provider.session_lost` event is published; resending
-the same request is the caller's decision, because the new turn starts
-without the old history.
+dropped the id; resending the same request is the caller's decision, because the
+new turn starts without the old history. A provider-reported continuation in a
+new conversation emits `provider.session_lost` with `requested`, `actual` and
+`reason`; an initial native recovery cold attempt emits the separate continuity
+variant described under logical-agent resume. A rejected turn is not evidence
+that a replacement turn ran.
 
 On a subprocess-runtime session (one agent process per turn), a turn whose
 process exits non-zero answers 502 `turn_failed`: the process failed, not
@@ -858,15 +862,21 @@ engine's session host) can rely on, and what it cannot:
   daemon restart), `GET /sessions/{id}/health` the live runtime,
   `GET /sessions/{id}/wait` blocks for the exit code, and
   `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
-- **Cancelling.** `POST /sessions/{id}/stop`. The session ends in `killed`,
-  durably, so a cancel is never mistaken for an agent that finished.
-- **A daemon restart ends running sessions.** Agent processes are children of
-  tetherd. On startup tetherd sweeps every session left `launching` or `running` to
-  `failed` with exit code -1, so after a restart an observer sees a definite terminal state, not
-  a session that silently vanished. Nothing reattaches to the old process.
-- **Resume makes a new session.** `POST /logical-agents/{id}/resume` starts a
-  new session linked to its parent by `parent_session_id`; it never reattaches
-  the old one.
+- **Cancelling.** `POST /sessions/{id}/stop`. A successful stop records `killed`,
+  durably, so a cancel is never mistaken for an agent that finished. A retained
+  shim can refuse an unverified stop; an HTTP refusal is not proof of exit.
+- **Restart recovery depends on hosting.** Direct processes follow the startup
+  sweep described below. Tracked shim custody is reconciled separately: a
+  verified surviving provider can reattach under the same canonical session;
+  an uncertain outcome retains custody rather than proving completion. A
+  provider needs a separate service cgroup to survive a systemd daemon restart.
+  See [shim hosting](../shim-host.md) for configuration and readiness checks.
+- **Ordinary logical-agent resume makes a new session.**
+  `POST /logical-agents/{id}/resume` links it through `parent_session_id` and may
+  continue recorded provider-native history. It does not reattach the old
+  process. Shim reattachment preserves the original canonical session. Retained team
+  recovery of proven-lost eligible execution commits a new session while keeping
+  the original actor, enrollment and binding authority.
 - **There is no "result" value.** Tether does not record a terminal result for
   a session. What an agent produced is in the attach stream
   (`GET /sessions/{id}/attach`) and the session log while it runs, and in any
@@ -882,8 +892,9 @@ created ──launch──▶ launching ──▶ running ──┬──▶ com
    │                    │                   └──▶ killed      ended by POST /sessions/{id}/stop
    └────────────────────┴──▶ failed   the launch failed, exit code 1
 
-launching | running ──planned daemon shutdown──▶ killed   reason daemon-shutdown
-launching | running ──crash, then restart, process gone──▶ failed   exit code -1
+direct launching | running ──exit during planned shutdown──▶ killed   reason daemon-shutdown
+direct launching | running ──crash, then restart, process gone──▶ failed   exit code -1
+tracked shim ──controller disconnect──▶ detached ──verified reattach──▶ running
 ```
 
 | State       | Terminal | Reached by                                                        | `exit_code`                         |
@@ -892,15 +903,16 @@ launching | running ──crash, then restart, process gone──▶ failed   ex
 | `launching` | no       | `POST /sessions/{id}/launch`                                      | —                                   |
 | `ready`     | no       | reserved runtime preparation state (currently not written)        | —                                   |
 | `detached`  | no       | child alive, daemon disconnected; shim reconciliation can reattach | —                                  |
-| `orphaned`  | no       | shim and child gone, or shim reconciliation disabled at restart   | —                                   |
+| `orphaned`  | no       | positively gone custody, or detached row without tracked custody at restart | —                          |
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
 | `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
 | `killed`    | yes      | `POST /sessions/{id}/stop` (also `tether sessions stop`, MCP `tether_session_stop`, ACP session close), or a planned daemon shutdown | whatever the stopped process returned |
 
 **`exit_code` -1 from the startup sweep means "swept at daemon start", not an
-observed failure.** When the daemon starts, it settles every session the
-previous daemon left `launching` or `running`:
+observed failure.** Tracked shim sessions first pass through custody and protocol
+reconciliation; they are excluded from the legacy process-PID sweep even when
+recovery refuses. For direct sessions left `launching` or `running`:
 - A session whose own process is still alive keeps its state. "Its own"
   means the recorded pid is alive and has the start time recorded at launch,
   not a later process that reused the pid.
@@ -914,33 +926,50 @@ both sets.
 A spared direct-launch session is still `running`, but the new daemon holds no
 runtime handle for it, so it cannot be steered or stopped through Tether.
 
-`detached` means a shim-hosted child is alive while the daemon is disconnected.
-It preserves the child PID, credentials, bindings and workspace. This is distinct
+`detached` means the hosted controller is disconnected or recovery cannot settle
+the provider's outcome. It retains custody, credentials, bindings and workspace;
+the state alone does not prove provider liveness. This is distinct
 from client detach (`client_attachments.detached_at`, CLI Ctrl-]), which does not
-change the session state. `orphaned` means the shim and child are gone: credentials
-and all binding generations are revoked, and the stale PID is cleared. Neither
-state is terminal; no exit code or `ended_at` is invented. Workspace cleanup
-preserves both states. Resume from an orphaned checkpoint creates a new session;
-resume from a detached checkpoint returns HTTP 409 `conflict`, because its child
-is still alive and the shim reconciler must reattach it.
+change the session state. Ordinary `orphaned` reconciliation clears the stale
+PID and revokes credentials and binding generations. Neither state is terminal;
+no exit code or `ended_at` is invented. Workspace cleanup preserves both states.
+Ordinary resume from an orphaned source without active tracked custody creates a
+new canonical session. A detached source returns HTTP 409 `conflict`; the custody
+owner must reconcile it before a fresh resume can be considered.
 
-The state plumbing alone does not move launches into these states. The opt-in
-shim integration owns those transitions. With the shim path disabled, existing
-launching/running sweep and shutdown behavior stays as described here. If startup
-finds a detached row with no shim reconciler, it moves to orphaned with reason
-`shim_reconcile_disabled`, regardless of PID liveness. Already orphaned rows are
-left alone. Recovery transitions emit the existing `session.state_changed`
+One retained team recovery path preserves existing enrollment and binding:
+confirmed-Gone non-Codex shim custody can be retired only after the original
+placement is matched, both recorded host and provider PIDs are positively absent,
+and retirement is confirmed. Unknown or reused PIDs, revoked bindings, explicit
+stops and changed custody refuse this transition. A transaction rechecks exact
+custody, active roster/pin/intent and highest binding generation, archives
+secret-free custody metadata, removes only the old active custody and records
+`orphaned` recovery-pending state with reason `team_shim_recovery_pending`.
+Subsequent recovery can replace proven-lost execution with a new session while
+retaining the original actor, enrollment and binding authority; it does not
+revive a revoked binding. The archive
+retains no launch environment or protocol payload and is not an operator cleanup
+API. Gone Codex custody with unresolved protocol obligations remains refused.
+
+The opt-in shim integration owns custody transitions. When shim hosting is
+disabled at restart, tracked custody stays detached with reason
+`shim_reconcile_disabled`; disabling the feature does not authorize discarding
+the placement. A detached row without tracked shim custody follows the legacy
+orphaning sweep. Already orphaned rows are left alone by that sweep. Recovery
+transitions emit the existing `session.state_changed`
 payload `{from, to, reason}`; reasons include `daemon-shutdown`,
 `shim_unreachable`, `shim_reconcile_disabled`, and `shim_gone`.
 
 Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
 liveness and are not backfilled. Treat their `exit_code` -1 the same way.
 
-**`killed` with reason `daemon-shutdown` means the daemon was stopped on
-purpose.** On a graceful shutdown (SIGTERM or SIGINT to `tetherd`,
-`tether daemon stop`, `systemctl stop`/`restart`), the daemon marks every live
-session as stopping before it drains them. Any session the daemon sees exit
-during the drain (`daemon.shutdown_timeout`, default 10s) gets two records:
+**`killed` with reason `daemon-shutdown` means a direct session ended during a
+planned daemon shutdown.** On a graceful shutdown (SIGTERM or SIGINT to
+`tetherd`, `tether daemon stop`, `systemctl stop`/`restart`), tracked shim sessions
+detach their controller without closing the provider's stdin or retiring its
+placement. Other live sessions are marked as stopping before the drain. A
+direct session that exits during the drain (`daemon.shutdown_timeout`, default
+10s) gets two records:
 - its row is `killed`, with the process's own `exit_code`;
 - its terminal `session.state_changed` event has `reason`
   `"daemon-shutdown"`.
@@ -951,28 +980,31 @@ settles it:
 - spared if its own process is still alive;
 - `failed` with `exit_code` -1 if it is gone.
 
-A crash leaves no shutdown record, so its sessions are always settled by that
-sweep. One `daemon.shutdown_sessions_ended` event names the sessions that
-ended during the drain and those still running.
+A crash leaves no planned-shutdown record; startup reconciles shim custody and
+sweeps direct sessions. One `daemon.shutdown_sessions_ended` event names the
+sessions that ended during the drain and those still running.
 
 On a Linux host running the daemon as a systemd unit with the default
-`KillMode=control-group`, agent processes share the daemon's cgroup and get
+`KillMode=control-group`, direct agent processes share the daemon's cgroup and get
 the same SIGTERM. A planned `systemctl restart` therefore normally records
-them `killed` / `daemon-shutdown`. A crash, or an agent that outlasts the
-drain, is swept at the next start. Sessions survive a restart only when the
-daemon runs outside such a unit, for example `tether daemon start` or launchd.
+direct children `killed` / `daemon-shutdown`. A crash, or a direct agent that
+outlasts the drain, is swept at the next start. Hosted providers in separate
+systemd-user transient units have their own cgroups and can survive the daemon's
+restart. Detached setsid placement remains in the daemon's cgroup and does not
+provide that protection.
 
 Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
 handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
 is the `to` of the session's terminal `session.state_changed` event. A
-terminal state is final: a session never leaves it, and resuming makes a new
-session.
+terminal state is final. Ordinary logical-agent resume makes a new session;
+retained recovery operates on nonterminal custody instead.
 
 ## Checkpoints
 
-v0.0.2 ships persistence only. No runtime side effects: creating a
-checkpoint does not pause the session or snapshot context. Resume is a
-501 placeholder until v0.0.3 Sprint v003-04.
+Checkpoints persist declared recovery context. Creating one does not pause the
+session or snapshot the provider process. Logical-agent resume is implemented
+and can also recover from a prior session without a checkpoint; see
+[`POST /logical-agents/{id}/resume`](#post-logical-agentsidresume).
 
 ### `POST /sessions/{id}/checkpoint`
 
@@ -1043,8 +1075,73 @@ Response (200):
 
 ### `POST /logical-agents/{id}/resume`
 
-Start a new session for the logical agent using its most recent checkpoint as
-boot context and the agent's stored `launch_id`.
+Start a new canonical Tether session using the agent's stored `launch_id` and
+latest canonical source session. A checkpoint is optional when that source
+exists; an older checkpoint supplies context without overriding a newer
+provider conversation or work root. The source route and work root are retained.
+
+When the provider ID and brand match, resume uses the persisted native session
+mapping and copies only provider session state from the recorded planted home
+into the new one. Codex `sessions/` and Claude `projects/` are supported; auth and
+configuration files are not copied. A mapping tombstone prevents reuse of a lost
+native ID. Changed providers do not inherit that ID.
+
+Recovery submits one control turn with bounded task, mail, channel and workspace
+context. It does not replay an interrupted turn or consume/acknowledge mail.
+Optional Torque/Tesseract reads use the existing MCP runtime and the source
+session's sealed grants; refused or unavailable reads are recorded as omissions.
+An initial typed native-session loss or fast process death permits one cold
+attempt after any started failed process has been confirmed stopped. An
+unconfirmed teardown or authentication failure refuses recovery. The cold
+attempt publishes `provider.session_lost` with `fresh_conversation: true` before
+starting; that event does not certify successful launch or turn completion.
+
+A fresh resume returns 409 `conflict` if the agent has never launched, has any
+live session, requires recovery of retained team custody, or the selected source
+retains an active tracked shim row. The custody check precedes allocation even
+for a failed or orphaned ordinary source; a custody read error also refuses
+resume. Archived custody alone is not an active-row veto. It returns 404
+`not_found` when neither a previous session nor a checkpoint exists. Retained
+team recovery uses a separate host path: live custody reattaches under the
+original session; proven-lost eligible direct or confirmed-retired non-Codex
+execution receives a new session under its original actor, enrollment and
+binding. This endpoint does not perform that team transition.
+
+Retained team replacement commits its new session and immutable lineage in the
+same transaction as current roster, host member, session-port receipt,
+idempotency destination and binding-session remapping. The binding ID,
+generation, actor and enrollment stay unchanged. Execution starts only after
+commit; a retry resumes that committed destination, and failed admission retains
+its lineage rather than allocating another replacement. Historical message
+targets and accepted receipts are not redirected to the new session. Recovery
+checkpoint selection is restricted to the canonical source and immutable
+replacement ancestors belonging to the same original actor. Sharing a catalog
+logical-agent profile does not confer checkpoint ownership: sibling members and
+unbound legacy checkpoints are excluded; an absent owned checkpoint remains
+optional rather than borrowing another member's context.
+
+The old execution credential is revoked. The new execution credential stays
+within the inherited scopes/expiry and current restrictions; identity-mode
+changes and unavailable authority refuse launch. The original sealed MCP policy
+is carried as a ceiling, with current gateway restrictions still applied.
+Unsettled delivery leases refuse replacement. Frozen old rows and transaction
+fences prevent old runtime, native mapping, publication and acknowledgment
+effects from regaining authority. Native conversation mapping may initialize the
+new resume input while the old mapping remains historical; private Codex protocol
+state is not copied. Tracked Codex replacement additionally requires a matching
+retired canonical receipt, positive absence of both recorded process IDs, and
+complete historical accounting issued by the same store. That opaque proof is
+revalidated inside the reference-remapping transaction; serialized diagnostic
+references, an empty inbox or a provider exit are not authority. Unknown or
+pending effects, changed evidence and unavailable authority refuse replacement.
+
+For eligible lost Codex execution, the old raw protocol ledger and custody remain
+frozen as history. The replacement starts with a new protocol placement and no
+copied inbox, RPC counters, delivery checkpoint or thread state. Historical
+accounting can still read the old evidence, but normal old-session protocol
+loads/commits, delivery, reattachment, stop and detach cannot operate the old
+placement or fall through to direct process control. A lookup error also refuses.
+This path does not turn a surviving or uncertain host into a replacement.
 
 The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
 retry: the same key returns the session the first resume created
@@ -1063,6 +1160,14 @@ Response (201):
   "logical_agent_id": "demo-agent"
 }
 ```
+
+At daemon startup, reconciliation runs before a single boot-recovery pass
+launched after the listener is serving. Ordinary agents with no live owner are
+resumed only when unread mail, a readable open assignment or an active roster
+provides work evidence; idle agents stay cold. Each ordinary attempt has a
+20-second context. Retained team members are handled first by their configured
+team host and are excluded from ordinary fresh-session recovery. Recovery
+channel cursors record accepted context delivery, not terminal consumption.
 
 ### `GET /logical-agents/{id}/policy`
 
@@ -1209,29 +1314,34 @@ remain hidden and cannot be published.
 
 Without a selected route kind, no durable message is created. The event instead
 carries `text`, an excerpt of at most 4096 bytes on a UTF-8 boundary, and
-`text_truncated: true` when shortened. Non-context route/body persistence errors
-log and fall back to that excerpt without a `message_id`. Non-context session
-metadata errors log and continue with an empty `workstream_id`.
+`text_truncated: true` when shortened. Selected route/body persistence errors
+retain the full output in its private journal for retry; an unreadable route
+leaves output pending rather than inventing an unrouted default. Non-context
+session metadata errors log and continue with an empty `workstream_id`.
 
-The synchronous persistence attempt has a five-second overall budget. Context
-errors on reads/staging, and any event-publication error, retry off the reader
-with operation deadlines and backoff from 100 milliseconds to five seconds.
-Retries retain a staged message ID; staging itself is idempotent for the
-session/turn/kind tuple when the body matches. Empty turn IDs use fresh message
-IDs; reused IDs with different bodies are logged and stored separately, with
-stable IDs on retries of each body. Events can be delayed and arrive out of turn order within
-one session (turn 2 before a retried turn 1). Use the session and turn IDs to
-identify outputs; event order is successful persistence order, not model-turn
-order. Channel publication can reorder independently.
+New producer events carry `output_id`, a stable identity derived from the
+session, turn, kind, native source identity and original body. Staging uses that
+identity; replay checks durable publication before acknowledging the journal.
+`fresh_conversation: true` reports provider conversation loss and is omitted
+when false. Both annotations are retained in staged message metadata. Consumers
+should use output identity and attribution rather than deduplicating by text.
 
-The retry pool holds at most 64 outputs / 16 MiB for up to one minute. Shutdown
-cancels in-flight work, makes one final bounded attempt per pending output and
-joins workers before storage closes. An event is not guaranteed for every
-completed turn: a full pool, prolonged failure or failed final attempt can lose
-it. Before staging, a crash can also lose the output body. After staging, the
-durable router scan can publish the body even when the event is lost. These
-limits and empty-terminal attribution are detailed in
-[the runtime contract](../runtime-turn-output.md#persistence-and-submission-boundaries).
+Before database work, the daemon commits a private retry record under
+`<state.db>.turn-output-retries`, following the selected state database. Database
+attempts use an overall five-second synchronous budget and operation-bounded
+retry workers with backoff. Startup and periodic replay recover committed
+records after worker expiry, pool saturation and restart. Known unrouted output
+retains only the bounded excerpt; selected or unresolved-route output keeps its
+full body. A failed journal write can still prevent durable recovery.
+
+Replay reads stop at 128 MiB per serialized record and the normal 30-day routing
+eligibility window. Oversized and expired records remain on disk for explicit
+operator handling. Events can be delayed and arrive out of turn order within one
+session; channel publication can reorder independently. These persistence rules
+do not promise public exactly-once delivery, successful native inbox drain or a
+terminal consumption acknowledgment. See
+[the runtime contract](../runtime-turn-output.md#persistence-and-submission-boundaries)
+for retry, shutdown and empty-terminal attribution limits.
 
 This is the canonical event for turn output. Consumers such as Tangent's bridge
 should migrate from `session.turn_waiting_input` to `session.turn_output`; no
@@ -1633,7 +1743,9 @@ Current (v0.0.2):
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `session.turn_interrupt_requested` | CancelTurnAndWait before a runtime cancel attempt | `{actor, session_id, turn_id, result:"requested"}`; no reply body |
 | session  | `session.turn_interrupt_completed` | CancelTurnAndWait on every outcome, including invalid actor/missing session | `{actor, session_id, turn_id?, output_turn_id?, output_kind?, stop_reason?, result, error?}`; result is `completed`, a typed refusal reason (`unsupported`, `no_turn_in_progress`, `turn_not_yet_started`, `turn_superseded`, `session_ended`, `interrupt_timeout`), or `error` |
-| session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
+| session  | `provider.session_lost`       | provider conversation continuity was lost | Provider-reported continuation: `{requested, actual, reason}`. Initial native recovery cold attempt: `{requested, reason, fresh_conversation: true}`, emitted before starting and not proof of completion. |
+| session  | `session.replaced_by`         | committed retained-team execution lineage, emitted on the old session | `{replaced_by, replaces, actor}` — new session ID, old session ID and unchanged actor; commit precedes launch, so this is not readiness or turn completion |
+| session  | `session.boot_recovery`       | ordinary logical-agent startup recovery outcome | `{outcome, reason?}` — `resumed` reports admission; `failed` reports a refused/unavailable attempt, not turn completion |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
 | session  | `routing.reply_delivered`     | the reply dispatcher, after a reply was injected as the session's next turn | `{reply_id, parent_id, state, reason?, original_session_id, target_session_id, delivered_to_session_id, logical_agent_id?, actor}` — no reply text; `reason` is `handed_off` when `delivered_to_session_id` differs from `original_session_id` (see [Replies to routed messages](#replies-to-routed-messages)) |
 | session  | `routing.reply_undeliverable` | the reply dispatcher, when it gave up on a reply | same shape with `state: "undeliverable"` and `reason` / `detail` saying why |
