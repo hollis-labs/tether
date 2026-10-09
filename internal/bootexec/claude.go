@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	"github.com/hollis-labs/agentkit/agentlaunch/launcher"
-	"github.com/hollis-labs/agentkit/agentlaunch/providerplant"
-	gop "github.com/hollis-labs/go-providers/provider"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
+	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
 
 	"github.com/hollis-labs/tether/internal/launch"
 	tetherprovider "github.com/hollis-labs/tether/internal/provider"
