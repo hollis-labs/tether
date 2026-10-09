@@ -109,6 +109,17 @@ for retry; an ambiguous receipt commit refuses further input until recovery can
 resolve it. Public channel attachment and terminal consumption remain separate
 boundaries.
 
+Native inbox message bytes are stored without JSON compaction or HTML escaping.
+Older checkpoints that embedded messages as JSON retain an explicit legacy
+marker. Before retained delivery, a trusted recovery reader can restore their
+original spelling only from the canonical journal, checking exact stdout spans,
+cursors, partial bytes, current receipt and unchanged checkpoint. The ordinary
+conditional protocol commit preserves current execution and old-write fences.
+Missing or changed evidence refuses; restoration does not drain the inbox,
+advance replay, settle operations or issue a delivery/replacement proof.
+An older binary may refuse the new byte encoding while retaining obligations;
+rollback must not be treated as a way to force their delivery.
+
 Reattachment uses the exact original host and durable protocol ledger. Before
 admitting replay records, a reconnect settles its existing frozen inbox under a
 five-second delivery context so a batch at capacity can make room. Failure or
@@ -253,8 +264,12 @@ Systemd teardown retains a loaded unit after stop failure and retries on the
 next Stop; retirement requires verified unit absence.
 
 Startup recovery reattaches a running host with the recorded journal and bridge
-checkpoint. Positive host absence becomes `orphaned`, revoking session principals
-and binding generations in one transaction. A timeout, typed refusal, missing
+checkpoint. Ordinary positive host absence becomes `orphaned`, revoking session
+principals and binding generations in one transaction. Eligible retained-team
+recovery instead archives confirmed-retired non-Codex custody with current
+fences, preserving enrollment and binding authority; subsequent replacement
+commits a new execution before launch. Unresolved Gone Codex obligations remain
+retained. A timeout, typed refusal, missing
 receipt or unknown outcome stays `detached`. Reconciliation runs once at daemon
 startup; it does not retry automatically during the daemon's lifetime. Inspection
 is bounded to ten seconds per placement and a shared thirty-second inspection/

@@ -67,8 +67,9 @@ The daemon constructs the team host and mounts these routes only when
 `teams.enabled` in `global.yaml` is explicitly true; the default is false.
 The same service supplies native MCP team tools. A disabled or missing service
 has no team routes (404) or MCP tools; with the key off the CLI namespace is absent.
-The daemon service enforces authentication and authority. Construction does no
-enrollment, launch, publication or recovery work, and recovery is not scheduled.
+The daemon service enforces authentication and authority. Construction alone does no
+enrollment, launch, publication or recovery work. The daemon schedules a separate
+post-listener recovery pass for eligible retained members of a configured host.
 
 Production formation remains unavailable: host formation policy refuses it,
 and actor/pin trust and exact-pin legacy launch targets are empty. They must be
@@ -873,8 +874,9 @@ engine's session host) can rely on, and what it cannot:
 - **Ordinary logical-agent resume makes a new session.**
   `POST /logical-agents/{id}/resume` links it through `parent_session_id` and may
   continue recorded provider-native history. It does not reattach the old
-  process. Retained team boot recovery and shim reattachment use separate paths
-  that preserve the original canonical session and binding.
+  process. Shim reattachment preserves the original canonical session. Retained team
+  recovery of proven-lost eligible execution commits a new session while keeping
+  the original actor, enrollment and binding authority.
 - **There is no "result" value.** Tether does not record a terminal result for
   a session. What an agent produced is in the attach stream
   (`GET /sessions/{id}/attach`) and the session log while it runs, and in any
@@ -943,8 +945,9 @@ stops and changed custody refuse this transition. A transaction rechecks exact
 custody, active roster/pin/intent and highest binding generation, archives
 secret-free custody metadata, removes only the old active custody and records
 `orphaned` recovery-pending state with reason `team_shim_recovery_pending`.
-Subsequent admission uses the same canonical session and existing enrollment;
-it does not mint replacement authority or revive a revoked binding. The archive
+Subsequent recovery can replace proven-lost execution with a new session while
+retaining the original actor, enrollment and binding authority; it does not
+revive a revoked binding. The archive
 retains no launch environment or protocol payload and is not an operator cleanup
 API. Gone Codex custody with unresolved protocol obligations remains refused.
 
@@ -1099,9 +1102,34 @@ retains an active tracked shim row. The custody check precedes allocation even
 for a failed or orphaned ordinary source; a custody read error also refuses
 resume. Archived custody alone is not an active-row veto. It returns 404
 `not_found` when neither a previous session nor a checkpoint exists. Retained
-direct team recovery uses its existing session,
-actor, enrollment and binding through the team host; this endpoint does not
-replace those identities.
+team recovery uses a separate host path: live custody reattaches under the
+original session; proven-lost eligible direct or confirmed-retired non-Codex
+execution receives a new session under its original actor, enrollment and
+binding. This endpoint does not perform that team transition.
+
+Retained team replacement commits its new session and immutable lineage in the
+same transaction as current roster, host member, session-port receipt,
+idempotency destination and binding-session remapping. The binding ID,
+generation, actor and enrollment stay unchanged. Execution starts only after
+commit; a retry resumes that committed destination, and failed admission retains
+its lineage rather than allocating another replacement. Historical message
+targets and accepted receipts are not redirected to the new session. Recovery
+checkpoint selection is restricted to the canonical source and immutable
+replacement ancestors belonging to the same original actor. Sharing a catalog
+logical-agent profile does not confer checkpoint ownership: sibling members and
+unbound legacy checkpoints are excluded; an absent owned checkpoint remains
+optional rather than borrowing another member's context.
+
+The old execution credential is revoked. The new execution credential stays
+within the inherited scopes/expiry and current restrictions; identity-mode
+changes and unavailable authority refuse launch. The original sealed MCP policy
+is carried as a ceiling, with current gateway restrictions still applied.
+Unsettled delivery leases refuse replacement. Frozen old rows and transaction
+fences prevent old runtime, native mapping, publication and acknowledgment
+effects from regaining authority. Native conversation mapping may initialize the
+new resume input while the old mapping remains historical; private Codex protocol
+state is not copied. Tracked Codex custody remains refused in this path and needs
+its separate accounting/replacement implementation.
 
 The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
 retry: the same key returns the session the first resume created
@@ -1704,6 +1732,7 @@ Current (v0.0.2):
 | session  | `session.turn_interrupt_requested` | CancelTurnAndWait before a runtime cancel attempt | `{actor, session_id, turn_id, result:"requested"}`; no reply body |
 | session  | `session.turn_interrupt_completed` | CancelTurnAndWait on every outcome, including invalid actor/missing session | `{actor, session_id, turn_id?, output_turn_id?, output_kind?, stop_reason?, result, error?}`; result is `completed`, a typed refusal reason (`unsupported`, `no_turn_in_progress`, `turn_not_yet_started`, `turn_superseded`, `session_ended`, `interrupt_timeout`), or `error` |
 | session  | `provider.session_lost`       | provider conversation continuity was lost | Provider-reported continuation: `{requested, actual, reason}`. Initial native recovery cold attempt: `{requested, reason, fresh_conversation: true}`, emitted before starting and not proof of completion. |
+| session  | `session.replaced_by`         | committed retained-team execution lineage, emitted on the old session | `{replaced_by, replaces, actor}` — new session ID, old session ID and unchanged actor; commit precedes launch, so this is not readiness or turn completion |
 | session  | `session.boot_recovery`       | ordinary logical-agent startup recovery outcome | `{outcome, reason?}` — `resumed` reports admission; `failed` reports a refused/unavailable attempt, not turn completion |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
 | session  | `routing.reply_delivered`     | the reply dispatcher, after a reply was injected as the session's next turn | `{reply_id, parent_id, state, reason?, original_session_id, target_session_id, delivered_to_session_id, logical_agent_id?, actor}` — no reply text; `reason` is `handed_off` when `delivered_to_session_id` differs from `original_session_id` (see [Replies to routed messages](#replies-to-routed-messages)) |

@@ -10,6 +10,12 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Preserve exact hosted Codex inbox message bytes across checkpoint persistence.
+  Restore legacy embedded-JSON bytes only from the original canonical journal
+  under current custody, span and checkpoint fences, before retained delivery.
+  Missing or changed evidence refuses; restoration neither drains the inbox nor
+  mints delivery or replacement authority. (CW-20261003-0018)
+
 - Adopt the published substrate and libs modules in Tether and Sysop. Bind
   managed launch artifacts to the accepted canonical session, plan and held
   launch custody before planting; use one durable operation receipt store.
@@ -18,6 +24,13 @@ This file was backfilled from the git history and is a good-faith summary, not a
   Link only that credential source under separate read and refresh-write
   authority; missing input refuses without a HOME fallback or placeholder.
   Operators must supply that explicit daemon startup input. (CW-20261009-0006)
+
+- Replace proven-lost eligible enrolled direct or confirmed-retired non-Codex
+  execution with a new session under the same actor and binding. Commit lineage
+  and current references atomically before launch; preserve credential/MCP
+  ceilings and historical targets, fence old effects and retry the committed
+  pending destination. `session.replaced_by` records lineage, not readiness.
+  Unsettled leases and tracked Codex custody refuse. (CW-20261003-0018)
 
 - Preserve supported hosted Codex command-execution starts, deltas and completion
   envelopes across controller reconnect as checked private turn obligations.
@@ -30,7 +43,7 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 - Preserve retained non-Codex team identity after proven Gone custody: matching
   retirement, both original PIDs absent and current binding/intent fences permit
-  an atomic secret-free archive and same-session recovery-pending transition.
+  an atomic secret-free archive and retained-authority recovery-pending transition.
   Ordinary logical-agent resume refuses active tracked shim custody before
   allocating a replacement; read errors also refuse and archived metadata alone
   does not veto. Unresolved Gone Codex obligations remain retained.
@@ -41,10 +54,9 @@ This file was backfilled from the git history and is a good-faith summary, not a
   submit one recovery control turn, and allow one confirmed cold attempt after
   initial native loss or fast death; mark its first output `fresh_conversation`.
   Post-listener boot recovery selects positive unread/task/roster work while idle
-  agents stay cold. Retained direct team recovery keeps the same canonical
-  session, enrollment and binding. Optional context reads use the existing MCP
-  runtime and sealed source-session grants. Broader team replacement and Gone
-  Codex custody remain outside this slice. (CW-20261003-0005, CW-20261003-0018)
+  agents stay cold. Optional context reads use the existing MCP runtime and
+  sealed source-session grants. Tracked Gone Codex custody remains outside this
+  native/direct slice. (CW-20261003-0005, CW-20261003-0018)
 - Connect supported hosted Codex output to the durable producer and verify public
   content and selected-route staging before atomically draining the native inbox.
   Reattach the exact surviving host using its retained protocol and replay high
