@@ -221,7 +221,7 @@ func (a *Adapter) addTool(s *gomcp.Server, t gomcp.Tool, b Behavior) {
 	inner := t.Handler
 	t.Handler = func(ctx context.Context, args map[string]any) (any, error) {
 		ctx = a.withClaimedSessionID(ctx)
-		if sc := trace.SpanContextFromContext(extractTraceContext(gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !telemetry.IsObserved(ctx) {
+		if sc := trace.SpanContextFromContext(extractTraceContext(ctx, gomcp.MetaFromContext(ctx), args)); sc.IsValid() && !telemetry.IsObserved(ctx) {
 			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 		}
 		ctx, span := hotel.ToolCallSpan(ctx, name)
