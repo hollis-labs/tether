@@ -146,7 +146,12 @@ func Resolve(cat *config.Catalog, in Input) (*Plan, error) {
 		return nil, err
 	}
 
+	lifecycle := launchprofile.MergeLifecycle(agent.Lifecycle, l.Lifecycle)
+	if _, err := lifecycle.Durations(); err != nil {
+		return nil, err
+	}
 	return &Plan{
+		Lifecycle:      lifecycle,
 		LaunchID:       l.ID,
 		ProjectID:      proj.ID,
 		LogicalAgentID: agent.ID,

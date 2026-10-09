@@ -681,6 +681,10 @@ func (s *Service) GetSession(id string) (*store.SessionRow, error) {
 // terminal state is recorded as "killed", distinct from "completed" and
 // "failed", whatever exit code the process returns on the way down.
 func (s *Service) StopSession(id string) error {
+	return s.stopSessionWithLifecycle(id)
+}
+
+func (s *Service) stopSessionImmediate(id string) error {
 	if handled, err := s.stopShimSession(id); handled {
 		return err
 	}
