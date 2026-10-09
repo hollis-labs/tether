@@ -11,6 +11,8 @@ import (
 	"github.com/hollis-labs/substrate/harness/agentlaunch/launcher"
 	providerplant "github.com/hollis-labs/substrate/harness/agentlaunch/planting"
 	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/tether/internal/launchartifacts"
+	"github.com/hollis-labs/tether/internal/launchartifacts/testfixture"
 
 	"github.com/hollis-labs/tether/internal/launchresolve"
 	"github.com/hollis-labs/tether/internal/specresolve"
@@ -75,12 +77,13 @@ func TestPlantSmoke_AntigravitySpecPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	prepared, err := launcher.Prepare(ctx, compiled)
+	prepared, custody, err := launchartifacts.Prepare(ctx, compiled, testfixture.Admission(t, func() any { return plan }))
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
+	defer custody.Close()
 	projectRoot := prepared.Workdir
-	if err := providerplant.Plant(ctx, prepared); err != nil {
+	if err := providerplant.Plant(ctx, prepared, providerplant.WithArtifactAuthorization(custody.Authorize)); err != nil {
 		t.Fatalf("Plant: %v", err)
 	}
 
