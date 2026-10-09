@@ -28,6 +28,7 @@ var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
 	db            *sql.DB
+	stateDBPath   string
 	channelAuthMu sync.RWMutex
 	channelAuth   channels.Authorization
 	// msgOnce + msgStore ensure MessagingStore() returns the same in-memory
@@ -90,7 +91,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, stateDBPath: path}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

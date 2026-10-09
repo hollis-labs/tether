@@ -45,7 +45,16 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	// JSON encodes the tuple without delimiter ambiguity. The existing message
 	// primary key makes repeated staging idempotent, including after attachment.
 	key, _ := json.Marshal([3]string{env.From.ID, env.Metadata["turn_id"], env.Metadata["kind"]})
-	if env.Metadata["turn_id"] == "" {
+	outputID := env.Metadata["output_id"]
+	if outputID != "" {
+		if !validOutputRetryID(outputID) {
+			return messaging.Envelope{}, errors.New("stage turn output: invalid output identity")
+		}
+		// Native completion sources can produce identical bodies in the same
+		// turn. Keep their output attribution separate as well as replay-stable.
+		key, _ = json.Marshal([2]string{env.From.ID, outputID})
+		env.ID = uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("tether:turn-output:id:"), key...)).String()
+	} else if env.Metadata["turn_id"] == "" {
 		// No stable turn identity: distinct unidentified outputs must not collapse.
 		id, err := uuid.NewV7()
 		if err != nil {
@@ -64,6 +73,9 @@ func (s *Store) StageTurnOutput(ctx context.Context, env messaging.Envelope) (me
 	}
 	if bytes.Equal(saved.Payload, env.Payload) && saved.ContentType == env.ContentType {
 		return saved, nil
+	}
+	if outputID != "" {
+		return messaging.Envelope{}, fmt.Errorf("stage turn output: conflicting or purged output identity %q", outputID)
 	}
 	// A producer can reuse a turn ID. Preserve both bodies, and make retries of
 	// the alternate body stable as well. Never replace an attached/purged row.
