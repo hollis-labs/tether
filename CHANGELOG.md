@@ -10,6 +10,9 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [0.7.0] - 2026-10-09
 
+- Fence hosted actor wake submission against pull-only or revoked bindings and
+  same-session generation changes. Consumer channel reads remain nondestructive.
+  See `docs/consumers-hosted-wake.md`. (CW-20261008-0126)
 - Generated workspace and temp roots live outside protected Tether state, and
   worktree branches retain literal slash-containing names. Existing catalogs
   are not automatically migrated; explicit `workspace.write_home` overrides remain
