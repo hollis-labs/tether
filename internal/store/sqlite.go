@@ -91,6 +91,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply delivery schema: %w", err)
 	}
+	if err := installReplacementDeliveryFences(context.Background(), db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("install replacement delivery fences: %w", err)
+	}
 	return &Store{db: db, stateDBPath: path}, nil
 }
 
