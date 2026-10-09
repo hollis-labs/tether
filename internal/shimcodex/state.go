@@ -113,6 +113,7 @@ type State struct {
 	Inbox           []Event         `json:"inbox"`
 	Exit            *shim.Exit      `json:"exit,omitempty"`
 	ServerRequests  []ServerRequest `json:"server_requests,omitempty"`
+	Delivery        *Projection     `json:"delivery,omitempty"`
 }
 
 // Store commits one conditional durable transaction over the entire state.

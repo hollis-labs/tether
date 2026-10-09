@@ -6,6 +6,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/hollis-labs/go-agent-wrapper/turnoutput"
 	"github.com/hollis-labs/tether/internal/shimcodex"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -54,4 +55,55 @@ func (s *Service) codexDeliveryCandidate(ctx context.Context, observed shimcodex
 	}
 	// Successful B2 remains unearned; return a private candidate + Unsupported.
 	return candidate, store.ErrCodexDeliveryUnsupported
+}
+
+func (s *Service) deliverCodexInbox(ctx context.Context, observed shimcodex.State) (shimcodex.Projection, error) {
+	row, err := s.Store.SessionShim(ctx, observed.Binding.Session)
+	if err != nil {
+		return shimcodex.Projection{}, err
+	}
+	canonical, err := loadShimReceipt(row)
+	if err != nil || canonical.Retired || codexBinding(canonical) != observed.Binding {
+		return shimcodex.Projection{}, store.ErrSessionShimConflict
+	}
+	if _, err = s.Store.ReadCodexCandidate(ctx, observed); err != nil {
+		return shimcodex.Projection{}, err
+	}
+	p, err := shimcodex.BuildDeliveryProjection(observed)
+	if err != nil {
+		return p, err
+	}
+	for i := range p.Turns {
+		turn := &p.Turns[i]
+		if turn.Phase == "open" || turn.OutputAcceptanceID != "" {
+			continue
+		}
+		kind := turnoutput.KindFinal
+		switch turn.Phase {
+		case "failed":
+			kind = turnoutput.KindFailure
+		case "interrupted":
+			kind = turnoutput.KindTerminal
+		}
+		result := turnoutput.Output{SessionID: observed.Binding.Session, TurnID: turn.StableOutputTurnID, Text: shimcodex.ProjectedTurnText(*turn), Kind: kind, StopReason: turn.StopReason, Runtime: "codex", Confidence: turnoutput.ConfidenceExact}
+		messageID, outputID, err := s.persistHostedTurnOutput(ctx, observed.Binding.Session, result, turn.CompletionSourceID)
+		if err != nil {
+			return p, err
+		}
+		turn.OutputAcceptanceID = outputID
+		if messageID != "" {
+			turn.OutboxMessageIDs = []string{messageID}
+		}
+	}
+	// Canonical filesystem custody is frozen across external publication. The
+	// store transaction independently fences placement and the entire ledger.
+	row, err = s.Store.SessionShim(ctx, observed.Binding.Session)
+	if err != nil {
+		return p, err
+	}
+	current, err := loadShimReceipt(row)
+	if err != nil || current.Retired || current != canonical || s.stops.requested(observed.Binding.Session) {
+		return p, store.ErrSessionShimConflict
+	}
+	return p, ctx.Err()
 }
