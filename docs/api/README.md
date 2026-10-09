@@ -1582,6 +1582,40 @@ Response (200):
 
 ---
 
+## Session lifecycle policy
+
+Agent profiles and launch entries accept a `lifecycle` block. Launch fields
+inherit the profile field by field; omitted fields inherit, and `"0s"`
+explicitly disables a limit. The create request's JSON `override.lifecycle`
+applies last. Resolved values persist in the launch plan and remain stable
+when the catalog changes or the daemon restarts.
+
+```yaml
+lifecycle:
+  idle_timeout: 30m
+  max_duration: 24h
+  lease_duration: 2h
+  orphan_grace: 30s
+  request_grace: 2s
+  terminate_grace: 5s
+  kill_grace: 5s
+```
+
+Idle, duration and session lease limits default to disabled; no implicit 12-hour
+ceiling applies. Duration and configured session lease budgets start at launch;
+expiry of a current runtime binding also triggers lease reaping. Genuine runtime
+activity resets the idle budget. The daemon checks every five seconds, gives
+launches an orphan grace, and retains unknown/live process identities. Verified
+missing processes become `orphaned` with authority revoked and their workspaces
+preserved; late terminal transitions remain terminal.
+
+Stop records its cause before requesting SIGINT, then sends SIGTERM and SIGKILL
+only after the preceding grace expires. Shim stops use the authenticated,
+generation-checked host controller. Linux direct process groups use a verified
+pidfd; older kernels and non-process runtimes retain the owning runtime's native
+teardown contract and grace behavior. Every attempted reap records an outcome,
+including a retained session when teardown fails.
+
 ## Event kinds
 
 Current (v0.0.2):
@@ -1594,6 +1628,8 @@ Current (v0.0.2):
 | daemon   | `daemon.shutdown_sessions_ended` | tetherd after the graceful-shutdown session drain, when any session was live | `{ended, ended_session_ids, still_running, still_running_session_ids}` — ended sessions were recorded `killed` with reason `daemon-shutdown`; still-running ones are left for the next start's sweep (see [Session states](#session-states)) |
 | daemon   | `daemon.sessions_swept`       | the startup sweep, when it settles any session | `{swept, swept_session_ids, spared, spared_session_ids}` — swept sessions were failed with `exit_code` -1; spared ones still had their own process alive (see [Session states](#session-states)) |
 | daemon   | `ai.budget_rejected`          | AI service on durable budget rejection | `{request_id?, session_id?, caller_id?, provider, model, policy_version?, error}` |
+| session | `session.reaper` | periodic reaper and explicit stop | `{reason, stage, outcome, error?}`; reasons include `idle_timeout`, `max_duration`, `lease_expired`, `process_missing`, `user_stop`; stages include `requested`, `request_stop`, `terminate`, `kill`, `runtime_fallback`, `outcome`. Intent persists before signals; outcome records terminal or retained state. |
+| session | `session.activity` | periodic snapshot of genuine runtime activity; durable history only | `{at}`; original observed activity timestamp, excluding binding heartbeats and reaper telemetry. |
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `session.turn_interrupt_requested` | CancelTurnAndWait before a runtime cancel attempt | `{actor, session_id, turn_id, result:"requested"}`; no reply body |
 | session  | `session.turn_interrupt_completed` | CancelTurnAndWait on every outcome, including invalid actor/missing session | `{actor, session_id, turn_id?, output_turn_id?, output_kind?, stop_reason?, result, error?}`; result is `completed`, a typed refusal reason (`unsupported`, `no_turn_in_progress`, `turn_not_yet_started`, `turn_superseded`, `session_ended`, `interrupt_timeout`), or `error` |

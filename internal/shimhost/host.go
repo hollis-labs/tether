@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -566,10 +567,31 @@ func (p *Provider) Reattach(ctx context.Context, r Receipt) (Inspection, error) 
 	return p.Inspect(ctx, r)
 }
 
-// Stop requests the shim's bounded process-group kill and waits for provider
-// exit. It then tears down the host; detached/controller shutdown never calls it.
+// StopPolicy configures cooperative request, termination and forced kill grace.
+// BeforeStage can persist the cause before each provider-side effect.
+type StopPolicy struct {
+	RequestGrace, TerminateGrace, KillGrace time.Duration
+	BeforeStage                             func(context.Context, string) error
+}
+
+// Stop requests the shim's bounded process-group kill, then retires the exited host.
 func (p *Provider) Stop(ctx context.Context, r Receipt) error {
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.StopTimeout)
+	return p.stop(ctx, r, nil)
+}
+
+func (p *Provider) StopWithPolicy(ctx context.Context, r Receipt, policy StopPolicy) error {
+	if policy.RequestGrace < 0 || policy.TerminateGrace < 0 || policy.KillGrace < 0 {
+		return fmt.Errorf("negative stop grace")
+	}
+	return p.stop(ctx, r, &policy)
+}
+
+func (p *Provider) stop(ctx context.Context, r Receipt, policy *StopPolicy) error {
+	timeout := p.cfg.StopTimeout
+	if policy != nil {
+		timeout = max(timeout, policy.RequestGrace+policy.TerminateGrace+policy.KillGrace+p.cfg.StopGrace+5*time.Second)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	lock, err := LockWait(ctx, filepath.Join(filepath.Dir(r.DescriptorPath), "placement.lock"), p.cfg.LockWait)
 	if err != nil {
@@ -673,6 +695,12 @@ func (p *Provider) Stop(ctx context.Context, r Receipt) error {
 	running, _, _, err := health(ctx, c, spec.Session)
 	if err != nil {
 		return err
+	}
+	if running && policy != nil {
+		running, err = stopProviderInTiers(ctx, c, spec.Session, spec.Generation, *policy)
+		if err != nil {
+			return err
+		}
 	}
 	if running {
 		if err = c.Send(spec.Session, "control", map[string]string{"action": "kill", "expected_generation": strconv.FormatUint(spec.Generation, 10)}); err != nil {
