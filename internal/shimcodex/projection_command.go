@@ -11,8 +11,16 @@ import (
 // approval capability. Byte slices preserve the complete native item envelopes
 // through checkpoint JSON round trips, including output snapshots and metadata.
 type ProjectedCommand struct {
-	StartedParams   []byte `json:"started_params"`
-	CompletedParams []byte `json:"completed_params,omitempty"`
+	StartedParams   []byte                         `json:"started_params"`
+	CompletedParams []byte                         `json:"completed_params,omitempty"`
+	Interactions    []ProjectedTerminalInteraction `json:"interactions,omitempty"`
+}
+
+// ProjectedTerminalInteraction records observed native command input, never
+// authorization to write stdin. Its exact private bytes stay out of the reply.
+type ProjectedTerminalInteraction struct {
+	SourceEventID string `json:"source_event_id"`
+	Params        []byte `json:"params"`
 }
 
 type projectionCommandParams struct {
@@ -129,6 +137,21 @@ func validateProjectedCommand(t ProjectedTurn, item ProjectedItem, sources map[s
 	source, exists := sources[item.StartedSourceID]
 	start, ok := decodeCommandParams(item.Command.StartedParams)
 	if !exists || source.Kind != "notification" || source.Disposition != "projected" || !ok || start.ThreadID != t.NativeThreadID || start.TurnID != t.NativeTurnID || start.Item.ID != item.NativeItemID || start.Item.Status != "inProgress" {
+		return fail("projection_invalid")
+	}
+	if len(item.Command.Interactions) > ProjectionSources {
+		return fail("projection_invalid")
+	}
+	interactionIDs := make([]string, 0, len(item.Command.Interactions))
+	for _, interaction := range item.Command.Interactions {
+		params, ok := decodeTerminalInteraction(interaction.Params)
+		source, exists := sources[interaction.SourceEventID]
+		if !ok || !exists || source.Kind != "notification" || source.Disposition != "projected" || !terminalInteractionMatches(start, params) {
+			return fail("projection_invalid")
+		}
+		interactionIDs = append(interactionIDs, interaction.SourceEventID)
+	}
+	if !uniqueStrings(interactionIDs, ProjectionSources) {
 		return fail("projection_invalid")
 	}
 	if item.CompletedSourceID == "" {
