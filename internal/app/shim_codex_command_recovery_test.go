@@ -79,6 +79,13 @@ func TestHostedCodexCommandProvider(t *testing.T) {
 			continue
 		}
 		emit("turn/started", map[string]any{"threadId": "command-native", "turn": map[string]string{"id": "command-turn", "status": "inProgress"}})
+		for _, method := range []string{"item/started", "item/completed"} {
+			// Write native JSON spelling, including HTML characters and spaces,
+			// instead of an encoder's already-normalized JSON representation.
+			if _, err := fmt.Fprintf(os.Stdout, "{ \"method\":%q, \"params\":{\"threadId\":\"command-native\",\"turnId\":\"command-turn\",\"item\":{\"id\":\"user\",\"type\":\"userMessage\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic > & < input\",\"text_elements\":[]}],\"clientId\":null}} }\n", method); err != nil {
+				os.Exit(91)
+			}
+		}
 		emit("item/started", command("inProgress"))
 		deadline := time.Now().Add(20 * time.Second)
 		for {
@@ -189,7 +196,23 @@ func TestHostedCodexRetainedCommandCompletesThroughBootRecovery(t *testing.T) {
 	}
 	shimAwait(t, "durable original command start", func() bool {
 		state, e := port.Load(ctx)
-		return e == nil && state.ActiveTurn == "command-turn" && len(state.Inbox) >= 3
+		if e != nil || state.ActiveTurn != "command-turn" {
+			return false
+		}
+		for _, event := range state.Inbox {
+			var message struct {
+				Method string `json:"method"`
+				Params struct {
+					Item struct {
+						Type string `json:"type"`
+					} `json:"item"`
+				} `json:"params"`
+			}
+			if json.Unmarshal(event.Raw, &message) == nil && message.Method == "item/started" && message.Params.Item.Type == "commandExecution" {
+				return true
+			}
+		}
+		return false
 	})
 	before, err := port.Load(ctx)
 	if err != nil {
@@ -204,6 +227,44 @@ func TestHostedCodexRetainedCommandCompletesThroughBootRecovery(t *testing.T) {
 	_, _ = s.Manager.WaitSession(ctx, "codex-command")
 	if err = s.waitShimBinding(ctx, "codex-command"); err != nil {
 		t.Fatal(err)
+	}
+	// Emulate an old controller's durable JSON codec only after its reader is
+	// gone. No provider/journal bytes are changed. The original offsets remain
+	// exact while embedded RawMessage is compacted and HTML-escaped, as in the
+	// actual retained user-message failure that preceded command projection.
+	legacy, err := port.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type legacyEvent struct {
+		Identity string          `json:"identity"`
+		Cursor   string          `json:"cursor"`
+		Raw      json.RawMessage `json:"raw"`
+	}
+	legacyInbox := make([]legacyEvent, len(legacy.Inbox))
+	for i, event := range legacy.Inbox {
+		legacyInbox[i] = legacyEvent{event.Identity, event.Cursor, event.Raw}
+	}
+	legacyJSON, err := json.Marshal(struct {
+		shimcodex.State
+		Inbox []legacyEvent `json:"inbox"`
+	}{legacy, legacyInbox})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Store.DB().ExecContext(ctx, `UPDATE codex_shim_protocol SET state_json=? WHERE session_id=? AND revision=?`, string(legacyJSON), "codex-command", fmt.Sprint(legacy.Revision))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		t.Fatal("legacy fixture CAS", err)
+	}
+	legacy, err = port.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shimcodex.BuildDeliveryProjection(legacy); !shimcodex.HasCode(err, "legacy_bytes_pending") {
+		t.Fatal("legacy bytes were treated as a source witness", err)
 	}
 	if err = os.WriteFile(filepath.Join(root, "command-release"), []byte("release"), 0o600); err != nil {
 		t.Fatal(err)

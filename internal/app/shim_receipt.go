@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/shimbridge"
+	"github.com/hollis-labs/tether/internal/shimcodex"
 	"github.com/hollis-labs/tether/internal/shimhost"
 	"github.com/hollis-labs/tether/internal/store"
 	"log"
@@ -24,6 +25,10 @@ func shimFailureCode(err error) string {
 	var bridge *shimbridge.Failure
 	if errors.As(err, &bridge) {
 		return bridge.Code
+	}
+	var codex *shimcodex.Failure
+	if errors.As(err, &codex) {
+		return codex.Code
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
