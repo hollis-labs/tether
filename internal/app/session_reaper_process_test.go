@@ -116,7 +116,9 @@ func TestReaperDirectStopTiers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p := map[string]any{"lifecycle": map[string]string{"request_grace": "30ms", "terminate_grace": "30ms", "kill_grace": "1s"}}
+			// A race-instrumented child sleeps for one second during os.Exit.
+			// Allow its real process exit before asserting that no later tier ran.
+			p := map[string]any{"lifecycle": map[string]string{"request_grace": "2s", "terminate_grace": "2s", "kill_grace": "3s"}}
 			raw, _ := json.Marshal(p)
 			if _, err := svc.Store.DB().Exec(`UPDATE launch_plans SET plan_json=? WHERE session_id=?`, string(raw), "tiers"); err != nil {
 				t.Fatal(err)
