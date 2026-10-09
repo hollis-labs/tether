@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	gomsg "github.com/hollis-labs/go-messaging"
+	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 type PendingTurnOutput struct {

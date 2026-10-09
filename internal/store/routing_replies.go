@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	messaging "github.com/hollis-labs/go-messaging"
+	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 )
 
 // RoutingReplyState is where a reply to a routed message stands. The dispatcher

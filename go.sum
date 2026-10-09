@@ -98,8 +98,16 @@ github.com/hollis-labs/go-safefs v0.1.0 h1:DOlOS/0OnLKgUXON9YiPTzZZyYhqogNUo9RoY
 github.com/hollis-labs/go-safefs v0.1.0/go.mod h1:cy6lXh6KhPuIoQ9hGQSL+sd4N1dhJ1hE3sSCMXNB6JA=
 github.com/hollis-labs/go-sandbox v0.6.0 h1:W//Xikb5ipFl/8aJIbCTqtmwSwsPKw+7Za/+BqOcQUM=
 github.com/hollis-labs/go-sandbox v0.6.0/go.mod h1:cZVYQKfEze0jFkt7iyvvUTAc7M+7tppRxpq/h8VYUYg=
+github.com/hollis-labs/libs/plugin-mcp v0.1.1 h1:213HZTZaWL6KFkQeU3d2HZU9UMI+C0jxixHUtD4JFR0=
+github.com/hollis-labs/libs/plugin-mcp v0.1.1/go.mod h1:3x5ZVgHJewzwEpdl1RNFfxXXkq9SKVNL6LJVcpLCGnQ=
+github.com/hollis-labs/libs/util v0.2.0 h1:q+loirMZzmjo3GDrA0yNoOCRBTLWUhdOFPvEV+a5Keg=
+github.com/hollis-labs/libs/util v0.2.0/go.mod h1:MPkSgYHqmxtlHp3vGKaUpBAGv8Xt5l6RcRU76HSfH2Y=
 github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da h1:KFDmTESU7obtQm/VAjW+gj0CT2Br3E5nuQVCpVSr7Uo=
 github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da/go.mod h1:ZOeRRrM2anLCsuj32+cJq8QKXaJkWKdnxU4BFcOtr6w=
+github.com/hollis-labs/substrate/harness v0.3.0 h1:anLe6fr48bbhE8ubXUiNz1GYKzM1IEnFLUjKhtg5I5I=
+github.com/hollis-labs/substrate/harness v0.3.0/go.mod h1:BCteU5BGFnLujwOQJK1USbwu35YoNLpr+oe0/3ZD+sU=
+github.com/hollis-labs/substrate/llm-core v0.1.0 h1:nsNpY3OzpuvHKC9zLzqFKmwMXt856PXOUfaVpGP8pFY=
+github.com/hollis-labs/substrate/llm-core v0.1.0/go.mod h1:055xZrH5gLwodrVMu2SHQzfIcTXhjDGBXfJ1kdy/eSo=
 github.com/hollis-labs/substrate/mesh v0.1.0 h1:CkUvYdoXSGVcSlXhVgc+0AYzyhXdd49c+AV47z0XvOs=
 github.com/hollis-labs/substrate/mesh v0.1.0/go.mod h1:akUYHGaDVmF2Gwyr784nk8HuNr0KBsl1x97ApvTxcAM=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

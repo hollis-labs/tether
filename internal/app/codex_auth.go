@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 )
 
 // linkCodexHostAuth points a codex launch's planted auth.json at the host's

@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hollis-labs/agentkit/agentlaunch"
-	gop "github.com/hollis-labs/go-providers/provider"
+	gop "github.com/hollis-labs/substrate/harness/adapters/provider"
+	"github.com/hollis-labs/substrate/harness/agentlaunch"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"

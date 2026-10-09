@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hollis-labs/go-apppaths/paths"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	"github.com/hollis-labs/libs/util/apppaths"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 )
 
 // Load reads the global catalog + subdirectories and returns a populated Catalog.

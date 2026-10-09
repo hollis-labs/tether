@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	permission "github.com/hollis-labs/go-permission"
-	"github.com/hollis-labs/go-sandbox/sandbox"
+	permission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/substrate/harness/sandbox"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/launch"

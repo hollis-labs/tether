@@ -3,9 +3,9 @@ module github.com/hollis-labs/tether/apps/sysop
 go 1.26.9
 
 require (
-	github.com/hollis-labs/go-messaging v0.5.2
-	github.com/hollis-labs/go-modelsdev v0.2.0
-	github.com/hollis-labs/go-webui v0.1.0
+	github.com/hollis-labs/libs/ui-go v0.1.0
+	github.com/hollis-labs/substrate/llm-core v0.1.0
+	github.com/hollis-labs/substrate/mesh v0.1.0
 	github.com/hollis-labs/tether v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -33,25 +33,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/hollis-labs/agent-contracts-leaf v0.3.0 // indirect
-	github.com/hollis-labs/agentkit v0.26.1 // indirect
-	github.com/hollis-labs/go-agent-wrapper v0.28.0 // indirect
-	github.com/hollis-labs/go-apppaths v0.1.0 // indirect
-	github.com/hollis-labs/go-harness-filters v0.1.1 // indirect
-	github.com/hollis-labs/go-llm-contracts v0.4.0 // indirect
-	github.com/hollis-labs/go-llm-types v0.5.1 // indirect
-	github.com/hollis-labs/go-localdaemon v0.1.0 // indirect
-	github.com/hollis-labs/go-materialize v0.1.0 // indirect
-	github.com/hollis-labs/go-mcp v0.14.1 // indirect
-	github.com/hollis-labs/go-otel v0.6.1 // indirect
-	github.com/hollis-labs/go-permission v0.1.0 // indirect
-	github.com/hollis-labs/go-providers v0.46.0 // indirect
-	github.com/hollis-labs/go-runner v0.8.2 // indirect
-	github.com/hollis-labs/go-runtime-events v0.2.2 // indirect
-	github.com/hollis-labs/go-safefs v0.1.0 // indirect
-	github.com/hollis-labs/go-sandbox v0.6.0 // indirect
-	github.com/hollis-labs/substrate/harness v0.0.0-20261003211832-bf21ff7831da // indirect
-	github.com/hollis-labs/substrate/mesh v0.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
