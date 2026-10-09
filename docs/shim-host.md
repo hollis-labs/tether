@@ -2,8 +2,8 @@
 
 The daemon can host Claude streaming-stdio, Codex app-server JSON-RPC and eligible
 Antigravity subprocess-per-turn providers through a persistent shim. Direct
-execution remains the default. Codex public output delivery has additional requirements described
-below. The explicit
+execution remains the default. Codex public output delivery has additional
+requirements described below. The explicit
 `tether shim-bridge --descriptor <path>` command connects stdio to an already
 placed provider. `--attach` reconnects to that provider and journal using its
 existing private checkpoint; it never places another provider.

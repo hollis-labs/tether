@@ -6,7 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 This file was backfilled from the git history and is a good-faith summary, not an exhaustive one; `git log` is the complete record. Entries are grouped by tagged release. Consumers should watch this file for new HTTP routes, MCP tools, CLI commands and catalog/configuration changes.
 
-## [Unreleased]
+## [0.8.0] - 2026-10-09
+
+- Add opt-in `tether messages claude-hook` feedback for external or hosted Claude
+  sessions. Use authenticated read-only mailbox listing to emit unread counts
+  and fixed reminders on startup, prompt submission and guarded Stop. An optional
+  bounded SessionStart wait supports one-shot `asyncRewake` notification; the
+  guide describes a recurring native `/loop` recipe separately. No message body
+  or credential appears in feedback, and polling does not mark mail delivered,
+  read or consumed. Hooks and schedules are not installed automatically; Codex
+  and Antigravity adapters and live provider acceptance remain separate.
+  (CW-20261008-0125)
 
 - Host eligible Antigravity subprocess-per-turn launches with a persistent
   worker under the canonical shim. Turn children inherit the resolved launch
