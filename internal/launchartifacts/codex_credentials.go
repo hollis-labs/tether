@@ -38,7 +38,7 @@ func CaptureCodexHome(path string) (*CodexHome, error) {
 	if err != nil || !filepath.IsAbs(path) || path != filepath.Clean(path) || path != canonical {
 		return nil, refusal("codex_explicit_provider_home_required")
 	}
-	f, err := os.Open(path)
+	f, err := openDirectory(path)
 	if err != nil {
 		return nil, refusal("codex_provider_home_unavailable")
 	}
@@ -98,11 +98,11 @@ func (c *Custody) PlantCodex(ctx context.Context, prepared *agentlaunch.Prepared
 		return err
 	}
 	parent := filepath.Dir(c.root.Path)
-	parentFile, err := os.Open(parent)
+	parentFile, err := openDirectory(parent)
 	if err != nil {
 		return err
 	}
-	defer parentFile.Close()
+	defer func() { err = errors.Join(err, parentFile.Close()) }()
 	validate := func(ctx context.Context) error {
 		if err := c.validate(ctx); err != nil {
 			return err
@@ -390,7 +390,7 @@ func (c *Custody) acceptMaterializedRoot(ctx context.Context, result workspace.A
 	if err != nil || actual != expected {
 		return refusal("codex_committed_root_unverified")
 	}
-	next, err := os.Open(c.root.Path)
+	next, err := openDirectory(c.root.Path)
 	if err != nil {
 		return err
 	}

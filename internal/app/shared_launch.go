@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,18 +49,22 @@ func storeSharedLaunchState(plan *launch.Plan, compiled *agentlaunch.CompiledLau
 	}
 }
 
-func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, workspaceDir string, plant plantContextInput) (*agentlaunch.PreparedLaunch, error) {
+func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, workspaceDir string, plant plantContextInput) (result *agentlaunch.PreparedLaunch, err error) {
 	if workspaceDir == "" {
 		return nil, fmt.Errorf("workspace dir required")
 	}
 	var codexHome *launchartifacts.CodexHome
 	if plan.ProviderBrand == "codex" {
-		var err error
 		codexHome, err = captureCodexHome()
 		if err != nil {
 			return nil, err
 		}
-		defer codexHome.Close()
+		defer func() {
+			err = errors.Join(err, codexHome.Close())
+			if err != nil {
+				result = nil
+			}
+		}()
 	}
 	bootRoot := filepath.Join(workspaceDir, "boot")
 	if err := os.MkdirAll(bootRoot, 0o750); err != nil {
@@ -95,7 +100,12 @@ func (s *Service) prepareSharedLaunch(ctx context.Context, plan *launch.Plan, wo
 	if err != nil {
 		return nil, err
 	}
-	defer custody.Close()
+	defer func() {
+		err = errors.Join(err, custody.Close())
+		if err != nil {
+			result = nil
+		}
+	}()
 	// Use the neutral named-server contract: the provider library's self-MCP
 	// helper fixes a legacy server key, while this gateway is named tether.
 	if plant.TetherCommand != "" {

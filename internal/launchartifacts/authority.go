@@ -1,5 +1,6 @@
-// Package launchartifacts binds an accepted Tether launch to its freshly
-// allocated private boot directory. It grants no project or credential effects.
+// Package launchartifacts binds accepted Tether launches to freshly allocated
+// private boot directories. Managed-tree authority grants no project or
+// credential effects; the separate DEC-036 adapter authorizes one captured link.
 package launchartifacts
 
 import (
@@ -100,11 +101,11 @@ func Prepare(ctx context.Context, compiled *agentlaunch.CompiledLaunch, admissio
 		root:    workspace.RootRef{ID: "boot:" + admission.OperationID, Path: root, AllowedBase: filepath.Dir(root), Owner: admission.Owner, Provenance: "tether.accepted-launch:" + admission.DecisionID},
 		control: workspace.RootRef{ID: "control:" + admission.OperationID, Path: control, AllowedBase: parent, Owner: admission.Owner, Provenance: "tether.accepted-launch:" + admission.DecisionID},
 	}
-	c.rootFile, err = os.Open(root)
+	c.rootFile, err = openDirectory(root)
 	if err != nil {
 		return nil, nil, err
 	}
-	c.controlFile, err = os.Open(control)
+	c.controlFile, err = openDirectory(control)
 	if err != nil {
 		_ = c.Close()
 		return nil, nil, err
@@ -248,4 +249,22 @@ func overlap(a, b string) bool {
 
 func refusal(code string) error {
 	return &workspace.Refusal{Code: code, Concern: "tether.launch-artifacts", Status: workspace.Conflict}
+}
+
+// openDirectory holds only the already validated directory itself. Relative
+// access is confined to that root; this helper cannot open a variable leaf.
+func openDirectory(path string) (*os.File, error) {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	directory, openErr := root.Open(".")
+	closeErr := root.Close()
+	if openErr != nil || closeErr != nil {
+		if directory != nil {
+			closeErr = errors.Join(closeErr, directory.Close())
+		}
+		return nil, errors.Join(openErr, closeErr)
+	}
+	return directory, nil
 }
