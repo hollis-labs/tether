@@ -12,10 +12,10 @@ import (
 )
 
 // otelInjectForTest reproduces the PRE-0026 injection shape -- trace context
-// written into the arguments map -- using the same go-otel call the old code
-// used, so the legacy fixture cannot drift from what older Tether proxies actually send.
+// written into the arguments map. The supported metadata helper retains the
+// same underscore-prefixed wire keys and traceparent encoding.
 func otelInjectForTest(ctx context.Context, args map[string]any) map[string]any {
-	return otelprop.InjectMCP(ctx, args)
+	return otelprop.InjectMCPMeta(ctx, args)
 }
 
 // fakeRemoteContext builds a remote span context AND installs the tracer and
@@ -139,6 +139,47 @@ func TestExtractTraceContext_EmptyOrInvalidCarrierDoesNotReuseLocalSpan(t *testi
 			}
 			if got.Err() != context.Canceled || got.Value(requestKey{}) != "request" {
 				t.Fatal("extraction lost request cancellation or values")
+			}
+		})
+	}
+}
+
+func TestInjectTraceContextMeta_PreservesMetadataAndRefreshesTraceState(t *testing.T) {
+	ctx, wantTraceID := fakeRemoteContext(t)
+	state, err := trace.ParseTraceState("vendor=fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name  string
+		state trace.TraceState
+	}{
+		{name: "no state"},
+		{name: "current state", state: state},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requestCtx := trace.ContextWithSpanContext(ctx, trace.SpanContextFromContext(ctx).WithTraceState(tt.state))
+			original := mcpsdk.Meta{"progressToken": "token", "_tracestate": "vendor=stale"}
+			args := map[string]any{"input": "x"}
+			params := &mcpsdk.CallToolParams{Name: "t", Meta: original, Arguments: args}
+			injectTraceContextMeta(requestCtx, params)
+			if params.Meta["progressToken"] != "token" {
+				t.Fatal("injection dropped unrelated metadata")
+			}
+			if original["_tracestate"] != "vendor=stale" || original["_traceparent"] != nil {
+				t.Fatal("injection changed the caller's metadata map")
+			}
+			if _, exists := args["_traceparent"]; exists {
+				t.Fatal("injection wrote trace metadata into tool arguments")
+			}
+			got := trace.SpanContextFromContext(extractTraceContext(requestCtx, map[string]any(params.Meta), args))
+			if got.TraceID().String() != wantTraceID || got.TraceState().String() != tt.state.String() {
+				t.Fatalf("injected parent/state = %s/%s, want %s/%s", got.TraceID(), got.TraceState(), wantTraceID, tt.state)
+			}
+			if tt.state.Len() == 0 {
+				if _, exists := params.Meta["_tracestate"]; exists {
+					t.Fatal("injection retained a tracestate from the previous parent")
+				}
 			}
 		})
 	}
