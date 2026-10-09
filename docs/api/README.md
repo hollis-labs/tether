@@ -796,9 +796,12 @@ Response: 204 on success; 409 `conflict` when the session has no writable
 input channel (e.g. api-stub runtimes); 409 `provider_session_lost` when the
 provider no longer has the session's resume id. The same applies to
 `POST /sessions/{id}/turn`. On `provider_session_lost` the runtime has already
-dropped the id and a `provider.session_lost` event is published; resending
-the same request is the caller's decision, because the new turn starts
-without the old history.
+dropped the id; resending the same request is the caller's decision, because the
+new turn starts without the old history. A provider-reported continuation in a
+new conversation emits `provider.session_lost` with `requested`, `actual` and
+`reason`; an initial native recovery cold attempt emits the separate continuity
+variant described under logical-agent resume. A rejected turn is not evidence
+that a replacement turn ran.
 
 On a subprocess-runtime session (one agent process per turn), a turn whose
 process exits non-zero answers 502 `turn_failed`: the process failed, not
@@ -1043,8 +1046,33 @@ Response (200):
 
 ### `POST /logical-agents/{id}/resume`
 
-Start a new session for the logical agent using its most recent checkpoint as
-boot context and the agent's stored `launch_id`.
+Start a new canonical Tether session using the agent's stored `launch_id` and
+latest canonical source session. A checkpoint is optional when that source
+exists; an older checkpoint supplies context without overriding a newer
+provider conversation or work root. The source route and work root are retained.
+
+When the provider ID and brand match, resume uses the persisted native session
+mapping and copies only provider session state from the recorded planted home
+into the new one. Codex `sessions/` and Claude `projects/` are supported; auth and
+configuration files are not copied. A mapping tombstone prevents reuse of a lost
+native ID. Changed providers do not inherit that ID.
+
+Recovery submits one control turn with bounded task, mail, channel and workspace
+context. It does not replay an interrupted turn or consume/acknowledge mail.
+Optional Torque/Tesseract reads use the existing MCP runtime and the source
+session's sealed grants; refused or unavailable reads are recorded as omissions.
+An initial typed native-session loss or fast process death permits one cold
+attempt after any started failed process has been confirmed stopped. An
+unconfirmed teardown or authentication failure refuses recovery. The cold
+attempt publishes `provider.session_lost` with `fresh_conversation: true` before
+starting; that event does not certify successful launch or turn completion.
+
+A fresh resume returns 409 `conflict` if the agent has never launched, has any
+live session, or requires recovery of retained team/shim custody instead of a
+new canonical session. It returns 404 `not_found` when neither a previous session
+nor a checkpoint exists. Retained direct team recovery uses its existing session,
+actor, enrollment and binding through the team host; this endpoint does not
+replace those identities.
 
 The body is optional. `{"idempotency_key": "..."}` makes the resume safe to
 retry: the same key returns the session the first resume created
@@ -1063,6 +1091,14 @@ Response (201):
   "logical_agent_id": "demo-agent"
 }
 ```
+
+At daemon startup, reconciliation runs before a single boot-recovery pass
+launched after the listener is serving. Ordinary agents with no live owner are
+resumed only when unread mail, a readable open assignment or an active roster
+provides work evidence; idle agents stay cold. Each ordinary attempt has a
+20-second context. Retained team members are handled first by their configured
+team host and are excluded from ordinary fresh-session recovery. Recovery
+channel cursors record accepted context delivery, not terminal consumption.
 
 ### `GET /logical-agents/{id}/policy`
 
@@ -1638,7 +1674,8 @@ Current (v0.0.2):
 | session  | `session.state_changed`       | runtime.Manager at every transition    | `{from, to, exit_code?, reason?}` — terminal `to` is `completed`, `failed` or `killed` (see [Session states](#session-states)) |
 | session  | `session.turn_interrupt_requested` | CancelTurnAndWait before a runtime cancel attempt | `{actor, session_id, turn_id, result:"requested"}`; no reply body |
 | session  | `session.turn_interrupt_completed` | CancelTurnAndWait on every outcome, including invalid actor/missing session | `{actor, session_id, turn_id?, output_turn_id?, output_kind?, stop_reason?, result, error?}`; result is `completed`, a typed refusal reason (`unsupported`, `no_turn_in_progress`, `turn_not_yet_started`, `turn_superseded`, `session_ended`, `interrupt_timeout`), or `error` |
-| session  | `provider.session_lost`       | a resume turn that ran in a new provider session (agy) | `{requested, actual, reason}` — the turn ran; history was lost |
+| session  | `provider.session_lost`       | provider conversation continuity was lost | Provider-reported continuation: `{requested, actual, reason}`. Initial native recovery cold attempt: `{requested, reason, fresh_conversation: true}`, emitted before starting and not proof of completion. |
+| session  | `session.boot_recovery`       | ordinary logical-agent startup recovery outcome | `{outcome, reason?}` — `resumed` reports admission; `failed` reports a refused/unavailable attempt, not turn completion |
 | session  | `provider.permission_denied`  | a headless tool action auto-denied (agy) | `{action, display_name}`                                   |
 | session  | `routing.reply_delivered`     | the reply dispatcher, after a reply was injected as the session's next turn | `{reply_id, parent_id, state, reason?, original_session_id, target_session_id, delivered_to_session_id, logical_agent_id?, actor}` — no reply text; `reason` is `handed_off` when `delivered_to_session_id` differs from `original_session_id` (see [Replies to routed messages](#replies-to-routed-messages)) |
 | session  | `routing.reply_undeliverable` | the reply dispatcher, when it gave up on a reply | same shape with `state: "undeliverable"` and `reason` / `detail` saying why |

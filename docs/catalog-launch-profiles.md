@@ -132,8 +132,11 @@ prune` remedy — it never clobbers an existing checkout.
   sessions have no worktree to deregister; only their `workspace_dir` is
   removed, never `repo_root`.
 
-Removing a *terminated* session's worktree never affects a running session, and
-attach (log replay) and resume (which creates a fresh session) are unaffected.
+Removing a *terminated* session's worktree does not change another running
+session. Resume creates a new canonical session but preserves the original work
+root and can copy native history from the recorded planted home. Preserve that
+worktree and provider state when you intend to resume its conversation; pruning
+them can make native continuity unavailable.
 
 Tether compiles launch profiles through `go-agent-launch` and stores shared
 provenance (`plan_hash`, compiler version, provider/runtime/workspace, and
