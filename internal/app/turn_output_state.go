@@ -199,7 +199,7 @@ func runtimeTookNoTurn(err error) bool {
 // doing something with a turn: it opened or bound one, finished one, or reported
 // a terminal (even one dropped as ambiguous). trackTurnSubmissionContext compares
 // the count at entry and at exit.
-func (o *sessionTurnOutput) noteTurnActivity() { o.activity++ }
+func (o *sessionTurnOutput) noteTurnActivity() { o.activity++; o.lastActivity = time.Now() }
 
 // tookTurn reports, with mu held, whether the turn feed shows the runtime took a
 // turn since activity was read at a submission's entry: the submission's marker
@@ -313,4 +313,17 @@ func (o *sessionTurnOutput) completeEmptyTerminal(kind turnoutput.Kind, stopReas
 	completion := o.completedDetails[id]
 	completion.Synthetic = true
 	o.completedDetails[id] = completion
+}
+
+// SessionLastActivity reports observed turn-feed activity, excluding
+// process/session telemetry and synthetic binding heartbeats.
+func (s *Service) SessionLastActivity(id string) time.Time {
+	value, ok := s.turnOutputs.Load(id)
+	if !ok {
+		return time.Time{}
+	}
+	output := value.(*sessionTurnOutput)
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return output.lastActivity
 }
