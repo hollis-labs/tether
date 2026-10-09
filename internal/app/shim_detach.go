@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/substrate/harness/shim"
 	"github.com/hollis-labs/tether/internal/events"
@@ -14,6 +15,9 @@ import (
 )
 
 func (s *Service) settleShimBridgeExit(id string) {
+	if s.currentShimExecution(context.Background(), id) != nil {
+		return
+	}
 	if _, draining := s.shimDraining.Load(id); draining {
 		return
 	}
@@ -105,8 +109,14 @@ func (s *Service) shimSessionRetained(id string) bool {
 
 func (s *Service) detachShimSession(ctx context.Context, id string) bool {
 	shimRow, err := s.Store.SessionShim(ctx, id)
-	if err != nil {
+	if errors.Is(err, store.ErrSessionShimNotFound) {
 		return false
+	}
+	if err != nil {
+		return true
+	}
+	if s.currentShimExecution(ctx, id) != nil {
+		return true
 	}
 	draining := any(true)
 	if value, ok := s.shimBindingWait.Load(id); ok {
