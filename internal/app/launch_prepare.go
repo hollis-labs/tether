@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/launch"
+	"github.com/hollis-labs/tether/internal/mcpgateway"
 	"github.com/hollis-labs/tether/internal/provider/cli/antigravity"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -24,7 +25,11 @@ func tetherCommandPath() string {
 // daemon's session launches use it; `tether boot` plants for the operator's own
 // terminal and keeps its own (cmd/tether tetherEnvFromPlan).
 func tetherEnvMap(env map[string]string) map[string]string {
-	return map[string]string{launch.MCPServersEnv: strings.Join(launch.EffectiveMCPServers(env), ",")}
+	out := map[string]string{launch.MCPServersEnv: strings.Join(launch.EffectiveMCPServers(env), ",")}
+	if value, set := env[mcpgateway.ToolsEnv]; set {
+		out[mcpgateway.ToolsEnv] = value
+	}
+	return out
 }
 
 // TetherMCPPlan is what a planting decided: the argv to write into the worker's
