@@ -861,15 +861,20 @@ engine's session host) can rely on, and what it cannot:
   daemon restart), `GET /sessions/{id}/health` the live runtime,
   `GET /sessions/{id}/wait` blocks for the exit code, and
   `GET /sessions/{id}/events` / `GET /events/stream` carry state changes.
-- **Cancelling.** `POST /sessions/{id}/stop`. The session ends in `killed`,
-  durably, so a cancel is never mistaken for an agent that finished.
-- **A daemon restart ends running sessions.** Agent processes are children of
-  tetherd. On startup tetherd sweeps every session left `launching` or `running` to
-  `failed` with exit code -1, so after a restart an observer sees a definite terminal state, not
-  a session that silently vanished. Nothing reattaches to the old process.
-- **Resume makes a new session.** `POST /logical-agents/{id}/resume` starts a
-  new session linked to its parent by `parent_session_id`; it never reattaches
-  the old one.
+- **Cancelling.** `POST /sessions/{id}/stop`. A successful stop records `killed`,
+  durably, so a cancel is never mistaken for an agent that finished. A retained
+  shim can refuse an unverified stop; an HTTP refusal is not proof of exit.
+- **Restart recovery depends on hosting.** Direct processes follow the startup
+  sweep described below. Tracked shim custody is reconciled separately: a
+  verified surviving provider can reattach under the same canonical session;
+  an uncertain outcome retains custody rather than proving completion. A
+  provider needs a separate service cgroup to survive a systemd daemon restart.
+  See [shim hosting](../shim-host.md) for configuration and readiness checks.
+- **Ordinary logical-agent resume makes a new session.**
+  `POST /logical-agents/{id}/resume` links it through `parent_session_id` and may
+  continue recorded provider-native history. It does not reattach the old
+  process. Retained team boot recovery and shim reattachment use separate paths
+  that preserve the original canonical session and binding.
 - **There is no "result" value.** Tether does not record a terminal result for
   a session. What an agent produced is in the attach stream
   (`GET /sessions/{id}/attach`) and the session log while it runs, and in any
@@ -885,8 +890,9 @@ created ──launch──▶ launching ──▶ running ──┬──▶ com
    │                    │                   └──▶ killed      ended by POST /sessions/{id}/stop
    └────────────────────┴──▶ failed   the launch failed, exit code 1
 
-launching | running ──planned daemon shutdown──▶ killed   reason daemon-shutdown
-launching | running ──crash, then restart, process gone──▶ failed   exit code -1
+direct launching | running ──exit during planned shutdown──▶ killed   reason daemon-shutdown
+direct launching | running ──crash, then restart, process gone──▶ failed   exit code -1
+tracked shim ──controller disconnect──▶ detached ──verified reattach──▶ running
 ```
 
 | State       | Terminal | Reached by                                                        | `exit_code`                         |
@@ -895,15 +901,16 @@ launching | running ──crash, then restart, process gone──▶ failed   ex
 | `launching` | no       | `POST /sessions/{id}/launch`                                      | —                                   |
 | `ready`     | no       | reserved runtime preparation state (currently not written)        | —                                   |
 | `detached`  | no       | child alive, daemon disconnected; shim reconciliation can reattach | —                                  |
-| `orphaned`  | no       | shim and child gone, or shim reconciliation disabled at restart   | —                                   |
+| `orphaned`  | no       | positively gone custody, or detached row without tracked custody at restart | —                          |
 | `running`   | no       | the runtime started                                               | —                                   |
 | `completed` | yes      | the process exited on its own with code 0                         | `0`                                 |
 | `failed`    | yes      | exited on its own non-zero; the launch failed; or swept at daemon start | the process's code; `1` for a failed launch; `-1` when swept |
 | `killed`    | yes      | `POST /sessions/{id}/stop` (also `tether sessions stop`, MCP `tether_session_stop`, ACP session close), or a planned daemon shutdown | whatever the stopped process returned |
 
 **`exit_code` -1 from the startup sweep means "swept at daemon start", not an
-observed failure.** When the daemon starts, it settles every session the
-previous daemon left `launching` or `running`:
+observed failure.** Tracked shim sessions first pass through custody and protocol
+reconciliation; they are excluded from the legacy process-PID sweep even when
+recovery refuses. For direct sessions left `launching` or `running`:
 - A session whose own process is still alive keeps its state. "Its own"
   means the recorded pid is alive and has the start time recorded at launch,
   not a later process that reused the pid.
@@ -927,23 +934,25 @@ preserves both states. Resume from an orphaned checkpoint creates a new session;
 resume from a detached checkpoint returns HTTP 409 `conflict`, because its child
 is still alive and the shim reconciler must reattach it.
 
-The state plumbing alone does not move launches into these states. The opt-in
-shim integration owns those transitions. With the shim path disabled, existing
-launching/running sweep and shutdown behavior stays as described here. If startup
-finds a detached row with no shim reconciler, it moves to orphaned with reason
-`shim_reconcile_disabled`, regardless of PID liveness. Already orphaned rows are
-left alone. Recovery transitions emit the existing `session.state_changed`
+The opt-in shim integration owns custody transitions. When shim hosting is
+disabled at restart, tracked custody stays detached with reason
+`shim_reconcile_disabled`; disabling the feature does not authorize discarding
+the placement. A detached row without tracked shim custody follows the legacy
+orphaning sweep. Already orphaned rows are left alone by that sweep. Recovery
+transitions emit the existing `session.state_changed`
 payload `{from, to, reason}`; reasons include `daemon-shutdown`,
 `shim_unreachable`, `shim_reconcile_disabled`, and `shim_gone`.
 
 Rows swept before this behaviour (up to 2026-10-01) were failed regardless of
 liveness and are not backfilled. Treat their `exit_code` -1 the same way.
 
-**`killed` with reason `daemon-shutdown` means the daemon was stopped on
-purpose.** On a graceful shutdown (SIGTERM or SIGINT to `tetherd`,
-`tether daemon stop`, `systemctl stop`/`restart`), the daemon marks every live
-session as stopping before it drains them. Any session the daemon sees exit
-during the drain (`daemon.shutdown_timeout`, default 10s) gets two records:
+**`killed` with reason `daemon-shutdown` means a direct session ended during a
+planned daemon shutdown.** On a graceful shutdown (SIGTERM or SIGINT to
+`tetherd`, `tether daemon stop`, `systemctl stop`/`restart`), tracked shim sessions
+detach their controller without closing the provider's stdin or retiring its
+placement. Other live sessions are marked as stopping before the drain. A
+direct session that exits during the drain (`daemon.shutdown_timeout`, default
+10s) gets two records:
 - its row is `killed`, with the process's own `exit_code`;
 - its terminal `session.state_changed` event has `reason`
   `"daemon-shutdown"`.
@@ -954,28 +963,31 @@ settles it:
 - spared if its own process is still alive;
 - `failed` with `exit_code` -1 if it is gone.
 
-A crash leaves no shutdown record, so its sessions are always settled by that
-sweep. One `daemon.shutdown_sessions_ended` event names the sessions that
-ended during the drain and those still running.
+A crash leaves no planned-shutdown record; startup reconciles shim custody and
+sweeps direct sessions. One `daemon.shutdown_sessions_ended` event names the
+sessions that ended during the drain and those still running.
 
 On a Linux host running the daemon as a systemd unit with the default
-`KillMode=control-group`, agent processes share the daemon's cgroup and get
+`KillMode=control-group`, direct agent processes share the daemon's cgroup and get
 the same SIGTERM. A planned `systemctl restart` therefore normally records
-them `killed` / `daemon-shutdown`. A crash, or an agent that outlasts the
-drain, is swept at the next start. Sessions survive a restart only when the
-daemon runs outside such a unit, for example `tether daemon start` or launchd.
+direct children `killed` / `daemon-shutdown`. A crash, or a direct agent that
+outlasts the drain, is swept at the next start. Hosted providers in separate
+systemd-user transient units have their own cgroups and can survive the daemon's
+restart. Detached setsid placement remains in the daemon's cgroup and does not
+provide that protection.
 
 Branch on `state`, not `exit_code`. A stopped process may exit `0` (it
 handled `SIGTERM` and exited cleanly) or `-1` (a signal ended it). Only `killed` says the session was stopped. The same value
 is the `to` of the session's terminal `session.state_changed` event. A
-terminal state is final: a session never leaves it, and resuming makes a new
-session.
+terminal state is final. Ordinary logical-agent resume makes a new session;
+retained recovery operates on nonterminal custody instead.
 
 ## Checkpoints
 
-v0.0.2 ships persistence only. No runtime side effects: creating a
-checkpoint does not pause the session or snapshot context. Resume is a
-501 placeholder until v0.0.3 Sprint v003-04.
+Checkpoints persist declared recovery context. Creating one does not pause the
+session or snapshot the provider process. Logical-agent resume is implemented
+and can also recover from a prior session without a checkpoint; see
+[`POST /logical-agents/{id}/resume`](#post-logical-agentsidresume).
 
 ### `POST /sessions/{id}/checkpoint`
 
