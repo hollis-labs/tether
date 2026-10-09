@@ -46,7 +46,7 @@ func TestCopyNativeStateSameHomePreservesHistory(t *testing.T) {
 }
 
 func TestCopyNativeStateRejectsUnsafeInputs(t *testing.T) {
-	for _, kind := range []string{"home-link", "state-link", "file-link", "directory-link", "target-link", "missing-state", "unsupported-brand", "relative-home"} {
+	for _, kind := range []string{"home-link", "state-link", "file-link", "directory-link", "target-link", "missing-home", "missing-state", "unsupported-brand", "relative-home"} {
 		t.Run(kind, func(t *testing.T) {
 			source, target, outside := t.TempDir(), t.TempDir(), t.TempDir()
 			writeNativeFixture(t, outside, "auth.json", "outside fixture")
@@ -70,13 +70,20 @@ func TestCopyNativeStateRejectsUnsafeInputs(t *testing.T) {
 				target = link
 			case "missing-state":
 				source = t.TempDir()
+			case "missing-home":
+				source = filepath.Join(t.TempDir(), "absent-home")
 			case "unsupported-brand":
 				brand = "other"
 			case "relative-home":
 				source = "relative-home"
 			}
-			if err := CopyNativeState(source, target, brand); err == nil {
+			err := CopyNativeState(source, target, brand)
+			if err == nil {
 				t.Fatal("unsafe input accepted")
+			}
+			wantMissing := kind == "missing-home" || kind == "missing-state"
+			if errors.Is(err, ErrNativeStateMissing) != wantMissing {
+				t.Fatalf("missing state classification: err=%v wantMissing=%v", err, wantMissing)
 			}
 			if _, err := os.Lstat(filepath.Join(target, "sessions")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("refusal created target state: %v", err)

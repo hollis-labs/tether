@@ -1,12 +1,19 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 )
+
+// ErrNativeStateMissing means the source home or its history directory is
+// absent. No destination state has been created, so callers may classify the
+// native thread as lost. Other errors, including missing files during a copy,
+// must abort the launch rather than falling back with partial state.
+var ErrNativeStateMissing = errors.New("native session state missing")
 
 // CopyNativeState copies provider session history into an already planted home.
 // The caller must validate both homes against canonical session metadata and
@@ -31,6 +38,9 @@ func CopyNativeState(sourceProviderHome, targetProviderHome, providerBrand strin
 	}
 	sourceInfo, err := os.Lstat(sourceProviderHome)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("native state: source home: %w", ErrNativeStateMissing)
+		}
 		return fmt.Errorf("native state: source home: %w", err)
 	}
 	targetInfo, err := os.Lstat(targetProviderHome)
@@ -50,6 +60,9 @@ func CopyNativeState(sourceProviderHome, targetProviderHome, providerBrand strin
 	defer func() { _ = sourceHome.Close() }()
 	stateInfo, err := sourceHome.Lstat(stateDir)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("native state: source %s: %w", stateDir, ErrNativeStateMissing)
+		}
 		return fmt.Errorf("native state: source %s: %w", stateDir, err)
 	}
 	if !stateInfo.IsDir() {
