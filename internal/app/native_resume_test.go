@@ -10,6 +10,7 @@ import (
 
 	"github.com/hollis-labs/agentkit/agentsessions"
 	"github.com/hollis-labs/go-providers/provider"
+	gopevents "github.com/hollis-labs/go-providers/provider/events"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -20,7 +21,7 @@ type recoveryFakeRuntime struct {
 }
 
 func (r recoveryFakeRuntime) Caps() agentsessions.Capabilities {
-	return agentsessions.Capabilities{ProviderSessionID: true}
+	return agentsessions.Capabilities{ProviderSessionID: true, StreamingStdio: true}
 }
 func (r recoveryFakeRuntime) Start(_ context.Context, o agentsessions.StartOptions) (agentsessions.Session, error) {
 	return r.start(o)
@@ -28,15 +29,24 @@ func (r recoveryFakeRuntime) Start(_ context.Context, o agentsessions.StartOptio
 
 type recoveryFakeSession struct {
 	agentsessions.Session
-	done    chan struct{}
-	once    sync.Once
-	send    func() error
-	stopErr error
+	done       chan struct{}
+	once       sync.Once
+	send       func() error
+	stopErr    error
+	healthDead bool
 }
 
 func (s *recoveryFakeSession) Wait() (int, error) { <-s.done; return 1, nil }
 func (s *recoveryFakeSession) Health() agentsessions.HealthStatus {
-	return agentsessions.HealthStatus{Alive: true}
+	if s.healthDead {
+		return agentsessions.HealthStatus{Alive: false}
+	}
+	select {
+	case <-s.done:
+		return agentsessions.HealthStatus{Alive: false}
+	default:
+		return agentsessions.HealthStatus{Alive: true}
+	}
 }
 func (s *recoveryFakeSession) Stop(context.Context) error {
 	if s.stopErr != nil {
@@ -91,6 +101,34 @@ func TestNativeRecoveryLostIDColdBootKeepsCanonicalSession(t *testing.T) {
 	plan, _ := r.service.Store.GetLaunchPlan("resumed")
 	if plan.ResumeProviderSessionID != "" || plan.ResumeSourceSessionID != "source" {
 		t.Fatalf("persisted fallback=%+v", plan)
+	}
+}
+
+func TestNativeRecoveryColdStartMarksFirstOutputFresh(t *testing.T) {
+	svc, output := outputHarness(t, nil)
+	svc.turnOutputs.Store("s1", output)
+	plan := &launch.Plan{ProviderID: "codex", ProviderBrand: "codex", ResumeSourceSessionID: "s1", ResumeProviderSessionID: "thread-old"}
+	if err := svc.Store.UpsertSessionProviderMapping("s1", "tether", plan.ProviderID, "thread-old"); err != nil {
+		t.Fatal(err)
+	}
+	cold := &recoveryFakeSession{done: make(chan struct{}), send: func() error { return nil }}
+	t.Cleanup(func() { _ = cold.Stop(context.Background()) })
+	r := &recoveryRuntime{service: svc, plan: plan, id: "s1", request: context.Background(), Runtime: recoveryFakeRuntime{start: func(opts agentsessions.StartOptions) (agentsessions.Session, error) {
+		if opts.SessionIDPreset != "" {
+			return nil, &agentsessions.SessionLostError{RequestedID: opts.SessionIDPreset, Err: errors.New("gone")}
+		}
+		// A provider may emit output synchronously during Start. Continuity must
+		// already be marked when the cold provider is admitted.
+		output.observeProvider(gopevents.Done{Text: "cold result"})
+		return cold, nil
+	}}}
+	if _, err := r.Start(context.Background(), agentsessions.StartOptions{SessionIDPreset: "thread-old"}); err != nil {
+		t.Fatal(err)
+	}
+	output.observeProvider(gopevents.Done{Text: "continued result"})
+	got := outputEvents(t, svc)
+	if len(got) != 2 || !got[0].FreshConversation || got[1].FreshConversation {
+		t.Fatalf("cold recovery output continuity=%+v", got)
 	}
 }
 
@@ -162,6 +200,25 @@ func TestNativeRecoveryFastProcessDeathRetriesOnce(t *testing.T) {
 	_, err := r.Start(context.Background(), agentsessions.StartOptions{SessionIDPreset: "conversation-old"})
 	if err != nil || attempts != 2 {
 		t.Fatalf("fast death recovery=%d %v", attempts, err)
+	}
+}
+
+func TestNativeRecoveryDeadHealthRequiresCompletedWait(t *testing.T) {
+	uncertain := &recoveryFakeSession{done: make(chan struct{}), healthDead: true, send: func() error { return nil }}
+	t.Cleanup(func() { _ = uncertain.Stop(context.Background()) })
+	attempts := 0
+	r := recoveryRuntimeRig(t, func(agentsessions.StartOptions) (agentsessions.Session, error) {
+		attempts++
+		return uncertain, nil
+	})
+	_, err := r.Start(context.Background(), agentsessions.StartOptions{SessionIDPreset: "thread-old"})
+	var unconfirmed *recoveryUnconfirmedError
+	if !errors.As(err, &unconfirmed) || attempts != 1 {
+		t.Fatalf("unconfirmed dead health admitted recovery: attempts=%d error=%v", attempts, err)
+	}
+	got, _ := r.service.Store.GetSessionProviderMapping("source", "tether", r.plan.ProviderID)
+	if got.NativeSessionID.String != "thread-old" {
+		t.Fatal("unconfirmed completion erased native history")
 	}
 }
 
