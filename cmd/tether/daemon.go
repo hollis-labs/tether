@@ -32,6 +32,7 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -233,6 +234,10 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
+		environmentDescriptor, err := buildEnvironmentDescriptor(svc.Catalog, svc.Store)
+		if err != nil {
+			return err
+		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,
 			Usage:     svc.Store,
@@ -275,12 +280,16 @@ var daemonRunCmd = &cobra.Command{
 			log.Printf("daemon: reply routing not started: %v", err)
 		}
 		server := &daemon.Server{
+			Environment:              environmentDescriptor,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,
 			Startup: func(startupCtx context.Context) {
+				if !cfg.Modules.Enabled(environment.SessionCore) || !cfg.Modules.Enabled(environment.Lifecycle) {
+					return
+				}
 				svc.BootResumeSessions(startupCtx, bootOptions)
 				if startupCtx.Err() == nil {
 					svc.StartSessionReaper(startupCtx)
@@ -392,6 +401,10 @@ func buildA2AAdapter(ctx context.Context, catalogRoot string, sender a2aadapter.
 
 func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiServiceDeps) api.AIService {
 	if cat == nil {
+		return nil
+	}
+	profile, err := cat.Global.Profile()
+	if err != nil || !profile.Enabled(environment.LLMGateway) {
 		return nil
 	}
 	helperPath := apikeyhelper.ResolvePath()
@@ -1084,13 +1097,21 @@ func loadDaemonConfig(catalogRoot string) (daemon.Config, error) {
 
 func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 	d := cat.Global.Daemon
+	profile, err := cat.Global.Profile()
+	if err != nil {
+		return daemon.Config{}, err
+	}
+	if strings.HasPrefix(d.ListenAddr, "tcp:") && !profile.Enabled(environment.RemoteListener) {
+		return daemon.Config{}, fmt.Errorf("TCP listener requires modules.remote_listener")
+	}
 	timeout, err := time.ParseDuration(d.ShutdownTimeout)
 	if err != nil {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
 	return daemon.Config{
-		TeamsEnabled:    cat.Global.Teams.Enabled,
+		Modules:         profile,
+		TeamsEnabled:    profile.Enabled(environment.Teams),
 		IdentityMode:    mode,
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),

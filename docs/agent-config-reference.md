@@ -4,6 +4,9 @@ Tether's two-tier agent configuration model. See ADR 0033 for the design rationa
 For launch profile, boot profile, workspace, and slot fields, see
 `docs/catalog-launch-profiles.md`.
 
+Global environment identity, protocol and worker/hub module settings are
+documented in [environment protocol and profiles](environment-protocol.md).
+
 ## Provider hosting
 
 `catalog.defaults.launch_host` selects `direct` (the default) or opt-in `shim`

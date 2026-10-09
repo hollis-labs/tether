@@ -17,6 +17,7 @@ import (
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/identity"
 )
@@ -28,6 +29,7 @@ const tetherVersion = "0.2.0"
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
 type Config struct {
+	Modules         *environment.Profile
 	TeamsEnabled    bool
 	IdentityMode    identity.Mode
 	ListenAddr      string
@@ -39,6 +41,9 @@ type Config struct {
 // is canceled; Close is the cleanup hook invoked after the runtime
 // manager drains (typically it closes the store).
 type Server struct {
+	// Environment is the cached public descriptor composed from selected
+	// state identity. It is separate from authenticated session/API handlers.
+	Environment              *environment.DescriptorHandler
 	Docs                     api.DocsService
 	Identity                 *identity.Store
 	OperatorIdentityDegraded bool
@@ -512,18 +517,28 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 	}
-	return otelprop.HTTPMiddleware(identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, router))
+	protected := identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, environment.ProtocolGate(false, s.Config.Modules.ModuleGate(router)))
+	return otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
+			s.Environment.ServeHTTP(w, r)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	}))
 }
 
 // Health is the response body shape for GET /health. Kept small on purpose —
 // full session/API surfaces arrive in Sprint v002-s05.
 type Health struct {
-	Identity  *IdentityHealth `json:"identity,omitempty"`
-	Status    string          `json:"status"`
-	PID       int             `json:"pid"`
-	UptimeSec int64           `json:"uptime_sec"`
-	Listener  string          `json:"listener"`
-	Sessions  int             `json:"sessions"`
+	EnvironmentID string          `json:"environmentId,omitempty"`
+	ServerVersion string          `json:"serverVersion,omitempty"`
+	Protocol      int             `json:"protocol,omitempty"`
+	Identity      *IdentityHealth `json:"identity,omitempty"`
+	Status        string          `json:"status"`
+	PID           int             `json:"pid"`
+	UptimeSec     int64           `json:"uptime_sec"`
+	Listener      string          `json:"listener"`
+	Sessions      int             `json:"sessions"`
 	// Hardening reports the launch-hardening switches the running daemon
 	// decided from its own environment, so `tether doctor` can report what
 	// tetherd does rather than what the doctor's environment would do. Absent
@@ -636,6 +651,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Listener:  s.Config.ListenAddr,
 	}
 	h.Identity = s.identityHealth()
+	if s.Environment != nil {
+		h.EnvironmentID, h.ServerVersion, h.Protocol = s.Environment.Identity()
+	}
 	if s.Manager != nil {
 		h.Sessions = len(s.Manager.List())
 	}

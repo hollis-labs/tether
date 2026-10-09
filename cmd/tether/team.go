@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/teamcli"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,9 @@ func buildRootCommand(root *cobra.Command, args []string, fallback string) *cobr
 	catalogRoot := commandCatalogRoot(args, fallback)
 	enabled := false
 	if cat, err := config.Load(catalogRoot); err == nil {
-		enabled = cat.Global.Teams.Enabled
+		if profile, err := cat.Global.Profile(); err == nil {
+			enabled = profile.Enabled(environment.Teams)
+		}
 	}
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "team" {

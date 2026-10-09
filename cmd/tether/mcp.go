@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app/proxyevents"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -142,6 +143,13 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("init service: %w", err)
 	}
 	defer func() { _ = svc.Close() }()
+	modules, err := svc.Catalog.Global.Profile()
+	if err != nil {
+		return err
+	}
+	if !modules.Enabled(environment.LocalMCP) {
+		return fmt.Errorf("local MCP module is disabled")
+	}
 
 	// v005-09 rescue: route session-mutating MCP tools through the running
 	// daemon over UDS to eliminate the in-process split-brain that the
@@ -280,6 +288,13 @@ func runMCPDaemonOnly(cmd *cobra.Command, listenAddr, token string, scopes, serv
 	svc, err := app.NewCatalogOnly(expandCatalogPath())
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
+	}
+	modules, err := svc.Catalog.Global.Profile()
+	if err != nil {
+		return err
+	}
+	if !modules.Enabled(environment.LocalMCP) {
+		return fmt.Errorf("local MCP module is disabled")
 	}
 	adapter := mcpadapter.NewWithDaemon(svc, dc, token, scopes)
 	if err := configureMCPAdapter(adapter, listenAddr); err != nil {

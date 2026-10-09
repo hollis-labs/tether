@@ -22,6 +22,7 @@ import (
 	"github.com/hollis-labs/tether/internal/app"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcpgateway"
@@ -149,6 +150,7 @@ func runDoctor(out io.Writer, stateDir, catalogRoot string, jsonOut bool, live .
 	cat = loadedCat
 	checks = append(checks, checkShimHosting(cat)...)
 	if cat != nil {
+		checks = append(checks, checkRoleModules(cat)...)
 		checks = append(checks, checkSandboxProfiles(cat))
 		checks = append(checks, checkMCPDiscoveryMode(cat), checkMCPEndpoint(cat))
 		checks = append(checks, checkMCPProfiles(cat, catalogRoot)...)
@@ -615,6 +617,9 @@ func checkMCPLiveNames(cat *config.Catalog, root string) []checkResult {
 }
 
 func checkMCPEndpoint(cat *config.Catalog) checkResult {
+	if profile, err := cat.Global.Profile(); err == nil && !profile.Enabled(environment.LocalMCP) {
+		return ok("mcp-endpoint", "disabled by modules.local_mcp")
+	}
 	if !cat.Global.Daemon.MCPEndpoint.Enabled {
 		return ok("mcp-endpoint", "disabled (daemon.mcp_endpoint.enabled defaults false)")
 	}

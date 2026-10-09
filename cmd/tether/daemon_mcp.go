@@ -9,13 +9,14 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/mcpadapter"
 	"github.com/hollis-labs/tether/internal/mcptransport"
 )
 
 func buildDaemonMCP(ctx context.Context, svc *app.Service, cfg daemon.Config, ids *identity.Store, teams api.TeamOps) (*mcptransport.Handler, error) {
-	if !svc.Catalog.Global.Daemon.MCPEndpoint.Enabled {
+	if !cfg.Modules.Enabled(environment.LocalMCP) || !svc.Catalog.Global.Daemon.MCPEndpoint.Enabled {
 		return nil, nil
 	}
 	var verifier identity.Verifier
