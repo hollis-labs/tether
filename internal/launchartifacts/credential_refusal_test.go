@@ -15,7 +15,7 @@ import (
 
 // An accepted artifact operation never becomes credential authorization. The
 // published projection's auth.json placeholder therefore still refuses before
-// artifacts; a future explicit credential mapping must resolve this boundary.
+// artifacts; only the separately approved DEC-036 route may resolve this boundary.
 func TestArtifactCustody_CodexCredentialSlotRemainsReserved(t *testing.T) {
 	compiled := compileLaunch(t, "codex")
 	prepared, custody, err := launchartifacts.Prepare(context.Background(), compiled, testfixture.Admission(t, func() any { return compiled }))
