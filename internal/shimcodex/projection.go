@@ -57,12 +57,14 @@ type ProjectedTurn struct {
 	OutboxMessageIDs        []string        `json:"outbox_message_ids"`
 }
 type ProjectedItem struct {
-	NativeItemID      string   `json:"native_item_id"`
-	Kind              string   `json:"kind"`
-	Phase             string   `json:"phase,omitempty"`
-	TextBytes         string   `json:"text_bytes"`
-	DeltaSourceIDs    []string `json:"delta_source_ids"`
-	CompletedSourceID string   `json:"completed_source_id"`
+	NativeItemID      string            `json:"native_item_id"`
+	Kind              string            `json:"kind"`
+	Phase             string            `json:"phase,omitempty"`
+	TextBytes         string            `json:"text_bytes"`
+	DeltaSourceIDs    []string          `json:"delta_source_ids"`
+	CompletedSourceID string            `json:"completed_source_id"`
+	StartedSourceID   string            `json:"started_source_id,omitempty"`
+	Command           *ProjectedCommand `json:"command,omitempty"`
 }
 type SourceDisposition struct {
 	SourceEventID       string   `json:"source_event_id"`
@@ -337,7 +339,19 @@ func ValidateProjection(p Projection) error {
 		}
 		items := map[string]bool{}
 		for _, item := range t.Items {
-			if item.NativeItemID == "" || items[item.NativeItemID] || item.Kind != "agent_message" || !uniqueStrings(item.DeltaSourceIDs, ProjectionSources) {
+			if item.NativeItemID == "" || items[item.NativeItemID] || !uniqueStrings(item.DeltaSourceIDs, ProjectionSources) {
+				return fail("projection_invalid")
+			}
+			switch item.Kind {
+			case "agent_message":
+				if item.Command != nil || item.StartedSourceID != "" {
+					return fail("projection_invalid")
+				}
+			case "command_execution":
+				if err := validateProjectedCommand(t, item, seen); err != nil {
+					return err
+				}
+			default:
 				return fail("projection_invalid")
 			}
 			items[item.NativeItemID] = true
@@ -540,6 +554,14 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 		p.Turns = append(p.Turns, ProjectedTurn{NativeThreadID: params.ThreadID, NativeTurnID: params.Turn.ID, StableOutputTurnID: projectedID(p.Binding, "turn", params.ThreadID, params.Turn.ID), Phase: "open"})
 		source.Disposition = "projected"
 	case "item/started", "item/completed":
+		var union struct {
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(m.Params, &union) == nil && union.Item.Type == "commandExecution" {
+			return projectCommandItem(p, m, event, source)
+		}
 		var params projectionItemParams
 		if !supportedProjectionParams(m.Params, &params) || params.Item.ID == "" {
 			return nil
@@ -583,7 +605,7 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 			item.CompletedSourceID = event.Identity
 		}
 		source.Disposition = "projected"
-	case "item/agentMessage/delta":
+	case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 		var params struct {
 			ThreadID string `json:"threadId"`
 			TurnID   string `json:"turnId"`
@@ -603,7 +625,11 @@ func projectNotification(p *Projection, m Message, event Event, source *SourceDi
 				item = &t.Items[i]
 			}
 		}
-		if item == nil || item.CompletedSourceID != "" {
+		kind := "agent_message"
+		if m.Method == "item/commandExecution/outputDelta" {
+			kind = "command_execution"
+		}
+		if item == nil || item.Kind != kind || item.CompletedSourceID != "" {
 			return fail("item_mismatch")
 		}
 		if len(params.Delta) > ProjectionBudget-len(item.TextBytes) || len(item.DeltaSourceIDs) >= ProjectionSources {

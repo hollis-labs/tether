@@ -96,13 +96,13 @@ func BuildDeliveryProjection(state State) (Projection, error) {
 func ProjectedTurnText(turn ProjectedTurn) string {
 	final := false
 	for _, item := range turn.Items {
-		if item.Phase == "final_answer" {
+		if item.Kind == "agent_message" && item.Phase == "final_answer" {
 			final = true
 		}
 	}
 	var parts []string
 	for _, item := range turn.Items {
-		if !final || item.Phase == "final_answer" {
+		if item.Kind == "agent_message" && (!final || item.Phase == "final_answer") {
 			parts = append(parts, item.TextBytes)
 		}
 	}
