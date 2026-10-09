@@ -346,8 +346,14 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	if sessionID == "" {
 		return api.WakeOutcome{Reason: "offline"}
 	}
+	// Explicit notify overrides and untracked legacy messages must respect
+	// the same actor fence as the sweep's binding-first resolution.
+	bindingGeneration, blocked := checkWakeBinding(ctx, reg, to, sessionID, 0)
+	if blocked.Reason != "" {
+		return blocked
+	}
 	if st == nil {
-		return sendTurnDirect(ctx, rt, sessionID, wakeText)
+		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration)
 	}
 
 	deliveryID, ok, err := st.DeliveryIDForMessage(ctx, messageID)
@@ -358,7 +364,7 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		// Pre-T03 legacy message (no delivery-core tracking) or a lookup
 		// failure: fall back to a direct, untracked wake rather than
 		// blocking the caller's notify request on a bookkeeping gap.
-		return sendTurnDirect(ctx, rt, sessionID, wakeText)
+		return sendTurnDirect(ctx, reg, rt, to, sessionID, wakeText, bindingGeneration)
 	}
 
 	// T09 (messaging vNext, CW-20260906-0040): capture the binding
@@ -372,13 +378,6 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	// really live. Only meaningful for actor-kind targets, matching the
 	// stale-generation check below; an exact session address has no
 	// binding generation to report.
-	var bindingGeneration int64
-	if to.Kind == messaging.KindAgent && reg != nil {
-		if b, err := reg.CurrentBinding(ctx, registry.LogicalAgentBindingTarget(to.ID)); err == nil {
-			bindingGeneration = b.Generation
-		}
-	}
-
 	ds := st.DeliveryStore()
 	claim, claimErr := ds.Claim(ctx, delivery.ClaimRequest{
 		DeliveryID:        delivery.DeliveryID(deliveryID),
@@ -458,33 +457,6 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 		log.Printf("app: attempt wake: ack host_accepted for delivery %s failed (best-effort receipt recording skipped): %v", deliveryID, err)
 	}
 
-	// Stale-generation race: has ownership of this actor moved to a
-	// different session since sessionID was resolved a moment ago? Only
-	// meaningful for actor-kind targets -- an exact session address is
-	// pinned and never subject to actor rebinding. This narrows, but does
-	// not eliminate, the window: a rebind landing between this check and
-	// the SendTurn call below is a known, accepted residual race (it does
-	// not violate "never spawn a second owner" -- this call still only
-	// ever submits to the ORIGINALLY resolved sessionID -- but the check
-	// alone cannot guarantee ownership hasn't moved again in that instant;
-	// the losing side's own future resolution/sweep still self-corrects).
-	if to.Kind == messaging.KindAgent && reg != nil {
-		current, err := reg.CurrentBinding(ctx, registry.LogicalAgentBindingTarget(to.ID))
-		switch {
-		case err == nil && current.SessionID != sessionID:
-			nackRetryable(ctx, ds, lease, "stale generation: a newer binding now owns this actor", wakeOfflineRetryBackoff)
-			return api.WakeOutcome{Reason: "stale-generation", SessionID: sessionID}
-		case err != nil && !errors.Is(err, registry.ErrBindingNotFound):
-			// A transient lookup failure must not silently skip the
-			// fencing check and proceed as if ownership were confirmed
-			// current -- log it so a real DB problem here is visible,
-			// even though the wake attempt still proceeds (the binding
-			// existed at resolution time; treating a lookup hiccup as an
-			// automatic abort would make wakes needlessly fragile).
-			log.Printf("app: attempt wake: stale-generation check for %s failed (proceeding with the already-resolved session): %v", to.URN(), err)
-		}
-	}
-
 	health, ok := rt.health(sessionID)
 	if !ok {
 		nackRetryable(ctx, ds, lease, "session not running", wakeOfflineRetryBackoff)
@@ -493,6 +465,14 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	if health.Health.State == agentsessions.LiveStateProcessing {
 		nackRetryable(ctx, ds, lease, "session busy", wakeBusyRetryBackoff)
 		return api.WakeOutcome{Reason: "busy", SessionID: sessionID}
+	}
+	// Recheck after the health call, immediately before submitting. A new
+	// generation can reuse the same session ID or make it pull-only; neither
+	// grants this in-flight claim authority to submit. A rebind between this
+	// check and SendTurn remains a residual race, since they are not atomic.
+	if _, blocked := checkWakeBinding(ctx, reg, to, sessionID, bindingGeneration); blocked.Reason != "" {
+		nackRetryable(ctx, ds, lease, blocked.Reason+": "+blocked.Detail, wakeOfflineRetryBackoff)
+		return blocked
 	}
 
 	if err := rt.sendTurn(ctx, sessionID, wakeText); err != nil {
@@ -516,7 +496,48 @@ func attemptWake(ctx context.Context, st *store.Store, reg *registry.Service, rt
 	return api.WakeOutcome{Attempted: true, Delivered: true, SessionID: sessionID}
 }
 
-func sendTurnDirect(ctx context.Context, rt wakeRuntime, sessionID, wakeText string) api.WakeOutcome {
+// checkWakeBinding fences actor wakes without consulting runtime health.
+// expectedGeneration is zero before claim, and the claimed generation at
+// submission. Never-bound and lapsed hosted actors keep the legacy path;
+// the most recent pull-only binding keeps its fence even after it lapses.
+func checkWakeBinding(ctx context.Context, reg *registry.Service, to messaging.Address, sessionID string, expectedGeneration int64) (int64, api.WakeOutcome) {
+	if to.Kind != messaging.KindAgent || reg == nil {
+		return 0, api.WakeOutcome{}
+	}
+	blocked := func(reason, detail string) (int64, api.WakeOutcome) {
+		return 0, api.WakeOutcome{Reason: reason, Detail: detail, SessionID: sessionID}
+	}
+	target := registry.LogicalAgentBindingTarget(to.ID)
+	current, err := reg.CurrentBinding(ctx, target)
+	if err == nil {
+		if isPullOnly(current) {
+			return blocked("pull-only", "actor binding requires recipient polling")
+		}
+		if current.SessionID != sessionID || (expectedGeneration != 0 && current.Generation != expectedGeneration) {
+			return blocked("stale-generation", "actor binding changed before turn submission")
+		}
+		return current.Generation, api.WakeOutcome{}
+	}
+	if !errors.Is(err, registry.ErrBindingNotFound) {
+		return blocked("binding-check-failed", err.Error())
+	}
+	if expectedGeneration != 0 {
+		return blocked("stale-generation", "claimed actor binding is no longer live")
+	}
+	history, err := reg.ListBindingsForTarget(ctx, target)
+	if err != nil {
+		return blocked("binding-check-failed", err.Error())
+	}
+	if len(history) > 0 && isPullOnly(history[0]) {
+		return blocked("pull-only", "actor's most recent binding requires recipient polling")
+	}
+	return 0, api.WakeOutcome{}
+}
+
+func sendTurnDirect(ctx context.Context, reg *registry.Service, rt wakeRuntime, to messaging.Address, sessionID, wakeText string, bindingGeneration int64) api.WakeOutcome {
+	if _, blocked := checkWakeBinding(ctx, reg, to, sessionID, bindingGeneration); blocked.Reason != "" {
+		return blocked
+	}
 	if err := rt.sendTurn(ctx, sessionID, wakeText); err != nil {
 		return api.WakeOutcome{Attempted: true, SessionID: sessionID, Reason: "turn-submit-failed", Detail: err.Error()}
 	}
