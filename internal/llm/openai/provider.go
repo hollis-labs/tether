@@ -79,6 +79,7 @@ func (c sdkResponseClient) NewChatCompletionStreaming(ctx context.Context, body 
 type Config struct {
 	ResolveAPIKey        func(context.Context) (string, error)
 	BaseURL              string
+	Wire                 string
 	HTTPClient           *http.Client
 	AllowUnauthenticated bool
 }
@@ -87,6 +88,7 @@ type Config struct {
 type Provider struct {
 	resolveAPIKey apiKeyResolver
 	newClient     clientFactory
+	wire          string
 	allowUnauth   bool
 }
 
@@ -95,6 +97,7 @@ func New(cfg Config) *Provider {
 	return &Provider{
 		resolveAPIKey: cfg.ResolveAPIKey,
 		allowUnauth:   cfg.AllowUnauthenticated,
+		wire:          cfg.Wire,
 		newClient: func(apiKey string) responseClient {
 			opts := []option.RequestOption{
 				option.WithMaxRetries(0),
@@ -132,12 +135,19 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 		}
 	}
 
+
+	if p.wire == "chat_completions" {
+		return p.chatCompletion(ctx, req, route, apiKey)
+	}
 	params, err := buildResponseParams(req, route.Model)
 	if err != nil {
 		return llm.Response{}, err
 	}
 	resp, err := p.newClient(apiKey).New(ctx, params)
 	if err != nil {
+		if p.wire == "responses" {
+			return llm.Response{}, err
+		}
 		if shouldFallbackToChatCompletions(err) {
 			return p.chatCompletion(ctx, req, route, apiKey)
 		}
@@ -199,6 +209,10 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 		}
 	}
 
+
+	if p.wire == "chat_completions" {
+		return p.streamChatCompletion(ctx, req, route, apiKey, emit)
+	}
 	params, err := buildResponseParams(req, route.Model)
 	if err != nil {
 		return llm.Response{}, err
@@ -258,6 +272,9 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 		}
 	}
 	if err := stream.Err(); err != nil {
+		if p.wire == "responses" {
+			return llm.Response{}, err
+		}
 		if shouldFallbackToChatCompletions(err) {
 			return p.streamChatCompletion(ctx, req, route, apiKey, emit)
 		}
