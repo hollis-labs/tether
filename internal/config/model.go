@@ -82,19 +82,20 @@ type AIPolicyConfig struct {
 }
 
 type AIProviderConfig struct {
-	ID              string              `yaml:"id"`
-	Type            string              `yaml:"type"`
-	CatalogProvider string              `yaml:"catalog_provider,omitempty"`
-	Price           string              `yaml:"price,omitempty"`
-	Wire            string              `yaml:"wire,omitempty"`
-	Model           string              `yaml:"model"`
-	Models          []string            `yaml:"models"`
-	DefaultModel    string              `yaml:"default_model"`
-	SecretRef       string              `yaml:"secret_ref"`
-	BaseURL         string              `yaml:"base_url"`
-	Enabled         bool                `yaml:"enabled"`
-	Policy          AIPolicyConfig      `yaml:"policy"`
-	Extensions      *ProviderExtensions `yaml:"extensions,omitempty"`
+	ID                   string              `yaml:"id"`
+	Type                 string              `yaml:"type"`
+	CatalogProvider      string              `yaml:"catalog_provider,omitempty"`
+	Price                string              `yaml:"price,omitempty"`
+	Wire                 string              `yaml:"wire,omitempty"`
+	Model                string              `yaml:"model"`
+	Models               []string            `yaml:"models"`
+	DefaultModel         string              `yaml:"default_model"`
+	SecretRef            string              `yaml:"secret_ref"`
+	BaseURL              string              `yaml:"base_url"`
+	Enabled              bool                `yaml:"enabled"`
+	IncludeReasoningText bool                `yaml:"include_reasoning_text,omitempty"`
+	Policy               AIPolicyConfig      `yaml:"policy"`
+	Extensions           *ProviderExtensions `yaml:"extensions,omitempty"`
 	// DiscoverModels opts an openai/openai-compatible connection into a
 	// bounded GET {base_url}/models at daemon start. Discovered ids are
 	// appended after the configured models; configured ids keep precedence
