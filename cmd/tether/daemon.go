@@ -585,7 +585,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		return nil
 	}
 
-	catalogView := modelcatalog.NewOverlay(catalog, syntheticConfiguredModels(providerConfigs))
+	models, priceStates := syntheticConfiguredModels(providerConfigs)
+	catalogView := modelcatalog.NewOverlay(catalog, models, priceStates)
 
 	var evaluators []router.PolicyEvaluator
 	if deps.Usage != nil {
@@ -608,21 +609,23 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	}
 }
 
-func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map[string]modelsdev.Model {
+func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) (map[string]modelsdev.Model, map[string]modelcatalog.PriceState) {
 	out := make(map[string]modelsdev.Model)
+	ps := make(map[string]modelcatalog.PriceState)
 	for _, p := range providers {
 		providerID := effectiveCatalogProvider(p)
 		for _, modelID := range p.EffectiveModels() {
 			key := providerID + "\x00" + modelID
-			cost := modelsdev.Pricing{Input: -1, Output: -1}
+			state := modelcatalog.PriceUnknown
 			if p.Price == "free" {
-				cost = modelsdev.Pricing{}
+				state = modelcatalog.PriceFree
 			}
+			ps[key] = state
 			out[key] = modelsdev.Model{
 				ID:     modelID,
 				Name:   modelID,
 				Family: providerID,
-				Cost:   cost,
+				Cost:   modelsdev.Pricing{},
 				Modality: modelsdev.Modality{
 					Input:  []string{"text"},
 					Output: []string{"text"},
@@ -631,7 +634,7 @@ func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map
 			}
 		}
 	}
-	return out
+	return out, ps
 }
 
 func modelCatalogProviderID(providerType string) string {

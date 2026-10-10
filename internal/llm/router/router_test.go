@@ -538,3 +538,49 @@ func (s stubCatalog) EstimateCost(providerID, modelID string, promptTokens, comp
 	}
 	return 0, modelcatalog.PriceUnknown
 }
+
+func TestValidateBudget(t *testing.T) {
+	c := stubCatalog{refs: []modelsdev.ModelRef{
+		{ProviderID: "p1", ID: "priced", Cost: modelsdev.Pricing{Input: 1.0, Output: 2.0}},
+		{ProviderID: "p1", ID: "free", Cost: modelsdev.Pricing{Input: 0, Output: 0}},
+	}}
+
+	tests := []struct {
+		name      string
+		reqBudget float64
+		routeMax  *float64
+		model     string
+		wantCost  float64
+		wantOk    bool
+		wantErr   bool
+	}{
+		{"no budget", 0, nil, "priced", 0, false, false},
+		{"req budget sufficient", 5.0, nil, "priced", 0.002, true, false},
+		{"req budget exceeded", 0.001, nil, "priced", 0, true, true},
+		
+		
+		{"free model with zero budget passes", 0.0, func(f float64) *float64 { return &f }(0.0), "free", 0, true, false},
+		{"unknown model with zero budget fails", 0.0, func(f float64) *float64 { return &f }(0.0), "unknown", 0, false, true},
+		{"regression: max cost but no req budget passes priced", 0.0, func(f float64) *float64 { return &f }(5.0), "priced", 0, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := llm.Request{
+				CostBudgetUSD:   tt.reqBudget,
+				MaxOutputTokens: 1000, // triggers token estimation
+				Input:           []llm.Message{{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "hello"}}}},
+			}
+			route := Route{MaxCostUSD: tt.routeMax}
+			cost, ok, err := validateBudget(req, route, c, "p1", tt.model)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateBudget() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if ok != tt.wantOk {
+				t.Errorf("validateBudget() ok = %v, want %v", ok, tt.wantOk)
+			}
+			if cost != tt.wantCost {
+				t.Errorf("validateBudget() cost = %v, want %v", cost, tt.wantCost)
+			}
+		})
+	}
+}

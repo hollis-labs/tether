@@ -216,6 +216,9 @@ func validateAIConfig(ai AIConfig) error {
 			return fmt.Errorf("global ai.providers[%d] (%s) policy usage_budget.max_cost_usd is required when usage_budget is set", i, p.ID)
 		}
 		models := p.EffectiveModels()
+		if p.Price != "" && p.Price != "free" {
+			return fmt.Errorf("global ai.providers[%d] (%s) has unsupported price %q (must be 'free' or empty)", i, p.ID, p.Price)
+		}
 		switch p.Type {
 		case "anthropic", "openai", "gemini":
 			if p.SecretRef == "" {

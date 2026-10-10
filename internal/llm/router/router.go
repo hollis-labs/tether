@@ -493,30 +493,32 @@ func validateLimits(req llm.Request, c Catalog, provider, model string) error {
 }
 
 func validateBudget(req llm.Request, route Route, c Catalog, provider, model string) (float64, bool, error) {
-	unlimited := req.CostBudgetUSD <= 0 && route.MaxCostUSD == nil
-	if unlimited {
+	freeOnly := route.MaxCostUSD != nil && *route.MaxCostUSD == 0
+	if req.CostBudgetUSD <= 0 && !freeOnly {
 		return 0, false, nil
 	}
-
-	effectiveBudget := req.CostBudgetUSD
-	if route.MaxCostUSD != nil && (effectiveBudget <= 0 || *route.MaxCostUSD < effectiveBudget) {
-		effectiveBudget = *route.MaxCostUSD
-	}
-
 	promptTokens, completionTokens, ok := budgetEstimateTokens(req)
 	if !ok {
 		return 0, false, nil
 	}
-
 	cost, state := c.EstimateCost(provider, model, promptTokens, completionTokens)
-	if state == modelcatalog.PriceUnknown {
-		if effectiveBudget == 0 {
-			return 0, false, fmt.Errorf("budget is zero but cost is unknown")
+
+	if freeOnly {
+		if state == modelcatalog.PriceUnknown {
+			return 0, false, fmt.Errorf("route requires free models but cost is unknown")
 		}
-		return 0, false, nil
+		if cost > 0 {
+			return 0, true, fmt.Errorf("route requires free models but estimated cost is %.6f USD", cost)
+		}
 	}
-	if cost > effectiveBudget {
-		return 0, true, fmt.Errorf("estimated cost %.6f USD exceeds budget %.6f USD", cost, effectiveBudget)
+
+	if req.CostBudgetUSD > 0 {
+		if state == modelcatalog.PriceUnknown {
+			return 0, false, nil
+		}
+		if cost > req.CostBudgetUSD {
+			return 0, true, fmt.Errorf("estimated cost %.6f USD exceeds budget %.6f USD", cost, req.CostBudgetUSD)
+		}
 	}
 	return cost, true, nil
 }
