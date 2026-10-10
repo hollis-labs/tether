@@ -135,16 +135,28 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 // internal team marker skips ordinary actor bookkeeping: the enrollment adapter
 // owns this separately enrolled member's exact actor binding.
 func (s *Service) CreateTeamSession(ctx context.Context, key, launchID string) (*Launched, error) {
+	return s.CreateTeamSessionWithContext(ctx, key, launchID, TeamBootContext{})
+}
+
+// CreateTeamSessionWithContext seals accepted non-secret slot context in the
+// same immutable keyed create as its launch plan.
+func (s *Service) CreateTeamSessionWithContext(ctx context.Context, key, launchID string, boot TeamBootContext) (*Launched, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	digest := requestDigest(struct{ Op, Launch string }{"team-create", launchID})
+	if err := boot.validate(); err != nil {
+		return nil, err
+	}
+	digest := teamCreateDigest(launchID, boot)
 	return s.createKeyed(key, digest, func() (*launch.Plan, error) {
 		plan, err := s.BuildLaunchPlan(CreateSessionInput{LaunchID: launchID})
 		if err != nil {
 			return nil, err
 		}
 		plan.TeamMember = true
+		if err := applyTeamBootContext(plan, boot); err != nil {
+			return nil, err
+		}
 		return plan, nil
 	})
 }

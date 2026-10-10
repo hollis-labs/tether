@@ -56,5 +56,6 @@ func NewCommand(factory func() (*client.Client, error), enabled bool) *cobra.Com
 		sub.MarkFlagsMutuallyExclusive("request", "request-file")
 		cmd.AddCommand(sub)
 	}
+	addRosterCommands(cmd, factory)
 	return cmd
 }
