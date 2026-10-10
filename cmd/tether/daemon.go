@@ -473,6 +473,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),
+				OpenRouter:  mapOpenRouterExt(p.Extensions),
+				HuggingFace: mapHuggingFaceExt(p.Extensions),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
