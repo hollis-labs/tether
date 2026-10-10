@@ -135,7 +135,6 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 		}
 	}
 
-
 	if p.wire == "chat_completions" {
 		return p.chatCompletion(ctx, req, route, apiKey)
 	}
@@ -208,7 +207,6 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 			return llm.Response{}, fmt.Errorf("resolve openai api key: %w", err)
 		}
 	}
-
 
 	if p.wire == "chat_completions" {
 		return p.streamChatCompletion(ctx, req, route, apiKey, emit)
