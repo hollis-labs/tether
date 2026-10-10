@@ -18,6 +18,10 @@ import (
 func TestLaunchScratchShimPrepareSubstitutionRefusesPlacement(t *testing.T) {
 	for _, scenario := range []string{"accepted", "physical-substitution", "changed-row", "changed-raw-plan", "changed-holder"} {
 		t.Run(scenario, func(t *testing.T) {
+			// shimFixture uses its workspace as TMPDIR. Keep the control DB
+			// created by bindingHarness outside that workspace, including
+			// when the launching test process has no GOTMPDIR configured.
+			t.Setenv("GOTMPDIR", t.TempDir())
 			f := shimFixture(t)
 			ctx := context.Background()
 			unlock, err := f.svc.lockSessionLaunch(ctx, f.req.ID)
