@@ -145,6 +145,10 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Refuse malformed remote flags even before a first-run catalog exists.
+		if _, err := remoteListenerFromCommand(config.RemoteListenerConfig{}, cmd); err != nil {
+			return err
+		}
 
 		// Pre-flight liveness check BEFORE app.New: app.New unconditionally
 		// runs seedLogicalAgents (a DB write) and, on a catalog-absent
@@ -167,10 +171,12 @@ var daemonRunCmd = &cobra.Command{
 		// by the same review to refuse stealing a socket something is
 		// still actually listening on, independent of PID-file integrity.
 		if cat, cfgErr := config.Load(catalogPath); cfgErr == nil {
-			if daemonCfg, err := daemonConfigFromCommand(cat, cmd); err == nil {
-				if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
-					return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
-				}
+			daemonCfg, err := daemonConfigFromCommand(cat, cmd)
+			if err != nil {
+				return err
+			}
+			if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
+				return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
 			}
 		}
 
@@ -1207,16 +1213,8 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
-	remote := daemon.RemoteListenerConfig{
-		Enabled:        d.RemoteListener.Enabled,
-		ListenAddr:     d.RemoteListener.ListenAddr,
-		AllowedHosts:   append([]string(nil), d.RemoteListener.AllowedHosts...),
-		AllowedOrigins: append([]string(nil), d.RemoteListener.AllowedOrigins...),
-	}
-	if remote.Enabled && remote.ListenAddr == "" {
-		remote.ListenAddr = daemon.DefaultRemoteListenAddr
-	}
-	if err := remote.Validate(); err != nil {
+	remote, err := resolveRemoteListener(d.RemoteListener)
+	if err != nil {
 		return daemon.Config{}, err
 	}
 	if remote.Enabled && !profile.Enabled(environment.RemoteListener) {

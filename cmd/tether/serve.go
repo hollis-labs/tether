@@ -29,15 +29,23 @@ func addRemoteServeFlags(cmd *cobra.Command) {
 func daemonConfigFromCommand(cat *config.Catalog, cmd *cobra.Command) (daemon.Config, error) {
 	// Copy the catalog value so CLI flags never write back to configuration.
 	copyCatalog := *cat
-	remote := cat.Global.Daemon.RemoteListener
+	remote, err := remoteListenerFromCommand(cat.Global.Daemon.RemoteListener, cmd)
+	if err != nil {
+		return daemon.Config{}, err
+	}
+	copyCatalog.Global.Daemon.RemoteListener = remote
+	return daemonConfigFromCatalog(&copyCatalog)
+}
+
+func remoteListenerFromCommand(remote config.RemoteListenerConfig, cmd *cobra.Command) (config.RemoteListenerConfig, error) {
 	if cmd.Name() == "serve" || cmd.Flags().Changed("remote-listen") {
 		remote.Enabled = true
 		addr, err := cmd.Flags().GetString("remote-listen")
 		if err != nil {
-			return daemon.Config{}, err
+			return config.RemoteListenerConfig{}, err
 		}
 		if cmd.Flags().Changed("remote-listen") && addr == "" {
-			return daemon.Config{}, fmt.Errorf("--remote-listen requires a loopback TCP address")
+			return config.RemoteListenerConfig{}, fmt.Errorf("--remote-listen requires a loopback TCP address")
 		}
 		if addr != "" {
 			remote.ListenAddr = addr
@@ -49,8 +57,22 @@ func daemonConfigFromCommand(cat *config.Catalog, cmd *cobra.Command) (daemon.Co
 	if cmd.Flags().Changed("allowed-origin") {
 		remote.AllowedOrigins, _ = cmd.Flags().GetStringSlice("allowed-origin")
 	}
-	copyCatalog.Global.Daemon.RemoteListener = remote
-	return daemonConfigFromCatalog(&copyCatalog)
+	if _, err := resolveRemoteListener(remote); err != nil {
+		return config.RemoteListenerConfig{}, err
+	}
+	return remote, nil
+}
+
+func resolveRemoteListener(c config.RemoteListenerConfig) (daemon.RemoteListenerConfig, error) {
+	remote := daemon.RemoteListenerConfig{
+		Enabled: c.Enabled, ListenAddr: c.ListenAddr,
+		AllowedHosts:   append([]string(nil), c.AllowedHosts...),
+		AllowedOrigins: append([]string(nil), c.AllowedOrigins...),
+	}
+	if remote.Enabled && remote.ListenAddr == "" {
+		remote.ListenAddr = daemon.DefaultRemoteListenAddr
+	}
+	return remote, remote.Validate()
 }
 
 func init() {

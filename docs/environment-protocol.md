@@ -202,7 +202,10 @@ socket. No managed unit or deployment is installed by this entry point.
 
 Credential issuance and pairing remain CW-20261009-0070. Until then, only
 credentials already minted through the local path can authenticate remote calls;
-the operator token is never a remote bootstrap mechanism. Federation transport
+the operator token is never a remote bootstrap mechanism. The current federation
+HTTP client does not resolve peer credentials or attach bearer/protocol headers
+by default; that client and secret resolution belongs to CW-20261009-0074 using
+the credentials from CW-20261009-0070. Federation transport
 adoption remains CW-20261009-0074: its current Subscribe forwarding omits `as`,
 while `/messages/subscribe` requires `as` to match `to`. This listener does not
 repair or activate that transport.

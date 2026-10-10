@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -117,5 +118,68 @@ daemon:
 	cfg, err := daemonConfigFromCatalog(&config.Catalog{Global: global})
 	if err != nil || !cfg.RemoteListener.Enabled || cfg.IdentityMode != identity.Observe || cfg.RemoteListener.AllowedHosts[0] != "localhost:9000" || cfg.RemoteListener.AllowedOrigins[0] != "http://localhost:9000" {
 		t.Fatal(cfg, err)
+	}
+}
+
+func TestServePreflightRefusesInvalidFlagsBeforeOpeningState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	savedFactory, savedCatalog := newDaemonService, catalogPath
+	t.Cleanup(func() { newDaemonService, catalogPath = savedFactory, savedCatalog })
+	catalogPath = t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "daemon.pid")
+	global := config.Global{Daemon: config.DaemonConfig{ListenAddr: "unix:" + filepath.Join(t.TempDir(), "unused.sock"), PIDFile: pidFile, ShutdownTimeout: "1s"}}
+	data, err := yaml.Marshal(global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(catalogPath, "global.yaml"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(catalogPath); err != nil {
+		t.Fatal("preflight fixture catalog failed to load", err)
+	}
+	newDaemonService = func(string) (*app.Service, error) {
+		t.Fatal("preflight opened selected state")
+		return nil, errors.New("unexpected state open")
+	}
+	for _, tc := range []struct{ addr, host string }{
+		{"tcp:0.0.0.0:7331", ""},
+		{daemon.DefaultRemoteListenAddr, "*"},
+	} {
+		cmd := &cobra.Command{Use: "serve"}
+		addRemoteServeFlags(cmd)
+		if err := cmd.Flags().Set("remote-listen", tc.addr); err != nil {
+			t.Fatal(err)
+		}
+		if tc.host != "" {
+			if err := cmd.Flags().Set("allowed-host", tc.host); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := daemonRunCmd.RunE(cmd, nil)
+		if err == nil {
+			t.Fatal("preflight accepted invalid remote flags")
+		}
+	}
+	global.Daemon.RemoteListener = config.RemoteListenerConfig{Enabled: true, ListenAddr: "tcp:0.0.0.0:7331"}
+	data, err = yaml.Marshal(global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(catalogPath, "global.yaml"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &cobra.Command{Use: "serve"}
+	addRemoteServeFlags(cmd)
+	if err := daemonRunCmd.RunE(cmd, nil); err == nil {
+		t.Fatal("invalid catalog listener reached state open")
+	}
+	// First-run flags must also fail before catalog seeding or state open.
+	catalogPath = filepath.Join(t.TempDir(), "absent-catalog")
+	if err := cmd.Flags().Set("remote-listen", "tcp:0.0.0.0:7331"); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemonRunCmd.RunE(cmd, nil); err == nil {
+		t.Fatal("invalid first-run flags reached state open")
 	}
 }
