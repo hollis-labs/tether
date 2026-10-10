@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 	"slices"
@@ -87,6 +88,9 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 type sessionLaunchGate struct {
 	slot chan struct{}
 	refs int
+	// holder is fresh for each acquisition, even while waiters retain this
+	// same gate pointer. launchMu guards publication and invalidation.
+	holder string
 }
 
 func (s *Service) lockSessionLaunch(ctx context.Context, id string) (func(), error) {
@@ -111,7 +115,19 @@ func (s *Service) lockSessionLaunch(ctx context.Context, id string) (func(), err
 	}
 	select {
 	case gate.slot <- struct{}{}:
-		return func() { <-gate.slot; dropRef() }, nil
+		s.launchMu.Lock()
+		gate.holder = uuid.NewString()
+		s.launchMu.Unlock()
+		return func() {
+			s.launchMu.Lock()
+			gate.holder = ""
+			<-gate.slot
+			gate.refs--
+			if gate.refs == 0 {
+				delete(s.launches, id)
+			}
+			s.launchMu.Unlock()
+		}, nil
 	case <-ctx.Done():
 		dropRef()
 		return nil, ctx.Err()

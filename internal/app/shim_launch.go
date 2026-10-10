@@ -27,6 +27,7 @@ import (
 	"github.com/hollis-labs/tether/internal/registry"
 	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/shimhost"
+	"github.com/hollis-labs/tether/internal/store"
 )
 
 type shimHosting struct {
@@ -150,7 +151,16 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		return fallback("placement_bookkeeping_unavailable")
 	}
 	// Make the durable intent eligible for startup recovery before submission.
-	if err = s.Store.UpdateSessionState(req.ID, string(session.StateLaunching), 0, nil); err != nil {
+	var placementDecision *store.WorkspaceLaunchDecision
+	scratchRuntime, hasScratch := req.Runtime.(*launchScratchRuntime)
+	if hasScratch {
+		decision, transitionErr := s.Store.BeginWorkspaceScratchPlacement(ctx, scratchRuntime.custody.accepted, scratchRuntime.custody.allocation)
+		err = transitionErr
+		placementDecision = &decision
+	} else {
+		err = s.Store.UpdateSessionState(req.ID, string(session.StateLaunching), 0, nil)
+	}
+	if err != nil {
 		cleanup()
 		return req, &shimhost.Failure{Code: "outcome_unknown", Message: "placement intent state could not be recorded"}
 	}
@@ -165,6 +175,21 @@ func (s *Service) prepareShimStart(ctx context.Context, plan *launch.Plan, req a
 		}
 		_ = s.Store.UpdateSessionState(req.ID, string(session.StateCreated), 0, nil)
 		return fallback(shimFailureCode(err))
+	}
+	if hasScratch {
+		// Earlier host preparation/checkpoint callbacks may have changed the
+		// resource or accepted decision. No DB transaction crosses placement.
+		if err := s.Store.ValidateWorkspaceScratchPlacement(ctx, *placementDecision, scratchRuntime.custody.allocation); err != nil {
+			cleanup()
+			return req, err
+		}
+		scratchRuntime.custody.mu.Lock()
+		err := scratchRuntime.custody.validatePhysical(ctx)
+		scratchRuntime.custody.mu.Unlock()
+		if err != nil {
+			cleanup()
+			return req, err
+		}
 	}
 	receipt, err := host.placeProvider(ctx, intent.OperationKey, spec)
 	// Placement can outlive the client request. Complete bookkeeping under its

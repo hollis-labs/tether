@@ -127,21 +127,40 @@ func TestMaterializeWorkRootSlashBranchName(t *testing.T) {
 	}
 }
 
-func TestMaterializeWorkRootTemplateNameStaysDetached(t *testing.T) {
+func TestMaterializeWorkRootTemplateNameCreatesAcceptedBranch(t *testing.T) {
 	repo := initGitRepo(t)
 	root := t.TempDir()
 
-	// An unrendered template must NOT be fed to git as a branch name.
 	plan := &launch.Plan{
 		RepoRoot:      repo,
+		ProjectID:     "project",
 		WorkspaceMode: "worktree",
 		WorktreeName:  "tether/{{.ProjectID}}/{{.SessionID}}",
 	}
 	if err := MaterializeWorkRoot(root, "session-tmpl", plan); err != nil {
 		t.Fatalf("MaterializeWorkRoot: %v", err)
 	}
-	if out := gitOutput(t, repo, "branch", "--list", "tether/*"); out != "" {
-		t.Fatalf("template worktree_name leaked a branch: %q", out)
+	if got := strings.TrimSpace(gitOutput(t, plan.WorkRoot, "symbolic-ref", "--short", "HEAD")); got != "tether/project/session-tmpl" {
+		t.Fatalf("rendered worktree branch: %q", got)
+	}
+}
+
+func TestMaterializeWorkRootInvalidTemplateRefusesBeforeAllocation(t *testing.T) {
+	repo := initGitRepo(t)
+	for _, name := range []string{"tether/{{.Unknown}}", "tether/{{.ProjectID}}", "{{broken", "bad..ref"} {
+		t.Run(name, func(t *testing.T) {
+			base := filepath.Join(t.TempDir(), "not-created")
+			plan := &launch.Plan{RepoRoot: repo, WorkspaceMode: "worktree", WorktreeBase: base, WorktreeName: name}
+			if err := MaterializeWorkRoot("", "session", plan); err == nil {
+				t.Fatal("invalid branch intent admitted")
+			}
+			if _, err := os.Stat(base); !os.IsNotExist(err) {
+				t.Fatalf("refused branch allocated a directory: %v", err)
+			}
+			if plan.WorkRoot != "" {
+				t.Fatal("refused branch changed accepted work root")
+			}
+		})
 	}
 }
 

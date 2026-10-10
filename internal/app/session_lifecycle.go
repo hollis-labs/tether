@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -278,6 +279,17 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 		return nil, err
 	}
+	var scratchDecision *store.WorkspaceLaunchDecision
+	if rt.Kind() != "api" {
+		if s.holdsLaunchScratch(sessionID) {
+			return nil, store.ErrWorkspaceAllocationConflict
+		}
+		accepted, err := s.captureLaunchScratchDecision(ctx, row, plan)
+		if err != nil {
+			return nil, err
+		}
+		scratchDecision = &accepted
+	}
 
 	ws := workspace.Open(row.Workspace, sessionID)
 
@@ -481,8 +493,10 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		// a launch must not fail because an audit field could not be written, and
 		// the column's NULL state already means "unknown", which is the truth if
 		// this write is the thing that failed.
-		if err := s.Store.SetSessionRefAttribution(sessionID, mcpPlan.Attribution); err != nil {
-			log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
+		if scratchDecision == nil {
+			if err := s.Store.SetSessionRefAttribution(sessionID, mcpPlan.Attribution); err != nil {
+				log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, err)
+			}
 		}
 
 		if err := s.prepareRecoveryNativeState(ctx, plan, prepared.PlantedBootDir); err != nil {
@@ -490,7 +504,17 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, fmt.Errorf("prepare native recovery state: %w", err)
 		}
-		if err := s.Store.SetNativeStateRoot(ctx, sessionID, plan.NativeStateRoot); err != nil {
+		if scratchDecision != nil {
+			result, err := s.Store.RecordWorkspacePreparation(ctx, *scratchDecision, &store.WorkspacePreparationStamp{RefAttribution: mcpPlan.Attribution, NativeStateRoot: plan.NativeStateRoot})
+			if err != nil {
+				return nil, fmt.Errorf("record workspace preparation: %w", err)
+			}
+			if result.RefAttributionError != nil {
+				log.Printf("session %s: record ref attribution %q failed: %v", sessionID, mcpPlan.Attribution, result.RefAttributionError)
+			}
+			scratchDecision = &result.Decision
+			row = &result.Decision.Session
+		} else if err := s.Store.SetNativeStateRoot(ctx, sessionID, plan.NativeStateRoot); err != nil {
 			exit := 1
 			_ = s.Store.UpdateSessionState(sessionID, string(session.StateFailed), 0, &exit)
 			return nil, fmt.Errorf("record native state root: %w", err)
@@ -534,6 +558,41 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		startOpts.Workdir = plan.EffectiveWorkRoot()
 		startOpts.Env = mergeEnv(startOpts.Env, map[string]string{"CODEX_HOME": plan.NativeStateRoot})
 	}
+	var scratch *launchScratchCustody
+	if scratchDecision != nil {
+		if rt.Kind() == acp.Kind {
+			result, err := s.Store.RecordWorkspacePreparation(ctx, *scratchDecision, nil)
+			if err != nil {
+				return nil, err
+			}
+			scratchDecision = &result.Decision
+		}
+		roots, err := s.launchScratchControlRoots(ctx, row.Workspace)
+		if err != nil {
+			return nil, err
+		}
+		operation := uuid.NewString()
+		prior, err := s.Store.WorkspaceScratchAllocation(ctx, sessionID)
+		if err == nil {
+			operation = prior.OperationID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		scratch, err = s.admitLaunchScratch(ctx, *scratchDecision, plan, operation, roots)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.escrowLaunchScratch(scratch); err != nil {
+			return nil, err
+		}
+		// Pre-entry failure releases handles only. Entered unknown outcomes
+		// remain escrowed; success has one Manager-completion release owner.
+		startOpts.Env = mergeEnv(startOpts.Env, map[string]string{"TMPDIR": scratch.allocation.Root})
+	}
+	var scratchRuntime *launchScratchRuntime
+	defer func() {
+		s.releaseScratchBeforeEntry(scratch, scratchRuntime)
+	}()
 	startOpts.Profile = profile
 	startOpts.OnSessionID = onSessionID
 	startOpts.OnProviderSessionLost = makeProviderSessionLostCallback(s.Bus, sessionID, plan.LogicalAgentID)
@@ -589,11 +648,24 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 	if plan.ResumeSourceSessionID != "" && (plan.ProviderBrand == "claude" || plan.ProviderBrand == "codex" || plan.ProviderBrand == "antigravity") {
 		req.Runtime = &recoveryRuntime{Runtime: rt, service: s, plan: plan, id: sessionID, request: ctx}
 	}
+	if scratch != nil {
+		if err := scratch.Validate(ctx); err != nil {
+			return nil, err
+		}
+		scratchRuntime = &launchScratchRuntime{Runtime: req.Runtime, custody: scratch}
+		req.Runtime = scratchRuntime
+	}
 	s.turnOutputs.Store(sessionID, turnOutput)
 	req, err = s.prepareShimStart(ctx, plan, req)
 	if err != nil {
 		s.turnOutputs.Delete(sessionID)
 		return nil, err
+	}
+	if scratch != nil {
+		if req.Runtime != scratchRuntime {
+			scratchRuntime.Runtime = req.Runtime
+		}
+		req.Runtime = scratchRuntime
 	}
 	launchCtx := ctx
 	if s.shimSessionRetained(sessionID) {
@@ -631,6 +703,9 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		return nil, s.retainShimStartFailure(sessionID, err)
 	}
 	launched = true
+	if scratch != nil {
+		go s.releaseScratchAfterCompletion(context.WithoutCancel(ctx), scratch)
+	}
 	s.finalizeSessionOutput(ctx, sessionID, turnOutput)
 	// A codex session left to codex's own sandbox is re-checked before each
 	// turn: what shapes that sandbox can change after this launch.

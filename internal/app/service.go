@@ -143,6 +143,11 @@ type Service struct {
 	// (refuseWidenedCodex). Set at launch, removed when the session ends.
 	codexExempt sync.Map
 
+	// scratchCustodies retains physical handles by session/operation through
+	// authoritative completion, including entered Start failures of unknown
+	// outcome. No shutdown, reaper or cleanup path infers deletion eligibility.
+	scratchCustodies sync.Map
+
 	// protectionStatus decides whether launched agents get Tether's own
 	// directories as ProtectedPaths; nil uses the daemon's OS and
 	// environment. See protected_paths.go.
