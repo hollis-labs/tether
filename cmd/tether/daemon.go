@@ -541,7 +541,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			usageBudget := effectiveAIUsageBudget(ai.Policy.UsageBudget, providerCfg.Policy.UsageBudget, routeCfg.UsageBudget)
 			routes = append(routes, router.Route{
 				Provider:          routeCfg.Provider,
-				CatalogProvider:   modelCatalogProviderID(providerCfg.Type),
+				CatalogProvider:   effectiveCatalogProvider(providerCfg),
 				Model:             routeCfg.Model,
 				Mode:              routeCfg.Mode,
 				Intent:            routeCfg.Intent,
@@ -569,7 +569,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				allowReasoning, allowTools, allowAttachments := effectiveAIDefaultPolicy(ai.Policy, p.Policy)
 				routes = append(routes, router.Route{
 					Provider:         id,
-					CatalogProvider:  modelCatalogProviderID(p.Type),
+					CatalogProvider:  effectiveCatalogProvider(p),
 					Model:            model,
 					AllowReasoning:   allowReasoning,
 					AllowTools:       allowTools,
@@ -611,7 +611,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map[string]modelsdev.Model {
 	out := make(map[string]modelsdev.Model)
 	for _, p := range providers {
-		providerID := modelCatalogProviderID(p.Type)
+		providerID := effectiveCatalogProvider(p)
 		for _, modelID := range p.EffectiveModels() {
 			key := providerID + "\x00" + modelID
 			out[key] = modelsdev.Model{
@@ -1217,4 +1217,11 @@ func nativeOnlyBootOptions() (app.BootResumeOptions, error) {
 		result.NativeOnlyWorkRoots[id] = path
 	}
 	return result, nil
+}
+
+func effectiveCatalogProvider(p config.AIProviderConfig) string {
+	if p.CatalogProvider != "" {
+		return p.CatalogProvider
+	}
+	return modelCatalogProviderID(p.Type)
 }
