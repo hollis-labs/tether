@@ -1,12 +1,16 @@
 package sshenroll
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,14 +31,27 @@ func init() {
 		_, _ = fmt.Fprint(os.Stderr, "synthetic private diagnostic")
 		os.Exit(17)
 	}
-	if mode == "forward" {
+	if mode == "stall" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	if mode == "forward" || mode == "substitute-tcp" {
 		for i, arg := range os.Args {
 			if arg == "-L" && i+1 < len(os.Args) {
 				parts := strings.Split(os.Args[i+1], ":")
-				if len(parts) != 4 {
+				network, address := "unix", parts[0]
+				if len(parts) == 4 {
+					network, address = "tcp4", net.JoinHostPort(parts[0], parts[1])
+				} else if len(parts) != 3 {
 					os.Exit(2)
 				}
-				listener, err := net.Listen("tcp4", net.JoinHostPort(parts[0], parts[1]))
+				if mode == "substitute-tcp" && network == "unix" {
+					for {
+						time.Sleep(time.Hour)
+					}
+				}
+				listener, err := net.Listen(network, address)
 				if err != nil {
 					os.Exit(3)
 				}
@@ -42,6 +59,11 @@ func init() {
 					conn, err := listener.Accept()
 					if err != nil {
 						os.Exit(4)
+					}
+					if mode == "forward" {
+						if _, err := http.ReadRequest(bufio.NewReader(conn)); err == nil {
+							_, _ = fmt.Fprint(conn, "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nowned-forward")
+						}
 					}
 					_ = conn.Close()
 				}
@@ -67,14 +89,19 @@ func TestSSHPrivateCaptureAndSanitizedRefusal(t *testing.T) {
 func TestSSHForwardOwnedCancellationAndJoin(t *testing.T) {
 	t.Setenv("TETHER_SSH_FIXTURE_HELPER", "forward")
 	s := &SSH{Target: "worker", Command: os.Args[0]}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	tunnel, err := s.Forward(ctx, 7181)
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := strings.TrimPrefix(tunnel.BaseURL(), "http://")
-	conn, err := net.DialTimeout("tcp", address, time.Second)
+	owned := tunnel.(*sshTunnel)
+	address := owned.socket
+	info, err := os.Stat(owned.directory)
+	if err != nil || info.Mode().Perm() != 0700 {
+		t.Fatal("forward directory is not private", err)
+	}
+	conn, err := net.DialTimeout("unix", address, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +112,10 @@ func TestSSHForwardOwnedCancellationAndJoin(t *testing.T) {
 	if err := tunnel.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
+	if _, err := os.Lstat(owned.directory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("owned forward directory remained after joined close", err)
+	}
+	if conn, err := net.DialTimeout("unix", address, 100*time.Millisecond); err == nil {
 		_ = conn.Close()
 		t.Fatal("owned forward remained alive after joined close")
 	}
@@ -101,5 +131,55 @@ func TestPreflightParsesLoginInventoryAndRefusesMissingCapability(t *testing.T) 
 	}
 	if _, err := parsePreflight([]byte("login banner with synthetic private material\n")); err == nil || strings.Contains(err.Error(), "synthetic private") {
 		t.Fatal("login banner accepted or reflected")
+	}
+}
+
+func TestSSHForwardRefusesTCPReadinessWithoutOwnedSocket(t *testing.T) {
+	t.Setenv("TETHER_SSH_FIXTURE_HELPER", "substitute-tcp")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	port := listener.Addr().(*net.TCPAddr).Port
+	s := &SSH{Target: "worker", Command: os.Args[0]}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if tunnel, err := s.Forward(ctx, port); !errors.Is(err, context.DeadlineExceeded) {
+		if tunnel != nil {
+			_ = tunnel.Close()
+		}
+		t.Fatal("TCP substitute did not reach owned-forward cancellation", err)
+	}
+}
+
+func TestSSHTunnelHTTPClientUsesOnlyPrivateSocket(t *testing.T) {
+	t.Setenv("TETHER_SSH_FIXTURE_HELPER", "forward")
+	s := &SSH{Target: "worker", Command: os.Args[0]}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tunnel, err := s.Forward(ctx, 7181)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tunnel.Close() }()
+	var tcpCalled atomic.Bool
+	input := &http.Client{Transport: &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+		tcpCalled.Store(true)
+		return nil, errors.New("unexpected TCP transport")
+	}}}
+	client, err := enrollmentTunnelHTTPClient(input, tunnel, 7181)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	response, err := client.Get(tunnel.BaseURL() + "/auth/context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || string(body) != "owned-forward" || tcpCalled.Load() {
+		t.Fatal("HTTP verification escaped the owned private SSH socket", err)
 	}
 }

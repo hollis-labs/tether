@@ -43,11 +43,32 @@ func TestHubChecksumFailurePreventsWorkerChanges(t *testing.T) {
 	if err := os.WriteFile(o.Checksums, []byte(strings.Repeat("0", 64)+"  "+filepath.Base(o.Archive)+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Add(context.Background(), o); err == nil {
+	partial, err := m.Add(context.Background(), o)
+	if err == nil {
 		t.Fatal("bad checksum accepted")
 	}
 	if f.installs != 0 || f.grants != 0 {
 		t.Fatal("bad hub artifact changed worker")
+	}
+	store, unlock, err := openReceipts(context.Background(), o.ReceiptDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := store.load()
+	unlock()
+	if err != nil || retained.OperationID != partial.OperationID || retained.Phase != "preflight" {
+		t.Fatal("artifact failure did not retain the reported preflight receipt", err)
+	}
+	digest, err := fileDigestBounded(o.Archive, maxArchive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.Checksums, []byte(digest+"  "+filepath.Base(o.Archive)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := m.Add(context.Background(), o)
+	if err != nil || complete.OperationID != partial.OperationID || complete.Phase != "complete" || f.installs != 1 || f.grants != 1 {
+		t.Fatal("corrected archive retry did not complete the retained operation", err)
 	}
 }
 func TestHubArchiveRefusesEscapesLinksDuplicatesAndTruncation(t *testing.T) {

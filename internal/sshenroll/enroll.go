@@ -132,6 +132,9 @@ func (m *Manager) Add(ctx context.Context, o Options) (Receipt, error) {
 			return r, problem("ownership", "external-state", "Use a clean dedicated worker account; existing state is never adopted.")
 		}
 		r = Receipt{Target: o.Target, Authority: o.Authority, Version: o.Version, RemotePort: o.RemotePort, Scopes: append([]string(nil), o.Scopes...), OperationID: uuid.NewString(), Phase: "preflight", Preflight: preflight}
+		if err := store.save(r); err != nil {
+			return r, err
+		}
 	} else if !r.matches(o) {
 		return r, problem("receipt", "different-operation", "Retain this receipt; use a separate receipt directory for a different enrollment.")
 	}
@@ -183,7 +186,7 @@ func (m *Manager) Add(ctx context.Context, o Options) (Receipt, error) {
 		return r, err
 	}
 	defer func() { _ = tunnel.Close() }()
-	client, err := enrollmentHTTPClient(m.HTTPClient, tunnel.BaseURL(), r.RemotePort)
+	client, err := enrollmentTunnelHTTPClient(m.HTTPClient, tunnel, r.RemotePort)
 	if err != nil {
 		return r, err
 	}

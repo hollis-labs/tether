@@ -48,7 +48,11 @@ enforced loopback listener and the local authority, and selects independently
 hosted systemd shim units for agent survival across daemon restarts. Existing
 external supervisors and unrelated units are never adopted or stopped.
 
-An invocation-owned SSH local forward reaches the public environment descriptor.
+An invocation-owned SSH local forward reaches the worker's loopback HTTP listener
+through a Unix socket in a private 0700 hub temporary directory. Another local
+user cannot substitute a TCP listener for that forward. The hub needs a short
+absolute `TMPDIR` without symlink ancestors for the socket path.
+The public environment descriptor is fetched through this private forward.
 Its UUID must match the worker's identity proved through the private SSH helper;
 the protocol, exact release and platform must match before pairing. Requests
 retain the configured worker Host authority while using the local forward.

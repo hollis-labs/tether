@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -36,7 +38,7 @@ func (s *SSH) args() ([]string, error) {
 	if !validTarget(s.Target) {
 		return nil, problem("ssh", "invalid-target", "Use a plain host alias or user@host, without SSH command options.")
 	}
-	return []string{"-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o", "ConnectTimeout=10"}, nil
+	return []string{"-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no", "-o", "ForkAfterAuthentication=no", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o", "ConnectTimeout=10"}, nil
 }
 func (s *SSH) command() string {
 	if s.Command != "" {
@@ -169,14 +171,22 @@ func (s *SSH) Rollback(ctx context.Context, r WorkerRequest) error {
 }
 
 type sshTunnel struct {
-	base   string
-	cancel context.CancelFunc
-	done   <-chan error
-	once   sync.Once
+	base, directory, socket string
+	cancel                  context.CancelFunc
+	done                    <-chan error
+	once                    sync.Once
 }
 
 func (t *sshTunnel) BaseURL() string { return t.base }
-func (t *sshTunnel) Close() error    { t.once.Do(func() { t.cancel(); <-t.done }); return nil }
+func (t *sshTunnel) Close() error {
+	t.once.Do(func() {
+		t.cancel()
+		<-t.done
+		_ = os.Remove(t.socket)
+		_ = os.Remove(t.directory)
+	})
+	return nil
+}
 func (s *SSH) Forward(ctx context.Context, remotePort int) (Tunnel, error) {
 	if remotePort < 1024 || remotePort > 65535 {
 		return nil, problem("forward", "invalid-port", "Choose an unprivileged loopback worker port.")
@@ -185,24 +195,36 @@ func (s *SSH) Forward(ctx context.Context, remotePort int) (Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	// The private directory prevents another UID from replacing the local
+	// listener before readiness or after an SSH failure. A public descriptor
+	// alone cannot authenticate a newly rebound TCP port.
+	directory, err := os.MkdirTemp("", "tether-forward-")
 	if err != nil {
-		return nil, problem("forward", "local-port-unavailable", "Cannot reserve a loopback port.")
+		return nil, problem("forward", "local-path-unavailable", "Cannot prepare the invocation-owned private SSH forward.")
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	cleanup := func() { _ = os.Remove(filepath.Join(directory, "forward.sock")); _ = os.Remove(directory) }
+	if err := privateDirectory(directory); err != nil {
+		cleanup()
+		return nil, err
+	}
+	socket := filepath.Join(directory, "forward.sock")
+	if strings.ContainsAny(socket, ":\r\n") || len(socket) > 100 {
+		cleanup()
+		return nil, problem("forward", "invalid-socket-path", "Set a short absolute TMPDIR without symlink ancestors on the hub.")
+	}
 	ctx, cancel := context.WithCancel(ctx)
-	args = append(args, "-n", "-N", "-L", "127.0.0.1:"+portText(port)+":127.0.0.1:"+portText(remotePort), s.Target)
+	args = append(args, "-o", "StreamLocalBindMask=0177", "-o", "StreamLocalBindUnlink=no", "-n", "-N", "-L", socket+":127.0.0.1:"+portText(remotePort), s.Target)
 	cmd := exec.CommandContext(ctx, s.command(), args...) //nolint:gosec // same validated fixed SSH configuration; no credential arguments
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.WaitDelay = 200 * time.Millisecond
 	if err := cmd.Start(); err != nil {
 		cancel()
+		cleanup()
 		return nil, problem("forward", "start-failed", "SSH could not start the owned local forward.")
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait(); close(done) }()
-	t := &sshTunnel{base: "http://127.0.0.1:" + portText(port), cancel: cancel, done: done}
+	t := &sshTunnel{base: "http://127.0.0.1:" + portText(remotePort), directory: directory, socket: socket, cancel: cancel, done: done}
 	deadline := time.NewTimer(10 * time.Second)
 	defer deadline.Stop()
 	for {
@@ -211,13 +233,13 @@ func (s *SSH) Forward(ctx context.Context, remotePort int) (Tunnel, error) {
 			_ = t.Close()
 			return nil, ctx.Err()
 		case <-done:
-			cancel()
+			_ = t.Close()
 			return nil, problem("forward", "forward-refused", "SSH exited before establishing the loopback forward.")
 		case <-deadline.C:
 			_ = t.Close()
-			return nil, problem("forward", "forward-timeout", "SSH did not establish its forward within 10s.")
+			return nil, problem("forward", "forward-timeout", "SSH did not establish its private forward within 10s.")
 		case <-time.After(25 * time.Millisecond):
-			conn, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", portText(port)), 100*time.Millisecond)
+			conn, e := net.DialTimeout("unix", socket, 100*time.Millisecond)
 			if e == nil {
 				_ = conn.Close()
 				return t, nil

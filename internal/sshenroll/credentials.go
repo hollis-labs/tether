@@ -20,6 +20,39 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
+// Production SSH uses an invocation-owned private Unix socket. The ordinary
+// loopback transport remains available for the disposable Remote test seam.
+func enrollmentTunnelHTTPClient(input *http.Client, tunnel Tunnel, remotePort int) (*http.Client, error) {
+	c, err := enrollmentHTTPClient(input, tunnel.BaseURL(), remotePort)
+	if err != nil {
+		return nil, err
+	}
+	if t, ok := tunnel.(*sshTunnel); ok {
+		transport := c.Transport.(*forwardTransport)
+		transport.base.DialContext = func(ctx context.Context, _, address string) (net.Conn, error) {
+			if address != transport.origin {
+				return nil, errors.New("enrollment origin refused")
+			}
+			select {
+			case <-t.done:
+				return nil, errors.New("enrollment forward unavailable")
+			default:
+			}
+			conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", t.socket)
+			if err != nil {
+				return nil, errors.New("enrollment private forward unavailable")
+			}
+			peer, ok := conn.RemoteAddr().(*net.UnixAddr)
+			if !ok || peer.Name != t.socket {
+				_ = conn.Close()
+				return nil, errors.New("enrollment private forward origin refused")
+			}
+			return conn, nil
+		}
+	}
+	return c, nil
+}
+
 func enrollmentHTTPClient(input *http.Client, baseURL string, remotePort int) (*http.Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Hostname() != "127.0.0.1" || u.Port() == "" {

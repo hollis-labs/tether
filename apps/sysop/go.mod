@@ -5,7 +5,7 @@ go 1.26.9
 require (
 	github.com/hollis-labs/libs/ui-go v0.1.0
 	github.com/hollis-labs/substrate/llm-core v0.1.0
-	github.com/hollis-labs/substrate/mesh v0.1.0
+	github.com/hollis-labs/substrate/mesh v0.4.0
 	github.com/hollis-labs/tether v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
