@@ -256,8 +256,8 @@ func TestValidate_AcceptedPermissionModes(t *testing.T) {
 
 func TestValidate_AIProviderRules(t *testing.T) {
 	tests := []struct {
-		name string
-		ai   AIConfig
+		name    string
+		ai      AIConfig
 		ok      bool
 		wantErr string
 	}{
