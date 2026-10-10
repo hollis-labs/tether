@@ -470,6 +470,200 @@ func TestProviderChatFallsBackToChatCompletionsOn404(t *testing.T) {
 	}
 }
 
+func TestProviderReasoningTextResponsesWire(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		name := "non-streaming"
+		if streaming {
+			name = "streaming"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/responses" {
+					t.Errorf("path = %q, want /responses", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if streaming {
+					w.Header().Set("Content-Type", "text/event-stream")
+					compactResponse := strings.ReplaceAll(reasoningResponseJSON, "\n", "")
+					_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":" + compactResponse + "}\n\n"))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(reasoningResponseJSON))
+			}))
+			defer srv.Close()
+
+			p := New(Config{
+				BaseURL:              srv.URL + "/",
+				HTTPClient:           srv.Client(),
+				AllowUnauthenticated: true,
+				Wire:                 "responses",
+				IncludeReasoningText: true,
+			})
+			resp := callReasoningProvider(t, p, streaming)
+			assertReasoningOutput(t, resp, "Checked the constraints.", "The answer is 42.")
+		})
+	}
+}
+
+func TestProviderReasoningTextChatCompletionsWire(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		name := "non-streaming"
+		if streaming {
+			name = "streaming"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/chat/completions" {
+					t.Errorf("path = %q, want /chat/completions", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if streaming {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = w.Write([]byte(strings.Join([]string{
+						`data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1716595200,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Checked the "},"finish_reason":""}]}`,
+						`data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1716595200,"model":"gpt-5","choices":[{"index":0,"delta":{"reasoning":"constraints."},"finish_reason":""}]}`,
+						`data: {"id":"chatcmpl-reasoning","object":"chat.completion.chunk","created":1716595200,"model":"gpt-5","choices":[{"index":0,"delta":{"content":"The answer is 42."},"finish_reason":"stop"}]}`,
+						"data: [DONE]",
+					}, "\n\n") + "\n\n"))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+				  "id":"chatcmpl-reasoning",
+				  "object":"chat.completion",
+				  "created":1716595200,
+				  "model":"gpt-5",
+				  "choices":[{"index":0,"message":{"role":"assistant","reasoning":"Checked the constraints.","content":"The answer is 42."},"finish_reason":"stop"}],
+				  "usage":{"prompt_tokens":4,"completion_tokens":7,"total_tokens":11}
+				}`))
+			}))
+			defer srv.Close()
+
+			p := New(Config{
+				BaseURL:              srv.URL + "/",
+				HTTPClient:           srv.Client(),
+				AllowUnauthenticated: true,
+				Wire:                 "chat_completions",
+				IncludeReasoningText: true,
+			})
+			resp := callReasoningProvider(t, p, streaming)
+			assertReasoningOutput(t, resp, "Checked the constraints.", "The answer is 42.")
+		})
+	}
+}
+
+func TestProviderReasoningTextDisabledPreservesResponseBytes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(reasoningResponseJSON))
+	}))
+	defer srv.Close()
+
+	p := New(Config{
+		BaseURL:              srv.URL + "/",
+		HTTPClient:           srv.Client(),
+		AllowUnauthenticated: true,
+		Wire:                 "responses",
+	})
+	resp := callReasoningProvider(t, p, false)
+
+	got, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	want, err := json.Marshal(llm.Response{
+		Provider:   "openai-test",
+		Model:      "gpt-5",
+		Output:     []llm.Message{{Role: "assistant", Parts: []llm.ContentPart{{Type: "text", Text: "The answer is 42."}}}},
+		StopReason: "completed",
+		Usage: llm.Usage{
+			InputTokens:     4,
+			OutputTokens:    7,
+			ReasoningTokens: 3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal expected response: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("disabled response bytes = %s, want %s", got, want)
+	}
+}
+
+func callReasoningProvider(t *testing.T, p *Provider, streaming bool) llm.Response {
+	t.Helper()
+	req := llm.Request{
+		Operation: llm.OperationChat,
+		Input:     []llm.Message{{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "Answer."}}}},
+	}
+	route := llm.RouteDecision{Provider: "openai-test", Model: "gpt-5"}
+	if streaming {
+		resp, err := p.StreamChat(context.Background(), req, route, nil)
+		if err != nil {
+			t.Fatalf("StreamChat: %v", err)
+		}
+		return resp
+	}
+	resp, err := p.Chat(context.Background(), req, route)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	return resp
+}
+
+func assertReasoningOutput(t *testing.T, resp llm.Response, wantReasoning, wantText string) {
+	t.Helper()
+	var reasoning, text strings.Builder
+	for _, msg := range resp.Output {
+		for _, part := range msg.Parts {
+			switch part.Type {
+			case "reasoning":
+				reasoning.WriteString(part.Text)
+			case "text":
+				text.WriteString(part.Text)
+			}
+		}
+	}
+	if reasoning.String() != wantReasoning || text.String() != wantText {
+		t.Fatalf("output = %+v, want reasoning %q and text %q", resp.Output, wantReasoning, wantText)
+	}
+}
+
+const reasoningResponseJSON = `{
+  "id":"resp_reasoning",
+  "created_at":1716595200,
+  "error":null,
+  "incomplete_details":null,
+  "instructions":null,
+  "metadata":{},
+  "model":"gpt-5",
+  "object":"response",
+  "output":[
+    {"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Checked the constraints."}]},
+    {"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The answer is 42.","annotations":[],"logprobs":[]}]}
+  ],
+  "parallel_tool_calls":false,
+  "temperature":1,
+  "tool_choice":"auto",
+  "tools":[],
+  "top_p":1,
+  "background":false,
+  "service_tier":"default",
+  "status":"completed",
+  "text":{"format":{"type":"text"}},
+  "truncation":"disabled",
+  "usage":{
+    "input_tokens":4,
+    "input_tokens_details":{"cached_tokens":0},
+    "output_tokens":7,
+    "output_tokens_details":{"reasoning_tokens":3},
+    "total_tokens":11
+  }
+}`
+
 type stubResponseClient struct {
 	newFn                   func(context.Context, responses.ResponseNewParams, ...option.RequestOption) (*responses.Response, error)
 	newStreamFn             func(context.Context, responses.ResponseNewParams, ...option.RequestOption) responseStream
