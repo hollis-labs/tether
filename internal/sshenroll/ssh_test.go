@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -181,5 +182,23 @@ func TestSSHTunnelHTTPClientUsesOnlyPrivateSocket(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil || string(body) != "owned-forward" || tcpCalled.Load() {
 		t.Fatal("HTTP verification escaped the owned private SSH socket", err)
+	}
+}
+
+func TestSSHForwardRefusesReplaceableTemporaryParent(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0777); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+	t.Setenv("TMPDIR", parent)
+	s := &SSH{Target: "worker", Command: filepath.Join(parent, "never-start")}
+	tunnel, err := s.Forward(context.Background(), 7181)
+	var e *Problem
+	if tunnel != nil || !errors.As(err, &e) || e.Code != "unsafe-socket-parent" {
+		if tunnel != nil {
+			_ = tunnel.Close()
+		}
+		t.Fatal("replaceable socket parent was not refused before SSH", err)
 	}
 }

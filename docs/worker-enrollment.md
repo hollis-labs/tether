@@ -51,7 +51,9 @@ external supervisors and unrelated units are never adopted or stopped.
 An invocation-owned SSH local forward reaches the worker's loopback HTTP listener
 through a Unix socket in a private 0700 hub temporary directory. Another local
 user cannot substitute a TCP listener for that forward. The hub needs a short
-absolute `TMPDIR` without symlink ancestors for the socket path.
+absolute `TMPDIR` without symlink ancestors for the socket path. Ancestors must
+belong to root or the current user; group/other-writable ancestors must be sticky
+so another user cannot rename and replace the private socket directory.
 The public environment descriptor is fetched through this private forward.
 Its UUID must match the worker's identity proved through the private SSH helper;
 the protocol, exact release and platform must match before pairing. Requests

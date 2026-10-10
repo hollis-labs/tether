@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,6 +188,29 @@ func (t *sshTunnel) Close() error {
 	})
 	return nil
 }
+
+// Every parent must prevent a different UID from renaming the private leaf.
+// Root/current-user ownership and non-writable or sticky parents preserve that
+// boundary. Same-UID and privileged interference remain outside this model.
+func privateForwardDirectory(directory string) error {
+	if err := privateDirectory(directory); err != nil {
+		return err
+	}
+	for parent := filepath.Dir(directory); ; parent = filepath.Dir(parent) {
+		info, err := os.Lstat(parent)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return problem("forward", "unsafe-socket-parent", "Use a short TMPDIR with trusted real directory ancestors.")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || (stat.Uid != 0 && int(stat.Uid) != os.Geteuid()) || (info.Mode().Perm()&0022 != 0 && info.Mode()&os.ModeSticky == 0) {
+			return problem("forward", "unsafe-socket-parent", "TMPDIR ancestors must belong to root or the current user; writable shared parents must be sticky.")
+		}
+		if parent == filepath.Dir(parent) {
+			break
+		}
+	}
+	return nil
+}
 func (s *SSH) Forward(ctx context.Context, remotePort int) (Tunnel, error) {
 	if remotePort < 1024 || remotePort > 65535 {
 		return nil, problem("forward", "invalid-port", "Choose an unprivileged loopback worker port.")
@@ -203,7 +227,7 @@ func (s *SSH) Forward(ctx context.Context, remotePort int) (Tunnel, error) {
 		return nil, problem("forward", "local-path-unavailable", "Cannot prepare the invocation-owned private SSH forward.")
 	}
 	cleanup := func() { _ = os.Remove(filepath.Join(directory, "forward.sock")); _ = os.Remove(directory) }
-	if err := privateDirectory(directory); err != nil {
+	if err := privateForwardDirectory(directory); err != nil {
 		cleanup()
 		return nil, err
 	}
