@@ -719,6 +719,9 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 // production wiring, not the reverse).
 func sweepWakeText(env messaging.Envelope) string {
 	urgency := env.Metadata["urgency"]
+	if intent, err := wakeintent.Read(env); err == nil && intent.Urgency != "" {
+		urgency = intent.Urgency
+	}
 	if urgency == "" {
 		urgency = "normal"
 	}

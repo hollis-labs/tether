@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -225,5 +226,43 @@ func TestRecipientWakeBusyRetryUsesAcceptedIntent(t *testing.T) {
 	}
 	if rt.sendCallCount("s") != 1 {
 		t.Fatalf("retry turns %d", rt.sendCallCount("s"))
+	}
+}
+
+func TestRecipientWakeGeneratedTextUsesAcceptedUrgency(t *testing.T) {
+	for _, tc := range []struct {
+		name, legacy, intent, want string
+	}{
+		{"legacy", "low", "", "low"},
+		{"accepted-intent", "low", "high", "high"},
+		{"default", "", "", "normal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, reg := newWakeHarness(t)
+			rt := newFakeRuntime()
+			rt.setAlive("s", true, agentsessions.LiveStateIdle)
+			env := messaging.Envelope{
+				Kind:     messaging.MsgKindNotice,
+				From:     messaging.Address{Kind: messaging.KindAgent, Authority: "sender", ID: "author"},
+				To:       messaging.Address{Kind: messaging.KindSession, Authority: "test", ID: "s"},
+				Metadata: map[string]string{"urgency": tc.legacy},
+			}
+			if tc.intent != "" {
+				wakeintent.Put(&env, wakeintent.Intent{Urgency: tc.intent})
+			}
+			accepted, err := st.MessagingStore().Send(context.Background(), env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := recipientWake(context.Background(), st, reg, rt.seam(), accepted)
+			if !out.Delivered {
+				t.Fatalf("wake failed: %+v", out)
+			}
+			rt.mu.Lock()
+			defer rt.mu.Unlock()
+			if len(rt.sendCalls) != 1 || !strings.Contains(rt.sendCalls[0].Text, "urgency `"+tc.want+"`") {
+				t.Fatalf("accepted urgency did not reach runtime: %+v", rt.sendCalls)
+			}
+		})
 	}
 }

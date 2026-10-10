@@ -16,9 +16,9 @@ authority local or foreign?**
   SQLite messaging store.
 - A registered peer authority → routed to that peer's daemon over HTTP.
 
-A standalone install registers no peers, so every authority is local and
-messaging behaves exactly as it did before federation existed. Federation
-is **off by default** and purely additive.
+A standalone install registers no peers, so every authority is local.
+Recipient wake described below also applies to locally delivered mail.
+Federation is **off by default**.
 
 ## Configuration
 
@@ -86,6 +86,8 @@ binding-generation checks remain in force. `no_wake` also fences the existing
 retry pump. Missing intent uses the receiving daemon's ordinary mailbox wake.
 Mail storage succeeds independently of wake; response-only
 `tether.wake_outcome` reports attempted/delivered/reason/detail.
+Generated wake notifications use the accepted intent's urgency, falling back
+to legacy envelope urgency and then `normal` when no intent urgency exists.
 
 `tether.message_id` is the stable source message identity. The existing shared
 delivery core scopes it by sender and rejects a changed immutable envelope or
@@ -99,10 +101,13 @@ Wake admission is durable and separate from mail. Ordinary redelivery does not
 submit another wake. A crash after admission but before recording its outcome
 can mean either before or after provider submission; it is reported as
 `wake-outcome-unknown` and is not guessed into another turn. A recorded busy or
-failed attempt remains eligible for the existing fenced retry pump; successful
-submission is not retried just because the consume lease later expires. Mail
-remains available to the recipient even when wake is refused or uncertain.
-This is not crash-proof exactly-once provider execution. Cross-host sender
+failed attempt remains eligible for the existing fenced retry pump. A confirmed
+successful outcome suppresses a resend after consume-lease expiry. A crash
+during a retry, after provider submission but before updating that outcome,
+can leave the earlier failure recorded; the existing lease may then permit
+another retry. Admission, provider submission and outcome persistence are not
+one atomic operation. Mail remains available even when wake is refused or
+uncertain. This is not crash-proof exactly-once provider execution. Cross-host sender
 authentication/reply authority remain separate future work; current source
 acceptance uses two isolated local daemons only.
 
