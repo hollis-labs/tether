@@ -151,7 +151,7 @@ func (f *fakeRuntime) seam() wakeRuntime {
 // wake/binding logic (no Manager, no runtime factories).
 func newWakeHarness(t *testing.T) (*store.Store, *registry.Service) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "wake.db"))
+	st, err := openAppFixtureStore(t, filepath.Join(t.TempDir(), "wake.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

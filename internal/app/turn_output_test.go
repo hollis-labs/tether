@@ -25,7 +25,7 @@ import (
 
 func outputHarness(t *testing.T, route *launchprofile.Route) (*Service, *sessionTurnOutput) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "output.db"))
+	db, err := openAppFixtureStore(t, filepath.Join(t.TempDir(), "output.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
