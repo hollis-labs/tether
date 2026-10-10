@@ -22,6 +22,11 @@ type AuditEvent struct {
 	CacheReadTokens  int
 	CacheWriteTokens int
 	ReasoningTokens  int
+	CostKind         string
+	UpstreamProvider string
+	BilledCostUSD    *float64
+	GenerationID     string
+
 	EstimatedCostUSD float64
 	RequestSummary   string
 	ResponseSummary  string

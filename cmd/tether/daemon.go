@@ -474,6 +474,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),
+				OpenRouter:  mapOpenRouterExt(p.Extensions),
+				HuggingFace: mapHuggingFaceExt(p.Extensions),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -1226,4 +1228,22 @@ func effectiveCatalogProvider(p config.AIProviderConfig) string {
 		return p.CatalogProvider
 	}
 	return modelCatalogProviderID(p.Type)
+}
+
+func mapOpenRouterExt(ext *config.ProviderExtensions) *llmopenai.OpenRouterExtension {
+	if ext == nil || ext.OpenRouter == nil {
+		return nil
+	}
+	return &llmopenai.OpenRouterExtension{
+		Provider: ext.OpenRouter.Provider,
+	}
+}
+
+func mapHuggingFaceExt(ext *config.ProviderExtensions) *llmopenai.HuggingFaceExtension {
+	if ext == nil || ext.HuggingFace == nil {
+		return nil
+	}
+	return &llmopenai.HuggingFaceExtension{
+		BillTo: ext.HuggingFace.BillTo,
+	}
 }
