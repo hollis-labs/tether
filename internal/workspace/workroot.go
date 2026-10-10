@@ -26,14 +26,9 @@ const WorktreeMode = "worktree"
 //   - workspace_dir  — the per-session bookkeeping dir (logs, prompts, plan
 //     JSON) created by workspace.Create; distinct from work_root.
 //
-// WorktreeName handling: if plan.WorktreeName is a non-empty literal git ref
-// (no Go-template markers or whitespace) it is used as the branch
-// name for `git worktree add -b <name>`. A template-style value such as
-// "tether/{{.ProjectID}}/{{.SessionID}}" is treated as reserved/not-yet-wired
-// — Tether has no template renderer for it today — and the worktree is created
-// detached. An empty WorktreeName always means a detached worktree. This keeps
-// the catalog field forward-compatible without silently feeding an unrendered
-// template string to git.
+// WorktreeName accepts a literal Git ref or the supported accepted identity
+// inputs. Invalid/unknown templates refuse before any allocation. Only an
+// explicitly empty name selects a detached worktree.
 func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 	if plan == nil {
 		return fmt.Errorf("launch plan required")
@@ -53,6 +48,10 @@ func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 	}
 	if runID == "" {
 		return fmt.Errorf("run id required for workspace mode %q", mode)
+	}
+	branch, err := RenderWorktreeBranch(plan.WorktreeName, BranchInputs{ProjectID: plan.ProjectID, SessionID: runID, LogicalAgentID: plan.LogicalAgentID})
+	if err != nil {
+		return err
 	}
 
 	base := plan.WorktreeBase
@@ -80,7 +79,6 @@ func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 		return fmt.Errorf("create worktree parent: %w", err)
 	}
 
-	branch := worktreeBranchName(plan.WorktreeName)
 	var gitArgs []string
 	if branch != "" {
 		gitArgs = []string{"worktree", "add", "-b", branch, workRoot, "HEAD"}
@@ -101,28 +99,6 @@ func MaterializeWorkRoot(workspaceRoot, runID string, plan *launch.Plan) error {
 	}
 	plan.WorkRoot = workRoot
 	return nil
-}
-
-// worktreeBranchName returns the git branch name to use for a worktree, or ""
-// when the worktree should be created detached. An unrendered Go template or a
-// value containing whitespace or a backslash is treated as reserved
-// (detached). Forward slashes are valid git branch separators, including
-// the task/<id> branches used by team agents.
-func worktreeBranchName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	if strings.Contains(name, "{{") || strings.Contains(name, "}}") {
-		return ""
-	}
-	if strings.ContainsAny(name, " \t") {
-		return ""
-	}
-	if strings.Contains(name, `\`) {
-		return ""
-	}
-	return name
 }
 
 // RemoveMaterializedWorkRoot removes a worktree created by MaterializeWorkRoot.
