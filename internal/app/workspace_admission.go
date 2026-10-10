@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"syscall"
 
 	"github.com/hollis-labs/substrate/harness/workspace/materialize"
 	"github.com/hollis-labs/tether/internal/config"
@@ -69,7 +70,7 @@ func (s *Service) admitLaunchScratch(ctx context.Context, accepted store.Workspa
 	}
 	var protectedInfo []os.FileInfo
 	for _, root := range protectedRoots {
-		info, err := scratchDirectoryInfo(root)
+		info, err := scratchProtectedDirectoryInfo(root)
 		if err != nil {
 			return nil, err
 		}
@@ -157,7 +158,7 @@ func (c *launchScratchCustody) validatePhysical(ctx context.Context) error {
 		return store.ErrWorkspaceAllocationConflict
 	}
 	for i, root := range c.protectedRoots {
-		current, err := scratchDirectoryInfo(root)
+		current, err := scratchProtectedDirectoryInfo(root)
 		if err != nil || !os.SameFile(c.protectedInfo[i], current) {
 			return store.ErrWorkspaceAllocationConflict
 		}
@@ -232,6 +233,28 @@ func scratchDirectoryInfo(path string) (os.FileInfo, error) {
 	return os.Lstat(path)
 }
 
+// Control-plane configuration may name a trusted symlink alias. Retain that
+// name and its resolved physical identity so retargeting still refuses; scratch
+// parents/children continue to require the separate no-symlink predicate.
+func scratchProtectedDirectoryInfo(path string) (os.FileInfo, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, store.ErrWorkspaceAllocationConflict
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := scratchDirectoryInfo(canonical)
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Stat(path)
+	if err != nil || !os.SameFile(info, current) {
+		return nil, store.ErrWorkspaceAllocationConflict
+	}
+	return info, nil
+}
+
 func scratchPathAllowed(path string, protected []string) bool {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return false
@@ -301,7 +324,9 @@ func (s *Service) launchScratchControlRoots(ctx context.Context, workspaceRoot s
 			if root == workspaceRoot || pathWithin(root, workspaceRoot) || pathWithin(workspaceRoot, root) {
 				return nil, store.ErrWorkspaceAllocationConflict
 			}
-			if _, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) {
+			if _, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+				// A regular ancestor cannot contain a layer. The lexical
+				// overlap refusal above still applies before this omission.
 				continue
 			} else if err != nil {
 				return nil, err

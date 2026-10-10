@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -374,6 +375,70 @@ func TestLaunchScratchAdmittedRetryPreservesAcceptedPlan(t *testing.T) {
 	stored, err := rig.service.Store.GetLaunchPlan(rig.row.ID)
 	if err != nil || stored.WorkRoot != rig.plan.WorkRoot || stored.Env["KEEP"] != "accepted" || stored.Env["TMPDIR"] != "" || stored.Env["CODEX_HOME"] != "" {
 		t.Fatalf("scratch changed accepted plan: %+v err=%v", stored, err)
+	}
+}
+
+func TestLaunchScratchRetainsConfiguredControlAliasIdentity(t *testing.T) {
+	rig := newScratchAdmissionRig(t)
+	catalog := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "catalog")
+	if err := os.Symlink(catalog, alias); err != nil {
+		t.Fatal(err)
+	}
+	rig.service.CatalogRoot = alias
+	roots, err := rig.service.launchScratchControlRoots(context.Background(), rig.row.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custody, err := rig.service.admitLaunchScratch(context.Background(), rig.decision, rig.plan, uuid.NewString(), roots)
+	if err != nil {
+		t.Fatalf("accepted daemon control alias refused: %v", err)
+	}
+	t.Cleanup(func() { _ = custody.Close() })
+	replacement := alias + "-replacement"
+	if err := os.Symlink(t.TempDir(), replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := custody.Validate(context.Background()); err == nil {
+		t.Fatal("retargeted control alias retained admission")
+	}
+}
+
+func TestLaunchScratchUnusableUnrelatedProjectLayer(t *testing.T) {
+	for _, withinWorkspace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("within-workspace=%t", withinWorkspace), func(t *testing.T) {
+			rig := newScratchAdmissionRig(t)
+			base := t.TempDir()
+			if withinWorkspace {
+				base = rig.row.Workspace
+			}
+			file := filepath.Join(base, "not-a-directory")
+			if err := os.WriteFile(file, []byte("fixture"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rig.service.CatalogRoot = t.TempDir()
+			rig.service.Catalog = &config.Catalog{Projects: map[string]config.Project{
+				"broken": {ID: "broken", RepoRoot: filepath.Join(file, "child")},
+			}}
+			roots, err := rig.service.launchScratchControlRoots(context.Background(), rig.row.Workspace)
+			if withinWorkspace {
+				if !errors.Is(err, store.ErrWorkspaceAllocationConflict) {
+					t.Fatalf("unresolved layer inside workspace accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unrelated nonexistent layer refused allocation: %v", err)
+			}
+			custody, err := rig.service.admitLaunchScratch(context.Background(), rig.decision, rig.plan, uuid.NewString(), roots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = custody.Close() })
+		})
 	}
 }
 

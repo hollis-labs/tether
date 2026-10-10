@@ -34,6 +34,12 @@ A reserved partial allocation cannot adopt an existing directory, even if empty.
    its exact returned timestamp and snapshot after preparation callbacks,
    immediately before `placeProvider`.
 
+Trusted daemon control paths may use configured symlink aliases. Admission
+captures their resolved physical identity and retains the configured name for
+revalidation; retargeting the alias refuses. Scratch parents and children retain
+their separate no-symlink requirement. An unrelated project layer beneath a
+regular file cannot exist and is omitted only after the workspace overlap check.
+
 No database transaction spans a provider or host callback. The existing launch
 gate spans preparation and Start; it is not extended through execution. The
 checks do not make filesystem paths immutable against noncooperating processes.
@@ -73,9 +79,10 @@ happen before directory allocation or Git worktree creation. Missing inputs,
 unknown variables, malformed templates and invalid refs explicitly refuse.
 An explicitly empty branch retains the existing detached-worktree behavior.
 
-This is bounded CW-20261003-0009 coverage. It does not complete multirepo and
-extra-directory admission, provider trust setup, Torque task-bundle contents,
-declared output admission, or adoption of a separate worktree library. Scratch
+This is bounded CW-20261003-0009 coverage. It does not complete general per-launch
+cwd selection, multirepo and extra-directory admission, provider trust setup,
+Torque task-bundle contents, declared output admission, broader worktree
+reattachment proof, or adoption of a separate worktree library. Scratch
 allocation alone does not prove that a provider confinement policy permits all
 required writes. Strict native resume and credential continuity retain their
 existing separate checks. Team cleanup parity remains a separate unfinished
