@@ -77,7 +77,8 @@ func remoteTestServer(t *testing.T) (*Server, string, string) {
 		}
 		return token
 	}
-	read := mint(identity.Principal{ID: "remote-reader", Kind: "service", Scopes: []string{"read"}})
+	expires := time.Now().Add(time.Hour)
+	read := mint(identity.Principal{ID: "remote-reader", Kind: "device", Scopes: []string{"read"}, ExpiresAt: &expires})
 	operator := mint(identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 	desc, err := environment.NewDescriptor(environment.Descriptor{EnvironmentID: "test-environment", Label: "test"})
 	if err != nil {
@@ -389,5 +390,27 @@ func TestRemoteListenerBothTransportsAndJoinedShutdown(t *testing.T) {
 	if conn, err := net.DialTimeout("unix", SocketPath(s.Config.ListenAddr), time.Second); err == nil {
 		_ = conn.Close()
 		t.Fatal("local listener survived shutdown")
+	}
+}
+
+func TestRemoteListenerRefusesLegacyKinds(t *testing.T) {
+	s, _, operator := remoteTestServer(t)
+	for _, kind := range []string{"service", "interactive", "operator"} {
+		token := operator
+		if kind != "operator" {
+			var err error
+			token, err = s.Identity.Mint(context.Background(), identity.Principal{ID: "legacy-" + kind, Kind: kind, Scopes: []string{"*", "read"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := httptest.NewRequest("GET", "http://localhost:9000/v1/environment/report", nil)
+		r.Header.Set(environment.ProtocolHeader, "1")
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.RemoteHandler("127.0.0.1:7331").ServeHTTP(w, r)
+		if w.Code != 401 {
+			t.Fatal("remote legacy kind accepted", kind, w.Code)
+		}
 	}
 }

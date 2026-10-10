@@ -36,7 +36,7 @@ func (r *credentialRuntime) Start(ctx context.Context, opts agentsessions.StartO
 func credentialLaunch(t *testing.T, brands ...string) (*Service, *credentialRuntime, string, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	db, err := openAppFixtureStore(t, filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
