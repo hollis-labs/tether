@@ -227,6 +227,9 @@ func validateAIConfig(ai AIConfig) error {
 		if p.Wire != "" && p.Type != "openai" && p.Type != "openai-compatible" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets wire %q (wire is only supported for openai/openai-compatible)", i, p.ID, p.Type, p.Wire)
 		}
+		if p.DiscoverModels && p.Type != "openai" && p.Type != "openai-compatible" {
+			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets discover_models (only supported for openai/openai-compatible)", i, p.ID, p.Type)
+		}
 		switch p.Type {
 		case "anthropic", "openai", "gemini":
 			if p.SecretRef == "" {
