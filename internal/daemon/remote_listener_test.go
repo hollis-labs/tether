@@ -11,10 +11,54 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/libs/util/localdaemon"
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/store"
 )
+
+func TestServeCommandPIDRecognition(t *testing.T) {
+	savedVerify := verifyCommand
+	t.Cleanup(func() { verifyCommand = savedVerify })
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{"tether serve", true},
+		{"/usr/local/bin/tether serve --remote-listen tcp:127.0.0.1:7331", true},
+		{"./tether-dev --catalog /state/catalog serve", true},
+		{"tether --catalog=/state/catalog --token-file=/state/token serve", true},
+		{"tether --token-file= serve", true},
+		{"tether daemon run --catalog /state/catalog", true},
+		{"/usr/local/bin/tether --catalog /state/catalog daemon run", true},
+		{"tether daemon start", false},
+		{"tether daemon status", false},
+		{"tether daemon stop", false},
+		{"tether mcp", false},
+		{"tether sessions serve", false},
+		{"tether served", false},
+		{"tether serve-other", false},
+		{"tether --catalog=serve sessions", false},
+		{"codex exec /usr/local/bin/tether serve", false},
+		{"sh -c /usr/local/bin/tether daemon run", false},
+		{"python /usr/local/bin/tether serve", false},
+		{"/usr/local/bin/other-tether serve", false},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			verifyCommand = func(_ context.Context, _ int, matcher localdaemon.Matcher) (bool, error) {
+				return matcher.MatchString(tc.command), nil
+			}
+			// Stop uses IsDaemon; start/status and PID writes use IsDaemonAlive.
+			matched, err := IsDaemon(context.Background(), os.Getpid())
+			if err != nil || matched != tc.want {
+				t.Fatal("stop identity", matched, err)
+			}
+			if alive := IsDaemonAlive(os.Getpid()); alive != tc.want {
+				t.Fatal("start/status identity", alive)
+			}
+		})
+	}
+}
 
 func remoteTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
