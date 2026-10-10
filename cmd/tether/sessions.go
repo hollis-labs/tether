@@ -93,7 +93,7 @@ var sessionsTailCmd = &cobra.Command{
 		if sessionsTailFollow {
 			return runAttach(cmd.Context(), args[0], true)
 		}
-		return runTailSnapshot(args[0])
+		return runTailSnapshotContext(cmd.Context(), args[0])
 	},
 }
 
@@ -194,7 +194,7 @@ func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) er
 	// Degraded path: stdin is not a TTY → just stream output.
 	if !term.IsTerminal(stdinFd) {
 		err := c.AttachSession(ctx, id, os.Stdout, 0)
-		return attachFallback(err, id, tailFallbackOnNotRunning)
+		return attachFallbackContext(ctx, err, id, tailFallbackOnNotRunning)
 	}
 	old, err := term.MakeRaw(stdinFd)
 	if err != nil {
@@ -268,27 +268,33 @@ func runAttach(ctx context.Context, id string, tailFallbackOnNotRunning bool) er
 	// doesn't land in the middle of a half-drawn line.
 	fmt.Fprint(os.Stderr, "\r\n[detached]\r\n")
 
-	return attachFallback(err, id, tailFallbackOnNotRunning)
+	return attachFallbackContext(ctx, err, id, tailFallbackOnNotRunning)
 }
 
 // attachFallback maps benign attach errors (daemon down, session
 // exited) to the log-snapshot path, and passes everything else
 // through as-is.
-func attachFallback(err error, id string, tailFallbackOnNotRunning bool) error {
+func attachFallbackContext(ctx context.Context, err error, id string, tailFallbackOnNotRunning bool) error {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return nil
 	}
 	if errors.Is(err, client.ErrDaemonUnreachable) {
-		return runTailSnapshot(id)
+		if remoteTargetSelected() {
+			return err
+		}
+		return runTailSnapshotContext(ctx, id)
 	}
 	if tailFallbackOnNotRunning && strings.Contains(err.Error(), "session not running") {
-		return runTailSnapshot(id)
+		return runTailSnapshotContext(ctx, id)
 	}
 	return err
 }
 
-func runTailSnapshot(id string) error {
-	d, err := getSessionDaemonOrStore(context.Background(), catalogPath, id)
+func runTailSnapshotContext(ctx context.Context, id string) error {
+	if remoteTargetSelected() {
+		return runRemoteTailSnapshot(ctx, id)
+	}
+	d, err := getSessionDaemonOrStore(ctx, catalogPath, id)
 	if err != nil {
 		return err
 	}
@@ -318,7 +324,7 @@ func listSessionsDaemonOrStore(ctx context.Context, catalogRoot string) ([]api.S
 	if err == nil {
 		return res.Sessions, nil
 	}
-	if !errors.Is(err, client.ErrDaemonUnreachable) {
+	if remoteTargetSelected() || !errors.Is(err, client.ErrDaemonUnreachable) {
 		return nil, err
 	}
 	return listSessionsFromStore(catalogRoot)
@@ -353,7 +359,7 @@ func getSessionDaemonOrStore(ctx context.Context, catalogRoot, id string) (api.S
 	if err == nil {
 		return dto, nil
 	}
-	if !errors.Is(err, client.ErrDaemonUnreachable) {
+	if remoteTargetSelected() || !errors.Is(err, client.ErrDaemonUnreachable) {
 		return api.SessionDTO{}, err
 	}
 	return getSessionFromStore(catalogRoot, id)

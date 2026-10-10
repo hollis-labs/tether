@@ -1164,6 +1164,9 @@ var daemonStatusCmd = &cobra.Command{
 // address. Shared by the launch / sessions subcommands so the daemon
 // transport lives in one place.
 func newDaemonClient(catalogRoot string) (*client.Client, error) {
+	if remoteTargetSelected() {
+		return remoteDaemonClient()
+	}
 	cfg, err := loadDaemonConfig(catalogRoot)
 	if err != nil {
 		return nil, err
@@ -1176,6 +1179,9 @@ func newDaemonClient(catalogRoot string) (*client.Client, error) {
 // concurrency so this is safe even if the daemon has the file open too.
 // Caller is responsible for closing the returned *store.Store.
 func openStoreReadOnly(catalogRoot string) (*store.Store, error) {
+	if remoteTargetSelected() {
+		return nil, fmt.Errorf("local state access is unavailable with --target")
+	}
 	cat, err := config.Load(catalogRoot)
 	if err != nil {
 		return nil, err

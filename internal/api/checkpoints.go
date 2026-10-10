@@ -320,24 +320,24 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 		res, err = s.Service.ResumeLogicalAgent(agentID, ResumeOptions(req))
 	}
 	if err != nil {
-		if writeIdempotencyConflict(w, err) {
+		if writeIdempotencyConflict(w, remoteResponseError(r, err, "session request conflicts with prior request")) {
 			return
 		}
-		if writeLaunchRefused(w, err) {
+		if writeLaunchRefused(w, remoteResponseError(r, err, "session resume refused")) {
 			return
 		}
 		msg := err.Error()
 		switch {
 		case errors.Is(err, config.ErrUnknownSandboxProfile):
-			writeError(w, http.StatusNotFound, CodeNotFound, msg)
+			writeError(w, http.StatusNotFound, CodeNotFound, remoteResponseError(r, err, "resume configuration unavailable").Error())
 		case errors.Is(err, store.ErrSessionNotFound),
 			strings.Contains(msg, "no checkpoint"),
 			strings.Contains(msg, "no rows"):
 			writeError(w, http.StatusNotFound, CodeNotFound, "no checkpoint found for agent "+agentID)
 		case errors.Is(err, session.ErrDetached), errors.Is(err, session.ErrRecoveryConflict), strings.Contains(msg, "never launched"):
-			writeError(w, http.StatusConflict, CodeConflict, msg)
+			writeError(w, http.StatusConflict, CodeConflict, remoteResponseError(r, err, "session resume conflict").Error())
 		default:
-			writeError(w, http.StatusInternalServerError, CodeInternalError, msg)
+			writeError(w, http.StatusInternalServerError, CodeInternalError, remoteResponseError(r, err, "session resume failed").Error())
 		}
 		return
 	}
@@ -345,7 +345,7 @@ func (s *Server) handleResumeLogicalAgent(w http.ResponseWriter, r *http.Request
 	if res.Replayed {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, launchResponseOf(res))
+	writeJSON(w, status, launchResponseFor(r, res))
 }
 
 func logicalAgentPolicyResponse(policy agentmodel.LogicalAgentPolicy) LogicalAgentPolicyResponse {

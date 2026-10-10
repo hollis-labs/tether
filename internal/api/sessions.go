@@ -98,6 +98,12 @@ func (s *Server) handleSessionsItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleResizeSession(w, r, id)
+	case "log":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleSessionLog(w, r, id)
 	case "attach":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
@@ -222,7 +228,7 @@ func (s *Server) handleSessionHealth(w http.ResponseWriter, _ *http.Request, id 
 func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var req LaunchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+remoteResponseError(r, err, "session creation failed").Error())
 		return
 	}
 	if req.Launch == "" {
@@ -265,31 +271,31 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var invalidRoute *launchprofile.InvalidRouteError
 		if errors.As(err, &invalidRoute) {
-			writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest, remoteResponseError(r, err, "session creation failed").Error())
 			return
 		}
-		if writeIdempotencyConflict(w, err) {
+		if writeIdempotencyConflict(w, remoteResponseError(r, err, "session request conflicts with prior request")) {
 			return
 		}
-		if writeLaunchRefused(w, err) {
+		if writeLaunchRefused(w, remoteResponseError(r, err, "session launch refused")) {
 			return
 		}
 		if errors.Is(err, launch.ErrLaunchNotFound) || errors.Is(err, config.ErrUnknownSandboxProfile) {
-			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			writeError(w, http.StatusNotFound, CodeNotFound, remoteResponseError(r, err, "session creation failed").Error())
 			return
 		}
 		if errors.Is(err, config.ErrSandboxOverrideRefused) {
-			writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
+			writeError(w, http.StatusForbidden, CodeForbidden, remoteResponseError(r, err, "session creation failed").Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		writeError(w, http.StatusInternalServerError, CodeInternalError, remoteResponseError(r, err, "session creation failed").Error())
 		return
 	}
 	status := http.StatusCreated
 	if res.Replayed {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, launchResponseOf(res))
+	writeJSON(w, status, launchResponseFor(r, res))
 }
 
 // launchResponseOf renders a LaunchResult as the wire response.
@@ -355,25 +361,25 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
 		}
-		if writeLaunchRefused(w, err) {
+		if writeLaunchRefused(w, remoteResponseError(r, err, "session launch refused")) {
 			return
 		}
 		if errors.Is(err, session.ErrNotCreated) {
-			writeError(w, http.StatusConflict, CodeConflict, err.Error())
+			writeError(w, http.StatusConflict, CodeConflict, remoteResponseError(r, err, "session start failed").Error())
 			return
 		}
 		if errors.Is(err, config.ErrUnknownSandboxProfile) {
-			writeError(w, http.StatusNotFound, CodeNotFound, err.Error())
+			writeError(w, http.StatusNotFound, CodeNotFound, remoteResponseError(r, err, "session start failed").Error())
 			return
 		}
 		if errors.Is(err, config.ErrSandboxOverrideRefused) {
-			writeError(w, http.StatusForbidden, CodeForbidden, err.Error())
+			writeError(w, http.StatusForbidden, CodeForbidden, remoteResponseError(r, err, "session start failed").Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		writeError(w, http.StatusInternalServerError, CodeInternalError, remoteResponseError(r, err, "session start failed").Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, launchResponseOf(res))
+	writeJSON(w, http.StatusOK, launchResponseFor(r, res))
 }
 
 // handleListSessions services GET /sessions. Supports three query
@@ -384,20 +390,20 @@ func (s *Server) handleLaunchSession(w http.ResponseWriter, r *http.Request, id 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	opts, err := parseListSessionsOpts(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, remoteResponseError(r, err, "session listing failed").Error())
 		return
 	}
 
 	rows, err := s.Service.ListSessions(opts)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		writeError(w, http.StatusInternalServerError, CodeInternalError, remoteResponseError(r, err, "session listing failed").Error())
 		return
 	}
 	out := make([]SessionDTO, 0, len(rows))
 	for _, row := range rows {
 		dto := SessionRowToDTO(row)
 		dto.AttachedClients = s.Service.AttachedClients(row.ID)
-		out = append(out, dto)
+		out = append(out, sessionResponseFor(r, dto))
 	}
 
 	// When we hit the requested page size, more rows may exist older
@@ -437,19 +443,19 @@ func parseListSessionsOpts(r *http.Request) (store.ListSessionsOptions, error) {
 	return opts, nil
 }
 
-func (s *Server) handleGetSession(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request, id string) {
 	row, err := s.Service.GetSession(id)
 	if err != nil {
 		if errors.Is(err, store.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, CodeNotFound, "session not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		writeError(w, http.StatusInternalServerError, CodeInternalError, remoteResponseError(r, err, "session lookup failed").Error())
 		return
 	}
 	dto := SessionRowToDTO(*row)
 	dto.AttachedClients = s.Service.AttachedClients(id)
-	writeJSON(w, http.StatusOK, dto)
+	writeJSON(w, http.StatusOK, sessionResponseFor(r, dto))
 }
 
 func (s *Server) handleStopSession(w http.ResponseWriter, _ *http.Request, id string) {
