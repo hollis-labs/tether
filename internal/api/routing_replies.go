@@ -189,9 +189,14 @@ func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, b
 		writeReplyError(w, err)
 		return RoutingReplyReceipt{}, false
 	}
+	key, err := principalIdempotencyKey(r.Context(), strings.TrimSpace(r.Header.Get("Idempotency-Key")))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
+		return RoutingReplyReceipt{}, false
+	}
 	receipt, err := s.RoutingReplies.SubmitRoutingReply(r.Context(), RoutingReplyRequest{
 		ParentID: parentID, Body: body, Interrupt: interrupt, Caller: caller, Verified: verified,
-		IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		IdempotencyKey: key,
 	})
 	if err != nil {
 		writeReplyError(w, err)

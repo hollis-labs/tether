@@ -1,5 +1,9 @@
 # Verified caller identity
 
+The local listener retains the CW-20260930-0253 phase-1 policy. Optional remote
+access uses [paired device credentials and route scopes](device-pairing.md),
+independently of local identity mode.
+
 CW-20260930-0253 phase 1 starts with daemon-verified bearer identity. The approved
 record is Tesseract workspace item `01M3TVNJ02SD1C3NRXBF4FF1CC`; its section 8
 recommendations are approved by Chrispian and lead.
@@ -36,12 +40,13 @@ not turn on enforcement anywhere. Non-loopback TCP binds require explicit
 The `principals` table holds token rows: a unique row id and a non-unique
 `principal_id` identify the credential and stable principal separately. Each
 row holds kind (`operator`, `session`,
-`service`, `interactive`), display, scopes, optional session id, permitted
+`service`, `interactive`, `device`), display, scopes, optional session id, permitted
 addresses, creator, creation time and optional revocation/expiry times.
 Tokens contain 32 cryptographically random bytes with a `tth_` prefix. Only a
 SHA-256 hash is stored, with a unique indexed hash lookup. Database lookup
 timing is not claimed to be constant-time. Multiple tokens may represent one
-principal; revocation by principal id revokes all its token rows.
+principal; device ids are unique to one credential. Revocation by principal id
+revokes all its token rows.
 Revoked and expired credentials cannot verify. Raw tokens are not included in
 principal JSON, audit receipts or events.
 
@@ -131,9 +136,11 @@ The client library's credential options have their own task/PR and require a
 lead-chosen release before consumers adopt them. No token introspection endpoint
 is required.
 
-Phase 2 covers message `from` stamping, mailbox ownership, per-principal
-idempotency, AI caller stamping, route-scope policy and launch-plan read
-restrictions. Phase 2 must also reconcile the operator messaging address
+The remote listener now enforces device route scopes and namespaces launch,
+resume, routing-reply and team idempotency keys by the verified device id.
+Local keys and local authorization retain their existing behavior. Remaining
+phase-2 work covers message `from` stamping, mailbox ownership, AI caller
+stamping and launch-plan read restrictions. Phase 2 must also reconcile the operator messaging address
 `msg://user/local/me` with its stable principal identity. Phase 3 covers live enforcement rollout and consumer adoption.
 Observe-mode attribution does not prevent same-uid credential theft: meaningful
 impersonation protection also requires read isolation (CW-20261001-0263), along
@@ -167,3 +174,16 @@ still use the documented fallback; explicit token files/environment remain first
 Stdio upstream processes do not inherit any `TETHER_*TOKEN` variable from the
 proxy. An upstream catalog entry may deliberately supply its own token variable
 in `env`; that explicit configuration is retained.
+
+## Device-only remote authentication
+
+CW-20261009-0070 replaces CW-20261009-0068's generic non-operator remote
+admission with the scoped device-token authentication chosen by ADR 0062.
+Protected remote routes refuse operator, service, session and interactive
+credentials, even if locally valid. Health and the minimal descriptor remain
+public; the bounded POST `/auth/pair/exchange` is the only unauthenticated
+credential bootstrap exception. Local operator and session behavior is retained.
+Remote device use writes its audit and metadata transactionally before dispatch;
+an audit failure returns 503. Device revocation cancels requests and open streams
+by the current authenticated credential, independently of `as`, `from` or labels.
+See [device pairing](device-pairing.md) for lifetimes and scope policy.

@@ -26,18 +26,23 @@ disclosure; response times are best effort during the pre-release period.
 
 ## Deployment boundary
 
-Tether is a **single-user, same-host** control plane. The `tetherd` HTTP API has no
-authentication: trust is anchored to the filesystem permissions of the Unix
-domain socket (default `~/.tether/run/tetherd.sock`). Anyone who can connect to
-that socket can create, steer and stop sessions, send messages and read
-session output as the daemon's user.
+Tether remains a **single-user control plane**. The local Unix socket retains
+its configured `off`, `observe` or `enforce` identity policy; the default
+`observe` attributes supplied credentials and permits anonymous local requests.
+Keep the socket and its parent directory owner-only. Caller `as` and `from`
+fields remain provenance rather than independent authenticated authority.
 
-- Keep the socket and its parent directory owner-only.
-- If you set `daemon.listen_addr` to a TCP address, use a loopback address
-  (`tcp:127.0.0.1:PORT`). Do not bind `tetherd` to a non-loopback interface; there
-  is no TLS and no bearer-token check on the HTTP API.
-- Caller identity on messaging and group routes (the `as` / `from` URN) is
-  provenance supplied by the caller, not an authenticated credential.
+The optional remote listener binds only to literal loopback addresses and
+always enforces scoped device credentials, independently of local mode.
+Operator, service, session and interactive credentials cannot authenticate
+remotely. Health and the minimal environment descriptor are public; a bounded,
+rate-limited pairing exchange is the sole credential bootstrap exception.
+Pairing grant creation requires an operator credential on the accepted local
+Unix socket. Remote MCP and proxy gateways remain absent. Exact Host and Origin
+allowlists protect every remote request, including discovery and pairing.
+There is no built-in TLS: SSH forwarding supplies the encrypted v1 carrier.
+See [device pairing](docs/device-pairing.md) and
+[environment protocol](docs/environment-protocol.md).
 
 The MCP stdio adapter (`tether mcp`) is the one surface with scopes. Read-only
 tools need no token. Mutating tools require a token and the matching scope
@@ -267,11 +272,11 @@ environment and sends trace data to the endpoint you choose.
 
 ## Current security limitations
 
-- no authentication on the daemon HTTP/UDS API
-- no built-in TLS; TCP listeners are loopback-only by convention
+- default local observe/off modes permit anonymous daemon API access
+- no built-in TLS; the optional remote listener enforces a loopback bind
 - no at-rest encryption of state, logs or backups
 - macOS sandboxing relies on a deprecated mechanism with a default-allow posture
-- MCP scopes are coarse capability guards, not multi-tenant isolation
+- MCP and device scopes are capability guards, not multi-tenant isolation
 - caller URNs on messaging routes are unauthenticated provenance
 - tool-call records from the `tether mcp` Tether plants in an agent (`proxy_events`
   and the `tool_call_*` events in the event log) are asserted by the agent's own
@@ -298,3 +303,13 @@ them or place Tether behind controls that provide the missing boundary.
 
 For which layer protects which resource, and what an agent can still reach,
 see [docs/agent-reach.md](docs/agent-reach.md).
+
+Device credentials and pairing codes are random secrets stored only as hashes.
+Device use records its id, last-use time, parsed peer IP and bounded user agent;
+revocation cancels active device streams. This is not isolation from a process
+with access to the same uid's database or token files. In this pre-1.0,
+single-owner model, a device with `read` can see all environment data, including
+sessions and message content. Per-principal filtering is required before 1.0.
+Provider credentials, strict native launch policy and retained shim custody are
+separate boundaries; pairing supplies none of those authorities. Source and
+synthetic tests do not establish live worker pairing acceptance.

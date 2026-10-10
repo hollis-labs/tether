@@ -155,7 +155,8 @@ adapter. Enabling it retains the separate `daemon.mcp_endpoint.enabled` opt-in;
 it does not expose the endpoint automatically. A forwarded adapter inherits the
 destination daemon's module policy. Disabling `remote_listener` refuses a TCP
 listener; enabling it permits the separately configured loopback remote listener.
-It does not issue device credentials or install pairing. Stream, directory and connection manager
+It does not issue device credentials; pairing is an explicit local operator
+action. Stream, directory and connection manager
 switches do not create absent implementations.
 
 ## Loopback remote access
@@ -164,7 +165,8 @@ switches do not create absent implementations.
 in the same daemon process. It is disabled by default. Only literal loopback IP
 addresses are accepted; wildcard binds, LAN addresses and hostnames are refused
 before either listener starts. The remote listener always enforces verified
-credentials, including on A2A routes, and rejects operator credentials. The
+device credentials, including on A2A routes. Operator, service, session and
+interactive credentials are refused remotely. The
 local listener retains its configured identity mode and existing exemptions.
 `/health` and the public descriptor remain unauthenticated on both listeners.
 The remote router has no `/mcp` or `/p/` proxy mounts.
@@ -200,15 +202,22 @@ must be enabled. Both listeners open before the PID file is published and drain
 before services close; failure to open the remote port releases the owned local
 socket. No managed unit or deployment is installed by this entry point.
 
-Credential issuance and pairing remain CW-20261009-0070. Until then, only
-credentials already minted through the local path can authenticate remote calls;
-the operator token is never a remote bootstrap mechanism. The current federation
-HTTP client does not resolve peer credentials or attach bearer/protocol headers
-by default; that client and secret resolution belongs to CW-20261009-0074 using
-the credentials from CW-20261009-0070. Federation transport
-adoption remains CW-20261009-0074: its current Subscribe forwarding omits `as`,
-while `/messages/subscribe` requires `as` to match `to`. This listener does not
-repair or activate that transport.
+[Device pairing](device-pairing.md) issues one-use grants through the local Unix
+socket and exchanges them for scoped device credentials over the remote
+listener. This source transition replaces 0068's generic non-operator admission;
+it performs no live token migration or enrollment. POST `/auth/pair/exchange`
+is unauthenticated but still requires protocol agreement and the exact Host/Origin
+allowlists. Its body and rate are bounded. All other protected remote routes
+require a verified device and their explicit route/payload scopes.
+
+Federation adoption remains CW-20261009-0074. Its HTTP client does not resolve
+peer credentials or attach bearer/protocol headers by default; Subscribe still
+omits `as`, while `/messages/subscribe` requires `as` to match `to`. A2A retains
+its separate inner binding-bearer authentication. A paired device does not match
+that binding bearer, and a legacy binding credential fails outer device-only
+admission. A synthetic refusal test preserves both gates; full A2A device
+integration remains unsupported. This slice does not activate federation or
+change its credentials.
 
 ## Enrollment authority metadata
 

@@ -50,10 +50,10 @@ func Middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 	return middleware(mode, verifier, record, next, false)
 }
 
-// RemoteMiddleware always enforces verified non-operator credentials. Unlike
+// RemoteMiddleware always enforces verified device credentials. Unlike
 // the local listener, A2A does not bypass caller authentication here.
 func RemoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
-	return middleware(Enforce, verifier, record, next, true)
+	return remoteMiddleware(verifier, record, next)
 }
 
 func middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler, remote bool) http.Handler {
@@ -79,7 +79,7 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 		}
 		o := Observation{At: time.Now().UTC(), Mode: mode, Authentication: "missing", Method: r.Method, Route: routeFamily(r.URL.Path)}
 		p, state := authenticate(r.Context(), headers, verifier)
-		if remote && state == "verified" && (p.Kind == "operator" || p.ID == OperatorID) {
+		if remote && state == "verified" && (p.Kind != "device" || p.ID == OperatorID) {
 			p, state = Principal{}, "invalid"
 		}
 		o.Authentication = state
@@ -89,7 +89,7 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 		}
 		// Context lookups and verified proxy telemetry are self-observation.
 		// Authenticate normally, but avoid duplicating each call in the audit.
-		selfObservation := state == "verified" && (r.Method == http.MethodGet && r.URL.Path == "/auth/context" || r.Method == http.MethodPost && r.URL.Path == "/proxy/events")
+		selfObservation := !remote && state == "verified" && (r.Method == http.MethodGet && r.URL.Path == "/auth/context" || r.Method == http.MethodPost && r.URL.Path == "/proxy/events")
 		if record != nil && !selfObservation {
 			if err := record(r.Context(), o); err != nil {
 				// Do not print database errors: a driver may echo parameters.
@@ -151,7 +151,7 @@ func authError(w http.ResponseWriter, status int, code string) {
 
 func routeFamily(path string) string {
 	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
-	if len(first) > 64 || strings.Contains(first, "tth_") {
+	if len(first) > 64 || strings.Contains(first, "tth_") || strings.Contains(first, "tpg_") {
 		return "/<redacted>"
 	}
 	return "/" + first

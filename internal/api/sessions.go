@@ -233,6 +233,12 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
+	key, keyErr := principalIdempotencyKey(r.Context(), req.IdempotencyKey)
+	if keyErr != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
+		return
+	}
+	req.IdempotencyKey = key
 	var res LaunchResult
 	var err error
 	// A keyed request always takes the input path: that is where the

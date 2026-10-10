@@ -35,5 +35,6 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(detectCmd, doctorCmd)
 	rootCmd.AddCommand(newWorkerServiceCommand())
+	rootCmd.AddCommand(newPairCommand(localDeviceAdminClient), newAuthCommand(localDeviceAdminClient))
 	rootCmd.AddCommand(workstreamsCmd)
 }

@@ -6,10 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db       *sql.DB
+	streamMu sync.Mutex
+	streams  map[string]map[*deviceStream]struct{}
+}
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
@@ -55,8 +60,18 @@ func (s *Store) MintSessionForLaunch(ctx context.Context, p Principal) (string, 
 }
 
 func mint(ctx context.Context, writer principalWriter, p Principal) (string, error) {
-	if p.ID == "" || (p.Kind != "operator" && p.Kind != "session" && p.Kind != "service" && p.Kind != "interactive") {
+	if p.ID == "" || (p.Kind != "operator" && p.Kind != "session" && p.Kind != "service" && p.Kind != "interactive" && p.Kind != "device") {
 		return "", fmt.Errorf("principal id and valid kind required")
+	}
+	if p.Kind == "device" {
+		if p.ID == OperatorID || p.ExpiresAt == nil {
+			return "", fmt.Errorf("expiring non-operator device required")
+		}
+		var err error
+		p.Scopes, err = NormalizeDeviceScopes(p.Scopes)
+		if err != nil {
+			return "", err
+		}
 	}
 	if (p.Kind == "session") != (p.SessionID != "") {
 		return "", fmt.Errorf("session id is required only for session principals")
@@ -80,6 +95,9 @@ func mint(ctx context.Context, writer principalWriter, p Principal) (string, err
 	var expires any
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		if p.Kind == "device" {
+			expires = p.ExpiresAt.UTC().Format(credentialTimeFormat)
+		}
 	}
 	result, err := writer.ExecContext(ctx, `INSERT INTO principals
         (principal_id, kind, display, token_hash, scopes_json, session_id, addresses_json,
@@ -104,6 +122,10 @@ func (s *Store) Verify(ctx context.Context, token string) (Principal, error) {
 		return Principal{}, ErrInvalidToken
 	}
 	hash := HashToken(token)
+	return s.verifyHash(ctx, hash)
+}
+
+func (s *Store) verifyHash(ctx context.Context, hash string) (Principal, error) {
 	var p Principal
 	var scopes, addresses, created string
 	var revoked, expires sql.NullString
@@ -143,6 +165,15 @@ func (s *Store) Verify(ctx context.Context, token string) (Principal, error) {
 		}
 		p.ExpiresAt = &at
 	}
+	if p.Kind == "device" {
+		if p.ID == OperatorID || p.ExpiresAt == nil {
+			return Principal{}, ErrInvalidToken
+		}
+		p.Scopes, err = NormalizeDeviceScopes(p.Scopes)
+		if err != nil {
+			return Principal{}, fmt.Errorf("invalid persisted device scopes")
+		}
+	}
 	return p, nil
 }
 
@@ -151,6 +182,7 @@ func (s *Store) Revoke(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("revoke principal: %w", err)
 	}
+	s.cancelDeviceStreams(id)
 	return nil
 }
 
@@ -163,6 +195,9 @@ func (s *Store) RevokeToken(ctx context.Context, token string) error {
 	if err != nil {
 		return fmt.Errorf("revoke credential: %w", err)
 	}
+	// A token-specific revoke must not cancel a different credential sharing
+	// a legacy principal id; watchers recheck their actual hash immediately.
+	s.checkDeviceStreams()
 	return nil
 }
 

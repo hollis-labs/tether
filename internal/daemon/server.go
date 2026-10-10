@@ -516,6 +516,12 @@ func (s *Server) handler(remote bool) http.Handler {
 	if s.EnvironmentReport != nil {
 		router.Handle("/v1/environment/report", s.EnvironmentReport)
 	}
+	if s.Identity != nil {
+		devices := api.NewDeviceAuthHandler(s.Identity)
+		for _, path := range []string{"/auth/pair", "/auth/pair/revoke", "/auth/pair/exchange", "/auth/devices", "/auth/revoke", "/auth/renew"} {
+			router.Handle(path, devices)
+		}
+	}
 	if s.MCP != nil && !remote {
 		router.Handle("/mcp", s.MCP)
 		router.Handle("/p/", s.MCP)
@@ -570,7 +576,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			}
 		}
 	}
-	versioned := environment.ProtocolGate(true, router)
+	versioned := environment.ProtocolGate(true, api.RemoteScopeMiddleware(router))
 	local := environment.ProtocolGate(false, router)
 	protocolHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
