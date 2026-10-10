@@ -12,6 +12,7 @@ import (
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/packages/respjson"
 	"github.com/openai/openai-go/responses"
 	"github.com/openai/openai-go/shared"
 
@@ -82,6 +83,9 @@ type Config struct {
 	Wire                 string
 	HTTPClient           *http.Client
 	AllowUnauthenticated bool
+	// IncludeReasoningText opts this provider into returning vendor reasoning
+	// text as "reasoning" content parts. The zero value preserves prior output.
+	IncludeReasoningText bool
 	OpenRouter           *OpenRouterExtension
 	HuggingFace          *HuggingFaceExtension
 }
@@ -96,22 +100,24 @@ type HuggingFaceExtension struct {
 
 // Provider executes normalized llm chat requests against OpenAI's Responses API.
 type Provider struct {
-	resolveAPIKey apiKeyResolver
-	newClient     clientFactory
-	wire          string
-	allowUnauth   bool
-	openRouter    *OpenRouterExtension
-	huggingFace   *HuggingFaceExtension
+	resolveAPIKey        apiKeyResolver
+	newClient            clientFactory
+	wire                 string
+	allowUnauth          bool
+	includeReasoningText bool
+	openRouter           *OpenRouterExtension
+	huggingFace          *HuggingFaceExtension
 }
 
 // New returns a Provider backed by the official OpenAI Go SDK.
 func New(cfg Config) *Provider {
 	return &Provider{
-		resolveAPIKey: cfg.ResolveAPIKey,
-		allowUnauth:   cfg.AllowUnauthenticated,
-		openRouter:    cfg.OpenRouter,
-		huggingFace:   cfg.HuggingFace,
-		wire:          cfg.Wire,
+		resolveAPIKey:        cfg.ResolveAPIKey,
+		allowUnauth:          cfg.AllowUnauthenticated,
+		includeReasoningText: cfg.IncludeReasoningText,
+		openRouter:           cfg.OpenRouter,
+		huggingFace:          cfg.HuggingFace,
+		wire:                 cfg.Wire,
 		newClient: func(apiKey string) responseClient {
 			opts := []option.RequestOption{
 				option.WithMaxRetries(0),
@@ -166,7 +172,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 		}
 		return llm.Response{}, err
 	}
-	return translateResponse(resp, route), nil
+	return translateResponse(resp, route, p.includeReasoningText), nil
 }
 
 // Embed sends one normalized embedding request to OpenAI.
@@ -284,7 +290,7 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 				}
 			}
 		case responses.ResponseCompletedEvent:
-			final = translateResponse(&ev.Response, route)
+			final = translateResponse(&ev.Response, route, p.includeReasoningText)
 		case responses.ResponseFailedEvent:
 			if ev.Response.Error.Message != "" {
 				return llm.Response{}, errors.New(ev.Response.Error.Message)
@@ -315,7 +321,7 @@ func (p *Provider) chatCompletion(ctx context.Context, req llm.Request, route ll
 	if err != nil {
 		return llm.Response{}, err
 	}
-	return translateChatCompletion(resp, route), nil
+	return translateChatCompletion(resp, route, p.includeReasoningText), nil
 }
 
 func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, route llm.RouteDecision, apiKey string, emit func(llm.StreamEvent) error) (llm.Response, error) {
@@ -328,6 +334,7 @@ func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, ro
 
 	final := llm.Response{Provider: route.Provider, Model: route.Model}
 	var textBuilder strings.Builder
+	var reasoningBuilder strings.Builder
 	toolCalls := map[int64]llm.ToolUse{}
 	toolOrder := make([]int64, 0)
 	for stream.Next() {
@@ -358,6 +365,9 @@ func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, ro
 						return llm.Response{}, err
 					}
 				}
+			}
+			if p.includeReasoningText {
+				reasoningBuilder.WriteString(reasoningTextFromExtraFields(choice.Delta.JSON.ExtraFields))
 			}
 			if strings.TrimSpace(choice.Delta.Refusal) != "" {
 				final.Refusal += choice.Delta.Refusal
@@ -393,9 +403,16 @@ func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, ro
 		return llm.Response{}, err
 	}
 	if text := strings.TrimSpace(textBuilder.String()); text != "" {
+		parts := make([]llm.ContentPart, 0, 2)
+		if reasoning := strings.TrimSpace(reasoningBuilder.String()); reasoning != "" {
+			parts = append(parts, llm.ContentPart{Type: "reasoning", Text: reasoning})
+		}
+		parts = append(parts, llm.ContentPart{Type: "text", Text: text})
+		final.Output = append(final.Output, llm.Message{Role: "assistant", Parts: parts})
+	} else if reasoning := strings.TrimSpace(reasoningBuilder.String()); reasoning != "" {
 		final.Output = append(final.Output, llm.Message{
 			Role:  "assistant",
-			Parts: []llm.ContentPart{{Type: "text", Text: text}},
+			Parts: []llm.ContentPart{{Type: "reasoning", Text: reasoning}},
 		})
 	}
 	for _, idx := range toolOrder {
@@ -734,7 +751,7 @@ func toChatCompletionTools(defs []llm.ToolDefinition) ([]openai.ChatCompletionTo
 	return tools, nil
 }
 
-func translateResponse(resp *responses.Response, route llm.RouteDecision) llm.Response {
+func translateResponse(resp *responses.Response, route llm.RouteDecision, includeReasoningText bool) llm.Response {
 	out := llm.Response{
 		Provider:   route.Provider,
 		Model:      resp.Model,
@@ -772,13 +789,24 @@ func translateResponse(resp *responses.Response, route llm.RouteDecision) llm.Re
 				},
 			})
 		case responses.ResponseReasoningItem:
-			// Keep reasoning out of message output for now; usage is preserved above.
+			if !includeReasoningText {
+				continue
+			}
+			parts := make([]llm.ContentPart, 0, len(variant.Summary))
+			for _, summary := range variant.Summary {
+				if strings.TrimSpace(summary.Text) != "" {
+					parts = append(parts, llm.ContentPart{Type: "reasoning", Text: summary.Text})
+				}
+			}
+			if len(parts) > 0 {
+				out.Output = append(out.Output, llm.Message{Role: "assistant", Parts: parts})
+			}
 		}
 	}
 	return out
 }
 
-func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecision) llm.Response {
+func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecision, includeReasoningText bool) llm.Response {
 	out := llm.Response{
 		Provider: route.Provider,
 		Model:    resp.Model,
@@ -810,10 +838,19 @@ func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecisio
 	}
 	choice := resp.Choices[0]
 	out.StopReason = choice.FinishReason
+	parts := make([]llm.ContentPart, 0, 2)
+	if includeReasoningText {
+		if reasoning := reasoningTextFromExtraFields(choice.Message.JSON.ExtraFields); strings.TrimSpace(reasoning) != "" {
+			parts = append(parts, llm.ContentPart{Type: "reasoning", Text: reasoning})
+		}
+	}
 	if strings.TrimSpace(choice.Message.Content) != "" {
+		parts = append(parts, llm.ContentPart{Type: "text", Text: choice.Message.Content})
+	}
+	if len(parts) > 0 {
 		out.Output = append(out.Output, llm.Message{
 			Role:  "assistant",
-			Parts: []llm.ContentPart{{Type: "text", Text: choice.Message.Content}},
+			Parts: parts,
 		})
 	}
 	if strings.TrimSpace(choice.Message.Refusal) != "" {
@@ -833,6 +870,20 @@ func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecisio
 		})
 	}
 	return out
+}
+
+func reasoningTextFromExtraFields(fields map[string]respjson.Field) string {
+	for _, name := range []string{"reasoning_content", "reasoning"} {
+		raw, ok := fields[name]
+		if !ok {
+			continue
+		}
+		var text string
+		if json.Unmarshal([]byte(raw.Raw()), &text) == nil && strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func shouldFallbackToChatCompletions(err error) bool {
