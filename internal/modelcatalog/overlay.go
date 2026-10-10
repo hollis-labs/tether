@@ -10,18 +10,20 @@ import (
 // where the upstream catalog has no entry yet, such as local OpenAI-compatible
 // model ids.
 type Overlay struct {
-	base  *Catalog
-	extra map[string]modelsdev.Model
+	base       *Catalog
+	extra      map[string]modelsdev.Model
+	priceState map[string]PriceState
 }
 
 // NewOverlay returns a catalog facade that prefers base metadata when present
 // and falls back to configured synthetic entries otherwise.
-func NewOverlay(base *Catalog, extra map[string]modelsdev.Model) *Overlay {
+func NewOverlay(base *Catalog, extra map[string]modelsdev.Model,
+	priceState map[string]PriceState) *Overlay {
 	cp := make(map[string]modelsdev.Model, len(extra))
 	for k, v := range extra {
 		cp[k] = v
 	}
-	return &Overlay{base: base, extra: cp}
+	return &Overlay{base: base, extra: cp, priceState: priceState}
 }
 
 func overlayKey(providerID, modelID string) string {
@@ -114,14 +116,26 @@ func (o *Overlay) MaxOutput(providerID, modelID string) (int, bool) {
 	return m.Limit.MaxOutputTokens, true
 }
 
-func (o *Overlay) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, bool) {
-	m, ok := o.Get(providerID, modelID)
-	if !ok {
-		return 0, false
+func (o *Overlay) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, PriceState) {
+	if o.base != nil {
+		if cost, state := o.base.EstimateCost(providerID, modelID, promptTokens, completionTokens); state != PriceUnknown {
+			return cost, state
+		}
 	}
-	if m.Cost.Input == 0 && m.Cost.Output == 0 {
-		return 0, false
+	m, ok := o.extra[overlayKey(providerID, modelID)]
+	if !ok {
+		return 0, PriceUnknown
+	}
+	state, ok := o.priceState[overlayKey(providerID, modelID)]
+	if !ok {
+		state = PriceUnknown
+	}
+	if state == PriceUnknown {
+		return 0, PriceUnknown
+	}
+	if state == PriceFree {
+		return 0, PriceFree
 	}
 	cost := float64(promptTokens)*m.Cost.Input/1_000_000 + float64(completionTokens)*m.Cost.Output/1_000_000
-	return cost, true
+	return cost, PricePriced
 }
