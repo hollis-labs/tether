@@ -614,10 +614,15 @@ func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map
 		providerID := effectiveCatalogProvider(p)
 		for _, modelID := range p.EffectiveModels() {
 			key := providerID + "\x00" + modelID
+			cost := modelsdev.Pricing{Input: -1, Output: -1}
+			if p.Price == "free" {
+				cost = modelsdev.Pricing{}
+			}
 			out[key] = modelsdev.Model{
 				ID:     modelID,
 				Name:   modelID,
 				Family: providerID,
+				Cost:   cost,
 				Modality: modelsdev.Modality{
 					Input:  []string{"text"},
 					Output: []string{"text"},

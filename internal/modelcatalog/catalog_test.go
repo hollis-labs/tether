@@ -56,9 +56,9 @@ func TestCatalogLookupAndEstimateCost(t *testing.T) {
 		t.Fatalf("Name = %q", m.Name)
 	}
 
-	in, out, ok := cat.Pricing("anthropic", "claude-sonnet-4-5")
-	if !ok || in != 3 || out != 15 {
-		t.Fatalf("Pricing = (%v, %v, %v), want (3, 15, true)", in, out, ok)
+	in, out, state := cat.Pricing("anthropic", "claude-sonnet-4-5")
+	if state != PricePriced || in != 3 || out != 15 {
+		t.Fatalf("Pricing = (%v, %v, %v), want (3, 15, priced)", in, out, state)
 	}
 
 	ctxWindow, ok := cat.ContextWindow("anthropic", "claude-sonnet-4-5")
@@ -81,9 +81,9 @@ func TestCatalogLookupAndEstimateCost(t *testing.T) {
 		t.Fatalf("Modality = %+v, ok=%v", modality, ok)
 	}
 
-	cost, ok := cat.EstimateCost("anthropic", "claude-sonnet-4-5", 1000, 500)
-	if !ok {
-		t.Fatal("EstimateCost returned !ok")
+	cost, state := cat.EstimateCost("anthropic", "claude-sonnet-4-5", 1000, 500)
+	if state == PriceUnknown {
+		t.Fatal("EstimateCost returned state == PriceUnknown")
 	}
 	wantCost := 1000*3.0/1_000_000 + 500*15.0/1_000_000
 	if math.Abs(cost-wantCost) > 1e-12 {

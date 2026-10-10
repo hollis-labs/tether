@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/tether/internal/llm"
+	"github.com/hollis-labs/tether/internal/modelcatalog"
 )
 
 func TestPlannerSelectsPinnedProviderAndModel(t *testing.T) {
@@ -525,11 +526,15 @@ func (s stubCatalog) MaxOutput(providerID, modelID string) (int, bool) {
 	return 0, false
 }
 
-func (s stubCatalog) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, bool) {
+func (s stubCatalog) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, modelcatalog.PriceState) {
 	for _, ref := range s.refs {
 		if ref.ProviderID == providerID && ref.ID == modelID {
-			return float64(promptTokens)*ref.Cost.Input/1_000_000 + float64(completionTokens)*ref.Cost.Output/1_000_000, true
+			cost := float64(promptTokens)*ref.Cost.Input/1_000_000 + float64(completionTokens)*ref.Cost.Output/1_000_000
+			if cost == 0 {
+				return 0, modelcatalog.PriceFree
+			}
+			return cost, modelcatalog.PricePriced
 		}
 	}
-	return 0, false
+	return 0, modelcatalog.PriceUnknown
 }

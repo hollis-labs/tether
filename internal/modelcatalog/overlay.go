@@ -114,14 +114,22 @@ func (o *Overlay) MaxOutput(providerID, modelID string) (int, bool) {
 	return m.Limit.MaxOutputTokens, true
 }
 
-func (o *Overlay) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, bool) {
-	m, ok := o.Get(providerID, modelID)
+func (o *Overlay) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, PriceState) {
+	if o.base != nil {
+		if cost, state := o.base.EstimateCost(providerID, modelID, promptTokens, completionTokens); state != PriceUnknown {
+			return cost, state
+		}
+	}
+	m, ok := o.extra[overlayKey(providerID, modelID)]
 	if !ok {
-		return 0, false
+		return 0, PriceUnknown
+	}
+	if m.Cost.Input == -1 {
+		return 0, PriceUnknown
 	}
 	if m.Cost.Input == 0 && m.Cost.Output == 0 {
-		return 0, false
+		return 0, PriceFree
 	}
 	cost := float64(promptTokens)*m.Cost.Input/1_000_000 + float64(completionTokens)*m.Cost.Output/1_000_000
-	return cost, true
+	return cost, PricePriced
 }

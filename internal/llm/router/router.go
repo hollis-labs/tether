@@ -9,6 +9,7 @@ import (
 
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
 	"github.com/hollis-labs/tether/internal/llm"
+	"github.com/hollis-labs/tether/internal/modelcatalog"
 )
 
 var (
@@ -24,7 +25,7 @@ type Catalog interface {
 	Modality(providerID, modelID string) (modelsdev.Modality, bool)
 	ContextWindow(providerID, modelID string) (int, bool)
 	MaxOutput(providerID, modelID string) (int, bool)
-	EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, bool)
+	EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, modelcatalog.PriceState)
 }
 
 // Route is one explicit provider/model target the planner may consider.
@@ -315,7 +316,7 @@ func (p *Planner) evaluateCandidate(req llm.Request, candidate Route) (Plan, err
 	}
 	plan.Reasons = append(plan.Reasons, selectionReasons(req, candidate)...)
 
-	if cost, ok, err := validateBudget(req, p.catalog, catalogProvider, model); err != nil {
+	if cost, ok, err := validateBudget(req, candidate, p.catalog, catalogProvider, model); err != nil {
 		return Plan{}, err
 	} else if ok {
 		plan.EstimatedCostUSD = cost
@@ -491,20 +492,31 @@ func validateLimits(req llm.Request, c Catalog, provider, model string) error {
 	return nil
 }
 
-func validateBudget(req llm.Request, c Catalog, provider, model string) (float64, bool, error) {
-	if req.CostBudgetUSD <= 0 {
+func validateBudget(req llm.Request, route Route, c Catalog, provider, model string) (float64, bool, error) {
+	unlimited := req.CostBudgetUSD <= 0 && route.MaxCostUSD == nil
+	if unlimited {
 		return 0, false, nil
 	}
+
+	effectiveBudget := req.CostBudgetUSD
+	if route.MaxCostUSD != nil && (effectiveBudget <= 0 || *route.MaxCostUSD < effectiveBudget) {
+		effectiveBudget = *route.MaxCostUSD
+	}
+
 	promptTokens, completionTokens, ok := budgetEstimateTokens(req)
 	if !ok {
 		return 0, false, nil
 	}
-	cost, ok := c.EstimateCost(provider, model, promptTokens, completionTokens)
-	if !ok {
+
+	cost, state := c.EstimateCost(provider, model, promptTokens, completionTokens)
+	if state == modelcatalog.PriceUnknown {
+		if effectiveBudget == 0 {
+			return 0, false, fmt.Errorf("budget is zero but cost is unknown")
+		}
 		return 0, false, nil
 	}
-	if cost > req.CostBudgetUSD {
-		return 0, true, fmt.Errorf("estimated cost %.6f USD exceeds budget %.6f USD", cost, req.CostBudgetUSD)
+	if cost > effectiveBudget {
+		return 0, true, fmt.Errorf("estimated cost %.6f USD exceeds budget %.6f USD", cost, effectiveBudget)
 	}
 	return cost, true, nil
 }

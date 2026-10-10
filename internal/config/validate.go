@@ -293,8 +293,8 @@ func validateAIPolicyConfig(prefix string, policy AIPolicyConfig) error {
 	if policy.MaxOutputTokens != nil && *policy.MaxOutputTokens <= 0 {
 		return fmt.Errorf("%s max_output_tokens must be > 0", prefix)
 	}
-	if policy.MaxCostUSD != nil && *policy.MaxCostUSD <= 0 {
-		return fmt.Errorf("%s max_cost_usd must be > 0", prefix)
+	if policy.MaxCostUSD != nil && *policy.MaxCostUSD < 0 {
+		return fmt.Errorf("%s max_cost_usd must be >= 0", prefix)
 	}
 	if err := validateAIUsageBudgetPolicyConfig(prefix, policy.UsageBudget); err != nil {
 		return err
@@ -303,8 +303,8 @@ func validateAIPolicyConfig(prefix string, policy AIPolicyConfig) error {
 }
 
 func validateAIUsageBudgetPolicyConfig(prefix string, budget AIUsageBudgetPolicyConfig) error {
-	if budget.MaxCostUSD != nil && *budget.MaxCostUSD <= 0 {
-		return fmt.Errorf("%s usage_budget.max_cost_usd must be > 0", prefix)
+	if budget.MaxCostUSD != nil && *budget.MaxCostUSD < 0 {
+		return fmt.Errorf("%s usage_budget.max_cost_usd must be >= 0", prefix)
 	}
 	switch budget.Window {
 	case "", "day", "month":
