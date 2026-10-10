@@ -12,7 +12,7 @@ require (
 	github.com/hollis-labs/libs/util v0.2.0
 	github.com/hollis-labs/substrate/harness v0.5.0
 	github.com/hollis-labs/substrate/llm-core v0.1.0
-	github.com/hollis-labs/substrate/mesh v0.1.0
+	github.com/hollis-labs/substrate/mesh v0.3.1-0.20261010190023-63c01d9699ab
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2

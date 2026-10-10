@@ -76,6 +76,8 @@ github.com/hollis-labs/substrate/llm-core v0.1.0 h1:nsNpY3OzpuvHKC9zLzqFKmwMXt85
 github.com/hollis-labs/substrate/llm-core v0.1.0/go.mod h1:055xZrH5gLwodrVMu2SHQzfIcTXhjDGBXfJ1kdy/eSo=
 github.com/hollis-labs/substrate/mesh v0.1.0 h1:CkUvYdoXSGVcSlXhVgc+0AYzyhXdd49c+AV47z0XvOs=
 github.com/hollis-labs/substrate/mesh v0.1.0/go.mod h1:akUYHGaDVmF2Gwyr784nk8HuNr0KBsl1x97ApvTxcAM=
+github.com/hollis-labs/substrate/mesh v0.3.1-0.20261010190023-63c01d9699ab h1:lV/e5Fr1+psr5AAtfVtqMmC2EotTNJVg/i1TfIgWv6I=
+github.com/hollis-labs/substrate/mesh v0.3.1-0.20261010190023-63c01d9699ab/go.mod h1:4elvX/CcBf51X9ORmGibLaS+bFOO3jolBvw9OlwCALs=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcIi21E=
