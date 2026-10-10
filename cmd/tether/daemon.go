@@ -484,6 +484,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),
+				OpenRouter:  mapOpenRouterExt(p.Extensions),
+				HuggingFace: mapHuggingFaceExt(p.Extensions),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
@@ -597,7 +599,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		return nil
 	}
 
-	catalogView := modelcatalog.NewOverlay(catalog, syntheticConfiguredModels(providerConfigs))
+	models, priceStates := syntheticConfiguredModels(providerConfigs)
+	catalogView := modelcatalog.NewOverlay(catalog, models, priceStates)
 
 	var evaluators []router.PolicyEvaluator
 	if deps.Usage != nil {
@@ -620,16 +623,23 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 	}
 }
 
-func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map[string]modelsdev.Model {
+func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) (map[string]modelsdev.Model, map[string]modelcatalog.PriceState) {
 	out := make(map[string]modelsdev.Model)
+	ps := make(map[string]modelcatalog.PriceState)
 	for _, p := range providers {
 		providerID := effectiveCatalogProvider(p)
 		for _, modelID := range p.EffectiveModels() {
 			key := providerID + "\x00" + modelID
+			state := modelcatalog.PriceUnknown
+			if p.Price == "free" {
+				state = modelcatalog.PriceFree
+			}
+			ps[key] = state
 			out[key] = modelsdev.Model{
 				ID:     modelID,
 				Name:   modelID,
 				Family: providerID,
+				Cost:   modelsdev.Pricing{},
 				Modality: modelsdev.Modality{
 					Input:  []string{"text"},
 					Output: []string{"text"},
@@ -638,7 +648,7 @@ func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map
 			}
 		}
 	}
-	return out
+	return out, ps
 }
 
 func modelCatalogProviderID(providerType string) string {
@@ -1236,4 +1246,22 @@ func effectiveCatalogProvider(p config.AIProviderConfig) string {
 		return p.CatalogProvider
 	}
 	return modelCatalogProviderID(p.Type)
+}
+
+func mapOpenRouterExt(ext *config.ProviderExtensions) *llmopenai.OpenRouterExtension {
+	if ext == nil || ext.OpenRouter == nil {
+		return nil
+	}
+	return &llmopenai.OpenRouterExtension{
+		Provider: ext.OpenRouter.Provider,
+	}
+}
+
+func mapHuggingFaceExt(ext *config.ProviderExtensions) *llmopenai.HuggingFaceExtension {
+	if ext == nil || ext.HuggingFace == nil {
+		return nil
+	}
+	return &llmopenai.HuggingFaceExtension{
+		BillTo: ext.HuggingFace.BillTo,
+	}
 }

@@ -536,6 +536,11 @@ func (s *Service) recordAuditEvent(eventType string, req llm.Request, plan route
 		CacheReadTokens:  resp.Usage.CacheReadTokens,
 		CacheWriteTokens: resp.Usage.CacheWriteTokens,
 		ReasoningTokens:  resp.Usage.ReasoningTokens,
+		CostKind:         resp.Usage.CostKind,
+		UpstreamProvider: resp.Usage.UpstreamProvider,
+		BilledCostUSD:    resp.Usage.BilledCostUSD,
+		GenerationID:     resp.Usage.GenerationID,
+
 		EstimatedCostUSD: maxFloat(resp.Usage.EstimatedCostUSD, plan.EstimatedCostUSD),
 		RequestSummary:   summarizeRequest(req),
 		ResponseSummary:  summarizeResponse(resp),

@@ -85,6 +85,7 @@ type AIProviderConfig struct {
 	ID              string         `yaml:"id"`
 	Type            string         `yaml:"type"`
 	CatalogProvider string         `yaml:"catalog_provider,omitempty"`
+	Price           string         `yaml:"price,omitempty"`
 	Wire            string         `yaml:"wire,omitempty"`
 	Model           string         `yaml:"model"`
 	Models          []string       `yaml:"models"`
@@ -92,7 +93,21 @@ type AIProviderConfig struct {
 	SecretRef       string         `yaml:"secret_ref"`
 	BaseURL         string         `yaml:"base_url"`
 	Enabled         bool           `yaml:"enabled"`
-	Policy          AIPolicyConfig `yaml:"policy"`
+	Policy          AIPolicyConfig       `yaml:"policy"`
+	Extensions      *ProviderExtensions  `yaml:"extensions,omitempty"`
+}
+
+type ProviderExtensions struct {
+	OpenRouter  *OpenRouterExtension  `yaml:"openrouter,omitempty"`
+	HuggingFace *HuggingFaceExtension `yaml:"huggingface,omitempty"`
+}
+
+type OpenRouterExtension struct {
+	Provider map[string]any `yaml:"provider,omitempty"`
+}
+
+type HuggingFaceExtension struct {
+	BillTo string `yaml:"bill_to,omitempty"`
 }
 
 type AIRoutingConfig struct {
