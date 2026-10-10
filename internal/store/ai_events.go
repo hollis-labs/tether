@@ -162,6 +162,10 @@ func (s *Store) RecordAIAuditEvent(ev observability.AuditEvent) error {
 		nullIfEmpty(ev.RequestSummary),
 		nullIfEmpty(ev.ResponseSummary),
 		ts,
+		nullIfEmpty(ev.CostKind),
+		nullIfEmpty(ev.UpstreamProvider),
+		ev.BilledCostUSD,
+		nullIfEmpty(ev.GenerationID),
 	)
 	if err != nil {
 		return fmt.Errorf("insert ai event: %w", err)
@@ -180,7 +184,8 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 	q := `SELECT id, event_type, request_id, session_id, caller_id, operation, provider, model,
 	             policy_version, latency_ms, success, refusal, error, input_tokens, output_tokens,
 	             cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd,
-	             request_summary, response_summary, timestamp
+	             request_summary, response_summary, timestamp,
+	             cost_kind, upstream_provider, billed_cost_usd, generation_id
 	      FROM ai_events`
 	where, args := aiEventWhereClause(f)
 	//nolint:gosec // G202: where is built from fixed column predicates with ? placeholders; values are bound via args
@@ -210,12 +215,17 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 			respSummary    sql.NullString
 			success        int
 			tsStr          string
+			costKind       sql.NullString
+			upstream       sql.NullString
+			billedCost     sql.NullFloat64
+			generationID   sql.NullString
 		)
 		if err := rows.Scan(
 			&ev.ID, &ev.EventType, &requestID, &sessionID, &callerID, &ev.Operation,
 			&provider, &model, &policyVersion, &ev.LatencyMs, &success, &refusal, &errStr,
 			&ev.InputTokens, &ev.OutputTokens, &ev.CacheReadTokens, &ev.CacheWriteTokens,
 			&ev.ReasoningTokens, &ev.EstimatedCostUSD, &requestSummary, &respSummary, &tsStr,
+			&costKind, &upstream, &billedCost, &generationID,
 		); err != nil {
 			return nil, fmt.Errorf("scan ai event: %w", err)
 		}
@@ -229,6 +239,10 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 		ev.Error = errStr.String
 		ev.RequestSummary = requestSummary.String
 		ev.ResponseSummary = respSummary.String
+		ev.CostKind = costKind.String
+		ev.UpstreamProvider = upstream.String
+		ev.GenerationID = generationID.String
+		ev.BilledCostUSD = billedCost.Float64
 		ev.Success = success == 1
 		ts, parseErr := time.Parse(time.RFC3339Nano, tsStr)
 		if parseErr != nil {
