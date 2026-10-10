@@ -44,8 +44,11 @@ type Config struct {
 type Server struct {
 	// Environment is the cached public descriptor composed from selected
 	// state identity. It is separate from authenticated session/API handlers.
-	EnvironmentStream        *environmentstream.Server
-	Environment              *environment.DescriptorHandler
+	EnvironmentStream *environmentstream.Server
+	Environment       *environment.DescriptorHandler
+	// EnvironmentReport is the detailed authenticated read-scope report.
+	// Its handler enforces read authority even when local identity observes.
+	EnvironmentReport        http.Handler
 	Docs                     api.DocsService
 	Identity                 *identity.Store
 	OperatorIdentityDegraded bool
@@ -466,6 +469,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	router := http.NewServeMux()
 	router.HandleFunc("/health", s.handleHealth)
+	if s.EnvironmentReport != nil {
+		router.Handle("/v1/environment/report", s.EnvironmentReport)
+	}
 	if s.MCP != nil {
 		router.Handle("/mcp", s.MCP)
 		router.Handle("/p/", s.MCP)

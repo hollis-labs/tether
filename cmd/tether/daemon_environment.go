@@ -6,6 +6,7 @@ import (
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/environment/report"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/store"
 )
@@ -36,7 +37,9 @@ func buildEnvironmentDescriptor(cat *config.Catalog, db *store.Store, capabiliti
 }
 
 func composedEnvironmentCapabilities(profile *environment.Profile, bus events.Bus, runtimeManager bool) map[string]map[string]any {
-	caps := map[string]map[string]any{}
+	// The report handler is installed by this daemon composition. Advertise
+	// its coarse contract without running detectors or exposing their results.
+	caps := report.CapabilityGroups()
 	if profile.Enabled(environment.StreamAPI) {
 		group := map[string]any{"version": 1, "environment_snapshot": true, "session_snapshot": true}
 		if _, live := bus.(events.LiveSubscriber); live {

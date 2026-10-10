@@ -190,8 +190,9 @@ var daemonRunCmd = &cobra.Command{
 			return err
 		}
 		logClaudeStrictMCP(log.Printf, svc.ClaudeStrictMCPStatus())
-		logControlPlaneProtection(log.Printf, svc.ProtectionHealth())
-		logCodexProtection(log.Printf, svc.ProtectionHealth())
+		protectionHealth := svc.ProtectionHealth()
+		logControlPlaneProtection(log.Printf, protectionHealth)
+		logCodexProtection(log.Printf, protectionHealth)
 		// Sweep stale sessions ONLY at daemon startup, never from short-
 		// lived subcommands (`tether mcp`, `tether agents`, etc.) — those may
 		// run concurrently with the daemon (e.g. as an MCP subprocess
@@ -286,8 +287,14 @@ var daemonRunCmd = &cobra.Command{
 		if err := svc.StartRoutingReplies(ctx); err != nil {
 			log.Printf("daemon: reply routing not started: %v", err)
 		}
+		environmentReport, stopReport, err := newDaemonEnvironmentReport(ctx, svc, cfg, protectionHealth)
+		if err != nil {
+			return err
+		}
+		defer stopReport()
 		server := &daemon.Server{
 			Environment:              environmentDescriptor,
+			EnvironmentReport:        environmentReport,
 			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
@@ -350,7 +357,10 @@ var daemonRunCmd = &cobra.Command{
 			A2A:              a2aHandler,
 			// Complete reducer persistence and join the routing worker before
 			// closing the store, even after the server has drained sessions.
-			Close: closeService,
+			Close: func() error {
+				stopReport()
+				return closeService()
+			},
 		}
 
 		if mcpHandler != nil {

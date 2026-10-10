@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,5 +68,41 @@ func TestEnvironmentCapabilitiesFollowInstalledComposition(t *testing.T) {
 	caps := composedEnvironmentCapabilities(disabled, bus, true)
 	if caps["streams"] != nil || caps["raw_attach"] != nil {
 		t.Fatal("disabled capability advertised", caps)
+	}
+}
+
+func TestEnvironmentDescriptorAdvertisesCachedCoarseReport(t *testing.T) {
+	profile, err := environment.ResolveProfile("worker", nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps := composedEnvironmentCapabilities(profile, nil, false)
+	d, err := environment.NewDescriptor(environment.Descriptor{EnvironmentID: "synthetic-id", Label: "worker", Capabilities: caps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Later changes cannot reveal details or change the public cached body.
+	caps["capability_report"]["providers"] = "secret provider login"
+	w := httptest.NewRecorder()
+	d.ServeHTTP(w, httptest.NewRequest(http.MethodGet, environment.DescriptorPath, nil))
+	var got environment.Descriptor
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	group := got.Capabilities["capability_report"]
+	if group["providers"] != true || group["resources"] != true || group["sandbox"] != true || group["role_profile"] != true {
+		t.Fatal("missing coarse report contract", group)
+	}
+	for _, detail := range []string{"claude", "codex", "logged_in", "launch_host_shim", "reflink_supported", "state_root", "cpu_load", "enabled_modules"} {
+		if group[detail] != nil {
+			t.Fatal("public report exposed host detail", detail)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, environment.DescriptorPath, nil)
+	r.Header.Set("If-None-Match", w.Header().Get("ETag"))
+	cached := httptest.NewRecorder()
+	d.ServeHTTP(cached, r)
+	if cached.Code != http.StatusNotModified || cached.Body.Len() != 0 {
+		t.Fatal("descriptor not cached")
 	}
 }
