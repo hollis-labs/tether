@@ -27,7 +27,7 @@ func TestEnvironmentRequestPolicyAndMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			output := svc.newSessionTurnOutput(*row, &launch.Plan{ProviderBrand: brand})
-			payload := json.RawMessage(`{"request_id":17,"method":"item/tool/requestUserInput","params":{"secret":"not-for-event-log"}}`)
+			payload := json.RawMessage(`{"request_id":17,"method":"item/tool/requestUserInput","params":{"request_marker":"not-for-event-log"}}`)
 			output.observeRuntime(runtimeevents.Event{ID: "request-event", Kind: runtimeevents.KindAgentPermissionRequested, TurnID: "t", Sequence: 1, Payload: payload})
 			base, err := svc.Store.EnvironmentSnapshot(context.Background(), "s1")
 			if err != nil {
