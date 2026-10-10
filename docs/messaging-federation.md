@@ -30,10 +30,9 @@ federation:
   local_authority: tether        # the URN authority this daemon owns
   strict: false                  # optional; see "Strict mode" below
   peers:
-    - authority: torque           # a foreign URN authority
-      base_url: http://192.0.2.4:7777
-    - authority: nanite
-      base_url: http://192.0.2.5:8080
+    - authority: worker           # the recipient environment authority
+      base_url: http://127.0.0.1:17331 # existing SSH local forward
+      credential_ref: file:///home/operator/.tether/credentials/worker.token
 ```
 
 - **`enabled`** — when `false` (the default) the whole block is ignored and
@@ -45,9 +44,18 @@ federation:
   daemon that owns it. The `base_url` is the root of that daemon's
   `go-messaging` HTTP surface; the `/messages/*` routes are resolved against
   it. Peer authorities must be unique and must not equal `local_authority`.
+- **`credential_ref`** — an optional explicit `file:///absolute/path` to the
+  device token issued by the recipient. The file must be regular, owned by the
+  daemon user, and mode `0600`; a final symlink or special file is refused. Only
+  the reference belongs in YAML. No environment, helper or default operator-token
+  lookup is performed. Authenticated peers require an HTTP loopback endpoint.
 - **`strict`** — see below.
 
-An invalid block fails catalog validation at daemon startup.
+An invalid block fails catalog validation at daemon startup. Credential file
+contents are read on each request, so replacing the private file updates later
+requests without restarting the daemon. A missing, insecure or invalid file
+fails that peer request; it never falls back to anonymous delivery and does not
+prevent local mail from working.
 
 ## What routes where
 
@@ -120,13 +128,38 @@ traffic. With `strict: true` an unknown authority is rejected with
 
 ## Security / transport
 
-The peer hop currently uses **plain HTTP** over the remote daemon's
-`/messages/*` routes. Cross-host authentication — mTLS, signed envelopes —
-is program task M2 (`CW-20260518-0040`). Until that lands, only enable
-peers within a shared trust domain: loopback, a private network, or a
-tunnel. The transport is pluggable (`federation.Dialer`) and accepts a
-custom `*http.Client`, so a hardened transport slots in without code
-changes elsewhere.
+Authenticated federation uses a device bearer on the recipient's always-enforce
+remote listener. Point `base_url` at an already established SSH local forward
+reaching that listener; Tether does not create or repair the tunnel. Use a
+separate peer-issued credential for each direction. The local operator token is
+not a federation credential and the remote listener rejects it.
+
+The recipient requires `operate` for Send/Consume and `read` for Inbox/Subscribe.
+These are independent permissions; no child execution or native-resume authority
+is implied. Inbox and Subscribe send the canonical mailbox argument as `as=to`.
+Envelope `from` and mailbox `as` remain caller assertions; authenticating the
+transport does not establish verified actor attribution. Strict routing and
+unknown-authority behavior remain as described above.
+
+The client preserves context-owned SSE lifetime and the supplied HTTP client's
+timeout and redirect settings. Authenticated peers require a standard HTTP
+transport; arbitrary transports are refused. The client clones the transport,
+disables proxies and checks the actual connection's loopback address and peer
+port before sending headers, including when a custom dialer or `localhost` is
+used. It clones requests and refuses redirects to another origin before sending
+either mail or credentials. File resolution errors are identifiable as
+`ErrPeerCredential`; HTTP401 (bad, expired or revoked token) as
+`ErrPeerAuthentication`; HTTP403 as `ErrPeerScope`. `PeerAuthError` includes the
+peer authority and HTTP status when available, without credential bytes or peer
+response-body text. Revocation also ends authenticated recipient streams under
+the existing device watcher; it does not stop agents or change their custody.
+
+Omitting `credential_ref` preserves the legacy unauthenticated peer transport;
+it cannot access a protected remote listener. mTLS, signed envelopes and verified
+sender/reply authority remain separate work. The same-user credential-file and
+token-database access limitation remains accepted for this MVP. Source tests use
+disposable credentials and two local loopback daemon HTTP compositions; they do
+not establish live worker enrollment, SSH carrier readiness or deployment.
 
 ## Status
 
