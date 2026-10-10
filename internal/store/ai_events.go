@@ -242,7 +242,9 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 		ev.CostKind = costKind.String
 		ev.UpstreamProvider = upstream.String
 		ev.GenerationID = generationID.String
-		ev.BilledCostUSD = billedCost.Float64
+		if billedCost.Valid {
+			ev.BilledCostUSD = &billedCost.Float64
+		}
 		ev.Success = success == 1
 		ts, parseErr := time.Parse(time.RFC3339Nano, tsStr)
 		if parseErr != nil {

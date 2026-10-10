@@ -780,11 +780,15 @@ func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecisio
 	if costRaw, ok := resp.Usage.JSON.ExtraFields["cost"]; ok {
 		var cost float64
 		if json.Unmarshal([]byte(costRaw.Raw()), &cost) == nil {
-			out.Usage.BilledCostUSD = cost
+			out.Usage.BilledCostUSD = &cost
+			out.Usage.CostKind = "api_billed"
 		}
 	}
-	if route.Provider == "openrouter" {
-		out.Usage.UpstreamProvider = strings.SplitN(resp.Model, "/", 2)[0]
+	if providerRaw, ok := resp.JSON.ExtraFields["provider"]; ok {
+		var providerName string
+		if json.Unmarshal([]byte(providerRaw.Raw()), &providerName) == nil && providerName != "" {
+			out.Usage.UpstreamProvider = providerName
+		}
 	}
 	if len(resp.Choices) == 0 {
 		return out

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	openai "github.com/openai/openai-go"
@@ -82,6 +84,7 @@ func TestProviderChatBuildsRequestAndTranslatesResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat returned err: %v", err)
 	}
+	t.Logf("resp: %+v", resp)
 
 	raw, err := json.Marshal(captured)
 	if err != nil {
@@ -178,6 +181,7 @@ func TestProviderChatRefusalUsesRefusalText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat returned err: %v", err)
 	}
+	t.Logf("resp: %+v", resp)
 	if resp.Refusal != "refused by policy" || resp.StopReason != "refusal" {
 		t.Fatalf("response = %+v", resp)
 	}
@@ -269,6 +273,7 @@ func TestProviderChatAllowsUnauthenticatedCompatibleServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat returned err: %v", err)
 	}
+	t.Logf("resp: %+v", resp)
 	if authHeader != "" {
 		t.Fatalf("Authorization header = %q, want empty", authHeader)
 	}
@@ -459,6 +464,7 @@ func TestProviderChatFallsBackToChatCompletionsOn404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat returned err: %v", err)
 	}
+	t.Logf("resp: %+v", resp)
 	if resp.Provider != "llama-local" || resp.Model != "llama3.1:8b" || resp.Output[0].Parts[0].Text != "hello local" {
 		t.Fatalf("response = %+v", resp)
 	}
@@ -584,40 +590,44 @@ func mustChatCompletion(t *testing.T, raw string) *openai.ChatCompletion {
 func TestProviderChatPassesExtensionsAndTranslatesProvenance(t *testing.T) {
 	t.Parallel()
 
-	var capturedOpts []option.RequestOption
-	p := &Provider{
-		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
-		openRouter: &OpenRouterExtension{
+	var capturedBody []byte
+	var capturedHeader http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "chat/completions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		capturedHeader = r.Header
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+		  "id":"gen-xyz",
+		  "object":"chat.completion",
+		  "created":1716595200,
+		  "model":"anthropic/claude-3-sonnet",
+		  "choices":[{"index":0,"message":{"role":"assistant","content":"hello extensions"},"finish_reason":"stop"}],
+		  "usage":{
+		    "prompt_tokens":10,
+		    "completion_tokens":5,
+		    "total_tokens":15,
+		    "completion_tokens_details":{"reasoning_tokens": 5},
+		    "cost": 0.005
+		  },
+		  "provider": "Anthropic"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := New(Config{
+		BaseURL:       srv.URL + "/v1/",
+		ResolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
+		OpenRouter: &OpenRouterExtension{
 			Provider: map[string]any{"order": []string{"Anthropic"}},
 		},
-		huggingFace: &HuggingFaceExtension{
+		HuggingFace: &HuggingFaceExtension{
 			BillTo: "my-org",
 		},
-		newClient: func(apiKey string) responseClient {
-			return stubResponseClient{
-				newChatCompletionFn: func(_ context.Context, _ openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
-					capturedOpts = opts
-					return mustChatCompletion(t, `{
-					  "id":"gen-xyz",
-					  "object":"chat.completion",
-					  "created":1716595200,
-					  "model":"anthropic/claude-3-sonnet",
-					  "choices":[{"index":0,"message":{"role":"assistant","content":"hello extensions"},"finish_reason":"stop"}],
-					  "usage":{
-					    "prompt_tokens":10,
-					    "completion_tokens":5,
-					    "total_tokens":15,
-					    "completion_tokens_details":{"reasoning_tokens": 5},
-					    "cost": 0.005
-					  }
-					}`), nil
-				},
-				newFn: func(_ context.Context, _ responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
-					return nil, &openai.Error{StatusCode: 404}
-				},
-			}
-		},
-	}
+	})
 
 	resp, err := p.Chat(context.Background(), llm.Request{
 		Operation: llm.OperationChat,
@@ -629,20 +639,34 @@ func TestProviderChatPassesExtensionsAndTranslatesProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat returned err: %v", err)
 	}
+	t.Logf("resp: %+v", resp)
 
 	if resp.Usage.GenerationID != "gen-xyz" {
 		t.Errorf("GenerationID = %v, want gen-xyz", resp.Usage.GenerationID)
 	}
-	if resp.Usage.BilledCostUSD != 0.005 {
+	if resp.Usage.BilledCostUSD == nil || *resp.Usage.BilledCostUSD != 0.005 {
 		t.Errorf("BilledCostUSD = %v, want 0.005", resp.Usage.BilledCostUSD)
 	}
-	if resp.Usage.UpstreamProvider != "anthropic" {
-		t.Errorf("UpstreamProvider = %v, want anthropic", resp.Usage.UpstreamProvider)
+	if resp.Usage.CostKind != "api_billed" {
+		t.Errorf("CostKind = %q, want api_billed", resp.Usage.CostKind)
+	}
+	if resp.Usage.UpstreamProvider != "Anthropic" {
+		t.Errorf("UpstreamProvider = %v, want Anthropic", resp.Usage.UpstreamProvider)
 	}
 	if resp.Usage.ReasoningTokens != 5 {
 		t.Errorf("ReasoningTokens = %v, want 5", resp.Usage.ReasoningTokens)
 	}
-	if len(capturedOpts) != 2 {
-		t.Errorf("got %d options, want 2", len(capturedOpts))
+
+	if hf := capturedHeader.Get("X-HF-Bill-To"); hf != "my-org" {
+		t.Errorf("X-HF-Bill-To = %q, want my-org", hf)
+	}
+	var reqBody struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if order, ok := reqBody.Provider["order"].([]any); !ok || len(order) == 0 || order[0] != "Anthropic" {
+		t.Errorf("provider JSON = %v, want {order: [Anthropic]}", reqBody.Provider)
 	}
 }

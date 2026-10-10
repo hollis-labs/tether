@@ -119,7 +119,7 @@ type Usage struct {
 	ReasoningTokens  int     `json:"reasoning_tokens,omitempty"`
 	CostKind         string  `json:"cost_kind,omitempty"`
 	UpstreamProvider string  `json:"upstream_provider,omitempty"`
-	BilledCostUSD    float64 `json:"billed_cost_usd,omitempty"`
+	BilledCostUSD    *float64 `json:"billed_cost_usd,omitempty"`
 	GenerationID     string  `json:"generation_id,omitempty"`
 
 	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`

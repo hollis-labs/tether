@@ -24,7 +24,7 @@ type AuditEvent struct {
 	ReasoningTokens  int
 	CostKind         string
 	UpstreamProvider string
-	BilledCostUSD    float64
+	BilledCostUSD    *float64
 	GenerationID     string
 
 	EstimatedCostUSD float64

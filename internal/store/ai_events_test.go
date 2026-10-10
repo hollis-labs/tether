@@ -9,6 +9,8 @@ import (
 	"github.com/hollis-labs/tether/internal/llm/observability"
 )
 
+func floatPtr(f float64) *float64 { return &f }
+
 func TestRecordAndQueryAIEvents(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "ai.db"))
 	if err != nil {
@@ -17,7 +19,7 @@ func TestRecordAndQueryAIEvents(t *testing.T) {
 
 	now := time.Now().UTC()
 	evs := []observability.AuditEvent{
-		{EventType: "chat", Operation: "chat", Provider: "anthropic-work", Model: "claude-sonnet-4-5", Success: true, Timestamp: now.Add(-2 * time.Second), GenerationID: "gen-123", CostKind: "billed", UpstreamProvider: "openai", BilledCostUSD: 0.005},
+		{EventType: "chat", Operation: "chat", Provider: "anthropic-work", Model: "claude-sonnet-4-5", Success: true, Timestamp: now.Add(-2 * time.Second), GenerationID: "gen-123", CostKind: "billed", UpstreamProvider: "openai", BilledCostUSD: floatPtr(0.005)},
 		{EventType: "route_preview", Operation: "chat", Provider: "anthropic-work", Model: "claude-sonnet-4-5", Success: false, Error: "no route", Timestamp: now.Add(-1 * time.Second)},
 		{EventType: "budget_rejection", Operation: "chat", Provider: "anthropic-work", Model: "claude-sonnet-4-5", Success: false, Error: "usage budget 1.000000 USD/month exceeded: spent 1.200000 USD", Timestamp: now},
 	}
