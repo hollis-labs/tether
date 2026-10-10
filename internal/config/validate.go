@@ -216,6 +216,11 @@ func validateAIConfig(ai AIConfig) error {
 			return fmt.Errorf("global ai.providers[%d] (%s) policy usage_budget.max_cost_usd is required when usage_budget is set", i, p.ID)
 		}
 		models := p.EffectiveModels()
+		switch p.Wire {
+		case "", "chat_completions", "responses":
+		default:
+			return fmt.Errorf("global ai.providers[%d] (%s) has unsupported wire %q (must be 'chat_completions', 'responses', or empty)", i, p.ID, p.Wire)
+		}
 		switch p.Type {
 		case "anthropic", "openai", "gemini":
 			if p.SecretRef == "" {
