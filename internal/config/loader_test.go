@@ -405,7 +405,7 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			name: "invalid global budget policy",
 			ai: AIConfig{
 				Policy: AIPolicyConfig{
-					MaxCostUSD: floatPtr(0),
+					MaxCostUSD: floatPtr(-1.0),
 				},
 				Providers: []AIProviderConfig{{
 					ID:        "anthropic-work",
