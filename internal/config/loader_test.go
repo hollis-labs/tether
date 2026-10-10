@@ -703,3 +703,56 @@ func TestCheckSandboxOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_AIProviderDiscoverModels(t *testing.T) {
+	tests := []struct {
+		name    string
+		p       AIProviderConfig
+		wantErr string
+	}{
+		{
+			name: "openai-compatible may discover",
+			p: AIProviderConfig{
+				ID: "gw", Type: "openai-compatible", BaseURL: "http://gw.invalid/v1",
+				Models: []string{"m1"}, DiscoverModels: true, Enabled: true,
+			},
+		},
+		{
+			name: "openai may discover",
+			p: AIProviderConfig{
+				ID: "oa", Type: "openai", SecretRef: "keychain://openai/work",
+				Models: []string{"gpt-4o"}, DiscoverModels: true, Enabled: true,
+			},
+		},
+		{
+			name: "anthropic may not discover",
+			p: AIProviderConfig{
+				ID: "an", Type: "anthropic", SecretRef: "keychain://anthropic/work",
+				Models: []string{"claude-3-opus"}, DiscoverModels: true, Enabled: true,
+			},
+			wantErr: "discover_models",
+		},
+		{
+			name: "discovery does not replace the configured model requirement",
+			p: AIProviderConfig{
+				ID: "gw", Type: "openai-compatible", BaseURL: "http://gw.invalid/v1",
+				DiscoverModels: true, Enabled: true,
+			},
+			wantErr: "missing model or models",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAIConfig(AIConfig{Providers: []AIProviderConfig{tc.p}})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateAIConfig() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateAIConfig() = %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}

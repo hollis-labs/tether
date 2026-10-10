@@ -449,6 +449,16 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		if !p.Enabled {
 			continue
 		}
+		if p.DiscoverModels {
+			var resolve func(context.Context) (string, error)
+			if p.SecretRef != "" {
+				secretRef := p.SecretRef
+				resolve = aiSecrets.Remember(func(ctx context.Context) (string, error) {
+					return resolveAISecret(ctx, secretResolver, secretRef)
+				})
+			}
+			p = applyModelDiscovery(ctx, p, resolve, llmopenai.DiscoverModels)
+		}
 		providerConfigs[p.ID] = p
 		switch p.Type {
 		case "anthropic":
@@ -629,6 +639,68 @@ func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) map
 				Capabilities: modelsdev.Capabilities{},
 			}
 		}
+	}
+	return out
+}
+
+// modelDiscoverer lists model ids from a connection's /models endpoint.
+type modelDiscoverer func(context.Context, llmopenai.DiscoveryConfig) ([]string, error)
+
+// applyModelDiscovery returns p with discovered model ids appended after its
+// configured models, when p opts in with discover_models. Configured ids keep
+// their order and precedence. Any failure (secret, transport, status, body,
+// timeout) is logged and leaves p unchanged so daemon start is never blocked
+// or altered by an unreachable endpoint.
+func applyModelDiscovery(ctx context.Context, p config.AIProviderConfig, resolveKey func(context.Context) (string, error), discover modelDiscoverer) config.AIProviderConfig {
+	if !p.DiscoverModels || discover == nil {
+		return p
+	}
+	if p.Type != "openai" && p.Type != "openai-compatible" {
+		return p
+	}
+	var apiKey string
+	if resolveKey != nil {
+		key, err := resolveKey(ctx)
+		if err != nil {
+			// The resolver error is not logged: it may echo the secret reference.
+			log.Printf("ai gateway: %s: discover_models skipped: could not resolve secret", p.ID)
+			return p
+		}
+		apiKey = key
+	}
+	ids, err := discover(ctx, llmopenai.DiscoveryConfig{
+		BaseURL: p.BaseURL,
+		APIKey:  apiKey,
+		Timeout: llmopenai.DefaultDiscoveryTimeout,
+	})
+	if err != nil {
+		log.Printf("ai gateway: %s: discover_models failed, keeping configured models: %v", p.ID, err)
+		return p
+	}
+	configured := p.EffectiveModels()
+	merged := mergeModelIDs(configured, ids)
+	if len(merged) == len(configured) {
+		return p
+	}
+	log.Printf("ai gateway: %s: discover_models added %d model(s)", p.ID, len(merged)-len(configured))
+	p.Models = merged
+	return p
+}
+
+// mergeModelIDs returns configured followed by the discovered ids it does not
+// already contain, preserving the order of both.
+func mergeModelIDs(configured, discovered []string) []string {
+	out := append([]string(nil), configured...)
+	seen := make(map[string]struct{}, len(configured)+len(discovered))
+	for _, id := range configured {
+		seen[id] = struct{}{}
+	}
+	for _, id := range discovered {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
 	}
 	return out
 }
