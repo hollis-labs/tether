@@ -51,16 +51,28 @@ func (c *Catalog) ListProviders() []modelsdev.Provider {
 	return c.client.ListProviders()
 }
 
-// Pricing returns per-million-token input/output USD pricing.
-func (c *Catalog) Pricing(providerID, modelID string) (input, output float64, ok bool) {
+// PriceState represents the pricing tier or cost state of a model.
+type PriceState string
+
+const (
+	PriceUnknown PriceState = "unknown"
+	PriceFree    PriceState = "free"
+	PricePriced  PriceState = "priced"
+)
+
+// Pricing returns per-million-token input and output prices in USD.
+//
+// If prices are not known, it returns PriceUnknown. If the model is known to be
+// completely free, it returns PriceFree.
+func (c *Catalog) Pricing(providerID, modelID string) (input, output float64, state PriceState) {
 	m, found := c.client.Get(providerID, modelID)
 	if !found {
-		return 0, 0, false
+		return 0, 0, PriceUnknown
 	}
 	if m.Cost.Input == 0 && m.Cost.Output == 0 {
-		return 0, 0, false
+		return 0, 0, PriceFree
 	}
-	return m.Cost.Input, m.Cost.Output, true
+	return m.Cost.Input, m.Cost.Output, PricePriced
 }
 
 // ContextWindow returns the model's context window when known.
@@ -101,11 +113,14 @@ func (c *Catalog) Modality(providerID, modelID string) (modelsdev.Modality, bool
 
 // EstimateCost computes an estimated USD cost from prompt + completion token
 // counts using the catalog's per-million-token pricing.
-func (c *Catalog) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, bool) {
-	in, out, ok := c.Pricing(providerID, modelID)
-	if !ok {
-		return 0, false
+func (c *Catalog) EstimateCost(providerID, modelID string, promptTokens, completionTokens int) (float64, PriceState) {
+	in, out, state := c.Pricing(providerID, modelID)
+	if state == PriceUnknown {
+		return 0, PriceUnknown
 	}
 	cost := float64(promptTokens)*in/1_000_000 + float64(completionTokens)*out/1_000_000
-	return cost, true
+	if cost == 0 {
+		return 0, PriceFree
+	}
+	return cost, PricePriced
 }

@@ -256,9 +256,10 @@ func TestValidate_AcceptedPermissionModes(t *testing.T) {
 
 func TestValidate_AIProviderRules(t *testing.T) {
 	tests := []struct {
-		name string
-		ai   AIConfig
-		ok   bool
+		name    string
+		ai      AIConfig
+		ok      bool
+		wantErr string
 	}{
 		{
 			name: "valid anthropic config",
@@ -327,30 +328,64 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			ok: true,
 		},
 		{
+			name: "invalid provider price",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:           "openai-work",
+					Type:         "openai",
+					Models:       []string{"gpt-4o"},
+					DefaultModel: "gpt-4o",
+					SecretRef:    "keychain://openai/work",
+					Price:        "cheap",
+					Enabled:      true,
+				}},
+			},
+			wantErr: "unsupported price \"cheap\"",
+		},
+		{
+			name: "valid free provider price",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:           "anthropic-work",
+					Type:         "anthropic",
+					Models:       []string{"claude-3-opus"},
+					DefaultModel: "claude-3-opus",
+					SecretRef:    "keychain://anthropic/work",
+					Price:        "free",
+					Enabled:      true,
+				}},
+			},
+			ok: true,
+		},
+		{
 			name: "invalid wire typo",
 			ai: AIConfig{
 				Providers: []AIProviderConfig{{
-					ID:        "openai-work",
-					Type:      "openai",
-					Models:    []string{"gpt-4o"},
-					SecretRef: "keychain://openai/work",
-					Wire:      "response",
-					Enabled:   true,
+					ID:           "openai-work",
+					Type:         "openai",
+					Models:       []string{"gpt-4o"},
+					DefaultModel: "gpt-4o",
+					SecretRef:    "keychain://openai/work",
+					Wire:         "response",
+					Enabled:      true,
 				}},
 			},
+			wantErr: "unsupported wire \"response\"",
 		},
 		{
 			name: "wire not allowed on anthropic",
 			ai: AIConfig{
 				Providers: []AIProviderConfig{{
-					ID:        "anthropic-work",
-					Type:      "anthropic",
-					Models:    []string{"claude-3-opus"},
-					SecretRef: "keychain://anthropic/work",
-					Wire:      "responses",
-					Enabled:   true,
+					ID:           "anthropic-work",
+					Type:         "anthropic",
+					Models:       []string{"claude-3-opus"},
+					DefaultModel: "claude-3-opus",
+					SecretRef:    "keychain://anthropic/work",
+					Wire:         "responses",
+					Enabled:      true,
 				}},
 			},
+			wantErr: "wire is only supported for openai",
 		},
 		{
 			name: "default_model must be in models",
@@ -431,7 +466,7 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			name: "invalid global budget policy",
 			ai: AIConfig{
 				Policy: AIPolicyConfig{
-					MaxCostUSD: floatPtr(0),
+					MaxCostUSD: floatPtr(-1.0),
 				},
 				Providers: []AIProviderConfig{{
 					ID:        "anthropic-work",
@@ -515,6 +550,9 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			}
 			if !tc.ok && err == nil {
 				t.Fatal("Validate() err = nil, want non-nil")
+			}
+			if tc.wantErr != "" && err != nil && !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Validate() err = %q, want it to contain %q", err, tc.wantErr)
 			}
 		})
 	}

@@ -50,6 +50,8 @@ func TestOverlayIncludesSyntheticConfiguredModel(t *testing.T) {
 				Output: []string{"text"},
 			},
 		},
+	}, map[string]PriceState{
+		overlayKey("openai", "llama3.3-custom"): PriceUnknown,
 	})
 
 	if _, ok := overlay.Get("openai", "llama3.3-custom"); !ok {
@@ -70,5 +72,48 @@ func TestOverlayIncludesSyntheticConfiguredModel(t *testing.T) {
 	}
 	if !foundSynthetic {
 		t.Fatal("synthetic model missing from List")
+	}
+}
+
+func TestOverlay_EstimateCost(t *testing.T) {
+	base := (*Catalog)(nil)
+	ov := NewOverlay(base, map[string]modelsdev.Model{
+		overlayKey("synthetic", "free-model"): {
+			ID:     "free-model",
+			Family: "synthetic",
+			Cost:   modelsdev.Pricing{},
+		},
+		overlayKey("synthetic", "priced-model"): {
+			ID:     "priced-model",
+			Family: "synthetic",
+			Cost:   modelsdev.Pricing{Input: 1.0, Output: 2.0},
+		},
+	}, map[string]PriceState{
+		overlayKey("synthetic", "free-model"):    PriceFree,
+		overlayKey("synthetic", "unknown-model"): PriceUnknown,
+		overlayKey("synthetic", "priced-model"):  PricePriced,
+	})
+
+	tests := []struct {
+		providerID, modelID string
+		wantCost            float64
+		wantState           PriceState
+	}{
+		{"synthetic", "unknown-model", 0, PriceUnknown},
+		{"synthetic", "free-model", 0, PriceFree},
+		{"synthetic", "priced-model", 0.003, PricePriced},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.providerID+"-"+tt.modelID, func(t *testing.T) {
+			cost, state := ov.EstimateCost(tt.providerID, tt.modelID, 1000, 1000)
+			t.Logf("extra=%v, state=%v cost=%v", ov.extra, state, cost)
+			if state != tt.wantState {
+				t.Errorf("state = %v, want %v", state, tt.wantState)
+			}
+			if cost != tt.wantCost {
+				t.Errorf("cost = %v, want %v", cost, tt.wantCost)
+			}
+		})
 	}
 }

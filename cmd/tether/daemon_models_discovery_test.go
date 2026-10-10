@@ -155,7 +155,7 @@ func TestApplyModelDiscoveryCatalogCollision(t *testing.T) {
 		ID: "oa", Type: "openai", SecretRef: "keychain://x", Models: []string{"gpt-4o"}, Enabled: true,
 	}
 
-	models := syntheticConfiguredModels(map[string]config.AIProviderConfig{"gw": gw, "oa": public})
+	models, _ := syntheticConfiguredModels(map[string]config.AIProviderConfig{"gw": gw, "oa": public})
 
 	for _, key := range []string{"my-gateway\x00vendor/a", "my-gateway\x00gpt-4o", "my-gateway\x00vendor/new", "openai\x00gpt-4o"} {
 		if _, ok := models[key]; !ok {

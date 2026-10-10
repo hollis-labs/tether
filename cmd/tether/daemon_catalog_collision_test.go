@@ -21,7 +21,7 @@ func TestSyntheticConfiguredModelsCollision(t *testing.T) {
 		},
 	}
 
-	models := syntheticConfiguredModels(providers)
+	models, _ := syntheticConfiguredModels(providers)
 
 	internalKey := "internal-corp\x00gpt-4-turbo"
 	if _, ok := models[internalKey]; !ok {
