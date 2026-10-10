@@ -12,6 +12,7 @@ import (
 type Config struct {
 	ResolveAPIKey func(context.Context) (string, error)
 	BaseURL       string
+	Wire          string
 	HTTPClient    *http.Client
 }
 
@@ -21,6 +22,7 @@ func New(cfg Config) *llmopenai.Provider {
 	return llmopenai.New(llmopenai.Config{
 		ResolveAPIKey:        cfg.ResolveAPIKey,
 		BaseURL:              cfg.BaseURL,
+		Wire:                 cfg.Wire,
 		HTTPClient:           cfg.HTTPClient,
 		AllowUnauthenticated: true,
 	})
