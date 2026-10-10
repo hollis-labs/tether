@@ -557,8 +557,7 @@ func TestValidateBudget(t *testing.T) {
 		{"no budget", 0, nil, "priced", 0, false, false},
 		{"req budget sufficient", 5.0, nil, "priced", 0.002, true, false},
 		{"req budget exceeded", 0.001, nil, "priced", 0, true, true},
-		
-		
+
 		{"free model with zero budget passes", 0.0, func(f float64) *float64 { return &f }(0.0), "free", 0, true, false},
 		{"unknown model with zero budget fails", 0.0, func(f float64) *float64 { return &f }(0.0), "unknown", 0, false, true},
 		{"regression: max cost but no req budget passes priced", 0.0, func(f float64) *float64 { return &f }(5.0), "priced", 0, false, false},
