@@ -44,7 +44,7 @@ There is no built-in TLS: SSH forwarding supplies the encrypted v1 carrier.
 See [device pairing](docs/device-pairing.md) and
 [environment protocol](docs/environment-protocol.md).
 
-The MCP stdio adapter (`tether mcp`) is the one surface with scopes. Read-only
+The MCP stdio adapter (`tether mcp`) uses legacy capability scopes. Read-only
 tools need no token. Mutating tools require a token and the matching scope
 (`session.write`, `message.write`, `registry.write`, `groups.write`,
 `delivery.write`, `catalog.write`, `ai.invoke`); scopes are per capability

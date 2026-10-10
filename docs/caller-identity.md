@@ -107,7 +107,12 @@ A normal launch in observe/enforce receives a fresh session principal and
 `tth_` credential. A verified parent is recorded as its creator; worker scopes
 are intersected with the parent's grants, and the address is that session's own
 `msg://session/local/<id>`. Anonymous observe-mode launches have no verified
-creator. Session tokens enter the runtime and planted MCP server via
+creator. The independent device scopes grant no legacy worker scopes to the
+child; device `operate` also does not satisfy the existing independent current
+authority required for native-only resume. See [device pairing](device-pairing.md)
+for these preserved execution limitations, including uncapped ordinary child
+expiry and the absence of parent-device revocation linkage. Session tokens enter
+the runtime and planted MCP server via
 `TETHER_TOKEN` environment entries, never argv or the stored launch plan. Native
 MCP configuration files necessarily contain that environment entry inside the
 session's boot directory. Same-uid read isolation remains a separate boundary.

@@ -49,7 +49,7 @@ use `Cache-Control: no-store`.
 
 ## Independent scopes
 
-| Scope | Remote operations |
+| Scope | Remote route admission |
 |---|---|
 | `read` | Environment reports and streams, sessions, messages, catalog metadata and ordinary observation |
 | `operate` | Catalog launches, turns, stop/resume/checkpoint, messaging and team operations |
@@ -68,6 +68,21 @@ or injected native files requires both `operate` and `maintain`. Ordinary
 catalog launches require `operate`. Session bootstrap, proxy telemetry and
 runtime binding mint/renew/revoke remain local custody operations, regardless of
 device scope. Module switches still decide whether an authorized route exists.
+
+Route admission does not grant execution or MCP authority. Native-only resume
+still requires the existing independent current launch authority (`session.write`
+or `*`) and the historical credential/MCP ceiling. A paired device with `operate`,
+even with all five scopes, reaches that route but receives
+`native-only resume unavailable: independent current launch authority required`
+with HTTP 409 before allocating a destination or executing its runtime. An
+ordinary device-initiated launch inherits no legacy
+`session.write`, `message.write` or `catalog.write` scope in its child credential;
+the five independent device scopes are not translated into worker/MCP grants.
+The ordinary child's seven-day expiry is not capped to the parent's device expiry.
+`CreatedBy` records provenance; parent device revocation does not revoke that child
+credential. Device request/stream cancellation does not establish child revocation.
+These preserved limitations require a separate authority decision. Ordinary
+pairing success does not prove every `operate` execution path is compatible.
 
 Device id namespaces launch/resume body keys and routing-reply/team
 `Idempotency-Key` headers. The verified id is used, never `as`, `from`, display
