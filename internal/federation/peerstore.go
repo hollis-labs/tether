@@ -37,9 +37,9 @@ type Dialer func(p Peer) (messaging.Store, error)
 //
 // The client MUST NOT carry a short Timeout: Subscribe holds a long-lived
 // SSE connection and a request timeout would sever it. Use per-call
-// context deadlines instead. Authenticating the hop (mTLS, signed
-// envelopes) is program task M2 — supply a client with a hardened
-// Transport here when that lands.
+// context deadlines instead. A configured credential_ref authenticates
+// requests using a locally resolved device bearer and the current remote
+// protocol header. mTLS and signed envelopes remain future transport work.
 func HTTPDialer(client *http.Client) Dialer {
 	return func(p Peer) (messaging.Store, error) {
 		base, err := url.Parse(p.BaseURL)
@@ -50,7 +50,11 @@ func HTTPDialer(client *http.Client) Dialer {
 		if c == nil {
 			c = http.DefaultClient
 		}
-		return &httpPeerStore{base: base, client: c, authority: p.Authority}, nil
+		c, err = peerCredentialClient(c, p.Authority, base, p.CredentialRef)
+		if err != nil {
+			return nil, err
+		}
+		return &httpPeerStore{base: base, client: c, authority: p.Authority, authenticated: p.CredentialRef != ""}, nil
 	}
 }
 
@@ -59,9 +63,10 @@ func HTTPDialer(client *http.Client) Dialer {
 // counterpart of Tether's own internal/api message routes, so a Tether
 // peer reaches another Tether (or any go-messaging-native) daemon.
 type httpPeerStore struct {
-	base      *url.URL
-	client    *http.Client
-	authority string
+	base          *url.URL
+	client        *http.Client
+	authority     string
+	authenticated bool
 }
 
 var _ messaging.Store = (*httpPeerStore)(nil)
@@ -79,6 +84,17 @@ func (s *httpPeerStore) do(req *http.Request) (*http.Response, error) {
 	// this is not an SSRF sink.
 	resp, err := s.client.Do(req) //nolint:gosec // G704: peer base URL is operator-configured + validated
 	if err != nil {
+		if s.authenticated {
+			for _, reason := range []error{ErrPeerCredential, ErrPeerOrigin} {
+				if errors.Is(err, reason) {
+					return nil, &PeerAuthError{Authority: s.authority, Reason: reason}
+				}
+			}
+			if req.Context().Err() != nil {
+				return nil, req.Context().Err()
+			}
+			return nil, fmt.Errorf("federation: peer %q unreachable", s.authority)
+		}
 		return nil, fmt.Errorf("federation: peer %q unreachable: %w", s.authority, err)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -86,7 +102,18 @@ func (s *httpPeerStore) do(req *http.Request) (*http.Response, error) {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	_ = resp.Body.Close()
+	status := resp.Status
+	if s.authenticated {
+		// An authenticated peer could reflect its Authorization header.
+		// Return status/category only, never credential-bearing body text.
+		body = nil
+		status = fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
 	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		return nil, &PeerAuthError{Authority: s.authority, StatusCode: resp.StatusCode, Reason: ErrPeerAuthentication}
+	case http.StatusForbidden:
+		return nil, &PeerAuthError{Authority: s.authority, StatusCode: resp.StatusCode, Reason: ErrPeerScope}
 	case http.StatusNotFound:
 		return nil, messaging.ErrNotFound
 	case http.StatusConflict:
@@ -96,7 +123,7 @@ func (s *httpPeerStore) do(req *http.Request) (*http.Response, error) {
 		return nil, ErrWrongRecipient
 	default:
 		return nil, fmt.Errorf("federation: peer %q returned %s: %s",
-			s.authority, resp.Status, strings.TrimSpace(string(body)))
+			s.authority, status, strings.TrimSpace(string(body)))
 	}
 }
 
@@ -232,6 +259,9 @@ func (s *httpPeerStore) Subscribe(ctx context.Context, to messaging.Address, f m
 	u := s.base.JoinPath("messages", "subscribe")
 	q := url.Values{}
 	q.Set("to", to.URN())
+	// Claim the existing canonical mailbox argument, just as Inbox does.
+	// Transport authentication does not verify this actor assertion.
+	q.Set("as", to.URN())
 	applyFilter(q, f)
 	u.RawQuery = q.Encode()
 

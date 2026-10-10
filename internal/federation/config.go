@@ -45,6 +45,11 @@ type Peer struct {
 	// "http://192.0.2.4:7777". The go-messaging /messages/* routes are
 	// resolved against it.
 	BaseURL string `yaml:"base_url" json:"base_url"`
+
+	// CredentialRef names a current-user-owned regular 0600 token file.
+	// Only file:///absolute/path is supported; resolved at request use,
+	// never stored as token bytes in catalog configuration.
+	CredentialRef string `yaml:"credential_ref,omitempty" json:"credential_ref,omitempty"`
 }
 
 // Validate reports a configuration error in the federation block. A
@@ -72,6 +77,10 @@ func (c Config) Validate() error {
 		seen[p.Authority] = struct{}{}
 		if err := validBaseURL(p.BaseURL); err != nil {
 			return fmt.Errorf("federation: peers[%d] (%s) base_url %w", i, p.Authority, err)
+		}
+		base, _ := url.Parse(p.BaseURL) // checked above; no credential read
+		if err := validatePeerCredential(base, p.CredentialRef); err != nil {
+			return fmt.Errorf("federation: peers[%d] (%s): %w", i, p.Authority, err)
 		}
 	}
 	return nil
