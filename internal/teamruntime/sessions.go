@@ -25,6 +25,10 @@ type SessionService interface {
 	StopTeamSession(context.Context, string) error
 }
 
+type contextualSessionService interface {
+	CreateTeamSessionWithContext(context.Context, string, string, app.TeamBootContext) (*app.Launched, error)
+}
+
 // SessionEnrollment is the enrollment adapter seam needed before Start.
 type SessionEnrollment interface {
 	LaunchTarget(context.Context, string, mesh.URN) (string, error)
@@ -67,7 +71,20 @@ func (s *Sessions) Launch(ctx context.Context, in teamhost.SessionRequest) (stri
 	if err != nil {
 		return "", err
 	}
-	launched, err := s.service.CreateTeamSession(ctx, sessionKey(saved.nonce), launchID)
+	boot, err := app.TeamBootContextFor(in.Provision)
+	if err != nil {
+		return "", err
+	}
+	var launched *app.Launched
+	if boot != (app.TeamBootContext{}) {
+		contextual, ok := s.service.(contextualSessionService)
+		if !ok {
+			return "", teamhost.ErrSessionUnavailable
+		}
+		launched, err = contextual.CreateTeamSessionWithContext(ctx, sessionKey(saved.nonce), launchID, boot)
+	} else {
+		launched, err = s.service.CreateTeamSession(ctx, sessionKey(saved.nonce), launchID)
+	}
 	if err != nil {
 		return "", classifySession(err)
 	}

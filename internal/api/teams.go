@@ -245,6 +245,7 @@ func (s *Server) registerTeamRoutes(mux *http.ServeMux) {
 	if !HasTeamOps(s.Teams) {
 		return
 	}
+	s.registerTeamRosterRoute(mux)
 	for _, verb := range TeamVerbs() {
 		mux.HandleFunc("/teams/"+verb, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
