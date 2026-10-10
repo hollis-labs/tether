@@ -327,6 +327,33 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			ok: true,
 		},
 		{
+			name: "invalid provider price",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "openai-work",
+					Type:      "openai",
+					Models:    []string{"gpt-4o"},
+					SecretRef: "keychain://openai/work",
+					Price:     "cheap",
+					Enabled:   true,
+				}},
+			},
+		},
+		{
+			name: "valid free provider price",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Models:    []string{"claude-3-opus"},
+					SecretRef: "keychain://anthropic/work",
+					Price:     "free",
+					Enabled:   true,
+				}},
+			},
+			ok: true,
+		},
+		{
 			name: "default_model must be in models",
 			ai: AIConfig{
 				Providers: []AIProviderConfig{{

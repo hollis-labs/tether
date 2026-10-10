@@ -23,7 +23,7 @@ func NewOverlay(base *Catalog, extra map[string]modelsdev.Model,
 	for k, v := range extra {
 		cp[k] = v
 	}
-	return &Overlay{base: base, extra: cp}
+	return &Overlay{base: base, extra: cp, priceState: priceState}
 }
 
 func overlayKey(providerID, modelID string) string {
