@@ -7,65 +7,74 @@ import (
 )
 
 func TestSampler(t *testing.T) {
-	s := NewSampler(10 * time.Millisecond)
-	ch := make(chan ResourceState, 1)
-	ch <- ResourceState{CPUCount: 2}
-
+	s := NewSampler(time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go s.Start(ctx, func() ResourceState {
-		select {
-		case st := <-ch:
-			return st
-		default:
-			return ResourceState{CPUCount: 4}
-		}
-	})
-
-	time.Sleep(5 * time.Millisecond)
-	cur := s.Current()
-	if cur.CPUCount != 2 {
-		t.Errorf("expected 2, got %d", cur.CPUCount)
+	calls := make(chan struct{})
+	values := make(chan ResourceState)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Start(ctx, func() ResourceState {
+			select {
+			case calls <- struct{}{}:
+			case <-ctx.Done():
+				return ResourceState{}
+			}
+			select {
+			case st := <-values:
+				return st
+			case <-ctx.Done():
+				return ResourceState{}
+			}
+		})
+	}()
+	t.Cleanup(func() { cancel(); waitSamplerDone(t, done) })
+	waitSamplerDone(t, calls)
+	values <- ResourceState{CPUCount: 2}
+	waitSamplerDone(t, calls) // next measurement waits until this assertion completes
+	if got := s.Current().CPUCount; got != 2 {
+		t.Fatalf("first CPU count = %d", got)
 	}
+	values <- ResourceState{CPUCount: 4}
+	waitSamplerDone(t, calls)
+	if got := s.Current().CPUCount; got != 4 {
+		t.Fatalf("next CPU count = %d", got)
+	}
+}
 
-	time.Sleep(15 * time.Millisecond)
-	cur = s.Current()
-	if cur.CPUCount != 4 {
-		t.Errorf("expected 4, got %d", cur.CPUCount)
+func waitSamplerDone(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("sampler did not make progress")
 	}
 }
 
 func TestSampler_PanicRecovery(t *testing.T) {
-	s := NewSampler(10 * time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go s.Start(ctx, func() ResourceState {
-		panic("test panic")
-	})
-
-	time.Sleep(20 * time.Millisecond)
-	// Should not crash the test suite
+	s := NewSampler(time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Start(context.Background(), func() ResourceState { panic("synthetic panic") })
+	}()
+	waitSamplerDone(t, done)
+	cur := s.Current()
+	if cur.Status != "unknown" || cur.CPULoad != "unknown" || cur.MemoryAvailable != nil || cur.StateDiskFree != nil || cur.WorkDiskFree != nil {
+		t.Fatalf("panic produced success or numeric zero: %+v", cur)
+	}
 }
 
 func TestSampler_CancelBeforeFirstMeasurement(t *testing.T) {
-	s := NewSampler(10 * time.Millisecond)
+	s := NewSampler(time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
+	cancel()
 	measured := false
-	s.Start(ctx, func() ResourceState {
-		measured = true
-		return ResourceState{CPUCount: 1}
-	})
-
+	s.Start(ctx, func() ResourceState { measured = true; return ResourceState{CPUCount: 1} })
 	if measured {
-		t.Errorf("sampler should not measure if cancelled before first iteration")
+		t.Fatal("sampler should not measure if canceled before first iteration")
 	}
-
-	cur := s.Current()
-	if cur.CPUCount != 0 {
-		t.Errorf("expected empty state")
+	if cur := s.Current(); cur.CPUCount != 0 || cur.Status != "unknown" {
+		t.Fatalf("initial state = %+v", cur)
 	}
 }

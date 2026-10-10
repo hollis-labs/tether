@@ -41,7 +41,8 @@ contains only identity, label, platform, version and capability metadata:
   "protocol": 1,
   "capabilities": {
     "streams": {"version": 1, "environment_snapshot": true, "session_snapshot": true, "environment_events": true, "session_events": true},
-    "raw_attach": {"version": 1, "resume": true}
+    "raw_attach": {"version": 1, "resume": true},
+    "capability_report": {"version": 1, "providers": true, "sandbox": true, "hosting": true, "filesystem": true, "resources": true, "role_profile": true}
   },
   "updateCapability": "foreground"
 }
@@ -57,6 +58,44 @@ authentication or service-update group. The descriptor exposes no catalog
 paths, provider configuration or credentials. `updateCapability: foreground` describes the current daemon
 composition: managed service updates are a later lifecycle slice. `/health`
 also reports `environmentId`, `serverVersion` and `protocol` and remains public.
+
+## Authenticated capability and resource report
+
+`GET /v1/environment/report` requires a verified principal with `read` or `*`
+scope, including when the local identity mode is `observe`. Anonymous or
+unverified callers receive 401; write-only credentials receive 403. Identity
+mode `off` cannot establish a principal for this endpoint. Responses use
+`Cache-Control: no-store`. The public descriptor's `capability_report` group
+advertises supported report sections only; it contains no host inventory,
+provider login state, selected hosting mode, paths or resource measurements.
+
+The report includes provider installation and version observations for Claude,
+Codex, OpenCode and Antigravity, sandbox policy from startup protection health,
+user-manager and linger availability, configured shim hosting, a workspace-volume
+reflink probe, resources, and the selected role and enabled modules. Codex keeps
+the existing honest protection state. Other wrapped providers report
+`unavailable` if bubblewrap or the protection plan is unavailable; this describes
+startup policy and availability, not a guarantee about an individual launch.
+`bubblewrap_usable` is a boolean when checked and `null` when not checked.
+
+Hosting availability, login state and reflink support use `"true"`, `"false"`
+and `"unknown"`. A missing command or failed probe remains unknown. Provider
+login detection is currently unsupported and always returns `"unknown"`; no
+interactive login or credential inspection runs. An undetectable version is
+`"unknown"`. Hosting uses user-manager observations rather than the presence
+of a runtime directory. An explicit unsupported clone can establish false
+reflink support; unrelated command failures cannot. The reflink probe creates
+and removes only unique owned scratch files in the selected workspace volume.
+
+A separate sampler refreshes resources every ten seconds. State disk space
+comes from the directory of the opened selected state database; work disk space
+comes from the resolved workspace root. CPU count is available independently;
+load and available memory currently use Linux `/proc` observations. Resource
+`status` is `"ok"`, `"partial"` or `"unknown"`; unavailable memory and disk
+measurements are `null`, distinct from a measured zero. Before a sample or after
+a sampler failure, load is `"unknown"` and CPU count is zero (unknown). A sampler
+panic degrades only the report, and daemon shutdown cancels and joins its owned
+sampler before closing state. Command probes have bounded time and output.
 
 ## Protocol agreement
 

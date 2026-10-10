@@ -3,9 +3,14 @@ package report
 import (
 	"context"
 	"errors"
+	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
+	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectProviders(t *testing.T) {
@@ -48,19 +53,28 @@ func TestDetectProviders(t *testing.T) {
 }
 
 func TestDetectHosting(t *testing.T) {
-	d := &Detectors{
-		ExecCommand: func(ctx context.Context, name string, arg ...string) ([]byte, error) {
-			return []byte("Linger=yes\n"), nil
-		},
-	}
-	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	defer os.Unsetenv("XDG_RUNTIME_DIR")
-
-	ctx := context.Background()
-	host := d.DetectHosting(ctx, true)
-
-	if !host.SystemdUserSession || !host.LingerEnabled || !host.LaunchHostShim {
-		t.Errorf("hosting unexpected: %+v", host)
+	for _, tc := range []struct{ name, systemd, linger, wantSystemd, wantLinger string }{
+		{"available", "running", "Linger=yes", "true", "true"},
+		{"degraded", "degraded", "Linger=no", "true", "false"},
+		{"offline", "offline", "Linger=no", "false", "false"},
+		{"undetectable", "", "", "unknown", "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_RUNTIME_DIR", "/synthetic/runtime")
+			d := &Detectors{ExecCommand: func(ctx context.Context, name string, arg ...string) ([]byte, error) {
+				if name == "systemctl" {
+					return []byte(tc.systemd), errors.New("synthetic nonzero status")
+				}
+				if tc.linger == "" {
+					return nil, errors.New("unavailable")
+				}
+				return []byte(tc.linger), nil
+			}}
+			host := d.DetectHosting(context.Background(), true)
+			if host.SystemdUserSession != tc.wantSystemd || host.LingerEnabled != tc.wantLinger || !host.LaunchHostShim {
+				t.Fatalf("hosting = %+v", host)
+			}
+		})
 	}
 }
 
@@ -79,35 +93,17 @@ func TestDetectFilesystem(t *testing.T) {
 }
 
 func TestCapabilityGroups(t *testing.T) {
-	r := Report{
-		Providers: map[string]ProviderState{
-			"claude": {Installed: true},
-			"codex":  {Installed: false},
-		},
-		Hosting: HostingState{
-			LaunchHostShim: true,
-		},
-		Filesystem: FilesystemState{
-			ReflinkSupported: "true",
-		},
-		RoleProfile: RoleProfile{
-			Enabled: []string{"teams"},
-		},
+	caps := CapabilityGroups()
+	want := map[string]map[string]any{"capability_report": {
+		"version": 1, "providers": true, "sandbox": true, "hosting": true,
+		"filesystem": true, "resources": true, "role_profile": true,
+	}}
+	if !reflect.DeepEqual(caps, want) {
+		t.Fatalf("public report contract = %v", caps)
 	}
-
-	caps := r.CapabilityGroups()
-
-	if !reflect.DeepEqual(caps["providers"], map[string]any{"claude": true}) {
-		t.Errorf("providers caps wrong: %v", caps["providers"])
-	}
-	if !reflect.DeepEqual(caps["hosting"], map[string]any{"shim": true}) {
-		t.Errorf("hosting caps wrong: %v", caps["hosting"])
-	}
-	if !reflect.DeepEqual(caps["filesystem"], map[string]any{"reflink": true}) {
-		t.Errorf("fs caps wrong: %v", caps["filesystem"])
-	}
-	if !reflect.DeepEqual(caps["modules"], map[string]any{"teams": true}) {
-		t.Errorf("modules caps wrong: %v", caps["modules"])
+	caps["capability_report"]["providers"] = false
+	if CapabilityGroups()["capability_report"]["providers"] != true {
+		t.Fatal("capability maps shared across compositions")
 	}
 }
 
@@ -127,8 +123,8 @@ func TestDetectFilesystem_SafetyAndErrors(t *testing.T) {
 	ctx := context.Background()
 	fs := d.DetectFilesystem(ctx, workspaceRoot)
 
-	if fs.ReflinkSupported != "false" {
-		t.Errorf("expected false, got %s", fs.ReflinkSupported)
+	if fs.ReflinkSupported != "unknown" {
+		t.Errorf("expected unknown for undetectable failure, got %s", fs.ReflinkSupported)
 	}
 	if !probeCalled {
 		t.Errorf("expected probe to be called")
@@ -141,9 +137,8 @@ func TestDetectFilesystem_SafetyAndErrors(t *testing.T) {
 }
 
 func TestDetectFilesystem_FailedScratch(t *testing.T) {
-	// Provide a readonly workspaceRoot so CreateTemp fails
-	workspaceRoot := t.TempDir()
-	os.Chmod(workspaceRoot, 0400)
+	// An unavailable selected workspace cannot be probed on another volume.
+	workspaceRoot := t.TempDir() + "/unavailable"
 
 	probeCalled := false
 	d := &Detectors{
@@ -155,12 +150,91 @@ func TestDetectFilesystem_FailedScratch(t *testing.T) {
 
 	ctx := context.Background()
 	fs := d.DetectFilesystem(ctx, workspaceRoot)
-	os.Chmod(workspaceRoot, 0700)
 
 	if fs.ReflinkSupported != "unknown" {
 		t.Errorf("expected unknown, got %s", fs.ReflinkSupported)
 	}
 	if probeCalled {
 		t.Errorf("expected probe NOT to be called when scratch fails")
+	}
+}
+
+func TestDetectFilesystem_UnsupportedClone(t *testing.T) {
+	d := &Detectors{ExecCommand: func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("cp: failed to clone: Operation not supported"), &exec.ExitError{}
+	}}
+	if got := d.DetectFilesystem(context.Background(), t.TempDir()).ReflinkSupported; got != "false" {
+		t.Fatalf("explicit unsupported clone = %s", got)
+	}
+}
+
+func TestDetectProviders_UnavailableSandbox(t *testing.T) {
+	d := &Detectors{LookPath: func(string) (string, error) { return "", exec.ErrNotFound }}
+	for _, sd := range []SandboxProtectData{
+		{Enabled: true}, {Enabled: true, BwrapUsable: true, PlanUnavailable: true},
+	} {
+		got := d.DetectProviders(context.Background(), sd)
+		if got["claude"].Sandbox != "unavailable" || got["codex"].Sandbox != "unknown" || got["codex"].Version != "unknown" {
+			t.Fatalf("unavailable protection became success: %+v", got)
+		}
+	}
+}
+
+func TestMeasureResources_UnknownAndZero(t *testing.T) {
+	selected := []string{}
+	d := &Detectors{
+		ReadFile: func(string) ([]byte, error) { return nil, errors.New("unavailable") },
+		Statfs: func(path string, buf *unix.Statfs_t) error {
+			selected = append(selected, path)
+			return errors.New("unavailable")
+		},
+	}
+	got := d.MeasureResources("selected-state", "selected-work")
+	if got.Status != "partial" || got.CPULoad != "unknown" || got.MemoryAvailable != nil || got.StateDiskFree != nil || got.WorkDiskFree != nil {
+		t.Fatalf("failed measurements became zero: %+v", got)
+	}
+	if !reflect.DeepEqual(selected, []string{"selected-state", "selected-work"}) {
+		t.Fatal(selected)
+	}
+	d.ReadFile = func(path string) ([]byte, error) {
+		if path == "/proc/loadavg" {
+			return []byte("0.00 0.00 0.00 1/1 1"), nil
+		}
+		return []byte("MemAvailable: 0 kB\n"), nil
+	}
+	d.Statfs = func(string, *unix.Statfs_t) error { return nil }
+	got = d.MeasureResources("selected-state", "selected-work")
+	if got.Status != "ok" || got.MemoryAvailable == nil || *got.MemoryAvailable != 0 || got.StateDiskFree == nil || *got.StateDiskFree != 0 || got.WorkDiskFree == nil {
+		t.Fatalf("known zero became unknown: %+v", got)
+	}
+}
+
+func TestDefaultDetectors_BoundedSyntheticProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TETHER_REPORT_SYNTHETIC_PROBE", "output")
+	out, err := DefaultDetectors().ExecCommand(context.Background(), executable, "-test.run=^TestReportSyntheticProbeHelper$")
+	if err != nil || len(out) != 32*1024 {
+		t.Fatalf("probe output bytes=%d err=%v", len(out), err)
+	}
+	t.Setenv("TETHER_REPORT_SYNTHETIC_PROBE", "wait")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := DefaultDetectors().ExecCommand(ctx, executable, "-test.run=^TestReportSyntheticProbeHelper$"); err == nil {
+		t.Fatal("canceled synthetic probe succeeded")
+	}
+}
+
+func TestReportSyntheticProbeHelper(t *testing.T) {
+	switch os.Getenv("TETHER_REPORT_SYNTHETIC_PROBE") {
+	case "output":
+		fmt.Print(strings.Repeat("x", 64*1024))
+		os.Exit(0)
+	case "wait":
+		time.Sleep(time.Second)
+		os.Exit(0)
 	}
 }

@@ -1,12 +1,15 @@
 package report
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -16,24 +19,47 @@ type Detectors struct {
 	LookPath    func(file string) (string, error)
 	Stat        func(name string) (os.FileInfo, error)
 	Statfs      func(path string, buf *unix.Statfs_t) error
+	ReadFile    func(string) ([]byte, error)
 }
 
 func DefaultDetectors() *Detectors {
 	return &Detectors{
 		ExecCommand: func(ctx context.Context, name string, arg ...string) ([]byte, error) {
-			//nolint:gosec // intentional
-			return exec.CommandContext(ctx, name, arg...).Output()
+			probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			//nolint:gosec // bounded local detector commands, never a model turn
+			cmd := exec.CommandContext(probeCtx, name, arg...)
+			cmd.WaitDelay = 200 * time.Millisecond
+			out := &probeOutput{}
+			cmd.Stdout, cmd.Stderr = out, out
+			err := cmd.Run()
+			return out.buffer.Bytes(), err
 		},
 		LookPath: exec.LookPath,
 		Stat:     os.Stat,
 		Statfs:   unix.Statfs,
+		ReadFile: os.ReadFile,
 	}
 }
 
+// Keep draining output after the limit so a noisy probe cannot block on a full
+// pipe or allocate unbounded memory inside the daemon.
+type probeOutput struct{ buffer bytes.Buffer }
+
+func (o *probeOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	if remaining := 32*1024 - o.buffer.Len(); remaining > 0 {
+		_, _ = o.buffer.Write(p[:min(n, remaining)])
+	}
+	return n, nil
+}
+
 type SandboxProtectData struct {
-	Enabled     bool
-	BwrapUsable bool
-	Codex       string
+	Enabled         bool
+	BwrapUsable     bool
+	BwrapChecked    bool
+	PlanUnavailable bool
+	Codex           string
 }
 
 func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProtectData) map[string]ProviderState {
@@ -44,6 +70,7 @@ func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProt
 		state := ProviderState{
 			Installed: false,
 			LoggedIn:  "unknown",
+			Version:   "unknown",
 		}
 		if _, err := d.LookPath(name); err == nil {
 			state.Installed = true
@@ -62,10 +89,10 @@ func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProt
 			}
 		} else {
 			if sandboxData.Enabled {
-				if sandboxData.BwrapUsable {
+				if sandboxData.BwrapUsable && !sandboxData.PlanUnavailable {
 					state.Sandbox = "wrapped"
 				} else {
-					state.Sandbox = "protected"
+					state.Sandbox = "unavailable"
 				}
 			} else {
 				state.Sandbox = "not protected"
@@ -79,15 +106,25 @@ func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProt
 
 func (d *Detectors) DetectHosting(ctx context.Context, launchHostShim bool) HostingState {
 	state := HostingState{
-		LaunchHostShim: launchHostShim,
+		LaunchHostShim:     launchHostShim,
+		SystemdUserSession: "unknown",
+		LingerEnabled:      "unknown",
 	}
-	if os.Getenv("XDG_RUNTIME_DIR") != "" {
-		state.SystemdUserSession = true
+	// A runtime directory alone is not proof of a reachable user manager.
+	out, _ := d.ExecCommand(ctx, "systemctl", "--user", "is-system-running")
+	switch strings.TrimSpace(string(out)) {
+	case "running", "degraded":
+		state.SystemdUserSession = "true"
+	case "offline":
+		state.SystemdUserSession = "false"
 	}
-	out, err := d.ExecCommand(ctx, "loginctl", "show-user", os.Getenv("USER"), "--property=Linger")
+	out, err := d.ExecCommand(ctx, "loginctl", "show-user", "--property=Linger")
 	if err == nil {
-		if strings.Contains(string(out), "Linger=yes") {
-			state.LingerEnabled = true
+		switch strings.TrimSpace(string(out)) {
+		case "Linger=yes":
+			state.LingerEnabled = "true"
+		case "Linger=no":
+			state.LingerEnabled = "false"
 		}
 	}
 	return state
@@ -112,9 +149,14 @@ func (d *Detectors) DetectFilesystem(ctx context.Context, workspaceRoot string) 
 	defer func() { _ = os.Remove(f2Name) }()
 
 	if err := os.WriteFile(f1Name, []byte("test"), 0600); err == nil {
-		_, err := d.ExecCommand(ctx, "cp", "--reflink=always", f1Name, f2Name)
+		out, err := d.ExecCommand(ctx, "cp", "--reflink=always", f1Name, f2Name)
 		if err != nil {
-			state.ReflinkSupported = "false"
+			// Tool absence, cancellation and permissions do not establish a
+			// filesystem limitation. Only an explicit unsupported clone does.
+			var exitErr *exec.ExitError
+			if errors.Is(err, unix.EOPNOTSUPP) || (errors.As(err, &exitErr) && strings.Contains(strings.ToLower(string(append(out, exitErr.Stderr...))), "operation not supported")) {
+				state.ReflinkSupported = "false"
+			}
 		} else {
 			state.ReflinkSupported = "true"
 		}
@@ -125,20 +167,33 @@ func (d *Detectors) DetectFilesystem(ctx context.Context, workspaceRoot string) 
 func (d *Detectors) MeasureResources(stateRoot, workRoot string) ResourceState {
 	st := ResourceState{
 		CPUCount: runtime.NumCPU(),
+		CPULoad:  "unknown",
+		Status:   "partial",
 	}
 
+	readFile := d.ReadFile
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	measured := 0
 	// Unix specific loadavg
-	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
-		st.CPULoad = strings.SplitN(string(b), " ", 2)[0]
+	if b, err := readFile("/proc/loadavg"); err == nil {
+		if fields := strings.Fields(string(b)); len(fields) > 0 {
+			st.CPULoad = fields[0]
+			measured++
+		}
 	}
 
-	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+	if b, err := readFile("/proc/meminfo"); err == nil {
 		lines := strings.Split(string(b), "\n")
 		for _, line := range lines {
 			if strings.HasPrefix(line, "MemAvailable:") {
 				var kb uint64
-				_, _ = fmt.Sscanf(line, "MemAvailable: %d kB", &kb)
-				st.MemoryAvailable = kb * 1024
+				if n, err := fmt.Sscanf(line, "MemAvailable: %d kB", &kb); n == 1 && err == nil {
+					available := kb * 1024
+					st.MemoryAvailable = &available
+					measured++
+				}
 				break
 			}
 		}
@@ -146,11 +201,18 @@ func (d *Detectors) MeasureResources(stateRoot, workRoot string) ResourceState {
 
 	var stat unix.Statfs_t
 	if err := d.Statfs(stateRoot, &stat); err == nil {
-		st.StateDiskFree = stat.Bavail * uint64(stat.Bsize) //nolint:gosec
+		free := stat.Bavail * uint64(stat.Bsize) //nolint:gosec
+		st.StateDiskFree = &free
+		measured++
 	}
 	if err := d.Statfs(workRoot, &stat); err == nil {
-		st.WorkDiskFree = stat.Bavail * uint64(stat.Bsize) //nolint:gosec
+		free := stat.Bavail * uint64(stat.Bsize) //nolint:gosec
+		st.WorkDiskFree = &free
+		measured++
 	}
 
+	if measured == 4 {
+		st.Status = "ok"
+	}
 	return st
 }

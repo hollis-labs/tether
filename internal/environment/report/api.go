@@ -51,6 +51,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RoleProfile: FromProfile(a.Profile),
 	}
 
+	if a.SandboxData.BwrapChecked || a.SandboxData.BwrapUsable {
+		rep.BubblewrapUsable = &a.SandboxData.BwrapUsable
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rep)
 }

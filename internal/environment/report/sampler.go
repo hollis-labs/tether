@@ -18,6 +18,7 @@ func NewSampler(delay time.Duration) *Sampler {
 	}
 	return &Sampler{
 		delay: delay,
+		state: ResourceState{Status: "unknown", CPULoad: "unknown"},
 	}
 }
 
@@ -27,11 +28,9 @@ func (s *Sampler) Start(ctx context.Context, measure func() ResourceState) {
 			s.mu.Lock()
 			// Explicitly set unknown values
 			s.state = ResourceState{
-				CPUCount:        0,
-				CPULoad:         "unknown",
-				MemoryAvailable: 0,
-				StateDiskFree:   0,
-				WorkDiskFree:    0,
+				Status:   "unknown",
+				CPUCount: 0,
+				CPULoad:  "unknown",
 			}
 			s.mu.Unlock()
 		}

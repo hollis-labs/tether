@@ -1,6 +1,9 @@
 package report
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,12 +12,19 @@ import (
 )
 
 func TestAPI_Auth(t *testing.T) {
-	d := DefaultDetectors() // using empty injected ones where needed
+	t.Setenv("HOME", t.TempDir())
+	d := &Detectors{
+		LookPath: func(string) (string, error) { return "", errors.New("not installed") },
+		ExecCommand: func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New("undetectable")
+		},
+	}
 	s := NewSampler(0)
 
 	api := &API{
 		Detectors: d,
 		Sampler:   s,
+		WorkRoot:  t.TempDir(),
 	}
 
 	tests := []struct {
@@ -42,6 +52,18 @@ func TestAPI_Auth(t *testing.T) {
 			w := httptest.NewRecorder()
 			api.ServeHTTP(w, req)
 
+			if tt.wantStatus == http.StatusOK {
+				var got Report
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.BubblewrapUsable != nil || got.Hosting.SystemdUserSession != "unknown" || got.Hosting.LingerEnabled != "unknown" || got.Resources.Status != "unknown" || got.Resources.MemoryAvailable != nil {
+					t.Fatalf("unknown detector state lost on wire: %+v", got)
+				}
+				if w.Header().Get("Cache-Control") != "no-store" {
+					t.Fatal("report could be cached")
+				}
+			}
 			if w.Code != tt.wantStatus {
 				t.Errorf("got status %v, want %v", w.Code, tt.wantStatus)
 			}
