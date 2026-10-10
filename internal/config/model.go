@@ -82,16 +82,16 @@ type AIPolicyConfig struct {
 }
 
 type AIProviderConfig struct {
-	ID           string         `yaml:"id"`
+	ID              string         `yaml:"id"`
 	Type            string         `yaml:"type"`
 	CatalogProvider string         `yaml:"catalog_provider,omitempty"`
-	Model        string         `yaml:"model"`
-	Models       []string       `yaml:"models"`
-	DefaultModel string         `yaml:"default_model"`
-	SecretRef    string         `yaml:"secret_ref"`
-	BaseURL      string         `yaml:"base_url"`
-	Enabled      bool           `yaml:"enabled"`
-	Policy       AIPolicyConfig `yaml:"policy"`
+	Model           string         `yaml:"model"`
+	Models          []string       `yaml:"models"`
+	DefaultModel    string         `yaml:"default_model"`
+	SecretRef       string         `yaml:"secret_ref"`
+	BaseURL         string         `yaml:"base_url"`
+	Enabled         bool           `yaml:"enabled"`
+	Policy          AIPolicyConfig `yaml:"policy"`
 }
 
 type AIRoutingConfig struct {

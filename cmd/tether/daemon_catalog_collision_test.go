@@ -15,14 +15,14 @@ func TestSyntheticConfiguredModelsCollision(t *testing.T) {
 			Models:          []string{"gpt-4-turbo"},
 		},
 		"public": {
-			ID:      "public",
-			Type:    "openai",
-			Models:  []string{"gpt-4-turbo"},
+			ID:     "public",
+			Type:   "openai",
+			Models: []string{"gpt-4-turbo"},
 		},
 	}
 
 	models := syntheticConfiguredModels(providers)
-	
+
 	internalKey := "internal-corp\x00gpt-4-turbo"
 	if _, ok := models[internalKey]; !ok {
 		t.Errorf("missing internal model at %q", internalKey)
