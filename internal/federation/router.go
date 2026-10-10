@@ -12,8 +12,8 @@ import (
 
 // ErrNoRoute is returned by a strict-mode Router for a message whose
 // recipient authority is neither the local authority nor a registered
-// peer. A non-strict Router never returns it — it falls through to the
-// local store instead.
+// peer. Directory-owned retired or incompatible authorities also refuse.
+// Unowned authorities retain the configured strict/local fallback behavior.
 var ErrNoRoute = errors.New("federation: no route for authority")
 
 // Router is a messaging.Store decorator that routes each operation by the
@@ -64,8 +64,9 @@ type Router struct {
 	localAuthority string
 	strict         bool
 
-	mu     sync.RWMutex
-	routes map[string]messaging.Store
+	mu      sync.RWMutex
+	routes  map[string]messaging.Store
+	resolve AuthorityResolver
 }
 
 // Router satisfies the go-messaging Store contract.
@@ -96,6 +97,14 @@ func NewRouter(local messaging.Store, localAuthority string, opts ...RouterOptio
 		opt(r)
 	}
 	return r
+}
+
+// SetAuthorityResolver attaches a committed directory lookup. An owned record
+// takes precedence over static peers, including retirement tombstones.
+func (r *Router) SetAuthorityResolver(resolve AuthorityResolver) {
+	r.mu.Lock()
+	r.resolve = resolve
+	r.mu.Unlock()
 }
 
 // LocalAuthority returns the authority this Router treats as local.
@@ -143,21 +152,41 @@ func (r *Router) Authorities() []string {
 }
 
 // IsLocal reports whether authority is served by the local store — that
-// is, it has no registered peer route.
+// is, it has no directory owner or registered peer route. Lookup errors
+// conservatively report non-local.
 func (r *Router) IsLocal(authority string) bool {
 	r.mu.RLock()
 	_, foreign := r.routes[authority]
+	resolve := r.resolve
 	r.mu.RUnlock()
+	if resolve != nil {
+		_, owned, err := resolve(context.Background(), authority)
+		if owned || err != nil {
+			return false
+		}
+	}
 	return !foreign
 }
 
-// storeFor resolves the store serving authority. A registered peer always
-// wins; otherwise the local store handles it, unless strict routing is on
-// and the authority is neither local nor routed.
-func (r *Router) storeFor(authority string) (messaging.Store, error) {
+// storeFor consults committed directory ownership first. An owned refusal
+// never falls through. Unowned authorities retain static/local routing.
+func (r *Router) storeFor(ctx context.Context, authority string) (messaging.Store, error) {
 	r.mu.RLock()
 	remote, foreign := r.routes[authority]
+	resolve := r.resolve
 	r.mu.RUnlock()
+	if resolve != nil {
+		store, owned, err := resolve(ctx, authority)
+		if err != nil {
+			return nil, err
+		}
+		if owned {
+			if store == nil {
+				return nil, ErrNoRoute
+			}
+			return store, nil
+		}
+	}
 	if foreign {
 		return remote, nil
 	}
@@ -169,7 +198,7 @@ func (r *Router) storeFor(authority string) (messaging.Store, error) {
 
 // Send routes the envelope to the store owning env.To.Authority.
 func (r *Router) Send(ctx context.Context, env messaging.Envelope) (messaging.Envelope, error) {
-	s, err := r.storeFor(env.To.Authority)
+	s, err := r.storeFor(ctx, env.To.Authority)
 	if err != nil {
 		return messaging.Envelope{}, err
 	}
@@ -178,7 +207,7 @@ func (r *Router) Send(ctx context.Context, env messaging.Envelope) (messaging.En
 
 // Inbox routes to the store owning to.Authority.
 func (r *Router) Inbox(ctx context.Context, to messaging.Address, f messaging.Filter) ([]messaging.Envelope, error) {
-	s, err := r.storeFor(to.Authority)
+	s, err := r.storeFor(ctx, to.Authority)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +216,7 @@ func (r *Router) Inbox(ctx context.Context, to messaging.Address, f messaging.Fi
 
 // Subscribe routes to the store owning to.Authority.
 func (r *Router) Subscribe(ctx context.Context, to messaging.Address, f messaging.Filter) (<-chan messaging.Envelope, error) {
-	s, err := r.storeFor(to.Authority)
+	s, err := r.storeFor(ctx, to.Authority)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +225,7 @@ func (r *Router) Subscribe(ctx context.Context, to messaging.Address, f messagin
 
 // Consume routes to the store owning recipient.Authority.
 func (r *Router) Consume(ctx context.Context, id string, recipient messaging.Address) error {
-	s, err := r.storeFor(recipient.Authority)
+	s, err := r.storeFor(ctx, recipient.Authority)
 	if err != nil {
 		return err
 	}

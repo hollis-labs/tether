@@ -94,6 +94,8 @@ func pathModule(path string) string {
 		return Messaging
 	case "broker":
 		return CredentialBroker
+	case "environments":
+		return EnvironmentDirectory
 	case "environment":
 		return StreamAPI
 	case "sessions":

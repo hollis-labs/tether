@@ -63,6 +63,8 @@ type Deps struct {
 	// the daemon falls through to its 404 default — matches the
 	// Catalog/Broker convention.
 	Registry RegistryService
+	// Directory enables the optional hub environment bindings; nil leaves routes absent.
+	Directory EnvironmentDirectory
 
 	// Settings, when non-nil, enables the /settings/onboarding routes
 	// for Global > Project > User configuration cascade (CW-20260914-0042).
@@ -163,6 +165,7 @@ type Server struct {
 	ProxyEvents         ProxyEventStore
 	Attachments         AttachmentStore
 	Registry            RegistryService
+	Directory           EnvironmentDirectory
 	Settings            SettingsService
 	RegistryCatalogRoot string
 	Groups              GroupsService
@@ -201,6 +204,7 @@ func NewHandler(deps Deps) http.Handler {
 		ProxyEvents:         deps.ProxyEvents,
 		Attachments:         deps.Attachments,
 		Registry:            deps.Registry,
+		Directory:           deps.Directory,
 		Settings:            deps.Settings,
 		RegistryCatalogRoot: deps.RegistryCatalogRoot,
 		Groups:              deps.Groups,
@@ -229,6 +233,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerRoutingRoutes(router)
 	s.registerProxyEventRoutes(router)
 	s.registerRegistryRoutes(router)
+	s.registerEnvironmentDirectoryRoutes(router)
 	s.registerSettingsRoutes(router)
 	s.registerGroupRoutes(router)
 	s.registerWhoamiRoutes(router)

@@ -111,7 +111,8 @@ type Server struct {
 	// Registry is optional; when set, /registry/* federation directory
 	// endpoints are mounted. Populated by app.Service.Registry at daemon
 	// startup.
-	Registry api.RegistryService
+	Registry  api.RegistryService
+	Directory api.EnvironmentDirectory
 	// Settings is optional; when set, /settings/* onboarding cascade endpoints
 	// are mounted (CW-20260914-0042).
 	Settings api.SettingsService
@@ -533,7 +534,7 @@ func (s *Server) handler(remote bool) http.Handler {
 		// through apiHandler below (T10, messaging vNext).
 		router.Handle("/a2a/", http.StripPrefix("/a2a", s.A2A))
 	}
-	if s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
+	if s.Directory != nil || s.EnvironmentStream != nil || s.Service != nil || s.Catalog != nil || s.AI != nil || s.Docs != nil || s.Channels != nil || s.Routing != nil || api.HasTeamOps(teams) {
 		apiHandler := api.NewHandler(api.Deps{
 			EnvironmentStream:   s.EnvironmentStream,
 			Docs:                s.Docs,
@@ -558,6 +559,7 @@ func (s *Server) handler(remote bool) http.Handler {
 			Attachments:         s.Attachments,
 			ProxyEvents:         s.ProxyEvents,
 			Registry:            s.Registry,
+			Directory:           s.Directory,
 			Settings:            s.Settings,
 			RegistryCatalogRoot: s.RegistryCatalogRoot,
 			Groups:              s.Groups,
@@ -877,6 +879,8 @@ func (s *Server) apiMounts() []apiMount {
 		// /registry/bindings* and /registry/scoped-bindings* (T07, T08)
 		// without a separate entry per subpath.
 		{"/registry/", s.Registry != nil},
+		{"/environments", s.Directory != nil},
+		{"/environments/", s.Directory != nil},
 		{"/whoami", s.Registry != nil},
 
 		{"/settings/mcp", s.Settings != nil},

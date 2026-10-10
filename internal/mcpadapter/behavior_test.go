@@ -35,6 +35,11 @@ import (
 // A method reached by a handler and absent here fails the test rather than
 // defaulting, so a new client method cannot arrive unclassified.
 var clientMethodWrites = map[string]bool{
+	"ListEnvironments":    false,
+	"GetEnvironment":      false,
+	"RegisterEnvironment": true,
+	"RenameEnvironment":   true,
+	"RetireEnvironment":   true,
 	// Reads.
 	"EventsHistory":              false,
 	"StreamEvents":               false,

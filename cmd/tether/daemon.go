@@ -339,6 +339,7 @@ var daemonRunCmd = &cobra.Command{
 			Attachments:         svc.Store,
 			ProxyEvents:         svc.Store,
 			Registry:            svc.Registry,
+			Directory:           svc.Directory,
 			Settings:            svc.Settings,
 			RegistryCatalogRoot: svc.CatalogRoot,
 			Groups:              svc.Registry,

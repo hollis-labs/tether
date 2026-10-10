@@ -22,12 +22,16 @@ import (
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/substrate/harness/adapters/turn"
 
+	tether "github.com/hollis-labs/substrate/mesh/tetherclient"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/environment"
+	directory "github.com/hollis-labs/tether/internal/environmentdirectory"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
+	"github.com/hollis-labs/tether/internal/identity"
 	"github.com/hollis-labs/tether/internal/launch"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
 	"github.com/hollis-labs/tether/internal/registry"
@@ -81,6 +85,8 @@ type Service struct {
 	// remote daemon for session ops). MCP / HTTP / CLI surfaces that
 	// depend on it must nil-guard before dispatching.
 	Registry *registry.Service
+	// Directory is present only when the startup profile enables environment_directory.
+	Directory *directory.Service
 
 	// Settings is the Global > Project > User settings cascade service
 	// (CW-20260914-0042) for onboarding and deployment configuration.
@@ -267,6 +273,46 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 			fedRouter.LocalAuthority(), len(fedRouter.Authorities()), fedRouter.Authorities())
 	}
 
+	profile, err := cat.Global.Profile()
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	var dirSvc *directory.Service
+	if profile.Enabled(environment.EnvironmentDirectory) {
+		directoryConfig := cat.Global.Federation
+		if !directoryConfig.Enabled {
+			directoryConfig.LocalAuthority = cat.Global.Environment.Authority
+		}
+		opts := tether.EnvironmentOptions{
+			ResolveCredential: func(_ context.Context, ref string) (string, error) {
+				path, err := directory.CredentialPath(ref)
+				if err != nil {
+					return "", err
+				}
+				token, err := identity.ReadTokenFile(path)
+				if err != nil {
+					return "", fmt.Errorf("environment directory: private credential unavailable")
+				}
+				return token, nil
+			},
+		}
+		dirSvc = directory.New(db, directory.Options{Client: opts,
+			ValidateBinding: func(in directory.Registration) error {
+				return federation.ValidateDirectoryBinding(in, directoryConfig)
+			},
+		})
+		resolve, err := federation.DirectoryAuthorityResolver(context.Background(), dirSvc, directoryConfig, opts)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("environment directory: %w", err)
+		}
+		if fedRouter == nil {
+			fedRouter = federation.NewRouter(db.MessagingStore(), cat.Global.Environment.Authority)
+		}
+		fedRouter.SetAuthorityResolver(resolve)
+	}
+
 	setStorage := settings.NewStorage(db.DB())
 	setSvc := settings.NewService(setStorage)
 
@@ -280,6 +326,7 @@ func newService(catalogRoot string, validateMCPGrants bool) (*Service, error) {
 		Broker:      brk,
 		Federation:  fedRouter,
 		Registry:    regSvc,
+		Directory:   dirSvc,
 		Settings:    setSvc,
 		factories:   factories,
 	}

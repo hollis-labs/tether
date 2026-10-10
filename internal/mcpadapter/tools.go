@@ -20,6 +20,7 @@ func (a *Adapter) registerTools(s *gomcp.Server) {
 	a.registerObservationTools(s)
 	a.registerAITools(s)
 	a.registerRegistryTools(s)
+	a.registerEnvironmentDirectoryTools(s)
 	a.registerGroupTools(s)
 	a.registerBindingsTools(s)
 	a.registerWhoamiTools(s)
