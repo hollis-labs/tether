@@ -126,6 +126,9 @@ install commands above. A bare Go install cannot generate those frontend assets.
 
 ## First-Time Setup
 
+For an independently managed Linux worker with checksummed, retained runtimes,
+see [the worker service guide](worker-service.md).
+
 Run the guided setup wizard once after install:
 
 ```sh
