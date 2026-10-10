@@ -1,7 +1,6 @@
 package federation
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hollis-labs/go-ssekit"
 	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
@@ -249,18 +249,12 @@ func (s *httpPeerStore) Subscribe(ctx context.Context, to messaging.Address, f m
 	go func() {
 		defer close(out)
 		defer resp.Body.Close() //nolint:errcheck
-		sc := bufio.NewScanner(resp.Body)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for sc.Scan() {
-			line := sc.Text()
-			// Tether emits one `data: <json>` line per "message" event;
-			// `: ping` comments and `event:` lines are skipped.
-			payload, ok := strings.CutPrefix(line, "data: ")
-			if !ok {
-				continue
+		for event, err := range ssekit.Read(resp.Body) {
+			if err != nil {
+				return
 			}
 			var env messaging.Envelope
-			if json.Unmarshal([]byte(payload), &env) != nil {
+			if json.Unmarshal(event.Data, &env) != nil {
 				continue
 			}
 			select {
