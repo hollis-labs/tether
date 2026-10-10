@@ -83,7 +83,8 @@ type AIPolicyConfig struct {
 
 type AIProviderConfig struct {
 	ID           string         `yaml:"id"`
-	Type         string         `yaml:"type"`
+	Type            string         `yaml:"type"`
+	CatalogProvider string         `yaml:"catalog_provider,omitempty"`
 	Model        string         `yaml:"model"`
 	Models       []string       `yaml:"models"`
 	DefaultModel string         `yaml:"default_model"`
