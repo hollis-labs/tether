@@ -81,6 +81,16 @@ type Config struct {
 	BaseURL              string
 	HTTPClient           *http.Client
 	AllowUnauthenticated bool
+	OpenRouter           *OpenRouterExtension
+	HuggingFace          *HuggingFaceExtension
+}
+
+type OpenRouterExtension struct {
+	Provider map[string]any
+}
+
+type HuggingFaceExtension struct {
+	BillTo string
 }
 
 // Provider executes normalized llm chat requests against OpenAI's Responses API.
@@ -88,6 +98,8 @@ type Provider struct {
 	resolveAPIKey apiKeyResolver
 	newClient     clientFactory
 	allowUnauth   bool
+	openRouter    *OpenRouterExtension
+	huggingFace   *HuggingFaceExtension
 }
 
 // New returns a Provider backed by the official OpenAI Go SDK.
@@ -95,6 +107,8 @@ func New(cfg Config) *Provider {
 	return &Provider{
 		resolveAPIKey: cfg.ResolveAPIKey,
 		allowUnauth:   cfg.AllowUnauthenticated,
+		openRouter:    cfg.OpenRouter,
+		huggingFace:   cfg.HuggingFace,
 		newClient: func(apiKey string) responseClient {
 			opts := []option.RequestOption{
 				option.WithMaxRetries(0),
@@ -136,7 +150,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 	if err != nil {
 		return llm.Response{}, err
 	}
-	resp, err := p.newClient(apiKey).New(ctx, params)
+	resp, err := p.newClient(apiKey).New(ctx, params, p.requestOptions()...)
 	if err != nil {
 		if shouldFallbackToChatCompletions(err) {
 			return p.chatCompletion(ctx, req, route, apiKey)
@@ -147,6 +161,17 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request, route llm.RouteDec
 }
 
 // Embed sends one normalized embedding request to OpenAI.
+func (p *Provider) requestOptions() []option.RequestOption {
+	var opts []option.RequestOption
+	if p.openRouter != nil && p.openRouter.Provider != nil {
+		opts = append(opts, option.WithJSONSet("provider", p.openRouter.Provider))
+	}
+	if p.huggingFace != nil && p.huggingFace.BillTo != "" {
+		opts = append(opts, option.WithHeader("X-HF-Bill-To", p.huggingFace.BillTo))
+	}
+	return opts
+}
+
 func (p *Provider) Embed(ctx context.Context, req llm.Request, route llm.RouteDecision) (llm.Response, error) {
 	if p.resolveAPIKey == nil && !p.allowUnauth {
 		return llm.Response{}, ErrAPIKeyResolverMissing
@@ -164,7 +189,7 @@ func (p *Provider) Embed(ctx context.Context, req llm.Request, route llm.RouteDe
 	if err != nil {
 		return llm.Response{}, err
 	}
-	resp, err := p.newClient(apiKey).NewEmbedding(ctx, params)
+	resp, err := p.newClient(apiKey).NewEmbedding(ctx, params, p.requestOptions()...)
 	if err != nil {
 		return llm.Response{}, err
 	}
@@ -203,7 +228,7 @@ func (p *Provider) StreamChat(ctx context.Context, req llm.Request, route llm.Ro
 	if err != nil {
 		return llm.Response{}, err
 	}
-	stream := p.newClient(apiKey).NewStreaming(ctx, params)
+	stream := p.newClient(apiKey).NewStreaming(ctx, params, p.requestOptions()...)
 	defer func() { _ = stream.Close() }()
 
 	var final llm.Response
@@ -271,7 +296,7 @@ func (p *Provider) chatCompletion(ctx context.Context, req llm.Request, route ll
 	if err != nil {
 		return llm.Response{}, err
 	}
-	resp, err := p.newClient(apiKey).NewChatCompletion(ctx, params)
+	resp, err := p.newClient(apiKey).NewChatCompletion(ctx, params, p.requestOptions()...)
 	if err != nil {
 		return llm.Response{}, err
 	}
@@ -283,7 +308,7 @@ func (p *Provider) streamChatCompletion(ctx context.Context, req llm.Request, ro
 	if err != nil {
 		return llm.Response{}, err
 	}
-	stream := p.newClient(apiKey).NewChatCompletionStreaming(ctx, params)
+	stream := p.newClient(apiKey).NewChatCompletionStreaming(ctx, params, p.requestOptions()...)
 	defer func() { _ = stream.Close() }()
 
 	final := llm.Response{Provider: route.Provider, Model: route.Model}
@@ -747,6 +772,19 @@ func translateChatCompletion(resp *openai.ChatCompletion, route llm.RouteDecisio
 			OutputTokens:    int(resp.Usage.CompletionTokens),
 			ReasoningTokens: int(resp.Usage.CompletionTokensDetails.ReasoningTokens),
 		},
+	}
+
+	if strings.HasPrefix(resp.ID, "gen-") {
+		out.Usage.GenerationID = resp.ID
+	}
+	if costRaw, ok := resp.Usage.JSON.ExtraFields["cost"]; ok {
+		var cost float64
+		if json.Unmarshal([]byte(costRaw.Raw()), &cost) == nil {
+			out.Usage.BilledCostUSD = cost
+		}
+	}
+	if route.Provider == "openrouter" {
+		out.Usage.UpstreamProvider = strings.SplitN(resp.Model, "/", 2)[0]
 	}
 	if len(resp.Choices) == 0 {
 		return out

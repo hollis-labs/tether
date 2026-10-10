@@ -1225,3 +1225,21 @@ func effectiveCatalogProvider(p config.AIProviderConfig) string {
 	}
 	return modelCatalogProviderID(p.Type)
 }
+
+func mapOpenRouterExt(ext *config.ProviderExtensions) *llmopenai.OpenRouterExtension {
+	if ext == nil || ext.OpenRouter == nil {
+		return nil
+	}
+	return &llmopenai.OpenRouterExtension{
+		Provider: ext.OpenRouter.Provider,
+	}
+}
+
+func mapHuggingFaceExt(ext *config.ProviderExtensions) *llmopenai.HuggingFaceExtension {
+	if ext == nil || ext.HuggingFace == nil {
+		return nil
+	}
+	return &llmopenai.HuggingFaceExtension{
+		BillTo: ext.HuggingFace.BillTo,
+	}
+}

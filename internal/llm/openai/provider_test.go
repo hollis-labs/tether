@@ -27,7 +27,7 @@ func TestProviderChatBuildsRequestAndTranslatesResponse(t *testing.T) {
 				t.Fatalf("apiKey = %q", apiKey)
 			}
 			return stubResponseClient{
-				newFn: func(_ context.Context, body responses.ResponseNewParams) (*responses.Response, error) {
+				newFn: func(_ context.Context, body responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
 					captured = body
 					return mustResponse(t, `{
 					  "id":"resp_123",
@@ -138,7 +138,7 @@ func TestProviderChatRefusalUsesRefusalText(t *testing.T) {
 		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
 		newClient: func(string) responseClient {
 			return stubResponseClient{
-				newFn: func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+				newFn: func(context.Context, responses.ResponseNewParams, ...option.RequestOption) (*responses.Response, error) {
 					return mustResponse(t, `{
 					  "id":"resp_123",
 					  "created_at":1716595200,
@@ -288,7 +288,7 @@ func TestProviderEmbedBuildsRequestAndTranslatesResponse(t *testing.T) {
 				t.Fatalf("apiKey = %q", apiKey)
 			}
 			return stubResponseClient{
-				newEmbeddingFn: func(_ context.Context, body openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error) {
+				newEmbeddingFn: func(_ context.Context, body openai.EmbeddingNewParams, _ ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
 					captured = body
 					return &openai.CreateEmbeddingResponse{
 						Model: "text-embedding-3-small",
@@ -357,7 +357,7 @@ func TestProviderStreamChatEmitsTextAndFinalResponse(t *testing.T) {
 		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
 		newClient: func(string) responseClient {
 			return stubResponseClient{
-				newStreamFn: func(context.Context, responses.ResponseNewParams) responseStream {
+				newStreamFn: func(context.Context, responses.ResponseNewParams, ...option.RequestOption) responseStream {
 					return &stubOpenAIResponseStream{
 						events: []responses.ResponseStreamEventUnion{
 							mustResponseStreamEvent(t, `{"type":"response.output_text.delta","content_index":0,"delta":"hel","item_id":"msg_1","logprobs":[],"output_index":0,"sequence_number":1}`),
@@ -421,10 +421,10 @@ func TestProviderChatFallsBackToChatCompletionsOn404(t *testing.T) {
 		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
 		newClient: func(string) responseClient {
 			return stubResponseClient{
-				newFn: func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+				newFn: func(context.Context, responses.ResponseNewParams, ...option.RequestOption) (*responses.Response, error) {
 					return nil, &openai.Error{StatusCode: http.StatusNotFound}
 				},
-				newChatCompletionFn: func(_ context.Context, body openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+				newChatCompletionFn: func(_ context.Context, body openai.ChatCompletionNewParams, _ ...option.RequestOption) (*openai.ChatCompletion, error) {
 					raw, err := json.Marshal(body)
 					if err != nil {
 						t.Fatalf("marshal fallback body: %v", err)
@@ -465,46 +465,46 @@ func TestProviderChatFallsBackToChatCompletionsOn404(t *testing.T) {
 }
 
 type stubResponseClient struct {
-	newFn                   func(context.Context, responses.ResponseNewParams) (*responses.Response, error)
-	newStreamFn             func(context.Context, responses.ResponseNewParams) responseStream
-	newEmbeddingFn          func(context.Context, openai.EmbeddingNewParams) (*openai.CreateEmbeddingResponse, error)
-	newChatCompletionFn     func(context.Context, openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
-	newChatCompletionStream func(context.Context, openai.ChatCompletionNewParams) chatCompletionStream
+	newFn                   func(context.Context, responses.ResponseNewParams, ...option.RequestOption) (*responses.Response, error)
+	newStreamFn             func(context.Context, responses.ResponseNewParams, ...option.RequestOption) responseStream
+	newEmbeddingFn          func(context.Context, openai.EmbeddingNewParams, ...option.RequestOption) (*openai.CreateEmbeddingResponse, error)
+	newChatCompletionFn     func(context.Context, openai.ChatCompletionNewParams, ...option.RequestOption) (*openai.ChatCompletion, error)
+	newChatCompletionStream func(context.Context, openai.ChatCompletionNewParams, ...option.RequestOption) chatCompletionStream
 }
 
-func (s stubResponseClient) New(ctx context.Context, body responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
+func (s stubResponseClient) New(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) (*responses.Response, error) {
 	if s.newFn == nil {
 		return nil, errors.New("unexpected call")
 	}
-	return s.newFn(ctx, body)
+	return s.newFn(ctx, body, opts...)
 }
 
-func (s stubResponseClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, _ ...option.RequestOption) responseStream {
+func (s stubResponseClient) NewStreaming(ctx context.Context, body responses.ResponseNewParams, opts ...option.RequestOption) responseStream {
 	if s.newStreamFn == nil {
 		return &stubOpenAIResponseStream{err: errors.New("unexpected call")}
 	}
-	return s.newStreamFn(ctx, body)
+	return s.newStreamFn(ctx, body, opts...)
 }
 
-func (s stubResponseClient) NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, _ ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
+func (s stubResponseClient) NewEmbedding(ctx context.Context, body openai.EmbeddingNewParams, opts ...option.RequestOption) (*openai.CreateEmbeddingResponse, error) {
 	if s.newEmbeddingFn == nil {
 		return nil, errors.New("unexpected call")
 	}
-	return s.newEmbeddingFn(ctx, body)
+	return s.newEmbeddingFn(ctx, body, opts...)
 }
 
-func (s stubResponseClient) NewChatCompletion(ctx context.Context, body openai.ChatCompletionNewParams, _ ...option.RequestOption) (*openai.ChatCompletion, error) {
+func (s stubResponseClient) NewChatCompletion(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
 	if s.newChatCompletionFn == nil {
 		return nil, errors.New("unexpected call")
 	}
-	return s.newChatCompletionFn(ctx, body)
+	return s.newChatCompletionFn(ctx, body, opts...)
 }
 
-func (s stubResponseClient) NewChatCompletionStreaming(ctx context.Context, body openai.ChatCompletionNewParams, _ ...option.RequestOption) chatCompletionStream {
+func (s stubResponseClient) NewChatCompletionStreaming(ctx context.Context, body openai.ChatCompletionNewParams, opts ...option.RequestOption) chatCompletionStream {
 	if s.newChatCompletionStream == nil {
 		return &stubOpenAIChatCompletionStream{err: errors.New("unexpected call")}
 	}
-	return s.newChatCompletionStream(ctx, body)
+	return s.newChatCompletionStream(ctx, body, opts...)
 }
 
 type stubOpenAIResponseStream struct {
@@ -579,4 +579,70 @@ func mustChatCompletion(t *testing.T, raw string) *openai.ChatCompletion {
 		t.Fatalf("Unmarshal(chat completion): %v", err)
 	}
 	return &resp
+}
+
+func TestProviderChatPassesExtensionsAndTranslatesProvenance(t *testing.T) {
+	t.Parallel()
+
+	var capturedOpts []option.RequestOption
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-openai-test", nil },
+		openRouter: &OpenRouterExtension{
+			Provider: map[string]any{"order": []string{"Anthropic"}},
+		},
+		huggingFace: &HuggingFaceExtension{
+			BillTo: "my-org",
+		},
+		newClient: func(apiKey string) responseClient {
+			return stubResponseClient{
+				newChatCompletionFn: func(_ context.Context, _ openai.ChatCompletionNewParams, opts ...option.RequestOption) (*openai.ChatCompletion, error) {
+					capturedOpts = opts
+					return mustChatCompletion(t, `{
+					  "id":"gen-xyz",
+					  "object":"chat.completion",
+					  "created":1716595200,
+					  "model":"anthropic/claude-3-sonnet",
+					  "choices":[{"index":0,"message":{"role":"assistant","content":"hello extensions"},"finish_reason":"stop"}],
+					  "usage":{
+					    "prompt_tokens":10,
+					    "completion_tokens":5,
+					    "total_tokens":15,
+					    "completion_tokens_details":{"reasoning_tokens": 5},
+					    "cost": 0.005
+					  }
+					}`), nil
+				},
+				newFn: func(_ context.Context, _ responses.ResponseNewParams, _ ...option.RequestOption) (*responses.Response, error) {
+					return nil, &openai.Error{StatusCode: 404}
+				},
+			}
+		},
+	}
+
+	resp, err := p.Chat(context.Background(), llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{{
+			Role:  "user",
+			Parts: []llm.ContentPart{{Type: "text", Text: "say hello"}},
+		}},
+	}, llm.RouteDecision{Provider: "openrouter", Model: "auto"})
+	if err != nil {
+		t.Fatalf("Chat returned err: %v", err)
+	}
+
+	if resp.Usage.GenerationID != "gen-xyz" {
+		t.Errorf("GenerationID = %v, want gen-xyz", resp.Usage.GenerationID)
+	}
+	if resp.Usage.BilledCostUSD != 0.005 {
+		t.Errorf("BilledCostUSD = %v, want 0.005", resp.Usage.BilledCostUSD)
+	}
+	if resp.Usage.UpstreamProvider != "anthropic" {
+		t.Errorf("UpstreamProvider = %v, want anthropic", resp.Usage.UpstreamProvider)
+	}
+	if resp.Usage.ReasoningTokens != 5 {
+		t.Errorf("ReasoningTokens = %v, want 5", resp.Usage.ReasoningTokens)
+	}
+	if len(capturedOpts) != 2 {
+		t.Errorf("got %d options, want 2", len(capturedOpts))
+	}
 }
