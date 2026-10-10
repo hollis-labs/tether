@@ -79,10 +79,6 @@ func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProt
 				if version := strings.TrimSpace(string(out)); version != "" {
 					state.Version = version
 				}
-			} else if out, err := d.ExecCommand(ctx, name, "version"); err == nil {
-				if version := strings.TrimSpace(string(out)); version != "" {
-					state.Version = version
-				}
 			}
 		}
 

@@ -254,3 +254,26 @@ func TestDetectProviders_EmptyVersionIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectProviders_NoPositionalPromptFallback(t *testing.T) {
+	calls := 0
+	d := &Detectors{
+		LookPath: func(string) (string, error) { return "/synthetic/tool", nil },
+		ExecCommand: func(ctx context.Context, name string, arg ...string) ([]byte, error) {
+			calls++
+			if !reflect.DeepEqual(arg, []string{"--version"}) {
+				t.Fatalf("potential model prompt invocation: %s %v", name, arg)
+			}
+			return nil, errors.New("unsupported version flag")
+		},
+	}
+	got := d.DetectProviders(context.Background(), SandboxProtectData{})
+	for name, state := range got {
+		if state.Version != "unknown" {
+			t.Fatalf("%s version = %q", name, state.Version)
+		}
+	}
+	if calls != len(got) {
+		t.Fatal("unsupported version command was retried", calls)
+	}
+}
