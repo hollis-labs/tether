@@ -47,12 +47,22 @@ type Verifier interface {
 // request, including invalid credentials and storage errors. Health is open.
 // Record receives metadata only, never bearer headers, query strings or bodies.
 func Middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
+	return middleware(mode, verifier, record, next, false)
+}
+
+// RemoteMiddleware always enforces verified non-operator credentials. Unlike
+// the local listener, A2A does not bypass caller authentication here.
+func RemoteMiddleware(verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
+	return middleware(Enforce, verifier, record, next, true)
+}
+
+func middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler, remote bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := mode.Validate(); err != nil {
 			authError(w, http.StatusServiceUnavailable, "identity_unavailable")
 			return
 		}
-		if mode == Off || mode == "" || r.URL.Path == "/health" || r.URL.Path == "/a2a" || strings.HasPrefix(r.URL.Path, "/a2a/") {
+		if mode == Off || mode == "" || r.URL.Path == "/health" || (!remote && (r.URL.Path == "/a2a" || strings.HasPrefix(r.URL.Path, "/a2a/"))) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -69,6 +79,9 @@ func Middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 		}
 		o := Observation{At: time.Now().UTC(), Mode: mode, Authentication: "missing", Method: r.Method, Route: routeFamily(r.URL.Path)}
 		p, state := authenticate(r.Context(), headers, verifier)
+		if remote && state == "verified" && (p.Kind == "operator" || p.ID == OperatorID) {
+			p, state = Principal{}, "invalid"
+		}
 		o.Authentication = state
 		if state == "verified" {
 			o.PrincipalID, o.SessionID = p.ID, p.SessionID
