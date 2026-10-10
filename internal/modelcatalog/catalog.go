@@ -60,6 +60,10 @@ const (
 	PricePriced  PriceState = "priced"
 )
 
+// Pricing returns per-million-token input and output prices in USD.
+//
+// If prices are not known, it returns PriceUnknown. If the model is known to be
+// completely free, it returns PriceFree.
 func (c *Catalog) Pricing(providerID, modelID string) (input, output float64, state PriceState) {
 	m, found := c.client.Get(providerID, modelID)
 	if !found {
