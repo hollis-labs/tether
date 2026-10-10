@@ -26,7 +26,11 @@ func (s *Service) launchArtifactAdmission(ctx context.Context, id string, row *s
 	acceptedRow := *row
 	s.launchMu.Lock()
 	gate := s.launches[id]
-	held := gate != nil && len(gate.slot) == 1
+	var holder string
+	if gate != nil {
+		holder = gate.holder
+	}
+	held := holder != "" && len(gate.slot) == 1
 	s.launchMu.Unlock()
 	if !held {
 		return launchartifacts.Admission{}, fmt.Errorf("artifact admission: launch gate not held")
@@ -52,7 +56,7 @@ func (s *Service) launchArtifactAdmission(ctx context.Context, id string, row *s
 			return err
 		}
 		s.launchMu.Lock()
-		held := s.launches[id] == gate && len(gate.slot) == 1
+		held := s.launches[id] == gate && gate.holder == holder && len(gate.slot) == 1
 		s.launchMu.Unlock()
 		if !held {
 			return fmt.Errorf("artifact admission: launch gate custody changed")
