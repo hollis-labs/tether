@@ -50,6 +50,8 @@ func TestOverlayIncludesSyntheticConfiguredModel(t *testing.T) {
 				Output: []string{"text"},
 			},
 		},
+	}, map[string]PriceState{
+		overlayKey("openai", "llama3.3-custom"): PriceUnknown,
 	})
 
 	if _, ok := overlay.Get("openai", "llama3.3-custom"); !ok {
