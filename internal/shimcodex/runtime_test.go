@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -161,6 +162,18 @@ func TestCodexProtocolProcess(t *testing.T) {
 				if _, err := os.Stdout.Write([]byte("{")); err != nil {
 					os.Exit(80)
 				}
+				// Exercise protocol truncation after durable capture, independently
+				// of the host's bounded post-exit pipe drain. An immediate exit can
+				// race journal fsync and instead exercise the output-gap refusal.
+				gate, err := os.Open(os.Getenv("TETHER_CODEX_EXIT_GATE"))
+				if err != nil {
+					os.Exit(76)
+				}
+				one := make([]byte, 1)
+				if n, err := gate.Read(one); err != nil || n != 1 {
+					os.Exit(75)
+				}
+				_ = gate.Close()
 				os.Exit(7)
 			}
 		}
@@ -208,17 +221,23 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 	}
 	logPath := filepath.Join(root, "requests")
 	gatePath := ""
+	exitGatePath := ""
 	var gate *os.File
-	if uncertain {
-		gatePath = filepath.Join(root, "release")
-		if err = unix.Mkfifo(gatePath, 0600); err != nil {
+	if uncertain || terminal {
+		releasePath := filepath.Join(root, "release")
+		if err = unix.Mkfifo(releasePath, 0600); err != nil {
 			t.Fatal(err)
 		}
-		gate, err = os.OpenFile(gatePath, os.O_RDWR|syscall.O_NONBLOCK, 0600)
+		gate, err = os.OpenFile(releasePath, os.O_RDWR|syscall.O_NONBLOCK, 0600)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = gate.Close() })
+		if uncertain {
+			gatePath = releasePath
+		} else {
+			exitGatePath = releasePath
+		}
 	}
 	p, err := shimhost.New(shimhost.Config{StateDir: filepath.Join(root, "s"), ShimCommand: []string{exe, "-test.run=^TestCodexProtocolProcess$", "--"}, HostEnv: []string{"TETHER_CODEX_FIXTURE=host", "HOME=" + root, "TMPDIR=" + root}, StopGrace: 50 * time.Millisecond})
 	if err != nil {
@@ -226,7 +245,7 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	spec := shim.Launch{Session: "urn:session:codex-fixture", Instance: "urn:instance:fixture", Generation: 1, Actor: mesh.Actor{URN: "msg://service/shim/test", Kind: mesh.ActorService}, Subject: "urn:session:codex-fixture", Argv: []string{exe, "-test.run=^TestCodexProtocolProcess$"}, Env: []string{"TETHER_CODEX_FIXTURE=provider", "TETHER_CODEX_LOG=" + logPath, "TETHER_CODEX_GATE=" + gatePath, "TETHER_CODEX_CONTROLS=" + func() string {
+	spec := shim.Launch{Session: "urn:session:codex-fixture", Instance: "urn:instance:fixture", Generation: 1, Actor: mesh.Actor{URN: "msg://service/shim/test", Kind: mesh.ActorService}, Subject: "urn:session:codex-fixture", Argv: []string{exe, "-test.run=^TestCodexProtocolProcess$"}, Env: []string{"TETHER_CODEX_FIXTURE=provider", "TETHER_CODEX_LOG=" + logPath, "TETHER_CODEX_GATE=" + gatePath, "TETHER_CODEX_EXIT_GATE=" + exitGatePath, "TETHER_CODEX_CONTROLS=" + func() string {
 		if controls {
 			return "yes"
 		}
@@ -253,6 +272,11 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 	}
 	store := &memoryStore{}
 	config := Config{ID: "fixture", Receipt: receipt, Store: store, Fresh: true, Limits: Limits{InboxItems: 128, InboxBytes: 1 << 20}, Validate: func(ctx context.Context) error { return ctx.Err() }}
+	config.OnDetach = func(err error) {
+		if HasCode(err, "output_gap") {
+			logFixtureOutputGap(t, receipt)
+		}
+	}
 	start := func(cfg Config) *Session {
 		t.Helper()
 		raw, err := (&Runtime{Config: cfg}).Start(ctx, agentsessions.StartOptions{})
@@ -320,12 +344,9 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 			t.Fatal(ctx.Err())
 		}
 	} else {
-		// This provider answers and immediately exits. Its authenticated exit
-		// closes the controller, which may end the local inject/call observer
-		// before it sees a bytes receipt or wakes for the durable RPC response.
-		// That observer's refusal is not evidence that private output was lost.
-		// Require the exact persisted response and exit/carry below; never turn
-		// this test allowance into production success from host acceptance.
+		// Preserve the observer-refusal allowance only with the exact persisted
+		// response and exit/carry assertions below. A local observer disposition
+		// cannot substitute for native evidence or make host acceptance success.
 		if err = first.SendTurn(ctx, "first", "", "fixture", "1"); err != nil && (!terminal || !HasCode(err, "outcome_unknown")) {
 			t.Fatal(err)
 		}
@@ -333,6 +354,15 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 	}
 
 	if terminal {
+		captured := waitProtocol(ctx, t, first, func(state State) bool {
+			return state.LastTerminal == "turn-1" && string(state.Partial) == "{"
+		})
+		if captured.Exit != nil {
+			t.Fatal("provider exited before the capture barrier")
+		}
+		if _, err = gate.Write([]byte{1}); err != nil {
+			t.Fatal(err)
+		}
 		select {
 		case <-first.done:
 		case <-ctx.Done():
@@ -407,5 +437,51 @@ func libraryProtocolFixture(t *testing.T, uncertain, terminal, controls bool) {
 	}
 	if counts["initialize"] != 1 || counts["initialized"] != 1 || counts["thread/start"] != 1 || counts["turn/start"] != 2 {
 		t.Fatalf("protocol replay: %v", counts)
+	}
+}
+
+// Report only the synthetic host's refusal class, never its output or descriptor.
+func logFixtureOutputGap(t *testing.T, receipt shimhost.Receipt) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	spec, err := shimhost.Descriptor(receipt)
+	if err != nil {
+		t.Logf("gap metadata unavailable: %v", err)
+		return
+	}
+	c, err := shimhost.Connect(ctx, receipt.SocketPath, spec.Secret, spec.Session, spec.Instance, strconv.FormatUint(spec.Generation, 10), "observer", receipt.Journal, false)
+	if err != nil {
+		t.Logf("gap metadata unavailable: %v", err)
+		return
+	}
+	defer func() { _ = c.Close() }()
+	if err := c.Replay(spec.Session, ""); err != nil {
+		t.Logf("gap metadata unavailable: %v", err)
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case frame, ok := <-c.Frames:
+			if !ok {
+				return
+			}
+			var body struct {
+				Event mesh.Event `json:"event"`
+			}
+			if frame.Type != "event" || json.Unmarshal(frame.Body, &body) != nil || body.Event.Kind != "shim.output_gap" {
+				continue
+			}
+			var gap struct {
+				Code   string `json:"code"`
+				Stream string `json:"stream"`
+			}
+			if json.Unmarshal(body.Event.Payload, &gap) == nil {
+				t.Logf("fixture output gap: code=%q stream=%q", gap.Code, gap.Stream)
+			}
+			return
+		}
 	}
 }
