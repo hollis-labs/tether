@@ -3,9 +3,11 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/session"
 )
 
 // References describe resources within the selected environment. They neither
@@ -50,4 +52,14 @@ func remoteResponseError(r *http.Request, err error, category string) error {
 		return remoteOperationError{cause: err, message: category}
 	}
 	return err
+}
+
+func remoteResumeConflictError(r *http.Request, err error, nativeOnly bool) error {
+	category := "session resume conflict"
+	if nativeOnly && errors.Is(err, session.ErrRecoveryConflict) {
+		// State the public requirements, not a specific inferred failed
+		// predicate or any underlying error/path from the recorded context.
+		category = "native-only resume unavailable; independent current launch authority required and recorded context must be valid"
+	}
+	return remoteResponseError(r, err, category)
 }

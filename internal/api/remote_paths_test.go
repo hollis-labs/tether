@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/hollis-labs/tether/internal/identity"
+	"github.com/hollis-labs/tether/internal/session"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -119,6 +121,39 @@ func TestRemotePathErrorsPreserveClassificationAndLocalText(t *testing.T) {
 				if !remote && out.Error.Message != err.Error() {
 					t.Fatalf("%s local error changed: %+v", tc.name, out)
 				}
+			}
+		}
+	}
+}
+
+func TestRemotePathNativeConflictRequirements(t *testing.T) {
+	err := fmt.Errorf("%w: open /private/worker/native/state: unavailable", session.ErrRecoveryConflict)
+	s := &Server{Service: &fakeLaunchService{resumeErr: err}}
+	for _, remote := range []bool{false, true} {
+		for _, nativeOnly := range []bool{false, true} {
+			body := `{}`
+			if nativeOnly {
+				body = `{"native_only":true,"source_session_id":"source"}`
+			}
+			r := httptest.NewRequest(http.MethodPost, "/logical-agents/agent/resume", strings.NewReader(body))
+			if remote {
+				r = remotePathRequest(http.MethodPost, r.URL.Path, body)
+			}
+			w := httptest.NewRecorder()
+			s.handleResumeLogicalAgent(w, r, "agent")
+			var out ErrorResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			want := err.Error()
+			if remote {
+				want = "session resume conflict"
+				if nativeOnly {
+					want = "native-only resume unavailable; independent current launch authority required and recorded context must be valid"
+				}
+			}
+			if w.Code != http.StatusConflict || out.Error.Code != CodeConflict || out.Error.Message != want {
+				t.Fatalf("remote=%v native=%v: %d %+v", remote, nativeOnly, w.Code, out)
 			}
 		}
 	}
