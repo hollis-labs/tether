@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,9 @@ func TestDetectHosting(t *testing.T) {
 			d := &Detectors{ExecCommand: func(ctx context.Context, name string, arg ...string) ([]byte, error) {
 				if name == "systemctl" {
 					return []byte(tc.systemd), errors.New("synthetic nonzero status")
+				}
+				if !reflect.DeepEqual(arg, []string{"show-user", strconv.Itoa(os.Getuid()), "--property=Linger"}) {
+					t.Fatalf("linger probe did not select the actual user: %v", arg)
 				}
 				if tc.linger == "" {
 					return nil, errors.New("unavailable")
@@ -236,5 +240,17 @@ func TestReportSyntheticProbeHelper(t *testing.T) {
 	case "wait":
 		time.Sleep(time.Second)
 		os.Exit(0)
+	}
+}
+
+func TestDetectProviders_EmptyVersionIsUnknown(t *testing.T) {
+	d := &Detectors{
+		LookPath:    func(string) (string, error) { return "/synthetic/tool", nil },
+		ExecCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("\n"), nil },
+	}
+	for name, state := range d.DetectProviders(context.Background(), SandboxProtectData{}) {
+		if !state.Installed || state.Version != "unknown" || state.LoggedIn != "unknown" {
+			t.Fatalf("%s = %+v", name, state)
+		}
 	}
 }

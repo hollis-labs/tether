@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,9 +76,13 @@ func (d *Detectors) DetectProviders(ctx context.Context, sandboxData SandboxProt
 		if _, err := d.LookPath(name); err == nil {
 			state.Installed = true
 			if out, err := d.ExecCommand(ctx, name, "--version"); err == nil {
-				state.Version = strings.TrimSpace(string(out))
+				if version := strings.TrimSpace(string(out)); version != "" {
+					state.Version = version
+				}
 			} else if out, err := d.ExecCommand(ctx, name, "version"); err == nil {
-				state.Version = strings.TrimSpace(string(out))
+				if version := strings.TrimSpace(string(out)); version != "" {
+					state.Version = version
+				}
 			}
 		}
 
@@ -118,7 +123,7 @@ func (d *Detectors) DetectHosting(ctx context.Context, launchHostShim bool) Host
 	case "offline":
 		state.SystemdUserSession = "false"
 	}
-	out, err := d.ExecCommand(ctx, "loginctl", "show-user", "--property=Linger")
+	out, err := d.ExecCommand(ctx, "loginctl", "show-user", strconv.Itoa(os.Getuid()), "--property=Linger")
 	if err == nil {
 		switch strings.TrimSpace(string(out)) {
 		case "Linger=yes":
