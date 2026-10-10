@@ -302,6 +302,20 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			ok: true,
 		},
 		{
+			name: "reasoning text accepted for openai",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:                   "openai-reasoning",
+					Type:                 "openai",
+					Model:                "gpt-5",
+					SecretRef:            "keychain://openai/reasoning",
+					Enabled:              true,
+					IncludeReasoningText: true,
+				}},
+			},
+			ok: true,
+		},
+		{
 			name: "routing order references disabled provider",
 			ai: AIConfig{
 				Providers: []AIProviderConfig{{
@@ -326,6 +340,34 @@ func TestValidate_AIProviderRules(t *testing.T) {
 				Routing: AIRoutingConfig{DefaultProviderOrder: []string{"llama-local"}},
 			},
 			ok: true,
+		},
+		{
+			name: "reasoning text accepted for openai compatible",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:                   "compatible-reasoning",
+					Type:                 "openai-compatible",
+					Model:                "reasoner",
+					BaseURL:              "http://127.0.0.1:11434/v1",
+					Enabled:              true,
+					IncludeReasoningText: true,
+				}},
+			},
+			ok: true,
+		},
+		{
+			name: "reasoning text rejected for non-openai provider",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:                   "anthropic-reasoning",
+					Type:                 "anthropic",
+					Model:                "claude-sonnet-4-5",
+					SecretRef:            "keychain://anthropic/reasoning",
+					Enabled:              true,
+					IncludeReasoningText: true,
+				}},
+			},
+			wantErr: "include_reasoning_text is only supported for openai/openai-compatible",
 		},
 		{
 			name: "invalid provider price",

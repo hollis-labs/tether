@@ -488,15 +488,9 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			}
 		case "openai":
 			secretRef := p.SecretRef
-			providers[p.ID] = llmopenai.New(llmopenai.Config{
-				BaseURL: p.BaseURL,
-				Wire:    p.Wire,
-				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
-					return resolveAISecret(ctx, secretResolver, secretRef)
-				}),
-				OpenRouter:  mapOpenRouterExt(p.Extensions),
-				HuggingFace: mapHuggingFaceExt(p.Extensions),
-			})
+			providers[p.ID] = llmopenai.New(openAIAdapterConfig(p, aiSecrets.Remember(func(ctx context.Context) (string, error) {
+				return resolveAISecret(ctx, secretResolver, secretRef)
+			})))
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
 				Type:         p.Type,
@@ -527,11 +521,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}
 			}
-			providers[p.ID] = llmopenaicompat.New(llmopenaicompat.Config{
-				BaseURL:       p.BaseURL,
-				Wire:          p.Wire,
-				ResolveAPIKey: aiSecrets.Remember(resolve),
-			})
+			providers[p.ID] = llmopenaicompat.New(openAICompatAdapterConfig(p, aiSecrets.Remember(resolve)))
 			providerInfos[p.ID] = llmservice.ProviderInfo{
 				ID:           p.ID,
 				Type:         p.Type,
@@ -1318,6 +1308,26 @@ func effectiveCatalogProvider(p config.AIProviderConfig) string {
 		return p.CatalogProvider
 	}
 	return modelCatalogProviderID(p.Type)
+}
+
+func openAIAdapterConfig(p config.AIProviderConfig, resolve func(context.Context) (string, error)) llmopenai.Config {
+	return llmopenai.Config{
+		BaseURL:              p.BaseURL,
+		Wire:                 p.Wire,
+		ResolveAPIKey:        resolve,
+		IncludeReasoningText: p.IncludeReasoningText,
+		OpenRouter:           mapOpenRouterExt(p.Extensions),
+		HuggingFace:          mapHuggingFaceExt(p.Extensions),
+	}
+}
+
+func openAICompatAdapterConfig(p config.AIProviderConfig, resolve func(context.Context) (string, error)) llmopenaicompat.Config {
+	return llmopenaicompat.Config{
+		BaseURL:              p.BaseURL,
+		Wire:                 p.Wire,
+		ResolveAPIKey:        resolve,
+		IncludeReasoningText: p.IncludeReasoningText,
+	}
 }
 
 func mapOpenRouterExt(ext *config.ProviderExtensions) *llmopenai.OpenRouterExtension {
