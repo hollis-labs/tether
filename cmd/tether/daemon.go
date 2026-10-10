@@ -470,6 +470,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			secretRef := p.SecretRef
 			providers[p.ID] = llmopenai.New(llmopenai.Config{
 				BaseURL: p.BaseURL,
+				Wire:    p.Wire,
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),
@@ -508,6 +509,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			}
 			providers[p.ID] = llmopenaicompat.New(llmopenaicompat.Config{
 				BaseURL:       p.BaseURL,
+				Wire:          p.Wire,
 				ResolveAPIKey: aiSecrets.Remember(resolve),
 			})
 			providerInfos[p.ID] = llmservice.ProviderInfo{
