@@ -354,6 +354,32 @@ func TestValidate_AIProviderRules(t *testing.T) {
 			ok: true,
 		},
 		{
+			name: "invalid wire typo",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "openai-work",
+					Type:      "openai",
+					Models:    []string{"gpt-4o"},
+					SecretRef: "keychain://openai/work",
+					Wire:      "response",
+					Enabled:   true,
+				}},
+			},
+		},
+		{
+			name: "wire not allowed on anthropic",
+			ai: AIConfig{
+				Providers: []AIProviderConfig{{
+					ID:        "anthropic-work",
+					Type:      "anthropic",
+					Models:    []string{"claude-3-opus"},
+					SecretRef: "keychain://anthropic/work",
+					Wire:      "responses",
+					Enabled:   true,
+				}},
+			},
+		},
+		{
 			name: "default_model must be in models",
 			ai: AIConfig{
 				Providers: []AIProviderConfig{{

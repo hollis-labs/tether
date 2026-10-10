@@ -580,3 +580,153 @@ func mustChatCompletion(t *testing.T, raw string) *openai.ChatCompletion {
 	}
 	return &resp
 }
+
+func TestProviderChatExplicitWireChatCompletions(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-test", nil },
+		wire:          "chat_completions",
+		newClient: func(string) responseClient {
+			return stubResponseClient{
+				newFn: func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+					t.Fatalf("expected wire chat_completions to skip /responses")
+					return nil, nil
+				},
+				newChatCompletionFn: func(_ context.Context, body openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+					return mustChatCompletion(t, `{
+					  "id":"chatcmpl-638",
+					  "object":"chat.completion",
+					  "created":1716595200,
+					  "model":"llama3.1:8b",
+					  "choices":[{"index":0,"message":{"role":"assistant","content":"hello local"},"finish_reason":"stop"}],
+					  "usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}
+					}`), nil
+				},
+			}
+		},
+	}
+
+	req := llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{
+			{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "Hi"}}},
+		},
+	}
+	route := llm.RouteDecision{Model: "llama3.1:8b"}
+
+	resp, err := p.Chat(context.Background(), req, route)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(resp.Output) == 0 || resp.Output[0].Parts[0].Text != "hello local" {
+		t.Errorf("unexpected response: %+v", resp.Output)
+	}
+}
+
+func TestProviderChatExplicitWireResponses(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-test", nil },
+		wire:          "responses",
+		newClient: func(string) responseClient {
+			return stubResponseClient{
+				newFn: func(context.Context, responses.ResponseNewParams) (*responses.Response, error) {
+					return nil, &openai.Error{StatusCode: http.StatusNotFound}
+				},
+				newChatCompletionFn: func(_ context.Context, body openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+					t.Fatalf("expected wire responses to skip chat_completions fallback")
+					return nil, nil
+				},
+			}
+		},
+	}
+
+	req := llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{
+			{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "Hi"}}},
+		},
+	}
+	route := llm.RouteDecision{Model: "llama3.1:8b"}
+
+	_, err := p.Chat(context.Background(), req, route)
+	if err == nil {
+		t.Fatalf("expected error from 404")
+	}
+}
+
+func TestProviderStreamChatExplicitWireChatCompletions(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-test", nil },
+		wire:          "chat_completions",
+		newClient: func(string) responseClient {
+			return stubResponseClient{
+				newStreamFn: func(context.Context, responses.ResponseNewParams) responseStream {
+					t.Fatalf("expected wire chat_completions to skip /responses")
+					return nil
+				},
+				newChatCompletionStream: func(_ context.Context, body openai.ChatCompletionNewParams) chatCompletionStream {
+					return &stubOpenAIChatCompletionStream{
+						events: []openai.ChatCompletionChunk{
+							func() openai.ChatCompletionChunk {
+								var chunk openai.ChatCompletionChunk
+								json.Unmarshal([]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"hello local"}}],"usage":null}`), &chunk)
+								return chunk
+							}(),
+						},
+					}
+				},
+			}
+		},
+	}
+
+	req := llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{
+			{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "Hi"}}},
+		},
+	}
+	route := llm.RouteDecision{Model: "llama3.1:8b"}
+
+	_, err := p.StreamChat(context.Background(), req, route, func(ev llm.StreamEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+}
+
+func TestProviderStreamChatExplicitWireResponses(t *testing.T) {
+	t.Parallel()
+
+	p := &Provider{
+		resolveAPIKey: func(context.Context) (string, error) { return "sk-test", nil },
+		wire:          "responses",
+		newClient: func(string) responseClient {
+			return stubResponseClient{
+				newStreamFn: func(context.Context, responses.ResponseNewParams) responseStream {
+					return &stubOpenAIResponseStream{err: &openai.Error{StatusCode: http.StatusNotFound}}
+				},
+				newChatCompletionStream: func(_ context.Context, body openai.ChatCompletionNewParams) chatCompletionStream {
+					t.Fatalf("expected wire responses to skip chat_completions fallback")
+					return nil
+				},
+			}
+		},
+	}
+
+	req := llm.Request{
+		Operation: llm.OperationChat,
+		Input: []llm.Message{
+			{Role: "user", Parts: []llm.ContentPart{{Type: "text", Text: "Hi"}}},
+		},
+	}
+	route := llm.RouteDecision{Model: "llama3.1:8b"}
+
+	_, err := p.StreamChat(context.Background(), req, route, func(ev llm.StreamEvent) error { return nil })
+	if err == nil {
+		t.Fatalf("expected error from 404")
+	}
+}

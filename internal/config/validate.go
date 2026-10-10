@@ -219,6 +219,14 @@ func validateAIConfig(ai AIConfig) error {
 		if p.Price != "" && p.Price != "free" {
 			return fmt.Errorf("global ai.providers[%d] (%s) has unsupported price %q (must be 'free' or empty)", i, p.ID, p.Price)
 		}
+		switch p.Wire {
+		case "", "chat_completions", "responses":
+		default:
+			return fmt.Errorf("global ai.providers[%d] (%s) has unsupported wire %q (must be 'chat_completions', 'responses', or empty)", i, p.ID, p.Wire)
+		}
+		if p.Wire != "" && p.Type != "openai" && p.Type != "openai-compatible" {
+			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets wire %q (wire is only supported for openai/openai-compatible)", i, p.ID, p.Type, p.Wire)
+		}
 		switch p.Type {
 		case "anthropic", "openai", "gemini":
 			if p.SecretRef == "" {

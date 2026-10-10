@@ -86,6 +86,7 @@ type AIProviderConfig struct {
 	Type            string         `yaml:"type"`
 	CatalogProvider string         `yaml:"catalog_provider,omitempty"`
 	Price           string         `yaml:"price,omitempty"`
+	Wire            string         `yaml:"wire,omitempty"`
 	Model           string         `yaml:"model"`
 	Models          []string       `yaml:"models"`
 	DefaultModel    string         `yaml:"default_model"`
