@@ -51,7 +51,7 @@ func (c *Catalog) ListProviders() []modelsdev.Provider {
 	return c.client.ListProviders()
 }
 
-// Pricing returns per-million-token input/output USD pricing.
+// PriceState represents the pricing tier or cost state of a model.
 type PriceState string
 
 const (
