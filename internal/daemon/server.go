@@ -30,6 +30,7 @@ const tetherVersion = "0.2.0"
 // expected to have already run path expansion (config.Expand) on
 // ListenAddr and PIDFile.
 type Config struct {
+	RemoteListener  RemoteListenerConfig
 	Modules         *environment.Profile
 	TeamsEnabled    bool
 	IdentityMode    identity.Mode
@@ -325,6 +326,12 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := identity.ValidateBind(s.Config.ListenAddr, s.Config.IdentityMode); err != nil {
 		return err
 	}
+	if err := s.Config.RemoteListener.Validate(); err != nil {
+		return err
+	}
+	if s.Config.RemoteListener.Enabled && (s.Identity == nil || !s.Config.Modules.Enabled(environment.RemoteListener)) {
+		return fmt.Errorf("remote listener requires identity store and modules.remote_listener")
+	}
 	defer s.CloseIdentityAudit()
 	s.startedAt = time.Now()
 
@@ -339,6 +346,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open listener %s: %w", s.Config.ListenAddr, err)
 	}
+	defer func() { _ = lis.Close() }()
 	if s.MCP != nil {
 		if err := validateMCPListenerAddress(lis.Addr(), s.Config.IdentityMode, s.Identity != nil); err != nil {
 			_ = lis.Close()
@@ -346,6 +354,14 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 
+	var remoteLis net.Listener
+	if s.Config.RemoteListener.Enabled {
+		remoteLis, err = Listener(s.Config.RemoteListener.ListenAddr)
+		if err != nil {
+			return fmt.Errorf("open remote listener: %w", err)
+		}
+		defer func() { _ = remoteLis.Close() }()
+	}
 	if err := WritePIDFile(s.Config.PIDFile, os.Getpid()); err != nil {
 		lis.Close()
 		return fmt.Errorf("write pidfile: %w", err)
@@ -355,6 +371,16 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ConnContext:       identity.ConnectionContext,
 		ReadHeaderTimeout: 5 * time.Second,
+	}
+	servers := []*http.Server{httpSrv}
+	listeners := []net.Listener{lis}
+	if remoteLis != nil {
+		servers = append(servers, &http.Server{
+			Handler:           s.RemoteHandler(remoteLis.Addr().String()),
+			ConnContext:       identity.ConnectionContext,
+			ReadHeaderTimeout: 5 * time.Second,
+		})
+		listeners = append(listeners, remoteLis)
 	}
 
 	// Daemon is up; announce it. Errors are ignored (persister failure
@@ -367,15 +393,19 @@ func (s *Server) Run(ctx context.Context) error {
 		s.publishDaemon(events.KindDaemonStarted, string(b))
 	}
 
-	serveErr := make(chan error, 1)
-	go func() {
-		err := httpSrv.Serve(lis)
-		if !errors.Is(err, http.ErrServerClosed) {
+	serveErr := make(chan error, len(servers))
+	var serving sync.WaitGroup
+	for i, srv := range servers {
+		serving.Add(1)
+		go func() {
+			defer serving.Done()
+			err := srv.Serve(listeners[i])
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
 			serveErr <- err
-			return
-		}
-		serveErr <- nil
-	}()
+		}()
+	}
 	startupCtx, stopStartup := context.WithCancel(ctx)
 	startupDone := make(chan struct{})
 	go func() {
@@ -418,9 +448,13 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	// Graceful shutdown: stop accepting connections, using the same deadline.
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil && runErr == nil {
-		runErr = fmt.Errorf("http shutdown: %w", err)
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil && runErr == nil {
+			runErr = fmt.Errorf("http shutdown: %w", err)
+		}
+		_ = srv.Close()
 	}
+	serving.Wait()
 
 	// Drain runtime sessions (Manager.Shutdown waits for watch goroutines).
 	// A SessionDrainer also records why they are ending.
@@ -463,16 +497,26 @@ func (s *Server) Run(ctx context.Context) error {
 // /health is always registered; api routes are delegated to the api
 // package when Service is non-nil.
 func (s *Server) Handler() http.Handler {
+	return s.handler(false)
+}
+
+func (s *Server) handler(remote bool) http.Handler {
 	var teams api.TeamOps
 	if s.Config.TeamsEnabled && api.HasTeamOps(s.Teams) {
 		teams = s.Teams
 	}
 	router := http.NewServeMux()
-	router.HandleFunc("/health", s.handleHealth)
+	if remote {
+		router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			s.handleListenerHealth(w, identity.Enforce, s.Config.RemoteListener.ListenAddr)
+		})
+	} else {
+		router.HandleFunc("/health", s.handleHealth)
+	}
 	if s.EnvironmentReport != nil {
 		router.Handle("/v1/environment/report", s.EnvironmentReport)
 	}
-	if s.MCP != nil {
+	if s.MCP != nil && !remote {
 		router.Handle("/mcp", s.MCP)
 		router.Handle("/p/", s.MCP)
 	}
@@ -532,13 +576,16 @@ func (s *Server) Handler() http.Handler {
 		path := r.URL.Path
 		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 		sessionStream := len(parts) == 3 && parts[0] == "sessions" && parts[1] != "" && (parts[2] == "snapshot" || parts[2] == "stream")
-		if s.EnvironmentStream != nil && (path == "/environment/snapshot" || path == "/environment/events" || sessionStream) {
+		if remote || s.EnvironmentStream != nil && (path == "/environment/snapshot" || path == "/environment/events" || sessionStream) {
 			versioned.ServeHTTP(w, r)
 			return
 		}
 		local.ServeHTTP(w, r)
 	})
 	protected := identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
+	if remote {
+		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
+	}
 	return otelprop.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.Environment != nil && r.URL.Path == environment.DescriptorPath {
 			s.Environment.ServeHTTP(w, r)
@@ -665,13 +712,18 @@ type CreatedProjectRoot struct {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.handleListenerHealth(w, s.Config.IdentityMode, s.Config.ListenAddr)
+}
+
+func (s *Server) handleListenerHealth(w http.ResponseWriter, mode identity.Mode, addr string) {
 	h := Health{
 		Status:    "ok",
 		PID:       os.Getpid(),
 		UptimeSec: int64(time.Since(s.startedAt).Seconds()),
-		Listener:  s.Config.ListenAddr,
+		Listener:  addr,
 	}
 	h.Identity = s.identityHealth()
+	h.Identity.Mode = mode
 	if s.Environment != nil {
 		h.EnvironmentID, h.ServerVersion, h.Protocol = s.Environment.Identity()
 	}

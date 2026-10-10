@@ -162,6 +162,8 @@ func (p AIProviderConfig) EffectiveDefaultModel() string {
 // DaemonConfig controls the long-lived tetherd process. See ADR 0002 for the
 // scheme-prefixed listen_addr rationale. All path fields accept ~ expansion.
 type DaemonConfig struct {
+	// RemoteListener adds an enforce-only loopback TCP listener beside listen_addr.
+	RemoteListener RemoteListenerConfig `yaml:"remote_listener,omitempty"`
 	// MCPEndpoint is opt-in; startup/doctor validate its listener when enabled.
 	MCPEndpoint MCPEndpointConfig `yaml:"mcp_endpoint,omitempty"`
 	// MCPUpstreams selects planting for new launches; omitted means legacy_proxy.
@@ -181,6 +183,13 @@ type DaemonConfig struct {
 	// proxy_events, ai_events, identity_audit and terminal a2a_tasks.
 	// Enabled by default for 90 days.
 	EventsRetention EventsRetentionConfig `yaml:"events_retention,omitempty"`
+}
+
+type RemoteListenerConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	ListenAddr     string   `yaml:"listen_addr"`
+	AllowedHosts   []string `yaml:"allowed_hosts,omitempty"`
+	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
 }
 
 type MCPEndpointConfig struct {

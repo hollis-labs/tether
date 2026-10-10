@@ -145,6 +145,10 @@ var daemonRunCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Refuse malformed remote flags even before a first-run catalog exists.
+		if _, err := remoteListenerFromCommand(config.RemoteListenerConfig{}, cmd); err != nil {
+			return err
+		}
 
 		// Pre-flight liveness check BEFORE app.New: app.New unconditionally
 		// runs seedLogicalAgents (a DB write) and, on a catalog-absent
@@ -167,10 +171,12 @@ var daemonRunCmd = &cobra.Command{
 		// by the same review to refuse stealing a socket something is
 		// still actually listening on, independent of PID-file integrity.
 		if cat, cfgErr := config.Load(catalogPath); cfgErr == nil {
-			if daemonCfg, err := daemonConfigFromCatalog(cat); err == nil {
-				if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
-					return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
-				}
+			daemonCfg, err := daemonConfigFromCommand(cat, cmd)
+			if err != nil {
+				return err
+			}
+			if pid, err := daemon.ReadPIDFile(daemonCfg.PIDFile); err == nil && daemon.IsDaemonAlive(pid) {
+				return fmt.Errorf("%w (pid %d, pidfile %s)", daemon.ErrAlreadyRunning, pid, daemonCfg.PIDFile)
 			}
 		}
 
@@ -228,7 +234,7 @@ var daemonRunCmd = &cobra.Command{
 			svc.Registry.SetMentionParser(parser)
 		}
 
-		cfg, err := daemonConfigFromCatalog(svc.Catalog)
+		cfg, err := daemonConfigFromCommand(svc.Catalog, cmd)
 		if err != nil {
 			_ = closeService()
 			return err
@@ -260,8 +266,10 @@ var daemonRunCmd = &cobra.Command{
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		var identities *identity.Store
 		operatorDegraded := false
-		if cfg.IdentityMode != identity.Off {
+		if cfg.IdentityMode != identity.Off || cfg.RemoteListener.Enabled {
 			identities = identity.NewStore(svc.Store.DB())
+		}
+		if cfg.IdentityMode != identity.Off {
 			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), cfg.IdentityMode)
 			if err != nil {
 				_ = closeService()
@@ -1205,7 +1213,15 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
+	remote, err := resolveRemoteListener(d.RemoteListener)
+	if err != nil {
+		return daemon.Config{}, err
+	}
+	if remote.Enabled && !profile.Enabled(environment.RemoteListener) {
+		return daemon.Config{}, fmt.Errorf("remote listener requires modules.remote_listener")
+	}
 	return daemon.Config{
+		RemoteListener:  remote,
 		Modules:         profile,
 		TeamsEnabled:    profile.Enabled(environment.Teams),
 		IdentityMode:    mode,
@@ -1263,6 +1279,7 @@ func init() {
 	daemonCmd.PersistentFlags().StringSliceVar(&bootNativeOnlySourceIDs, "boot-resume-native-only-source", nil, "Preserve only the recorded native context of these canonical source sessions during boot recovery")
 	daemonCmd.PersistentFlags().StringSliceVar(&bootNativeOnlyWorkRoots, "boot-resume-native-only-workroot", nil, "Explicit coordination workroot for a selected native source (source UUID=recorded native home)")
 	daemonCmd.AddCommand(daemonStartCmd, daemonRunCmd, daemonStopCmd, daemonStatusCmd)
+	addRemoteServeFlags(daemonRunCmd)
 }
 
 func (a *serviceAdapter) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgentID string, opts api.ResumeOptions) (api.LaunchResult, error) {

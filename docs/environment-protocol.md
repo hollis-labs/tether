@@ -64,7 +64,8 @@ also reports `environmentId`, `serverVersion` and `protocol` and remains public.
 `GET /v1/environment/report` requires a verified principal with `read` or `*`
 scope, including when the local identity mode is `observe`. Anonymous or
 unverified callers receive 401; write-only credentials receive 403. Identity
-mode `off` cannot establish a principal for this endpoint. Responses use
+mode `off` cannot establish a principal for this endpoint on the local listener.
+The remote listener verifies credentials independently. Responses use
 `Cache-Control: no-store`. The public descriptor's `capability_report` group
 advertises supported report sections only; it contains no host inventory,
 provider login state, selected hosting mode, paths or resource measurements.
@@ -120,8 +121,8 @@ values fail with HTTP 409:
 ```
 
 Existing local API callers may omit the value. New versioned stream routes
-require it when installed; future remote listeners must require it for their
-protected routes. Health and the descriptor remain bootstrap-readable even
+require it when installed. The loopback remote listener requires it on every protected
+route. Health and the descriptor remain bootstrap-readable even
 with a mismatched value. Protocol agreement grants no authentication or scopes.
 
 ## Worker and hub modules
@@ -153,9 +154,61 @@ The local MCP switch controls the daemon gateway and locally composed stdio
 adapter. Enabling it retains the separate `daemon.mcp_endpoint.enabled` opt-in;
 it does not expose the endpoint automatically. A forwarded adapter inherits the
 destination daemon's module policy. Disabling `remote_listener` refuses a TCP
-listener; enabling it does not install the later per-listener remote policy,
-device authentication or pairing. Stream, directory and connection manager
+listener; enabling it permits the separately configured loopback remote listener.
+It does not issue device credentials or install pairing. Stream, directory and connection manager
 switches do not create absent implementations.
+
+## Loopback remote access
+
+`daemon.remote_listener` adds a TCP listener beside the existing local listener
+in the same daemon process. It is disabled by default. Only literal loopback IP
+addresses are accepted; wildcard binds, LAN addresses and hostnames are refused
+before either listener starts. The remote listener always enforces verified
+credentials, including on A2A routes, and rejects operator credentials. The
+local listener retains its configured identity mode and existing exemptions.
+`/health` and the public descriptor remain unauthenticated on both listeners.
+The remote router has no `/mcp` or `/p/` proxy mounts.
+
+Example settings for SSH forwarding a client port 9000 to worker port 7331:
+
+```yaml
+daemon:
+  remote_listener:
+    enabled: true
+    listen_addr: tcp:127.0.0.1:7331
+    allowed_hosts:
+      - localhost:9000
+    allowed_origins:
+      - http://localhost:9000
+```
+
+Host and Origin values match exactly, including case, scheme and explicit port;
+wildcards are rejected. An omitted `allowed_hosts` accepts only the listener's
+actual bound authority. Requests without Origin are permitted for native clients.
+An omitted `allowed_origins` accepts only `http://` plus the allowed request Host.
+Multiple Origin values, `null` and mismatches return 403, including on discovery
+routes. Forwarded Host/protocol headers do not bypass these checks. The listener
+provides no TLS or CORS policy; SSH local forwarding is the v1 encrypted carrier.
+Tailscale Serve is a later carrier option.
+
+`tether serve` runs this same foreground daemon with remote access enabled;
+the default remote address is `tcp:127.0.0.1:7331`. `--remote-listen`,
+`--allowed-host` and `--allowed-origin` override that invocation without changing
+the catalog. The same flags are available on `tether daemon run`; setting
+`--remote-listen` enables its additional listener. `modules.remote_listener`
+must be enabled. Both listeners open before the PID file is published and drain
+before services close; failure to open the remote port releases the owned local
+socket. No managed unit or deployment is installed by this entry point.
+
+Credential issuance and pairing remain CW-20261009-0070. Until then, only
+credentials already minted through the local path can authenticate remote calls;
+the operator token is never a remote bootstrap mechanism. The current federation
+HTTP client does not resolve peer credentials or attach bearer/protocol headers
+by default; that client and secret resolution belongs to CW-20261009-0074 using
+the credentials from CW-20261009-0070. Federation transport
+adoption remains CW-20261009-0074: its current Subscribe forwarding omits `as`,
+while `/messages/subscribe` requires `as` to match `to`. This listener does not
+repair or activate that transport.
 
 ## Enrollment authority metadata
 

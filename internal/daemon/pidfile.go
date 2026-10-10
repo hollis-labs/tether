@@ -77,9 +77,10 @@ func IsAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-// daemonCmdRegex matches the command line of a running tetherd: the tether binary
-// re-executed as `tether daemon run` by `tether daemon start`.
-var daemonCmdRegex = regexp.MustCompile(`(?:^|/)tether[^\s/]*\s+daemon\s+run(?:\s|$)`)
+// daemonCmdRegex recognizes the foreground daemon entry points, including known
+// root flags before the subcommand. Anchor at the executable so a provider or
+// shell carrying a tether command as an argument is not mistaken for tetherd.
+var daemonCmdRegex = regexp.MustCompile(`^(?:[^\s]+/)?tether[^\s/]*\s+(?:--(?:catalog|token-file)(?:=[^\s]*|\s+[^\s]+)\s+)*(?:daemon\s+run|serve)(?:\s|$)`)
 
 // verifyCommand is localdaemon.VerifyCommand; tests replace it.
 var verifyCommand = localdaemon.VerifyCommand
