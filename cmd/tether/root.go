@@ -34,5 +34,6 @@ func init() {
 	rootCmd.AddCommand(settingsCmd())
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(detectCmd, doctorCmd)
+	rootCmd.AddCommand(newWorkerServiceCommand())
 	rootCmd.AddCommand(workstreamsCmd)
 }

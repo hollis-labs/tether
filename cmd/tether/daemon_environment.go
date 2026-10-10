@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/environment"
 	"github.com/hollis-labs/tether/internal/environment/report"
 	"github.com/hollis-labs/tether/internal/events"
+	"github.com/hollis-labs/tether/internal/service"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -33,7 +35,9 @@ func buildEnvironmentDescriptor(cat *config.Catalog, db *store.Store, capabiliti
 		return nil, err
 	}
 	// Capabilities describe only the installed and selected startup wiring.
-	return environment.NewDescriptor(environment.Descriptor{EnvironmentID: id, Label: cat.Global.Environment.Label, ServerVersion: version, UpdateCapability: "foreground", Capabilities: capabilities})
+	executable, _ := os.Executable()
+	updateCapability := service.LaunchUpdateCapability(os.Getenv(service.RuntimeRootEnv), executable)
+	return environment.NewDescriptor(environment.Descriptor{EnvironmentID: id, Label: cat.Global.Environment.Label, ServerVersion: version, UpdateCapability: updateCapability, Capabilities: capabilities})
 }
 
 func composedEnvironmentCapabilities(profile *environment.Profile, bus events.Bus, runtimeManager bool) map[string]map[string]any {
