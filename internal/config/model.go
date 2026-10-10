@@ -15,13 +15,16 @@ import (
 )
 
 type Global struct {
-	Teams    TeamsConfig       `yaml:"teams"`
-	MCP      mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
-	Version  string            `yaml:"version"`
-	Catalog  CatalogRoots      `yaml:"catalog"`
-	Daemon   DaemonConfig      `yaml:"daemon"`
-	AI       AIConfig          `yaml:"ai"`
-	Identity IdentityConfig    `yaml:"identity"`
+	Role        string            `yaml:"role,omitempty"`
+	Modules     map[string]bool   `yaml:"modules,omitempty"`
+	Environment EnvironmentConfig `yaml:"environment,omitempty"`
+	Teams       TeamsConfig       `yaml:"teams"`
+	MCP         mcpgateway.Config `yaml:"mcp" json:"mcp,omitempty"`
+	Version     string            `yaml:"version"`
+	Catalog     CatalogRoots      `yaml:"catalog"`
+	Daemon      DaemonConfig      `yaml:"daemon"`
+	AI          AIConfig          `yaml:"ai"`
+	Identity    IdentityConfig    `yaml:"identity"`
 	// Federation is the authority-routing messaging block. Its zero value
 	// (enabled: false) is a standalone install — no peers, no routing,
 	// behavior identical to pre-federation Tether. See internal/federation

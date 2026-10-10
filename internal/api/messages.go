@@ -15,6 +15,7 @@ import (
 	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
 	"github.com/hollis-labs/tether/internal/app/messageinbox"
 	"github.com/hollis-labs/tether/internal/messaging/channels"
+	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 	"github.com/hollis-labs/tether/internal/store"
 )
 
@@ -169,8 +170,14 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		s.notifyRoutedReply(w, r, env, parent)
 		return
 	}
-	sent, err := s.sendMessage(r.Context(), env)
+	intent := wakeintent.Intent{WakeText: req.WakeText, Urgency: req.Urgency, NoWake: req.Wake != nil && !*req.Wake}
+	wakeintent.Put(&env, intent)
+	sent, err := s.sendMessage(wakeintent.LocalNotify(r.Context()), env)
 	if err != nil {
+		if errors.Is(err, delivery.ErrDigestConflict) {
+			writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
+			return
+		}
 		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
 			writeChannelError(w, err)
 			return
@@ -188,6 +195,22 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 		unread = 1
 	}
 	res := messageNotifyResponse{Message: sent, UnreadCount: unread}
+	// The receiving host already evaluated remote delivery. Its wake result
+	// is independent of successful storage and must not be re-attempted here.
+	if raw := sent.Metadata[wakeintent.OutcomeKey]; raw != "" {
+		var outcome WakeOutcome
+		if json.Unmarshal([]byte(raw), &outcome) == nil {
+			res.WakeAttempted = outcome.Attempted
+			res.WakeDelivered = outcome.Delivered
+			res.SessionID = outcome.SessionID
+			res.WakeReason = outcome.Reason
+			if outcome.Reason == "turn-submit-failed" {
+				res.WakeError = outcome.Detail
+			}
+			writeJSON(w, http.StatusCreated, res)
+			return
+		}
+	}
 	wake := true
 	if req.Wake != nil {
 		wake = *req.Wake
@@ -461,6 +484,10 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 
 	sent, err := s.sendMessage(r.Context(), env)
 	if err != nil {
+		if errors.Is(err, delivery.ErrDigestConflict) {
+			writeError(w, http.StatusConflict, CodeIdempotencyConflict, err.Error())
+			return
+		}
 		if errors.Is(err, channels.ErrInvalid) || errors.Is(err, channels.ErrForbidden) {
 			writeChannelError(w, err)
 			return

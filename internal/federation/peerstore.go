@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +16,8 @@ import (
 
 	otelprop "github.com/hollis-labs/libs/util/otel/propagation"
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/substrate/mesh/messaging/delivery"
+	"github.com/hollis-labs/tether/internal/messaging/wakeintent"
 )
 
 // ErrWrongRecipient is returned by a peer store when a Consume targets an
@@ -87,6 +90,9 @@ func (s *httpPeerStore) do(req *http.Request) (*http.Response, error) {
 	case http.StatusNotFound:
 		return nil, messaging.ErrNotFound
 	case http.StatusConflict:
+		if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/messages") {
+			return nil, fmt.Errorf("%w: %s", delivery.ErrDigestConflict, strings.TrimSpace(string(body)))
+		}
 		return nil, ErrWrongRecipient
 	default:
 		return nil, fmt.Errorf("federation: peer %q returned %s: %s",
@@ -100,6 +106,19 @@ func (s *httpPeerStore) Send(ctx context.Context, env messaging.Envelope) (messa
 	}
 	// The remote daemon assigns id/created_at; clear caller values so the
 	// wire request matches the local-store contract.
+	metadata := make(map[string]string, len(env.Metadata)+1)
+	for k, v := range env.Metadata {
+		if k != wakeintent.OutcomeKey {
+			metadata[k] = v
+		}
+	}
+	if metadata[wakeintent.MessageIDKey] == "" {
+		metadata[wakeintent.MessageIDKey] = env.ID
+		if metadata[wakeintent.MessageIDKey] == "" {
+			metadata[wakeintent.MessageIDKey] = uuid.NewString()
+		}
+	}
+	env.Metadata = metadata
 	env.ID = ""
 	body, err := json.Marshal(env)
 	if err != nil {

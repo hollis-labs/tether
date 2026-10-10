@@ -42,6 +42,7 @@ var apiTopLevelPaths = []string{
 	"/catalog/agents", "/catalog/launches", "/catalog/projects", "/catalog/providers",
 	"/docs/mcp", "/docs/mcp/",
 	"/events", "/events/stream",
+	"/environment/snapshot", "/environment/events",
 	"/fs/detect", "/fs/validate",
 	"/groups", "/groups/",
 	"/logical-agents", "/logical-agents/",

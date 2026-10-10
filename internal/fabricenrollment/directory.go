@@ -21,14 +21,15 @@ import (
 // It contains no owner, source location, instructions, policy or runtime locator.
 // Capability IDs are offered services filtered by explicit host publication.
 type DirectoryRecord struct {
-	URN            mesh.URN                 `json:"urn"`
-	Kind           mesh.ActorKind           `json:"kind"`
-	Lifecycle      mesh.EnrollmentLifecycle `json:"lifecycle"`
-	Definition     *mesh.DefinitionRef      `json:"definition,omitempty"`
-	Capabilities   []string                 `json:"capabilities"`
-	RecordRevision string                   `json:"record_revision"`
-	VerifiedAt     time.Time                `json:"verified_at"`
-	ValidUntil     time.Time                `json:"valid_until"`
+	Authority      fabricstore.EnrollmentAuthority `json:"authority"`
+	URN            mesh.URN                        `json:"urn"`
+	Kind           mesh.ActorKind                  `json:"kind"`
+	Lifecycle      mesh.EnrollmentLifecycle        `json:"lifecycle"`
+	Definition     *mesh.DefinitionRef             `json:"definition,omitempty"`
+	Capabilities   []string                        `json:"capabilities"`
+	RecordRevision string                          `json:"record_revision"`
+	VerifiedAt     time.Time                       `json:"verified_at"`
+	ValidUntil     time.Time                       `json:"valid_until"`
 }
 type DirectoryPage struct {
 	Records []DirectoryRecord
@@ -106,7 +107,7 @@ func (s *Service) Directory(ctx context.Context, caller, owner, after mesh.URN, 
 			}
 		}
 		sort.Strings(ids)
-		projection := DirectoryRecord{URN: record.Actor.Value.URN, Kind: record.Actor.Value.Kind, Lifecycle: record.Actor.Value.Lifecycle, Capabilities: ids, RecordRevision: fmt.Sprintf("%d", record.Actor.Version)}
+		projection := DirectoryRecord{Authority: record.Actor.Value.Authority.Effective(), URN: record.Actor.Value.URN, Kind: record.Actor.Value.Kind, Lifecycle: record.Actor.Value.Lifecycle, Capabilities: ids, RecordRevision: fmt.Sprintf("%d", record.Actor.Version)}
 		if record.Agent != nil {
 			pin := record.Agent.Value.Definition
 			projection.Definition = &pin

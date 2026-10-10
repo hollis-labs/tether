@@ -79,11 +79,11 @@ var ErrBoundSessionNotRunning = errors.New("bound session is not running")
 // imports internal/api for RuntimeHealthResult, so a shared api-facing
 // result type must live on this side of that dependency edge.
 type WakeOutcome struct {
-	Attempted bool
-	Delivered bool
-	SessionID string
-	Reason    string
-	Detail    string
+	Attempted bool   `json:"attempted"`
+	Delivered bool   `json:"delivered"`
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 // RuntimeHealthResult is the api-facing health snapshot. It carries the

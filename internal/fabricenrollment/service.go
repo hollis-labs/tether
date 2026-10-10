@@ -96,12 +96,16 @@ func (s *Service) allow(ctx context.Context, auth Authorization) error {
 }
 
 type Enrollment struct {
+	Authority  fabricstore.EnrollmentAuthority
 	Actor      mesh.Actor
 	Owner      mesh.URN
 	Definition *mesh.DefinitionRef
 }
 
 func validateEnrollment(request Enrollment) error {
+	if err := request.Authority.Validate(); err != nil {
+		return err
+	}
 	if !utf8.ValidString(string(request.Actor.URN)) || !utf8.ValidString(string(request.Owner)) || request.Actor.Validate() != nil || request.Owner.Validate() != nil {
 		return fabricstore.ErrInvalid
 	}
@@ -130,7 +134,7 @@ func (s *Service) verify(ctx context.Context, request Enrollment) error {
 	return nil
 }
 func create(tx *fabricstore.Tx, request Enrollment) error {
-	if err := tx.PutActor(fabricstore.Actor{Actor: request.Actor, Owner: request.Owner, Lifecycle: mesh.EnrollmentActive}, 0); err != nil {
+	if err := tx.PutActor(fabricstore.Actor{Actor: request.Actor, Authority: request.Authority, Owner: request.Owner, Lifecycle: mesh.EnrollmentActive}, 0); err != nil {
 		return err
 	}
 	if request.Definition != nil {
@@ -264,7 +268,7 @@ func (s *Service) RetireActor(ctx context.Context, caller, urn mesh.URN, expecte
 				return fmt.Errorf("%w: owner mismatch", fabricstore.ErrInvalid)
 			}
 			agent.Value.Lifecycle = mesh.EnrollmentRetired
-			if err := tx.PutActor(fabricstore.Actor{Actor: current.Value.Actor, Owner: current.Value.Owner, Lifecycle: mesh.EnrollmentRetired}, expected); err != nil {
+			if err := tx.PutActor(fabricstore.Actor{Actor: current.Value.Actor, Authority: current.Value.Authority, Owner: current.Value.Owner, Lifecycle: mesh.EnrollmentRetired}, expected); err != nil {
 				return err
 			}
 			if err := tx.PutAgent(agent.Value, agent.Version); err != nil {

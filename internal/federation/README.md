@@ -38,10 +38,12 @@ message is foreign precisely when its authority is owned by another daemon.
 - The peer hop is **plain HTTP**. Cross-host auth (mTLS / signed envelopes)
   is program task M2 (`CW-20260518-0040`); only enable peers inside a
   shared trust domain until then.
-- The Router duplicates the decorator promoted into `go-messaging`
-  (`CW-20260518-0049`) because Tether pins `go-messaging v0.2.1`, which
-  predates that release. The API was kept matching for a future drop-in
-  swap.
+- The current envelope/delivery contract comes from `substrate/mesh`.
+  Tether retains its own configured Router and recipient host policy adapter.
+- Receiving mail triggers a separate local wake decision; additive intent,
+  stable source identity, canonical redelivery and crash limitations are
+  documented in the linked messaging federation guide. No wake outcome can
+  roll back successful mail storage or authorize starting a stopped session.
 
 See [ADR-0040](../../docs/adr/0040-messaging-federation-peer-routing.md)
 and [docs/messaging-federation.md](../../docs/messaging-federation.md).

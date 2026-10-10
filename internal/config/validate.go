@@ -21,6 +21,12 @@ var ErrUnknownSandboxProfile = errors.New("unknown sandbox profile")
 // and AgentSandbox refuse the affected launches. MCP grants are checked explicitly
 // at daemon startup/doctor and per selected launch, keeping inspection available.
 func (c *Catalog) Validate() error {
+	if _, err := c.Global.Profile(); err != nil {
+		return err
+	}
+	if err := c.Global.Environment.Validate(); err != nil {
+		return err
+	}
 	for id := range c.Launches {
 		if err := c.validateLaunchRefs(id); err != nil {
 			return err

@@ -21,6 +21,7 @@ type DefinitionArtifact struct {
 }
 type Actor struct {
 	mesh.Actor
+	Authority EnrollmentAuthority      `json:"authority"`
 	Owner     mesh.URN                 `json:"owner"`
 	Lifecycle mesh.EnrollmentLifecycle `json:"lifecycle"`
 }
@@ -66,6 +67,10 @@ func (r *Repository) Artifact(ctx context.Context, pin mesh.DefinitionRef, diges
 	return read[DefinitionArtifact](ctx, r.db, artifacts, tuple(pin.ID, pin.Revision, digest))
 }
 func (tx *Tx) PutActor(value Actor, expected int64) error {
+	if err := value.Authority.Validate(); err != nil {
+		return err
+	}
+	value.Authority = value.Authority.Effective()
 	if err := value.Validate(); err != nil {
 		return invalid(err.Error())
 	}

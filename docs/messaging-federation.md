@@ -16,9 +16,9 @@ authority local or foreign?**
   SQLite messaging store.
 - A registered peer authority → routed to that peer's daemon over HTTP.
 
-A standalone install registers no peers, so every authority is local and
-messaging behaves exactly as it did before federation existed. Federation
-is **off by default** and purely additive.
+A standalone install registers no peers, so every authority is local.
+Recipient wake described below also applies to locally delivered mail.
+Federation is **off by default**.
 
 ## Configuration
 
@@ -65,24 +65,51 @@ cross-host transport from program task M2.
 
 ## Notify and wake
 
-`POST /messages/notify` is a local daemon convenience wrapper around the same
-message envelope model. It first stores the message, then best-effort injects a
-mailbox wake turn into a live session when the recipient resolves locally:
+`POST /messages/notify` stores the same message envelope and retains its local
+best-effort wake behavior. Federated `Send` now carries recipient wake intent
+to the receiving daemon, which evaluates its own live recipient:
 
 - `msg://session/<authority>/<session_id>` wakes that live session.
-- `msg://agent/<authority>/<logical_agent_id>` wakes the newest running local
-  session for that logical agent.
-- An explicit `session_id` in the notify body overrides recipient resolution.
+- `msg://agent/<authority>/<logical_agent_id>` follows the current runtime
+  binding and generation fence. Legacy running-session fallback applies only
+  where the existing binding policy permits it.
+- An explicit local notify `session_id` must still match the recipient.
 
 Unknown or offline recipients still receive durable mail when the send routes
 locally; the response reports `wake_attempted`, `wake_delivered`, and
 `wake_error`.
 
-Current federation caveat: notify wake injection is local-session behavior.
-Cross-host wake requires the recipient authority's daemon to receive a notify
-request and resolve its own live sessions. Plain `Send`/`Inbox`/`Subscribe`
-federation is the base layer; cross-host notify orchestration belongs with the
-M2 hardened transport work.
+The additive envelope metadata `tether.wake_intent` contains JSON with
+`wake_text`, `urgency`, and `no_wake`. Recipient policy wins: pull-only/external
+bindings never wake, stopped sessions are never launched or resumed, and
+binding-generation checks remain in force. `no_wake` also fences the existing
+retry pump. Missing intent uses the receiving daemon's ordinary mailbox wake.
+Mail storage succeeds independently of wake; response-only
+`tether.wake_outcome` reports attempted/delivered/reason/detail.
+Generated wake notifications use the accepted intent's urgency, falling back
+to legacy envelope urgency and then `normal` when no intent urgency exists.
+
+`tether.message_id` is the stable source message identity. The existing shared
+delivery core scopes it by sender and rejects a changed immutable envelope or
+intent. The recipient keeps one canonical message row. Reuse the same source
+identity when retrying a request; a fresh identity means a fresh message. The
+HTTP peer adapter uses a supplied identity, otherwise the envelope ID, otherwise
+one newly minted identity for that send operation. It does not promise retry
+identity for a caller that discards a failed request's identity.
+
+Wake admission is durable and separate from mail. Ordinary redelivery does not
+submit another wake. A crash after admission but before recording its outcome
+can mean either before or after provider submission; it is reported as
+`wake-outcome-unknown` and is not guessed into another turn. A recorded busy or
+failed attempt remains eligible for the existing fenced retry pump. A confirmed
+successful outcome suppresses a resend after consume-lease expiry. A crash
+during a retry, after provider submission but before updating that outcome,
+can leave the earlier failure recorded; the existing lease may then permit
+another retry. Admission, provider submission and outcome persistence are not
+one atomic operation. Mail remains available even when wake is refused or
+uncertain. This is not crash-proof exactly-once provider execution. Cross-host sender
+authentication/reply authority remain separate future work; current source
+acceptance uses two isolated local daemons only.
 
 ## Strict mode
 
@@ -104,6 +131,7 @@ changes elsewhere.
 ## Status
 
 The `federation.Router` is composed onto `app.Service.Federation` at daemon
-startup. Routing the live MCP/HTTP message-send and inbox paths through it
-(rather than the local store directly) is the remaining integration step —
-see ADR-0040 "Consequences".
+startup. The daemon already wraps its message store with that router, forwarding
+Send/Inbox/Subscribe/Consume by recipient authority. The recipient's canonical
+local store now performs the post-commit wake decision. This source description
+does not claim any production peer configuration or live cross-host acceptance.

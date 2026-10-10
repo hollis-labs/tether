@@ -1,9 +1,11 @@
 # Tether Local API (v0.0.2)
 
 The `tetherd` daemon exposes an HTTP API for session lifecycle, attach streaming,
-checkpoints, broker envelopes, and event observation. Clients are assumed to
-run on the same host — there is no authentication. Trust is anchored to the
-UDS filesystem permissions (or loopback interface for TCP transports).
+checkpoints, broker envelopes, and event observation. The local listener uses the configured `identity.mode` (`observe` by default);
+`enforce` verifies caller credentials; individual handlers apply their admission rules. Non-local binds require
+`enforce`. The public health and environment descriptor routes support bootstrap
+without caller credentials. See [environment protocol and profiles](../environment-protocol.md)
+for the additive protocol contract and role/module selection.
 
 ## Transport
 
@@ -43,6 +45,7 @@ Defined codes:
 | `forbidden`         | 403  | caller identity is not permitted for this resource — on messaging paths, `as` did not match the message's sender or recipient; on launch paths, a launch the daemon refuses by policy: an ACP-mode launch while Tether write-protects its directories, which the ACP launcher cannot do until CW-20261001-0162 (see [provider runtime sessions](../provider-runtime-sessions.md)); a launch whose work directory or workspace lies inside a write-protected directory, the state directory included; or any launch while that protection is on and `bwrap` is not installed (see [control-plane protection](../sandboxing.md#control-plane-protection-every-agent-tether-wraps)) |
 | `not_found`         | 404  | resource or action path doesn't exist         |
 | `method_not_allowed`| 405  | route exists, method doesn't                  |
+| `protocol_mismatch` | 409 | supplied client protocol differs, is ambiguous, or is missing on a versioned route; response includes `required_protocol` and `update_hint` |
 | `conflict`          | 409  | state precondition failed (e.g. wrong state)  |
 | `provider_session_lost` | 409 | the provider no longer has the session's resume id; the turn was not delivered and a resend starts a fresh provider session without the old history |
 | `project_layer_unprotectable` | 403 | a registered project's catalog layer cannot be protected and cannot be left open, because of that project's catalog entry or the file system under it: its `repo_root` runs through a file in a directory an agent can write, or through a symlink an agent could replace, or cannot be examined, or its layer turned up while protection was creating it. The message names the project and the path. It is not a host that cannot provide protection (that is `forbidden`, bubblewrap missing): fix or remove the project. A project whose root is merely missing is never this: it is anchored or skipped. **Not every unprotectable shape is typed yet:** a `<root>/.tether` that is a file, and a user-owned unwritable `/` as the nearest ancestor, still surface as an untyped 500 (see "Known limits" in [sandboxing.md](../sandboxing.md), CW-20261003-0106) |
@@ -64,7 +67,9 @@ Defined codes:
 ## Team verbs
 
 The daemon constructs the team host and mounts these routes only when
-`teams.enabled` in `global.yaml` is explicitly true; the default is false.
+`teams.enabled` in `global.yaml` is explicitly true when `role` is omitted;
+the legacy default is false. An explicit worker defaults teams off and an
+explicit hub defaults them on; `modules.teams` overrides the profile.
 The same service supplies native MCP team tools. A disabled or missing service
 has no team routes (404) or MCP tools; with the key off the CLI namespace is absent.
 The daemon service enforces authentication and authority. Construction alone does no

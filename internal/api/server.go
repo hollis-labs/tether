@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/llm"
 	"github.com/hollis-labs/tether/internal/llm/router"
@@ -24,18 +25,19 @@ type AttachmentStore interface {
 // dependency is nil return 404 for their routes rather than panicking.
 type Deps struct {
 	// Teams is populated only when the host enables teams; nil leaves routes absent.
-	Teams       TeamOps
-	Docs        DocsService
-	Service     LaunchService
-	AI          AIService
-	AIAudit     AIAuditStore
-	AIUsage     AIUsageStore
-	Checkpoints CheckpointStore
-	Broker      BrokerService
-	Bus         events.Bus
-	EventsStore EventsStore
-	Catalog     CatalogLoader
-	GroupStore  SessionGroupStore
+	Teams             TeamOps
+	Docs              DocsService
+	Service           LaunchService
+	AI                AIService
+	AIAudit           AIAuditStore
+	AIUsage           AIUsageStore
+	Checkpoints       CheckpointStore
+	Broker            BrokerService
+	Bus               events.Bus
+	EventsStore       EventsStore
+	EnvironmentStream *environmentstream.Server
+	Catalog           CatalogLoader
+	GroupStore        SessionGroupStore
 	// Workstreams, when non-nil, enables the /workstreams endpoints and the
 	// per-session workstream sub-resource (S1, CW-20260912-0059).
 	Workstreams WorkstreamStore
@@ -149,6 +151,7 @@ type Server struct {
 	Broker              BrokerService
 	Bus                 events.Bus
 	EventsStore         EventsStore
+	EnvironmentStream   *environmentstream.Server
 	Catalog             CatalogLoader
 	GroupStore          SessionGroupStore
 	Workstreams         WorkstreamStore
@@ -186,6 +189,7 @@ func NewHandler(deps Deps) http.Handler {
 		Broker:              deps.Broker,
 		Bus:                 deps.Bus,
 		EventsStore:         deps.EventsStore,
+		EnvironmentStream:   deps.EnvironmentStream,
 		Catalog:             deps.Catalog,
 		GroupStore:          deps.GroupStore,
 		Workstreams:         deps.Workstreams,
@@ -215,6 +219,7 @@ func NewHandler(deps Deps) http.Handler {
 	s.registerCheckpointRoutes(router)
 	s.registerBrokerRoutes(router)
 	s.registerEventRoutes(router)
+	s.registerEnvironmentRoutes(router)
 	s.registerCatalogRoutes(router)
 	s.registerSessionGroupRoutes(router)
 	s.registerTeamRoutes(router)

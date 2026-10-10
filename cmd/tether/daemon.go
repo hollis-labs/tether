@@ -23,6 +23,7 @@ import (
 	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
 	"github.com/spf13/cobra"
 
+	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
 	"github.com/hollis-labs/tether/internal/a2aadapter"
 	"github.com/hollis-labs/tether/internal/agent"
 	"github.com/hollis-labs/tether/internal/api"
@@ -32,6 +33,8 @@ import (
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
 	"github.com/hollis-labs/tether/internal/daemon"
+	"github.com/hollis-labs/tether/internal/environment"
+	"github.com/hollis-labs/tether/internal/environmentstream"
 	"github.com/hollis-labs/tether/internal/events"
 	"github.com/hollis-labs/tether/internal/federation"
 	"github.com/hollis-labs/tether/internal/identity"
@@ -233,6 +236,15 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
+		environmentDescriptor, err := buildEnvironmentDescriptor(svc.Catalog, svc.Store, composedEnvironmentCapabilities(cfg.Modules, svc.Bus, svc.Manager != nil))
+		if err != nil {
+			return err
+		}
+		var environmentStream *environmentstream.Server
+		if cfg.Modules.Enabled(environment.StreamAPI) {
+			environmentID, _, _ := environmentDescriptor.Identity()
+			environmentStream = environmentstream.New(environmentID, svc.Store, svc.Bus)
+		}
 		aiSvc := buildAIServiceFromConfig(ctx, svc.Catalog, aiServiceDeps{
 			Recorder:  svc.Store,
 			Usage:     svc.Store,
@@ -275,12 +287,17 @@ var daemonRunCmd = &cobra.Command{
 			log.Printf("daemon: reply routing not started: %v", err)
 		}
 		server := &daemon.Server{
+			Environment:              environmentDescriptor,
+			EnvironmentStream:        environmentStream,
 			Docs:                     svc.Docs(),
 			Identity:                 identities,
 			OperatorIdentityDegraded: operatorDegraded,
 			Config:                   cfg,
 			Manager:                  svc.Manager,
 			Startup: func(startupCtx context.Context) {
+				if !cfg.Modules.Enabled(environment.SessionCore) || !cfg.Modules.Enabled(environment.Lifecycle) {
+					return
+				}
 				svc.BootResumeSessions(startupCtx, bootOptions)
 				if startupCtx.Err() == nil {
 					svc.StartSessionReaper(startupCtx)
@@ -392,6 +409,10 @@ func buildA2AAdapter(ctx context.Context, catalogRoot string, sender a2aadapter.
 
 func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiServiceDeps) api.AIService {
 	if cat == nil {
+		return nil
+	}
+	profile, err := cat.Global.Profile()
+	if err != nil || !profile.Enabled(environment.LLMGateway) {
 		return nil
 	}
 	helperPath := apikeyhelper.ResolvePath()
@@ -829,6 +850,10 @@ func (a *serviceAdapter) AttachSession(ctx context.Context, id string, w io.Writ
 	return a.svc.AttachSession(ctx, id, w, sinceSeq)
 }
 
+func (a *serviceAdapter) AttachSessionWithSnapshot(ctx context.Context, id string, w io.Writer, sinceSeq int64, onSnapshot func(agentsessions.AttachSnapshot) error) error {
+	return a.svc.AttachSessionWithSnapshot(ctx, id, w, sinceSeq, onSnapshot)
+}
+
 func (a *serviceAdapter) AttachedClients(id string) int {
 	return a.svc.AttachedClients(id)
 }
@@ -1084,13 +1109,21 @@ func loadDaemonConfig(catalogRoot string) (daemon.Config, error) {
 
 func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 	d := cat.Global.Daemon
+	profile, err := cat.Global.Profile()
+	if err != nil {
+		return daemon.Config{}, err
+	}
+	if strings.HasPrefix(d.ListenAddr, "tcp:") && !profile.Enabled(environment.RemoteListener) {
+		return daemon.Config{}, fmt.Errorf("TCP listener requires modules.remote_listener")
+	}
 	timeout, err := time.ParseDuration(d.ShutdownTimeout)
 	if err != nil {
 		return daemon.Config{}, fmt.Errorf("parse daemon.shutdown_timeout %q: %w", d.ShutdownTimeout, err)
 	}
 	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
 	return daemon.Config{
-		TeamsEnabled:    cat.Global.Teams.Enabled,
+		Modules:         profile,
+		TeamsEnabled:    profile.Enabled(environment.Teams),
 		IdentityMode:    mode,
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),

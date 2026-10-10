@@ -314,6 +314,17 @@ func TestPIDFDPeerExitRetiresPlacement(t *testing.T) {
 		if err := handle.wait(ctx); err != nil {
 			return -1, err
 		}
+		// pidfd readiness does not synchronize /proc identity reads with the
+		// owned Cmd.Wait. Reap before injecting ESRCH so this retirement fixture
+		// cannot race a disappearing stat file and correctly get outcome_unknown.
+		p.mu.Lock()
+		reaped := p.reaped[identity(r)]
+		p.mu.Unlock()
+		select {
+		case <-reaped:
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		}
 		return -1, syscall.ESRCH
 	}
 	err := p.Stop(context.Background(), r)

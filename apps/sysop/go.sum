@@ -63,8 +63,8 @@ github.com/hollis-labs/libs/util v0.2.0 h1:q+loirMZzmjo3GDrA0yNoOCRBTLWUhdOFPvEV
 github.com/hollis-labs/libs/util v0.2.0/go.mod h1:MPkSgYHqmxtlHp3vGKaUpBAGv8Xt5l6RcRU76HSfH2Y=
 github.com/hollis-labs/substrate/agent v0.1.0 h1:KAf3hQOe1EO88KU08V29UmyViHnVfY98m5dqXRV7G3c=
 github.com/hollis-labs/substrate/agent v0.1.0/go.mod h1:NGtnJ+6am7s5SpR7mnoYnb3bOLhysCphSiXh/aNlelk=
-github.com/hollis-labs/substrate/harness v0.3.0 h1:anLe6fr48bbhE8ubXUiNz1GYKzM1IEnFLUjKhtg5I5I=
-github.com/hollis-labs/substrate/harness v0.3.0/go.mod h1:BCteU5BGFnLujwOQJK1USbwu35YoNLpr+oe0/3ZD+sU=
+github.com/hollis-labs/substrate/harness v0.5.0 h1:igx3XCPA7EmMpnuUYfULkFc9mkgJuLt5QawEH97VLkU=
+github.com/hollis-labs/substrate/harness v0.5.0/go.mod h1:BCteU5BGFnLujwOQJK1USbwu35YoNLpr+oe0/3ZD+sU=
 github.com/hollis-labs/substrate/llm-core v0.1.0 h1:nsNpY3OzpuvHKC9zLzqFKmwMXt856PXOUfaVpGP8pFY=
 github.com/hollis-labs/substrate/llm-core v0.1.0/go.mod h1:055xZrH5gLwodrVMu2SHQzfIcTXhjDGBXfJ1kdy/eSo=
 github.com/hollis-labs/substrate/mesh v0.1.0 h1:CkUvYdoXSGVcSlXhVgc+0AYzyhXdd49c+AV47z0XvOs=

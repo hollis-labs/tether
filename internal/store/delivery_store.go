@@ -63,6 +63,7 @@ const deliveryConsumeLeaseDuration = 30 * time.Second
 type deliveryBackedStore struct {
 	*messagingStore
 	delivery delivery.Store
+	observer deliveryObserver
 }
 
 var _ InboxStore = (*deliveryBackedStore)(nil)
@@ -113,11 +114,25 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 	if env.DeliveredAt != nil || env.ConsumedAt != nil {
 		return messaging.Envelope{}, messaging.ErrPresetLifecycle
 	}
+	// Wake outcome is response-only observation, never immutable mail content
+	// or sender policy. Retrying a returned envelope must not change its digest.
+	if _, hasOutcome := env.Metadata["tether.wake_outcome"]; hasOutcome {
+		metadata := make(map[string]string, len(env.Metadata))
+		for k, v := range env.Metadata {
+			if k != "tether.wake_outcome" {
+				metadata[k] = v
+			}
+		}
+		env.Metadata = metadata
+	}
 
 	req, err := delivery.EnvelopeEnqueueRequest(env)
 	if err != nil {
 		return messaging.Envelope{}, fmt.Errorf("delivery store: project envelope: %w", err)
 	}
+	// Explicit source message identity is scoped by From and checked against
+	// the immutable body digest by the existing shared delivery core.
+	req.IdempotencyKey = env.Metadata["tether.message_id"]
 	res, err := d.delivery.Enqueue(ctx, req)
 	if err != nil {
 		return messaging.Envelope{}, fmt.Errorf("delivery store: enqueue: %w", err)
@@ -128,14 +143,31 @@ func (d *deliveryBackedStore) Send(ctx context.Context, env messaging.Envelope) 
 
 	env.ID = string(res.Message.ID)
 	env.CreatedAt = res.Message.CreatedAt
+	if res.Duplicate {
+		existing, lookupErr := d.Get(ctx, env.ID)
+		if lookupErr == nil {
+			return d.observe(ctx, existing), nil
+		}
+		if !errors.Is(lookupErr, messaging.ErrNotFound) {
+			return messaging.Envelope{}, lookupErr
+		}
+		// Repair a prior crash between the delivery-core transaction and its
+		// content row using the SAME accepted identity, never a second enqueue.
+	}
 
 	sent, err := d.sendWithID(ctx, env, string(res.Deliveries[0].ID))
 	if err != nil {
+		if res.Duplicate {
+			// A concurrent retry may have repaired the content row first.
+			if existing, lookupErr := d.Get(ctx, env.ID); lookupErr == nil {
+				return d.observe(ctx, existing), nil
+			}
+		}
 		log.Printf("delivery store: messages insert failed after successful enqueue -- orphaned delivery %s (message %s) needs manual reconciliation: %v",
 			res.Deliveries[0].ID, res.Message.ID, err)
 		return messaging.Envelope{}, err
 	}
-	return sent, nil
+	return d.observe(ctx, sent), nil
 }
 
 // Consume drives the same idempotent, recipient-scoped consumed_at update
