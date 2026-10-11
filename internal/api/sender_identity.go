@@ -58,7 +58,7 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 	delete(env.Metadata, MetaFromVerification)
 	delete(env.Metadata, MetaFromUnverified)
 	delete(env.Metadata, MetaFromPrincipal)
-	p, ok := identity.FromContext(r.Context())
+	p, ok := verifiedPrincipal(r)
 	if !ok {
 		return true
 	}
@@ -95,28 +95,66 @@ func (s *Server) stampSender(w http.ResponseWriter, r *http.Request, env *messag
 	return true
 }
 
+// verifiedPrincipal is the request's principal when the middleware verified
+// its credential. A claim-only or internally built principal never stamps or
+// vouches for an address.
+func verifiedPrincipal(r *http.Request) (identity.Principal, bool) {
+	p, ok := identity.FromContext(r.Context())
+	return p, ok && p.Verified
+}
+
+func canonicalClaim(claimed string) string {
+	if addr, err := messaging.ParseURN(claimed); err == nil {
+		return canonicalAddress(addr)
+	}
+	return claimed
+}
+
+// verifyClaim checks an address the caller claims (a ?as=, a body by/from/
+// member, a broker sender) against the verified principal's address set.
+// Observe records unverifiedEvent and continues; enforce records refusedEvent
+// and answers 403. With no verified principal the claim is left to the
+// middleware. It reports whether the handler may continue.
+func (s *Server) verifyClaim(w http.ResponseWriter, r *http.Request, claimed, unverifiedEvent, refusedEvent, what string) bool {
+	p, ok := verifiedPrincipal(r)
+	if !ok || claimed == "" || p.MayActAs(canonicalClaim(claimed)) {
+		return true
+	}
+	if s.enforcing() {
+		s.auditIdentity(r, p, refusedEvent)
+		writeError(w, http.StatusForbidden, CodeForbidden, what+" is not an address of the authenticated principal")
+		return false
+	}
+	s.auditIdentity(r, p, unverifiedEvent)
+	return true
+}
+
+// claimedActor is verifyClaim for a body or query field that names the acting
+// member (by, member, as, from).
+func (s *Server) claimedActor(w http.ResponseWriter, r *http.Request, claimed, field string) bool {
+	return s.verifyClaim(w, r, claimed, eventAsUnverified, eventAsRefused, field)
+}
+
+// stampedActor returns the claimed address, or the verified principal's own
+// address when none was given. Without a verified principal it returns claimed
+// unchanged.
+func stampedActor(r *http.Request, claimed string) string {
+	if claimed != "" {
+		return claimed
+	}
+	if p, ok := verifiedPrincipal(r); ok {
+		return p.DefaultAddress()
+	}
+	return ""
+}
+
 // guardAs verifies a ?as= mailbox identity against the verified principal's
 // address set (or message.send_as) before the wrapped handler runs. Observe
 // records as_unverified and continues; enforce refuses with 403.
 func (s *Server) guardAs(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		as := r.URL.Query().Get("as")
-		p, ok := identity.FromContext(r.Context())
-		if as == "" || !ok {
-			next(w, r)
+		if !s.claimedActor(w, r, r.URL.Query().Get("as"), "as") {
 			return
-		}
-		canonical := as
-		if addr, err := messaging.ParseURN(as); err == nil {
-			canonical = canonicalAddress(addr)
-		}
-		if !p.MayActAs(canonical) {
-			if s.enforcing() {
-				s.auditIdentity(r, p, eventAsRefused)
-				writeError(w, http.StatusForbidden, CodeForbidden, "as is not an address of the authenticated principal")
-				return
-			}
-			s.auditIdentity(r, p, eventAsUnverified)
 		}
 		next(w, r)
 	}

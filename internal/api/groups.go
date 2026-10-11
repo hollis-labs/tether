@@ -91,9 +91,9 @@ func (s *Server) registerGroupRoutes(router *http.ServeMux) {
 	if s.Groups == nil {
 		return
 	}
-	router.HandleFunc("/groups", s.handleGroupsRoot)
-	router.HandleFunc("/groups/", s.handleGroupsTree)
-	router.HandleFunc("/mentions", s.handleMentions)
+	router.HandleFunc("/groups", s.guardAs(s.handleGroupsRoot))
+	router.HandleFunc("/groups/", s.guardAs(s.handleGroupsTree))
+	router.HandleFunc("/mentions", s.guardAs(s.handleMentions))
 }
 
 // handleGroupsRoot services /groups (no trailing slash): POST creates a
@@ -237,6 +237,10 @@ func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	p.UpdatedAt = noTime()
 	p.TetherInstanceID = ""
 
+	p.LastUpdatedBy = stampedActor(r, p.LastUpdatedBy)
+	if !s.claimedActor(w, r, p.LastUpdatedBy, "last_updated_by") {
+		return
+	}
 	out, err := s.Groups.Register(r.Context(), registry.KindGroup, p)
 	if err != nil {
 		writeGroupError(w, err)
@@ -276,6 +280,9 @@ func (s *Server) handleGroupListForMember(w http.ResponseWriter, r *http.Request
 			"GET /groups requires ?member=<urn>; use /registry/groups for a directory search")
 		return
 	}
+	if !s.claimedActor(w, r, member, "member") {
+		return
+	}
 	out, err := s.Groups.ListGroupsForMember(r.Context(), member)
 	if err != nil {
 		writeGroupError(w, err)
@@ -292,7 +299,10 @@ func (s *Server) handleGroupListForMember(w http.ResponseWriter, r *http.Request
 // `as` query param for parity with /messages and /read. Returns the
 // archived Profile.
 func (s *Server) handleGroupArchive(w http.ResponseWriter, r *http.Request, urn string) {
-	by := callerFromBodyOrQuery(r, "by")
+	by := stampedActor(r, callerFromBodyOrQuery(r, "by"))
+	if by != "" && !s.claimedActor(w, r, by, "by") {
+		return
+	}
 	if by == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"archive: 'by' (caller URN) is required in body or ?as= query")
@@ -323,6 +333,10 @@ func (s *Server) handleGroupAddMember(w http.ResponseWriter, r *http.Request, gr
 			"invalid request body: "+err.Error())
 		return
 	}
+	body.By = stampedActor(r, body.By)
+	if !s.claimedActor(w, r, body.By, "by") {
+		return
+	}
 	if body.Member == "" || body.By == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"add member: 'member' and 'by' are required in body")
@@ -340,7 +354,10 @@ func (s *Server) handleGroupAddMember(w http.ResponseWriter, r *http.Request, gr
 // handleGroupRemoveMember services DELETE /groups/{urn}/members/{member_urn}.
 // `by` arrives via query (`?as=<urn>`) or body — body wins when present.
 func (s *Server) handleGroupRemoveMember(w http.ResponseWriter, r *http.Request, grpURN, memberURN string) {
-	by := callerFromBodyOrQuery(r, "by")
+	by := stampedActor(r, callerFromBodyOrQuery(r, "by"))
+	if by != "" && !s.claimedActor(w, r, by, "by") {
+		return
+	}
 	if by == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"remove member: 'by' (caller URN) is required in body or ?as= query")
@@ -365,6 +382,10 @@ func (s *Server) handleGroupLeave(w http.ResponseWriter, r *http.Request, grpURN
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"invalid request body: "+err.Error())
+		return
+	}
+	body.Member = stampedActor(r, body.Member)
+	if !s.claimedActor(w, r, body.Member, "member") {
 		return
 	}
 	if body.Member == "" {
@@ -392,6 +413,10 @@ func (s *Server) handleGroupSetMemberRole(w http.ResponseWriter, r *http.Request
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"invalid request body: "+err.Error())
+		return
+	}
+	body.By = stampedActor(r, body.By)
+	if !s.claimedActor(w, r, body.By, "by") {
 		return
 	}
 	if body.Role == "" || body.By == "" {
@@ -452,6 +477,10 @@ func (s *Server) handleGroupSend(w http.ResponseWriter, r *http.Request, grpURN 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"invalid request body: "+err.Error())
+		return
+	}
+	body.From = stampedActor(r, body.From)
+	if body.From != "" && !s.verifyClaim(w, r, body.From, eventFromUnverified, eventFromRefused, "from") {
 		return
 	}
 	if body.From == "" {
@@ -552,6 +581,10 @@ func (s *Server) handleGroupMarkRead(w http.ResponseWriter, r *http.Request, grp
 	caller := body.As
 	if caller == "" {
 		caller = r.URL.Query().Get("as")
+	}
+	caller = stampedActor(r, caller)
+	if !s.claimedActor(w, r, caller, "as") {
+		return
 	}
 	if caller == "" {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,

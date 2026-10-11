@@ -18,11 +18,11 @@ import (
 )
 
 var senderPrincipals = map[string]identity.Principal{
-	"operator":     {ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, Addresses: []string{identity.OperatorID}},
-	"session":      {ID: "msg://session/local/s1", Kind: "session", SessionID: "s1", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s1"}},
-	"device":       {ID: "msg://device/d1", Kind: "device", Scopes: []string{"operate"}, Addresses: []string{}},
-	"agentsession": {ID: "msg://session/local/s3", Kind: "session", SessionID: "s3", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s3", "msg://agent/agent-mux/builder"}},
-	"sendas":       {ID: "msg://session/local/s2", Kind: "session", SessionID: "s2", Scopes: []string{"message.write", identity.ScopeSendAs}, Addresses: []string{"msg://session/local/s2"}},
+	"operator":     {ID: identity.OperatorID, Kind: "operator", Verified: true, Scopes: []string{"*"}, Addresses: []string{identity.OperatorID}},
+	"session":      {ID: "msg://session/local/s1", Kind: "session", Verified: true, SessionID: "s1", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s1"}},
+	"device":       {ID: "msg://device/d1", Kind: "device", Verified: true, Scopes: []string{"operate"}, Addresses: []string{}},
+	"agentsession": {ID: "msg://session/local/s3", Kind: "session", Verified: true, SessionID: "s3", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s3", "msg://agent/agent-mux/builder"}},
+	"sendas":       {ID: "msg://session/local/s2", Kind: "session", Verified: true, SessionID: "s2", Scopes: []string{"message.write", identity.ScopeSendAs}, Addresses: []string{"msg://session/local/s2"}},
 }
 
 type senderHarness struct {
@@ -295,7 +295,7 @@ func TestSenderIdentity_RoutedReplyCarriesVerification(t *testing.T) {
 				svc.db = db
 				api := NewHandler(Deps{MessageStore: db.MessagingStore(), Channels: channels.New(db, nil), RoutingReplies: svc, Service: &fakeLaunchService{}, IdentityMode: identity.Observe})
 				parent := routedMessage(t, db)
-				p := identity.Principal{ID: "msg://session/local/s9", Kind: "session", SessionID: "s9", Addresses: []string{"msg://session/local/s9"}}
+				p := identity.Principal{ID: "msg://session/local/s9", Kind: "session", Verified: true, SessionID: "s9", Addresses: []string{"msg://session/local/s9"}}
 				body := map[string]any{"kind": "response", "in_reply_to": parent.ID, "payload": map[string]string{"body": "go"}, "metadata": map[string]string{"from_unverified": "false"}}
 				if tc.from != "" {
 					body["from"] = tc.from
