@@ -141,11 +141,12 @@ func TestBootResumePolicyIgnoresLaunchIDCollisions(t *testing.T) {
 		resume  bool
 		wantErr string
 	}{
-		"leaf never, launch points at auto": {map[string]config.Agent{"agent": {ID: "agent", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
-		"leaf auto, launch points at never": {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
-		"ancestor shadowed by launch":       {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
-		"cycle":                             {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "x"}, "x": {ID: "x", Extends: "agent"}}, false, "recovery_policy_unresolved"},
-		"missing ancestor":                  {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "ghost"}}, false, "recovery_policy_unresolved"},
+		"leaf never, launch points at auto":     {map[string]config.Agent{"agent": {ID: "agent", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
+		"leaf auto, launch points at never":     {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"ancestor shadowed by launch":           {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"ancestor never, launch points at auto": {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
+		"cycle":                                 {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "x"}, "x": {ID: "x", Extends: "agent"}}, false, "recovery_policy_unresolved"},
+		"missing ancestor":                      {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "ghost"}}, false, "recovery_policy_unresolved"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
