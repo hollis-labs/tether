@@ -5,10 +5,12 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/teamhost"
+	"github.com/hollis-labs/tether/internal/teamloop"
 )
 
 // wrapper injects a race after ReplyResult's observational liveness checks but
@@ -165,4 +167,30 @@ func TestImmutableMessageBindingAndRetainedDelivery(t *testing.T) {
 		t.Fatal("retained delivery retargeted")
 	}
 	must(t, h.SendMessage(ctx, again)) // Already accepted before liveness changed.
+}
+
+func TestScheduledLoopDeliversAcceptedMessageWithoutManualFlush(t *testing.T) {
+	f := fake()
+	_, s, h := open(t, t.TempDir()+"/state.db", f)
+	run, root := launch(t, s, h)
+	worker := spawn(t, s, h, run, root, "worker")
+	router := teams.Router{Roster: s, Sender: h}
+	_, err := router.Send(ctx, definition(), teams.AddressRequest{RunID: run.ID, Actor: root.Actor, Address: "@worker", Body: "do work", Verb: mesh.Delegate}, "delegate")
+	must(t, err)
+	_ = worker
+	stop := teamloop.Start(ctx, teamloop.Config{Interval: time.Millisecond, Flush: h.FlushMessages})
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := len(f.deliveries)
+		f.mu.Unlock()
+		if n == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("outbox message not delivered by loop", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
