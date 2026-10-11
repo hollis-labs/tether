@@ -114,6 +114,10 @@ const (
 	// each sweep reads past it. Beyond it, an unresolvable delivery is
 	// simply re-checked every sweep, as before parking existed.
 	wakeParkMaxEntries = 4096
+	// wakeSweepScanExtra is how many rows the sweep reads beyond the batch
+	// and the parked rows, so unparked dead rows ahead of a live one are
+	// parked in one pass instead of one batch per pass.
+	wakeSweepScanExtra = 2048
 )
 
 // wakeParkSet is the sweep's memory of deliveries whose recipient had no
@@ -130,8 +134,20 @@ const (
 // may never come back. A daemon restart forgets the set, which costs one
 // re-check of each parked delivery. The zero value is ready to use.
 type wakeParkSet struct {
-	mu      sync.Mutex
-	entries map[delivery.DeliveryID]wakeParkEntry
+	mu         sync.Mutex
+	entries    map[delivery.DeliveryID]wakeParkEntry
+	unparkable int
+}
+
+// noteUnparkable records how many rows the last pass could not park and
+// reports whether that differs from the pass before, so a persistent
+// overflow is logged when it changes, not every sweep.
+func (p *wakeParkSet) noteUnparkable(n int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	changed := n != p.unparkable
+	p.unparkable = n
+	return changed
 }
 
 type wakeParkEntry struct {
@@ -592,6 +608,16 @@ func resolveWakeTarget(ctx context.Context, st *store.Store, reg *registry.Servi
 
 // runWakeSweep runs one pass. park carries parked deliveries across passes;
 // nil gives this pass a fresh, empty set.
+//
+// The batch limit bounds wake attempts, not rows looked at: resolving a
+// recipient is a cheap in-process lookup (memoized per recipient within the
+// pass), while an attempt claims the delivery and submits a turn. Rows for
+// recipients with no live session are parked without spending any of the
+// batch, so a backlog of them -- after a restart the park set is empty --
+// cannot delay a live recipient behind it. Live rows are taken round-robin
+// across recipients so one busy recipient's backlog cannot hold the others
+// back either. A parked row whose recipient has a live session again is
+// released and woken at once rather than when its park lapses.
 func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, rt wakeRuntime, park *wakeParkSet) (int, error) {
 	if st == nil {
 		return 0, nil
@@ -600,11 +626,10 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 		park = &wakeParkSet{}
 	}
 	ds := st.DeliveryStore()
-	// At most park.size() of the listed rows can be parked, so reading
-	// that many past the batch guarantees a full batch of unparked rows
-	// whenever that many are ready: parked rows at the head of the queue
-	// can no longer hide the rows behind them.
-	limit := wakeSweepBatchLimit + park.size()
+	// Parked rows stay in the listing (their recipient is re-probed), so
+	// read past them: park.size() for those, plus room for dead rows not
+	// yet parked.
+	limit := wakeSweepBatchLimit + park.size() + wakeSweepScanExtra
 	ready, err := ds.ListDeliveries(ctx, delivery.Filter{
 		Status:    []delivery.DeliveryStatus{delivery.DeliveryPending, delivery.DeliveryRetryScheduled},
 		ReadyOnly: true,
@@ -614,97 +639,131 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 		return 0, fmt.Errorf("run wake sweep: list deliveries: %w", err)
 	}
 
-	now := time.Now()
-	attempted, processed, newlyParked, unparkable := 0, 0, 0, 0
-	more := false
-	parkRow := func(id delivery.DeliveryID) {
-		misses, ok := park.park(id, now)
-		switch {
-		case !ok:
-			unparkable++
-		case misses == 1:
-			newlyParked++
-		}
+	type resolved struct {
+		sessionID string
+		err       error
 	}
+	memo := map[string]resolved{}
+	resolve := func(to messaging.Address) resolved {
+		key := to.URN()
+		if r, ok := memo[key]; ok {
+			return r
+		}
+		sessionID, err := resolveWakeTarget(ctx, st, reg, rt, to)
+		r := resolved{sessionID, err}
+		memo[key] = r
+		return r
+	}
+
+	now := time.Now()
+	newlyParked, unparkable := 0, 0
+	type liveRow struct {
+		rd        delivery.RecipientDelivery
+		sessionID string
+	}
+	var liveOrder []string
+	liveByRecipient := map[string][]liveRow{}
 	for _, rd := range ready {
 		if ctx.Err() != nil {
 			break
 		}
-		if park.parked(rd.ID, now) {
-			continue
-		}
-		if processed == wakeSweepBatchLimit {
-			more = true
-			break
-		}
-		processed++
-		msg, err := st.MessagingStore().Get(ctx, string(rd.MessageID))
-		if err != nil {
-			parkRow(rd.ID)
-			continue
-		}
-		intent, intentErr := wakeintent.Read(msg)
-		if intentErr != nil || intent.NoWake {
-			parkRow(rd.ID)
-			continue
-		}
-		prior, found, priorErr := st.RecipientWakeOutcome(ctx, msg.ID)
-		if priorErr != nil {
-			parkRow(rd.ID)
-			continue
-		}
-		if found {
-			var outcome api.WakeOutcome
-			if prior == "" || json.Unmarshal([]byte(prior), &outcome) != nil || outcome.Delivered {
-				parkRow(rd.ID)
+		r := resolve(rd.Recipient)
+		if r.sessionID == "" || r.err != nil {
+			// No live session for this recipient. Park it rather than
+			// re-wake it; Consume or a bridge can still claim it meanwhile.
+			if park.parked(rd.ID, now) {
 				continue
 			}
-		}
-		sessionID, resolveErr := resolveWakeTarget(ctx, st, reg, rt, rd.Recipient)
-		if resolveErr != nil {
-			log.Printf("app: wake sweep: resolve session for %s failed: %v", rd.Recipient.URN(), resolveErr)
-			parkRow(rd.ID)
-			continue
-		}
-		if sessionID == "" {
-			// No live session for this recipient. Park it rather than
-			// re-resolve it every tick; it is re-checked once the park
-			// lapses, and Consume or a bridge can still claim it meanwhile.
-			parkRow(rd.ID)
+			if r.err != nil {
+				log.Printf("app: wake sweep: resolve session for %s failed: %v", rd.Recipient.URN(), r.err)
+			}
+			misses, ok := park.park(rd.ID, now)
+			switch {
+			case !ok:
+				unparkable++
+			case misses == 1:
+				newlyParked++
+			}
 			continue
 		}
 		park.release(rd.ID)
-		text := intent.WakeText
-		if text == "" {
-			text = sweepWakeText(msg)
+		key := rd.Recipient.URN()
+		if _, seen := liveByRecipient[key]; !seen {
+			liveOrder = append(liveOrder, key)
 		}
-		var outcome api.WakeOutcome
-		if !found && st.HasMessageDeliveryObserver() {
-			outcome = attemptRecipientWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, text)
-		} else {
-			outcome = attemptWake(ctx, st, reg, rt, string(rd.MessageID), rd.Recipient, sessionID, text)
+		liveByRecipient[key] = append(liveByRecipient[key], liveRow{rd, r.sessionID})
+	}
+
+	// Round-robin across live recipients, oldest delivery first within each.
+	attempted, processed, deferred := 0, 0, 0
+	for round := 0; ; round++ {
+		any := false
+		for _, key := range liveOrder {
+			rows := liveByRecipient[key]
+			if round >= len(rows) {
+				continue
+			}
+			any = true
+			if ctx.Err() != nil || processed >= wakeSweepBatchLimit {
+				deferred++
+				continue
+			}
+			lr := rows[round]
+			msg, err := st.MessagingStore().Get(ctx, string(lr.rd.MessageID))
+			if err != nil {
+				park.park(lr.rd.ID, now)
+				continue
+			}
+			intent, intentErr := wakeintent.Read(msg)
+			if intentErr != nil || intent.NoWake {
+				park.park(lr.rd.ID, now)
+				continue
+			}
+			prior, found, priorErr := st.RecipientWakeOutcome(ctx, msg.ID)
+			if priorErr != nil {
+				park.park(lr.rd.ID, now)
+				continue
+			}
+			if found {
+				var prev api.WakeOutcome
+				if prior == "" || json.Unmarshal([]byte(prior), &prev) != nil || prev.Delivered {
+					park.park(lr.rd.ID, now)
+					continue
+				}
+			}
+			processed++
+			text := intent.WakeText
+			if text == "" {
+				text = sweepWakeText(msg)
+			}
+			var outcome api.WakeOutcome
+			if !found && st.HasMessageDeliveryObserver() {
+				outcome = attemptRecipientWake(ctx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
+			} else {
+				outcome = attemptWake(ctx, st, reg, rt, string(lr.rd.MessageID), lr.rd.Recipient, lr.sessionID, text)
+			}
+			if found {
+				raw, _ := json.Marshal(outcome)
+				_ = st.CompleteRecipientWake(ctx, msg.ID, string(raw))
+			}
+			if outcome.Attempted {
+				attempted++
+			}
 		}
-		if found {
-			raw, _ := json.Marshal(outcome)
-			_ = st.CompleteRecipientWake(ctx, msg.ID, string(raw))
-		}
-		if outcome.Attempted {
-			attempted++
+		if !any {
+			break
 		}
 	}
+
 	if len(ready) < limit {
 		// The listing held every ready delivery: forget parked ones that
 		// have since been delivered, consumed or claimed elsewhere.
 		park.retain(ready)
 	}
-	if newlyParked > 0 {
-		log.Printf("app: wake sweep: parked %d deliveries with no live recipient session (%d parked in total)", newlyParked, park.size())
-	}
-	if unparkable > 0 {
-		log.Printf("app: wake sweep: park set full (%d); %d unresolvable deliveries will be re-checked every sweep", wakeParkMaxEntries, unparkable)
-	}
-	if more || (processed == wakeSweepBatchLimit && len(ready) == limit) {
-		log.Printf("app: wake sweep: batch limit %d reached; more ready deliveries may remain for the next sweep", wakeSweepBatchLimit)
+	// One summary line, and only when the pass changed something.
+	if park.noteUnparkable(unparkable) || attempted > 0 || newlyParked > 0 || deferred > 0 {
+		log.Printf("app: wake sweep: attempted %d, newly parked %d (%d parked in total), %d live deliveries deferred to the next sweep (batch limit %d), %d unparkable (park set cap %d)",
+			attempted, newlyParked, park.size(), deferred, wakeSweepBatchLimit, unparkable, wakeParkMaxEntries)
 	}
 	return attempted, nil
 }
