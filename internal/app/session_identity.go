@@ -32,8 +32,12 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 		return "", nil
 	}
 	expires := time.Now().UTC().Add(sessionTokenTTL)
+	granted := slices.Clone(workerScopes)
+	if s.TeamsEnabled {
+		granted = append(granted, "team.write") // mcpadapter.ScopeTeamWrite; only when teams run
+	}
 	p := identity.Principal{ExpiresAt: &expires, ID: "msg://session/local/" + sessionID, Kind: "session", SessionID: sessionID, Display: "Session " + sessionID,
-		Scopes: slices.Clone(workerScopes), Addresses: []string{"msg://session/local/" + sessionID}}
+		Scopes: slices.Clone(granted), Addresses: []string{"msg://session/local/" + sessionID}}
 	// The session's own logical agent is another address it may send and read
 	// as. Derived from the session row, never from a request.
 	if row, err := s.Store.GetSession(sessionID); err == nil && row != nil && row.LogicalAgentID != "" {
@@ -46,7 +50,7 @@ func (s *Service) mintSessionCredential(ctx context.Context, sessionID string) (
 		p.CreatedBy = parent.ID
 		if !slices.Contains(parent.Scopes, "*") {
 			p.Scopes = nil
-			for _, scope := range workerScopes {
+			for _, scope := range granted {
 				if slices.Contains(parent.Scopes, scope) {
 					p.Scopes = append(p.Scopes, scope)
 				}

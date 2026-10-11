@@ -341,3 +341,21 @@ func TestSessionCredentialAddressSetIncludesTheLogicalAgent(t *testing.T) {
 		t.Fatalf("address set wrong for %+v", p)
 	}
 }
+
+func TestSessionCredentialTeamWriteOnlyWhenTeamsEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		svc, _, id, _ := credentialLaunch(t)
+		svc.TeamsEnabled = enabled
+		token, err := svc.mintSessionCredential(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := identity.NewStore(svc.Store.DB()).Verify(context.Background(), token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has := slices.Contains(p.Scopes, "team.write"); has != enabled {
+			t.Fatalf("teams enabled=%v scopes=%v", enabled, p.Scopes)
+		}
+	}
+}
