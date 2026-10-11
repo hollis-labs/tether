@@ -221,10 +221,16 @@ func matchScopePath(pattern, escapedPath string) (int, bool) {
 }
 
 func remoteScopeRule(r *http.Request) *RouteScope {
+	return scopeRule(RemoteRouteScopes, r)
+}
+
+// scopeRule picks the most specific rule of a route-to-scope table for the
+// request path; the remote and local tables share this matcher.
+func scopeRule(table []RouteScope, r *http.Request) *RouteScope {
 	best := -1
 	var selected *RouteScope
-	for i := range RemoteRouteScopes {
-		rule := &RemoteRouteScopes[i]
+	for i := range table {
+		rule := &table[i]
 		if score, match := matchScopePath(rule.Path, r.URL.EscapedPath()); match && score > best {
 			best, selected = score, rule
 		}

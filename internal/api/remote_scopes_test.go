@@ -22,14 +22,31 @@ func TestRemoteScopesCoverRegisteredRoutes(t *testing.T) {
 	for _, rule := range RemoteRouteScopes {
 		policy[rule.Registration] = true
 	}
-	check := func(pattern string) {
-		t.Helper()
-		if _, path, ok := strings.Cut(pattern, " "); ok {
-			pattern = path
-		}
+	for _, pattern := range registeredRoutePatterns(t) {
 		if !policy[pattern] {
 			t.Errorf("registered route %s lacks explicit remote policy", pattern)
 		}
+	}
+	if policy["/future/unclassified"] {
+		t.Fatal("unknown fixture unexpectedly classified")
+	}
+	request := httptest.NewRequest("GET", "/future/unclassified", nil)
+	if _, _, known := RequiredRemoteScope(request); known {
+		t.Fatal("unknown registration admitted")
+	}
+}
+
+// registeredRoutePatterns returns every ServeMux pattern the api package
+// registers, parsed from source, plus the team verbs. Shared by the remote
+// and local table coverage tests.
+func registeredRoutePatterns(t *testing.T) []string {
+	t.Helper()
+	var patterns []string
+	check := func(pattern string) {
+		if _, path, ok := strings.Cut(pattern, " "); ok {
+			pattern = path
+		}
+		patterns = append(patterns, pattern)
 	}
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -74,13 +91,7 @@ func TestRemoteScopesCoverRegisteredRoutes(t *testing.T) {
 	for _, verb := range TeamVerbs() {
 		check("/teams/" + verb)
 	}
-	if policy["/future/unclassified"] {
-		t.Fatal("unknown fixture unexpectedly classified")
-	}
-	request := httptest.NewRequest("GET", "/future/unclassified", nil)
-	if _, _, known := RequiredRemoteScope(request); known {
-		t.Fatal("unknown registration admitted")
-	}
+	return patterns
 }
 
 func TestRemoteScopesEnforceIndependentAndPayloadCases(t *testing.T) {
