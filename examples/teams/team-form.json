@@ -81,6 +81,21 @@
           "to_slot": "workers"
         },
         {
+          "from_slot": "coordinator",
+          "verb": "may_assign",
+          "to_slot": "workers"
+        },
+        {
+          "from_slot": "coordinator",
+          "verb": "may_delegate",
+          "to_slot": "workers"
+        },
+        {
+          "from_slot": "coordinator",
+          "verb": "may_message",
+          "to_slot": "reviewer"
+        },
+        {
           "from_slot": "workers",
           "verb": "may_message",
           "to_slot": "reviewer"

@@ -48,7 +48,18 @@ func teamRequestSchema(verb string) map[string]any {
 		if field == "cascade" {
 			kind = "boolean"
 		}
-		properties[field] = map[string]any{"type": kind}
+		prop := map[string]any{"type": kind}
+		switch field {
+		case "kind":
+			prop["enum"] = []string{"agent", "user", "service"}
+			prop["description"] = "Optional recipient actor-kind filter; omit for any"
+		case "history":
+			prop["enum"] = []string{"none", "summary", "filtered", "full"}
+			prop["description"] = "Optional; may not widen the team's history policy. Omit unless needed"
+		case "address":
+			prop["description"] = "@slot, @slot*, @all or @member-id; the grants must allow your slot to reach it"
+		}
+		properties[field] = prop
 	}
 	return map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": required}
 }

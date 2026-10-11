@@ -62,8 +62,11 @@ capability only; a definition declaring any other capability is rejected.
   reviewer must run on a different runtime than the workers. With a single
   runtime it is only a preference.
 - **Ceilings:** `teamsvc.ConservativePolicy()` with `MaxDepth` 1 (fan-out 4,
-  budget 1, five-minute timeout, 16 rounds, 4 stalls), three slots, `may_message`
-  as the only grantable permission, strict authority.
+  budget 1, five-minute timeout, 16 rounds, 4 stalls), three slots, `may_message`,
+  `may_assign` and `may_delegate` as the only grantable permissions, strict
+  authority. A verb only works when the team's grants allow the sender's slot to
+  reach the recipient's slot (the example grants coordinator to workers and
+  reviewer, workers to reviewer).
 
 A refused formation writes nothing: no definition, run, enrollment, binding or
 session.

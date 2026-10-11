@@ -260,7 +260,13 @@ func (s *Service) message(ctx context.Context, verb mesh.Verb, req MessageReques
 		if err != nil {
 			return Result{}, err
 		}
-		if req.Body == "" {
+		// Caller-supplied filters are request errors, not host failures.
+		switch req.Kind {
+		case "", mesh.ActorAgent, mesh.ActorUser, mesh.ActorService:
+		default:
+			return Result{}, ErrInvalidRequest
+		}
+		if req.Body == "" || req.History != "" && !req.History.Valid() {
 			return Result{}, ErrInvalidRequest
 		}
 		address := teams.AddressRequest{RunID: req.RunID, Actor: p.ID, Address: req.Address, Body: req.Body, Verb: verb, Kind: req.Kind, History: req.History}
