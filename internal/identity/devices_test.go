@@ -64,8 +64,9 @@ func TestDeviceRenewListRevokeAndAudit(t *testing.T) {
 		t.Fatal("metadata not tied to device")
 	}
 	var audited string
-	if err := db.DB().QueryRow(`SELECT principal_id FROM identity_audit WHERE route='/sessions'`).Scan(&audited); err != nil || audited != p.ID {
-		t.Fatal("missing device use audit", err)
+	var auditVerified bool
+	if err := db.DB().QueryRow(`SELECT principal_id, verified FROM identity_audit WHERE route='/sessions'`).Scan(&audited, &auditVerified); err != nil || audited != p.ID || !auditVerified {
+		t.Fatal("missing verified device use audit", err)
 	}
 	if err := s.RecordDeviceUse(ctx, p, o, "forged.invalid:1", device.Token); err != nil {
 		t.Fatal(err)

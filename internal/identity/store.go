@@ -211,10 +211,10 @@ func (s *Store) RevokeSession(ctx context.Context, sessionID string) error {
 
 func (s *Store) RecordObservation(ctx context.Context, o Observation) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO identity_audit
-        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
+        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow, verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
 		o.PrincipalID, o.SessionID, o.Mode, o.Authentication, o.Method, o.Route,
-		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow))
+		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow), o.Authentication == "verified")
 	if err != nil {
 		return fmt.Errorf("persist identity observation: %w", err)
 	}

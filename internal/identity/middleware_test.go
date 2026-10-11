@@ -189,3 +189,47 @@ type stubScopeVerifier struct{ p identity.Principal }
 func (v stubScopeVerifier) Verify(context.Context, string) (identity.Principal, error) {
 	return v.p, nil
 }
+
+// TestVerifiedFlagReachesPolicyPrincipalAndAudit covers acceptance 2 and 3 of
+// CW-20261010-0264: each principal kind is verified in the policy principal and
+// in the persisted decision-log row, and anonymous or invalid callers are not.
+func TestVerifiedFlagReachesPolicyPrincipalAndAudit(t *testing.T) {
+	s, db := identityStore(t)
+	principals := map[string]identity.Principal{
+		"op": {ID: identity.OperatorID, Kind: "operator"}, "sess": {ID: "session:A", Kind: "session", SessionID: "A"},
+		"dev": {ID: "device:d", Kind: "device"}, "svc": {ID: "svc", Kind: "service"},
+	}
+	verify := verifierFunc(func(_ context.Context, token string) (identity.Principal, error) {
+		if p, ok := principals[token]; ok {
+			return p, nil
+		}
+		return identity.Principal{}, identity.ErrInvalidToken
+	})
+	for _, tc := range []struct {
+		name, token string
+		want        bool
+	}{{"operator", "op", true}, {"session", "sess", true}, {"device", "dev", true}, {"service", "svc", true}, {"invalid", "nope", false}, {"anonymous", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := "/r-" + tc.name
+			var policy identity.PolicyPrincipal
+			h := identity.Middleware(identity.Observe, verify, s.RecordObservation, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				policy = identity.PolicyPrincipalFrom(r.Context())
+			}))
+			req := httptest.NewRequest(http.MethodGet, route, nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			if policy.Verified != tc.want {
+				t.Fatalf("policy principal = %+v", policy)
+			}
+			if tc.token == "" {
+				return // anonymous traffic is deliberately not audited
+			}
+			var audited bool
+			if err := db.DB().QueryRow(`SELECT verified FROM identity_audit WHERE route = ?`, route).Scan(&audited); err != nil || audited != tc.want {
+				t.Fatalf("audit verified = %v, %v", audited, err)
+			}
+		})
+	}
+}
