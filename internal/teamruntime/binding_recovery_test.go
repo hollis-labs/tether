@@ -232,7 +232,7 @@ func TestEndedTeamReceiptRefusesStillBoundSessionPrincipal(t *testing.T) {
 	port, e, _, req := sessionFixture(t, db, s, reg, "ended-principal")
 	id, err := port.Launch(ctx, req)
 	check(t, err)
-	caller := identity.WithPrincipal(ctx, identity.Principal{Kind: "session", SessionID: id, ID: "msg://session/local/" + id})
+	caller := identity.WithPrincipal(ctx, identity.Principal{Verified: true, Kind: "session", SessionID: id, ID: "msg://session/local/" + id})
 	resolver := Principals{Mode: identity.Enforce, Sessions: e}
 	_, err = resolver.ResolvePrincipal(caller)
 	check(t, err)

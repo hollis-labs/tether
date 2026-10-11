@@ -68,7 +68,7 @@ func TestSessionCredentialLaunchAndTerminalRevocation(t *testing.T) {
 }
 func testSessionCredentialLaunchAndTerminalRevocation(t *testing.T, brand string) {
 	svc, rt, id, ws := credentialLaunch(t, brand)
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "parent", Scopes: []string{"session.write"}})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "parent", Scopes: []string{"session.write"}})
 	launched, err := svc.LaunchSessionWithContext(ctx, id)
 	if err != nil {
 		t.Fatal(err)

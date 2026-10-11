@@ -196,9 +196,15 @@ func (r *Router) attach(ctx context.Context, item store.PendingTurnOutput) error
 		return fmt.Errorf("output kind is not selected")
 	}
 	sender := gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: item.SessionID}
-	ctx = identity.WithPrincipal(ctx, identity.Principal{ID: sender.URN(), Kind: "session", SessionID: item.SessionID, Addresses: []string{sender.URN()}, CreatedBy: actor.URN()})
+	ctx = identity.WithPrincipal(ctx, senderPrincipal(sender, item.SessionID, actor.URN()))
 	_, err = r.channels.AttachExisting(ctx, channels.ExistingMessage{MessageID: item.MessageID, Channel: route.Channel, SessionID: item.SessionID, Actor: actor})
 	return err
+}
+
+// senderPrincipal is internal attribution for channel authorization: the router
+// speaks for the session without a bearer credential, so it is not Verified.
+func senderPrincipal(sender gomsg.Address, sessionID, createdBy string) identity.Principal {
+	return identity.Principal{ID: sender.URN(), Kind: "session", SessionID: sessionID, Addresses: []string{sender.URN()}, CreatedBy: createdBy}
 }
 
 func (r *Router) clock() time.Time {

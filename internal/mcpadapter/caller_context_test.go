@@ -60,7 +60,7 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TETHER_TOKEN", "")
 	f := newDaemonOnlyFixture(t)
-	localCtx := f.inProcess.withSessionID(identity.WithPrincipal(context.Background(), identity.Principal{ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}))
+	localCtx := f.inProcess.withSessionID(identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}))
 	local, _ := callcontext.FromContext(localCtx)
 	if !local.Verified || local.SessionID != "sess-1" || local.AgentURN != "" {
 		t.Fatalf("local context without registry: %+v", local)

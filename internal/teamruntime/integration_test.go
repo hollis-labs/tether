@@ -27,7 +27,7 @@ func TestServiceFormationAndDissolveUseRealAdaptersAndLeaveExternalOwnerAlone(t 
 		{Name: "owner", Definition: pin, Resolution: teams.Fresh, Activation: teams.Singleton, Min: 0, Max: 1},
 		{Name: "worker", Definition: pin, Resolution: teams.Fresh, Activation: teams.Singleton, Min: 1, Max: 1},
 	}, Phases: []teams.Phase{{ID: "work", Kind: "flex", ActiveSlots: []string{"owner", "worker"}, OwnerSlot: "owner", ExitTrigger: teams.Trigger{Kind: "manual", Spec: map[string]string{"signal": "done"}}}}, Authority: teams.Authority{Mode: teams.Strict, Grants: []teams.Grant{{FromSlot: "owner", Verb: teams.MayMessage, ToSlot: "worker"}}}, Policy: teams.Policy{Spawn: teamsvc.ConservativePolicy().Limits, History: mesh.HistoryNone}, Routing: teams.Routing{CoordinatorSlot: "owner"}}
-	owner := identity.WithPrincipal(ctx, identity.Principal{ID: "msg://service/local/owner", Kind: "service"})
+	owner := identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "msg://service/local/owner", Kind: "service"})
 	request := teamsvc.FormRequest{Key: "form", Team: team}
 	result, err := service.Form(owner, request)
 	check(t, err)

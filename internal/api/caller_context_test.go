@@ -32,9 +32,9 @@ func TestProxyEventAttributionOverridesVerifiedCallerClaims(t *testing.T) {
 		wantSession, wantClaim string
 		verified               bool
 	}{
-		{"session", identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"}, "own", "other", true},
-		{"operator", identity.Principal{ID: "operator", Kind: "operator"}, "", "other", false},
-		{"service", identity.Principal{ID: "service", Kind: "service"}, "", "other", false},
+		{"session", identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"}, "own", "other", true},
+		{"operator", identity.Principal{Verified: true, ID: "operator", Kind: "operator"}, "", "other", false},
+		{"service", identity.Principal{Verified: true, ID: "service", Kind: "service"}, "", "other", false},
 		{"anonymous", identity.Principal{}, "other", "other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,10 +80,10 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 		session, agent string
 	}{
 		{"anonymous", identity.Principal{}, "", ""},
-		{"operator", identity.Principal{ID: "operator", Kind: "operator", SessionID: "own"}, "", ""},
-		{"service", identity.Principal{ID: "service", Kind: "service", SessionID: "own"}, "", ""},
-		{"missing session", identity.Principal{ID: "session:absent", Kind: "session", SessionID: "absent"}, "", ""},
-		{"verified own session", identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"}, "own", registry.LogicalAgentBindingTarget("worker")},
+		{"operator", identity.Principal{Verified: true, ID: "operator", Kind: "operator", SessionID: "own"}, "", ""},
+		{"service", identity.Principal{Verified: true, ID: "service", Kind: "service", SessionID: "own"}, "", ""},
+		{"missing session", identity.Principal{Verified: true, ID: "session:absent", Kind: "session", SessionID: "absent"}, "", ""},
+		{"verified own session", identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"}, "own", registry.LogicalAgentBindingTarget("worker")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -100,7 +100,7 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 			}
 		})
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"})
 	for _, binding := range []registry.RuntimeBinding{{}, {TargetURN: registry.LogicalAgentBindingTarget("worker"), SessionID: "other"}} {
 		got := ResolveCallerContext(ctx, sessions, contextBindings{binding})
 		if !got.Verified || !got.SessionResolved || got.AgentURN != "" {

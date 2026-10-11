@@ -26,7 +26,7 @@ func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 			switch kind {
 			case "foreign_source_principal", "foreign_source_only":
 				if err := ids.RevokeToken(ctx, token); err != nil {
@@ -50,7 +50,7 @@ func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
 				}
 			case "narrower_current":
 				at := time.Now().UTC().Add(10 * time.Minute)
-				ctx = identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"session.write"}, ExpiresAt: &at})
+				ctx = identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"session.write"}, ExpiresAt: &at})
 			case "missing_current":
 				ctx = context.Background()
 			case "expired_source":
@@ -59,7 +59,7 @@ func TestNativeOnlyCredentialNeverWidensOriginalCeiling(t *testing.T) {
 				}
 			case "revoked_current":
 				now := time.Now()
-				ctx = identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, RevokedAt: &now})
+				ctx = identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, RevokedAt: &now})
 			}
 			minted, err := r.service.mintSessionCredential(ctx, "resumed")
 			positive := kind == "bounded" || kind == "auto_revoked_source" || kind == "narrower_current" || kind == "foreign_source_principal"

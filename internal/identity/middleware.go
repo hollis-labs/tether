@@ -121,7 +121,8 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 		}
 		var scoped ScopeObservation
 		if state == "verified" && !remote && scopes.Observe != nil {
-			scoped = scopes.Observe(r, p)
+			authenticated, _ := FromContext(r.Context())
+			scoped = scopes.Observe(r, authenticated)
 			if scoped.Known {
 				allowed := scoped.WouldAllow
 				o.RoutePattern, o.RequiredScope, o.WouldAllow = scoped.Pattern, scoped.Required, &allowed
@@ -183,6 +184,7 @@ func authenticate(ctx context.Context, headers []string, verifier Verifier) (Pri
 	if err != nil {
 		return Principal{}, "unavailable"
 	}
+	p.Verified = true
 	return p, "verified"
 }
 

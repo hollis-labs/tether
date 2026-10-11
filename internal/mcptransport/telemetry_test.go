@@ -68,9 +68,9 @@ func TestTelemetryHTTPKeepsPresentedCredentialIdentity(t *testing.T) {
 			}
 			_, _ = io.Copy(io.Discard, response.Body)
 			closeResponse(response)
-			want := callcontext.Snapshot{Source: "daemon", PrincipalID: principal.ID, PrincipalKind: principal.Kind}
+			want := callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: principal.ID, PrincipalKind: principal.Kind}
 			if principal.Kind == "session" {
-				want.Verified, want.SessionID, want.LogicalAgentID = true, principal.SessionID, "agent"
+				want.SessionResolved, want.SessionID, want.LogicalAgentID = true, principal.SessionID, "agent"
 			}
 			deadline := time.Now().Add(10 * time.Second)
 			for {

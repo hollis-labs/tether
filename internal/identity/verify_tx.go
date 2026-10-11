@@ -38,6 +38,9 @@ func VerifyTx(ctx context.Context, tx *sql.Tx, token string) (Principal, error) 
 	if revoked.Valid {
 		return Principal{}, ErrInvalidToken
 	}
+	// The credential hash matched an active row: the only place, besides the
+	// middleware for an injected Verifier, that a Principal becomes Verified.
+	p.Verified = true
 	if err := json.Unmarshal([]byte(scopes), &p.Scopes); err != nil {
 		return Principal{}, fmt.Errorf("decode scopes: %w", err)
 	}

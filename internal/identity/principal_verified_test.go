@@ -15,10 +15,13 @@ func TestVerifiedFlagByPrincipalKind(t *testing.T) {
 		p    *Principal
 		want bool
 	}{
-		{"operator", &Principal{ID: OperatorID, Kind: "operator"}, true},
-		{"session", &Principal{ID: "session:s", Kind: "session", SessionID: "s"}, true},
-		{"device", &Principal{ID: "device:d", Kind: "device"}, true},
-		{"service", &Principal{ID: "svc", Kind: "service"}, true},
+		{"operator", &Principal{ID: OperatorID, Kind: "operator", Verified: true}, true},
+		{"session", &Principal{ID: "session:s", Kind: "session", SessionID: "s", Verified: true}, true},
+		{"device", &Principal{ID: "device:d", Kind: "device", Verified: true}, true},
+		{"service", &Principal{ID: "svc", Kind: "service", Verified: true}, true},
+		// An internally constructed principal (turn router sender) is attribution
+		// only: WithPrincipal must not promote it to verified.
+		{"internal session sender", &Principal{ID: "msg://session/local/s", Kind: "session", SessionID: "s"}, false},
 		{"anonymous", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,15 +33,12 @@ func TestVerifiedFlagByPrincipalKind(t *testing.T) {
 				t.Fatalf("Verified = %v, want %v", got, tc.want)
 			}
 			pp := PolicyPrincipalFrom(ctx)
-			if pp.Verified != tc.want || (tc.p != nil) != (pp.ID != "") || (tc.p != nil && (pp.ID != tc.p.ID || pp.Kind != tc.p.Kind)) {
+			if pp.Verified != tc.want || (tc.want) != (pp.ID != "") || (tc.want && (pp.ID != tc.p.ID || pp.Kind != tc.p.Kind)) {
 				t.Fatalf("policy principal = %+v", pp)
 			}
 			if p, ok := FromContext(ctx); ok != (tc.p != nil) || p.Verified != tc.want {
 				t.Fatalf("FromContext = %+v, %v", p, ok)
 			}
 		})
-	}
-	if Verified(context.WithValue(context.Background(), principalKey{}, Principal{ID: "forged"})) {
-		t.Fatal("principal not placed by WithPrincipal must not be verified")
 	}
 }

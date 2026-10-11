@@ -127,7 +127,7 @@ func TestRemoteScopesEnforceIndependentAndPayloadCases(t *testing.T) {
 		t.Run(tc.method+tc.path+strings.Join(tc.scopes, ","), func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
 			ctx := identity.WithRemoteContext(r.Context())
-			ctx = identity.WithPrincipal(ctx, identity.Principal{ID: "msg://device/test", Kind: "device", Scopes: tc.scopes})
+			ctx = identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "msg://device/test", Kind: "device", Scopes: tc.scopes})
 			w := httptest.NewRecorder()
 			RemoteScopeMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })).ServeHTTP(w, r.WithContext(ctx))
 			if w.Code != tc.want {

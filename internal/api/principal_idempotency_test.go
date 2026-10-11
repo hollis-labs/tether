@@ -15,7 +15,7 @@ func TestRemoteIdempotencyUsesActualPrincipal(t *testing.T) {
 		svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "s"}, resumeRes: LaunchResult{SessionID: "s"}}
 		h := newTestHandler(svc)
 		for _, id := range []string{"msg://device/a", "msg://device/a", "msg://device/b"} {
-			ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{ID: id, Kind: "device", Display: "same label", Scopes: []string{"operate"}})
+			ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{Verified: true, ID: id, Kind: "device", Display: "same label", Scopes: []string{"operate"}})
 			body := `{"launch":"demo","idempotency_key":"same"}`
 			if strings.Contains(path, "resume") {
 				body = `{"idempotency_key":"same"}`
@@ -55,7 +55,7 @@ func TestRemoteReplyAndTeamIdempotency(t *testing.T) {
 	svc := &fakeReplies{}
 	s := &Server{RoutingReplies: svc}
 	for _, id := range []string{"msg://device/a", "msg://device/b"} {
-		ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{ID: id, Kind: "device", Scopes: []string{"operate"}})
+		ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{Verified: true, ID: id, Kind: "device", Scopes: []string{"operate"}})
 		r := httptest.NewRequest("POST", "/messages/parent/reply?as=msg://device/forged", nil).WithContext(ctx)
 		r.Header.Set("Idempotency-Key", "same")
 		if _, ok := s.submitReply(httptest.NewRecorder(), r, "parent", "body", false, ""); !ok {
@@ -67,7 +67,7 @@ func TestRemoteReplyAndTeamIdempotency(t *testing.T) {
 	}
 	var keys []string
 	for _, id := range []string{"msg://device/a", "msg://device/b"} {
-		ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{ID: id, Kind: "device", Scopes: []string{"operate"}})
+		ctx := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{Verified: true, ID: id, Kind: "device", Scopes: []string{"operate"}})
 		r := httptest.NewRequest("POST", "/teams/form", nil).WithContext(ctx)
 		r.Header.Set("Idempotency-Key", "same")
 		RemoteScopeMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { keys = append(keys, r.Header.Get("Idempotency-Key")) })).ServeHTTP(httptest.NewRecorder(), r)

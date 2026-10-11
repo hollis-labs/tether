@@ -20,9 +20,9 @@ const OperatorID = "msg://user/local/operator"
 // Principal is an identity row bound to a bearer credential. Verified is the
 // single definition of "verified" (RK-044): the request carried a bearer
 // credential bound to an authenticated principal row, of any kind (operator,
-// session, device, service, interactive). It is set only by WithPrincipal,
-// which only the authentication middleware reaches after a credential
-// verifies; a Principal built from a claim (?as=, headers, JSON) is never
+// session, device, service, interactive). It is set only where a credential
+// verifies (Store.Verify, VerifyTx, and the middleware for an injected
+// Verifier); WithPrincipal preserves it and never sets it. A Principal built from a claim (?as=, headers, JSON) is never
 // verified. Every other "verified" field derives from this one. It says who
 // the credential belongs to, not that the caller may do anything: scope policy
 // is separate, and trusting the flag against same-uid agents additionally
@@ -43,10 +43,10 @@ type Principal struct {
 
 type principalKey struct{}
 
-// WithPrincipal records a bearer-authenticated principal and is the only place
-// Verified becomes true.
+// WithPrincipal records a principal for attribution and preserves its Verified
+// flag as given. It never sets it: an internally constructed principal (for
+// example the turn router's session sender) stays unverified.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	p.Verified = true
 	p.Scopes = append([]string(nil), p.Scopes...)
 	p.Addresses = append([]string(nil), p.Addresses...)
 	return context.WithValue(ctx, principalKey{}, p)

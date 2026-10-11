@@ -121,7 +121,7 @@ func TestReplyEndpointPrefersTheVerifiedPrincipalOverAs(t *testing.T) {
 	svc := &fakeReplies{}
 	h, db := replyServer(t, svc)
 	parent := routedMessage(t, db)
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://user/local/verified", Kind: "user"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://user/local/verified", Kind: "user"})
 	w := postAs(ctx, h, "/messages/"+parent.ID+"/reply?as=msg://user/local/spoofed", map[string]any{"body": "x"}, nil)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status %d %s", w.Code, w.Body)

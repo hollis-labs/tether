@@ -63,7 +63,7 @@ func TestCallerResolver_RefusesChangedOrMismatchedSessionPolicy(t *testing.T) {
 	cat := &config.Catalog{MCPServerEnabled: map[string]bool{"one": true}}
 	policy := mcpgateway.SessionPolicy{SessionID: "other", Servers: []string{"one"}}.Seal()
 	r := CallerResolver{Catalog: func(context.Context) (*config.Catalog, error) { return cat, nil }, Session: func(context.Context, string) (mcpgateway.SessionPolicy, error) { return policy, nil }}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "p", Kind: "session", SessionID: "s"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "p", Kind: "session", SessionID: "s"})
 	if _, err := r.Resolve(ctx); err == nil {
 		t.Fatal("cross-session snapshot accepted")
 	}

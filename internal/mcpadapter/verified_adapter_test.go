@@ -24,7 +24,7 @@ func TestVerifiedAdapter_RefusesBroaderNativeClientCredential(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	ids := identity.NewStore(db.DB())
-	p := identity.Principal{ID: "restricted", Kind: "service", Scopes: []string{"message.write"}}
+	p := identity.Principal{Verified: true, ID: "restricted", Kind: "service", Scopes: []string{"message.write"}}
 	callerToken, err := ids.Mint(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
@@ -53,13 +53,13 @@ func TestVerifiedAdapter_RefusesBroaderNativeClientCredential(t *testing.T) {
 }
 
 func TestVerifiedAdapter_UsesOnlyVerifiedSessionAndScopes(t *testing.T) {
-	p := identity.Principal{ID: "verified", Kind: "session", SessionID: "actual", Scopes: []string{"message.write"}}
+	p := identity.Principal{Verified: true, ID: "verified", Kind: "session", SessionID: "actual", Scopes: []string{"message.write"}}
 	a, err := NewVerifiedAdapter(identity.WithPrincipal(context.Background(), p), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.SessionID = "client-forged"
-	ctx := a.withSessionID(identity.WithPrincipal(WithSessionID(context.Background(), "forged"), identity.Principal{ID: "imposter"}))
+	ctx := a.withSessionID(identity.WithPrincipal(WithSessionID(context.Background(), "forged"), identity.Principal{Verified: true, ID: "imposter"}))
 	verified, ok := identity.FromContext(ctx)
 	if !ok || verified.ID != "verified" || sessionIDFromContext(ctx) != "actual" {
 		t.Fatalf("identity overwritten: %+v %s", verified, sessionIDFromContext(ctx))
@@ -76,7 +76,7 @@ func TestVerifiedAdapter_UsesOnlyVerifiedSessionAndScopes(t *testing.T) {
 }
 
 func TestVerifiedAdapter_OperatorWildcardDoesNotAlterLegacyScopes(t *testing.T) {
-	p := identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
+	p := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}}
 	a, err := NewVerifiedAdapter(identity.WithPrincipal(context.Background(), p), nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestVerifiedAdapter_OperatorWildcardDoesNotAlterLegacyScopes(t *testing.T) 
 func TestVerifiedAdapter_NativeSDKResolvesAdmittedCallerContext(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := newDaemonOnlyFixture(t)
-	p := identity.Principal{ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}
+	p := identity.Principal{Verified: true, ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}
 	a, err := NewVerifiedAdapter(identity.WithPrincipal(context.Background(), p), f.inProcess.svc, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestVerifiedAdapter_NativeSDKResolvesAdmittedCallerContext(t *testing.T) {
 		seen <- snapshot
 		return "ok", nil
 	}}, Reads("test native attribution"))
-	forged := callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{ID: "imposter"}), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "imposter", SessionID: "forged-session"})
+	forged := callcontext.WithSnapshot(identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "imposter"}), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "imposter", SessionID: "forged-session"})
 	st, ct := mcpsdk.NewInMemoryTransports()
 	ss, err := server.SDKServer().Connect(forged, st, nil)
 	if err != nil {

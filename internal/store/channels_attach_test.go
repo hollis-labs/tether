@@ -128,7 +128,7 @@ func TestAttachExistingAuthorizationAndAtomicAudit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: env.From.URN(), Kind: "session", SessionID: req.SessionID, CreatedBy: req.Actor.URN()})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: env.From.URN(), Kind: "session", SessionID: req.SessionID, CreatedBy: req.Actor.URN()})
 			_, err := service.AttachExisting(ctx, req)
 			if calls != 1 {
 				t.Fatal("authorization hook not used")

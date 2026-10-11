@@ -169,7 +169,7 @@ func TestVerifiedOrdinarySessionRequiresExactCurrentBinding(t *testing.T) {
 	_, err := reg.LeaseBinding(ctx, actor, "ordinary-session", "daemon", "ordinary", nil, registry.VisibilityTetherHosted, 0)
 	check(t, err)
 	p := Principals{Mode: identity.Enforce, Sessions: e}
-	caller := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://session/local/ordinary-session", Kind: "session", SessionID: "ordinary-session"})
+	caller := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://session/local/ordinary-session", Kind: "session", SessionID: "ordinary-session"})
 	out, err := p.ResolvePrincipal(caller)
 	check(t, err)
 	if string(out.ID) != actor || !out.Verified {

@@ -72,7 +72,7 @@ func TestTelemetrySharedViewPolicyDenialsCarryProfileAndMode(t *testing.T) {
 	}{{"flat", true}, {"search", true}, {"flat", false}} {
 		t.Run(scenario.mode+"/profile="+fmt.Sprint(scenario.profile), func(t *testing.T) {
 			mode := scenario.mode
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "reader", Kind: "service"})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "reader", Kind: "service"})
 			a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}}, nil)
 			if err != nil {
 				t.Fatal(err)
