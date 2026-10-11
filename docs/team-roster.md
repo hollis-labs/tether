@@ -9,8 +9,8 @@ identity.
 tether team ls
 tether team ls RUN_ID
 tether team ls --limit 20 --after LAST_RUN_ID
-tether team msg RUN_ID workers 'Check the accepted task' --key message-1
-tether team msg RUN_ID workers --body-file brief.txt --key message-2
+tether team msg RUN_ID @workers 'Check the accepted task' --key message-1
+tether team msg RUN_ID @workers --body-file brief.txt --key message-2
 tether team stop RUN_ID MEMBER_ID --key stop-1
 tether team stop RUN_ID MEMBER_ID --cascade --key stop-tree-1
 tether team stop RUN_ID --all --key end-run-1

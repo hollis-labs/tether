@@ -32,6 +32,10 @@ launches:
     definition: {id: codex-agent, revision: r1, digest: sha256:...}
 ```
 
+Each entry may add `source: catalog:<relative path>` to its definition file; the
+daemon indexes it at start and fails if the pin differs. Without it nothing
+indexes the definition. See [teams-first-team.md](teams-first-team.md).
+
 Each entry binds one exact launch id to one verified definition pin
 (id, revision and digest are all required). A pin appears once and a launch id
 appears once. The pinned definitions are the only ones the team host trusts, and
