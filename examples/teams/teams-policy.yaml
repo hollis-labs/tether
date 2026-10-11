@@ -18,3 +18,7 @@ launches:
     runtime: codex
     definition: {id: codex-worktree-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
     source: catalog:team-definitions/codex-worktree-agent.md
+  - launch: tether-agy
+    runtime: antigravity
+    definition: {id: agy-agent, revision: r1, digest: sha256:8d5099f63b9fe878aac4b54719fbe0690362425193333d52d868b4f91a627185}
+    source: catalog:team-definitions/agy-agent.md

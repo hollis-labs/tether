@@ -122,9 +122,43 @@ args: []
 bootstrap: {mode: jsonrpc-stdio, prompt_prefix: ""}
 env: {mode: merge, passthrough: [HOME, PATH]}
 YAML
-for l in tether-claude tether-claude-worktree agent-mux-codex-app-server agent-mux-codex-app-server-worktree; do
+# Stand-in for agy (subprocess-per-turn, --output-format stream-json): one
+# process per turn, prompt in -p=<text>. Logs the prompt to $ROOT/agy-got.log,
+# keeps one conversation id, and answers a smoke-reply turn by mail using the
+# session's own credential, like fake-claude.
+cat >"$ROOT/fake-agy" <<SH
+#!/bin/sh
+conv=agy-conv-1; prompt=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in --conversation) conv=\$2; shift ;; -p=*) prompt=\${1#-p=} ;; esac
+  shift
+done
+printf '%s\\n' "\$prompt" | tr '\\n' ' ' >>"$ROOT/agy-got.log"; echo >>"$ROOT/agy-got.log"
+case "\$prompt" in *smoke-reply*)
+  coord=\$(printf '%s' "\$prompt" | sed -n 's/.*coordinator \(msg:[^ ]*\)\. Reply.*/\1/p')
+  me=\$(printf '%s' "\$prompt" | sed -n 's/.*you are @[a-z0-9_-]* (\(msg:[^)]*\)).*/\1/p')
+  if [ -n "\$coord" ] && [ -n "\$me" ]; then
+    "$BIN" --catalog "$CAT" messages notify --from "\$me" --to "\$coord" --kind response "smoke-reply-ack from agy" >>"$ROOT/agy-reply.log" 2>&1
+  else echo "no coordinator in turn" >>"$ROOT/agy-reply.log"; fi ;;
+esac
+printf '{"event":"init","conversation_id":"%s","init":{"cwd":"/w","tools":[],"permission_mode":"request-review"}}\\n' "\$conv"
+printf '{"event":"step_update","step_update":{"conversation_id":"%s","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"agy ok","usage":{"input_tokens":1,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":2}}}\\n' "\$conv"
+printf '{"event":"result","result":{"conversation_id":"%s","status":"SUCCESS","response":"agy ok","num_turns":1}}\\n' "\$conv"
+SH
+chmod +x "$ROOT/fake-agy"
+cat >"$CAT/providers/antigravity.yaml" <<YAML
+id: antigravity
+type: cli
+provider: antigravity
+runtime_kind: subprocess
+command: $ROOT/fake-agy
+args: []
+bootstrap: {mode: prepend, prompt_prefix: ""}
+env: {mode: merge, passthrough: [HOME, PATH, TETHER_TOKEN]}
+YAML
+for l in tether-claude tether-claude-worktree agent-mux-codex-app-server agent-mux-codex-app-server-worktree tether-agy; do
   mode=hybrid; [[ $l == *worktree ]] && mode=worktree
-  prov=fake; [[ $l == agent-mux-codex-* ]] && prov=codex-app-server
+  prov=fake; [[ $l == agent-mux-codex-* ]] && prov=codex-app-server; [[ $l == tether-agy ]] && prov=antigravity
   printf 'id: %s\nproject: tether\nagent: general\nprovider: %s\nworkspace: {mode: %s}\nprompt: {include_project_boot: false, include_agent_boot: false}\n' "$l" "$prov" "$mode" >"$CAT/launches/$l.yaml"
 done
 cp "$REPO"/examples/teams/definitions/*.md "$CAT/team-definitions/"
@@ -172,6 +206,52 @@ for _ in $(seq 40); do
   [[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] && break; sleep 0.5
 done
 [[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] || die "sessions still running after stop"
+
+# --- Antigravity as a team member: agy is the reviewer slot. A team delivery must
+# start an agy turn; a smoke-reply turn must come back as mail to the coordinator.
+AF="$("${T[@]}" team form --key smoke-form-agy --request-file "$REPO/examples/teams/team-form-agy.json" 2>&1)" || die "agy form: $AF"
+echo "agy form: $AF"
+ARUN="$(sed -n 's/.*"run":{"id":"\([^"]*\)".*/\1/p' <<<"$AF")"
+[[ -n "$ARUN" ]] || die "no run_id in agy form result"
+AM="$("${T[@]}" team msg "$ARUN" @reviewer 'hello agy smoke-reply' --key smoke-msg-agy 2>&1)" || die "msg agy @reviewer: $AM"
+echo "msg agy @reviewer: $AM"
+SEEN=0
+for _ in $(seq 80); do
+  grep -qs 'hello agy smoke-reply' "$ROOT/agy-got.log" && SEEN=1 && break; sleep 0.5
+done
+[[ $SEEN == 1 ]] || die "message never started a turn on the agy reviewer"
+SEEN=0
+for _ in $(seq 60); do
+  [[ -s "$ROOT/agy-reply.log" ]] && SEEN=1 && break; sleep 0.5
+done
+[[ $SEEN == 1 ]] || die "agy reviewer never replied (agy-reply.log empty)"
+grep -q 'no coordinator' "$ROOT/agy-reply.log" && die "agy turn carried no coordinator/own address: $(cat "$ROOT/agy-reply.log")"
+echo "agy reply: $(head -c 300 "$ROOT/agy-reply.log" | tr '\n' ' ')"
+"${T[@]}" team stop "$ARUN" --all --key smoke-stop-agy >/dev/null 2>&1 || die "agy stop"
+for _ in $(seq 40); do
+  [[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] && break; sleep 0.5
+done
+[[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] || die "sessions still running after agy stop"
+
+# --- Antigravity outside a team: `sessions turn` on a launched agy session must
+# run an agy turn and publish session.turn_output with the reply.
+AL="$("${T[@]}" launch --launch tether-agy 2>&1)" || die "agy launch: $AL"
+ASID="$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$AL" | head -1)"
+[[ -n "$ASID" ]] || ASID="$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"{print $1; exit}')"
+[[ -n "$ASID" ]] || die "agy launch gave no session id: $AL"
+AT="$("${T[@]}" sessions turn "$ASID" "direct agy turn" 2>&1)" || die "agy sessions turn ($ASID; launch=$AL): $AT"
+SEEN=0
+for _ in $(seq 60); do
+  grep -qs 'direct agy turn' "$ROOT/agy-got.log" && SEEN=1 && break; sleep 0.5
+done
+[[ $SEEN == 1 ]] || die "sessions turn never started an agy turn"
+SEEN=0
+for _ in $(seq 40); do
+  "${T[@]}" events history --session-id "$ASID" --kind session.turn_output 2>&1 | grep -q 'agy ok' && SEEN=1 && break; sleep 0.5
+done
+[[ $SEEN == 1 ]] || die "agy turn published no session.turn_output"
+echo "agy sessions turn: turn_output published"
+"${T[@]}" sessions stop "$ASID" >/dev/null 2>&1
 
 # --- session phase: a launched session, using only its own credential, sees
 # tether_team_* over `tether mcp`, forms a team, messages workers, dissolves.
