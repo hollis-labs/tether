@@ -54,8 +54,12 @@ func teamRequestSchema(verb string) map[string]any {
 }
 
 func (a *Adapter) handleTeam(ctx context.Context, verb string, args map[string]any) (any, error) {
-	if err := a.checkScope(ScopeTeamWrite); err != nil {
-		return nil, err
+	// Daemon-backed ops authenticate with the session's own credential and the
+	// daemon enforces its grants; the adapter's local scope list is not authority.
+	if _, remote := a.teams.(clientTeamOps); !remote {
+		if err := a.checkScope(ScopeTeamWrite); err != nil {
+			return nil, err
+		}
 	}
 	for _, field := range traceMetaKeys {
 		if value, exists := args[field]; exists {

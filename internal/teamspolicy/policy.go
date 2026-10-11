@@ -63,8 +63,11 @@ func (p Pin) Ref() mesh.DefinitionRef {
 }
 
 type file struct {
-	Version  int      `yaml:"version"`
-	Launches []Launch `yaml:"launches"`
+	Version int `yaml:"version"`
+	// SessionFormation lets a verified session principal form teams under the
+	// same ceilings and allowlist; the session becomes the run owner. Default off.
+	SessionFormation bool     `yaml:"session_formation"`
+	Launches         []Launch `yaml:"launches"`
 }
 
 // Policy is immutable after Load. The zero value and nil both deny.
@@ -73,7 +76,11 @@ type Policy struct {
 	byPin       map[mesh.DefinitionRef]Launch
 	pauseMarker string
 	paused      atomic.Bool
+	sessionForm bool
 }
+
+// SessionFormation reports whether verified sessions may form teams.
+func (p *Policy) SessionFormation() bool { return p != nil && p.sessionForm }
 
 // Path returns where the policy file lives under the catalog root.
 func Path(catalogRoot string) string { return filepath.Join(catalogRoot, FileName) }
@@ -116,7 +123,7 @@ func Parse(raw []byte) (*Policy, error) {
 	if len(f.Launches) == 0 {
 		return nil, errors.New("launches: at least one exact launch is required")
 	}
-	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}}
+	p := &Policy{byPin: map[mesh.DefinitionRef]Launch{}, sessionForm: f.SessionFormation}
 	seen := map[string]bool{}
 	for i, l := range f.Launches {
 		at := fmt.Sprintf("launches[%d] (%q)", i, l.Launch)
@@ -199,6 +206,9 @@ func (p *Policy) HostOptions() teamhost.Options {
 		opts.TrustTiers[ref] = teamhost.TrustTrusted
 	}
 	opts.ActorTrust[teamsvc.LocalOperator] = teamhost.TrustTrusted
+	if p.sessionForm {
+		opts.OwnerAgentTrust = teamhost.TrustTrusted
+	}
 	return opts
 }
 
@@ -233,7 +243,9 @@ func (c Ceilings) gate(p teamsvc.Principal) error {
 	if c.Policy == nil {
 		return fmt.Errorf("%w: no teams policy provisioned", teamsvc.ErrDenied)
 	}
-	if !p.Verified || !p.LocalOperator || p.ID != teamsvc.LocalOperator || p.Kind != mesh.ActorUser {
+	operator := p.Verified && p.LocalOperator && p.ID == teamsvc.LocalOperator && p.Kind == mesh.ActorUser
+	session := c.Policy.sessionForm && p.Verified && !p.LocalOperator && p.Kind == mesh.ActorAgent && p.ID.Validate() == nil
+	if !operator && !session {
 		return fmt.Errorf("%w: team formation is operator-only", teamsvc.ErrDenied)
 	}
 	if c.Policy.Paused() {

@@ -55,6 +55,9 @@ printf 'id: general\nname: General\nroles: [general]\n' >"$CAT/agents/general.ya
 cat >"$ROOT/fake-claude" <<SH
 #!/bin/sh
 echo '{"type":"system","subtype":"init","session_id":"fake"}'
+# A launched session holds its own credential in TETHER_TOKEN; keep it (0600,
+# never printed) so the session phase can act as that session.
+( umask 077; printf '%s' "\$TETHER_TOKEN" >"$ROOT/tok.\$\$" )
 while read -r line; do
   printf '%s\\n' "\$line" >>"$ROOT/got.log"
   echo '{"type":"result","subtype":"success","result":"ok","session_id":"fake"}'
@@ -77,6 +80,7 @@ for l in tether-claude tether-claude-worktree agent-mux-codex-app-server agent-m
 done
 cp "$REPO"/examples/teams/definitions/*.md "$CAT/team-definitions/"
 cp "$REPO/examples/teams/teams-policy.yaml" "$CAT/teams-policy.yaml"
+echo 'session_formation: true' >>"$CAT/teams-policy.yaml"
 
 T=("$BIN" --catalog "$CAT")
 # pins in the policy must match what `team pin` computes for the shipped files
@@ -111,4 +115,23 @@ for _ in $(seq 40); do
   [[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] && break; sleep 0.5
 done
 [[ -z "$("${T[@]}" sessions list 2>/dev/null | awk 'NR>1 && $2=="running"')" ]] || die "sessions still running after stop"
+
+# --- session phase: a launched session, using only its own credential, sees
+# tether_team_* over `tether mcp`, forms a team, messages workers, dissolves.
+ls "$ROOT"/tok.* >"$ROOT/tok.before" 2>/dev/null
+LAUNCH="$("${T[@]}" launch --launch tether-claude 2>&1)" || die "session launch: $LAUNCH"
+TOK=""
+for _ in $(seq 40); do
+  for f in "$ROOT"/tok.*; do
+    [[ "$f" == "$ROOT/tok.before" ]] && continue
+    grep -qx "$f" "$ROOT/tok.before" && continue
+    [[ -s "$f" ]] && TOK="$f" && break 2
+  done
+  sleep 0.5
+done
+[[ -n "$TOK" ]] || die "launched session never recorded a credential"
+for flags in "--daemon-only" "--proxy"; do
+  out="$(SMOKE_KEY="${flags#--}" TETHER_TOKEN="$(cat "$TOK")" python3 -I "$REPO/scripts/team-smoke-mcp.py" "$BIN" "$CAT" "$REPO/examples/teams/team-form.json" $flags 2>&1)" || die "session mcp ($flags): $out"
+  echo "session mcp ($flags): $(tr '\n' ' ' <<<"$out")"
+done
 echo PASS

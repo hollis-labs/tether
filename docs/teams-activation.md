@@ -85,6 +85,18 @@ activation preconditions.
 
 When `modules.teams` (or legacy `teams.enabled`) is on, the daemon MCP endpoint
 registers one tool per team verb. When teams are off the tools are not listed.
+`tether mcp` (stdio, including `--daemon-only` and `--proxy`, which is what
+launched sessions use) probes the daemon's `/teams/*` routes at start and, when
+they exist, registers the same tools backed by the daemon over HTTP with the
+session's own credential.
+
+## Session formation
+
+Formation is operator-only by default. Add `session_formation: true` to
+`teams-policy.yaml` to let a verified session principal form teams under the
+same ceilings and allowlist; that session becomes the run owner in the
+coordinator slot (it provisions no member). Default off; read at daemon start.
+`scripts/team-smoke.sh` exercises this end to end.
 
 | Tool | Verb |
 |---|---|
