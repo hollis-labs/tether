@@ -871,13 +871,13 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 	var left []delivery.RecipientDelivery
 	lastServed := last
 	for round := 0; ; round++ {
-		any := false
+		sawRow := false
 		for _, key := range ring {
 			rows := liveByRecipient[key]
 			if round >= len(rows) {
 				continue
 			}
-			any = true
+			sawRow = true
 			lr := rows[round]
 			if ctx.Err() != nil || processed >= batchLimit {
 				if len(left) < wakeSweepDeferredMax {
@@ -928,7 +928,7 @@ func runWakeSweep(ctx context.Context, st *store.Store, reg *registry.Service, r
 				attempted++
 			}
 		}
-		if !any {
+		if !sawRow {
 			break
 		}
 	}
