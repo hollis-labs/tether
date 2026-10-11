@@ -18,10 +18,11 @@ import (
 )
 
 var senderPrincipals = map[string]identity.Principal{
-	"operator": {ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, Addresses: []string{identity.OperatorID}},
-	"session":  {ID: "msg://session/local/s1", Kind: "session", SessionID: "s1", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s1"}},
-	"device":   {ID: "msg://device/d1", Kind: "device", Scopes: []string{"operate"}, Addresses: []string{}},
-	"sendas":   {ID: "msg://session/local/s2", Kind: "session", SessionID: "s2", Scopes: []string{"message.write", identity.ScopeSendAs}, Addresses: []string{"msg://session/local/s2"}},
+	"operator":     {ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}, Addresses: []string{identity.OperatorID}},
+	"session":      {ID: "msg://session/local/s1", Kind: "session", SessionID: "s1", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s1"}},
+	"device":       {ID: "msg://device/d1", Kind: "device", Scopes: []string{"operate"}, Addresses: []string{}},
+	"agentsession": {ID: "msg://session/local/s3", Kind: "session", SessionID: "s3", Scopes: []string{"message.write"}, Addresses: []string{"msg://session/local/s3", "msg://agent/agent-mux/builder"}},
+	"sendas":       {ID: "msg://session/local/s2", Kind: "session", SessionID: "s2", Scopes: []string{"message.write", identity.ScopeSendAs}, Addresses: []string{"msg://session/local/s2"}},
 }
 
 type senderHarness struct {
@@ -343,4 +344,47 @@ func (f *fakeReplies) lastReplyID(t *testing.T, db *store.Store, parent string) 
 		t.Fatal(err)
 	}
 	return id
+}
+
+// A session credential's address set includes its logical agent (see
+// app.mintSessionCredential), so the common agent case works in enforce.
+func TestSenderIdentity_SessionSendsAndReadsAsItsOwnAgent(t *testing.T) {
+	const own, other = "msg://agent/agent-mux/builder", "msg://agent/agent-mux/reviewer"
+	send := func(from string) string {
+		return `{"from":"` + from + `","to":"msg://agent/local/worker","kind":"notice"}`
+	}
+	t.Run("enforce", func(t *testing.T) {
+		h := newSenderHarness(t, identity.Enforce)
+		code, raw := h.do(t, http.MethodPost, "/messages", "agentsession", send(own))
+		if code != http.StatusCreated {
+			t.Fatalf("own agent: status = %d: %s", code, raw)
+		}
+		if env := envelopeFrom(t, raw, false); env.Metadata[MetaFromVerification] != "verified" {
+			t.Fatalf("metadata = %v", env.Metadata)
+		}
+		if code, raw := h.do(t, http.MethodPost, "/messages", "agentsession", send(other)); code != http.StatusForbidden {
+			t.Fatalf("other agent: status = %d, want 403: %s", code, raw)
+		}
+		for as, want := range map[string]int{own: http.StatusOK, other: http.StatusForbidden} {
+			if code, raw := h.do(t, http.MethodGet, "/messages/list?to="+as+"&as="+as, "agentsession", ""); code != want {
+				t.Fatalf("list as %s: status = %d, want %d: %s", as, code, want, raw)
+			}
+		}
+	})
+	t.Run("observe", func(t *testing.T) {
+		h := newSenderHarness(t, identity.Observe)
+		code, raw := h.do(t, http.MethodPost, "/messages", "agentsession", send(other))
+		if code != http.StatusCreated {
+			t.Fatalf("status = %d: %s", code, raw)
+		}
+		if env := envelopeFrom(t, raw, false); env.Metadata[MetaFromUnverified] != "true" {
+			t.Fatalf("metadata = %v", env.Metadata)
+		}
+		if code, _ := h.do(t, http.MethodGet, "/messages/list?to="+other+"&as="+other, "agentsession", ""); code != http.StatusOK {
+			t.Fatalf("observe list as other: status = %d", code)
+		}
+		if got := h.eventNames(); len(got) != 2 || got[0] != "from_unverified" || got[1] != "as_unverified" {
+			t.Fatalf("audit events = %v", got)
+		}
+	})
 }
