@@ -231,6 +231,17 @@ func validateAIConfig(ai AIConfig) error {
 		if p.Wire != "" && p.Type != "openai" && p.Type != "openai-compatible" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets wire %q (wire is only supported for openai/openai-compatible)", i, p.ID, p.Type, p.Wire)
 		}
+		if len(p.Headers) > 0 && p.Type != "openai" && p.Type != "openai-compatible" && p.Type != "anthropic" {
+			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets headers (only supported for openai/openai-compatible/anthropic)", i, p.ID, p.Type)
+		}
+		for name := range p.Headers {
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "":
+				return fmt.Errorf("global ai.providers[%d] (%s) has an empty header name", i, p.ID)
+			case "authorization", "proxy-authorization", "x-api-key", "api-key", "cookie":
+				return fmt.Errorf("global ai.providers[%d] (%s) header %q is a credential header; use secret_ref instead", i, p.ID, name)
+			}
+		}
 		if p.APIVersion != "" && p.Type != "gemini" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets api_version (only supported for gemini)", i, p.ID, p.Type)
 		}

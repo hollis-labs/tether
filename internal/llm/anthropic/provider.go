@@ -53,6 +53,8 @@ type Config struct {
 	ResolveAPIKey func(context.Context) (string, error)
 	BaseURL       string
 	HTTPClient    *http.Client
+	// Headers are static request headers sent on every call.
+	Headers map[string]string
 }
 
 // Provider executes normalized llm chat requests against Anthropic's Messages
@@ -74,6 +76,9 @@ func New(cfg Config) *Provider {
 			}
 			if cfg.BaseURL != "" {
 				opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+			}
+			for name, value := range cfg.Headers {
+				opts = append(opts, option.WithHeader(name, value))
 			}
 			if cfg.HTTPClient != nil {
 				opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))

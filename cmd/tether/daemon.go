@@ -498,6 +498,7 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 			secretRef := p.SecretRef
 			providers[p.ID] = llmanthropic.New(llmanthropic.Config{
 				BaseURL: p.BaseURL,
+				Headers: p.Headers,
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),
@@ -1407,6 +1408,7 @@ func openAIAdapterConfig(p config.AIProviderConfig, resolve func(context.Context
 		BaseURL:              p.BaseURL,
 		Wire:                 p.Wire,
 		ResolveAPIKey:        resolve,
+		Headers:              p.Headers,
 		IncludeReasoningText: p.IncludeReasoningText,
 		OpenRouter:           mapOpenRouterExt(p.Extensions),
 		HuggingFace:          mapHuggingFaceExt(p.Extensions),
@@ -1418,6 +1420,7 @@ func openAICompatAdapterConfig(p config.AIProviderConfig, resolve func(context.C
 		BaseURL:              p.BaseURL,
 		Wire:                 p.Wire,
 		ResolveAPIKey:        resolve,
+		Headers:              p.Headers,
 		IncludeReasoningText: p.IncludeReasoningText,
 	}
 }

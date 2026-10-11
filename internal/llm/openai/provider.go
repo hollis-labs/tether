@@ -83,6 +83,8 @@ type Config struct {
 	Wire                 string
 	HTTPClient           *http.Client
 	AllowUnauthenticated bool
+	// Headers are static request headers sent on every call.
+	Headers map[string]string
 	// IncludeReasoningText opts this provider into returning vendor reasoning
 	// text as "reasoning" content parts. The zero value preserves prior output.
 	IncludeReasoningText bool
@@ -131,6 +133,9 @@ func New(cfg Config) *Provider {
 			}
 			if cfg.BaseURL != "" {
 				opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+			}
+			for name, value := range cfg.Headers {
+				opts = append(opts, option.WithHeader(name, value))
 			}
 			if cfg.HTTPClient != nil {
 				opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))

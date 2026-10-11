@@ -210,6 +210,11 @@ Provider notes:
 - Configured models that are missing from models.dev are still routable. Tether
   synthesizes a conservative text-only catalog entry for those ids so local
   OpenAI-compatible servers can use custom llama/Ollama model names.
+- `openai`, `openai-compatible` and `anthropic` accept `headers`, a map of static,
+  non-secret request headers sent on every call, for gateways that require a
+  client or session identifier (OpenCode Go needs `x-opencode-session`).
+  Credential headers (`authorization`, `x-api-key`, ...) are rejected; keys
+  belong in `secret_ref`.
 - `gemini` accepts an optional `api_version` (default `v1beta`) for gateways
   that serve Gemini under another version path; OpenCode Zen uses `v1` with
   `base_url: https://opencode.ai/zen`.

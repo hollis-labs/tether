@@ -120,6 +120,11 @@ type AIProviderConfig struct {
 	// APIVersion overrides the API version path segment for gemini providers
 	// (default v1beta), for gateways that serve Gemini under another one.
 	APIVersion string `yaml:"api_version,omitempty"`
+	// Headers are static, non-secret request headers sent on every call
+	// (openai/openai-compatible only), for gateways that require a stable
+	// client or session identifier. Credentials belong in secret_ref, never
+	// here: authorization-style header names are rejected.
+	Headers map[string]string `yaml:"headers,omitempty"`
 	// InputPriceUSDPerMTok is a decision provider's flat price per million
 	// input tokens (output is free). Only the jev type uses it: JEV has no
 	// models.dev entry, so the config declares the price.
