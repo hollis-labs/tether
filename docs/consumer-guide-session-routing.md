@@ -584,12 +584,21 @@ signal rather than stderr.
 
 Under identity **ENFORCE**, the daemon requires a verified bearer for every
 route except `/health` and `/a2a` (including its subpaths). Anonymous reply and
-delivery requests therefore return 401. Beyond authentication, reply-specific
-authorization is not installed (CW-20261002-0116): any verified caller may reply
-to any routed message and read any reply's delivery record. The `/delivery`
-handler checks neither identity nor ownership itself. In observe/off mode the
-reply requires a valid `as` (or compatibility envelope `from`) without a verified
-principal; `/delivery` requires no identity assertion.
+delivery requests therefore return 401. Beyond authentication, reply and delivery authorization is installed
+(CW-20261010-0266, which supersedes CW-20261002-0116). A verified caller may
+reply to a routed message, or read a reply's delivery record, only as a
+participant: the parent's sender session, its mailbox recipient (a channel is
+not a recipient list), the sending principal, or a holder of `*` or
+`message.send_as`. A delivery record is also readable by the reply's author and
+by the original, target and delivered sessions. The policy follows the
+`local_api` identity point: in observe mode a non-participant is allowed and an
+audit row (`reply_unauthorized`, `delivery_unauthorized`) is recorded; in
+enforce mode it returns 403 `forbidden` and records `reply_refused` or
+`delivery_refused`. Anonymous claims are never audited in observe mode. The
+turn router publishes to channels under an explicit internal-publisher rule,
+not session scopes. In observe/off mode the reply requires a valid `as` (or
+compatibility envelope `from`) without a verified principal; `/delivery`
+requires no identity assertion.
 
 HTTP errors use `{"error":{"code":"...","message":"..."}}`.
 

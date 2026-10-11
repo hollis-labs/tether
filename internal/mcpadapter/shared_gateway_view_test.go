@@ -45,7 +45,7 @@ func TestSharedGatewayView_AllNativeToolsKeepHiddenOriginsPrivate(t *testing.T) 
 	defer func() { _ = db.Close() }()
 	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
 		t.Run(string(mode), func(t *testing.T) {
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "restricted", Kind: "service"})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "restricted", Kind: "service"})
 			a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}, Store: db}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -127,7 +127,7 @@ func TestSharedGatewayView_EmptyUpstreamGrantKeepsNativeTools(t *testing.T) {
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "session-p", Kind: "session", SessionID: "s", Scopes: []string{"message.write"}})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session-p", Kind: "session", SessionID: "s", Scopes: []string{"message.write"}})
 	a, err := NewVerifiedAdapter(ctx, &app.Service{Catalog: &config.Catalog{}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestSharedGatewayView_ProfileAndGrantApplyToEveryPath(t *testing.T) {
 	}
 	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
 		t.Run(string(mode), func(t *testing.T) {
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "caller", Kind: "session", SessionID: "actual", Scopes: []string{"message.write"}})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "caller", Kind: "session", SessionID: "actual", Scopes: []string{"message.write"}})
 			a, err := NewVerifiedAdapter(ctx, nil, nil)
 			if err != nil {
 				t.Fatal(err)

@@ -187,13 +187,13 @@ func (f *sessionEffects) CreateSessionWithInput(in app.CreateSessionInput) (*app
 	if f.beforeCreate != nil {
 		f.beforeCreate()
 	}
-	record, err := f.db.GetSessionIdempotency(in.IdempotencyKey)
+	record, err := f.db.GetSessionIdempotency(store.IdempotencyPrincipalTeam, in.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}
 	id := "session-" + in.IdempotencyKey
 	if record == nil {
-		err = f.db.CreateSessionKeyed(store.SessionRow{ID: id, LaunchID: in.LaunchID, State: "created"}, &launch.Plan{LaunchID: in.LaunchID}, &store.SessionIdempotency{Key: in.IdempotencyKey, Operation: store.IdempotencyOpCreate, RequestDigest: "fixture"})
+		err = f.db.CreateSessionKeyed(store.SessionRow{ID: id, LaunchID: in.LaunchID, State: "created"}, &launch.Plan{LaunchID: in.LaunchID}, &store.SessionIdempotency{PrincipalID: store.IdempotencyPrincipalTeam, Key: in.IdempotencyKey, Operation: store.IdempotencyOpCreate, RequestDigest: "fixture"})
 	} else {
 		id = record.SessionID
 	}
@@ -246,7 +246,7 @@ func TestSessionLostCreateAckStopAndLateLaunchFence(t *testing.T) {
 	if _, err := port.Launch(ctx, req); err == nil {
 		t.Fatal("lost create ack ignored")
 	}
-	record, err := db.GetSessionIdempotency(testSessionKey(t, port, req.IntentKey))
+	record, err := db.GetSessionIdempotency(store.IdempotencyPrincipalTeam, testSessionKey(t, port, req.IntentKey))
 	check(t, err)
 	if record == nil {
 		t.Fatal("create effect missing")

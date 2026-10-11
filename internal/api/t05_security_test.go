@@ -18,7 +18,6 @@ package api
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -27,45 +26,52 @@ import (
 	"time"
 
 	messaging "github.com/hollis-labs/substrate/mesh/messaging"
+	"github.com/hollis-labs/tether/internal/identity"
 )
 
-// TestMessageSend_SenderIdentityIsSelfAssertedByDesign documents, as an
-// explicit and tested fact rather than an unexamined gap, Tether's current
-// same-host trust model for the general messaging surface (T05 acceptance
-// #3: "trusted per-user mode is explicit, not assumed universal
-// authentication"). No peer-credential mechanism exists anywhere in this
-// codebase (confirmed by the T05 design research: no SO_PEERCRED/ucred
-// code, and the daemon's transport can be UDS OR a documented TCP-loopback
-// option per ADR-0002) -- so /messages' `from` field is, today, whatever
-// the caller claims. This test locks in that fact so a future change to
-// the trust model is a deliberate, reviewed decision, not a silent
-// regression discovered by surprise.
-func TestMessageSend_SenderIdentityIsSelfAssertedByDesign(t *testing.T) {
-	srv, _ := newMessageTestServer(t)
+// TestMessageSend_SenderIdentityIsServerVerified replaces the T05 baseline that
+// documented a caller-authored `from` (CW-20261010-0262). With a verified
+// principal the daemon stamps a missing from and checks a supplied one against
+// the principal's address set: observe keeps a spoofed message and marks it
+// from_unverified, enforce refuses it with 403. A request with no verified
+// principal (identity off, or anonymous in observe) is admitted by the
+// middleware and its from stays caller-asserted; that is the only remaining
+// self-asserted path and ends when enforce is turned on. The full matrix lives
+// in sender_identity_test.go.
+func TestMessageSend_SenderIdentityIsServerVerified(t *testing.T) {
+	const spoof = `{"from":"msg://agent/tether/impersonated-sender","to":"msg://agent/tether/recipient","kind":"notice","payload":{"text":"hi"}}`
 
-	body := []byte(`{
-		"from":"msg://agent/tether/impersonated-sender",
-		"to":"msg://agent/tether/recipient",
-		"kind":"notice",
-		"payload":{"text":"hi"}
-	}`)
-	resp, err := http.Post(srv.URL+"/messages", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201 (same-host trust model accepts the self-asserted sender)", resp.StatusCode)
-	}
-	var got struct {
-		From string `json:"from"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.From != "msg://agent/tether/impersonated-sender" {
-		t.Fatalf("expected the claimed sender to be recorded verbatim (no verification exists), got %q", got.From)
-	}
+	t.Run("anonymous stays caller-asserted", func(t *testing.T) {
+		srv, _ := newMessageTestServer(t)
+		resp, err := http.Post(srv.URL+"/messages", "application/json", strings.NewReader(spoof))
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		defer resp.Body.Close()
+		var got messaging.Envelope
+		if resp.StatusCode != http.StatusCreated || json.NewDecoder(resp.Body).Decode(&got) != nil {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		if got.From.URN() != "msg://agent/tether/impersonated-sender" || got.Metadata[MetaFromVerification] != "" {
+			t.Fatalf("anonymous send altered: from=%q metadata=%v", got.From.URN(), got.Metadata)
+		}
+	})
+	t.Run("observe marks the spoofed sender", func(t *testing.T) {
+		h := newSenderHarness(t, identity.Observe)
+		code, raw := h.do(t, http.MethodPost, "/messages", "session", spoof)
+		if code != http.StatusCreated {
+			t.Fatalf("status = %d: %s", code, raw)
+		}
+		if got := envelopeFrom(t, raw, false); got.Metadata[MetaFromUnverified] != "true" {
+			t.Fatalf("metadata = %v", got.Metadata)
+		}
+	})
+	t.Run("enforce refuses the spoofed sender", func(t *testing.T) {
+		h := newSenderHarness(t, identity.Enforce)
+		if code, raw := h.do(t, http.MethodPost, "/messages", "session", spoof); code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403: %s", code, raw)
+		}
+	})
 }
 
 // TestHandleMessagesSubscribe_ScopedToRecipient_ExcludesOthers is the

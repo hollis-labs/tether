@@ -35,6 +35,40 @@ Phase 1 does **not** enforce route scopes or sender/mailbox ownership. It does
 not turn on enforcement anywhere. Non-loopback TCP binds require explicit
 `enforce`; this is an authentication condition, not transport encryption.
 
+## The verified flag
+
+One definition (RK-044, owner ruling 2026-10-10): a request is **verified**
+when it carried a bearer credential bound to an authenticated principal row in
+Tether, of any kind (operator, session, device, service, interactive).
+`identity.Principal.Verified` is the only implementation; it becomes true only
+where a credential verifies (`Store.Verify`, `VerifyTx`, and the middleware for
+an injected verifier). `WithPrincipal` preserves it and never sets it, so
+internally constructed principals (the turn router's session sender) are
+unverified. A principal built from `?as=`, headers or a body is
+never verified. The flag says whose credential it is, not what the caller may
+do (scope policy is separate) and, against same-uid agents, is trustworthy only
+once credential read protection (CW-20261001-0263) lands.
+
+Derived or renamed consumers:
+
+- Policy: `identity.PolicyPrincipalFrom(ctx)` is the Principal contract for the
+  policy library; its `verified` becomes Cedar `principal.verified`. No
+  verified principal yields the anonymous principal (`verified: false`).
+- Audit: `identity_audit.verified` (migration 0068) records the flag for every
+  row; missing, invalid and unavailable credentials are 0, pre-0068 rows are 0.
+- `callcontext.Snapshot.Verified` and `/auth/context` carry the same flag. The
+  former session-row meaning is renamed `session_resolved`.
+- `teamsvc.Principal.Verified` is copied from it by `teamruntime.Principals`.
+  `LocalOperator` stays a separate, stronger Unix-socket proof and mode
+  `enforce` is still required before teams grant authority.
+- `RoutingReplyRequest.Verified` is the flag of the request principal.
+
+**RK-044 closure criteria:** the flag is defined once and tested for operator,
+session, device, service and anonymous; every policy request and decision log
+row carries it. RK-044 closes when the policy library (CW-20261010-0024)
+populates `principal.verified` from `PolicyPrincipalFrom` and its shadow
+decisions log it, and CW-20261001-0263 is in place.
+
 ## Principals and credentials
 
 The `principals` table holds token rows: a unique row id and a non-unique
@@ -156,9 +190,17 @@ The client library's credential options have their own task/PR and require a
 lead-chosen release before consumers adopt them. No token introspection endpoint
 is required.
 
-The remote listener now enforces device route scopes and namespaces launch,
-resume, routing-reply and team idempotency keys by the verified device id.
-Local keys and local authorization retain their existing behavior. Remaining
+The remote listener now enforces device route scopes. Idempotency keys are
+scoped per caller (CW-20261010-0263, migration 0067): launch and resume keys
+are stored as sent under the verified principal (the device id on the remote
+listener); routing-reply keys are unique per (parent, actor, key) and team keys
+per (principal, verb, key). Rows from before the upgrade are kept as principal
+`legacy` for audit and are never matched, so a retry of a pre-upgrade key (and
+of an in-flight remote `device_v1_<hash>` key) creates a new session. The
+migration is one-way; back up the state DB first. Observe-mode behaviours are
+retained: unverified local callers share one `anonymous` key space, and a reply
+without a verified principal still takes its actor from `?as=`. Local
+authorization is unchanged. Remaining
 phase-2 work covers message `from` stamping, mailbox ownership, AI caller
 stamping and launch-plan read restrictions. Phase 2 must also reconcile the operator messaging address
 `msg://user/local/me` with its stable principal identity. Phase 3 covers live enforcement rollout and consumer adoption.
@@ -169,6 +211,8 @@ relaunch when enforcement is enabled. Interactive agents get a distinct
 interactive principal, not the operator credential.
 
 ## Cutover
+
+The stepwise procedure, switch, rollback and GO record are in [identity-enforce-runbook.md](identity-enforce-runbook.md).
 
 No install, live token creation, restart or mode change is performed by this
 change. Chrispian owns cutover. Back up the state database first, keep default
@@ -207,3 +251,45 @@ Remote device use writes its audit and metadata transactionally before dispatch;
 an audit failure returns 503. Device revocation cancels requests and open streams
 by the current authenticated credential, independently of `as`, `from` or labels.
 See [device pairing](device-pairing.md) for lifetimes and scope policy.
+
+## Server-stamped sender and `?as=` verification
+
+CW-20261010-0262. For a request that carries a verified principal, POST
+`/messages`, `/messages/notify` and `/messages/request` stamp `from` and check
+`?as=` on every `/messages` route against the principal's address set (its ID
+plus `addresses`; a device with none sends as `msg://service/device/<id>`).
+A principal holding `message.send_as`, or `*` (the operator), may use any
+address.
+
+| Case | observe | enforce |
+|---|---|---|
+| `from` absent | stamped from the principal | same |
+| `from` in the address set | kept | same |
+| `from` outside it | kept, marked `from_unverified` | 403 |
+| `?as=` outside it | served, audited `as_unverified` | 403 |
+
+Stamped envelopes carry metadata `from_verification` (`stamped`, `verified` or
+`unverified`), `from_principal`, and `from_unverified: "true"` when unverified.
+The daemon removes any caller-supplied copy of these keys, so a receiver can
+trust them; an envelope without them came from a request with no verified
+principal. Findings are recorded in `identity_audit.event` (`from_unverified`,
+`from_refused`, `as_unverified`, `as_refused`). Enforce is selected only by
+`identity.mode`; nothing here turns it on.
+
+### Group and legacy broker routes
+
+The same address-set rule covers `/groups/...`, `/mentions` and `/broker/...`
+for a verified principal. A missing `by`, `member`, `as`, `from`,
+`last_updated_by` (groups) or `sender` (broker) is stamped from the principal.
+A supplied one outside its address set is recorded in `identity_audit.event`
+(`from_unverified`/`as_unverified`) under observe and refused with 403 under
+enforce (`from_refused`/`as_refused`). Group and broker envelopes carry no
+metadata, so there is no `from_unverified` marker on them; the audit row is the
+record. A broker reply is authored as the original's recipient, so the replier
+must hold that address. Free-form broker sender strings that are not in the
+principal's address set are refused under enforce.
+
+A device principal's ID (`msg://device/<id>`) is not a messaging address; a
+routed reply from a device is attributed to its stamped sender
+(`msg://service/device/<id>`) while the authenticated device remains the actor
+that scopes idempotency keys.

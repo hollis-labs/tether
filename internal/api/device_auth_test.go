@@ -144,7 +144,7 @@ func TestDevicePairingHTTPUnixAndRemoteLifecycle(t *testing.T) {
 func TestDeviceAuthRequiresAcceptedUnixOperatorAndBoundsExchange(t *testing.T) {
 	_, _, _, router := deviceAuthFixture(t)
 	// Even a valid operator on an ordinary local TCP connection cannot mint.
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator", Scopes: []string{"*"}})
 	r := httptest.NewRequest("POST", "/auth/pair", bytes.NewBufferString(`{"scopes":["read"]}`)).WithContext(ctx)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)

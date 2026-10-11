@@ -183,7 +183,7 @@ func TestCompletionFailurePreservesRetryableSession(t *testing.T) {
 	if _, err = port.Launch(ctx, req); err == nil {
 		t.Fatal("completion failure ignored")
 	}
-	record, err := db.GetSessionIdempotency(testSessionKey(t, port, req.IntentKey))
+	record, err := db.GetSessionIdempotency(store.IdempotencyPrincipalTeam, testSessionKey(t, port, req.IntentKey))
 	check(t, err)
 	row, err := db.GetSession(record.SessionID)
 	check(t, err)
@@ -274,7 +274,7 @@ func TestSessionKeyConflictIsPermanent(t *testing.T) {
 	port, _, _, req := sessionFixture(t, db, s, reg, "collision")
 	receipt, err := port.reserve(ctx, "session", req.IntentKey, req)
 	check(t, err)
-	check(t, db.CreateSessionKeyed(store.SessionRow{ID: "foreign", State: "created"}, nil, &store.SessionIdempotency{Key: sessionKey(receipt.nonce), Operation: store.IdempotencyOpCreate, RequestDigest: "other"}))
+	check(t, db.CreateSessionKeyed(store.SessionRow{ID: "foreign", State: "created"}, nil, &store.SessionIdempotency{PrincipalID: store.IdempotencyPrincipalTeam, Key: sessionKey(receipt.nonce), Operation: store.IdempotencyOpCreate, RequestDigest: "other"}))
 	port.service = conflictingSessions{}
 	if _, err = port.Launch(ctx, req); !errors.Is(err, teams.ErrProvisionFailed) || !errors.Is(err, teamhost.ErrPermanent) || !errors.Is(err, store.ErrIdempotencyConflict) {
 		t.Fatal("collision remains retryable", err)

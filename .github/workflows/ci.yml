@@ -30,12 +30,15 @@ jobs:
     runs-on: ubuntu-latest
     # Allow the 25-minute per-package test budget plus tool setup, compilation
     # and remaining quality checks; the job must not cancel before tests report.
-    timeout-minutes: 35
+    timeout-minutes: 55
     env:
-      # The app package's race/coverage baseline takes almost 20 minutes.
+      # The app package's race/coverage run exceeded 25 minutes once the identity
+      # work landed (CI timed out at 25m00s with no failing test). Raised to 40m
+      # as a stopgap; the durable fix is to give internal/app its own job like store.
+      # It used to take almost 20 minutes.
       # Keep room for its admission regressions without changing the separate
       # store job's 20-minute budget or this job's overall 35-minute bound.
-      TEST_TIMEOUT: 25m
+      TEST_TIMEOUT: 40m
       # hollis-labs/go-messaging and hollis-labs/go-providers are private.
       # GOPRIVATE skips the proxy and sum database for these modules.
       # GONOSUMDB is the correct env var name (GONOSUMCHECK does not exist).

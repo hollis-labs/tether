@@ -76,9 +76,9 @@ func (s *Server) registerBrokerRoutes(router *http.ServeMux) {
 	if s.Broker == nil {
 		return
 	}
-	router.HandleFunc("/broker/envelopes", s.handleEnvelopesCollection)
-	router.HandleFunc("/broker/envelopes/", s.handleEnvelopesItem)
-	router.HandleFunc("/broker/requests", s.handleBrokerRequests)
+	router.HandleFunc("/broker/envelopes", s.guardAs(s.handleEnvelopesCollection))
+	router.HandleFunc("/broker/envelopes/", s.guardAs(s.handleEnvelopesItem))
+	router.HandleFunc("/broker/requests", s.guardAs(s.handleBrokerRequests))
 }
 
 func (s *Server) handleEnvelopesCollection(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +131,9 @@ func (s *Server) handleCreateEnvelope(w http.ResponseWriter, r *http.Request) {
 	var req EnvelopeCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if !s.stampBrokerSender(w, r, &req) {
 		return
 	}
 	e, err := broker.NewOperations(s.Broker).Create(r.Context(), broker.CreateRequest(req))
@@ -253,6 +256,11 @@ func (s *Server) handleReplyEnvelope(w http.ResponseWriter, r *http.Request, id 
 		}
 	}
 
+	// The reply is authored as the original's recipient; only that address's
+	// holder may send it.
+	if !s.verifyClaim(w, r, original.Recipient, eventFromUnverified, eventFromRefused, "the reply sender") {
+		return
+	}
 	reply, err := operation.Reply(r.Context(), *original, broker.CreateRequest(req))
 	if err != nil {
 		writeBrokerOperationError(w, err)
@@ -292,6 +300,9 @@ func (s *Server) handleBrokerRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.stampBrokerSender(w, r, &req) {
+		return
+	}
 	operation := broker.NewOperations(s.Broker)
 	e, err := operation.Request(r.Context(), broker.CreateRequest(req))
 	if err != nil {
@@ -326,4 +337,13 @@ func writeBrokerOperationError(w http.ResponseWriter, err error) {
 		}
 	}
 	writeError(w, status, code, message)
+}
+
+// stampBrokerSender applies the server-stamped sender rule to the legacy
+// broker: a verified principal's missing sender is filled from its address, a
+// supplied one is checked against its address set. Broker envelopes carry no
+// metadata, so observe records the finding in identity_audit only.
+func (s *Server) stampBrokerSender(w http.ResponseWriter, r *http.Request, req *EnvelopeCreateRequest) bool {
+	req.Sender = stampedActor(r, req.Sender)
+	return s.verifyClaim(w, r, req.Sender, eventFromUnverified, eventFromRefused, "sender")
 }

@@ -163,6 +163,8 @@ type Service struct {
 	interrupter turnInterrupter
 	// ReplyAuthorization is the reply caller-identity hook; nil is observe mode.
 	ReplyAuthorization ReplyAuthorization
+	// DeliveryAuthorization gates GET /messages/{reply_id}/delivery; nil is observe mode.
+	DeliveryAuthorization DeliveryAuthorization
 }
 
 // New constructs a Service rooted at catalogRoot. Reads + validates the

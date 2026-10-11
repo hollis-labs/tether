@@ -21,13 +21,22 @@ import (
 // written its own checkpoint must still replay, not conflict because the
 // resolver would now pick a newer parent.
 
-// idempotencyLocks serializes requests for one key within the daemon, the
-// single writer for its state DB (ADR 0035). The primary key on
+// idempotencyLocks serializes requests for one (principal, key) within the
+// daemon, the single writer for its state DB (ADR 0035). The primary key on
 // session_idempotency is the backstop.
-var idempotencyLocks sync.Map // key -> *sync.Mutex
+var idempotencyLocks sync.Map // principal + NUL + key -> *sync.Mutex
 
-func (s *Service) lockIdempotencyKey(key string) func() {
-	mu, _ := idempotencyLocks.LoadOrStore(key, &sync.Mutex{})
+// idempotencyPrincipal is the principal a key is scoped to. A caller the API
+// could not authenticate shares the anonymous space (CW-20261010-0263).
+func idempotencyPrincipal(principal string) string {
+	if principal == "" {
+		return store.IdempotencyPrincipalAnonymous
+	}
+	return principal
+}
+
+func (s *Service) lockIdempotencyKey(principal, key string) func() {
+	mu, _ := idempotencyLocks.LoadOrStore(principal+"\x00"+key, &sync.Mutex{})
 	m := mu.(*sync.Mutex)
 	m.Lock()
 	return m.Unlock
@@ -75,10 +84,11 @@ func requestDigest(v any) string {
 // createKeyed is the keyed create: under the key's lock, replay the bound
 // session or build a plan and create one bound to the key in the same
 // transaction as its row.
-func (s *Service) createKeyed(key, digest string, build func() (*launch.Plan, error)) (*Launched, error) {
-	unlock := s.lockIdempotencyKey(key)
+func (s *Service) createKeyed(principal, key, digest string, build func() (*launch.Plan, error)) (*Launched, error) {
+	principal = idempotencyPrincipal(principal)
+	unlock := s.lockIdempotencyKey(principal, key)
 	defer unlock()
-	if launched, err := s.replayIfKeyed(key, store.IdempotencyOpCreate, digest); launched != nil || err != nil {
+	if launched, err := s.replayIfKeyed(principal, key, store.IdempotencyOpCreate, digest); launched != nil || err != nil {
 		return launched, err
 	}
 	plan, err := build()
@@ -86,15 +96,15 @@ func (s *Service) createKeyed(key, digest string, build func() (*launch.Plan, er
 		return nil, err
 	}
 	return s.createSessionFromPlan(plan, &store.SessionIdempotency{
-		Key: key, Operation: store.IdempotencyOpCreate, RequestDigest: digest,
+		PrincipalID: principal, Key: key, Operation: store.IdempotencyOpCreate, RequestDigest: digest,
 	})
 }
 
-// replayIfKeyed returns the session key is bound to when the stored request
+// replayIfKeyed returns the session principal's key is bound to when the stored request
 // matches (op, digest), ErrIdempotencyConflict when it does not, and
 // (nil, nil) when the key is new. The caller must hold the key's lock.
-func (s *Service) replayIfKeyed(key, op, digest string) (*Launched, error) {
-	rec, err := s.Store.GetSessionIdempotency(key)
+func (s *Service) replayIfKeyed(principal, key, op, digest string) (*Launched, error) {
+	rec, err := s.Store.GetSessionIdempotency(principal, key)
 	if err != nil {
 		return nil, fmt.Errorf("look up idempotency key: %w", err)
 	}

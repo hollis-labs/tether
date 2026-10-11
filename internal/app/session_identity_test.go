@@ -68,7 +68,7 @@ func TestSessionCredentialLaunchAndTerminalRevocation(t *testing.T) {
 }
 func testSessionCredentialLaunchAndTerminalRevocation(t *testing.T, brand string) {
 	svc, rt, id, ws := credentialLaunch(t, brand)
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "parent", Scopes: []string{"session.write"}})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "parent", Scopes: []string{"session.write"}})
 	launched, err := svc.LaunchSessionWithContext(ctx, id)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func testSessionCredentialLaunchAndTerminalRevocation(t *testing.T, brand string
 	if err != nil {
 		t.Fatal("runtime credential not verified", err)
 	}
-	if p.SessionID != id || p.CreatedBy != "parent" || !slices.Equal(p.Scopes, []string{"session.write"}) || !slices.Equal(p.Addresses, []string{"msg://session/local/" + id}) {
+	if p.SessionID != id || p.CreatedBy != "parent" || !slices.Equal(p.Scopes, []string{"session.write"}) || !slices.Equal(p.Addresses, []string{"msg://session/local/" + id, "msg://agent/agent-mux/agent"}) {
 		t.Fatal("wrong session credential provenance or grants")
 	}
 	if launched.Plan.Env["TETHER_TOKEN"] != "parent-credential" {
@@ -320,5 +320,24 @@ func TestSessionCredentialConcurrentLaunchKeepsWinner(t *testing.T) {
 	defer svc.launchMu.Unlock()
 	if len(svc.launches) != 0 {
 		t.Fatal("completed launch guard retained session")
+	}
+}
+
+func TestSessionCredentialAddressSetIncludesTheLogicalAgent(t *testing.T) {
+	svc, _, id, _ := credentialLaunch(t)
+	token, err := svc.mintSessionCredential(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := identity.NewStore(svc.Store.DB()).Verify(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, agent := "msg://session/local/"+id, "msg://agent/agent-mux/agent"
+	if len(p.Addresses) != 2 || p.Addresses[0] != session || p.Addresses[1] != agent {
+		t.Fatalf("addresses = %v", p.Addresses)
+	}
+	if !p.MayActAs(agent) || !p.MayActAs(session) || p.MayActAs("msg://agent/agent-mux/other") {
+		t.Fatalf("address set wrong for %+v", p)
 	}
 }

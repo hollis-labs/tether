@@ -12,8 +12,11 @@ import (
 const LocalOperator mesh.URN = "msg://user/local/operator"
 
 type Principal struct {
-	ID            mesh.URN
-	Kind          mesh.ActorKind
+	ID   mesh.URN
+	Kind mesh.ActorKind
+	// Verified is identity.Principal.Verified, copied by the host adapter.
+	// LocalOperator is a different, stronger proof (Unix-socket peer) and is
+	// why the operator may act without a bearer on that path.
 	Verified      bool
 	LocalOperator bool
 }

@@ -79,7 +79,7 @@ func TestPrincipalsRefuseAssertionsObserveAndAcceptVerifiedThroughService(t *tes
 	}
 }
 func TestLocalOperatorNeedsVerifiedCredentialAndAcceptedUnixSocket(t *testing.T) {
-	principal := identity.Principal{ID: identity.OperatorID, Kind: "operator"}
+	principal := identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "operator"}
 	resolver := Principals{Mode: identity.Enforce}
 	verified := identity.WithPrincipal(ctx, principal)
 	if _, err := resolver.ResolvePrincipal(verified); !errors.Is(err, teamsvc.ErrUnauthenticated) {
@@ -99,7 +99,7 @@ func TestLocalOperatorNeedsVerifiedCredentialAndAcceptedUnixSocket(t *testing.T)
 	connection := <-accepted
 	defer connection.Close()
 	local := identity.ConnectionContext(ctx, connection)
-	wrong := identity.WithPrincipal(local, identity.Principal{ID: "msg://user/local/mallory", Kind: "operator"})
+	wrong := identity.WithPrincipal(local, identity.Principal{Verified: true, ID: "msg://user/local/mallory", Kind: "operator"})
 	if _, err = resolver.ResolvePrincipal(wrong); !errors.Is(err, teamsvc.ErrUnauthenticated) {
 		t.Fatal("operator kind with arbitrary ID accepted", err)
 	}
@@ -133,7 +133,7 @@ func TestLocalOperatorNeedsVerifiedCredentialAndAcceptedUnixSocket(t *testing.T)
 	if !out.LocalOperator || !out.Verified || out.ID != teamsvc.LocalOperator {
 		t.Fatal("authenticated local operator absent", out)
 	}
-	spoof := identity.WithPrincipal(local, identity.Principal{ID: identity.OperatorID, Kind: "interactive"})
+	spoof := identity.WithPrincipal(local, identity.Principal{Verified: true, ID: identity.OperatorID, Kind: "interactive"})
 	if out, err = resolver.ResolvePrincipal(spoof); err == nil && out.LocalOperator {
 		t.Fatal("reserved URN gained operator by name")
 	}
@@ -144,7 +144,7 @@ func TestVerifiedSessionUsesOnlyItsRetainedActorAndBinding(t *testing.T) {
 	id, err := port.Launch(ctx, req)
 	check(t, err)
 	resolver := Principals{Mode: identity.Enforce, Sessions: e}
-	principal := identity.Principal{ID: "msg://session/local/" + id, Kind: "session", SessionID: id}
+	principal := identity.Principal{Verified: true, ID: "msg://session/local/" + id, Kind: "session", SessionID: id}
 	out, err := resolver.ResolvePrincipal(identity.WithPrincipal(ctx, principal))
 	check(t, err)
 	if out.ID != req.Actor || !out.Verified {

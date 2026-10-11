@@ -1642,9 +1642,10 @@ can echo argument fragments. Configured credentials are scrubbed before its
 4 KiB limit and from caller-facing error text. Recorded tool names are capped
 at 256 UTF-8 bytes with a hash suffix; dispatch uses the original name.
 
-Daemon-resolved operator/service principal ID, kind and source remain recorded
-with `verified:false`; session, agent and workstream fields require verified
-session binding. Anonymous callers acquire no attribution. Strict `/mcp`
+Daemon-resolved operator/service principal ID, kind and source are recorded
+with `verified:true` (the bearer-credential flag, any principal kind) and
+`session_resolved` absent; session, agent and workstream fields require
+`session_resolved:true`, a session principal whose row exists. Anonymous callers acquire no attribution. Strict `/mcp`
 admission rejects anonymous calls before observation.
 
 Byte sizes use canonical JSON; nil or empty arguments measure zero.

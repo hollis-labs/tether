@@ -48,14 +48,14 @@ func (s *Server) registerMessageRoutes(router *http.ServeMux) {
 	if s.MessageStore == nil {
 		return
 	}
-	router.HandleFunc("/messages", s.handleMessagesCollection)
-	router.HandleFunc("/messages/notify", s.handleMessageNotify)
-	router.HandleFunc("/messages/request", s.handleMessageRequest)
-	router.HandleFunc("/messages/subscribe", s.handleMessagesSubscribe)
-	router.HandleFunc("/messages/inbox", s.handleMessagesInbox)
-	router.HandleFunc("/messages/list", s.handleMessagesList)
-	router.HandleFunc("/messages/thread/", s.handleMessagesThread)
-	router.HandleFunc("/messages/", s.handleMessagesItem)
+	router.HandleFunc("/messages", s.guardAs(s.handleMessagesCollection))
+	router.HandleFunc("/messages/notify", s.guardAs(s.handleMessageNotify))
+	router.HandleFunc("/messages/request", s.guardAs(s.handleMessageRequest))
+	router.HandleFunc("/messages/subscribe", s.guardAs(s.handleMessagesSubscribe))
+	router.HandleFunc("/messages/inbox", s.guardAs(s.handleMessagesInbox))
+	router.HandleFunc("/messages/list", s.guardAs(s.handleMessagesList))
+	router.HandleFunc("/messages/thread/", s.guardAs(s.handleMessagesThread))
+	router.HandleFunc("/messages/", s.guardAs(s.handleMessagesItem))
 }
 
 type messageNotifyRequest struct {
@@ -138,6 +138,11 @@ func (s *Server) handleMessageNotify(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("invalid kind %q; valid: request, response, notice, status_update, handoff, escalation", req.Kind))
 		return
 	}
+	envMeta := messaging.Envelope{From: req.From, Metadata: req.Metadata}
+	if !s.stampSender(w, r, &envMeta) {
+		return
+	}
+	req.From, req.Metadata = envMeta.From, envMeta.Metadata
 	if req.From.IsZero() || req.To.IsZero() {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "from and to are required")
 		return
@@ -474,6 +479,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request) {
 	env.CreatedAt = time.Time{}
 	env.DeliveredAt = nil
 	env.ConsumedAt = nil
+	if !s.stampSender(w, r, &env) {
+		return
+	}
 
 	// A reply to a message a session routed to a channel goes to that session
 	// as its next turn (CW-20261002-0065); other in_reply_to use is unchanged.
@@ -1065,6 +1073,9 @@ func (s *Server) handleMessageRequest(w http.ResponseWriter, r *http.Request) {
 	var env messaging.Envelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "invalid body: "+err.Error())
+		return
+	}
+	if !s.stampSender(w, r, &env) {
 		return
 	}
 

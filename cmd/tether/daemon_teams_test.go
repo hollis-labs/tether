@@ -326,7 +326,7 @@ func TestDaemonTeamsFormationRefusedBeforeDefinitionEnrollmentOrSessionEffects(t
 	}
 	def := daemonTeamDefinition()
 	teamRequire(t, teams.Validate(def))
-	principal := identity.Principal{ID: string(daemonTeamCaller), Kind: "service"}
+	principal := identity.Principal{ID: string(daemonTeamCaller), Kind: "service", Verified: true}
 	_, err = f.ops.Form(identity.WithPrincipal(context.Background(), principal), teamsvc.FormRequest{Key: "valid-form", Team: def})
 	if !errors.Is(err, teamsvc.ErrDenied) {
 		t.Fatalf("production formation not denied: %v", err)

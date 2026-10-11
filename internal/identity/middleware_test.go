@@ -189,3 +189,82 @@ type stubScopeVerifier struct{ p identity.Principal }
 func (v stubScopeVerifier) Verify(context.Context, string) (identity.Principal, error) {
 	return v.p, nil
 }
+
+// TestVerifiedFlagReachesPolicyPrincipalAndAudit covers acceptance 2 and 3 of
+// CW-20261010-0264: each principal kind is verified in the policy principal and
+// in the persisted decision-log row, and anonymous or invalid callers are not.
+func TestVerifiedFlagReachesPolicyPrincipalAndAudit(t *testing.T) {
+	s, db := identityStore(t)
+	principals := map[string]identity.Principal{
+		"op": {ID: identity.OperatorID, Kind: "operator"}, "sess": {ID: "session:A", Kind: "session", SessionID: "A"},
+		"dev": {ID: "device:d", Kind: "device"}, "svc": {ID: "svc", Kind: "service"},
+	}
+	verify := verifierFunc(func(_ context.Context, token string) (identity.Principal, error) {
+		if p, ok := principals[token]; ok {
+			return p, nil
+		}
+		return identity.Principal{}, identity.ErrInvalidToken
+	})
+	for _, tc := range []struct {
+		name, token string
+		want        bool
+	}{{"operator", "op", true}, {"session", "sess", true}, {"device", "dev", true}, {"service", "svc", true}, {"invalid", "nope", false}, {"anonymous", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := "/r-" + tc.name
+			var policy identity.PolicyPrincipal
+			h := identity.Middleware(identity.Observe, verify, s.RecordObservation, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				policy = identity.PolicyPrincipalFrom(r.Context())
+			}))
+			req := httptest.NewRequest(http.MethodGet, route, nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			if policy.Verified != tc.want {
+				t.Fatalf("policy principal = %+v", policy)
+			}
+			if tc.token == "" {
+				return // anonymous traffic is deliberately not audited
+			}
+			var audited bool
+			if err := db.DB().QueryRow(`SELECT verified FROM identity_audit WHERE route = ?`, route).Scan(&audited); err != nil || audited != tc.want {
+				t.Fatalf("audit verified = %v, %v", audited, err)
+			}
+		})
+	}
+}
+
+// The scope observer must see the same principal the request context carries,
+// verified, so policy and audit agree (CW-20261010-0264 review).
+func TestScopeObserverReceivesAuthenticatedVerifiedPrincipal(t *testing.T) {
+	verify := verifierFunc(func(context.Context, string) (identity.Principal, error) {
+		return identity.Principal{ID: "svc", Kind: "service"}, nil
+	})
+	var seen identity.Principal
+	scopes := identity.ScopePolicy{Observe: func(r *http.Request, p identity.Principal) identity.ScopeObservation {
+		seen = p
+		if ctxP, ok := identity.FromContext(r.Context()); !ok || ctxP.Verified != p.Verified {
+			t.Fatalf("observer principal %+v differs from context %+v", p, ctxP)
+		}
+		return identity.ScopeObservation{}
+	}}
+	h := identity.MiddlewareWithScopes(identity.Observe, verify, nil, scopes, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !seen.Verified {
+		t.Fatalf("observer saw unverified principal: %+v", seen)
+	}
+}
+
+func TestStoreVerifyReturnsVerifiedPrincipal(t *testing.T) {
+	s, _ := identityStore(t)
+	token, err := s.Mint(context.Background(), identity.Principal{ID: "svc", Kind: "service", Scopes: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Verify(context.Background(), token)
+	if err != nil || !p.Verified {
+		t.Fatalf("Verify = %+v, %v", p, err)
+	}
+}

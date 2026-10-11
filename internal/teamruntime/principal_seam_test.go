@@ -28,7 +28,7 @@ func TestPrincipalRefusalPrecedesEnrollmentSessionLookup(t *testing.T) {
 	if _, err := resolver.ResolvePrincipal(context.Background()); !errors.Is(err, teamsvc.ErrUnauthenticated) {
 		t.Fatal("missing identity admitted", err)
 	}
-	verified := identity.WithPrincipal(ctx, identity.Principal{ID: "msg://session/local/authenticated", Kind: "session", SessionID: "authenticated"})
+	verified := identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "msg://session/local/authenticated", Kind: "session", SessionID: "authenticated"})
 	resolver.Mode = identity.Observe
 	if _, err := resolver.ResolvePrincipal(verified); !errors.Is(err, teamsvc.ErrUnauthenticated) {
 		t.Fatal("observe attributed identity admitted", err)

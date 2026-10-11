@@ -29,7 +29,7 @@ func TestLaunchAndResumeCarryVerifiedPrincipal(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			svc := &contextualLaunchService{fakeLaunchService: &fakeLaunchService{launchRes: LaunchResult{SessionID: "s"}, resumeRes: LaunchResult{SessionID: "s"}}}
 			req := httptest.NewRequest(http.MethodPost, path, nil)
-			req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{ID: "verified-parent"}))
+			req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{Verified: true, ID: "verified-parent"}))
 			rr := httptest.NewRecorder()
 			newCheckpointTestHandler(svc, &fakeCheckpoints{}).ServeHTTP(rr, req)
 			if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {

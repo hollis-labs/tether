@@ -37,12 +37,16 @@ func (f *fakeReplies) SubmitRoutingReply(ctx context.Context, req RoutingReplyRe
 	}
 	id := "reply-1"
 	if f.db != nil {
-		caller, err := messaging.ParseURN(req.Caller.ID)
+		sender := req.Sender
+		if sender == "" {
+			sender = req.Caller.ID
+		}
+		caller, err := messaging.ParseURN(sender)
 		if err != nil {
 			return RoutingReplyReceipt{}, err
 		}
 		reply, _, err := f.db.CreateRoutingReply(ctx, store.NewRoutingReply{From: caller, ParentID: req.ParentID, Body: req.Body,
-			TargetSessionID: "s1", Actor: caller.URN()})
+			TargetSessionID: "s1", Actor: caller.URN(), Metadata: req.Metadata})
 		if err != nil {
 			return RoutingReplyReceipt{}, err
 		}
@@ -121,7 +125,7 @@ func TestReplyEndpointPrefersTheVerifiedPrincipalOverAs(t *testing.T) {
 	svc := &fakeReplies{}
 	h, db := replyServer(t, svc)
 	parent := routedMessage(t, db)
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://user/local/verified", Kind: "user"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "msg://user/local/verified", Kind: "user"})
 	w := postAs(ctx, h, "/messages/"+parent.ID+"/reply?as=msg://user/local/spoofed", map[string]any{"body": "x"}, nil)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status %d %s", w.Code, w.Body)

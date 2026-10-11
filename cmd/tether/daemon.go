@@ -29,6 +29,7 @@ import (
 	"github.com/hollis-labs/tether/internal/api"
 	"github.com/hollis-labs/tether/internal/apikeyhelper"
 	"github.com/hollis-labs/tether/internal/app"
+	"github.com/hollis-labs/tether/internal/app/turnrouting"
 	"github.com/hollis-labs/tether/internal/broker"
 	"github.com/hollis-labs/tether/internal/client"
 	"github.com/hollis-labs/tether/internal/config"
@@ -239,7 +240,7 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
-		if err := identity.ValidateBind(cfg.ListenAddr, cfg.IdentityMode); err != nil {
+		if err := cfg.ValidateListenerBind(false); err != nil {
 			_ = closeService()
 			return err
 		}
@@ -266,11 +267,11 @@ var daemonRunCmd = &cobra.Command{
 		stateRoot := filepath.Dir(config.Expand(catalogPath))
 		var identities *identity.Store
 		operatorDegraded := false
-		if cfg.IdentityMode != identity.Off || cfg.RemoteListener.Enabled {
+		if cfg.StrictestIdentityMode() != identity.Off || cfg.RemoteListener.Enabled {
 			identities = identity.NewStore(svc.Store.DB())
 		}
-		if cfg.IdentityMode != identity.Off {
-			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), cfg.IdentityMode)
+		if strictest := cfg.StrictestIdentityMode(); strictest != identity.Off {
+			operatorDegraded, err = bootstrapOperator(ctx, identities, filepath.Join(stateRoot, "run", "operator.token"), strictest)
 			if err != nil {
 				_ = closeService()
 				return err
@@ -375,6 +376,14 @@ var daemonRunCmd = &cobra.Command{
 			server.MCP = mcpHandler
 			server.MCPShutdown = mcpHandler.Close
 			server.MCPDrain = mcpHandler.Drain
+		}
+
+		// Reply, delivery and channel-publication authorization follow the
+		// local_api point (CW-20261010-0266). Observe records would-deny
+		// findings; only an explicit enforce refuses. The turn router is the one
+		// explicitly authorized internal publisher.
+		if identities != nil {
+			svc.InstallIdentityPolicy(app.NewIdentityPolicy(cfg.IdentityModeFor("local_api"), server.RecordIdentityObservation, turnrouting.ServiceURN))
 		}
 
 		return runDaemonServer(server, ctx)
@@ -866,16 +875,17 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 
 func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
 	l, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
-		LaunchID:           in.LaunchID,
-		BootPromptOverride: in.BootPromptOverride,
-		AgentFile:          in.AgentFile,
-		AgentInline:        in.AgentInline,
-		BootProfileFile:    in.BootProfileFile,
-		Override:           in.Override,
-		BootPromptAppend:   in.PromptAppend,
-		Route:              in.Route,
-		Injection:          in.Injection,
-		IdempotencyKey:     in.IdempotencyKey,
+		LaunchID:             in.LaunchID,
+		BootPromptOverride:   in.BootPromptOverride,
+		AgentFile:            in.AgentFile,
+		AgentInline:          in.AgentInline,
+		BootProfileFile:      in.BootProfileFile,
+		Override:             in.Override,
+		BootPromptAppend:     in.PromptAppend,
+		Route:                in.Route,
+		Injection:            in.Injection,
+		IdempotencyKey:       in.IdempotencyKey,
+		IdempotencyPrincipal: in.IdempotencyPrincipal,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err
@@ -1231,6 +1241,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		Modules:         profile,
 		TeamsEnabled:    profile.Enabled(environment.Teams),
 		IdentityMode:    mode,
+		IdentityPoints:  identityPointModes(cat.Global.Identity),
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),
 		ShutdownTimeout: timeout,
@@ -1369,4 +1380,16 @@ func mapHuggingFaceExt(ext *config.ProviderExtensions) *llmopenai.HuggingFaceExt
 	return &llmopenai.HuggingFaceExtension{
 		BillTo: ext.HuggingFace.BillTo,
 	}
+}
+
+// identityPointModes resolves identity.points overrides; unknown point names
+// are ignored here and flagged by doctor.
+func identityPointModes(c config.IdentityConfig) map[string]identity.Mode {
+	out := map[string]identity.Mode{}
+	for _, p := range config.IdentityPoints {
+		if _, set := c.Points[p]; set {
+			out[p] = identity.Mode(c.ModeFor(p))
+		}
+	}
+	return out
 }
