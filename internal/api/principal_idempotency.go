@@ -2,30 +2,31 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
-// Local callers retain the existing namespace. Remote keys bind to the actual
-// verified device, never a label, caller-selected from/as, address or header.
-// Framed JSON prevents concatenation ambiguity; hashing bounds arbitrary keys
-// without persisting the credential or exposing it to the launch service.
-func principalIdempotencyKey(ctx context.Context, key string) (string, error) {
-	if !identity.IsRemote(ctx) {
-		return key, nil
-	}
+// idempotencyPrincipal is the principal an idempotency key is scoped to
+// (CW-20261010-0263). The key itself is stored as the client sent it; the
+// scope is the second half of the store's primary key, so one caller's keys
+// can neither collide with nor replay another's.
+//
+// A remote key binds to the actual verified device, never a label,
+// caller-selected from/as, address or header. A local caller binds to its
+// verified principal. A local caller with no verified principal (observe mode
+// admits them) yields "", which the service scopes to the shared anonymous
+// space, exactly as before.
+func idempotencyPrincipal(ctx context.Context) (string, error) {
 	p, ok := identity.FromContext(ctx)
+	if !identity.IsRemote(ctx) {
+		if !ok {
+			return "", nil
+		}
+		return p.ID, nil
+	}
 	if !ok || p.Kind != "device" || p.ID == "" || p.ID == identity.OperatorID {
 		return "", errors.New("verified device required")
 	}
-	if key == "" {
-		return "", nil
-	}
-	data, _ := json.Marshal([2]string{p.ID, key})
-	sum := sha256.Sum256(data)
-	return "device_v1_" + hex.EncodeToString(sum[:]), nil
+	return p.ID, nil
 }

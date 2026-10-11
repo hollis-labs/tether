@@ -10,7 +10,7 @@ import (
 	"github.com/hollis-labs/tether/internal/teamhost"
 )
 
-const pendingPortQuery = `SELECT port_kind,intent_key,request,ended,binding_ended,sequence FROM team_port_intents WHERE port_kind<>'delivery' AND state IN ('pending','done') AND (state='pending' OR ended<>'' OR binding_ended=1 OR (port_kind='session' AND EXISTS(SELECT 1 FROM session_idempotency k JOIN sessions s ON s.id=k.session_id WHERE k.key='team-port:'||nonce AND s.state='created'))) ORDER BY CASE WHEN sequence>? THEN 0 ELSE 1 END,sequence LIMIT ?`
+const pendingPortQuery = `SELECT port_kind,intent_key,request,ended,binding_ended,sequence FROM team_port_intents WHERE port_kind<>'delivery' AND state IN ('pending','done') AND (state='pending' OR ended<>'' OR binding_ended=1 OR (port_kind='session' AND EXISTS(SELECT 1 FROM session_idempotency k JOIN sessions s ON s.id=k.session_id WHERE k.principal_id='team-runtime' AND k.key='team-port:'||nonce AND s.state='created'))) ORDER BY CASE WHEN sequence>? THEN 0 ELSE 1 END,sequence LIMIT ?`
 
 // Reconciler repairs only committed write-ahead receipts. Construction starts
 // no work; unreceipted namespaced objects belong to other callers.

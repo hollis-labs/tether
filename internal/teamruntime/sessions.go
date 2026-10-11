@@ -139,7 +139,7 @@ func (s *Sessions) cleanup(ctx context.Context, key string) error {
 	if receipt.nonce == "" {
 		return s.cleaned(ctx, "session", key)
 	}
-	record, err := s.sessions.GetSessionIdempotency(sessionKey(receipt.nonce))
+	record, err := s.sessions.GetSessionIdempotency(store.IdempotencyPrincipalTeam, sessionKey(receipt.nonce))
 	if err != nil {
 		return err
 	}

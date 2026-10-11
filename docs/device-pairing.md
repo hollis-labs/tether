@@ -84,9 +84,10 @@ credential. Device request/stream cancellation does not establish child revocati
 These preserved limitations require a separate authority decision. Ordinary
 pairing success does not prove every `operate` execution path is compatible.
 
-Device id namespaces launch/resume body keys and routing-reply/team
-`Idempotency-Key` headers. The verified id is used, never `as`, `from`, display
-name or remote address. Local idempotency behavior is retained.
+Launch/resume body keys are scoped to the verified device id, and routing-reply
+keys are unique per actor. The verified id is used, never `as`, `from`, display
+name or remote address. Remote keys stored before migration 0067 no longer
+replay (see `docs/caller-identity.md`).
 
 ## Lifetime, inspection and revocation
 

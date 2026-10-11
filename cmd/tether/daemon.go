@@ -866,16 +866,17 @@ func (a *serviceAdapter) CreateSessionWithBootPrompt(launchID, bootPrompt string
 
 func (a *serviceAdapter) CreateSessionWithInput(in api.CreateSessionInput) (api.LaunchResult, error) {
 	l, err := a.svc.CreateSessionWithInput(app.CreateSessionInput{
-		LaunchID:           in.LaunchID,
-		BootPromptOverride: in.BootPromptOverride,
-		AgentFile:          in.AgentFile,
-		AgentInline:        in.AgentInline,
-		BootProfileFile:    in.BootProfileFile,
-		Override:           in.Override,
-		BootPromptAppend:   in.PromptAppend,
-		Route:              in.Route,
-		Injection:          in.Injection,
-		IdempotencyKey:     in.IdempotencyKey,
+		LaunchID:             in.LaunchID,
+		BootPromptOverride:   in.BootPromptOverride,
+		AgentFile:            in.AgentFile,
+		AgentInline:          in.AgentInline,
+		BootProfileFile:      in.BootProfileFile,
+		Override:             in.Override,
+		BootPromptAppend:     in.PromptAppend,
+		Route:                in.Route,
+		Injection:            in.Injection,
+		IdempotencyKey:       in.IdempotencyKey,
+		IdempotencyPrincipal: in.IdempotencyPrincipal,
 	})
 	if err != nil {
 		return api.LaunchResult{}, err

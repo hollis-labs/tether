@@ -41,7 +41,7 @@ func replacementStoreRig(t *testing.T) (*codexRig, store.TeamReplacementInput, s
 	if _, err := r.svc.Store.DB().Exec(`UPDATE team_port_intents SET nonce='retained-nonce' WHERE port_kind='session' AND intent_key='retained'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.svc.Store.DB().Exec(`INSERT INTO session_idempotency(key,operation,request_digest,session_id) VALUES('team-port:retained-nonce','create','original-request',?)`, id); err != nil {
+	if _, err := r.svc.Store.DB().Exec(`INSERT INTO session_idempotency(principal_id,key,operation,request_digest,session_id) VALUES('team-runtime','team-port:retained-nonce','create','original-request',?)`, id); err != nil {
 		t.Fatal(err)
 	}
 	row, err := r.svc.Store.GetSession(id)
@@ -203,7 +203,7 @@ func TestTeamReplacementRollsBackAllReferencesOnLateFailure(t *testing.T) {
 	if err != nil || binding.SessionID != in.Source.ID {
 		t.Fatal("binding partially moved", err)
 	}
-	keyed, err := r.svc.Store.GetSessionIdempotency("team-port:retained-nonce")
+	keyed, err := r.svc.Store.GetSessionIdempotency(store.IdempotencyPrincipalTeam, "team-port:retained-nonce")
 	if err != nil || keyed.SessionID != in.Source.ID {
 		t.Fatal("cleanup target partially moved", err)
 	}

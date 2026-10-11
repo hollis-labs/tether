@@ -53,7 +53,7 @@ func TestGoneTeamShimRetirementPreservesAuthorityForReplacement(t *testing.T) {
 	if _, err := r.svc.Store.DB().Exec(`UPDATE team_port_intents SET nonce='gone-retained-nonce' WHERE port_kind='session' AND intent_key='retained'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.svc.Store.DB().Exec(`INSERT INTO session_idempotency(key,operation,request_digest,session_id) VALUES('team-port:gone-retained-nonce','create','original-request',?)`, row.SessionID); err != nil {
+	if _, err := r.svc.Store.DB().Exec(`INSERT INTO session_idempotency(principal_id,key,operation,request_digest,session_id) VALUES('team-runtime','team-port:gone-retained-nonce','create','original-request',?)`, row.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	before, err := r.svc.Registry.CurrentBinding(ctx, actor)

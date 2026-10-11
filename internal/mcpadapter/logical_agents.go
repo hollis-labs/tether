@@ -24,7 +24,7 @@ func (a *Adapter) registerLogicalAgentTools(s *gomcp.Server) {
 		Description: "Resume a logical agent: starts a new session using its most recent checkpoint as the boot context. Requires session.write scope.",
 		InputSchema: gomcp.InputSchema(
 			gomcp.StringProp("logical_agent_id", "Logical agent ID", true),
-			gomcp.StringProp("idempotency_key", "Optional. Makes the resume idempotent: a retry with the same key returns the session the first resume created (replayed=true) instead of starting another. Keys are one global, unauthenticated space; prefix them (e.g. \"myapp/<run>/<step>\").", false),
+			gomcp.StringProp("idempotency_key", "Optional. Makes the resume idempotent: a retry with the same key returns the session the first resume created (replayed=true) instead of starting another. Keys are scoped to the authenticated caller, so another caller's identical key never collides with yours.", false),
 		),
 		Handler: a.handleLogicalAgentResume,
 	}, Writes())

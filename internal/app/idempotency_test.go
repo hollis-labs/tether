@@ -53,14 +53,14 @@ func countSessions(t *testing.T, svc *Service) int {
 func TestCreateKeyed_SameKeyAndRequestReplays(t *testing.T) {
 	svc, _ := idemHarness(t)
 	build := idemPlan(t)
-	first, err := svc.createKeyed("test/k1", "digest-a", build)
+	first, err := svc.createKeyed("p1", "test/k1", "digest-a", build)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.Replayed {
 		t.Fatal("first create reported Replayed")
 	}
-	second, err := svc.createKeyed("test/k1", "digest-a", build)
+	second, err := svc.createKeyed("p1", "test/k1", "digest-a", build)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,10 +75,10 @@ func TestCreateKeyed_SameKeyAndRequestReplays(t *testing.T) {
 func TestCreateKeyed_DifferentRequestConflicts(t *testing.T) {
 	svc, _ := idemHarness(t)
 	build := idemPlan(t)
-	if _, err := svc.createKeyed("test/k1", "digest-a", build); err != nil {
+	if _, err := svc.createKeyed("p1", "test/k1", "digest-a", build); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.createKeyed("test/k1", "digest-b", build); !errors.Is(err, store.ErrIdempotencyConflict) {
+	if _, err := svc.createKeyed("p1", "test/k1", "digest-b", build); !errors.Is(err, store.ErrIdempotencyConflict) {
 		t.Fatalf("err = %v; want ErrIdempotencyConflict", err)
 	}
 	if n := countSessions(t, svc); n != 1 {
@@ -89,10 +89,10 @@ func TestCreateKeyed_DifferentRequestConflicts(t *testing.T) {
 // A key claimed by a create conflicts with a resume, and vice versa.
 func TestReplayIfKeyed_OperationMismatchConflicts(t *testing.T) {
 	svc, _ := idemHarness(t)
-	if _, err := svc.createKeyed("test/k1", resumeRequestDigest("agent"), idemPlan(t)); err != nil {
+	if _, err := svc.createKeyed("p1", "test/k1", resumeRequestDigest("agent"), idemPlan(t)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.replayIfKeyed("test/k1", store.IdempotencyOpResume, resumeRequestDigest("agent")); !errors.Is(err, store.ErrIdempotencyConflict) {
+	if _, err := svc.replayIfKeyed("p1", "test/k1", store.IdempotencyOpResume, resumeRequestDigest("agent")); !errors.Is(err, store.ErrIdempotencyConflict) {
 		t.Fatalf("err = %v; want ErrIdempotencyConflict for a resume on a create key", err)
 	}
 }
@@ -106,13 +106,13 @@ func TestCreateKeyed_FailedCreateReservesNothing(t *testing.T) {
 		p.ProviderID = "no-such-provider"
 		return p, nil
 	}
-	if _, err := svc.createKeyed("test/k1", "digest-a", failing); err == nil {
+	if _, err := svc.createKeyed("p1", "test/k1", "digest-a", failing); err == nil {
 		t.Fatal("create with an unknown provider succeeded")
 	}
-	if rec, err := svc.Store.GetSessionIdempotency("test/k1"); err != nil || rec != nil {
+	if rec, err := svc.Store.GetSessionIdempotency("p1", "test/k1"); err != nil || rec != nil {
 		t.Fatalf("key after failed create = %+v, %v; want none", rec, err)
 	}
-	if l, err := svc.createKeyed("test/k1", "digest-a", idemPlan(t)); err != nil || l.Replayed {
+	if l, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t)); err != nil || l.Replayed {
 		t.Fatalf("retry = %+v, %v; want a fresh create", l, err)
 	}
 }
@@ -128,7 +128,7 @@ func TestCreateKeyed_ConcurrentSameKeyCreatesOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			l, err := svc.createKeyed("test/concurrent", "digest-a", build)
+			l, err := svc.createKeyed("p1", "test/concurrent", "digest-a", build)
 			if err != nil {
 				t.Errorf("create %d: %v", i, err)
 				return
@@ -151,7 +151,7 @@ func TestCreateKeyed_ConcurrentSameKeyCreatesOnce(t *testing.T) {
 // failed and is never replaced.
 func TestCreateKeyed_ReplaysAFailedSessionUnchanged(t *testing.T) {
 	svc, _ := idemHarness(t)
-	first, err := svc.createKeyed("test/k1", "digest-a", idemPlan(t))
+	first, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestCreateKeyed_ReplaysAFailedSessionUnchanged(t *testing.T) {
 	if err := svc.Store.UpdateSessionState(first.SessionID, string(session.StateFailed), 0, &exit); err != nil {
 		t.Fatal(err)
 	}
-	again, err := svc.createKeyed("test/k1", "digest-a", idemPlan(t))
+	again, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
 	if err != nil || !again.Replayed || again.SessionID != first.SessionID {
 		t.Fatalf("replay = %+v, %v; want the failed session back", again, err)
 	}
@@ -176,7 +176,7 @@ func TestCreateKeyed_ReplaysAFailedSessionUnchanged(t *testing.T) {
 // unkeyed one keeps the 409-backed ErrSessionNotCreated.
 func TestLaunchSession_KeyedIsIdempotentUnkeyedIsNot(t *testing.T) {
 	svc, _ := idemHarness(t)
-	keyed, err := svc.createKeyed("test/k1", "digest-a", idemPlan(t))
+	keyed, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestResumeLogicalAgent_RetryAfterNewCheckpointReplays(t *testing.T) {
 	plan, _ := idemPlan(t)()
 	// The session the first resume created, bound to its key as a resume.
 	first, err := svc.createSessionFromPlan(plan, &store.SessionIdempotency{
-		Key: "test/resume", Operation: store.IdempotencyOpResume, RequestDigest: resumeRequestDigest("agent"),
+		PrincipalID: "p1", Key: "test/resume", Operation: store.IdempotencyOpResume, RequestDigest: resumeRequestDigest("agent"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,12 @@ func TestResumeLogicalAgent_RetryAfterNewCheckpointReplays(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := svc.ResumeLogicalAgent("agent", api.ResumeOptions{IdempotencyKey: "test/resume"})
+	// Another principal's identical key must not replay this session: it
+	// proceeds as a fresh resume (which fails here: no such logical agent row).
+	if other, err := svc.ResumeLogicalAgent("agent", api.ResumeOptions{IdempotencyKey: "test/resume", IdempotencyPrincipal: "p2"}); err == nil && other.Replayed {
+		t.Fatalf("another principal replayed %s", other.SessionID)
+	}
+	res, err := svc.ResumeLogicalAgent("agent", api.ResumeOptions{IdempotencyKey: "test/resume", IdempotencyPrincipal: "p1"})
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -235,7 +240,7 @@ func TestResumeLogicalAgent_RetryAfterNewCheckpointReplays(t *testing.T) {
 // Keys live in the state DB, so a daemon restart keeps them.
 func TestIdempotencyKey_SurvivesStoreReopen(t *testing.T) {
 	svc, dbPath := idemHarness(t)
-	first, err := svc.createKeyed("test/k1", "digest-a", idemPlan(t))
+	first, err := svc.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +251,7 @@ func TestIdempotencyKey_SurvivesStoreReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
 	svc2 := &Service{Store: reopened, factories: svc.factories}
-	again, err := svc2.createKeyed("test/k1", "digest-a", idemPlan(t))
+	again, err := svc2.createKeyed("p1", "test/k1", "digest-a", idemPlan(t))
 	if err != nil || !again.Replayed || again.SessionID != first.SessionID {
 		t.Fatalf("after reopen = %+v, %v; want a replay of %s", again, err, first.SessionID)
 	}
@@ -267,5 +272,74 @@ func TestCreateRequestDigest(t *testing.T) {
 		if createRequestDigest(changed) == createRequestDigest(base) {
 			t.Errorf("changing %s left the digest unchanged", name)
 		}
+	}
+}
+
+// Two principals using the same key do not collide, replay each other's
+// session or see each other's conflicts (CW-20261010-0263).
+func TestCreateKeyed_KeysAreScopedPerPrincipal(t *testing.T) {
+	svc, _ := idemHarness(t)
+	a, err := svc.createKeyed("msg://session/local/a", "shared", "digest-a", idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.createKeyed("msg://session/local/b", "shared", "digest-b", idemPlan(t))
+	if err != nil {
+		t.Fatalf("a different principal's request under the same key was refused: %v", err)
+	}
+	if a.SessionID == b.SessionID || b.Replayed {
+		t.Fatalf("principals share a session: %s %s replayed=%v", a.SessionID, b.SessionID, b.Replayed)
+	}
+	again, err := svc.createKeyed("msg://session/local/a", "shared", "digest-a", idemPlan(t))
+	if err != nil || !again.Replayed || again.SessionID != a.SessionID {
+		t.Fatalf("same principal replay = %+v, %v", again, err)
+	}
+	if _, err := svc.createKeyed("msg://session/local/a", "shared", "digest-b", idemPlan(t)); !errors.Is(err, store.ErrIdempotencyConflict) {
+		t.Fatalf("same principal, changed request = %v, want conflict", err)
+	}
+	if rec, err := svc.Store.GetSessionIdempotency("msg://session/local/c", "shared"); err != nil || rec != nil {
+		t.Fatalf("a third principal sees a record: %+v, %v", rec, err)
+	}
+	if n := countSessions(t, svc); n != 2 {
+		t.Fatalf("sessions = %d, want 2", n)
+	}
+}
+
+// Callers with no principal keep the one shared space they always had.
+func TestCreateKeyed_UnauthenticatedCallersShareAnonymousSpace(t *testing.T) {
+	svc, _ := idemHarness(t)
+	first, err := svc.createKeyed("", "k", "digest-a", idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.createKeyed(store.IdempotencyPrincipalAnonymous, "k", "digest-a", idemPlan(t))
+	if err != nil || !again.Replayed || again.SessionID != first.SessionID {
+		t.Fatalf("anonymous replay = %+v, %v", again, err)
+	}
+}
+
+// A row from before keys were scoped is kept but never matched: no caller
+// replays it or sees its conflict, and a retry creates a new session.
+func TestCreateKeyed_LegacyRowIsPreservedButNeverMatched(t *testing.T) {
+	svc, _ := idemHarness(t)
+	first, err := svc.createKeyed("p1", "old", "digest-a", idemPlan(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.DB().Exec(`UPDATE session_idempotency SET principal_id='legacy' WHERE key='old'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, digest := range []string{"digest-a", "digest-b"} {
+		got, err := svc.createKeyed("p2", "old", digest, idemPlan(t))
+		if err != nil || got.Replayed || got.SessionID == first.SessionID {
+			t.Fatalf("legacy row matched (%s): %+v, %v", digest, got, err)
+		}
+		if _, err := svc.Store.DB().Exec(`DELETE FROM session_idempotency WHERE principal_id='p2'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	if err := svc.Store.DB().QueryRow(`SELECT COUNT(1) FROM session_idempotency WHERE principal_id='legacy' AND key='old' AND session_id=?`, first.SessionID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("legacy row not preserved: %d, %v", n, err)
 	}
 }

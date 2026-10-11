@@ -48,7 +48,8 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 	// Idempotent resume (CW-20260930-0229). The digest is the request as
 	// sent, so a retry after the resumed session has checkpointed replays
 	// that session instead of conflicting over a newer parent.
-	unlock := s.lockIdempotencyKey(opts.IdempotencyKey)
+	principal := idempotencyPrincipal(opts.IdempotencyPrincipal)
+	unlock := s.lockIdempotencyKey(principal, opts.IdempotencyKey)
 	defer unlock()
 	digest := resumeRequestDigest(logicalAgentID)
 	if opts.NativeOnly {
@@ -57,7 +58,7 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 			NativeOnly              bool
 		}{logicalAgentID, opts.SourceSessionID, opts.ResumeWorkRoot, true})
 	}
-	replayed, err := s.replayIfKeyed(opts.IdempotencyKey, store.IdempotencyOpResume, digest)
+	replayed, err := s.replayIfKeyed(principal, opts.IdempotencyKey, store.IdempotencyOpResume, digest)
 	if err != nil {
 		return api.LaunchResult{}, err
 	}
@@ -65,7 +66,7 @@ func (s *Service) ResumeLogicalAgentWithContext(ctx context.Context, logicalAgen
 		return launchResultOf(replayed), nil
 	}
 	return s.resumeLogicalAgent(ctx, logicalAgentID, &store.SessionIdempotency{
-		Key: opts.IdempotencyKey, Operation: store.IdempotencyOpResume, RequestDigest: digest,
+		PrincipalID: principal, Key: opts.IdempotencyKey, Operation: store.IdempotencyOpResume, RequestDigest: digest,
 	}, opts)
 }
 

@@ -239,12 +239,11 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
 		return
 	}
-	key, keyErr := principalIdempotencyKey(r.Context(), req.IdempotencyKey)
+	idemPrincipal, keyErr := idempotencyPrincipal(r.Context())
 	if keyErr != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "verified device required")
 		return
 	}
-	req.IdempotencyKey = key
 	var res LaunchResult
 	var err error
 	// A keyed request always takes the input path: that is where the
@@ -262,6 +261,8 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 			PromptAppend:       req.PromptAppend,
 			Injection:          req.Injection,
 			IdempotencyKey:     req.IdempotencyKey,
+
+			IdempotencyPrincipal: idemPrincipal,
 		})
 	} else if req.BootPrompt != "" {
 		res, err = s.Service.CreateSessionWithBootPrompt(req.Launch, req.BootPrompt)

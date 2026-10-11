@@ -84,7 +84,7 @@ func TestUnregisteredTeamAdaptersLeaveOrdinaryLaunchAndMessagingUnchanged(t *tes
 	// Reuse the existing stub create and messaging harnesses; no adapter is
 	// constructed, so additive migrations are the only team state present.
 	svc, _ := idemHarness(t)
-	first, err := svc.createKeyed("ordinary", "ordinary-digest", idemPlan(t))
+	first, err := svc.createKeyed("p1", "ordinary", "ordinary-digest", idemPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}

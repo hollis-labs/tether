@@ -18,9 +18,25 @@ const (
 	IdempotencyOpResume = "resume"
 )
 
+// Idempotency principals (CW-20261010-0263). A key is unique per principal, not
+// globally. Real callers are claimed under their authenticated principal id.
+// The reserved ids below are not principal ids, which are URNs or device ids.
+const (
+	// IdempotencyPrincipalAnonymous scopes callers the daemon could not
+	// authenticate (observe mode). They share one space, as everyone once did.
+	IdempotencyPrincipalAnonymous = "anonymous"
+	// IdempotencyPrincipalTeam scopes keys the daemon's team runtime derives.
+	IdempotencyPrincipalTeam = "team-runtime"
+	// IdempotencyPrincipalLegacy marks rows from before keys were scoped
+	// (migration 0067). Kept for audit; never matched by a lookup.
+	IdempotencyPrincipalLegacy = "legacy"
+)
+
 // SessionIdempotency binds one idempotency key to the session its first
 // request created (CW-20260930-0229). Only a digest of the request is kept.
 type SessionIdempotency struct {
+	// PrincipalID scopes Key. Required when recording a key.
+	PrincipalID   string
 	Key           string
 	Operation     string
 	RequestDigest string
@@ -31,22 +47,29 @@ type SessionIdempotency struct {
 }
 
 func insertSessionIdempotency(tx *sql.Tx, sessionID string, key SessionIdempotency) error {
+	if key.PrincipalID == "" || key.PrincipalID == IdempotencyPrincipalLegacy {
+		return fmt.Errorf("record idempotency key: principal %q cannot claim a key", key.PrincipalID)
+	}
 	if _, err := tx.Exec(`INSERT INTO session_idempotency
-		(key, operation, request_digest, session_id, resolved_parent_session_id)
-		VALUES (?, ?, ?, ?, ?)`,
-		key.Key, key.Operation, key.RequestDigest, sessionID, key.ResolvedParentSessionID); err != nil {
+		(principal_id, key, operation, request_digest, session_id, resolved_parent_session_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		key.PrincipalID, key.Key, key.Operation, key.RequestDigest, sessionID, key.ResolvedParentSessionID); err != nil {
 		return fmt.Errorf("record idempotency key: %w", err)
 	}
 	return nil
 }
 
-// GetSessionIdempotency returns the record for key, or nil when the key has
-// never been used.
-func (s *Store) GetSessionIdempotency(key string) (*SessionIdempotency, error) {
+// GetSessionIdempotency returns principal's record for key, or nil when that
+// principal has never used it. Pre-scoping ("legacy") rows are never returned:
+// a key from before the upgrade does not replay.
+func (s *Store) GetSessionIdempotency(principal, key string) (*SessionIdempotency, error) {
+	if principal == IdempotencyPrincipalLegacy {
+		return nil, nil
+	}
 	var rec SessionIdempotency
-	err := s.db.QueryRow(`SELECT key, operation, request_digest, session_id, resolved_parent_session_id
-		FROM session_idempotency WHERE key = ?`, key).
-		Scan(&rec.Key, &rec.Operation, &rec.RequestDigest, &rec.SessionID, &rec.ResolvedParentSessionID)
+	err := s.db.QueryRow(`SELECT principal_id, key, operation, request_digest, session_id, resolved_parent_session_id
+		FROM session_idempotency WHERE principal_id = ? AND key = ?`, principal, key).
+		Scan(&rec.PrincipalID, &rec.Key, &rec.Operation, &rec.RequestDigest, &rec.SessionID, &rec.ResolvedParentSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

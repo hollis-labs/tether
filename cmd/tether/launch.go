@@ -123,7 +123,7 @@ func init() {
 	launchCmd.Flags().StringVar(&launchInjection, "injection", "", `caller-provided JSON config.LaunchInjection, e.g. '{"native_files":[{"rel_path":"NOTES.md","content":"..."}]}' (non-secret only — persisted at rest)`)
 	launchCmd.Flags().StringVar(&launchPromptAppend, "prompt-append", "", "append launch-time instructions to the composed boot prompt")
 	launchCmd.Flags().StringVar(&launchBootPromptOR, "boot-prompt", "", "raw boot-prompt override (wins over all composition layers)")
-	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are global and unauthenticated; prefix them)")
+	launchCmd.Flags().StringVar(&launchIdemKey, "idempotency-key", "", "make the launch safe to retry: the same key and request return the session it first launched (keys are scoped to the authenticated caller)")
 	launchCmd.Flags().StringSliceVar(&launchTorqueTasks, "torque-task", nil, "Torque task ID to fetch and plant under the task bundle directory; repeatable or comma-separated")
 	launchCmd.Flags().StringVar(&launchTorqueURL, "torque-url", "", "Torque HTTP API base URL (env: TORQUE_BASE_URL; default: http://127.0.0.1:8990)")
 	launchCmd.Flags().StringVar(&launchTorqueDir, "torque-task-dir", "tasks", "bootdir-relative directory for planted Torque task bundles")
