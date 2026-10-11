@@ -681,3 +681,5 @@ func TestExternalOwnerCountsAgainstHostCeiling(t *testing.T) {
 		t.Fatal("rejected owner limit provisioned workers")
 	}
 }
+
+func (r runs) MarkDissolved(context.Context, string) error { return nil }

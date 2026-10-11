@@ -33,6 +33,7 @@ type Principals interface {
 // to the host; it must not rewrite the library's run channel.
 type Runs interface {
 	GetRun(context.Context, string) (teams.TeamRun, error)
+	MarkDissolved(context.Context, string) error
 }
 
 type Deps struct {

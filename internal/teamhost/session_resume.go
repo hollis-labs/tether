@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/hollis-labs/substrate/mesh/teams"
+	"github.com/hollis-labs/tether/internal/teamstore"
 )
 
 // RetainedSessionRecoverer recovers custody under the original enrollment.
@@ -81,7 +82,7 @@ func (h *Host) RecoverSessions(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if run.Run.Status.Terminal() {
+			if teamstore.RunEnded(run.Run.Status) {
 				return nil
 			}
 			roster, err := h.store.Snapshot(leaseCtx, runID)
