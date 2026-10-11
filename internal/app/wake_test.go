@@ -1532,3 +1532,101 @@ func TestRunWakeSweep_NothingNew_LogsNothing(t *testing.T) {
 		t.Fatalf("sweeps with nothing new logged:\n%s", buf.String())
 	}
 }
+
+// ─── RunWakeSweep: scan cursor and recipient rotation (CW-20261011-0024 review) ─────
+
+// TestRunWakeSweep_BacklogDeeperThanScanWindow_LiveRowEventuallyReached: dead
+// ready rows stay pending, so a fixed oldest-first window never reaches a
+// live row behind more of them than it holds. The cursor must make progress
+// across passes.
+func TestRunWakeSweep_BacklogDeeperThanScanWindow_LiveRowEventuallyReached(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	// Deeper than the old fixed window plus a full park set.
+	const dead = wakeSweepBatchLimit + wakeParkMaxEntries + 2048 + 100
+	for i := 0; i < dead; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: fmt.Sprintf("gone-%03d", i)})
+	}
+	rt.setAlive("s-live", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-live"})
+
+	for pass := 1; pass <= 6 && rt.sendCallCount("s-live") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-live") != 1 {
+		t.Fatalf("live row behind %d dead rows never reached within 6 passes", dead)
+	}
+	// Dead rows stay claimable: nothing durable was written for them.
+	rd, err := st.DeliveryStore().ListDeliveries(ctx, delivery.Filter{Status: []delivery.DeliveryStatus{delivery.DeliveryPending}, ReadyOnly: true})
+	if err != nil || len(rd) != dead {
+		t.Fatalf("pending ready rows = %d err=%v, want %d untouched", len(rd), err, dead)
+	}
+}
+
+// TestRunWakeSweep_SustainedBusyOldRecipients_LaterIdleRecipientServed: more
+// busy recipients than one batch, each re-ready on every pass. Restarting the
+// round at the oldest recipient would serve the same few forever.
+func TestRunWakeSweep_SustainedBusyOldRecipients_LaterIdleRecipientServed(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	const busy = wakeSweepBatchLimit + 5
+	for i := 0; i < busy; i++ {
+		id := fmt.Sprintf("s-busy-%02d", i)
+		rt.setAlive(id, true, agentsessions.LiveStateProcessing)
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: id})
+	}
+	rt.setAlive("s-zidle", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-zidle"})
+
+	for pass := 1; pass <= 8 && rt.sendCallCount("s-zidle") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-zidle") != 1 {
+		t.Fatalf("idle recipient behind %d re-ready busy recipients not served within 8 passes", busy)
+	}
+}
+
+// TestRunWakeSweep_HugeLiveBacklogOneRecipient_SecondRecipientServed: one
+// recipient's backlog larger than the scan window must not hide a later one.
+func TestRunWakeSweep_HugeLiveBacklogOneRecipient_SecondRecipientServed(t *testing.T) {
+	prevBusy, prevOff := wakeBusyRetryBackoff, wakeOfflineRetryBackoff
+	wakeBusyRetryBackoff, wakeOfflineRetryBackoff = 0, 0
+	t.Cleanup(func() { wakeBusyRetryBackoff, wakeOfflineRetryBackoff = prevBusy, prevOff })
+
+	st, reg := newWakeHarness(t)
+	ctx := context.Background()
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	// Larger than the old fixed scan window (batch + parked + 2048 rows).
+	const backlog = wakeSweepBatchLimit + 2048 + 60
+	rt.setAlive("s-a", true, agentsessions.LiveStateProcessing)
+	for i := 0; i < backlog; i++ {
+		sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-a"})
+	}
+	rt.setAlive("s-b", true, agentsessions.LiveStateIdle)
+	sendMessage(t, st, messaging.Address{Kind: messaging.KindSession, Authority: "local", ID: "s-b"})
+
+	for pass := 1; pass <= 6 && rt.sendCallCount("s-b") == 0; pass++ {
+		if _, err := runWakeSweep(ctx, st, reg, rt.seam(), park); err != nil {
+			t.Fatalf("sweep %d: %v", pass, err)
+		}
+	}
+	if rt.sendCallCount("s-b") != 1 {
+		t.Fatalf("second recipient hidden behind a %d-row backlog for another recipient", backlog)
+	}
+}

@@ -498,3 +498,50 @@ func (s *Store) NackMessageDelivery(ctx context.Context, lease delivery.LeaseRef
 		NextAttemptAt: nextAttemptAt,
 	})
 }
+
+// deliverySQLiteTimeFormat is the timestamp layout go-messaging's SQLite
+// delivery store writes (and compares as text) for next_attempt_at and
+// deadline_at.
+const deliverySQLiteTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
+// ReadyDeliveryPage returns up to limit wake-sweep candidates -- pending or
+// retry_scheduled deliveries whose backoff and deadline allow a claim now --
+// with id strictly greater than afterID, oldest first. It exists because
+// delivery.Filter has no cursor: a sweep that only ever reads the oldest N
+// ready rows can never reach a row behind N undeliverable ones. Only ID,
+// MessageID, Recipient and Status are populated. Read-only; the same
+// readiness rule as delivery.Filter{ReadyOnly: true} for those two statuses.
+func (s *Store) ReadyDeliveryPage(ctx context.Context, afterID delivery.DeliveryID, limit int) ([]delivery.RecipientDelivery, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	// A zero-limit listing runs the delivery store's expired-lease release,
+	// so lapsed leases are retry-eligible here exactly as in a plain listing.
+	if _, err := s.DeliveryStore().ListDeliveries(ctx, delivery.Filter{ReadyOnly: true, Limit: 1}); err != nil {
+		return nil, fmt.Errorf("ready delivery page: release expired leases: %w", err)
+	}
+	now := time.Now().UTC().Format(deliverySQLiteTimeFormat)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, message_id, recipient_urn, status FROM messaging_deliveries
+		WHERE id > ? AND status IN (?, ?) AND (next_attempt_at IS NULL OR next_attempt_at <= ?) AND (deadline_at IS NULL OR deadline_at > ?)
+		ORDER BY id ASC LIMIT ?`,
+		string(afterID), string(delivery.DeliveryPending), string(delivery.DeliveryRetryScheduled), now, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ready delivery page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []delivery.RecipientDelivery
+	for rows.Next() {
+		var id, msgID, urn, status string
+		if err := rows.Scan(&id, &msgID, &urn, &status); err != nil {
+			return nil, fmt.Errorf("ready delivery page: scan: %w", err)
+		}
+		to, err := messaging.ParseURN(urn)
+		if err != nil {
+			// Same row ListDeliveries would return, but unusable as an
+			// address; the sweep could only park it, so skip it.
+			continue
+		}
+		out = append(out, delivery.RecipientDelivery{ID: delivery.DeliveryID(id), MessageID: delivery.MessageID(msgID), Recipient: to, Status: delivery.DeliveryStatus(status)})
+	}
+	return out, rows.Err()
+}

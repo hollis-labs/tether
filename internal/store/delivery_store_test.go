@@ -30,6 +30,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -753,5 +754,68 @@ func TestDeliveryBackedConsume_PreT03MessageHasNoDeliveryID(t *testing.T) {
 
 	if err := db.MessagingStore().Consume(context.Background(), "legacy-msg-1", addr("bob")); err != nil {
 		t.Fatalf("consume a no-delivery-id row must still succeed: %v", err)
+	}
+}
+
+// TestReadyDeliveryPage_MatchesReadyListingAndPaginates: the cursor query
+// must agree with delivery.Filter{ReadyOnly} on which rows are ready, and
+// pages must walk the queue oldest first without repeats.
+func TestReadyDeliveryPage_MatchesReadyListingAndPaginates(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "page.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ms := db.MessagingStore()
+	var ids []string
+	for i := 0; i < 6; i++ {
+		env, err := ms.Send(ctx, messaging.Envelope{From: addr("alice"), To: addr(fmt.Sprintf("bob%d", i)), Kind: messaging.MsgKindNotice, Payload: []byte("x")})
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		ids = append(ids, env.ID)
+	}
+	// One consumed (terminal), one claimed then nacked with a future retry.
+	if err := ms.Consume(ctx, ids[1], addr("bob1")); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	_, lease, err := db.ClaimMessageDelivery(ctx, ids[3], addr("bob3"), "test", time.Minute)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, _, err := db.NackMessageDelivery(ctx, lease, true, "later", time.Hour); err != nil {
+		t.Fatalf("nack: %v", err)
+	}
+
+	want, err := db.DeliveryStore().ListDeliveries(ctx, delivery.Filter{
+		Status: []delivery.DeliveryStatus{delivery.DeliveryPending, delivery.DeliveryRetryScheduled}, ReadyOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(want) != 4 {
+		t.Fatalf("ready listing has %d rows, want 4", len(want))
+	}
+	var got []delivery.RecipientDelivery
+	after := delivery.DeliveryID("")
+	for {
+		page, err := db.ReadyDeliveryPage(ctx, after, 3)
+		if err != nil {
+			t.Fatalf("page: %v", err)
+		}
+		got = append(got, page...)
+		if len(page) < 3 {
+			break
+		}
+		after = page[len(page)-1].ID
+	}
+	if len(got) != len(want) {
+		t.Fatalf("pages returned %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].ID != want[i].ID || got[i].MessageID != want[i].MessageID || got[i].Recipient.URN() != want[i].Recipient.URN() {
+			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
