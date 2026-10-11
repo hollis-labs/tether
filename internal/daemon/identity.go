@@ -6,6 +6,12 @@ import (
 	"github.com/hollis-labs/tether/internal/identity"
 )
 
+// RecordIdentityObservation queues an identity audit row (used by policies
+// composed outside the HTTP middleware).
+func (s *Server) RecordIdentityObservation(ctx context.Context, o identity.Observation) error {
+	return s.recordIdentityObservation(ctx, o)
+}
+
 func (s *Server) recordIdentityObservation(ctx context.Context, o identity.Observation) error {
 	if s.Identity == nil {
 		return fmt.Errorf("identity store unavailable")

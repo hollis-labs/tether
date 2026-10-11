@@ -93,6 +93,10 @@ const (
 // refused. CW-20260930-0253 phases 2-3 install a checker here.
 type ReplyAuthorization func(ctx context.Context, caller identity.Principal, parent messaging.Envelope, targetSessionID string) error
 
+// DeliveryAuthorization gates reading a reply's delivery record. parent is the
+// zero Envelope when the parent message no longer exists. Nil is observe mode.
+type DeliveryAuthorization func(ctx context.Context, caller identity.Principal, reply store.RoutingReply, parent messaging.Envelope) error
+
 // turnInterrupter is Service.CancelTurnAndWait (CW-20261002-0067); tests substitute a fake.
 type turnInterrupter interface {
 	CancelTurnAndWait(ctx context.Context, sessionID, actor string) (TurnInterruptResult, error)
@@ -918,6 +922,16 @@ func (s *Service) RoutingReplyDelivery(ctx context.Context, replyID string) (api
 	}
 	if err != nil {
 		return api.RoutingReplyDelivery{}, err
+	}
+	if s.DeliveryAuthorization != nil {
+		caller, _ := identity.FromContext(ctx)
+		parent, perr := s.Store.MessagingStore().Get(ctx, r.ParentID)
+		if perr != nil && !errors.Is(perr, messaging.ErrNotFound) {
+			return api.RoutingReplyDelivery{}, perr
+		}
+		if err := s.DeliveryAuthorization(ctx, caller, r, parent); err != nil {
+			return api.RoutingReplyDelivery{}, fmt.Errorf("%w: %w", api.ErrReplyForbidden, err)
+		}
 	}
 	return api.RoutingReplyDelivery{ReplyID: r.ReplyID, ParentID: r.ParentID, State: string(r.State), Reason: r.Reason,
 		Detail: r.Detail, OriginalSessionID: r.OriginalSessionID, TargetSessionID: r.TargetSessionID,
