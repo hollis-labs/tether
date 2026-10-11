@@ -80,6 +80,12 @@ func TestHostedCodexAppProvider(t *testing.T) {
 		if enc.Encode(map[string]any{"id": m.ID, "result": result}) != nil {
 			os.Exit(89)
 		}
+		if m.Method == "initialize" && os.Getenv("TETHER_CODEX_APP_NOISE") == "yes" {
+			// What the real app-server prints around startup: a config warning
+			// notification and a tracing line on stderr.
+			fmt.Fprintln(os.Stdout, `{"method":"configWarning","params":{"summary":"fixture warning","details":null}}`)
+			fmt.Fprintln(os.Stderr, "WARN codex_app_server: fixture log line")
+		}
 		if m.Method == "turn/start" && os.Getenv("TETHER_CODEX_APP_COMPLETE") == "yes" {
 			for _, line := range []string{
 				`{"emittedAtMs":1,"method":"turn/started","params":{"threadId":"app-native","turn":{"id":"app-turn","status":"inProgress","items":[],"error":null}}}`,

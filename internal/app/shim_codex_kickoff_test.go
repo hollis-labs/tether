@@ -78,7 +78,7 @@ func startNeverPromptedHostedCodex(t *testing.T) (*Service, context.Context) {
 			}
 		}
 	})
-	opts := agentsessions.StartOptions{Workdir: root, WorkspaceDir: root, Env: []string{"TETHER_CODEX_APP_FIXTURE=yes", "TETHER_CODEX_APP_COMPLETE=yes", "HOME=" + root, "TMPDIR=" + root}, Launch: &agentlaunch.TurnTemplate{Convention: gop.LaunchConvention{Executable: exe, Mode: runtimes.ModeJSONRPCStdio, Argv: []gop.ArgTemplate{{Kind: gop.ArgLiteral, Value: "-test.run=^TestHostedCodexAppProvider$"}}}}}
+	opts := agentsessions.StartOptions{Workdir: root, WorkspaceDir: root, Env: []string{"TETHER_CODEX_APP_FIXTURE=yes", "TETHER_CODEX_APP_COMPLETE=yes", "TETHER_CODEX_APP_NOISE=yes", "HOME=" + root, "TMPDIR=" + root}, Launch: &agentlaunch.TurnTemplate{Convention: gop.LaunchConvention{Executable: exe, Mode: runtimes.ModeJSONRPCStdio, Argv: []gop.ArgTemplate{{Kind: gop.ArgLiteral, Value: "-test.run=^TestHostedCodexAppProvider$"}}}}}
 	req, err := s.prepareShimStart(ctx, plan, agentsessions.StartRequest{ID: "codex-kick", Runtime: &shimcodex.Runtime{Config: shimcodex.Config{ID: "codex"}}, Options: opts})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,12 @@ func TestPrimeAppServerSessionTakesAFirstTurn(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		state, loadErr := port.Load(ctx)
-		if loadErr == nil && state.ThreadID == "app-native" && state.LastTerminal == "app-turn" {
+		if loadErr == nil && state.ThreadID == "app-native" && state.LastTerminal == "app-turn" && len(state.Inbox) == 0 && state.Delivery != nil {
+			// Startup noise (config warning, stderr) must not leave undeliverable
+			// output behind: the session stays running instead of detaching.
+			if cur, err := s.Store.GetSession("codex-kick"); err != nil || cur.State != "running" {
+				t.Fatalf("session left running: %+v %v", cur, err)
+			}
 			return
 		}
 		if time.Now().After(deadline) {

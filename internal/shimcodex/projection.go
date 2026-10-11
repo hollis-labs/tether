@@ -470,7 +470,10 @@ func projectFrozenSourceInto(next *Projection, event Event) (int, error) {
 	} else if event.Identity == next.JournalIdentity+":exit:"+event.Cursor {
 		source.Kind = "provider_exit" // Never authenticate from a pure candidate.
 	} else if event.Identity == next.JournalIdentity+":"+event.Cursor+":stderr" {
-		// Stderr is a retained output obligation, not a protocol response.
+		// Provider stderr is diagnostics (tracing, warnings), never turn output.
+		// The journal keeps the bytes; treating them as undeliverable output
+		// detached every real Codex session at its first log line.
+		source.Disposition = "metadata_only"
 	} else {
 		m, err := Decode(event.Raw)
 		if err != nil {
@@ -533,7 +536,7 @@ type projectionItemParams struct {
 func projectNotification(p *Projection, m Message, event Event, source *SourceDisposition) error {
 	// Unknown fields and unsupported item unions remain retained, never truncated.
 	switch m.Method {
-	case "remoteControl/status/changed", "account/updated", "thread/started", "mcpServer/startupStatus/updated", "thread/status/changed", "thread/tokenUsage/updated", "account/rateLimits/updated":
+	case "remoteControl/status/changed", "account/updated", "thread/started", "mcpServer/startupStatus/updated", "thread/status/changed", "thread/tokenUsage/updated", "account/rateLimits/updated", "configWarning", "warning", "deprecationNotice":
 		// Status/usage/account notifications are protocol telemetry, never output
 		// or grant callbacks. Their bounded original bytes retain a source digest.
 		source.Disposition = "protocol_only"
