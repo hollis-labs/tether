@@ -60,7 +60,7 @@ func TestVerifiedContextIdenticalInTelemetryRowAndForwardedEnvelope(t *testing.T
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TETHER_TOKEN", "")
 	f := newDaemonOnlyFixture(t)
-	localCtx := f.inProcess.withSessionID(identity.WithPrincipal(context.Background(), identity.Principal{ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}))
+	localCtx := f.inProcess.withSessionID(identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:sess-1", Kind: "session", SessionID: "sess-1"}))
 	local, _ := callcontext.FromContext(localCtx)
 	if !local.Verified || local.SessionID != "sess-1" || local.AgentURN != "" {
 		t.Fatalf("local context without registry: %+v", local)
@@ -154,7 +154,7 @@ func TestLegacyProvenanceShapeUnchangedAlongsideTrustedContext(t *testing.T) {
 		t.Run(fmt.Sprint(verified), func(t *testing.T) {
 			ctx := WithSessionID(context.Background(), "s")
 			if verified {
-				ctx = callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "session:s", SessionID: "s", WorkstreamID: "w"})
+				ctx = callcontext.WithSnapshot(ctx, callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "session:s", SessionID: "s", WorkstreamID: "w"})
 			}
 			router := NewProxyRouter(nil)
 			router.SetWorkstreamResolver(func(context.Context, string) (string, error) { return "w", nil })
@@ -211,7 +211,7 @@ func TestCallerContextSlowDaemonIsBoundedAndNegativelyCached(t *testing.T) {
 	}
 	a.SetCallerContextResolver(func(context.Context) (callcontext.Snapshot, error) {
 		lookups++
-		return callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: "session:A", SessionID: "A"}, nil
+		return callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: "session:A", SessionID: "A"}, nil
 	})
 	for range 10 {
 		a.withSessionID(context.Background())

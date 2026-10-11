@@ -35,8 +35,12 @@ type Observation struct {
 	SessionID      string    `json:"session_id,omitempty"`
 	Mode           Mode      `json:"mode"`
 	Authentication string    `json:"authentication"`
-	Method         string    `json:"method"`
-	Route          string    `json:"route"`
+	// Verified is the one verified flag: true only when a bearer credential
+	// resolved to a principal row. It is derived from Authentication, never set
+	// by callers of Record.
+	Verified bool   `json:"verified"`
+	Method   string `json:"method"`
+	Route    string `json:"route"`
 	// RoutePattern, RequiredScope and WouldAllow are set only when a
 	// ScopePolicy observer ran for a verified principal. WouldAllow is nil
 	// when the route or method is not in the table.
@@ -113,13 +117,15 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 			p, state = Principal{}, "invalid"
 		}
 		o.Authentication = state
+		o.Verified = state == "verified"
 		if state == "verified" {
 			o.PrincipalID, o.SessionID = p.ID, p.SessionID
 			r = r.WithContext(WithPrincipal(r.Context(), p))
 		}
 		var scoped ScopeObservation
 		if state == "verified" && !remote && scopes.Observe != nil {
-			scoped = scopes.Observe(r, p)
+			authenticated, _ := FromContext(r.Context())
+			scoped = scopes.Observe(r, authenticated)
 			if scoped.Known {
 				allowed := scoped.WouldAllow
 				o.RoutePattern, o.RequiredScope, o.WouldAllow = scoped.Pattern, scoped.Required, &allowed
@@ -181,6 +187,7 @@ func authenticate(ctx context.Context, headers []string, verifier Verifier) (Pri
 	if err != nil {
 		return Principal{}, "unavailable"
 	}
+	p.Verified = true
 	return p, "verified"
 }
 

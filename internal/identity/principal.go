@@ -18,7 +18,18 @@ var ErrInvalidToken = errors.New("invalid or inactive identity token")
 
 const OperatorID = "msg://user/local/operator"
 
+// Principal is an identity row bound to a bearer credential. Verified is the
+// single definition of "verified" (RK-044): the request carried a bearer
+// credential bound to an authenticated principal row, of any kind (operator,
+// session, device, service, interactive). It is set only where a credential
+// verifies (Store.Verify, VerifyTx, and the middleware for an injected
+// Verifier); WithPrincipal preserves it and never sets it. A Principal built from a claim (?as=, headers, JSON) is never
+// verified. Every other "verified" field derives from this one. It says who
+// the credential belongs to, not that the caller may do anything: scope policy
+// is separate, and trusting the flag against same-uid agents additionally
+// needs read protection of the credential (CW-20261001-0263).
 type Principal struct {
+	Verified  bool       `json:"verified"`
 	ID        string     `json:"id"`
 	Kind      string     `json:"kind"`
 	Display   string     `json:"display"`
@@ -33,6 +44,9 @@ type Principal struct {
 
 type principalKey struct{}
 
+// WithPrincipal records a principal for attribution and preserves its Verified
+// flag as given. It never sets it: an internally constructed principal (for
+// example the turn router's session sender) stays unverified.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	p.Scopes = append([]string(nil), p.Scopes...)
 	p.Addresses = append([]string(nil), p.Addresses...)
@@ -44,6 +58,33 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	p.Scopes = append([]string(nil), p.Scopes...)
 	p.Addresses = append([]string(nil), p.Addresses...)
 	return p, ok
+}
+
+// Verified reports the one verified flag for the request context. An absent
+// principal (anonymous or claim-only caller) is not verified.
+func Verified(ctx context.Context) bool {
+	p, ok := ctx.Value(principalKey{}).(Principal)
+	return ok && p.Verified
+}
+
+// PolicyPrincipal is the principal contract handed to the policy library: the
+// Cedar request carries principal.verified. It holds attribution only, never
+// credentials or scopes.
+type PolicyPrincipal struct {
+	ID       string `json:"id,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Verified bool   `json:"verified"`
+}
+
+// PolicyPrincipalFrom derives the policy principal from the request context.
+// With no verified principal it returns the anonymous principal (Verified
+// false, no id), so a claimed identity can never reach a decision as verified.
+func PolicyPrincipalFrom(ctx context.Context) PolicyPrincipal {
+	p, ok := FromContext(ctx)
+	if !ok || !p.Verified {
+		return PolicyPrincipal{}
+	}
+	return PolicyPrincipal{ID: p.ID, Kind: p.Kind, Verified: true}
 }
 
 func NewToken() (string, error) {

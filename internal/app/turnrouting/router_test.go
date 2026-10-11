@@ -251,3 +251,17 @@ func TestRecoverySweepAttachesInStagingOrder(t *testing.T) {
 		}
 	}
 }
+
+// The router attributes channel writes to the session without a bearer
+// credential, so its principal must never be verified (RK-044).
+func TestSenderPrincipalIsNotVerified(t *testing.T) {
+	sender := gomsg.Address{Kind: gomsg.KindSession, Authority: "local", ID: "routed"}
+	ctx := identity.WithPrincipal(context.Background(), senderPrincipal(sender, "routed", "msg://user/local/actor"))
+	p, ok := identity.FromContext(ctx)
+	if !ok || p.Verified || identity.Verified(ctx) || identity.PolicyPrincipalFrom(ctx).Verified {
+		t.Fatalf("turn-router principal = %+v, %v", p, ok)
+	}
+	if p.ID != sender.URN() || p.SessionID != "routed" {
+		t.Fatalf("attribution lost: %+v", p)
+	}
+}

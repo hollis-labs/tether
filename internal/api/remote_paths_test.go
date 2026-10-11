@@ -18,7 +18,7 @@ import (
 func remotePathRequest(method, path, body string) *http.Request {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	ctx := identity.WithRemoteContext(r.Context())
-	ctx = identity.WithPrincipal(ctx, identity.Principal{ID: "device-test", Kind: "device", Scopes: []string{"read", "operate", "terminal"}})
+	ctx = identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "device-test", Kind: "device", Scopes: []string{"read", "operate", "terminal"}})
 	return r.WithContext(ctx)
 }
 

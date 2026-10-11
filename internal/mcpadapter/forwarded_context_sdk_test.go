@@ -112,7 +112,7 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 	// A verified caller can cause initialization/reconnect, but those RPCs must
 	// not gain the actual tool call's actor marker.
 	p := identity.Principal{ID: "principal:A", Kind: "session", SessionID: "A"}
-	caller := callcontext.WithSnapshot(identity.WithPrincipal(ctx, p), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind, SessionID: p.SessionID})
+	caller := callcontext.WithSnapshot(identity.WithPrincipal(ctx, p), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: p.ID, PrincipalKind: p.Kind, SessionID: p.SessionID})
 	registered, ok := owner.registry.Lookup("probe")
 	if !ok {
 		t.Fatal("shared owner did not publish probe")
@@ -150,7 +150,7 @@ func testServiceContextThroughSDKReconnect(t *testing.T, transport string) {
 			defer calls.Done()
 			session := fmt.Sprintf("parallel-%d", i)
 			principal := identity.Principal{ID: "principal:" + session, Kind: "session", SessionID: session}
-			parallelCtx := callcontext.WithSnapshot(identity.WithPrincipal(ctx, principal), callcontext.Snapshot{Verified: true, Source: "daemon", PrincipalID: principal.ID, PrincipalKind: principal.Kind, SessionID: session})
+			parallelCtx := callcontext.WithSnapshot(identity.WithPrincipal(ctx, principal), callcontext.Snapshot{Verified: true, SessionResolved: true, Source: "daemon", PrincipalID: principal.ID, PrincipalKind: principal.Kind, SessionID: session})
 			call(parallelCtx)
 		}()
 	}

@@ -33,7 +33,7 @@ func sessionLogFixture(t *testing.T, data []byte) (http.Handler, string) {
 func requestSessionLog(t *testing.T, h http.Handler, query string, scopes []string, want int) SessionLogResponse {
 	t.Helper()
 	r := remotePathRequest("GET", "/sessions/s/log"+query, "")
-	r = r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{ID: "device-test", Kind: "device", Scopes: scopes}))
+	r = r.WithContext(identity.WithPrincipal(r.Context(), identity.Principal{Verified: true, ID: "device-test", Kind: "device", Scopes: scopes}))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != want {

@@ -142,7 +142,7 @@ func (s *Store) RecordDeviceUse(ctx context.Context, p Principal, o Observation,
 	if err != nil || n != 1 {
 		return fmt.Errorf("device use unavailable")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO identity_audit (at, principal_id, session_id, mode, authentication, method, route) VALUES (?, ?, '', ?, ?, ?, ?)`, o.At.UTC().Format(credentialTimeFormat), p.ID, string(Enforce), o.Authentication, o.Method, o.Route)
+	_, err = tx.ExecContext(ctx, `INSERT INTO identity_audit (at, principal_id, session_id, mode, authentication, method, route, verified) VALUES (?, ?, '', ?, ?, ?, ?, 1)`, o.At.UTC().Format(credentialTimeFormat), p.ID, string(Enforce), o.Authentication, o.Method, o.Route)
 	if err != nil {
 		return err
 	}

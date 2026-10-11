@@ -36,7 +36,7 @@ func TestEventHistoryRetentionAuditAndRollback(t *testing.T) {
 					insertEventAt(t, s, at)
 				case "proxy_events":
 					err = s.AppendProxyEvent(ProxyEvent{Server: "s", ToolName: "t", OK: true, Timestamp: at,
-						Attribution: callcontext.Snapshot{Verified: true, PrincipalID: "session:s", SessionID: "s", AgentURN: "msg://agent/local/a"}, ClaimedSessionID: "unverified-claim"})
+						Attribution: callcontext.Snapshot{Verified: true, SessionResolved: true, PrincipalID: "session:s", SessionID: "s", AgentURN: "msg://agent/local/a"}, ClaimedSessionID: "unverified-claim"})
 				case "ai_events":
 					err = s.RecordAIAuditEvent(AIEvent{EventType: "chat", Operation: "chat", Success: true, Timestamp: at})
 				}

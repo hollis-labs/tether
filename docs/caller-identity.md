@@ -35,6 +35,40 @@ Phase 1 does **not** enforce route scopes or sender/mailbox ownership. It does
 not turn on enforcement anywhere. Non-loopback TCP binds require explicit
 `enforce`; this is an authentication condition, not transport encryption.
 
+## The verified flag
+
+One definition (RK-044, owner ruling 2026-10-10): a request is **verified**
+when it carried a bearer credential bound to an authenticated principal row in
+Tether, of any kind (operator, session, device, service, interactive).
+`identity.Principal.Verified` is the only implementation; it becomes true only
+where a credential verifies (`Store.Verify`, `VerifyTx`, and the middleware for
+an injected verifier). `WithPrincipal` preserves it and never sets it, so
+internally constructed principals (the turn router's session sender) are
+unverified. A principal built from `?as=`, headers or a body is
+never verified. The flag says whose credential it is, not what the caller may
+do (scope policy is separate) and, against same-uid agents, is trustworthy only
+once credential read protection (CW-20261001-0263) lands.
+
+Derived or renamed consumers:
+
+- Policy: `identity.PolicyPrincipalFrom(ctx)` is the Principal contract for the
+  policy library; its `verified` becomes Cedar `principal.verified`. No
+  verified principal yields the anonymous principal (`verified: false`).
+- Audit: `identity_audit.verified` (migration 0068) records the flag for every
+  row; missing, invalid and unavailable credentials are 0, pre-0068 rows are 0.
+- `callcontext.Snapshot.Verified` and `/auth/context` carry the same flag. The
+  former session-row meaning is renamed `session_resolved`.
+- `teamsvc.Principal.Verified` is copied from it by `teamruntime.Principals`.
+  `LocalOperator` stays a separate, stronger Unix-socket proof and mode
+  `enforce` is still required before teams grant authority.
+- `RoutingReplyRequest.Verified` is the flag of the request principal.
+
+**RK-044 closure criteria:** the flag is defined once and tested for operator,
+session, device, service and anonymous; every policy request and decision log
+row carries it. RK-044 closes when the policy library (CW-20261010-0024)
+populates `principal.verified` from `PolicyPrincipalFrom` and its shadow
+decisions log it, and CW-20261001-0263 is in place.
+
 ## Principals and credentials
 
 The `principals` table holds token rows: a unique row id and a non-unique

@@ -41,7 +41,7 @@ func TestChannelPublishPolicyCoversAllCreationPaths(t *testing.T) {
 		}
 		return channels.ErrForbidden
 	})
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "verified"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "verified"})
 	if _, err := svc.Publish(ctx, env); !errors.Is(err, channels.ErrForbidden) {
 		t.Fatalf("service: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestChannelsHTTPVerifiedCallerAndPublishPolicy(t *testing.T) {
 	})
 	h := NewHandler(Deps{Channels: svc, MessageStore: db.MessagingStore()})
 	req := httptest.NewRequest("GET", "/channels/ops/messages", nil)
-	req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{ID: "verified"}))
+	req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{Verified: true, ID: "verified"}))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != 200 {
@@ -379,7 +379,7 @@ func TestChannelsHTTPVerifiedCallerAndPublishPolicy(t *testing.T) {
 	}
 	body := `{"kind":"notice","from":"msg://session/local/sender","to":"msg://service/local/channel/ops"}`
 	req = httptest.NewRequest("POST", "/messages", strings.NewReader(body))
-	req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{ID: "verified"}))
+	req = req.WithContext(identity.WithPrincipal(req.Context(), identity.Principal{Verified: true, ID: "verified"}))
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != 403 {

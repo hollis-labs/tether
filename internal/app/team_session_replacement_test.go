@@ -228,7 +228,7 @@ func TestReplacementCredentialKeepsInheritedScopesExpiryAndCurrentRestrictions(t
 			}
 			ctx := context.Background()
 			if current == "narrower_caller" {
-				ctx = identity.WithPrincipal(ctx, identity.Principal{ID: "fixture-verified-caller", Scopes: []string{"message.write"}})
+				ctx = identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "fixture-verified-caller", Scopes: []string{"message.write"}})
 			}
 			if _, err := r.svc.mintSessionCredential(ctx, in.DestinationID); err != nil {
 				t.Fatal(err)

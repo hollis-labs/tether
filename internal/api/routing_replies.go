@@ -213,7 +213,7 @@ func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, b
 // (or fallback, the envelope's own sender, when ?as= is absent).
 func replyCaller(r *http.Request, fallback string) (identity.Principal, bool, error) {
 	if p, ok := identity.FromContext(r.Context()); ok {
-		return p, true, nil
+		return p, p.Verified, nil
 	}
 	as := r.URL.Query().Get("as")
 	if as == "" {

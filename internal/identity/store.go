@@ -145,6 +145,9 @@ func (s *Store) verifyHash(ctx context.Context, hash string) (Principal, error) 
 	if revoked.Valid {
 		return Principal{}, ErrInvalidToken
 	}
+	// The credential hash matched an active row: the only place, besides the
+	// middleware for an injected Verifier, that a Principal becomes Verified.
+	p.Verified = true
 	if err := json.Unmarshal([]byte(scopes), &p.Scopes); err != nil {
 		return Principal{}, fmt.Errorf("decode scopes: %w", err)
 	}
@@ -211,10 +214,10 @@ func (s *Store) RevokeSession(ctx context.Context, sessionID string) error {
 
 func (s *Store) RecordObservation(ctx context.Context, o Observation) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO identity_audit
-        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow, event)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
+        (at, principal_id, session_id, mode, authentication, method, route, route_pattern, required_scope, would_allow, event, verified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, o.At.UTC().Format(time.RFC3339Nano),
 		o.PrincipalID, o.SessionID, o.Mode, o.Authentication, o.Method, o.Route,
-		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow), o.Event)
+		o.RoutePattern, o.RequiredScope, wouldAllowColumn(o.WouldAllow), o.Event, o.Authentication == "verified")
 	if err != nil {
 		return fmt.Errorf("persist identity observation: %w", err)
 	}

@@ -32,9 +32,9 @@ func TestProxyEventAttributionOverridesVerifiedCallerClaims(t *testing.T) {
 		wantSession, wantClaim string
 		verified               bool
 	}{
-		{"session", identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"}, "own", "other", true},
-		{"operator", identity.Principal{ID: "operator", Kind: "operator"}, "", "other", false},
-		{"service", identity.Principal{ID: "service", Kind: "service"}, "", "other", false},
+		{"session", identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"}, "own", "other", true},
+		{"operator", identity.Principal{Verified: true, ID: "operator", Kind: "operator"}, "", "other", false},
+		{"service", identity.Principal{Verified: true, ID: "service", Kind: "service"}, "", "other", false},
 		{"anonymous", identity.Principal{}, "other", "other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestProxyEventAttributionOverridesVerifiedCallerClaims(t *testing.T) {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}
 			got := rows.events[0]
-			if got.Attribution.Verified != tc.verified || got.SessionID != tc.wantSession || got.ClaimedSessionID != tc.wantClaim || got.Attribution.PrincipalID != tc.p.ID {
+			if got.Attribution.Verified != (tc.p.ID != "") || got.Attribution.SessionResolved != tc.verified || got.SessionID != tc.wantSession || got.ClaimedSessionID != tc.wantClaim || got.Attribution.PrincipalID != tc.p.ID {
 				t.Fatalf("attribution=%+v", got)
 			}
 			contextReq := httptest.NewRequest(http.MethodGet, "/auth/context?session_id=other", nil).WithContext(req.Context())
@@ -80,10 +80,10 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 		session, agent string
 	}{
 		{"anonymous", identity.Principal{}, "", ""},
-		{"operator", identity.Principal{ID: "operator", Kind: "operator", SessionID: "own"}, "", ""},
-		{"service", identity.Principal{ID: "service", Kind: "service", SessionID: "own"}, "", ""},
-		{"missing session", identity.Principal{ID: "session:absent", Kind: "session", SessionID: "absent"}, "", ""},
-		{"verified own session", identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"}, "own", registry.LogicalAgentBindingTarget("worker")},
+		{"operator", identity.Principal{Verified: true, ID: "operator", Kind: "operator", SessionID: "own"}, "", ""},
+		{"service", identity.Principal{Verified: true, ID: "service", Kind: "service", SessionID: "own"}, "", ""},
+		{"missing session", identity.Principal{Verified: true, ID: "session:absent", Kind: "session", SessionID: "absent"}, "", ""},
+		{"verified own session", identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"}, "own", registry.LogicalAgentBindingTarget("worker")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -92,18 +92,18 @@ func TestResolveCallerContextOnlyVerifiedSessionSelectsRows(t *testing.T) {
 			}
 			bindings := contextBindings{registry.RuntimeBinding{TargetURN: registry.LogicalAgentBindingTarget("worker"), SessionID: "own"}}
 			got := ResolveCallerContext(ctx, sessions, bindings)
-			if got.SessionID != tc.session || got.AgentURN != tc.agent || got.Verified != (tc.session != "") {
+			if got.SessionID != tc.session || got.AgentURN != tc.agent || got.SessionResolved != (tc.session != "") || got.Verified != (tc.p.ID != "") {
 				t.Fatalf("context = %+v", got)
 			}
-			if got.Verified && (got.WorkstreamID != "work" || got.LaunchID != "launch" || got.ProjectID != "project") {
+			if got.SessionResolved && (got.WorkstreamID != "work" || got.LaunchID != "launch" || got.ProjectID != "project") {
 				t.Fatalf("missing row context: %+v", got)
 			}
 		})
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "session:own", Kind: "session", SessionID: "own"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "session:own", Kind: "session", SessionID: "own"})
 	for _, binding := range []registry.RuntimeBinding{{}, {TargetURN: registry.LogicalAgentBindingTarget("worker"), SessionID: "other"}} {
 		got := ResolveCallerContext(ctx, sessions, contextBindings{binding})
-		if !got.Verified || got.AgentURN != "" {
+		if !got.Verified || !got.SessionResolved || got.AgentURN != "" {
 			t.Fatalf("missing/stale binding invented agent: %+v", got)
 		}
 	}

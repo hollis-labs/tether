@@ -81,7 +81,7 @@ func TestSharedNamingTypedCollisionKeepsDiagnosticsAndViewNames(t *testing.T) {
 	}
 	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {
 		t.Run(string(mode), func(t *testing.T) {
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "caller", Kind: "service"})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "caller", Kind: "service"})
 			a, err := NewVerifiedAdapter(ctx, nil, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -158,7 +158,7 @@ func TestSharedNamingReconnectRebindsAcceptedToolsInEveryView(t *testing.T) {
 	if err := r.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "caller", Kind: "service"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "caller", Kind: "service"})
 	type caller struct {
 		mode    mcpgateway.Mode
 		client  *mcpsdk.ClientSession
@@ -234,7 +234,7 @@ func TestSharedNamingSchemaRefreshKeepsAcceptedToolsCallable(t *testing.T) {
 	if err := r.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	ctx = identity.WithPrincipal(ctx, identity.Principal{ID: "caller", Kind: "service"})
+	ctx = identity.WithPrincipal(ctx, identity.Principal{Verified: true, ID: "caller", Kind: "service"})
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for _, mode := range []mcpgateway.Mode{mcpgateway.Flat, mcpgateway.Search} {

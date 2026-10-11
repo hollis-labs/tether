@@ -17,7 +17,7 @@ func TestDocsThroughSharedGatewayResourcesAndTools(t *testing.T) {
 	for _, mode := range []string{"flat", "search"} {
 		for _, deny := range []bool{false, true} {
 			t.Run(mode+map[bool]string{true: "/denied", false: "/visible"}[deny], func(t *testing.T) {
-				ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "docs-reader", Kind: "service"})
+				ctx := identity.WithPrincipal(context.Background(), identity.Principal{Verified: true, ID: "docs-reader", Kind: "service"})
 				a := newTestAdapter(t)
 				a.principal = &identity.Principal{ID: "docs-reader", Kind: "service"}
 				a.svc.Catalog = &config.Catalog{}

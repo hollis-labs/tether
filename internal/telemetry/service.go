@@ -51,11 +51,11 @@ func (s *Service) Start(ctx context.Context, call Call) (context.Context, *Obser
 	ctx, span := otel.Tracer("tether/telemetry").Start(ctx, "tether.tool.call")
 	now := time.Now()
 	attribution, _ := callcontext.FromContext(ctx)
-	if !attribution.Verified {
+	if !attribution.SessionResolved {
 		if attribution.Source == "daemon" && attribution.PrincipalID != "" {
-			// Verified describes session binding, not credential validity.
-			// Retain daemon-resolved operator/service identity, without claims.
-			attribution = callcontext.Snapshot{Source: attribution.Source, PrincipalID: attribution.PrincipalID, PrincipalKind: attribution.PrincipalKind}
+			// SessionResolved describes session binding; Verified is credential
+			// validity. Retain daemon-resolved identity, without session claims.
+			attribution = callcontext.Snapshot{Verified: attribution.Verified, Source: attribution.Source, PrincipalID: attribution.PrincipalID, PrincipalKind: attribution.PrincipalKind}
 		} else {
 			attribution = callcontext.Snapshot{}
 		}
