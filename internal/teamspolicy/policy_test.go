@@ -43,14 +43,15 @@ func TestLoadAbsentFileDeniesEverything(t *testing.T) {
 
 func TestParseRejectsInvalidPolicyClearly(t *testing.T) {
 	for name, tc := range map[string]struct{ raw, want string }{
-		"version":   {"launches: []\n", "version must be 1"},
-		"empty":     {"version: 1\n", "at least one exact launch"},
-		"pattern":   {"version: 1\nlaunches:\n  - {launch: 'tether-*', runtime: claude, definition: {id: a, revision: r, digest: d}}\n", "no patterns"},
-		"runtime":   {"version: 1\nlaunches:\n  - {launch: a, definition: {id: a, revision: r, digest: d}}\n", "runtime is required"},
-		"no digest": {"version: 1\nlaunches:\n  - {launch: a, runtime: x, definition: {id: a, revision: r}}\n", "exact pin"},
-		"dup":       {validPolicy + "  - {launch: tether-claude, runtime: claude, definition: {id: z, revision: r, digest: d}}\n", "duplicate launch"},
-		"dup pin":   {validPolicy + "  - {launch: other, runtime: claude, definition: {id: claude-agent, revision: r1, digest: d-claude}}\n", "already bound"},
-		"unknown":   {validPolicy + "paused: true\n", "field paused not found"},
+		"version":    {"launches: []\n", "version must be 1"},
+		"empty":      {"version: 1\n", "at least one exact launch"},
+		"pattern":    {"version: 1\nlaunches:\n  - {launch: 'tether-*', runtime: claude, definition: {id: a, revision: r, digest: d}}\n", "no patterns"},
+		"runtime":    {"version: 1\nlaunches:\n  - {launch: a, definition: {id: a, revision: r, digest: d}}\n", "runtime is required"},
+		"no digest":  {"version: 1\nlaunches:\n  - {launch: a, runtime: x, definition: {id: a, revision: r}}\n", "exact pin"},
+		"dup":        {validPolicy + "  - {launch: tether-claude, runtime: claude, definition: {id: z, revision: r, digest: d}}\n", "duplicate launch"},
+		"dup pin":    {validPolicy + "  - {launch: other, runtime: claude, definition: {id: claude-agent, revision: r1, digest: d-claude}}\n", "already bound"},
+		"unknown":    {validPolicy + "paused: true\n", "field paused not found"},
+		"second doc": {validPolicy + "---\nversion: 1\nlaunches: [garbage\n", "exactly one document"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.raw)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -154,15 +155,17 @@ func TestAdmitFormationReasons(t *testing.T) {
 		mutate func(*teams.Team)
 		want   string
 	}{
-		"valid":           {func(*teams.Team) {}, ""},
-		"extra slot":      {func(t *teams.Team) { t.Slots = append(t.Slots, t.Slots[0]) }, "exactly three slots"},
-		"renamed slot":    {func(t *teams.Team) { t.Slots[1].Name = "grunts" }, "missing slot"},
-		"not allowlisted": {func(t *teams.Team) { t.Slots[1].Definition = rogue }, "allowlisted exact pin"},
-		"same runtime":    {func(t *teams.Team) { t.Slots[2].Definition = t.Slots[1].Definition }, "different runtime"},
-		"durable":         {func(t *teams.Team) { t.Slots[2].Resolution = teams.Durable }, "fresh members"},
-		"coordinator":     {func(t *teams.Team) { t.Routing.CoordinatorSlot = SlotWorkers }, "coordinator slot must be"},
-		"workers min 0":   {func(t *teams.Team) { t.Slots[1].Min = 0 }, "size must be"},
-		"workers max 3":   {func(t *teams.Team) { t.Slots[1].Max = 3 }, "size must be"},
+		"valid":             {func(*teams.Team) {}, ""},
+		"extra slot":        {func(t *teams.Team) { t.Slots = append(t.Slots, t.Slots[0]) }, "exactly three slots"},
+		"renamed slot":      {func(t *teams.Team) { t.Slots[1].Name = "grunts" }, "missing slot"},
+		"not allowlisted":   {func(t *teams.Team) { t.Slots[1].Definition = rogue }, "allowlisted exact pin"},
+		"same runtime":      {func(t *teams.Team) { t.Slots[2].Definition = t.Slots[1].Definition }, "different runtime"},
+		"durable":           {func(t *teams.Team) { t.Slots[2].Resolution = teams.Durable }, "fresh members"},
+		"coordinator":       {func(t *teams.Team) { t.Routing.CoordinatorSlot = SlotWorkers }, "owner slot must both"},
+		"workers min 0":     {func(t *teams.Team) { t.Slots[1].Min = 0 }, "size must be"},
+		"owner is workers":  {func(t *teams.Team) { t.Phases = []teams.Phase{{OwnerSlot: SlotWorkers}} }, "owner slot must both"},
+		"coordinator min 1": {func(t *teams.Team) { t.Slots[0].Min = 1 }, "provisions no member"},
+		"workers max 3":     {func(t *teams.Team) { t.Slots[1].Max = 3 }, "size must be"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			team := admitTeam()
@@ -185,5 +188,38 @@ func TestAdmitFormationReasons(t *testing.T) {
 	team.Slots[2].Definition = team.Slots[1].Definition
 	if err := (Ceilings{Policy: single}).AdmitFormation(context.Background(), operator(), teamsvc.FormRequest{Team: team}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdmitFormationRefusesProvisionedCoordinatorCount(t *testing.T) {
+	p, err := Parse([]byte(validPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := teamsvc.FormRequest{Team: admitTeam(), Launch: teams.LaunchRequest{Counts: map[string]int{SlotCoordinator: 1}}}
+	if err := (Ceilings{Policy: p}).AdmitFormation(context.Background(), operator(), req); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("coordinator count accepted: %v", err)
+	}
+}
+
+func TestPauseMarkerStatErrorFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(Path(root), []byte(validPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Paused() {
+		t.Fatal("paused without a marker")
+	}
+	// A symlink loop makes Stat fail with something other than not-exist.
+	marker := filepath.Join(root, PauseFileName)
+	if err := os.Symlink(marker, marker); err != nil {
+		t.Skip(err)
+	}
+	if !p.Paused() {
+		t.Fatal("stat failure treated as not paused")
 	}
 }

@@ -103,6 +103,10 @@ func Parse(raw []byte) (*Policy, error) {
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("invalid yaml: %w", err)
 	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, errors.New("invalid yaml: exactly one document is allowed")
+	}
 	if f.Version != Version {
 		return nil, fmt.Errorf("version must be %d, got %d", Version, f.Version)
 	}
@@ -154,7 +158,8 @@ func (p *Policy) Paused() bool {
 		return true
 	}
 	if p.pauseMarker != "" {
-		if _, err := os.Stat(p.pauseMarker); err == nil {
+		// Only a confirmed absence resumes; any other stat failure fails closed.
+		if _, err := os.Stat(p.pauseMarker); !errors.Is(err, os.ErrNotExist) {
 			return true
 		}
 	}
@@ -274,8 +279,17 @@ func (c Ceilings) AdmitFormation(_ context.Context, p teamsvc.Principal, req tea
 		}
 		runtimes[name] = l.Runtime
 	}
-	if req.Team.Routing.CoordinatorSlot != SlotCoordinator {
-		return deny("coordinator slot must be %q", SlotCoordinator)
+	// The operator's owner seat must be the coordinator slot, and that slot
+	// must provision no member, so an agent can never take the coordinator role.
+	owner := req.Team.Routing.CoordinatorSlot
+	if len(req.Team.Phases) > 0 && req.Team.Phases[0].OwnerSlot != "" {
+		owner = req.Team.Phases[0].OwnerSlot
+	}
+	if req.Team.Routing.CoordinatorSlot != SlotCoordinator || owner != SlotCoordinator {
+		return deny("coordinator and owner slot must both be %q", SlotCoordinator)
+	}
+	if slots[SlotCoordinator].Min != 0 || req.Launch.Counts[SlotCoordinator] != 0 {
+		return deny("the coordinator slot is the operator's seat and provisions no member")
 	}
 	// Reviewer must be on a different runtime from the workers when the
 	// allowlist offers more than one runtime; with a single runtime it is
