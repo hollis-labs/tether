@@ -210,6 +210,12 @@ Provider notes:
 - Configured models that are missing from models.dev are still routable. Tether
   synthesizes a conservative text-only catalog entry for those ids so local
   OpenAI-compatible servers can use custom llama/Ollama model names.
+- `capabilities` (`tool_call`, `reasoning`, `attachment`, all default false)
+  declares what a provider's models support when the catalog has no entry for
+  them, such as local llama.cpp servers. Without it a model unknown to
+  models.dev is routed for plain chat only (tool calling and reasoning requests
+  are rejected). A catalog entry, when one exists, wins over the declaration.
+  Pair it with `price: free` for local servers.
 - `openai`, `openai-compatible` and `anthropic` accept `headers`, a map of static,
   non-secret request headers sent on every call, for gateways that require a
   client or session identifier (OpenCode Go needs `x-opencode-session`).

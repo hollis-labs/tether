@@ -720,11 +720,20 @@ func syntheticConfiguredModels(providers map[string]config.AIProviderConfig) (ma
 					Input:  []string{"text"},
 					Output: []string{"text"},
 				},
-				Capabilities: modelsdev.Capabilities{},
+				Capabilities: declaredCapabilities(p.Capabilities),
 			}
 		}
 	}
 	return out, ps
+}
+
+// declaredCapabilities maps a provider's declared capabilities onto a
+// synthetic catalog entry. Unset means none, the conservative default.
+func declaredCapabilities(c *config.AICapabilitiesConfig) modelsdev.Capabilities {
+	if c == nil {
+		return modelsdev.Capabilities{}
+	}
+	return modelsdev.Capabilities{ToolCall: c.ToolCall, Reasoning: c.Reasoning, Attachment: c.Attachment}
 }
 
 // modelDiscoverer lists model ids from a connection's /models endpoint.
