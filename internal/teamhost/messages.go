@@ -100,7 +100,9 @@ func (h *Host) SendMessage(ctx context.Context, d teams.Delivery) error {
 	if d.IdempotencyKey == "" || d.Body == "" || d.From.Validate() != nil || d.Recipient.Actor.Validate() != nil || d.Recipient.ID == "" || d.Route.RunID == "" || d.Route.RosterVersion == 0 {
 		return errors.New("delivery: retained plan required")
 	}
-	if d.Recipient.Kind == mesh.ActorAgent && d.Recipient.SessionID == "" {
+	// An owner/coordinator has no provisioned session: replies reach it as mail
+	// at its own address, which wakes whatever session is bound to it.
+	if d.Recipient.Kind == mesh.ActorAgent && d.Recipient.SessionID == "" && d.Recipient.Governance != teams.Owner {
 		return teams.ErrUnavailable
 	}
 	if d.Delivery != "" && d.Delivery != mesh.DeliveryAtIdle {

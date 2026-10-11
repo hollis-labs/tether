@@ -161,6 +161,7 @@ func (s *Service) agentLaunchPlanFor(ctx context.Context, plan *launch.Plan, wor
 	if err := mergeTeamBootContext(plan, &lp); err != nil {
 		return agentlaunch.LaunchPlan{}, err
 	}
+	mergeSessionIdentity(plan, &lp)
 	// Whichever engine produced the plan, an app-launched Claude loads only
 	// the MCP servers Tether plants (CW-20261001-0227).
 	s.applyClaudeStrictMCP(&lp)

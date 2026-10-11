@@ -68,7 +68,16 @@ func (s *Service) Form(ctx context.Context, req FormRequest) (Result, error) {
 			r.Members = append(r.Members, teams.Member{ID: serviceKey(scope) + "-owner", Slot: slot, Actor: p.ID, Kind: p.Kind, Status: "active", Governance: teams.Owner, JoinedAt: s.deps.Clock.Now()})
 			return nil
 		})
-		return Result{Run: &run}, err
+		if err != nil {
+			return Result{Run: &run}, err
+		}
+		out := Result{Run: &run, Self: p.ID, Coordinator: p.ID, Channel: run.Channel}
+		if snapshot, serr := s.deps.Roster.Snapshot(ctx, run.ID); serr == nil {
+			for _, m := range snapshot.Members {
+				out.Members = append(out.Members, memberView(m))
+			}
+		}
+		return out, nil
 	})
 }
 

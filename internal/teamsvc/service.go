@@ -118,6 +118,13 @@ type Result struct {
 	Member       *MemberView    `json:"member,omitempty"`
 	Recipients   []MemberView   `json:"recipients,omitempty"`
 	DeliveryKeys []string       `json:"delivery_keys,omitempty"`
+	// Self, Coordinator and Members tell a forming caller its own message
+	// address, the owner's address (where member replies and results land) and
+	// every member's address. Channel is the run's shared channel.
+	Self        mesh.URN     `json:"self,omitempty"`
+	Coordinator mesh.URN     `json:"coordinator,omitempty"`
+	Channel     string       `json:"channel,omitempty"`
+	Members     []MemberView `json:"members,omitempty"`
 }
 
 const (

@@ -56,7 +56,17 @@ print("TOOLS", len(names), "team:", len(team))
 if "tether_team_form" not in team:
     sys.exit("FAIL: tether_team_form not listed (%d tools)" % len(names))
 form = json.load(open(form_path))
-run = call("tether_team_form", {"key": "smoke-session-form-" + K, "request": form})["run"]["id"]
+formed = call("tether_team_form", {"key": "smoke-session-form-" + K, "request": form})
+run = formed["run"]["id"]
+# The coordinator learns its own verified address from the form result and whoami.
+me = call("tether_whoami", {})
+if not me.get("address") or me["address"] != formed.get("self") or formed.get("coordinator") != formed.get("self"):
+    sys.exit("FAIL: identity mismatch whoami=%s form self=%s coordinator=%s" % (me.get("address"), formed.get("self"), formed.get("coordinator")))
+if not me["principal"].get("verified") or me["principal"].get("principal_kind") != "session":
+    sys.exit("FAIL: whoami principal not a verified session: %s" % me["principal"])
+if not formed.get("channel") or not any(m["slot"] == "workers" for m in formed.get("members", [])):
+    sys.exit("FAIL: form result lacks channel/members: %s" % json.dumps(formed)[:400])
+print("SELF", me["address"])
 print("RUN", run)
 if os.environ.get("SMOKE_HOOK"):
     os.system(os.environ["SMOKE_HOOK"])
@@ -80,6 +90,17 @@ for verb in ("address", "assign", "delegate"):
         else:
             sys.exit("FAIL: worker never received %r" % text)
         print("DELIVERED", verb)
+# A worker answers a team delivery by mail to the coordinator address its
+# preamble names; it must land in this session's own inbox (no 'to').
+call("tether_team_address", {"key": "smoke-session-reply-" + K, "request": {"run_id": run, "address": "@workers", "body": "smoke-reply please " + K}})
+for _ in range(60):
+    box = call("tether_message_inbox", {})
+    if any("smoke-reply-ack" in json.dumps(m) for m in (box.get("messages") or [])):
+        print("REPLY-IN-INBOX")
+        break
+    time.sleep(0.5)
+else:
+    sys.exit("FAIL: worker reply never reached the coordinator inbox (%s)" % os.environ.get("SMOKE_REPLYLOG", ""))
 call("tether_team_dissolve", {"key": "smoke-session-dissolve-" + K, "request": {"run_id": run}})
 print("OK")
 proc.stdin.close()

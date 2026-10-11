@@ -31,7 +31,7 @@ func (a *Adapter) registerTeamTools(s *gomcp.Server) {
 				"request":      teamRequestSchema(verb),
 				"_traceparent": map[string]any{"type": "string"}, "_tracestate": map[string]any{"type": "string"},
 			}},
-			OutputSchema: map[string]any{"type": "object", "description": "The stable team service Result: run metadata, minimal membership views and delivery keys; no host intents or session identifiers.", "properties": map[string]any{"run": map[string]any{"type": "object"}, "member": map[string]any{"type": "object"}, "recipients": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}, "delivery_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "additionalProperties": false},
+			OutputSchema: map[string]any{"type": "object", "description": "The stable team service Result: run metadata, minimal membership views and delivery keys; no host intents or session identifiers.", "properties": map[string]any{"run": map[string]any{"type": "object"}, "member": map[string]any{"type": "object"}, "recipients": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}, "delivery_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "self": map[string]any{"type": "string"}, "coordinator": map[string]any{"type": "string"}, "channel": map[string]any{"type": "string"}, "members": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}, "additionalProperties": false},
 			Handler:      func(ctx context.Context, args map[string]any) (any, error) { return a.handleTeam(ctx, verb, args) },
 		}, behavior)
 	}
