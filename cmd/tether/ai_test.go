@@ -521,3 +521,7 @@ type aiStubUsageStore struct {
 func (s aiStubUsageStore) QueryAIUsageSummary(store.AIUsageFilter) (store.AIUsageSummary, error) {
 	return s.summary, nil
 }
+
+func (s aiStubService) Decide(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, nil
+}

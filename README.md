@@ -283,11 +283,11 @@ at least one enabled AI provider. Supported provider types currently include
 `anthropic`, `gemini`, `openai`, and `openai-compatible`. The current surfaces are:
 
 - HTTP: `/ai/providers`, `/ai/models`, `/ai/routes`, `/ai/routes/preview`, `/ai/routes/explain`, `/ai/chat`,
-  `/ai/chat/stream`, `/ai/embeddings`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
+  `/ai/chat/stream`, `/ai/embeddings`, `/ai/decide`, `/ai/usage`, `/ai/budgets`, `/ai/audit`
 - CLI: `tether ai providers|models|routes|route-preview|route-explain|chat|embeddings|usage|budgets|audit|watch-budgets`
 - MCP: `tether_ai_list_providers`, `tether_ai_list_models`,
   `tether_ai_list_routes`, `tether_ai_route_preview`, `tether_ai_route_explain`, `tether_ai_chat`,
-  `tether_ai_chat_stream`, `tether_ai_embeddings`,
+  `tether_ai_chat_stream`, `tether_ai_embeddings`, `tether_ai_decide`,
   `tether_ai_usage`, `tether_ai_budgets`, `tether_ai_audit`
 
 `tether ai chat` and `tether ai route-preview` accept either simple text input or a

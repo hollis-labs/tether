@@ -29,6 +29,7 @@ type AIUsageFilter struct {
 	SessionID string
 	CallerID  string
 	Operation string
+	Purpose   string
 	Since     time.Time
 }
 
@@ -96,8 +97,14 @@ func aiEventWhereClause(f AIEventFilter) (string, []any) {
 }
 
 func aiUsageWhereClause(f AIUsageFilter) (string, []any) {
+	// Chat spend is event_type "chat"; decision spend is its own event type,
+	// so a decide budget never counts chat and vice versa.
+	eventType := "chat"
+	if f.Operation == "decide" {
+		eventType = "decide"
+	}
 	q := ` WHERE event_type = ?`
-	args := []any{"chat"}
+	args := []any{eventType}
 	if f.Provider != "" {
 		q += " AND provider = ?"
 		args = append(args, f.Provider)
@@ -117,6 +124,10 @@ func aiUsageWhereClause(f AIUsageFilter) (string, []any) {
 	if f.Operation != "" {
 		q += " AND operation = ?"
 		args = append(args, f.Operation)
+	}
+	if f.Purpose != "" {
+		q += " AND purpose = ?"
+		args = append(args, f.Purpose)
 	}
 	if !f.Since.IsZero() {
 		q += " AND timestamp > ?"
@@ -139,8 +150,9 @@ func (s *Store) RecordAIAuditEvent(ev observability.AuditEvent) error {
 		    (event_type, request_id, session_id, caller_id, operation, provider, model,
 		     policy_version, latency_ms, success, refusal, error, input_tokens, output_tokens,
 		     cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd,
-		     request_summary, response_summary, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     request_summary, response_summary, timestamp,
+		     cost_kind, upstream_provider, billed_cost_usd, generation_id, purpose)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.EventType,
 		nullIfEmpty(ev.RequestID),
 		nullIfEmpty(ev.SessionID),
@@ -166,6 +178,7 @@ func (s *Store) RecordAIAuditEvent(ev observability.AuditEvent) error {
 		nullIfEmpty(ev.UpstreamProvider),
 		ev.BilledCostUSD,
 		nullIfEmpty(ev.GenerationID),
+		nullIfEmpty(ev.Purpose),
 	)
 	if err != nil {
 		return fmt.Errorf("insert ai event: %w", err)
@@ -185,7 +198,7 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 	             policy_version, latency_ms, success, refusal, error, input_tokens, output_tokens,
 	             cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd,
 	             request_summary, response_summary, timestamp,
-	             cost_kind, upstream_provider, billed_cost_usd, generation_id
+	             cost_kind, upstream_provider, billed_cost_usd, generation_id, purpose
 	      FROM ai_events`
 	where, args := aiEventWhereClause(f)
 	//nolint:gosec // G202: where is built from fixed column predicates with ? placeholders; values are bound via args
@@ -219,13 +232,14 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 			upstream       sql.NullString
 			billedCost     sql.NullFloat64
 			generationID   sql.NullString
+			purpose        sql.NullString
 		)
 		if err := rows.Scan(
 			&ev.ID, &ev.EventType, &requestID, &sessionID, &callerID, &ev.Operation,
 			&provider, &model, &policyVersion, &ev.LatencyMs, &success, &refusal, &errStr,
 			&ev.InputTokens, &ev.OutputTokens, &ev.CacheReadTokens, &ev.CacheWriteTokens,
 			&ev.ReasoningTokens, &ev.EstimatedCostUSD, &requestSummary, &respSummary, &tsStr,
-			&costKind, &upstream, &billedCost, &generationID,
+			&costKind, &upstream, &billedCost, &generationID, &purpose,
 		); err != nil {
 			return nil, fmt.Errorf("scan ai event: %w", err)
 		}
@@ -242,6 +256,7 @@ func (s *Store) QueryAIEvents(f AIEventFilter) ([]AIEvent, error) {
 		ev.CostKind = costKind.String
 		ev.UpstreamProvider = upstream.String
 		ev.GenerationID = generationID.String
+		ev.Purpose = purpose.String
 		if billedCost.Valid {
 			ev.BilledCostUSD = &billedCost.Float64
 		}

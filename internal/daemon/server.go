@@ -829,6 +829,7 @@ func (s *Server) apiMounts() []apiMount {
 		{"/ai/chat", hasAI},
 		{"/ai/chat/stream", hasAI},
 		{"/ai/embeddings", hasAI},
+		{"/ai/decide", hasAI},
 		{"/ai/providers", hasAI},
 		{"/ai/models", hasAI},
 		{"/ai/routes", hasAI},

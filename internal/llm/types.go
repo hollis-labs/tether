@@ -8,6 +8,7 @@ type OperationKind string
 const (
 	OperationChat          OperationKind = "chat"
 	OperationEmbedding     OperationKind = "embedding"
+	OperationDecide        OperationKind = "decide"
 	OperationImageGenerate OperationKind = "image_generate"
 	OperationAudioInput    OperationKind = "audio_input"
 )
@@ -43,6 +44,10 @@ type Request struct {
 	Tools               []ToolDefinition  `json:"tools,omitempty"`
 	Attachments         []Attachment      `json:"attachments,omitempty"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
+
+	// Decision carries the structured-judgment payload of an OperationDecide
+	// request.
+	Decision *DecisionRequest `json:"decision,omitempty"`
 }
 
 // Message is a normalized conversational message. Providers that do not
@@ -94,14 +99,15 @@ type Attachment struct {
 // Response is the normalized AI gateway result returned by a provider adapter
 // after route planning and middleware execution.
 type Response struct {
-	Provider   string        `json:"provider,omitempty"`
-	Model      string        `json:"model,omitempty"`
-	Output     []Message     `json:"output,omitempty"`
-	Embeddings []Embedding   `json:"embeddings,omitempty"`
-	StopReason string        `json:"stop_reason,omitempty"`
-	Refusal    string        `json:"refusal,omitempty"`
-	Usage      Usage         `json:"usage,omitempty"`
-	Route      RouteDecision `json:"route,omitempty"`
+	Provider   string          `json:"provider,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Output     []Message       `json:"output,omitempty"`
+	Embeddings []Embedding     `json:"embeddings,omitempty"`
+	Decision   *DecisionResult `json:"decision,omitempty"`
+	StopReason string          `json:"stop_reason,omitempty"`
+	Refusal    string          `json:"refusal,omitempty"`
+	Usage      Usage           `json:"usage,omitempty"`
+	Route      RouteDecision   `json:"route,omitempty"`
 }
 
 // Embedding is one normalized embedding vector result.

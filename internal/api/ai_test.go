@@ -546,3 +546,7 @@ func intRef(v int) *int {
 func floatRef(v float64) *float64 {
 	return &v
 }
+
+func (s stubAIService) Decide(context.Context, llm.Request) (llm.Response, error) {
+	return s.resp, s.err
+}

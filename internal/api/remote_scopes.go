@@ -163,6 +163,7 @@ var RemoteRouteScopes = []RouteScope{
 	routeScope("/ai/chat", "/ai/chat", map[string]string{"POST": operateScope}),
 	routeScope("/ai/chat/stream", "/ai/chat/stream", map[string]string{"POST": operateScope}),
 	routeScope("/ai/embeddings", "/ai/embeddings", map[string]string{"POST": operateScope}),
+	routeScope("/ai/decide", "/ai/decide", map[string]string{"POST": operateScope}),
 	routeScope("/ai/providers", "/ai/providers", map[string]string{"GET": readScope}),
 	routeScope("/ai/models", "/ai/models", map[string]string{"GET": readScope}),
 	routeScope("/ai/routes", "/ai/routes", map[string]string{"GET": readScope}),

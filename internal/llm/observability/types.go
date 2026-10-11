@@ -10,6 +10,7 @@ type AuditEvent struct {
 	SessionID        string
 	CallerID         string
 	Operation        string
+	Purpose          string
 	Provider         string
 	Model            string
 	PolicyVersion    string

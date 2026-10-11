@@ -201,7 +201,7 @@ Mutating tools require a **token** and the corresponding **scope**:
 | `groups.write` | `tether_group_create`, `tether_group_archive`, `tether_group_invite`, `tether_group_kick`, `tether_group_leave`, `tether_group_set_role`, `tether_group_post`, `tether_group_mark_read` |
 | `delivery.write` | `tether_message_redrive`, `tether_message_purge` |
 | `catalog.write` | `tether_agent_create`, `tether_agent_edit` |
-| `ai.invoke` | `tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings` |
+| `ai.invoke` | `tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings`, `tether_ai_decide` |
 
 Scopes are per capability group, not a hierarchy — `registry.write` does not
 imply `groups.write`, and neither implies `message.write`. Grant the ones the
@@ -1876,6 +1876,7 @@ event reaction without keeping a long-lived stream open.
 6. tether_ai_chat                       → invoke the gateway and return one final response (requires ai.invoke)
 7. tether_ai_chat_stream                → invoke the gateway as a live MCP stream (requires ai.invoke)
 8. tether_ai_embeddings                 → generate embedding vectors (requires ai.invoke)
+8b. tether_ai_decide                    → structured judgments: noul / choice / score questions about one state (requires ai.invoke)
 9. tether_ai_usage / tether_ai_budgets     → inspect durable usage and live budget headroom
 10. tether_ai_budget_alerts             → inspect durable budget_rejection alerts directly
 11. tether_ai_wait_budget_alerts        → wait briefly for live ai.budget_rejected events
@@ -1943,7 +1944,7 @@ Example full request call:
 }
 ```
 
-`tether_ai_chat`, `tether_ai_chat_stream`, and `tether_ai_embeddings` require the `ai.invoke` scope. `tether_ai_usage`,
+`tether_ai_chat`, `tether_ai_chat_stream`, `tether_ai_embeddings`, and `tether_ai_decide` require the `ai.invoke` scope. `tether_ai_usage`,
 `tether_ai_budgets`, `tether_ai_budget_alerts`, `tether_ai_wait_budget_alerts` and
 `tether_ai_audit` are read-only but require a token (any scope).
 `tether_ai_list_providers`, `tether_ai_list_models`, `tether_ai_list_routes`,

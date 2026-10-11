@@ -138,6 +138,26 @@ func (a *Adapter) registerAITools(s *gomcp.Server) {
 		Handler: a.handleAIEmbeddings,
 	}, Writes().OpenWorld())
 	a.addTool(s, gomcp.Tool{
+		Name: "tether_ai_decide",
+		Description: "Ask a decision provider structured questions (noul yes/no probability, choice among ordered options, score on ordered levels) about one state; " +
+			"it chooses among the options you give and never writes text. Returns answers by question key with probabilities and confidence (none for noul), plus usage. " +
+			"Provider failures come back typed (kind, on_error). Requires the ai.invoke scope.",
+		InputSchema: gomcp.InputSchema(
+			gomcp.ObjectProp("state", "State to judge: a JSON string, object or array. Send only the fields the questions need.", false),
+			gomcp.ArrayProp("questions", "Ordered questions. Each: {key, type: noul|choice|score, instructions, options:[{key,description}] (choice), levels:[string] (score, 2..10, lowest first), true/false: string (noul, optional)}. Option order matters: the model leans toward the first.", false, map[string]interface{}{"type": "object"}),
+			gomcp.StringProp("purpose", "Spend-accounting tag; per-purpose budgets key on it", false),
+			gomcp.StringEnumProp("on_error", "Caller's failure mode, echoed on errors: fail_open or fail_closed", false, "fail_open", "fail_closed"),
+			gomcp.ObjectProp("request", "Full normalized llm.Request object with a decision payload. Mutually exclusive with request_json and the shorthand fields.", false),
+			gomcp.StringProp("request_json", "Full normalized llm.Request encoded as JSON. Mutually exclusive with request and the shorthand fields.", false),
+			gomcp.StringProp("provider", "Configured decision provider id hint", false),
+			gomcp.StringProp("model", "Model hint (pinned id such as jev-1.13.0)", false),
+			gomcp.StringProp("request_id", "Optional request correlation id", false),
+			gomcp.StringProp("session_id", "Optional session correlation id", false),
+			gomcp.StringProp("caller_id", "Optional caller correlation id", false),
+		),
+		Handler: a.handleAIDecide,
+	}, Writes().OpenWorld())
+	a.addTool(s, gomcp.Tool{
 		Name:        "tether_ai_chat_stream",
 		Description: "Invoke the AI gateway as a live stream. Emits MCP notifications for incremental stream events and returns the final normalized response. Requires the ai.invoke scope.",
 		InputSchema: gomcp.InputSchema(
@@ -355,6 +375,28 @@ func (a *Adapter) handleAIEmbeddings(ctx context.Context, args map[string]any) (
 		return nil, err
 	}
 	out, err := c.AIEmbeddings(ctx, api.ChatRequest{Request: request})
+	if err != nil {
+		return nil, a.classifyAIClientErr(err)
+	}
+	return toolJSON(map[string]any{
+		"ok":       true,
+		"response": out.Response,
+	}), nil
+}
+
+func (a *Adapter) handleAIDecide(ctx context.Context, args map[string]any) (any, error) {
+	if err := a.checkScope(ScopeAIInvoke); err != nil {
+		return nil, err
+	}
+	c, err := a.requireAIClient()
+	if err != nil {
+		return nil, err
+	}
+	request, err := aiDecideRequestFromTool(args)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.AIDecide(ctx, api.ChatRequest{Request: request})
 	if err != nil {
 		return nil, a.classifyAIClientErr(err)
 	}
@@ -733,6 +775,49 @@ func aiEmbeddingRequestFromTool(args map[string]any) (llm.Request, error) {
 	}
 	if len(request.EmbeddingInput) == 0 {
 		return llm.Request{}, toolError("invalid_request", "embedding_input required")
+	}
+	return request, nil
+}
+
+func aiDecideRequestFromTool(args map[string]any) (llm.Request, error) {
+	_, hasRequest := args["request"]
+	shorthand := args["state"] != nil || args["questions"] != nil || str(args, "purpose") != "" || str(args, "on_error") != ""
+	var request llm.Request
+	if hasRequest || str(args, "request_json") != "" {
+		if shorthand {
+			return llm.Request{}, toolError("invalid_request", "request and request_json cannot be combined with state, questions, purpose or on_error")
+		}
+		decoded, err := decodeAIRequestOverride(args)
+		if err != nil {
+			return llm.Request{}, err
+		}
+		request = decoded
+	} else {
+		dec := &llm.DecisionRequest{
+			State:   args["state"],
+			Purpose: str(args, "purpose"),
+			OnError: llm.OnError(str(args, "on_error")),
+		}
+		if raw, ok := args["questions"]; ok {
+			b, err := json.Marshal(raw)
+			if err != nil {
+				return llm.Request{}, toolError("invalid_request", "questions must be a valid array")
+			}
+			if err := json.Unmarshal(b, &dec.Questions); err != nil {
+				return llm.Request{}, toolError("invalid_request", "questions must decode as decision questions: "+err.Error())
+			}
+		}
+		request = llm.Request{Decision: dec}
+	}
+	if request.Operation == "" {
+		request.Operation = llm.OperationDecide
+	}
+	request = applyAIRequestToolOverrides(args, request)
+	if request.Operation != llm.OperationDecide {
+		return llm.Request{}, toolError("invalid_request", "request operation must be decide")
+	}
+	if err := request.Decision.Validate(); err != nil {
+		return llm.Request{}, toolError("invalid_request", err.Error())
 	}
 	return request, nil
 }

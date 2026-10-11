@@ -502,10 +502,92 @@ Errors: `invalid_request` when the body is malformed, `embedding_input` is
 missing, or `operation` is not `embedding`; `not_found` when no route/provider
 can satisfy the request; `internal_error` for upstream provider failures.
 
+### `POST /ai/decide`
+
+Ask a decision provider (JEV) structured questions about one state. The
+provider chooses among options the caller defines; it never writes text. The
+request is an `llm.Request` whose `decision` carries the payload; the provider
+shapes stay inside the adapter.
+
+```json
+{
+  "request": {
+    "caller_id": "torque",
+    "decision": {
+      "state": {"title": "fix login", "body": "500 on submit"},
+      "purpose": "task-kind",
+      "on_error": "fail_open",
+      "questions": [
+        {"key": "kind", "type": "choice", "instructions": "What kind of task is this?",
+         "options": [{"key": "bug", "description": "a defect"}, {"key": "feature", "description": "new behavior"}]},
+        {"key": "urgent", "type": "noul", "instructions": "Is it urgent?",
+         "true": "needs action today", "false": "can wait"},
+        {"key": "size", "type": "score", "instructions": "How big is it?",
+         "levels": ["tiny", "small", "large"]}
+      ]
+    }
+  }
+}
+```
+
+- `state`: string, object or array. Send only the fields the questions need.
+- `questions` are ordered and each `key` is unique. `choice` needs at least two
+  options; `score` needs 2 to 10 `levels`, lowest first; `noul` takes optional
+  `true`/`false` text. Option order is preserved to the provider (the model
+  leans toward the first option, so callers shuffle per request).
+- `purpose` tags the call for spend accounting; `on_error` is the caller's
+  declared failure mode (`fail_open` or `fail_closed`).
+- `provider_hint` and `model_hint` on the request pin a route; otherwise the
+  first decision route wins.
+
+Response (200):
+
+```json
+{
+  "response": {
+    "provider": "jev",
+    "model": "jev-1.13.0",
+    "decision": {
+      "answers": {
+        "kind": {"type": "choice", "choice": "bug", "confidence": 0.8,
+                 "probabilities": {"bug": 0.8, "feature": 0.2}},
+        "urgent": {"type": "noul", "noul": 0.9},
+        "size": {"type": "score", "score": 1.4, "confidence": 0.4,
+                 "probabilities": {"0": 0.0, "1": 0.6, "2": 0.4}}
+      },
+      "latency_ms": 112,
+      "request_id": "..."
+    },
+    "usage": {"input_tokens": 360, "output_tokens": 39, "estimated_cost_usd": 0.0000151},
+    "route": {"provider": "jev", "model": "jev-1.13.0", "policy_version": "catalog-ai-decide-v1"}
+  }
+}
+```
+
+`noul` answers carry no `confidence`: JEV reports none, and the gateway does
+not invent one (callers derive their own). `choice` probabilities are by option
+key; `score` probabilities are by level index and `score` is the
+probability-weighted level index. `usage.estimated_cost_usd` is input tokens
+times the provider's configured flat price.
+
+Errors: `invalid_request` for a malformed or invalid decision (or one the
+provider rejected with 422, which is never retried); `decision_failed` when the
+provider could not answer. A `decision_failed` envelope carries
+`error.details`: `kind` (`auth`, `rate_limited`, `overloaded`, `timeout`,
+`circuit_open`, `unavailable`), `on_error` (the caller's declared mode, when
+set) and `provider_status`. HTTP status: 429 rate limited, 503 overloaded or
+circuit open, 504 timeout, 502 auth or unavailable. The gateway retries only
+the provider's 429 and 529 (exponential backoff), pauses calls after repeated
+failures (circuit breaker), and acts on neither `on_error` nor the failure
+itself: the caller's own code takes the fail-open or fail-closed path. Error
+text never contains credentials. Budget rejections are `internal_error`
+like chat's.
+
 ### `GET /ai/usage`
 
 Return durable aggregate usage derived from `ai_events` rows of
-`event_type=chat`.
+`event_type=chat`; pass `operation=decide` for decision spend (`event_type=decide`),
+optionally narrowed with a `purpose` tag.
 
 | Query param | Type | Description |
 |-------------|------|-------------|

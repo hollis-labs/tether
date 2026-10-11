@@ -214,6 +214,7 @@ type AIUsageBudgetFilterDTO struct {
 	SessionID string `json:"session_id,omitempty"`
 	CallerID  string `json:"caller_id,omitempty"`
 	Operation string `json:"operation,omitempty"`
+	Purpose   string `json:"purpose,omitempty"`
 }
 
 type AIUsageBudgetsResponse struct {
@@ -228,6 +229,7 @@ func (s *Server) registerAIRoutes(router *http.ServeMux) {
 	router.HandleFunc("/ai/chat", s.handleAIChat)
 	router.HandleFunc("/ai/chat/stream", s.handleAIChatStream)
 	router.HandleFunc("/ai/embeddings", s.handleAIEmbeddings)
+	router.HandleFunc("/ai/decide", s.handleAIDecide)
 	router.HandleFunc("/ai/providers", s.handleAIProviders)
 	router.HandleFunc("/ai/models", s.handleAIModels)
 	router.HandleFunc("/ai/routes", s.handleAIRoutes)
@@ -268,6 +270,52 @@ func (s *Server) handleAIEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.AI.Embed(r.Context(), req.Request)
 	if err != nil {
+		status, code := aiErrorStatus(err)
+		writeError(w, status, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ChatResponse{Response: resp})
+}
+
+func (s *Server) handleAIDecide(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req ChatRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxAIRequestBytes+1))
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "decode body: "+err.Error())
+		return
+	}
+	if req.Request.Operation == "" {
+		req.Request.Operation = llm.OperationDecide
+	}
+	if req.Request.Operation != llm.OperationDecide {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "operation must be decide for /ai/decide")
+		return
+	}
+	if err := req.Request.Decision.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return
+	}
+
+	resp, err := s.AI.Decide(r.Context(), req.Request)
+	if err != nil {
+		var decErr *llm.DecisionError
+		if errors.As(err, &decErr) {
+			status, code := decisionErrorStatus(decErr)
+			details := map[string]string{"kind": string(decErr.Kind)}
+			if decErr.OnError != "" {
+				details["on_error"] = string(decErr.OnError)
+			}
+			if decErr.Status != 0 {
+				details["provider_status"] = strconv.Itoa(decErr.Status)
+			}
+			writeJSON(w, status, ErrorResponse{Error: ErrorDetail{Code: code, Message: err.Error(), Details: details}})
+			return
+		}
 		status, code := aiErrorStatus(err)
 		writeError(w, status, code, err.Error())
 		return
@@ -495,8 +543,28 @@ func (s *Server) handleAIRouteExplain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, routeExplainResponseDTO(explanation))
 }
 
+func decisionErrorStatus(e *llm.DecisionError) (int, string) {
+	switch e.Kind {
+	case llm.DecisionErrInvalid:
+		return http.StatusBadRequest, CodeInvalidRequest
+	case llm.DecisionErrRateLimited:
+		return http.StatusTooManyRequests, CodeDecisionFailed
+	case llm.DecisionErrOverloaded, llm.DecisionErrCircuitOpen:
+		return http.StatusServiceUnavailable, CodeDecisionFailed
+	case llm.DecisionErrTimeout:
+		return http.StatusGatewayTimeout, CodeDecisionFailed
+	default: // auth, unavailable
+		return http.StatusBadGateway, CodeDecisionFailed
+	}
+}
+
 func aiErrorStatus(err error) (int, string) {
+	var decErr *llm.DecisionError
 	switch {
+	case errors.As(err, &decErr):
+		return decisionErrorStatus(decErr)
+	case errors.Is(err, llm.ErrInvalidDecision):
+		return http.StatusBadRequest, CodeInvalidRequest
 	case errors.Is(err, router.ErrNoCandidates), errors.Is(err, router.ErrNoRouteMatch):
 		return http.StatusBadRequest, CodeInvalidRequest
 	case errors.Is(err, llmservice.ErrUnsupportedOperation):
@@ -586,6 +654,7 @@ func (s *Server) handleAIUsage(w http.ResponseWriter, r *http.Request) {
 		SessionID: q.Get("session_id"),
 		CallerID:  q.Get("caller_id"),
 		Operation: q.Get("operation"),
+		Purpose:   q.Get("purpose"),
 	}
 	if since := q.Get("since"); since != "" {
 		if t, err := time.Parse(time.RFC3339, since); err == nil {
@@ -631,6 +700,13 @@ func (s *Server) handleAIBudgets(w http.ResponseWriter, r *http.Request) {
 		SessionID: r.URL.Query().Get("session_id"),
 		CallerID:  r.URL.Query().Get("caller_id"),
 	}
+	purpose := r.URL.Query().Get("purpose")
+	decisionProviders := map[string]bool{}
+	for _, info := range s.AI.ListProviders() {
+		if info.Type == "jev" {
+			decisionProviders[info.ID] = true
+		}
+	}
 	providerFilter := r.URL.Query().Get("provider")
 	modelFilter := r.URL.Query().Get("model")
 	routes := s.AI.ListRoutes()
@@ -655,7 +731,12 @@ func (s *Server) handleAIBudgets(w http.ResponseWriter, r *http.Request) {
 			UsageBudget: *usageBudgetPolicyDTO(route.UsageBudget),
 			WindowStart: windowStart.Format(time.RFC3339),
 		}
-		filter, err := usagebudget.BuildFilter(req, route)
+		routeReq := req
+		if decisionProviders[route.Provider] {
+			routeReq.Operation = llm.OperationDecide
+			routeReq.Decision = &llm.DecisionRequest{Purpose: purpose}
+		}
+		filter, err := usagebudget.BuildFilter(routeReq, route)
 		if err != nil {
 			entry.Error = err.Error()
 			out = append(out, entry)
@@ -668,6 +749,7 @@ func (s *Server) handleAIBudgets(w http.ResponseWriter, r *http.Request) {
 			SessionID: filter.SessionID,
 			CallerID:  filter.CallerID,
 			Operation: filter.Operation,
+			Purpose:   filter.Purpose,
 		}
 		summary, err := s.AIUsage.QueryAIUsageSummary(filter)
 		if err != nil {
@@ -700,6 +782,10 @@ func configuredProvidersForVendor(in []llmservice.ProviderInfo, vendorProviderID
 			}
 		case "openai-compatible":
 			if vendorProviderID == "openai" {
+				out = append(out, info)
+			}
+		case "jev":
+			if vendorProviderID == "jev" {
 				out = append(out, info)
 			}
 		case "gemini":
