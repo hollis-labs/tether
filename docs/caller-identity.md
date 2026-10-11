@@ -207,3 +207,27 @@ Remote device use writes its audit and metadata transactionally before dispatch;
 an audit failure returns 503. Device revocation cancels requests and open streams
 by the current authenticated credential, independently of `as`, `from` or labels.
 See [device pairing](device-pairing.md) for lifetimes and scope policy.
+
+## Server-stamped sender and `?as=` verification
+
+CW-20261010-0262. For a request that carries a verified principal, POST
+`/messages`, `/messages/notify` and `/messages/request` stamp `from` and check
+`?as=` on every `/messages` route against the principal's address set (its ID
+plus `addresses`; a device with none sends as `msg://service/device/<id>`).
+A principal holding `message.send_as`, or `*` (the operator), may use any
+address.
+
+| Case | observe | enforce |
+|---|---|---|
+| `from` absent | stamped from the principal | same |
+| `from` in the address set | kept | same |
+| `from` outside it | kept, marked `from_unverified` | 403 |
+| `?as=` outside it | served, audited `as_unverified` | 403 |
+
+Stamped envelopes carry metadata `from_verification` (`stamped`, `verified` or
+`unverified`), `from_principal`, and `from_unverified: "true"` when unverified.
+The daemon removes any caller-supplied copy of these keys, so a receiver can
+trust them; an envelope without them came from a request with no verified
+principal. Findings are recorded in `identity_audit.event` (`from_unverified`,
+`from_refused`, `as_unverified`, `as_refused`). Enforce is selected only by
+`identity.mode`; nothing here turns it on.
