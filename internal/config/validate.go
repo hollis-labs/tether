@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/substrate/harness/agentlaunch"
 	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 // ErrUnknownSandboxProfile means an agent names a sandbox profile the
@@ -71,6 +72,9 @@ func (c *Catalog) Validate() error {
 		return err
 	}
 	for id, a := range c.Agents {
+		if !launchprofile.ValidRecovery(a.Recovery) {
+			return fmt.Errorf("agent %q has invalid recovery %q (want %q or %q)", id, a.Recovery, launchprofile.RecoveryNever, launchprofile.RecoveryAuto)
+		}
 		if m := a.Permissions.PermissionMode; !ValidPermissionMode(m) {
 			return fmt.Errorf("agent %q has invalid permission_mode %q (want %q or %q)", id, m, PermissionModeDefault, PermissionModeBypass)
 		}

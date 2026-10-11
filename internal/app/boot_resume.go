@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"os"
 	"time"
 
 	"github.com/hollis-labs/tether/internal/api"
+	"github.com/hollis-labs/tether/internal/config"
+	"github.com/hollis-labs/tether/internal/launchprofile"
 )
 
 // BootResumeOptions explicitly protects selected direct canonical sources from
@@ -20,7 +23,9 @@ type BootResumeOptions struct {
 // BootResumeSessions runs once after the listener is serving. Startup
 // reconciliation has already reattached surviving shims. Ordinary agents need
 // positive durable work evidence; selected native-only sources never receive an
-// automatic recovery turn. Selection consumes no mailbox.
+// automatic recovery turn. Selection consumes no mailbox. An agent is resumed
+// only when its catalog definition says recovery: auto (default never), and
+// nothing is recovered while the workspace root is unusable.
 func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeOptions) {
 	// Resolve every explicit source before any startup recovery. A missing or
 	// enrolled source cannot fall through into ordinary selection.
@@ -50,6 +55,10 @@ func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeO
 			}
 		}
 	}
+	if reason := s.bootReadinessFailure(); reason != "" {
+		log.Printf("boot recovery: skipped all agents: %s", reason)
+		return
+	}
 	if s.BootTeamRecovery != nil {
 		if err := s.BootTeamRecovery(ctx); err != nil {
 			log.Printf("boot recovery: retained members: %v", err)
@@ -68,6 +77,22 @@ func (s *Service) BootResumeSessions(ctx context.Context, options ...BootResumeO
 		s.bootResumeAgent(attemptCtx, a.ID, options...)
 		cancel()
 	}
+}
+
+// bootReadinessFailure returns why boot recovery must not run at all, or "".
+func (s *Service) bootReadinessFailure() string {
+	if s.Catalog == nil {
+		return "catalog unavailable"
+	}
+	root := config.ResolveWorkspaceRoot(s.Catalog.Global.Catalog.Defaults, s.Catalog.Paths)
+	info, err := os.Stat(root)
+	if err != nil {
+		return "workspace_root " + root + " unavailable: " + err.Error()
+	}
+	if !info.IsDir() {
+		return "workspace_root " + root + " is not a directory"
+	}
+	return ""
 }
 
 func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options ...BootResumeOptions) {
@@ -110,6 +135,13 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 	if plan.TeamMember {
 		return
 	} // separately recovered under the host's receipt
+	// Explicit native-only selection above is an operator choice; everything
+	// else needs the agent definition to opt in.
+	if s.Catalog == nil || s.Catalog.Agents[agentID].Recovery != launchprofile.RecoveryAuto {
+		log.Printf("boot recovery: agent %s decision=skipped reason=recovery_not_auto", agentID)
+		s.bootResumeOutcome(agentID, parent.ID, "skipped", "recovery_not_auto")
+		return
+	}
 	plan.ResumeSourceSessionID = parent.ID
 	ck, err := s.Store.GetLatestCheckpointForAgent(agentID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

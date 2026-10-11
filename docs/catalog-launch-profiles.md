@@ -7,6 +7,19 @@ dynamic boot prompt on top of a launch.
 For provider-specific setup examples, current smoke results, and boot prompt
 generation workflow, see [`docs/launches/`](launches/README.md).
 
+## Boot recovery
+
+Agent definitions take `recovery: never|auto`. Absent means `never`: after a
+daemon restart the agent stays cold even with unread mail, an open Torque
+assignment or a roster. Only `recovery: auto` lets post-listener boot recovery
+resume an agent that has no live session. Every decision is logged once and
+published as `session.boot_recovery` (`outcome: skipped`,
+`reason: recovery_not_auto` for a refused agent); skipping consumes no mail. If
+`catalog.defaults.workspace_root` (or its default) is missing or not a
+directory, all boot recovery is skipped with one log line and no events.
+An explicit native-only boot selection and retained team-member recovery are
+unaffected by this setting.
+
 ## Unattended Codex and Antigravity
 
 The example catalog includes `codex-unattended` (Codex app-server) and

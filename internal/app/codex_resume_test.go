@@ -112,9 +112,9 @@ func newCodexRig(t *testing.T) *codexRig {
 	repo := t.TempDir()
 	prov := config.Provider{ID: "codex-cli", Provider: "codex", Adapter: "codex", RuntimeKind: config.RuntimeKindSubprocess, Command: fake}
 	cat := &config.Catalog{
-		Global:    config.Global{Version: "test"},
+		Global:    config.Global{Version: "test", Catalog: config.CatalogRoots{Defaults: config.Defaults{WorkspaceRoot: t.TempDir()}}},
 		Projects:  map[string]config.Project{"proj": {ID: "proj", RepoRoot: repo, Workspace: config.WorkspaceSpec{SessionRoot: t.TempDir(), DefaultMode: "shared"}}},
-		Agents:    map[string]config.Agent{"agent": {ID: "agent"}},
+		Agents:    map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto"}},
 		Providers: map[string]config.Provider{"codex-cli": prov},
 		Launches:  map[string]config.Launch{"codex-launch": {ID: "codex-launch", Project: "proj", Agent: "agent", Provider: "codex-cli"}},
 	}
