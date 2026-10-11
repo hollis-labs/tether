@@ -67,6 +67,21 @@ func writeProviderSessionLost(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// writeTurnActiveOrUnknown answers a turn/start that hosted Codex refuses
+// because a turn is already running or the state of the previous turn is
+// unresolved. The code does not say which applies, so this is a 409 that
+// says so rather than a 500 or a plain "busy". Matched on the stable code, not the
+// concrete type, so api needs no shimcodex import.
+func writeTurnActiveOrUnknown(w http.ResponseWriter, err error) bool {
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) || coded.ErrorCode() != "turn_active_or_unknown" {
+		return false
+	}
+	writeError(w, http.StatusConflict, CodeTurnActiveOrUnknown,
+		"a turn is already active or the previous turn's state is unknown; the new turn was not started: "+err.Error())
+	return true
+}
+
 // writeSandboxWidened answers a turn Tether refuses on a codex session it left
 // to codex's own sandbox, because that sandbox may have been widened since the
 // launch (launch.ErrCodexSandboxWidened, CW-20261001-0142): 403, like the
@@ -123,7 +138,7 @@ func (s *Server) handleSendTurn(w http.ResponseWriter, r *http.Request, id strin
 			writeError(w, http.StatusConflict, CodeConflict, err.Error())
 			return
 		}
-		if writeProviderSessionLost(w, err) || writeTurnFailed(w, err) || writeSandboxWidened(w, err) {
+		if writeProviderSessionLost(w, err) || writeTurnActiveOrUnknown(w, err) || writeTurnFailed(w, err) || writeSandboxWidened(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())

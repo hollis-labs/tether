@@ -662,6 +662,33 @@ func TestHandleSendInputAndTurn_ProviderSessionLost(t *testing.T) {
 	}
 }
 
+type codedErr struct{ code string }
+
+func (e codedErr) Error() string     { return "hosted Codex: " + e.code }
+func (e codedErr) ErrorCode() string { return e.code }
+
+func TestHandleSendTurn_TurnActiveOrUnknown(t *testing.T) {
+	svc := &fakeLaunchService{inputErr: fmt.Errorf("send: %w", codedErr{"turn_active_or_unknown"})}
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s1/turn", bytes.NewReader([]byte(`{"text":"x"}`)))
+	rr := httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", rr.Code)
+	}
+	env := decodeErr(t, rr)
+	if env.Error.Code != CodeTurnActiveOrUnknown || !strings.Contains(env.Error.Message, "unknown") {
+		t.Errorf("error = %+v", env.Error)
+	}
+	// Other coded failures keep their existing mapping.
+	svc = &fakeLaunchService{inputErr: codedErr{"thread_mismatch"}}
+	req = httptest.NewRequest(http.MethodPost, "/sessions/s1/turn", bytes.NewReader([]byte(`{"text":"x"}`)))
+	rr = httptest.NewRecorder()
+	newTestHandler(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("other coded: status = %d, want 500", rr.Code)
+	}
+}
+
 // CW-20261001-0033: a subprocess turn whose process exits non-zero failed
 // upstream of the daemon. It answers 502 turn_failed with the service's
 // message (exit status + stderr tail), not 500 internal_error.
