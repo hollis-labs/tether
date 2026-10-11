@@ -240,6 +240,7 @@ var daemonRunCmd = &cobra.Command{
 			_ = closeService()
 			return err
 		}
+		svc.TeamsEnabled = cfg.TeamsEnabled
 		if err := cfg.ValidateListenerBind(false); err != nil {
 			_ = closeService()
 			return err

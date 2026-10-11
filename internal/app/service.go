@@ -62,6 +62,10 @@ type Service struct {
 	outputRetries          outputRetryState
 	turnOutputs            sync.Map // session ID -> *sessionTurnOutput; runtime-owned completion state
 
+	// TeamsEnabled grants launched sessions the team.write scope so they can
+	// call tether_team_*; set by daemon startup from modules.teams.
+	TeamsEnabled bool
+
 	CatalogRoot string
 	Catalog     *config.Catalog
 	Store       *store.Store
