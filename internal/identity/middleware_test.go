@@ -142,3 +142,50 @@ func TestIdentitySelfObservationAuthenticatesWithoutDuplicateAudit(t *testing.T)
 		}
 	}
 }
+
+func TestScopePolicyObserveNeverRejectsAndEnforceIsOptIn(t *testing.T) {
+	p := identity.Principal{ID: "msg://service/local/x", Kind: "service", Scopes: []string{"read"}}
+	verifier := stubScopeVerifier{p}
+	observer := func(r *http.Request, _ identity.Principal) identity.ScopeObservation {
+		if r.URL.Path == "/unknown" {
+			return identity.ScopeObservation{}
+		}
+		return identity.ScopeObservation{Pattern: "/x", Required: "operate", WouldAllow: false, Known: true}
+	}
+	for _, tc := range []struct {
+		name    string
+		enforce bool
+		path    string
+		want    int
+		audited bool
+	}{
+		{"observe denies nothing", false, "/x", 204, true},
+		{"enforce rejects would-deny", true, "/x", 403, true},
+		{"enforce ignores unknown route", true, "/unknown", 204, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []identity.Observation
+			h := identity.MiddlewareWithScopes(identity.Observe, verifier, func(_ context.Context, o identity.Observation) error { got = append(got, o); return nil },
+				identity.ScopePolicy{Observe: observer, Enforce: tc.enforce}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+			req := httptest.NewRequest("GET", tc.path, nil)
+			req.Header.Set("Authorization", "Bearer tth_"+strings.Repeat("a", 43))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != tc.want || len(got) != 1 {
+				t.Fatalf("status=%d records=%d", w.Code, len(got))
+			}
+			if tc.path == "/x" && (got[0].RequiredScope != "operate" || got[0].WouldAllow == nil || *got[0].WouldAllow) {
+				t.Fatalf("bad observation %+v", got[0])
+			}
+			if tc.path == "/unknown" && got[0].WouldAllow != nil {
+				t.Fatal("unknown route got a verdict")
+			}
+		})
+	}
+}
+
+type stubScopeVerifier struct{ p identity.Principal }
+
+func (v stubScopeVerifier) Verify(context.Context, string) (identity.Principal, error) {
+	return v.p, nil
+}

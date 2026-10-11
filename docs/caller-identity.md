@@ -94,6 +94,21 @@ in audit metadata or diagnostic counters.
 | `principals` | Indefinite, including revoked token rows; no automatic purge |
 | `identity_audit` | Shared `daemon.events_retention` window: default 90 days; false or days < 1 disables; deletions write durable retention receipts |
 
+## Local route-to-scope attribution (observe)
+
+CW-20261010-0261. `api.LocalRouteScopes` is the local listener's route-to-scope
+table. It has the same type, matcher and scope vocabulary as the remote table
+and is currently a copy of it; a local divergence is a deliberate edit. For a
+request with a verified principal, the `identity_audit` row also records
+`route_pattern`, `required_scope` and `would_allow` (NULL when the route or
+method is not in the table). The operator (`*`) satisfies every scope; other
+principals must hold the scope literally, so session principals (which carry
+`session.write`-style scopes) currently record `would_allow = 0`. `local-only`
+means operator custody. Payload-dependent escalations (custom launch, A2A RPC
+methods) are not evaluated. Observe never rejects; `identity.ScopePolicy.Enforce`
+is covered by tests and is not set by the daemon. A structural test fails when a
+route registered in `internal/api` or the daemon mux has no table entry.
+
 ## Clients and session credentials
 
 CLI and MCP requests prefer `--token-file`, then `TETHER_TOKEN`, then the selected

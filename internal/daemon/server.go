@@ -588,7 +588,9 @@ func (s *Server) handler(remote bool) http.Handler {
 		}
 		local.ServeHTTP(w, r)
 	})
-	protected := identity.Middleware(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
+	// Scope attribution is observe-only on the local listener (Enforce stays
+	// false); CW-20261010-0261.
+	protected := identity.MiddlewareWithScopes(s.Config.IdentityMode, s.Identity, s.recordIdentityObservation, identity.ScopePolicy{Observe: api.ObserveLocalScope}, s.Config.Modules.ModuleGate(protocolHandler))
 	if remote {
 		protected = identity.RemoteMiddleware(s.Identity, s.recordIdentityObservation, s.Config.Modules.ModuleGate(protocolHandler))
 	}
