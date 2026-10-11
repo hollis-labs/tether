@@ -125,6 +125,17 @@ SELECT principal_id, method, route_pattern, required_scope, count(*) n
   FROM identity_audit WHERE event = '' AND would_allow = 0 AND at > :since
  GROUP BY 1,2,3,4 ORDER BY n DESC;
 
+-- 3b. verified SESSION requests the legacy-scope mapping (internal/api/legacy_scopes.go) would
+--     still refuse. :since MUST be the daemon restart that shipped the mapping (earlier rows
+--     were judged by the literal matcher and all show would_allow = 0). Expected: no rows for
+--     routine traffic. Any row is either a route to add to LegacyScopeGrants (propose it to the
+--     owner) or a call a session must not make (fix the caller).
+SELECT a.principal_id, a.method, a.route_pattern, a.required_scope, count(*) n
+  FROM identity_audit a JOIN (SELECT DISTINCT principal_id, kind FROM principals) p ON p.principal_id = a.principal_id
+ WHERE a.event = '' AND a.authentication = 'verified' AND p.kind = 'session'
+   AND a.would_allow = 0 AND a.at > :since
+ GROUP BY 2,3,4 ORDER BY n DESC;
+
 -- 4. would_allow IS NULL on REQUEST rows: verified request on a route/method with no table entry.
 --    event <> '' rows (from_unverified, from_refused, …; internal/api/sender_identity.go) are
 --    handler findings whose scope fields are NULL by design, so they are excluded here.
@@ -144,9 +155,9 @@ Thresholds to flip an enforcement point (all must hold; record the numbers in th
 
 1. Query 1: zero `invalid` and zero `unavailable` over the last 72 h; `/health`
    `identity.audit.dropped` and `failures` both 0 (doctor warns otherwise).
-2. Query 3: `would_allow = 0` is **expected to be non-zero** for session
-   principals until I4 lands (they hold `session.write`-style scopes, the table
-   wants more). Each distinct (principal kind, route_pattern, scope) group must be
+2. Query 3: session principals' `session.write`/`message.write`/`catalog.write`
+   scopes are mapped onto the table (CW-20261011-0035), so **query 3b must return
+   no rows for routine traffic** over the window since the mapping shipped. Each distinct (principal kind, route_pattern, scope) group must be
    either fixed (table or grant corrected) or listed in the GO record as an
    accepted denial with the owner's initials. For a point whose enforcement
    rejects on scope, the unexplained count must be 0; for authentication-only

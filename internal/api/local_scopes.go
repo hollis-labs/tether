@@ -26,19 +26,24 @@ func RequiredLocalScope(r *http.Request) (pattern, scope string, known bool) {
 	return rule.Path, scope, known
 }
 
-// WouldAllowLocal reports whether the principal's granted scopes satisfy a
-// table scope. The local operator holds "*". Other principals must hold the
-// scope literally; session principals carry legacy session.write-style
-// scopes, so they report false until a mapping is decided (observe data
-// exists to inform that). "local-only" means operator custody.
-func WouldAllowLocal(p identity.Principal, scope string) bool {
+// WouldAllowLocal reports whether the principal satisfies the table scope on
+// this route. The local operator holds "*". Device and service principals hold
+// table scopes literally; session principals additionally satisfy them through
+// LegacyScopeGrants. "local-only" means operator custody.
+func WouldAllowLocal(r *http.Request, p identity.Principal, pattern, scope string) bool {
 	switch scope {
 	case publicScope:
 		return true
 	case selfScope:
 		return p.Kind == "device"
 	}
-	return slices.Contains(p.Scopes, "*") || scope != localScope && slices.Contains(p.Scopes, scope)
+	if slices.Contains(p.Scopes, "*") {
+		return true
+	}
+	if scope == localScope {
+		return false
+	}
+	return slices.Contains(p.Scopes, scope) || legacySatisfies(r, p, pattern, scope)
 }
 
 // ObserveLocalScope evaluates a verified principal's request against
@@ -48,5 +53,5 @@ func ObserveLocalScope(r *http.Request, p identity.Principal) identity.ScopeObse
 	if !known {
 		return identity.ScopeObservation{}
 	}
-	return identity.ScopeObservation{Pattern: pattern, Required: scope, WouldAllow: WouldAllowLocal(p, scope), Known: true}
+	return identity.ScopeObservation{Pattern: pattern, Required: scope, WouldAllow: WouldAllowLocal(r, p, pattern, scope), Known: true}
 }
