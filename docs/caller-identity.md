@@ -212,6 +212,8 @@ interactive principal, not the operator credential.
 
 ## Cutover
 
+The stepwise procedure, switch, rollback and GO record are in [identity-enforce-runbook.md](identity-enforce-runbook.md).
+
 No install, live token creation, restart or mode change is performed by this
 change. Chrispian owns cutover. Back up the state database first, keep default
 `observe`, and review attribution before any separately approved enforcement

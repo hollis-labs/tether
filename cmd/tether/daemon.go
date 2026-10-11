@@ -1232,6 +1232,7 @@ func daemonConfigFromCatalog(cat *config.Catalog) (daemon.Config, error) {
 		Modules:         profile,
 		TeamsEnabled:    profile.Enabled(environment.Teams),
 		IdentityMode:    mode,
+		IdentityPoints:  identityPointModes(cat.Global.Identity),
 		ListenAddr:      expandListenAddr(d.ListenAddr),
 		PIDFile:         config.Expand(d.PIDFile),
 		ShutdownTimeout: timeout,
@@ -1370,4 +1371,16 @@ func mapHuggingFaceExt(ext *config.ProviderExtensions) *llmopenai.HuggingFaceExt
 	return &llmopenai.HuggingFaceExtension{
 		BillTo: ext.HuggingFace.BillTo,
 	}
+}
+
+// identityPointModes resolves identity.points overrides; unknown point names
+// are ignored here and flagged by doctor.
+func identityPointModes(c config.IdentityConfig) map[string]identity.Mode {
+	out := map[string]identity.Mode{}
+	for _, p := range config.IdentityPoints {
+		if _, set := c.Points[p]; set {
+			out[p] = identity.Mode(c.ModeFor(p))
+		}
+	}
+	return out
 }
