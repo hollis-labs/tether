@@ -51,7 +51,7 @@ func TestStopCommitsFenceDuringCreateAndCompensatesLateEffect(t *testing.T) {
 		t.Fatal("late create accepted", err)
 	}
 	check(t, <-stop)
-	acquired, err := db.GetSessionIdempotency(testSessionKey(t, port, req.IntentKey))
+	acquired, err := db.GetSessionIdempotency(store.IdempotencyPrincipalTeam, testSessionKey(t, port, req.IntentKey))
 	check(t, err)
 	row, err := db.GetSession(acquired.SessionID)
 	check(t, err)
@@ -120,7 +120,7 @@ func TestReconcileCursorHostTombstonesAndSessionOrphans(t *testing.T) {
 	_, err = effects.CreateTeamSession(ctx, sessionKey("orphan"), "worker-launch")
 	check(t, err)
 	check(t, r.Reconcile(ctx, 20))
-	acquired, err := db.GetSessionIdempotency(sessionKey("orphan"))
+	acquired, err := db.GetSessionIdempotency(store.IdempotencyPrincipalTeam, sessionKey("orphan"))
 	check(t, err)
 	row, err := db.GetSession(acquired.SessionID)
 	check(t, err)

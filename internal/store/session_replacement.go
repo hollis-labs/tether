@@ -291,7 +291,7 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 		return result, ErrSessionReplacementUnavailable
 	}
 	key = "team-port:" + nonce
-	err = q.QueryRowContext(ctx, `SELECT session_id FROM session_idempotency WHERE key=? AND operation='create'`, key).Scan(&keyedSession)
+	err = q.QueryRowContext(ctx, `SELECT session_id FROM session_idempotency WHERE principal_id=? AND key=? AND operation='create'`, IdempotencyPrincipalTeam, key).Scan(&keyedSession)
 	if err != nil || keyedSession != id {
 		return result, ErrSessionReplacementUnavailable
 	}
@@ -355,7 +355,7 @@ func (s *Store) prepareTeamReplacementTx(ctx context.Context, q ReplacementTx, i
 	if err = replacementUpdate(ctx, q, `UPDATE team_port_intents SET payload=json_quote(?) WHERE port_kind='session' AND intent_key=? AND CAST(payload AS TEXT)=json_quote(?) AND ended='' AND state='done'`, in.DestinationID, in.IntentKey, id); err != nil {
 		return result, err
 	}
-	if err = replacementUpdate(ctx, q, `UPDATE session_idempotency SET session_id=? WHERE key=? AND session_id=?`, in.DestinationID, key, id); err != nil {
+	if err = replacementUpdate(ctx, q, `UPDATE session_idempotency SET session_id=? WHERE principal_id=? AND key=? AND session_id=?`, in.DestinationID, IdempotencyPrincipalTeam, key, id); err != nil {
 		return result, err
 	}
 	path := "$.members[" + strconv.Itoa(memberIndex) + "].session_id"
