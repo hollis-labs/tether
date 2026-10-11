@@ -8,6 +8,16 @@ This file was backfilled from the git history and is a good-faith summary, not a
 
 ## [Unreleased]
 
+- Add the teams activation policy (Stage A). Formation, previously always
+  refused, is now governed by `<catalog root>/teams-policy.yaml` read at daemon
+  start: absent means deny, invalid fails with a clear error. It allows only the
+  local Unix-socket operator to form flat `coordinator`/`workers`/`reviewer`
+  teams from an exact-pin launch allowlist, with `ConservativePolicy` ceilings at
+  `MaxDepth` 1 and `may_message` only; the reviewer must be on a different
+  runtime when the allowlist has more than one. A `teams-policy.paused` marker
+  beside the file refuses formation without a restart. `teamsvc.Ceilings` may now
+  also implement `FormationAdmitter` to see the whole request. See
+  `docs/teams-activation.md`. (CW-20261011-0013)
 - Breaking: daemon boot recovery no longer resumes ordinary logical agents by
   default. Agent definitions gain `recovery: never|auto` (absent = `never`,
   inherited through `extends`, closest non-empty value wins); only `auto`

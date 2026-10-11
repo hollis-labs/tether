@@ -511,3 +511,29 @@ func TestDaemonTeamsEnabledWithNilServiceExposesNoHTTPOrMCPVerbs(t *testing.T) {
 		}
 	}
 }
+
+func TestDaemonTeamsPolicyFileLoadedAtStart(t *testing.T) {
+	on := true
+	f := newDaemonTeamFixture(t, &on)
+	policyPath := filepath.Join(f.svc.CatalogRoot, "teams-policy.yaml")
+	teamRequire(t, os.WriteFile(policyPath, []byte("version: 2\n"), 0600))
+	if _, _, err := buildDaemonTeams(f.svc, f.cfg); err == nil || !strings.Contains(err.Error(), "teams-policy.yaml") {
+		t.Fatalf("invalid policy must fail daemon team construction clearly: %v", err)
+	}
+	valid := "version: 1\nlaunches:\n  - {launch: tether-claude, runtime: claude, definition: {id: worker, revision: r1, digest: verified-pin}}\n"
+	teamRequire(t, os.WriteFile(policyPath, []byte(valid), 0600))
+	ops, closeOps, err := buildDaemonTeams(f.svc, f.cfg)
+	teamRequire(t, err)
+	defer closeOps()
+	// A non-operator service is still refused (operator-only), with no effects.
+	principal := identity.Principal{ID: string(daemonTeamCaller), Kind: "service", Verified: true}
+	_, err = ops.Form(identity.WithPrincipal(context.Background(), principal), teamsvc.FormRequest{Key: "service-form", Team: daemonTeamDefinition()})
+	if !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("non-operator formation not denied: %v", err)
+	}
+	var n int
+	teamRequire(t, f.svc.Store.DB().QueryRow("SELECT count(*) FROM team_definitions").Scan(&n))
+	if n != 0 {
+		t.Fatal("denied formation wrote a definition")
+	}
+}
