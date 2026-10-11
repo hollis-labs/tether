@@ -37,7 +37,11 @@ func (f *fakeReplies) SubmitRoutingReply(ctx context.Context, req RoutingReplyRe
 	}
 	id := "reply-1"
 	if f.db != nil {
-		caller, err := messaging.ParseURN(req.Caller.ID)
+		sender := req.Sender
+		if sender == "" {
+			sender = req.Caller.ID
+		}
+		caller, err := messaging.ParseURN(sender)
 		if err != nil {
 			return RoutingReplyReceipt{}, err
 		}

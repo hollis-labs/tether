@@ -744,7 +744,11 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 	if !utf8.ValidString(req.Body) {
 		return api.RoutingReplyReceipt{}, fmt.Errorf("%w: body must be valid UTF-8", api.ErrReplyInvalid)
 	}
-	caller, err := messaging.ParseURN(req.Caller.ID)
+	senderURN := req.Sender
+	if senderURN == "" {
+		senderURN = req.Caller.ID
+	}
+	caller, err := messaging.ParseURN(senderURN)
 	if err != nil {
 		return api.RoutingReplyReceipt{}, fmt.Errorf("%w: caller identity: %w", api.ErrReplyInvalid, err)
 	}
@@ -775,12 +779,18 @@ func (s *Service) SubmitRoutingReply(ctx context.Context, req api.RoutingReplyRe
 		return api.RoutingReplyReceipt{}, api.ErrReplyNoTurnFeed
 	}
 
+	// The actor is the authenticated principal (a device ID is not an address);
+	// the sender address is what the reply is attributed to.
+	actor := caller.URN()
+	if req.Verified && req.Caller.ID != "" {
+		actor = req.Caller.ID
+	}
 	logicalAgent := parent.Metadata["logical_agent_id"]
 	if row, err := s.Store.GetSession(target); err == nil && row != nil && row.LogicalAgentID != "" {
 		logicalAgent = row.LogicalAgentID
 	}
 	in := store.NewRoutingReply{From: caller, ParentID: parent.ID, ThreadID: parent.ThreadID, Body: req.Body,
-		TargetSessionID: target, LogicalAgentID: logicalAgent, Actor: caller.URN(), Interrupt: req.Interrupt, IdempotencyKey: req.IdempotencyKey, Metadata: req.Metadata}
+		TargetSessionID: target, LogicalAgentID: logicalAgent, Actor: actor, Interrupt: req.Interrupt, IdempotencyKey: req.IdempotencyKey, Metadata: req.Metadata}
 
 	if !req.Interrupt {
 		reply, created, err := s.Store.CreateRoutingReply(ctx, in)

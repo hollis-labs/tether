@@ -1257,3 +1257,25 @@ func TestReplyStoresTheStampedSenderMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestReplyFromADeviceIsAttributedToItsSenderAddress(t *testing.T) {
+	h := newReplyHarness(t)
+	parent := h.routed("s1")
+	receipt, err := h.svc.SubmitRoutingReply(context.Background(), api.RoutingReplyRequest{
+		ParentID: parent.ID, Body: "go", Verified: true, Sender: "msg://service/device/d1",
+		Caller: identity.Principal{ID: "msg://device/d1", Kind: "device", Verified: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := h.st.MessagingStore().Get(context.Background(), receipt.ReplyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.From.URN() != "msg://service/device/d1" {
+		t.Fatalf("reply from = %q", stored.From.URN())
+	}
+	if got := h.state(receipt.ReplyID).Actor; got != "msg://device/d1" {
+		t.Fatalf("actor = %q, want the authenticated device", got)
+	}
+}

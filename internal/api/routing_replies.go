@@ -74,6 +74,11 @@ type RoutingReplyRequest struct {
 	// the POST /messages or notify envelope the reply arrived as; the stored
 	// reply carries it so a receiver can tell stamped from unverified senders.
 	Metadata map[string]string
+	// Sender is the messaging address the reply is attributed to: the stamped
+	// sender of a /messages reply, else the caller's own address. It can differ
+	// from Caller.ID, the authenticated actor (a device ID is not a messaging
+	// address). Empty means Caller.ID.
+	Sender string
 }
 
 // RoutingReplyReceipt is the 202 body: the reply was accepted and queued.
@@ -195,9 +200,16 @@ func (s *Server) submitReply(w http.ResponseWriter, r *http.Request, parentID, b
 	}
 	// The store scopes the key by the reply's actor, the verified caller.
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	sender := ""
+	if verified {
+		sender = caller.DefaultAddress()
+		if state := meta[MetaFromVerification]; (state == "stamped" || state == "verified") && fallbackCaller != "" {
+			sender = fallbackCaller
+		}
+	}
 	receipt, err := s.RoutingReplies.SubmitRoutingReply(r.Context(), RoutingReplyRequest{
 		ParentID: parentID, Body: body, Interrupt: interrupt, Caller: caller, Verified: verified,
-		IdempotencyKey: key, Metadata: meta,
+		IdempotencyKey: key, Metadata: meta, Sender: sender,
 	})
 	if err != nil {
 		writeReplyError(w, err)
