@@ -237,6 +237,8 @@ func configureMCPAdapter(adapter *mcpadapter.Adapter, listenAddr string) error {
 	adapter.SessionID = mcpSession
 	if listenAddr != "" {
 		adapter.SetCallerContextResolver(daemonClient(listenAddr).CallerContext)
+		// Team verbs live in the daemon; expose them when it serves /teams/*.
+		adapter.EnableTeamsFromDaemon(context.Background())
 	}
 	// Wired here, where both the in-process and the daemon-only server pass,
 	// so the refusal cannot be a control that quietly does nothing on one.

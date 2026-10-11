@@ -223,3 +223,37 @@ func TestPauseMarkerStatErrorFailsClosed(t *testing.T) {
 		t.Fatal("stat failure treated as not paused")
 	}
 }
+
+func TestSessionFormationIsOptIn(t *testing.T) {
+	session := teamsvc.Principal{ID: "msg://agent/local/worker", Kind: mesh.ActorAgent, Verified: true}
+	ctx := context.Background()
+	off, err := Parse([]byte(validPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (Ceilings{Policy: off}).FormationCeilings(ctx, session); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("session formed with the option off: %v", err)
+	}
+	if off.HostOptions().OwnerAgentTrust != "" {
+		t.Fatal("owner agent trusted with the option off")
+	}
+	on, err := Parse([]byte(validPolicy + "session_formation: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (Ceilings{Policy: on}).FormationCeilings(ctx, session); err != nil {
+		t.Fatalf("verified session denied with the option on: %v", err)
+	}
+	unverified := session
+	unverified.Verified = false
+	if _, err = (Ceilings{Policy: on}).FormationCeilings(ctx, unverified); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("unverified session formed: %v", err)
+	}
+	service := teamsvc.Principal{ID: "msg://service/local/x", Kind: mesh.ActorService, Verified: true}
+	if _, err = (Ceilings{Policy: on}).FormationCeilings(ctx, service); !errors.Is(err, teamsvc.ErrDenied) {
+		t.Fatalf("service formed: %v", err)
+	}
+	if on.HostOptions().OwnerAgentTrust != teamhost.TrustTrusted {
+		t.Fatal("owner agent not trusted with the option on")
+	}
+}

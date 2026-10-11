@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hollis-labs/substrate/mesh"
 	"github.com/hollis-labs/substrate/mesh/teams"
 	"github.com/hollis-labs/tether/internal/teamstore"
 )
@@ -19,6 +20,9 @@ func (h *Host) ResolveTrust(ctx context.Context, parent teams.Member, slot teams
 		return teams.TrustDeny, nil
 	}
 	source := h.actors[parent.Actor]
+	if source == "" && parent.Intent == nil && parent.Kind == mesh.ActorAgent && parent.Governance == teams.Owner {
+		source = h.ownerAgent
+	}
 	if parent.Intent != nil {
 		source = h.tiers[parent.Intent.Slot.Definition]
 	}

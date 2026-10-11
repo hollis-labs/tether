@@ -17,12 +17,13 @@ import (
 )
 
 type Host struct {
-	db     *sql.DB
-	store  *teamstore.Store
-	ports  Ports
-	tiers  map[mesh.DefinitionRef]TrustTier
-	actors map[mesh.URN]TrustTier
-	now    func() time.Time
+	db         *sql.DB
+	store      *teamstore.Store
+	ports      Ports
+	tiers      map[mesh.DefinitionRef]TrustTier
+	actors     map[mesh.URN]TrustTier
+	ownerAgent TrustTier
+	now        func() time.Time
 }
 
 // New attaches an already migrated database. db and storage must borrow the
@@ -50,7 +51,7 @@ func New(db *sql.DB, storage *teamstore.Store, ports Ports, options Options) (*H
 		now = time.Now
 	}
 	storage.SetLaunchWriteHook(writeLaunchIntents)
-	return &Host{db: db, store: storage, ports: ports, tiers: tiers, actors: actors, now: now}, nil
+	return &Host{db: db, store: storage, ports: ports, tiers: tiers, actors: actors, ownerAgent: options.OwnerAgentTrust, now: now}, nil
 }
 func (h *Host) Now() time.Time { return h.now() }
 func (h *Host) NewID() string  { return uuid.NewString() }

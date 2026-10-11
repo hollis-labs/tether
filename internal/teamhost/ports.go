@@ -87,5 +87,8 @@ type Options struct {
 	TrustTiers map[mesh.DefinitionRef]TrustTier
 	// ActorTrust admits explicitly configured principals without a provision intent.
 	ActorTrust map[mesh.URN]TrustTier
-	Now        func() time.Time
+	// OwnerAgentTrust, when set, admits an agent (session) acting as a run owner
+	// at formation. Slot definitions are still held to their own pinned tiers.
+	OwnerAgentTrust TrustTier
+	Now             func() time.Time
 }
