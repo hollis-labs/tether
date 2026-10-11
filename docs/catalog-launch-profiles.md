@@ -9,16 +9,27 @@ generation workflow, see [`docs/launches/`](launches/README.md).
 
 ## Boot recovery
 
-Agent definitions take `recovery: never|auto`. Absent means `never`: after a
-daemon restart the agent stays cold even with unread mail, an open Torque
-assignment or a roster. Only `recovery: auto` lets post-listener boot recovery
-resume an agent that has no live session. Every decision is logged once and
-published as `session.boot_recovery` (`outcome: skipped`,
-`reason: recovery_not_auto` for a refused agent); skipping consumes no mail. If
-`catalog.defaults.workspace_root` (or its default) is missing or not a
-directory, all boot recovery is skipped with one log line and no events.
-An explicit native-only boot selection and retained team-member recovery are
-unaffected by this setting.
+Agent definitions take `recovery: never|auto`. Absent means `never`. The
+effective value follows the `extends` chain: the closest non-empty value wins,
+so a child can inherit `auto` or override it with `never`. After a daemon
+restart only agents whose effective policy is `auto` are considered for
+resumption, and then only when they have no live session, a prior session, and
+positive work evidence (unread mail, an open Torque assignment or a roster).
+
+What is recorded: an agent that has no live session and a prior session, is not
+a retained team member, and whose effective policy is not `auto` gets one log
+line and one `session.boot_recovery` event (`outcome: skipped`,
+`reason: recovery_not_auto`, or `recovery_policy_unresolved` if its extends
+chain cannot be resolved); its mail is not consumed. Agents that are live, have
+no prior session, or are retained team members return silently, as do `auto`
+agents with no work evidence. `auto` agents that are attempted publish
+`resumed` or `failed`.
+
+Exceptions: an explicit native-only boot selection is an operator choice and
+follows the native-only path regardless of `recovery`; retained team-member
+recovery is separate and unaffected. If `catalog.defaults.workspace_root` (or
+its default) is missing or not a directory, all boot recovery is skipped with
+one log line and no events.
 
 ## Unattended Codex and Antigravity
 

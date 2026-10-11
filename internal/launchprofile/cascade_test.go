@@ -311,3 +311,18 @@ func TestDeterministicSnapshotAndDigest(t *testing.T) {
 		t.Errorf("Expected different digest for modified provider, got same: %q", snap3.Digest)
 	}
 }
+
+func TestResolveProfileRecoveryCascade(t *testing.T) {
+	mem := launchprofile.NewMemorySource()
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "base", Recovery: "auto"})
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "inherits", Extends: "base"})
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "optout", Extends: "base", Recovery: "never"})
+	mem.AddProfile(&launchprofile.LaunchProfile{ID: "plain"})
+	r := launchprofile.NewResolver(mem)
+	for id, want := range map[string]string{"inherits": "auto", "optout": "never", "plain": ""} {
+		p, err := r.ResolveProfile(context.Background(), id)
+		if err != nil || p.Recovery != want {
+			t.Errorf("%s: recovery=%v err=%v, want %q", id, p, err, want)
+		}
+	}
+}

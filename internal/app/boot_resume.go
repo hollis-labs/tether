@@ -136,10 +136,10 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 		return
 	} // separately recovered under the host's receipt
 	// Explicit native-only selection above is an operator choice; everything
-	// else needs the agent definition to opt in.
-	if s.Catalog == nil || s.Catalog.Agents[agentID].Recovery != launchprofile.RecoveryAuto {
-		log.Printf("boot recovery: agent %s decision=skipped reason=recovery_not_auto", agentID)
-		s.bootResumeOutcome(agentID, parent.ID, "skipped", "recovery_not_auto")
+	// else needs the effective agent policy (extends cascade) to be auto.
+	if reason := s.bootRecoveryPolicyReason(ctx, agentID); reason != "" {
+		log.Printf("boot recovery: agent %s decision=skipped reason=%s", agentID, reason)
+		s.bootResumeOutcome(agentID, parent.ID, "skipped", reason)
 		return
 	}
 	plan.ResumeSourceSessionID = parent.ID
@@ -159,6 +159,23 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 		return
 	}
 	s.bootResumeOutcome(agentID, result.SessionID, "resumed", "")
+}
+
+// bootRecoveryPolicyReason returns "" when the agent's effective recovery
+// policy is auto, else the skip reason.
+func (s *Service) bootRecoveryPolicyReason(ctx context.Context, agentID string) string {
+	if s.Catalog == nil {
+		return "recovery_not_auto"
+	}
+	profile, err := launchprofile.NewResolver(s.Catalog).ResolveProfile(ctx, agentID)
+	if err != nil {
+		log.Printf("boot recovery: agent %s: resolve recovery policy: %v", agentID, err)
+		return "recovery_policy_unresolved"
+	}
+	if profile.Recovery != launchprofile.RecoveryAuto {
+		return "recovery_not_auto"
+	}
+	return ""
 }
 
 func (s *Service) bootResumeOutcome(agentID, sessionID, outcome, reason string) {

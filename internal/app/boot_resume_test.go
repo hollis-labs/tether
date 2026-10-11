@@ -103,6 +103,50 @@ func TestBootResumeDefaultNeverSkipsAndRecordsDecision(t *testing.T) {
 	}
 }
 
+func TestBootResumeUsesEffectiveExtendsPolicy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		child  config.Agent
+		resume bool
+	}{
+		"inherited auto":        {config.Agent{ID: "agent", Extends: "base"}, true},
+		"child never overrides": {config.Agent{ID: "agent", Extends: "base", Recovery: "never"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, to := pendingMailRig(t)
+			r.svc.Catalog.Agents["base"] = config.Agent{ID: "base", Recovery: "auto"}
+			r.svc.Catalog.Agents["agent"] = tc.child
+			r.svc.BootResumeSessions(context.Background())
+			if tc.resume {
+				r.wait(2)
+			} else {
+				requireStillCold(t, r, to)
+			}
+		})
+	}
+}
+
+func TestBootResumeNativeOnlySelectionBypassesDefaultNever(t *testing.T) {
+	r := newCodexRig(t)
+	r.svc.Catalog.Agents["agent"] = config.Agent{ID: "agent"} // recovery defaults to never
+	id := r.start()
+	if err := r.svc.StopSession(id); err != nil {
+		t.Fatal(err)
+	}
+	r.ended(id)
+	r.svc.BootResumeSessions(context.Background(), BootResumeOptions{NativeOnlySourceIDs: []string{id}})
+	var native, skipped bool
+	for _, e := range r.bus.got {
+		if e.Kind != "session.boot_recovery" {
+			continue
+		}
+		native = native || strings.Contains(e.PayloadJSON, "native_only")
+		skipped = skipped || strings.Contains(e.PayloadJSON, "recovery_not_auto")
+	}
+	if !native || skipped {
+		t.Fatalf("native-only path not followed (native=%v skipped=%v)", native, skipped)
+	}
+}
+
 func TestBootResumeAutoResumes(t *testing.T) {
 	r, _ := pendingMailRig(t)
 	r.svc.BootResumeSessions(context.Background())

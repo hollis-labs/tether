@@ -9,12 +9,16 @@ This file was backfilled from the git history and is a good-faith summary, not a
 ## [Unreleased]
 
 - Breaking: daemon boot recovery no longer resumes ordinary logical agents by
-  default. Agent definitions gain `recovery: never|auto` (absent = `never`);
-  only `auto` agents with unread mail, an open assignment or a roster are
-  resumed at startup. Each decision is logged and published as
-  `session.boot_recovery` (new `skipped` outcome), without consuming mail. Boot
-  recovery is skipped entirely when `catalog.defaults.workspace_root` is missing
-  or not a directory. Native-only selection and team-member recovery are
+  default. Agent definitions gain `recovery: never|auto` (absent = `never`,
+  inherited through `extends`, closest non-empty value wins); only `auto`
+  agents with unread mail, an open assignment or a roster are resumed at
+  startup. A non-live, non-team agent with a prior session and a non-`auto`
+  policy is logged and published once as `session.boot_recovery`
+  (`outcome: skipped`) without consuming mail; live agents, agents without a
+  prior session and `auto` agents without work evidence return silently. Boot
+  recovery is skipped entirely, with one log line and no events, when
+  `catalog.defaults.workspace_root` is missing or not a directory. Explicit
+  native-only selection (an operator choice) and team-member recovery are
   unchanged. Set `recovery: auto` on agents that must survive restarts.
   (CW-20261011-0004)
 

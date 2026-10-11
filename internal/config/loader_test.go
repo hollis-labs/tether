@@ -836,3 +836,17 @@ func TestValidate_AIProviderDiscoverModels(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_AgentRecovery(t *testing.T) {
+	for _, v := range []string{"", "never", "auto"} {
+		cat := &Catalog{Agents: map[string]Agent{"a": {ID: "a", Recovery: v}}}
+		if err := cat.Validate(); err != nil {
+			t.Errorf("recovery %q rejected: %v", v, err)
+		}
+	}
+	cat := &Catalog{Agents: map[string]Agent{"a": {ID: "a", Recovery: "sometimes"}}}
+	err := cat.Validate()
+	if err == nil || !strings.Contains(err.Error(), "recovery") {
+		t.Errorf("invalid recovery accepted: %v", err)
+	}
+}
