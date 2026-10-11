@@ -97,7 +97,7 @@ func remoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 			}
 			return store.RecordDeviceUse(ctx, p, o, r.RemoteAddr, r.UserAgent())
 		}
-		middleware(Enforce, verifier, remoteRecord, guard, true).ServeHTTP(w, r)
+		middleware(Enforce, verifier, remoteRecord, ScopePolicy{}, guard, true).ServeHTTP(w, r)
 	})
 }
 

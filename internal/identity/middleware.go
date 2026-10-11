@@ -37,6 +37,28 @@ type Observation struct {
 	Authentication string    `json:"authentication"`
 	Method         string    `json:"method"`
 	Route          string    `json:"route"`
+	// RoutePattern, RequiredScope and WouldAllow are set only when a
+	// ScopePolicy observer ran for a verified principal. WouldAllow is nil
+	// when the route or method is not in the table.
+	RoutePattern  string `json:"route_pattern,omitempty"`
+	RequiredScope string `json:"required_scope,omitempty"`
+	WouldAllow    *bool  `json:"would_allow,omitempty"`
+}
+
+// ScopeObservation is the verdict of a route-to-scope table for one request.
+type ScopeObservation struct {
+	Pattern    string
+	Required   string
+	WouldAllow bool
+	Known      bool
+}
+
+// ScopePolicy attaches a route-to-scope table to the local middleware.
+// Observe is consulted only for verified principals. Enforce is off in the
+// daemon; it exists so the enforcing path is covered before any flip.
+type ScopePolicy struct {
+	Observe func(*http.Request, Principal) ScopeObservation
+	Enforce bool
 }
 
 type Verifier interface {
@@ -47,7 +69,12 @@ type Verifier interface {
 // request, including invalid credentials and storage errors. Health is open.
 // Record receives metadata only, never bearer headers, query strings or bodies.
 func Middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler) http.Handler {
-	return middleware(mode, verifier, record, next, false)
+	return middleware(mode, verifier, record, ScopePolicy{}, next, false)
+}
+
+// MiddlewareWithScopes is Middleware plus route-to-scope attribution.
+func MiddlewareWithScopes(mode Mode, verifier Verifier, record func(context.Context, Observation) error, scopes ScopePolicy, next http.Handler) http.Handler {
+	return middleware(mode, verifier, record, scopes, next, false)
 }
 
 // RemoteMiddleware always enforces verified device credentials. Unlike
@@ -56,7 +83,7 @@ func RemoteMiddleware(verifier Verifier, record func(context.Context, Observatio
 	return remoteMiddleware(verifier, record, next)
 }
 
-func middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, next http.Handler, remote bool) http.Handler {
+func middleware(mode Mode, verifier Verifier, record func(context.Context, Observation) error, scopes ScopePolicy, next http.Handler, remote bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := mode.Validate(); err != nil {
 			authError(w, http.StatusServiceUnavailable, "identity_unavailable")
@@ -87,6 +114,14 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 			o.PrincipalID, o.SessionID = p.ID, p.SessionID
 			r = r.WithContext(WithPrincipal(r.Context(), p))
 		}
+		var scoped ScopeObservation
+		if state == "verified" && !remote && scopes.Observe != nil {
+			scoped = scopes.Observe(r, p)
+			if scoped.Known {
+				allowed := scoped.WouldAllow
+				o.RoutePattern, o.RequiredScope, o.WouldAllow = scoped.Pattern, scoped.Required, &allowed
+			}
+		}
 		// Context lookups and verified proxy telemetry are self-observation.
 		// Authenticate normally, but avoid duplicating each call in the audit.
 		selfObservation := !remote && state == "verified" && (r.Method == http.MethodGet && r.URL.Path == "/auth/context" || r.Method == http.MethodPost && r.URL.Path == "/proxy/events")
@@ -99,6 +134,12 @@ func middleware(mode Mode, verifier Verifier, record func(context.Context, Obser
 					return
 				}
 			}
+		}
+		if scopes.Enforce && scoped.Known && !scoped.WouldAllow {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "scope_required", "message": "required scope: " + scoped.Required}})
+			return
 		}
 		if state != "verified" && mode == Enforce {
 			status := http.StatusUnauthorized
