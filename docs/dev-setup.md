@@ -210,6 +210,9 @@ Provider notes:
 - Configured models that are missing from models.dev are still routable. Tether
   synthesizes a conservative text-only catalog entry for those ids so local
   OpenAI-compatible servers can use custom llama/Ollama model names.
+- `gemini` accepts an optional `api_version` (default `v1beta`) for gateways
+  that serve Gemini under another version path; OpenCode Zen uses `v1` with
+  `base_url: https://opencode.ai/zen`.
 - Gemini currently supports text chat, image input, tool declarations,
   streaming chat, and embeddings through the same routed AI gateway surfaces.
 - `enabled: true` controls whether the provider is mounted into the daemon.

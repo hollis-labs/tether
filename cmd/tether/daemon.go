@@ -524,7 +524,8 @@ func buildAIServiceFromConfig(ctx context.Context, cat *config.Catalog, deps aiS
 		case "gemini":
 			secretRef := p.SecretRef
 			providers[p.ID] = llmgemini.New(llmgemini.Config{
-				BaseURL: p.BaseURL,
+				BaseURL:    p.BaseURL,
+				APIVersion: p.APIVersion,
 				ResolveAPIKey: aiSecrets.Remember(func(ctx context.Context) (string, error) {
 					return resolveAISecret(ctx, secretResolver, secretRef)
 				}),

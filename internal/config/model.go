@@ -117,6 +117,9 @@ type AIProviderConfig struct {
 	// appended after the configured models; configured ids keep precedence
 	// and a failed discovery leaves the configured list unchanged.
 	DiscoverModels bool `yaml:"discover_models,omitempty"`
+	// APIVersion overrides the API version path segment for gemini providers
+	// (default v1beta), for gateways that serve Gemini under another one.
+	APIVersion string `yaml:"api_version,omitempty"`
 	// InputPriceUSDPerMTok is a decision provider's flat price per million
 	// input tokens (output is free). Only the jev type uses it: JEV has no
 	// models.dev entry, so the config declares the price.
