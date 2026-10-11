@@ -20,34 +20,87 @@ identity:
 Points with their own override today: `local_api` (local listener auth
 middleware), `mcp_gateway` (daemon MCP transport, `/mcp` and `/p/<profile>`),
 `teams` (team principal resolution). Everything else follows the global
-`identity.mode` (see the fail-mode table). Because session-token minting and
-the startup bind rules (`identity.ValidateBind`, MCP listener address checks)
-read the **global** mode, flipping a point does not change them.
+`identity.mode` (see the fail-mode table), including session-token minting
+(global mode only: a point flip changes no token behavior). Startup bind rules use
+the per-point modes, see "Bind rules per point" below.
 
 Commands (all take `--catalog`, default `~/.tether/catalog`):
 
 ```bash
-tether identity mode                         # configured modes + flip history
+tether identity mode                         # configured vs RUNNING mode per point, restart-pending, flip history, chain check
 tether identity flip --point mcp_gateway --to enforce --evidence "CW-… GO rec <id>"
 tether identity flip --global --to enforce --evidence "…"
-tether identity rollback                     # ONE command: global + every point -> observe
+tether identity rollback                     # undo every pending flip, restoring prior value AND absence of overrides
 tether identity rollback --point mcp_gateway --evidence "why"
+tether identity rollback --observe           # break-glass: explicit observe on global + every point, ignoring history
 tether daemon stop && tether daemon start    # apply
-tether doctor                                # caller-identity check; curl /health shows identity.mode and identity.points
+tether doctor                                # caller-identity: effective per-point modes, restart-pending, flip-log integrity
 ```
 
-`--evidence` is mandatory on a flip. Each flip and rollback appends one JSON line
-to `<state root>/run/identity-flips.jsonl` (0600, append-only):
-`{at, action, by, point, from, to, evidence, catalog}`; `by` defaults to the OS
-user (`--by` overrides). The audit line is written **before** global.yaml is
-replaced (atomic rename, comments preserved), so no change is unrecorded; if the
-write then fails, `identity mode` shows the configured value against the log. Back up
-`global.yaml` and the state DB before the first flip (operator token and DB must stay a matching pair).
+`rollback` replays the flip log and reverts, newest first, flips not yet rolled
+back, restoring each target's prior configured value; an override that did not
+exist before the flip is removed again (the point follows global), and targets
+with nothing pending are untouched. It cannot weaken a point that was enforcing
+before the log began; use `--observe` for an emergency, knowing it does exactly that.
 
-Rollback leaves a restart as the only step; sessions minted under enforce keep
-valid tokens in observe, so rollback needs no relaunch.
+`--evidence` is mandatory on a flip. Each change appends one JSON line to
+`<state root>/run/identity-flips.jsonl` (0600): `{at, action (flip|rollback|reset),
+by, point, from, to, prior, evidence, catalog, prev, hash}`. `by` defaults to the OS
+user and is an **unauthenticated label**. The log is a **hash chain**: `prev` is
+the previous record's `hash`, `hash` is SHA-256 over the record's other fields.
+`identity mode`, `rollback`, further flips and `tether doctor` verify it; any
+malformed, blank, altered, removed, reordered or inserted record is reported
+loudly (doctor `fail`, `identity mode` exits non-zero) and further flips/rollbacks
+refuse until the log is restored. The audit line is written before global.yaml is replaced
+(atomic rename, comments preserved), so no change is unrecorded; if the write
+then fails, `identity mode` shows configured values disagreeing with the last record.
+Back up `global.yaml` and the state DB before the first flip (operator token and DB stay a matching pair).
+
+**Limits of the chain.** It detects edits, deletions in the middle, reordering and
+forged lines made without recomputing the chain, but the owning uid can rewrite
+the whole file consistently, or truncate the tail (a shorter log still verifies).
+Pin the **head hash** printed by `tether identity mode` in the GO record and in
+Tesseract after every flip, and compare it at the next review; a head that is not
+in your pinned history means the log was rewritten.
+
+### Operator boundary (precondition)
+
+The verbs have no authentication: they run as the invoking uid and edit
+`global.yaml`. They refuse to run when `TETHER_MCP_TOKEN` or `TETHER_TOKEN` is set
+(the markers Tether plants in every launched session; an operator who exports a
+token for CLI use must unset it for these verbs), which stops a launched session
+from flipping by accident. **That is a guard, not a boundary**: a process can unset
+its environment. Today the catalog, `run/` and `state/` are write-protected only for
+agents Tether wraps (Claude, OpenCode), **not Codex (CW-20261001-0230)** and not
+against processes outside Tether, and `run/` including `operator.token` is
+**readable by agents** until read protection CW-20261001-0263 lands. A same-uid
+process with catalog write access can therefore edit `identity` in `global.yaml` or the
+flip log directly and disable enforcement at the next restart. Enforcement
+integrity against Codex or any other same-uid process depends on read/write
+protection landing; do not describe a flip as tamper-resistant before then. Mitigations
+until then: review `tether identity mode` (running vs configured, chain) after each
+restart, and keep the pinned head hash.
+
+### Bind rules per point
+
+The local listener's bind is validated against the **effective mode of the points served
+on it**: `local_api`, plus `mcp_gateway` when the MCP endpoint is mounted. A
+non-loopback TCP bind starts only if each of them is `enforce`; a global enforce
+does not mask a point left at observe or off. Identity storage and operator
+bootstrap run whenever any point or the global mode is not off, and use the
+strictest of them (a mismatch refuses startup if anything enforces).
+Setting the global mode to `off` while a point enforces is a footgun: no session
+tokens are minted, so every session is rejected at that point.
 
 ## 2. Observe-mode review
+
+Schema: `event` (migration 0066) is empty for request rows and names a finding
+otherwise; `verified` (0068) is 1 when a bearer resolved to a principal and is **not
+backfilled**: rows from before 0068 default to 0 whatever their `authentication`.
+So the queries key on `authentication = 'verified'` (valid for all history) and
+`event = ''`; use `verified = 1` only for windows entirely after 0068. On a database
+without 0066/0068 columns, drop the `event` predicates. `route_pattern`,
+`required_scope`, `would_allow` come from 0065 and are NULL/empty on rows from before it.
 
 Run on a copy or read-only: `sqlite3 -readonly <state_db> '…'` (`defaults.state_db`
 in global.yaml). Window = the whole observe period, minimum **7 days of normal
@@ -69,17 +122,22 @@ SELECT principal_id, route, method, count(*) n FROM identity_audit
 
 -- 3. would_allow = 0 review (scope table, enforce-to-be). Every row must be explained.
 SELECT principal_id, method, route_pattern, required_scope, count(*) n
-  FROM identity_audit WHERE would_allow = 0 AND at > :since
+  FROM identity_audit WHERE event = '' AND would_allow = 0 AND at > :since
  GROUP BY 1,2,3,4 ORDER BY n DESC;
 
--- 4. would_allow IS NULL: verified request on a route/method with no table entry
+-- 4. would_allow IS NULL on REQUEST rows: verified request on a route/method with no table entry.
+--    event <> '' rows (from_unverified, from_refused, …; internal/api/sender_identity.go) are
+--    handler findings whose scope fields are NULL by design, so they are excluded here.
 SELECT method, route, count(*) FROM identity_audit
- WHERE authentication='verified' AND would_allow IS NULL AND at > :since GROUP BY 1,2;
+ WHERE event = '' AND authentication='verified' AND would_allow IS NULL AND at > :since GROUP BY 1,2;
 
--- 5. verified rows per kind (principal kind from principals)
+-- 4b. handler findings (I2 sender/as verification), informational: expect 0 *_refused before enforce
+SELECT event, principal_id, count(*) FROM identity_audit WHERE event <> '' AND at > :since GROUP BY 1,2;
+
+-- 5. verified request rows per principal kind
 SELECT p.kind, count(*) FROM identity_audit a
   JOIN (SELECT DISTINCT principal_id, kind FROM principals) p ON p.principal_id=a.principal_id
- WHERE a.at > :since GROUP BY 1;
+ WHERE a.event = '' AND a.authentication = 'verified' AND a.at > :since GROUP BY 1;
 ```
 
 Thresholds to flip an enforcement point (all must hold; record the numbers in the GO record):
@@ -115,6 +173,8 @@ Thresholds to flip an enforcement point (all must hold; record the numbers in th
 | Observe review | section 2 | query outputs, thresholds met |
 | Relaunch plan | section 4 | list of sessions to relaunch |
 | Rollback rehearsed | section 1 | dry-run transcript (see below) or a rerun |
+| Operator boundary understood | section 1 | note whether Codex/same-uid agents run; read/write protection state |
+| Flip-log head hash pinned | section 1 | `tether identity mode` head hash |
 
 Budgets (CW-20261001-0607) and delegation are not preconditions. Observe-mode
 attribution alone does not stop same-uid credential theft: without read
@@ -183,6 +243,7 @@ Query 4 uncovered routes:   <n>
 Declared fail mode:         <copy row from section 5>
 Sessions to relaunch:       <list>
 Backup taken:               <path/time>
+Flip log head hash before/after: <hash> / <hash>
 Rollback:                   tether identity rollback --point <name>; restart. Trigger: <e.g. any 401 for a needed caller>
 Decision:                   GO / NO-GO     Signature:
 Executed by / at:           <fill after flip>   flips.jsonl line: <copy>
@@ -200,10 +261,10 @@ tether init --yes --state-dir $D/state          # temp catalog, DB and own socke
 tether --catalog $D/state/catalog daemon run &  # foreground run; socket $D/state/run/tetherd.sock
 tether --catalog $D/state/catalog identity flip --point local_api --to enforce --evidence "dry run"
 # restart; anonymous GET /sessions -> 401, operator-token GET -> 200
-tether --catalog $D/state/catalog identity rollback   # restart; both 200 again
+tether --catalog $D/state/catalog identity rollback   # restart (env: unset TETHER_TOKEN/TETHER_MCP_TOKEN); both 200 again
 ```
 
-Recorded run (2026-10-11, `/tmp/i6-dry`, own socket, `HOME` overridden): observe
+Recorded run (2026-10-11, `/tmp/i6-dry`, own socket, `HOME` overridden, `TETHER_TOKEN`/`TETHER_MCP_TOKEN` unset for the verbs): observe
 200/200 → flip `local_api` → `/health` `identity.points.local_api=enforce`,
 anonymous 401, operator 200 → rollback → anonymous 200, operator 200; flips.jsonl has
 both lines. Not covered by the dry run: session relaunch with real provider

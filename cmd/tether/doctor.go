@@ -425,8 +425,8 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	if cat == nil {
 		return warn("caller-identity", "skipped — catalog unavailable", "fix catalog first")
 	}
-	mode := identity.Mode(cat.Global.Identity.EffectiveMode())
-	if err := mode.Validate(); err != nil {
+	global := identity.Mode(cat.Global.Identity.EffectiveMode())
+	if err := global.Validate(); err != nil {
 		return fail("caller-identity", "invalid identity.mode", "use off, observe or enforce; validation happens at daemon start")
 	}
 	for point, m := range cat.Global.Identity.Points {
@@ -437,21 +437,35 @@ func checkIdentity(cat *config.Catalog) checkResult {
 			return fail("caller-identity", "invalid identity.points."+point, "use off, observe or enforce")
 		}
 	}
+	if _, _, err := verifyFlipLog(flipLogPath(config.Expand(catalogPath))); err != nil {
+		return fail("caller-identity", "identity flip log integrity failure: "+err.Error(), "the audit chain is broken; treat flips as unverified, investigate before any further flip, restore the log from backup")
+	}
 	cfg, err := daemonConfigFromCatalog(cat)
 	if err != nil {
 		return warn("caller-identity", "daemon settings unavailable", "fix daemon settings")
 	}
-	if err := identity.ValidateBind(cfg.ListenAddr, mode); err != nil {
-		return warn("caller-identity", "daemon start would reject identity/listener settings", "use a local listener or explicitly configure enforce")
+	if err := cfg.ValidateListenerBind(cat.Global.Daemon.MCPEndpoint.Enabled); err != nil {
+		return warn("caller-identity", "daemon start would reject identity/listener settings", "use a local listener or enforce local_api (and mcp_gateway when its endpoint is enabled)")
 	}
-	if mode == identity.Off {
-		return ok("caller-identity", "off")
+	st := loadIdentityModeState(cat, false)
+	summary := "global=" + string(global)
+	for _, p := range config.IdentityPoints {
+		if _, set := cat.Global.Identity.Points[p]; set {
+			summary += " " + p + "=" + st.Configured[p]
+		}
+	}
+	if cfg.StrictestIdentityMode() == identity.Off {
+		return ok("caller-identity", "off ("+summary+")")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	h, err := client.New(cfg.ListenAddr, client.WithToken("")).Health(ctx)
 	if err != nil || h.Identity == nil {
-		return warn("caller-identity", string(mode)+" configured; runtime identity unavailable", "check daemon status")
+		return warn("caller-identity", summary+" configured; runtime identity unavailable", "check daemon status")
+	}
+	st = loadIdentityModeState(cat, true)
+	if pending := st.pendingRestart(); len(pending) > 0 {
+		return warn("caller-identity", summary+"; restart pending for "+strings.Join(pending, ", ")+" (running modes differ from configured)", "restart the daemon to apply the configured identity modes")
 	}
 	if h.Identity.OperatorDegraded {
 		return warn("caller-identity", "operator credentials degraded; observe daemon remains available", "restore matching DB/token backups or explicitly recover credentials before enforce")
@@ -459,7 +473,7 @@ func checkIdentity(cat *config.Catalog) checkResult {
 	if h.Identity.Audit.Dropped > 0 || h.Identity.Audit.Failures > 0 {
 		return warn("caller-identity", fmt.Sprintf("audit dropped=%d failures=%d", h.Identity.Audit.Dropped, h.Identity.Audit.Failures), "check queue load and state DB availability")
 	}
-	return ok("caller-identity", string(h.Identity.Mode)+"; operator credentials available")
+	return ok("caller-identity", summary+"; operator credentials available")
 }
 
 func checkMCPDiscoveryMode(cat *config.Catalog) checkResult {
@@ -639,7 +653,7 @@ func checkMCPEndpoint(cat *config.Catalog) checkResult {
 	if strings.HasPrefix(addr, "unix:") {
 		addr = "unix:" + config.Expand(strings.TrimPrefix(addr, "unix:"))
 	}
-	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.Mode)); err != nil {
+	if err := mcptransport.ValidateEndpoint(addr, identity.Mode(cat.Global.Identity.ModeFor("mcp_gateway"))); err != nil {
 		return fail("mcp-endpoint", err.Error(), "fix daemon.listen_addr or disable daemon.mcp_endpoint.enabled")
 	}
 	return ok("mcp-endpoint", "enabled; strict verified admission on /mcp and /p/<profile>")
