@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
@@ -132,8 +135,9 @@ func TestTeamSessionCreateRetainsOwnBindingAndStopFencesUnstartedLaunch(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.LogicalAgentID != "agent" {
-		t.Fatal("team lost catalog sandbox identity", row.LogicalAgentID)
+	plan, err := rig.svc.Store.GetLaunchPlan(created.SessionID)
+	if err != nil || plan.CatalogAgent() != "agent" || !strings.HasPrefix(row.LogicalAgentID, "agent#") || row.LogicalAgentID != plan.LogicalAgentID {
+		t.Fatal("team lost catalog sandbox identity", row.LogicalAgentID, plan, err)
 	}
 	if err = rig.svc.LinkTeamSession(context.Background(), created.SessionID, "wrong-key", "parent"); !errors.Is(err, teams.ErrConflict) {
 		t.Fatal("unowned session relinked", err)
@@ -157,6 +161,55 @@ func TestTeamSessionCreateRetainsOwnBindingAndStopFencesUnstartedLaunch(t *testi
 	}
 	if _, running := rig.svc.Manager.Get(created.SessionID); running {
 		t.Fatal("stopped key launched a process")
+	}
+}
+
+func TestTeamSessionsFromSameLaunchGetDistinctLogicalAgents(t *testing.T) {
+	rig := newCodexRig(t)
+	var ids [2]string
+	var errs [2]error
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l, err := rig.svc.CreateTeamSession(context.Background(), fmt.Sprintf("team-port:slot-%d", i), "codex-launch")
+			if err == nil {
+				ids[i] = l.SessionID
+			}
+			errs[i] = err
+		}()
+	}
+	wg.Wait()
+	var logical [2]string
+	for i := range ids {
+		if errs[i] != nil {
+			t.Fatal(errs[i])
+		}
+		row, err := rig.svc.Store.GetSession(ids[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := rig.svc.Store.GetLaunchPlan(ids[i])
+		if err != nil || plan.CatalogAgent() != "agent" || plan.CatalogAgentID != "agent" {
+			t.Fatal("catalog agent lost", plan, err)
+		}
+		logical[i] = row.LogicalAgentID
+	}
+	if logical[0] == logical[1] || !strings.HasPrefix(logical[0], "agent#") || !strings.HasPrefix(logical[1], "agent#") {
+		t.Fatal("team members share a logical agent", logical)
+	}
+	// An identical key replays the same member and logical id.
+	again, err := rig.svc.CreateTeamSession(context.Background(), "team-port:slot-0", "codex-launch")
+	if err != nil || again.SessionID != ids[0] {
+		t.Fatal(again, err)
+	}
+	if err = rig.svc.StopTeamSession(context.Background(), ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	row, err := rig.svc.Store.GetSession(ids[1])
+	if err != nil || row.State != "created" {
+		t.Fatal("stopping one member touched the other", row, err)
 	}
 }
 
@@ -214,7 +267,7 @@ func TestTeamSessionUsesCatalogSandboxThroughRealService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.LogicalAgentID != "agent" || !plan.TeamMember {
+	if plan.CatalogAgent() != "agent" || plan.LogicalAgentID == "agent" || !plan.TeamMember {
 		t.Fatal("catalog policy identity lost", plan)
 	}
 	binding, err = rig.svc.Registry.CurrentBinding(context.Background(), actor)

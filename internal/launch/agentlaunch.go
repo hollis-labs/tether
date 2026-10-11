@@ -73,8 +73,8 @@ func AgentLaunchPlan(plan *Plan, workspaceDir string) agentlaunch.LaunchPlan {
 // agents/<name>.md, selected with --agent <name>): the plan's logical agent,
 // else "agent".
 func AgentName(plan *Plan) string {
-	if plan.LogicalAgentID != "" {
-		return plan.LogicalAgentID
+	if id := plan.CatalogAgent(); id != "" {
+		return id
 	}
 	return "agent"
 }

@@ -312,13 +312,13 @@ func (s *Service) launchSessionWithContext(ctx context.Context, sessionID string
 		hasProfile bool
 	)
 	if plan.SandboxProfile != "" {
-		sp, hasProfile, err = s.Catalog.SandboxProfile(plan.LogicalAgentID, plan.SandboxProfile)
+		sp, hasProfile, err = s.Catalog.SandboxProfile(plan.CatalogAgent(), plan.SandboxProfile)
 		if err == nil {
 			// The catalog agent may have been pinned since create.
-			err = s.Catalog.CheckSandboxOverride(plan.LogicalAgentID, plan.SandboxProfile)
+			err = s.Catalog.CheckSandboxOverride(plan.CatalogAgent(), plan.SandboxProfile)
 		}
 	} else {
-		sp, hasProfile, err = s.Catalog.AgentSandbox(plan.LogicalAgentID)
+		sp, hasProfile, err = s.Catalog.AgentSandbox(plan.CatalogAgent())
 	}
 	if err != nil {
 		exit := 1
