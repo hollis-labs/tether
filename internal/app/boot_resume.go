@@ -137,8 +137,12 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 	} // separately recovered under the host's receipt
 	// Explicit native-only selection above is an operator choice; everything
 	// else needs the effective agent policy (extends cascade) to be auto.
-	if reason := s.bootRecoveryPolicyReason(ctx, agentID); reason != "" {
-		log.Printf("boot recovery: agent %s decision=skipped reason=%s", agentID, reason)
+	if reason, detail := s.bootRecoveryPolicyReason(ctx, agentID); reason != "" {
+		if detail != "" {
+			log.Printf("boot recovery: agent %s decision=skipped reason=%s: %s", agentID, reason, detail)
+		} else {
+			log.Printf("boot recovery: agent %s decision=skipped reason=%s", agentID, reason)
+		}
 		s.bootResumeOutcome(agentID, parent.ID, "skipped", reason)
 		return
 	}
@@ -161,21 +165,40 @@ func (s *Service) bootResumeAgent(ctx context.Context, agentID string, options .
 	s.bootResumeOutcome(agentID, result.SessionID, "resumed", "")
 }
 
-// bootRecoveryPolicyReason returns "" when the agent's effective recovery
-// policy is auto, else the skip reason.
-func (s *Service) bootRecoveryPolicyReason(ctx context.Context, agentID string) string {
-	if s.Catalog == nil {
-		return "recovery_not_auto"
+// agentOnlySource looks profiles up in Catalog.Agents only. Catalog.GetProfile
+// prefers Launches[id], which would let a launch id shadow a logical agent (or
+// an ancestor in its extends chain) when reading the recovery policy.
+type agentOnlySource struct{ cat *config.Catalog }
+
+func (a agentOnlySource) GetProfile(_ context.Context, id string) (*launchprofile.LaunchProfile, error) {
+	if a.cat != nil {
+		if p, ok := a.cat.Agents[id]; ok {
+			cp := p
+			return &cp, nil
+		}
 	}
-	profile, err := launchprofile.NewResolver(s.Catalog).ResolveProfile(ctx, agentID)
+	return nil, launchprofile.ErrProfileNotFound
+}
+
+func (agentOnlySource) GetContext(context.Context, string) (*launchprofile.LaunchContext, error) {
+	return nil, launchprofile.ErrContextNotFound
+}
+
+// bootRecoveryPolicyReason returns "" when the agent's effective recovery
+// policy (extends chain resolved over agents only) is auto, else the skip
+// reason and, for an unresolved chain, the resolver error.
+func (s *Service) bootRecoveryPolicyReason(ctx context.Context, agentID string) (reason, detail string) {
+	if s.Catalog == nil {
+		return "recovery_not_auto", ""
+	}
+	profile, err := launchprofile.NewResolver(agentOnlySource{s.Catalog}).ResolveProfile(ctx, agentID)
 	if err != nil {
-		log.Printf("boot recovery: agent %s: resolve recovery policy: %v", agentID, err)
-		return "recovery_policy_unresolved"
+		return "recovery_policy_unresolved", err.Error()
 	}
 	if profile.Recovery != launchprofile.RecoveryAuto {
-		return "recovery_not_auto"
+		return "recovery_not_auto", ""
 	}
-	return ""
+	return "", ""
 }
 
 func (s *Service) bootResumeOutcome(agentID, sessionID, outcome, reason string) {

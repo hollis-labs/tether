@@ -125,6 +125,54 @@ func TestBootResumeUsesEffectiveExtendsPolicy(t *testing.T) {
 	}
 }
 
+func bootEvents(r *codexRig, kind string) []string {
+	var out []string
+	for _, e := range r.bus.got {
+		if e.Kind == kind {
+			out = append(out, e.PayloadJSON)
+		}
+	}
+	return out
+}
+
+func TestBootResumePolicyIgnoresLaunchIDCollisions(t *testing.T) {
+	cases := map[string]struct {
+		agents  map[string]config.Agent
+		resume  bool
+		wantErr string
+	}{
+		"leaf never, launch points at auto": {map[string]config.Agent{"agent": {ID: "agent", Recovery: "never"}, "b": {ID: "b", Recovery: "auto"}}, false, ""},
+		"leaf auto, launch points at never": {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"ancestor shadowed by launch":       {map[string]config.Agent{"agent": {ID: "agent", Extends: "base"}, "base": {ID: "base", Recovery: "auto"}, "b": {ID: "b", Recovery: "never"}}, true, ""},
+		"cycle":                             {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "x"}, "x": {ID: "x", Extends: "agent"}}, false, "recovery_policy_unresolved"},
+		"missing ancestor":                  {map[string]config.Agent{"agent": {ID: "agent", Recovery: "auto", Extends: "ghost"}}, false, "recovery_policy_unresolved"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, to := pendingMailRig(t)
+			r.svc.Catalog.Agents = tc.agents
+			// Launches resolve before agents in Catalog.GetProfile; make the
+			// ids "agent" and "base" collide with launches pointing at "b".
+			r.svc.Catalog.Launches["agent"] = config.Launch{ID: "agent", Project: "proj", Agent: "b", Provider: "codex-cli"}
+			r.svc.Catalog.Launches["base"] = config.Launch{ID: "base", Project: "proj", Agent: "b", Provider: "codex-cli"}
+			r.svc.BootResumeSessions(context.Background())
+			if tc.resume {
+				r.wait(2)
+				return
+			}
+			requireStillCold(t, r, to)
+			want := tc.wantErr
+			if want == "" {
+				want = "recovery_not_auto"
+			}
+			evs := bootEvents(r, "session.boot_recovery")
+			if len(evs) != 1 || !strings.Contains(evs[0], `"skipped"`) || !strings.Contains(evs[0], want) {
+				t.Fatalf("events=%v, want one skipped %s", evs, want)
+			}
+		})
+	}
+}
+
 func TestBootResumeNativeOnlySelectionBypassesDefaultNever(t *testing.T) {
 	r := newCodexRig(t)
 	r.svc.Catalog.Agents["agent"] = config.Agent{ID: "agent"} // recovery defaults to never
@@ -134,16 +182,9 @@ func TestBootResumeNativeOnlySelectionBypassesDefaultNever(t *testing.T) {
 	}
 	r.ended(id)
 	r.svc.BootResumeSessions(context.Background(), BootResumeOptions{NativeOnlySourceIDs: []string{id}})
-	var native, skipped bool
-	for _, e := range r.bus.got {
-		if e.Kind != "session.boot_recovery" {
-			continue
-		}
-		native = native || strings.Contains(e.PayloadJSON, "native_only")
-		skipped = skipped || strings.Contains(e.PayloadJSON, "recovery_not_auto")
-	}
-	if !native || skipped {
-		t.Fatalf("native-only path not followed (native=%v skipped=%v)", native, skipped)
+	evs := bootEvents(r, "session.boot_recovery")
+	if len(evs) != 1 || !strings.Contains(evs[0], `"failed"`) || !strings.Contains(evs[0], "native_only_resume_refused") {
+		t.Fatalf("want exactly one native-only refusal outcome, got %v", evs)
 	}
 }
 
