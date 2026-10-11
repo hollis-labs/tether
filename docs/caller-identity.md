@@ -275,3 +275,21 @@ trust them; an envelope without them came from a request with no verified
 principal. Findings are recorded in `identity_audit.event` (`from_unverified`,
 `from_refused`, `as_unverified`, `as_refused`). Enforce is selected only by
 `identity.mode`; nothing here turns it on.
+
+### Group and legacy broker routes
+
+The same address-set rule covers `/groups/...`, `/mentions` and `/broker/...`
+for a verified principal. A missing `by`, `member`, `as`, `from`,
+`last_updated_by` (groups) or `sender` (broker) is stamped from the principal.
+A supplied one outside its address set is recorded in `identity_audit.event`
+(`from_unverified`/`as_unverified`) under observe and refused with 403 under
+enforce (`from_refused`/`as_refused`). Group and broker envelopes carry no
+metadata, so there is no `from_unverified` marker on them; the audit row is the
+record. A broker reply is authored as the original's recipient, so the replier
+must hold that address. Free-form broker sender strings that are not in the
+principal's address set are refused under enforce.
+
+A device principal's ID (`msg://device/<id>`) is not a messaging address; a
+routed reply from a device is attributed to its stamped sender
+(`msg://service/device/<id>`) while the authenticated device remains the actor
+that scopes idempotency keys.
