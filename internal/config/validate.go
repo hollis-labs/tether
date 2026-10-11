@@ -231,6 +231,9 @@ func validateAIConfig(ai AIConfig) error {
 		if p.Wire != "" && p.Type != "openai" && p.Type != "openai-compatible" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets wire %q (wire is only supported for openai/openai-compatible)", i, p.ID, p.Type, p.Wire)
 		}
+		if p.APIVersion != "" && p.Type != "gemini" {
+			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets api_version (only supported for gemini)", i, p.ID, p.Type)
+		}
 		if p.InputPriceUSDPerMTok != nil && p.Type != "jev" {
 			return fmt.Errorf("global ai.providers[%d] (%s) is type %q but sets input_price_usd_per_mtok (only supported for jev)", i, p.ID, p.Type)
 		}

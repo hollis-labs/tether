@@ -49,7 +49,11 @@ func (c sdkModelClient) EmbedContent(ctx context.Context, model string, contents
 type Config struct {
 	ResolveAPIKey func(context.Context) (string, error)
 	BaseURL       string
-	HTTPClient    *http.Client
+	// APIVersion overrides the SDK's default API version path segment
+	// (v1beta) for gateways that serve Gemini under another one, such as
+	// OpenCode Zen's v1.
+	APIVersion string
+	HTTPClient *http.Client
 }
 
 type Provider struct {
@@ -68,6 +72,9 @@ func New(cfg Config) *Provider {
 			}
 			if cfg.BaseURL != "" {
 				clientCfg.HTTPOptions.BaseURL = cfg.BaseURL
+			}
+			if cfg.APIVersion != "" {
+				clientCfg.HTTPOptions.APIVersion = cfg.APIVersion
 			}
 			client, err := genai.NewClient(ctx, clientCfg)
 			if err != nil {
