@@ -20,12 +20,15 @@ import (
 func idempotencyPrincipal(ctx context.Context) (string, error) {
 	p, ok := identity.FromContext(ctx)
 	if !identity.IsRemote(ctx) {
-		if !ok {
+		// Only a principal that carried a bearer credential bound to an
+		// authenticated principal row (identity.Principal.Verified) owns a
+		// namespace; anything else shares the anonymous space.
+		if !ok || !p.Verified {
 			return "", nil
 		}
 		return p.ID, nil
 	}
-	if !ok || p.Kind != "device" || p.ID == "" || p.ID == identity.OperatorID {
+	if !ok || !p.Verified || p.Kind != "device" || p.ID == "" || p.ID == identity.OperatorID {
 		return "", errors.New("verified device required")
 	}
 	return p.ID, nil

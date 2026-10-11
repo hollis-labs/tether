@@ -58,7 +58,7 @@ func TestLocalIdempotencyPrincipal(t *testing.T) {
 	if p, err := idempotencyPrincipal(context.Background()); err != nil || p != "" {
 		t.Fatalf("unverified local principal = %q, %v", p, err)
 	}
-	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://session/local/s1", Kind: "session"})
+	ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://session/local/s1", Kind: "session", Verified: true})
 	if p, err := idempotencyPrincipal(ctx); err != nil || p != "msg://session/local/s1" {
 		t.Fatalf("verified local principal = %q, %v", p, err)
 	}
@@ -66,7 +66,7 @@ func TestLocalIdempotencyPrincipal(t *testing.T) {
 		svc := &fakeLaunchService{createRes: LaunchResult{SessionID: "s"}, resumeRes: LaunchResult{SessionID: "s"}}
 		h := newTestHandler(svc)
 		for _, id := range []string{"msg://session/local/s1", "msg://session/local/s2"} {
-			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: id, Kind: "session"})
+			ctx := identity.WithPrincipal(context.Background(), identity.Principal{ID: id, Kind: "session", Verified: true})
 			body := `{"launch":"demo","idempotency_key":"same","idempotency_principal":"msg://user/local/operator"}`
 			if strings.Contains(path, "resume") {
 				body = `{"idempotency_key":"same","idempotency_principal":"msg://user/local/operator"}`
@@ -104,5 +104,16 @@ func TestRemoteReplyIdempotency(t *testing.T) {
 	// The store keys a reply by (parent, actor, key); the actor is the verified caller.
 	if len(svc.requests) != 2 || svc.requests[0].IdempotencyKey != "same" || svc.requests[0].Caller.ID != "msg://device/a" || svc.requests[1].Caller.ID != "msg://device/b" {
 		t.Fatal("reply bound to supplied identity")
+	}
+}
+
+func TestIdempotencyPrincipalIgnoresUnverified(t *testing.T) {
+	local := identity.WithPrincipal(context.Background(), identity.Principal{ID: "msg://session/local/s9", Kind: "session"})
+	if got, err := idempotencyPrincipal(local); err != nil || got != "" {
+		t.Fatalf("unverified local principal: got %q, %v; want shared anonymous space", got, err)
+	}
+	remote := identity.WithPrincipal(identity.WithRemoteContext(context.Background()), identity.Principal{ID: "msg://device/d9", Kind: "device"})
+	if _, err := idempotencyPrincipal(remote); err == nil {
+		t.Fatal("unverified remote device accepted")
 	}
 }
