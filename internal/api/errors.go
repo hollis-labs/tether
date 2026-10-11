@@ -27,6 +27,12 @@ const (
 	// can tell it from a session that cannot take input at all.
 	CodeProviderSessionLost = "provider_session_lost"
 
+	// CodeTurnActiveOrUnknown (409) means hosted Codex refused a new turn
+	// because a turn is still active OR the previous turn's state is unknown
+	// (not yet resolved). The two cannot be told apart, so callers must not
+	// treat it as plain "busy". The new turn was not started.
+	CodeTurnActiveOrUnknown = "turn_active_or_unknown"
+
 	// CodeTurnFailed (502) means the session's agent process ran the turn
 	// and exited non-zero — a subprocess runtime (codex exec, claude -p)
 	// that failed on its own terms, such as a provider 401 or a usage
