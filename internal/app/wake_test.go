@@ -1533,6 +1533,25 @@ func TestRunWakeSweep_NothingNew_LogsNothing(t *testing.T) {
 	}
 }
 
+// TestRunWakeSweep_EmptyQueue_LogsNothing: a pass that attempts, parks and
+// defers nothing emits no summary line.
+func TestRunWakeSweep_EmptyQueue_LogsNothing(t *testing.T) {
+	st, reg := newWakeHarness(t)
+	rt := newFakeRuntime()
+	park := &wakeParkSet{}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if _, err := runWakeSweep(context.Background(), st, reg, rt.seam(), park); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("empty sweep logged:\n%s", buf.String())
+	}
+}
+
 // ─── RunWakeSweep: scan cursor and recipient rotation (CW-20261011-0024 review) ─────
 
 // TestRunWakeSweep_BacklogDeeperThanScanWindow_LiveRowEventuallyReached: dead
