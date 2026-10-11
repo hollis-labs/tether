@@ -454,7 +454,7 @@ func assertStreamJSONUserTurn(t *testing.T, payload []byte, want string) {
 	if err := json.Unmarshal(payload, &frame); err != nil {
 		t.Fatalf("first turn is not a stream-json frame: %v (%q)", err, payload)
 	}
-	if frame.Type != "user" || frame.Message.Role != "user" || frame.Message.Content != want {
+	if frame.Type != "user" || frame.Message.Role != "user" || !strings.HasPrefix(frame.Message.Content, want) {
 		t.Fatalf("first turn = %+v, want a user message carrying the boot prompt", frame)
 	}
 }

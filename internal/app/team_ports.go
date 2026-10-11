@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
@@ -55,7 +57,7 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 	if d.Delivery != "" && d.Delivery != mesh.DeliveryAtIdle {
 		return teamhost.ErrInvalidRequest
 	}
-	if d.Recipient.SessionID == "" && d.Recipient.Kind != mesh.ActorAgent {
+	if d.Recipient.SessionID == "" && (d.Recipient.Kind != mesh.ActorAgent || d.Recipient.Governance == teams.Owner) {
 		from, err := messaging.ParseURN(string(d.From))
 		if err != nil {
 			return teamhost.ErrInvalidRequest
@@ -85,7 +87,8 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 	if err != nil {
 		return teamhost.ErrInvalidRequest
 	}
-	queueRequest := store.NewRoutingReply{From: from, ParentID: "team-delivery:" + d.IdempotencyKey, Body: d.Body, TargetSessionID: d.Recipient.SessionID, Actor: string(d.From), IdempotencyKey: d.IdempotencyKey}
+	body := teamDeliveryBody(d)
+	queueRequest := store.NewRoutingReply{From: from, ParentID: "team-delivery:" + d.IdempotencyKey, Body: body, TargetSessionID: d.Recipient.SessionID, Actor: string(d.From), IdempotencyKey: d.IdempotencyKey}
 	prior, found, err := s.Store.PeekRoutingReply(ctx, queueRequest)
 	if errors.Is(err, store.ErrRoutingReplyIdempotencyConflict) {
 		return teams.ErrConflict
@@ -119,7 +122,7 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 	if err != nil {
 		return err
 	}
-	reply, created, err := s.Store.CreateRoutingReply(ctx, store.NewRoutingReply{From: from, ParentID: "team-delivery:" + d.IdempotencyKey, Body: d.Body, TargetSessionID: row.ID, Actor: string(d.From), IdempotencyKey: d.IdempotencyKey, Metadata: map[string]string{"team_run": d.Route.RunID, "team_delivery_key": d.IdempotencyKey, "team_delivery_request": string(request)}})
+	reply, created, err := s.Store.CreateRoutingReply(ctx, store.NewRoutingReply{From: from, ParentID: "team-delivery:" + d.IdempotencyKey, Body: body, TargetSessionID: row.ID, Actor: string(d.From), IdempotencyKey: d.IdempotencyKey, Metadata: map[string]string{"team_run": d.Route.RunID, "team_delivery_key": d.IdempotencyKey, "team_delivery_request": string(request)}})
 	if errors.Is(err, store.ErrRoutingReplyIdempotencyConflict) {
 		return teams.ErrConflict
 	}
@@ -133,6 +136,24 @@ func (s *Service) QueueTeamDelivery(ctx context.Context, d teams.Delivery) error
 		dispatcher.notifyNew(row.ID)
 	}
 	return nil
+}
+
+// teamDeliveryBody prefixes a delivered team message with who sent it and how
+// to answer: the coordinator's address (where replies and results land as
+// mail) and, for a delegation, the key tether_team_report_result needs.
+func teamDeliveryBody(d teams.Delivery) string {
+	if d.Verb == mesh.Reply || d.Route.Sender.Actor == "" {
+		return d.Body
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[team %s: you are @%s (%s); message from %s; coordinator %s. ", d.Route.RunID, d.Recipient.Slot, d.Recipient.Actor, d.From, d.Route.Sender.Actor)
+	fmt.Fprintf(&b, "Reply by mail with tether_message_notify {from: %q, to: %q, kind: \"response\"}", d.Recipient.Actor, d.Route.Sender.Actor)
+	if d.Verb == mesh.Delegate {
+		fmt.Fprintf(&b, ", or finish with tether_team_report_result {run_id: %q, delegate_key: %q, body: <result>}", d.Route.RunID, d.IdempotencyKey)
+	}
+	b.WriteString(".]\n\n")
+	b.WriteString(d.Body)
+	return b.String()
 }
 
 // CreateTeamSession retains the catalog logical agent for sandbox policy. The
