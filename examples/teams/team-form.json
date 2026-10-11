@@ -9,7 +9,7 @@
   "team": {
     "id": "first-team",
     "name": "First team",
-    "version": 1,
+    "version": 2,
     "slots": [
       {
         "name": "coordinator",
