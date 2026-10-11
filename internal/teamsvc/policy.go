@@ -16,6 +16,13 @@ import (
 type Ceilings interface {
 	FormationCeilings(context.Context, Principal) (FormationPolicy, error)
 }
+
+// FormationAdmitter is an optional Ceilings extension that sees the whole
+// request before any definition write, for rules that span slots (shape,
+// runtime pairing). A non-nil error refuses the formation.
+type FormationAdmitter interface {
+	AdmitFormation(context.Context, Principal, FormRequest) error
+}
 type FormationPolicy struct {
 	Limits                                         mesh.Limits
 	MaxSlots, MaxMembersPerSlot, MaxInitialMembers int
@@ -37,6 +44,11 @@ func (s *Service) formationPolicy(ctx context.Context, p Principal, req FormRequ
 	policy, err := s.deps.Ceilings.FormationCeilings(ctx, p)
 	if err != nil {
 		return mesh.Limits{}, "", err
+	}
+	if admitter, ok := s.deps.Ceilings.(FormationAdmitter); ok {
+		if err = admitter.AdmitFormation(ctx, p, req); err != nil {
+			return mesh.Limits{}, "", err
+		}
 	}
 	if err = policy.Limits.Validate(); err != nil {
 		return mesh.Limits{}, "", fmt.Errorf("%w: host ceilings: %w", ErrUnavailable, err)
