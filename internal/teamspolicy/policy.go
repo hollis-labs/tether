@@ -223,12 +223,12 @@ var _ teamsvc.Ceilings = Ceilings{}
 var _ teamsvc.FormationAdmitter = Ceilings{}
 
 // StageA is the fixed Stage A formation ceiling: conservative limits at depth 1,
-// message-only authority and at most three slots.
+// messaging authority (message, assign, delegate) and at most three slots.
 func StageA() teamsvc.FormationPolicy {
 	f := teamsvc.ConservativePolicy()
 	f.Limits.MaxDepth = 1
 	f.MaxSlots = 3
-	f.AllowedPermissions = []teams.Permission{teams.MayMessage}
+	f.AllowedPermissions = []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate}
 	return f
 }
 

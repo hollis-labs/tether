@@ -6,7 +6,7 @@ forms a team, messages workers and dissolves it.
 usage: team-smoke-mcp.py <tether-bin> <catalog> <team-form.json> [mcp flags...]
 Prints the run id on the line "RUN <id>" and "TOOLS <n>"; exits non-zero on failure.
 """
-import json, os, subprocess, sys
+import json, os, time, subprocess, sys
 K = os.environ.get("SMOKE_KEY", "a")
 
 binary, catalog, form_path, *flags = sys.argv[1:]
@@ -58,7 +58,28 @@ if "tether_team_form" not in team:
 form = json.load(open(form_path))
 run = call("tether_team_form", {"key": "smoke-session-form-" + K, "request": form})["run"]["id"]
 print("RUN", run)
-call("tether_team_address", {"key": "smoke-session-msg-" + K, "request": {"run_id": run, "address": "@workers", "body": "hello from the session"}})
+if os.environ.get("SMOKE_HOOK"):
+    os.system(os.environ["SMOKE_HOOK"])
+# A bad caller-supplied filter is a request error, never internal_error.
+for extra in ({"history": "bogus"}, {"kind": "bogus"}):
+    req = {"run_id": run, "address": "@workers", "body": "probe"}
+    req.update(extra)
+    r = rpc("tools/call", {"name": "tether_team_address", "arguments": {"key": "bad-%s-%s" % (K, list(extra)[0]), "request": req}})
+    code = (r["result"].get("structuredContent") or {}).get("code")
+    if code != "invalid_request":
+        sys.exit("FAIL: %s -> %s, want invalid_request" % (extra, code))
+got = os.environ.get("SMOKE_GOT")  # file the fake worker appends every turn it receives
+for verb in ("address", "assign", "delegate"):
+    text = "session %s %s" % (verb, K)
+    call("tether_team_" + verb, {"key": "smoke-session-%s-%s" % (verb, K), "request": {"run_id": run, "address": "@workers", "body": text}})
+    if got:
+        for _ in range(60):
+            if os.path.exists(got) and text in open(got).read():
+                break
+            time.sleep(0.5)
+        else:
+            sys.exit("FAIL: worker never received %r" % text)
+        print("DELIVERED", verb)
 call("tether_team_dissolve", {"key": "smoke-session-dissolve-" + K, "request": {"run_id": run}})
 print("OK")
 proc.stdin.close()

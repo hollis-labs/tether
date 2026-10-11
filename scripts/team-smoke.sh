@@ -107,6 +107,8 @@ for _ in $(seq 40); do
   grep -qs 'hello from the smoke' "$ROOT/got.log" && SEEN=1 && break; sleep 0.5
 done
 [[ $SEEN == 1 ]] || die "message never reached a worker session"
+RV="$("${T[@]}" team msg "$RUN" @reviewer 'hello reviewer' --key smoke-msg-rev 2>&1)" || die "msg @reviewer: $RV"
+echo "msg @reviewer: $RV"
 LS="$("${T[@]}" team ls "$RUN" 2>&1)" || die "ls: $LS"
 echo "ls: $LS"
 DIS="$("${T[@]}" team stop "$RUN" --all --key smoke-stop 2>&1)" || die "stop: $DIS"
@@ -131,7 +133,7 @@ for _ in $(seq 40); do
 done
 [[ -n "$TOK" ]] || die "launched session never recorded a credential"
 for flags in "--daemon-only" "--proxy"; do
-  out="$(SMOKE_KEY="${flags#--}" TETHER_TOKEN="$(cat "$TOK")" python3 -I "$REPO/scripts/team-smoke-mcp.py" "$BIN" "$CAT" "$REPO/examples/teams/team-form.json" $flags 2>&1)" || die "session mcp ($flags): $out"
+  out="$(SMOKE_GOT="$ROOT/got.log" SMOKE_KEY="${flags#--}" TETHER_TOKEN="$(cat "$TOK")" python3 -I "$REPO/scripts/team-smoke-mcp.py" "$BIN" "$CAT" "$REPO/examples/teams/team-form.json" $flags 2>&1)" || die "session mcp ($flags): $out"
   echo "session mcp ($flags): $(tr '\n' ' ' <<<"$out")"
 done
 echo PASS

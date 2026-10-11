@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestCeilingsGateOperatorAndPause(t *testing.T) {
 	}
 	c := Ceilings{Policy: p}
 	got, err := c.FormationCeilings(context.Background(), operator())
-	if err != nil || got.Limits.MaxDepth != 1 || got.MaxSlots != 3 || len(got.AllowedPermissions) != 1 || got.AllowedPermissions[0] != teams.MayMessage {
+	if err != nil || got.Limits.MaxDepth != 1 || got.MaxSlots != 3 || !slices.Equal(got.AllowedPermissions, []teams.Permission{teams.MayMessage, teams.MayAssign, teams.MayDelegate}) {
 		t.Fatalf("stage A ceilings: %+v %v", got, err)
 	}
 	for name, mutate := range map[string]func(*teamsvc.Principal){
